@@ -27,15 +27,30 @@ constexpr double kBytesPerMBf = 1024.0 * 1024.0;
 constexpr double kBytesPerGBf = 1024.0 * 1024.0 * 1024.0;
 
 // ============================================================================
+// Numeric scale factors
+// ============================================================================
+
+constexpr int kPercentMax = 100;
+constexpr double kPercentMaxF = 100.0;
+constexpr int kSecondsPerMinute = 60;
+constexpr int kMillisecondsPerSecond = 1000;
+constexpr double kMillisecondsPerSecondF = 1000.0;
+constexpr int kTimeFieldWidth = 2;
+constexpr int kDecimalBase = 10;
+constexpr int kHexBase = 16;
+
+// ============================================================================
 // Timer intervals (milliseconds)
 // ============================================================================
 
+constexpr int kTimerImmediateMs = 0;          ///< Next event-loop tick
 constexpr int kTimerSnapMs = 50;              ///< Snap/animation tick
 constexpr int kTimerPollingFastMs = 100;      ///< Fast polling (USB creation, install)
 constexpr int kTimerDelayShortMs = 200;       ///< Short UI delay
 constexpr int kTimerRetryBaseMs = 500;        ///< Retry backoff base
 constexpr int kTimerProgressPollMs = 1000;    ///< Progress poll (downloads, conversions)
 constexpr int kTimerSplashMs = 1500;          ///< Splash screen display
+constexpr int kTimerStatusBriefMs = 2000;     ///< Brief status-bar display
 constexpr int kTimerBroadcastMs = 2000;       ///< Peer discovery broadcast
 constexpr int kTimerServiceDelayMs = 2000;    ///< Service restart delay
 constexpr int kTimerStatusMessageMs = 3000;   ///< Status bar message display

@@ -3,6 +3,7 @@
 
 #include "sak/install_summary_dialog.h"
 
+#include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
 #include <QHeaderView>
@@ -17,6 +18,9 @@ namespace sak {
 namespace {
 constexpr int kDialogMinWidth = 520;
 constexpr int kDialogMinHeight = 380;
+constexpr int kPackageColumnWidth = 180;
+constexpr int kStatusColumnWidth = 90;
+constexpr int kDurationColumnWidth = 80;
 
 enum JobColumn {
     ColPackage = 0,
@@ -59,9 +63,10 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_summary_label = new QLabel(headline, this);
     m_summary_label->setWordWrap(true);
     m_summary_label->setStyleSheet(
-        QStringLiteral("font-size: %1pt; font-weight: bold; color: %2;")
-            .arg(ui::kFontSizeSection)
-            .arg(stats.failed > 0 ? ui::kColorError : ui::kColorSuccess));
+        ui::fontSizeWeightColorStyle(ui::kFontSizeSection,
+                                     ui::kFontWeightBold,
+                                     stats.failed > 0 ? QString::fromLatin1(ui::kColorError)
+                                                      : QString::fromLatin1(ui::kColorSuccess)));
     layout->addWidget(m_summary_label);
 
     // Per-package table
@@ -73,9 +78,9 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_job_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_job_table->horizontalHeader()->setStretchLastSection(true);
     m_job_table->verticalHeader()->setVisible(false);
-    m_job_table->setColumnWidth(ColPackage, 180);
-    m_job_table->setColumnWidth(ColStatus, 90);
-    m_job_table->setColumnWidth(ColDuration, 80);
+    m_job_table->setColumnWidth(ColPackage, kPackageColumnWidth);
+    m_job_table->setColumnWidth(ColStatus, kStatusColumnWidth);
+    m_job_table->setColumnWidth(ColDuration, kDurationColumnWidth);
     layout->addWidget(m_job_table, 1);
 
     // Close button
@@ -136,10 +141,12 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
         QString duration_text;
         if (job.startTime.isValid() && job.endTime.isValid()) {
             qint64 elapsed_sec = job.startTime.secsTo(job.endTime);
-            if (elapsed_sec < 60) {
+            if (elapsed_sec < kSecondsPerMinute) {
                 duration_text = tr("%1s").arg(elapsed_sec);
             } else {
-                duration_text = tr("%1m %2s").arg(elapsed_sec / 60).arg(elapsed_sec % 60);
+                duration_text = tr("%1m %2s")
+                                    .arg(elapsed_sec / kSecondsPerMinute)
+                                    .arg(elapsed_sec % kSecondsPerMinute);
             }
         }
         m_job_table->setItem(row, ColDuration, new QTableWidgetItem(duration_text));

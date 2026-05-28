@@ -4,7 +4,7 @@
   "title": "Build Offline Deployment Bundle",
   "role": "Software Installer",
   "category": "Software",
-  "description": "Create an internalized offline Chocolatey deployment bundle.",
+  "description": "Build an offline Chocolatey deployment bundle with package manifests, cached payloads, checksums, and install instructions.",
   "starter_prompt": "Build an offline deployment bundle for the requested apps using SAK offline downloader.",
   "required_inputs": [
     {"id": "app_list", "label": "Applications", "type": "list", "required": true},

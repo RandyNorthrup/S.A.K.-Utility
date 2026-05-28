@@ -20,6 +20,10 @@
 namespace sak {
 
 namespace {
+constexpr int kRestoreProgressFileInterval = 100;
+constexpr qint64 kRestoreProgressByteInterval = kRestoreProgressFileInterval * kBytesPerMB;
+constexpr int kRestoreConflictMaxAttempts = 1000;
+
 bool buildSafePath(const QString& basePath, const QString& relativePath, QString& outPath) {
     Q_ASSERT(!basePath.isEmpty());
     Q_ASSERT(!relativePath.isEmpty());
@@ -48,7 +52,7 @@ UserProfileRestoreWorker::UserProfileRestoreWorker(QObject* parent)
 UserProfileRestoreWorker::~UserProfileRestoreWorker() {
     if (isRunning()) {
         cancel();
-        wait(5000);
+        wait(kTimeoutThreadTerminateMs);
     }
 }
 
@@ -612,8 +616,8 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
     static int lastFileCount = 0;
     static qint64 lastByteCount = 0;
 
-    if (m_filesRestored - lastFileCount >= 100 ||
-        m_bytesRestored - lastByteCount >= 100 * sak::kBytesPerMB) {
+    if (m_filesRestored - lastFileCount >= kRestoreProgressFileInterval ||
+        m_bytesRestored - lastByteCount >= kRestoreProgressByteInterval) {
         Q_EMIT fileProgress(m_filesRestored, m_totalFilesToRestore);
 
         lastFileCount = m_filesRestored;
@@ -655,7 +659,7 @@ QString UserProfileRestoreWorker::resolveConflict(const QString& destPath) {
                            baseName,
                            QString::number(counter++),
                            extension.isEmpty() ? "" : "." + extension);
-    } while (QFileInfo::exists(newPath) && counter < 1000);
+    } while (QFileInfo::exists(newPath) && counter < kRestoreConflictMaxAttempts);
 
     return newPath;
 }

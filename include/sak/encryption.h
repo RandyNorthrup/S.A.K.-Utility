@@ -16,12 +16,17 @@
 
 namespace sak {
 
+inline constexpr int kDefaultPbkdf2Iterations = 100'000;
+inline constexpr int kAes256KeyBytes = 32;
+inline constexpr int kAesBlockBytes = 16;
+inline constexpr int kEncryptionSaltBytes = 32;
+
 /// @brief AES-256 encryption parameters
 struct EncryptionParams {
-    int iterations = 100'000;  // PBKDF2 iterations
-    int key_size = 32;         // 256 bits
-    int iv_size = 16;          // 128 bits (AES block size)
-    int salt_size = 32;        // Salt for key derivation
+    int iterations = kDefaultPbkdf2Iterations;
+    int key_size = kAes256KeyBytes;
+    int iv_size = kAesBlockBytes;
+    int salt_size = kEncryptionSaltBytes;
 };
 
 /// @brief Encrypt data using AES-256-CBC with password

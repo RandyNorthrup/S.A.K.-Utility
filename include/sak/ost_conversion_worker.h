@@ -74,6 +74,13 @@ private:
     /// Initialize format-specific writers based on config
     void initializeFormatWriters(const OstConversionConfig& config, const QString& source_path);
 
+    void computeSourceChecksumIfRequested(const QString& source_path,
+                                          const OstConversionConfig& config,
+                                          OstConversionResult& result);
+
+    [[nodiscard]] std::unique_ptr<PstParser> openSourceParser(const QString& source_path,
+                                                              OstConversionResult& result);
+
     /// Finalize all active writers
     void finalizeWriters(OstConversionResult& result);
 

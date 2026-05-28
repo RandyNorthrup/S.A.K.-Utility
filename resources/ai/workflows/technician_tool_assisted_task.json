@@ -4,7 +4,7 @@
   "title": "Technician Tool Assisted Task",
   "role": "PC Technician",
   "category": "Diagnostics",
-  "description": "Download an official technician tool, verify it, run it for a bounded task, verify the result, then remove the downloaded tool.",
+  "description": "Use an approved technician tool for a bounded task with official-source verification, result validation, reporting, and cleanup.",
   "starter_prompt": "Use an official technician tool to complete the requested task. Download it to session artifacts, verify it, run it only after approval, verify the result, then remove the downloaded tool.",
   "required_inputs": [
     {"id": "task_goal", "label": "Task goal", "type": "string", "required": true},

@@ -15,6 +15,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kMagicHeaderProbeBytes = 16;
+constexpr int kMaxMagicSignatureBytes = 6;
+}  // namespace
+
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
     Q_ASSERT(!filePath.isEmpty());
     QString format = detectFormat(filePath);
@@ -102,13 +107,13 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
 
 QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     Q_ASSERT(!filePath.isEmpty());
-    unsigned char magic[16];
+    unsigned char magic[kMagicHeaderProbeBytes];
     if (!readMagicNumber(filePath, magic, sizeof(magic))) {
         return QString();
     }
 
     struct MagicEntry {
-        const unsigned char bytes[6];
+        const unsigned char bytes[kMaxMagicSignatureBytes];
         int length;
         const char* format;
     };

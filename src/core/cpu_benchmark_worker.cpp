@@ -6,6 +6,7 @@
 
 #include "sak/cpu_benchmark_worker.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -36,6 +37,31 @@ constexpr double kBaselinePrimeSieveMs = 120.0;
 constexpr double kBaselineMatrixMultiplyMs = 350.0;
 constexpr double kBaselineZlibCompressionMs = 280.0;
 constexpr double kBaselineAesEncryptionMs = 180.0;
+constexpr int kBenchmarkStepTotal = 6;
+constexpr int kProgressStepMatrix = 1;
+constexpr int kProgressStepZlib = 2;
+constexpr int kProgressStepAes = 3;
+constexpr int kProgressStepMultiThread = 4;
+constexpr int kProgressStepScoring = 5;
+constexpr double kBenchmarkMillisecondsPerSecond = 1000.0;
+constexpr double kNanosecondsPerMillisecond = 1'000'000.0;
+constexpr double kGigaScale = 1'000'000'000.0;
+constexpr double kMatrixOperationMultiplier = 2.0;
+constexpr uint64_t kSmallestPrime = 2;
+constexpr unsigned int kMatrixRandomSeed = 42;
+constexpr unsigned int kZlibRandomSeed = 123;
+constexpr unsigned int kAesRandomSeed = 456;
+constexpr size_t kPatternModulo = 256;
+constexpr size_t kPatternRandomSpan = 128;
+constexpr uint32_t kByteMask = 0xFF;
+constexpr size_t kAesBlockBytes = 16;
+constexpr int kAesRounds = 10;
+constexpr uint64_t kMultiThreadPrimeLimit = 2'000'000;
+constexpr int kMultiThreadMatrixSize = 256;
+constexpr double kMinScoreTimeMs = 0.001;
+constexpr double kGeometricMeanExponent = 0.25;
+constexpr double kBaselineScore = 1000.0;
+constexpr double kPercentScale = 100.0;
 
 /// @brief Compute one row of C = A x B (ikj order for cache-friendly B access)
 void multiplyMatrixRow(const std::vector<double>& a,
@@ -88,65 +114,19 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     m_result = CpuBenchmarkResult{};
     m_result.thread_count = std::thread::hardware_concurrency();
 
-    // -- Single-thread benchmarks --------------------------------
-    reportProgress(0, 6, "Running prime sieve benchmark...");
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
+    if (auto result = runSingleThreadBenchmarks(); !result) {
+        return result;
     }
-    m_result.prime_sieve_time_ms = runPrimeSieve();
-
-    reportProgress(1, 6, "Running matrix multiplication benchmark...");
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
-    m_result.matrix_multiply_time_ms = runMatrixMultiply();
-
-    reportProgress(2, 6, "Running ZLIB compression benchmark...");
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
-    m_result.zlib_compression_time_ms = runZlibCompression();
-
-    reportProgress(3, 6, "Running AES encryption benchmark...");
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
-    m_result.aes_encryption_time_ms = runAesEncryption();
-
-    // Store throughput metrics
-    m_result.zlib_throughput_mbps = m_zlib_throughput_mbps;
-    m_result.aes_throughput_mbps = m_aes_throughput_mbps;
-
-    // Compute GFLOPS from single-thread matrix multiply (512x512)
-    {
-        const double elapsed_sec = m_result.matrix_multiply_time_ms / 1000.0;
-        const double ops = 2.0 * 512.0 * 512.0 * 512.0;
-        m_matrix_gflops = (elapsed_sec > 0.0) ? (ops / elapsed_sec / 1e9) : 0.0;
-        m_result.matrix_gflops = m_matrix_gflops;
-    }
-
-    // -- Multi-thread benchmark ----------------------------------
-    reportProgress(4, 6, "Running multi-threaded benchmark...");
-    if (checkStop()) {
-        return std::unexpected(sak::error_code::operation_cancelled);
-    }
+    updateDerivedMetrics();
 
     const double st_total = m_result.prime_sieve_time_ms + m_result.matrix_multiply_time_ms +
                             m_result.zlib_compression_time_ms + m_result.aes_encryption_time_ms;
-
-    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
-    const double mt_total = runMultiThreaded(hw_threads);
-
-    // Thread scaling efficiency
-    if (mt_total > 0.0 && hw_threads > 0) {
-        m_result.thread_scaling_efficiency = (st_total / mt_total) /
-                                             static_cast<double>(hw_threads);
+    if (auto result = runMultiThreadBenchmark(st_total); !result) {
+        return result;
     }
 
-    // -- Scoring -------------------------------------------------
-    reportProgress(5, 6, "Calculating scores...");
+    reportProgress(kProgressStepScoring, kBenchmarkStepTotal, "Calculating scores...");
     calculateScores();
-
     m_result.timestamp = QDateTime::currentDateTime();
 
     logInfo("CPU benchmark complete -- ST: {}, MT: {}",
@@ -158,12 +138,72 @@ auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
+std::expected<void, sak::error_code> CpuBenchmarkWorker::runSingleThreadBenchmarks() {
+    reportProgress(sak::progress::kStart, kBenchmarkStepTotal, "Running prime sieve benchmark...");
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+    m_result.prime_sieve_time_ms = runPrimeSieve();
+
+    reportProgress(kProgressStepMatrix,
+                   kBenchmarkStepTotal,
+                   "Running matrix multiplication benchmark...");
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+    m_result.matrix_multiply_time_ms = runMatrixMultiply();
+
+    reportProgress(kProgressStepZlib, kBenchmarkStepTotal, "Running ZLIB compression benchmark...");
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+    m_result.zlib_compression_time_ms = runZlibCompression();
+
+    reportProgress(kProgressStepAes, kBenchmarkStepTotal, "Running AES encryption benchmark...");
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+    m_result.aes_encryption_time_ms = runAesEncryption();
+
+    return {};
+}
+
+void CpuBenchmarkWorker::updateDerivedMetrics() {
+    m_result.zlib_throughput_mbps = m_zlib_throughput_mbps;
+    m_result.aes_throughput_mbps = m_aes_throughput_mbps;
+
+    const double elapsed_sec = m_result.matrix_multiply_time_ms / kBenchmarkMillisecondsPerSecond;
+    const double matrix_size = static_cast<double>(kDefaultMatrixSize);
+    const double ops = kMatrixOperationMultiplier * matrix_size * matrix_size * matrix_size;
+    m_matrix_gflops = (elapsed_sec > 0.0) ? (ops / elapsed_sec / kGigaScale) : 0.0;
+    m_result.matrix_gflops = m_matrix_gflops;
+}
+
+std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark(double st_total) {
+    reportProgress(kProgressStepMultiThread,
+                   kBenchmarkStepTotal,
+                   "Running multi-threaded benchmark...");
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
+    const double mt_total = runMultiThreaded(hw_threads);
+
+    if (mt_total > 0.0 && hw_threads > 0) {
+        m_result.thread_scaling_efficiency = (st_total / mt_total) /
+                                             static_cast<double>(hw_threads);
+    }
+
+    return {};
+}
+
 // ============================================================================
 // Individual Benchmarks
 // ============================================================================
 
 double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
-    Q_ASSERT_X(limit >= 2, "runPrimeSieve", "limit must be >= 2");
+    Q_ASSERT_X(limit >= kSmallestPrime, "runPrimeSieve", "limit must be >= 2");
     // Sieve of Eratosthenes -- stresses integer arithmetic + memory
     QElapsedTimer timer;
     timer.start();
@@ -173,7 +213,7 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
 
     const uint64_t sqrt_limit = static_cast<uint64_t>(std::sqrt(static_cast<double>(limit)));
 
-    for (uint64_t i = 2; i <= sqrt_limit; ++i) {
+    for (uint64_t i = kSmallestPrime; i <= sqrt_limit; ++i) {
         if (!sieve[i]) {
             continue;
         }
@@ -185,7 +225,7 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
     // Count primes (prevents optimizer from eliding the work)
     [[maybe_unused]] const auto count = std::count(sieve.begin(), sieve.end(), true);
 
-    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
     logInfo("Prime sieve ({} primes up to {}) completed in {:.1f} ms", count, limit, elapsed_ms);
     return elapsed_ms;
 }
@@ -199,7 +239,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
     std::vector<double> c(element_count * element_count, 0.0);
 
     // Deterministic init with fixed seed for reproducibility
-    std::mt19937 rng(42);
+    std::mt19937 rng(kMatrixRandomSeed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
     std::generate(a.begin(), a.end(), [&]() { return dist(rng); });
@@ -213,11 +253,14 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
         multiplyMatrixRow(a, b, c, i, element_count);
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
 
     // GFLOPS = 2*N^3 / (time_sec * 10^9)
-    const double ops = 2.0 * static_cast<double>(element_count) * element_count * element_count;
-    const double gflops = (elapsed_ms > 0.0) ? (ops / (elapsed_ms / 1000.0) / 1e9) : 0.0;
+    const double ops = kMatrixOperationMultiplier * static_cast<double>(element_count) *
+                       element_count * element_count;
+    const double gflops = (elapsed_ms > 0.0)
+                              ? (ops / (elapsed_ms / kBenchmarkMillisecondsPerSecond) / kGigaScale)
+                              : 0.0;
 
     // Prevent optimizer from eliding c
     volatile double sink = c[0];
@@ -237,13 +280,13 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
 
     // Generate compressible data (mixed patterns)
     std::vector<uint8_t> input(data_size);
-    std::mt19937 rng(123);
+    std::mt19937 rng(kZlibRandomSeed);
     for (size_t i = 0; i < data_size; ++i) {
         // Mix of random and repeating patterns for realistic compressibility
-        if (i % 256 < 128) {
-            input[i] = static_cast<uint8_t>(rng() & 0xFF);
+        if (i % kPatternModulo < kPatternRandomSpan) {
+            input[i] = static_cast<uint8_t>(rng() & kByteMask);
         } else {
-            input[i] = static_cast<uint8_t>(i & 0xFF);
+            input[i] = static_cast<uint8_t>(i & kByteMask);
         }
     }
 
@@ -260,7 +303,7 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
                               static_cast<uLong>(data_size),
                               Z_DEFAULT_COMPRESSION);
 
-    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
 
     if (ret != Z_OK) {
         logError("ZLIB compression failed with code {}", ret);
@@ -268,8 +311,8 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
     }
 
     const double ratio = static_cast<double>(data_size) / static_cast<double>(compressed_size);
-    m_zlib_throughput_mbps = static_cast<double>(data_size) / (1024.0 * 1024.0) /
-                             (elapsed_ms / 1000.0);
+    m_zlib_throughput_mbps = static_cast<double>(data_size) / sak::kBytesPerMBf /
+                             (elapsed_ms / kBenchmarkMillisecondsPerSecond);
 
     logInfo("ZLIB: {} MB compressed in {:.1f} ms ({:.1f} MB/s, {:.2f}x ratio)",
             data_size_mb,
@@ -285,28 +328,28 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
 
     // Generate random data
     std::vector<uint8_t> data(data_size);
-    std::mt19937 rng(456);
+    std::mt19937 rng(kAesRandomSeed);
     for (size_t i = 0; i < data_size; ++i) {
-        data[i] = static_cast<uint8_t>(rng() & 0xFF);
+        data[i] = static_cast<uint8_t>(rng() & kByteMask);
     }
 
     // Fixed key schedule (16 bytes for AES-128)
-    alignas(16) const uint8_t key[16] = {0x2b,
-                                         0x7e,
-                                         0x15,
-                                         0x16,
-                                         0x28,
-                                         0xae,
-                                         0xd2,
-                                         0xa6,
-                                         0xab,
-                                         0xf7,
-                                         0x15,
-                                         0x88,
-                                         0x09,
-                                         0xcf,
-                                         0x4f,
-                                         0x3c};
+    alignas(kAesBlockBytes) const uint8_t key[kAesBlockBytes] = {0x2b,
+                                                                 0x7e,
+                                                                 0x15,
+                                                                 0x16,
+                                                                 0x28,
+                                                                 0xae,
+                                                                 0xd2,
+                                                                 0xa6,
+                                                                 0xab,
+                                                                 0xf7,
+                                                                 0x15,
+                                                                 0x88,
+                                                                 0x09,
+                                                                 0xcf,
+                                                                 0x4f,
+                                                                 0x3c};
 
     QElapsedTimer timer;
     timer.start();
@@ -314,22 +357,22 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     // AES-like S-Box substitution with key mixing -- representative of
     // real encryption workload without requiring a full AES implementation.
     // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey x 10 rounds.
-    for (size_t block = 0; block + 16 <= data_size; block += 16) {
-        for (int round = 0; round < 10; ++round) {
-            for (int block_index = 0; block_index < 16; ++block_index) {
+    for (size_t block = 0; block + kAesBlockBytes <= data_size; block += kAesBlockBytes) {
+        for (int round = 0; round < kAesRounds; ++round) {
+            for (size_t block_index = 0; block_index < kAesBlockBytes; ++block_index) {
                 data[block + block_index] = kAesSBox[data[block + block_index]] ^ key[block_index];
             }
         }
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
 
     // Prevent optimizer from eliding
     volatile uint8_t sink = data[0];
     (void)sink;
 
-    m_aes_throughput_mbps = static_cast<double>(data_size) / (1024.0 * 1024.0) /
-                            (elapsed_ms / 1000.0);
+    m_aes_throughput_mbps = static_cast<double>(data_size) / sak::kBytesPerMBf /
+                            (elapsed_ms / kBenchmarkMillisecondsPerSecond);
 
     logInfo("AES: {} MB encrypted in {:.1f} ms ({:.1f} MB/s)",
             data_size_mb,
@@ -353,8 +396,8 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
     for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
         futures.push_back(std::async(std::launch::async, [this]() {
             // Smaller workloads per thread to keep total duration reasonable
-            (void)runPrimeSieve(2'000'000);
-            (void)runMatrixMultiply(256);
+            (void)runPrimeSieve(kMultiThreadPrimeLimit);
+            (void)runMatrixMultiply(kMultiThreadMatrixSize);
         }));
     }
 
@@ -362,7 +405,7 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
         future.get();
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / 1'000'000.0;
+    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
     logInfo("Multi-threaded benchmark ({} threads) completed in {:.1f} ms",
             thread_count,
             elapsed_ms);
@@ -372,18 +415,18 @@ double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
 void CpuBenchmarkWorker::calculateScores() {
     // Single-thread score: geometric mean of individual ratios x 1000
     const double prime_ratio = kBaselinePrimeSieveMs /
-                               std::max(m_result.prime_sieve_time_ms, 0.001);
+                               std::max(m_result.prime_sieve_time_ms, kMinScoreTimeMs);
     const double matrix_ratio = kBaselineMatrixMultiplyMs /
-                                std::max(m_result.matrix_multiply_time_ms, 0.001);
+                                std::max(m_result.matrix_multiply_time_ms, kMinScoreTimeMs);
     const double zlib_ratio = kBaselineZlibCompressionMs /
-                              std::max(m_result.zlib_compression_time_ms, 0.001);
+                              std::max(m_result.zlib_compression_time_ms, kMinScoreTimeMs);
     const double aes_ratio = kBaselineAesEncryptionMs /
-                             std::max(m_result.aes_encryption_time_ms, 0.001);
+                             std::max(m_result.aes_encryption_time_ms, kMinScoreTimeMs);
 
     const double geometric_mean = std::pow(prime_ratio * matrix_ratio * zlib_ratio * aes_ratio,
-                                           0.25);
+                                           kGeometricMeanExponent);
 
-    m_result.single_thread_score = static_cast<int>(geometric_mean * 1000.0);
+    m_result.single_thread_score = static_cast<int>(geometric_mean * kBaselineScore);
 
     // Multi-thread score: single_thread x thread_count x efficiency
     const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
@@ -394,7 +437,7 @@ void CpuBenchmarkWorker::calculateScores() {
     logInfo("Scores -- ST: {}, MT: {}, Scaling: {:.1f}%",
             m_result.single_thread_score,
             m_result.multi_thread_score,
-            m_result.thread_scaling_efficiency * 100.0);
+            m_result.thread_scaling_efficiency * kPercentScale);
 }
 
 }  // namespace sak

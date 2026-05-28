@@ -20,6 +20,12 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kNugetErrorBodyPreviewChars = 500;
+constexpr int kContentDispositionFilenamePrefixLength = 9;
+constexpr qsizetype kDependencySubpartMinimumCount = 2;
+}  // namespace
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -213,7 +219,7 @@ void NuGetApiClient::handleSearchReply(QNetworkReply* reply) {
                         wire_url.toStdString());
         if (!body.isEmpty()) {
             sak::logWarning("[NuGetApiClient] Response body (first 500 chars): {}",
-                            body.left(500).toStdString());
+                            body.left(kNugetErrorBodyPreviewChars).toStdString());
         }
 
         Q_EMIT errorOccurred("search", reply->errorString());
@@ -322,7 +328,7 @@ void NuGetApiClient::handleDownloadReply(QNetworkReply* reply,
     QString filename;
     QString disposition = reply->header(QNetworkRequest::ContentDispositionHeader).toString();
     if (!disposition.isEmpty() && disposition.contains("filename=")) {
-        int start = disposition.indexOf("filename=") + 9;
+        int start = disposition.indexOf("filename=") + kContentDispositionFilenamePrefixLength;
         filename = disposition.mid(start).trimmed();
         filename.remove('"');
     }
@@ -555,7 +561,7 @@ QStringList NuGetApiClient::parseDependencyString(const QString& dep_string) con
             } else {
                 // This might be "framework::dep_id:ver" — try splitting further
                 QStringList sub_parts = trimmed.split(':', Qt::SkipEmptyParts);
-                if (sub_parts.size() >= 2) {
+                if (sub_parts.size() >= kDependencySubpartMinimumCount) {
                     result.append(sub_parts[0]);
                 }
             }

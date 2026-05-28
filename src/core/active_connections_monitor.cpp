@@ -26,6 +26,10 @@
 namespace sak {
 
 namespace {
+constexpr uint32_t kWindowsSystemProcessId = 4;
+}
+
+namespace {
 constexpr DWORD kInitialBufferSize = 32'768;
 constexpr int kMaxHostnameLen = 256;
 
@@ -209,7 +213,7 @@ QString ActiveConnectionsMonitor::getProcessName(uint32_t pid) {
     if (pid == 0) {
         return QStringLiteral("System Idle");
     }
-    if (pid == 4) {
+    if (pid == kWindowsSystemProcessId) {
         return QStringLiteral("System");
     }
 
@@ -237,7 +241,7 @@ QString ActiveConnectionsMonitor::getProcessName(uint32_t pid) {
 }
 
 QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
-    if (pid == 0 || pid == 4) {
+    if (pid == 0 || pid == kWindowsSystemProcessId) {
         return {};
     }
 

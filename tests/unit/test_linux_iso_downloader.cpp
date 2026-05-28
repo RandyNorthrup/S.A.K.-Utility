@@ -62,7 +62,7 @@ private Q_SLOTS:
 
     // URL resolution — GitHub
     void testResolveGitHubUrl_NoCache();
-    void testResolveGitHubUrl_WithFallback();
+    void testResolveGitHubUrl_RequiresVersionCheck();
 
     // Checksum URL resolution
     void testResolveChecksumUrl_Ubuntu();
@@ -72,7 +72,7 @@ private Q_SLOTS:
     // Filename resolution
     void testResolveFileName_Direct();
     void testResolveFileName_SourceForge();
-    void testResolveFileName_GitHubFallback();
+    void testResolveFileName_GitHubTemplate();
 
     // Version substitution
     void testVersionSubstitution();
@@ -83,7 +83,7 @@ private Q_SLOTS:
     // ========================================================================
     void testGitHubVersionCheck_Success();
     void testGitHubVersionCheck_NoMatchingAsset();
-    void testGitHubVersionCheck_EmptyTag();
+    void testArchLinuxCatalogEntry();
 
     // ========================================================================
     // Downloader Tests
@@ -221,6 +221,9 @@ void LinuxISODownloaderTests::testDistroByIdFound() {
 void LinuxISODownloaderTests::testDistroByIdNotFound() {
     auto d = m_catalog->distroById("nonexistent-distro-xyz");
     QVERIFY(d.id.isEmpty());
+
+    auto removed = m_catalog->distroById("memtest86plus");
+    QVERIFY2(removed.id.isEmpty(), "Memtest86+ should not be present in the ISO catalog");
 }
 
 void LinuxISODownloaderTests::testDistrosByCategory() {
@@ -312,26 +315,17 @@ void LinuxISODownloaderTests::testResolveGitHubUrl_NoCache() {
     auto d = m_catalog->distroById("shredos");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
 
-    // Without cached GitHub API data, URL should be empty for ShredOS
-    // (it has no fileName template to fall back on)
+    // Without cached GitHub API data, URL should be empty for ShredOS.
     QString url = m_catalog->resolveDownloadUrl(d);
-    // ShredOS has empty fileName, so no fallback URL
     QVERIFY(url.isEmpty());
 }
 
-void LinuxISODownloaderTests::testResolveGitHubUrl_WithFallback() {
+void LinuxISODownloaderTests::testResolveGitHubUrl_RequiresVersionCheck() {
     auto d = m_catalog->distroById("ventoy");
     QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::GitHubRelease);
 
-    // Ventoy has a fileName template, so it should produce a fallback URL
     QString url = m_catalog->resolveDownloadUrl(d);
-    // Should have constructed a fallback from fileName template
-    QVERIFY2(!url.isEmpty() || d.fileName.isEmpty(),
-             qPrintable("Ventoy should have fallback URL or no fileName"));
-    if (!url.isEmpty()) {
-        QVERIFY(url.contains("github.com"));
-        QVERIFY(url.contains(d.version));
-    }
+    QVERIFY2(url.isEmpty(), "GitHub release URLs must come from a successful version check");
 }
 
 // ============================================================================
@@ -378,10 +372,10 @@ void LinuxISODownloaderTests::testResolveFileName_SourceForge() {
     QVERIFY(filename.endsWith(".iso"));
 }
 
-void LinuxISODownloaderTests::testResolveFileName_GitHubFallback() {
+void LinuxISODownloaderTests::testResolveFileName_GitHubTemplate() {
     auto d = m_catalog->distroById("ventoy");
     QString filename = m_catalog->resolveFileName(d);
-    // Should fall back to fileName template with version substitution
+    // GitHub-backed distros keep a deterministic filename template before live asset resolution.
     if (!d.fileName.isEmpty()) {
         QVERIFY(filename.contains(d.version));
     }
@@ -456,16 +450,21 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_NoMatchingAsset() {
     QVERIFY(!regex.match("README.md").hasMatch());
 
     // Should match ISO files
-    QVERIFY(regex.match("shredos-v2025.11_28_x86-64_0.40.iso").hasMatch());
+    QVERIFY(regex.match("shredos-v2025.11_30_x86-64_0.41.iso").hasMatch());
 }
 
-void LinuxISODownloaderTests::testGitHubVersionCheck_EmptyTag() {
-    // Verify Memtest86+ asset pattern matches .iso.gz
-    auto d = m_catalog->distroById("memtest86plus");
-    QRegularExpression regex(d.githubAssetPattern, QRegularExpression::CaseInsensitiveOption);
-    QVERIFY(regex.isValid());
-    QVERIFY(regex.match("memtest86plus-7.20.iso.gz").hasMatch());
-    QVERIFY(!regex.match("memtest86plus-7.20.bin.gz").hasMatch());
+void LinuxISODownloaderTests::testArchLinuxCatalogEntry() {
+    auto d = m_catalog->distroById("arch-linux");
+    QVERIFY(!d.id.isEmpty());
+    QCOMPARE(d.name, QString("Arch Linux"));
+    QCOMPARE(d.sourceType, LinuxDistroCatalog::SourceType::DirectURL);
+
+    const QString url = m_catalog->resolveDownloadUrl(d);
+    QVERIFY2(url.contains("geo.mirror.pkgbuild.com"), qPrintable("URL: " + url));
+    QVERIFY2(url.endsWith("archlinux-x86_64.iso"), qPrintable("URL: " + url));
+
+    const QString checksumUrl = m_catalog->resolveChecksumUrl(d);
+    QVERIFY2(checksumUrl.endsWith("sha256sums.txt"), qPrintable("Checksum URL: " + checksumUrl));
 }
 
 // ============================================================================

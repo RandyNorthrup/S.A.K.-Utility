@@ -8,12 +8,14 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultPackageToolTimeoutSeconds = 1800;
+
 struct AiPackageToolPlan {
     QString operation;
     QString query;
     QString package_id;
     QString version;
-    int timeout_seconds = 1800;
+    int timeout_seconds = kDefaultPackageToolTimeoutSeconds;
     bool query_operation = false;
     bool read_operation = false;
     bool change_operation = false;

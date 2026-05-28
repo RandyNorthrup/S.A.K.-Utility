@@ -212,6 +212,9 @@ private:
     void setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperfLayout);
     void setupBandwidthHttpSection(QWidget* widget, QVBoxLayout* layout);
     QWidget* createWiFiTab();
+    void setupWifiControls(QWidget* widget, QVBoxLayout* layout);
+    void setupWifiTable(QWidget* widget, QVBoxLayout* layout);
+    void setupWifiStatusLabel(QWidget* widget, QVBoxLayout* layout);
     QWidget* createConnectionsTab();
     void setupConnectionsConfig(QWidget* widget, QVBoxLayout* layout);
     void setupConnectionsControls(QWidget* widget, QVBoxLayout* layout);
@@ -226,6 +229,10 @@ private:
     QGroupBox* createLanClientGroup(QWidget* parent);
     void connectSignals();
     void connectUiSignals();
+    void connectAdapterUiSignals();
+    void connectProbeUiSignals();
+    void connectBandwidthWifiUiSignals();
+    void connectConnectionsContextSignals();
     void connectControllerCoreSignals();
     void connectControllerAdapterPingTraceMtrSignals();
     void connectControllerDnsPortSignals();

@@ -55,20 +55,38 @@ constexpr uint8_t kNidTypeHierarchyTable = 0x0D;
 constexpr int kHeaderSize = 564;
 constexpr int kBTreePageSize = 512;
 constexpr int kMaxBlockSize = 8176;
+constexpr int kNidIndexShift = 5;
+constexpr int kUtf16BytesPerChar = 2;
+constexpr uint16_t kByteMask = 0x00FF;
+constexpr int kByteShift = 8;
+constexpr int kFileTimeBytes = 8;
+constexpr uint64_t kInitialNid = 0x100;
+constexpr uint64_t kInitialBid = 0x100;
+constexpr uint16_t kPstClientVersion = 19;
+constexpr uint8_t kPstPlatformVersion = 0x01;
+constexpr uint32_t kPstHeaderSentinel = 0x12'34'56'78;
+constexpr int kPstHeaderReservedDwords = 128;
+constexpr uint64_t kBidIncrement = 4;
+constexpr int kBTreeEntryPageLimit = 20;
+constexpr uint8_t kPcSignature = 0xBC;
+constexpr int kInlinePropertyValueBytes = 4;
+constexpr int kCountPropertyBytes = 4;
+constexpr int kEmptyTableContextBytes = 16;
+constexpr uint32_t kInitialCrc = 0xFF'FF'FF'FF;
 
 /// Build a NID from type + index
 uint64_t makeNid(uint8_t type, uint64_t index) {
-    return (index << 5) | type;
+    return (index << kNidIndexShift) | type;
 }
 
 /// Encode a Unicode string as UTF-16LE for PST storage
 QByteArray encodeUnicode(const QString& str) {
     QByteArray result;
-    result.reserve(str.size() * 2);
+    result.reserve(str.size() * kUtf16BytesPerChar);
     for (const auto& ch : str) {
         uint16_t code = ch.unicode();
-        result.append(static_cast<char>(code & 0xFF));
-        result.append(static_cast<char>((code >> 8) & 0xFF));
+        result.append(static_cast<char>(code & kByteMask));
+        result.append(static_cast<char>((code >> kByteShift) & kByteMask));
     }
     return result;
 }
@@ -76,7 +94,7 @@ QByteArray encodeUnicode(const QString& str) {
 /// Encode a FILETIME (100-ns intervals since 1601-01-01)
 QByteArray encodeFileTime(const QDateTime& dt) {
     if (!dt.isValid()) {
-        return QByteArray(8, '\0');
+        return QByteArray(kFileTimeBytes, '\0');
     }
     // Windows FILETIME epoch: 1601-01-01 00:00:00 UTC
     // Unix epoch: 1970-01-01 00:00:00 UTC
@@ -87,9 +105,9 @@ QByteArray encodeFileTime(const QDateTime& dt) {
     int64_t unix_secs = dt.toSecsSinceEpoch();
     int64_t file_time = (unix_secs + kEpochDiffSeconds) * kTicksPerSecond;
 
-    QByteArray result(8, '\0');
-    for (int i = 0; i < 8; ++i) {
-        result[i] = static_cast<char>((file_time >> (i * 8)) & 0xFF);
+    QByteArray result(kFileTimeBytes, '\0');
+    for (int i = 0; i < kFileTimeBytes; ++i) {
+        result[i] = static_cast<char>((file_time >> (i * kByteShift)) & kByteMask);
     }
     return result;
 }
@@ -124,8 +142,8 @@ std::expected<void, error_code> PstWriter::create() {
 
     m_is_open = true;
     m_write_offset = 0;
-    m_next_nid = 0x100;
-    m_next_bid = 0x100;
+    m_next_nid = kInitialNid;
+    m_next_bid = kInitialBid;
     m_nbt_entries.clear();
     m_bbt_entries.clear();
     m_folder_nids.clear();
@@ -218,12 +236,12 @@ void PstWriter::writeHeader() {
     // wVer (offset 10) — 23 for Unicode
     ds << kVersionUnicode;
     // wVerClient (offset 12)
-    ds << static_cast<uint16_t>(19);
+    ds << static_cast<uint16_t>(kPstClientVersion);
 
     // bPlatformCreate (offset 14)
-    ds << static_cast<uint8_t>(0x01);
+    ds << static_cast<uint8_t>(kPstPlatformVersion);
     // bPlatformAccess (offset 15)
-    ds << static_cast<uint8_t>(0x01);
+    ds << static_cast<uint8_t>(kPstPlatformVersion);
 
     // dwReserved1, dwReserved2 (offsets 16-23)
     ds << static_cast<uint32_t>(0) << static_cast<uint32_t>(0);
@@ -235,11 +253,11 @@ void PstWriter::writeHeader() {
     ds << static_cast<uint64_t>(m_next_bid);
 
     // dwUnique (offset 40-43)
-    ds << static_cast<uint32_t>(0x12'34'56'78);
+    ds << static_cast<uint32_t>(kPstHeaderSentinel);
 
     // rgnid[128] (offset 44-555) — 128 * 4 bytes of NID counters
     // Fill with zeros (simplified)
-    for (int i = 0; i < 128; ++i) {
+    for (int i = 0; i < kPstHeaderReservedDwords; ++i) {
         ds << static_cast<uint32_t>(0);
     }
 
@@ -262,7 +280,7 @@ void PstWriter::writeEmptyBTrees() {
 
 uint64_t PstWriter::allocateBlock(const QByteArray& data) {
     uint64_t bid = m_next_bid;
-    m_next_bid += 4;
+    m_next_bid += kBidIncrement;
 
     // Align to 64 bytes
     qint64 aligned_offset = (m_write_offset + kBlockAlignment - 1) & ~(kBlockAlignment - 1);
@@ -299,7 +317,7 @@ void PstWriter::updateNodeBTree() {
     ds.setByteOrder(QDataStream::LittleEndian);
 
     // Simplified: write leaf entries directly
-    int count = qMin(m_nbt_entries.size(), 20);
+    int count = qMin(m_nbt_entries.size(), kBTreeEntryPageLimit);
     for (int i = 0; i < count; ++i) {
         const auto& entry = m_nbt_entries[i];
         ds << entry.nid << entry.bid_data << entry.bid_sub << entry.parent_nid;
@@ -321,7 +339,7 @@ void PstWriter::updateBlockBTree() {
     QDataStream ds(&page, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
 
-    int count = qMin(m_bbt_entries.size(), 20);
+    int count = qMin(m_bbt_entries.size(), kBTreeEntryPageLimit);
     for (int i = 0; i < count; ++i) {
         const auto& entry = m_bbt_entries[i];
         ds << entry.bid << entry.offset << static_cast<uint16_t>(entry.size)
@@ -347,7 +365,7 @@ QByteArray PstWriter::buildPropertyContext(const QVector<QPair<uint16_t, QByteAr
     ds.setByteOrder(QDataStream::LittleEndian);
 
     // bClientSig = PC (0xBC)
-    ds << static_cast<uint8_t>(0xBC);
+    ds << static_cast<uint8_t>(kPcSignature);
     // cEntries
     ds << static_cast<uint16_t>(properties.size());
 
@@ -356,11 +374,11 @@ QByteArray PstWriter::buildPropertyContext(const QVector<QPair<uint16_t, QByteAr
         ds << tag;
         ds << static_cast<uint16_t>(value.size());
 
-        if (value.size() <= 4) {
+        if (value.size() <= kInlinePropertyValueBytes) {
             // Inline value
             QByteArray padded = value;
-            padded.resize(4, '\0');
-            ds.writeRawData(padded.constData(), 4);
+            padded.resize(kInlinePropertyValueBytes, '\0');
+            ds.writeRawData(padded.constData(), kInlinePropertyValueBytes);
         } else {
             // HID reference (we inline small values only for simplicity)
             ds << static_cast<uint32_t>(value.size());
@@ -417,7 +435,7 @@ void PstWriter::writeFolderNode(uint64_t nid, const QString& name, const QString
     props.append({kPropTagDisplayName, encodeUnicode(name)});
     props.append({kPropTagContainerClass, encodeUnicode(container_class)});
 
-    QByteArray count_bytes(4, '\0');
+    QByteArray count_bytes(kCountPropertyBytes, '\0');
     props.append({kPropTagContentCount, count_bytes});
     props.append({kPropTagContentUnreadCount, count_bytes});
 
@@ -432,8 +450,8 @@ void PstWriter::writeFolderNode(uint64_t nid, const QString& name, const QString
     m_nbt_entries.append(entry);
 
     // Create contents table node
-    uint64_t ct_nid = makeNid(kNidTypeContentsTable, nid >> 5);
-    QByteArray empty_tc(16, '\0');
+    uint64_t ct_nid = makeNid(kNidTypeContentsTable, nid >> kNidIndexShift);
+    QByteArray empty_tc(kEmptyTableContextBytes, '\0');
     uint64_t ct_bid = allocateBlock(empty_tc);
 
     NbtEntry ct_entry;
@@ -444,7 +462,7 @@ void PstWriter::writeFolderNode(uint64_t nid, const QString& name, const QString
     m_nbt_entries.append(ct_entry);
 
     // Create hierarchy table node
-    uint64_t ht_nid = makeNid(kNidTypeHierarchyTable, nid >> 5);
+    uint64_t ht_nid = makeNid(kNidTypeHierarchyTable, nid >> kNidIndexShift);
     uint64_t ht_bid = allocateBlock(empty_tc);
 
     NbtEntry ht_entry;
@@ -485,7 +503,7 @@ QVector<QPair<uint16_t, QByteArray>> PstWriter::buildMessageProperties(const Pst
 
     props.append({kPropTagMessageClass, encodeUnicode(QStringLiteral("IPM.Note"))});
 
-    QByteArray imp_bytes(4, '\0');
+    QByteArray imp_bytes(kInlinePropertyValueBytes, '\0');
     imp_bytes[0] = static_cast<char>(item.importance);
     props.append({kPropTagImportance, imp_bytes});
 
@@ -512,7 +530,7 @@ void PstWriter::writeMessageNode(uint64_t folder_nid,
             att_props.append({kPropTagAttachLongFilename, encodeUnicode(name)});
             att_props.append({kPropTagAttachDataBinary, data});
 
-            QByteArray att_method(4, '\0');
+            QByteArray att_method(kInlinePropertyValueBytes, '\0');
             att_method[0] = 1;  // ATTACH_BY_VALUE
             att_props.append({kPropTagAttachMethod, att_method});
 
@@ -552,12 +570,12 @@ uint32_t PstWriter::computeCrc32(const QByteArray& data) {
         return table;
     }();
 
-    uint32_t crc = 0xFF'FF'FF'FF;
+    uint32_t crc = kInitialCrc;
     for (const char byte : data) {
         uint8_t index = static_cast<uint8_t>(crc ^ static_cast<uint8_t>(byte));
-        crc = (crc >> 8) ^ kCrcTable[index];
+        crc = (crc >> kByteShift) ^ kCrcTable[index];
     }
-    return crc ^ 0xFF'FF'FF'FF;
+    return crc ^ kInitialCrc;
 }
 
 }  // namespace sak

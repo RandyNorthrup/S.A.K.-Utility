@@ -15,6 +15,10 @@
 
 #include <algorithm>
 
+namespace {
+constexpr qsizetype kInitialFileReserveCount = 256;
+}
+
 OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config) {
     Q_ASSERT_X(!config.target_directory.isEmpty(),
@@ -124,7 +128,7 @@ auto OrganizerWorker::scanDirectory()
 
     // Only scan immediate files, not subdirectories
     // Reserve capacity to reduce allocations
-    files.reserve(256);  // Reasonable default, will grow if needed
+    files.reserve(kInitialFileReserveCount);
 
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(target_path, ec)) {

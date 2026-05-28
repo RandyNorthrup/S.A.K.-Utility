@@ -5,6 +5,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QDir>
@@ -15,8 +16,26 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 
 namespace sak {
+
+namespace {
+constexpr int kCompressionLevelNone = 0;
+constexpr int kCompressionLevelFast = 3;
+constexpr int kCompressionLevelBalanced = 6;
+constexpr int kCompressionLevelMax = 9;
+constexpr int kCompressionLevelOptionCount = 4;
+constexpr int kProfileSizeDisplayPrecision = 1;
+
+enum UserProfileColumn {
+    UserProfileColSelect = 0,
+    UserProfileColUsername,
+    UserProfileColPath,
+    UserProfileColEstimatedSize,
+    UserProfileColCount
+};
+}  // namespace
 
 // ============================================================================
 // UserProfileBackupWizard
@@ -58,8 +77,15 @@ UserProfileBackupWizard::~UserProfileBackupWizard() = default;
 int UserProfileBackupWizard::getCompressionLevel() const {
     int index = field("compressionLevel").toInt();
     // Map combo index to compression level: 0=none(0), 1=fast(3), 2=balanced(6), 3=max(9)
-    static const int levels[] = {0, 3, 6, 9};
-    return (index >= 0 && index < 4) ? levels[index] : 6;
+    static constexpr std::array<int, kCompressionLevelOptionCount> levels{
+        kCompressionLevelNone,
+        kCompressionLevelFast,
+        kCompressionLevelBalanced,
+        kCompressionLevelMax,
+    };
+    return (index >= 0 && index < static_cast<int>(levels.size()))
+               ? levels[static_cast<size_t>(index)]
+               : kCompressionLevelBalanced;
 }
 
 bool UserProfileBackupWizard::isEncryptionEnabled() const {
@@ -155,7 +181,6 @@ UserProfileBackupSelectUsersPage::UserProfileBackupSelectUsersPage(QVector<UserP
 void UserProfileBackupSelectUsersPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
-    // Instructions
     auto* instructionLabel = new QLabel(
         tr("Click <b>Scan Users</b> to detect all Windows user accounts on this computer. "
            "Then select which users you want to backup."),
@@ -163,7 +188,6 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
-    // Scan button and status
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
@@ -175,20 +199,19 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     scanLayout->addWidget(m_statusLabel, 1);
     layout->addLayout(scanLayout);
 
-    // Progress bar
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
     layout->addWidget(m_scanProgress);
 
-    // User table (4 columns: checkbox, username, profile path, size)
-    m_userTable = new QTableWidget(0, 4, this);
+    m_userTable = new QTableWidget(0, UserProfileColCount, this);
     m_userTable->setHorizontalHeaderLabels(
         {tr("?"), tr("Username"), tr("Profile Path"), tr("Est. Size")});
     m_userTable->horizontalHeader()->setStretchLastSection(false);
     m_userTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_userTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_userTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    m_userTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_userTable->horizontalHeader()->setSectionResizeMode(UserProfileColPath, QHeaderView::Stretch);
+    m_userTable->horizontalHeader()->setSectionResizeMode(UserProfileColEstimatedSize,
+                                                          QHeaderView::ResizeToContents);
     m_userTable->verticalHeader()->setVisible(false);
     m_userTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_userTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -199,7 +222,6 @@ void UserProfileBackupSelectUsersPage::setupUi() {
             &UserProfileBackupSelectUsersPage::updateSummary);
     layout->addWidget(m_userTable);
 
-    // Selection buttons
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
@@ -221,9 +243,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
     updateSummary();
 }
@@ -263,7 +283,7 @@ void UserProfileBackupSelectUsersPage::onScanUsers() {
     if (m_users.isEmpty()) {
         m_statusLabel->setText(tr("No user accounts found"));
         sak::logWarning("No Windows user accounts detected during backup scan");
-        QMessageBox::warning(
+        sak::showWarningLogged(
             this,
             tr("No Users"),
             tr("No Windows user accounts were detected. Make sure you have permission to scan "
@@ -293,7 +313,7 @@ void UserProfileBackupSelectUsersPage::populateTable() {
         auto* checkItem = new QTableWidgetItem();
         checkItem->setCheckState(user.is_selected ? Qt::Checked : Qt::Unchecked);
         checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
-        m_userTable->setItem(i, 0, checkItem);
+        m_userTable->setItem(i, UserProfileColSelect, checkItem);
 
         // Username (mark current user)
         QString username = user.username;
@@ -301,21 +321,21 @@ void UserProfileBackupSelectUsersPage::populateTable() {
             username += tr(" (Current)");
         }
         auto* nameItem = new QTableWidgetItem(username);
-        m_userTable->setItem(i, 1, nameItem);
+        m_userTable->setItem(i, UserProfileColUsername, nameItem);
 
         // Profile path
         auto* pathItem = new QTableWidgetItem(user.profile_path);
-        m_userTable->setItem(i, 2, pathItem);
+        m_userTable->setItem(i, UserProfileColPath, pathItem);
 
         // Size estimate
         QString sizeText = tr("Calculating...");
         if (user.total_size_estimated > 0) {
             double sizeGB = user.total_size_estimated / sak::kBytesPerGBf;
-            sizeText = QString("%1 GB").arg(sizeGB, 0, 'f', 1);
+            sizeText = QString("%1 GB").arg(sizeGB, 0, 'f', kProfileSizeDisplayPrecision);
         }
         auto* sizeItem = new QTableWidgetItem(sizeText);
         sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        m_userTable->setItem(i, 3, sizeItem);
+        m_userTable->setItem(i, UserProfileColEstimatedSize, sizeItem);
     }
 
     m_userTable->blockSignals(false);

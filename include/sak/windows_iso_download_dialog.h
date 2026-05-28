@@ -74,6 +74,10 @@ private Q_SLOTS:
 private:
     void setupUi();
     void setupUi_formSections(QVBoxLayout* mainLayout);
+    void setupUi_buildConfig(QVBoxLayout* mainLayout);
+    void setupUi_buildSelection(QVBoxLayout* mainLayout);
+    void setupUi_languageEdition(QVBoxLayout* mainLayout);
+    void setupUi_saveLocation(QVBoxLayout* mainLayout);
     void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
     void connectSignals();
     void updateStartButton();

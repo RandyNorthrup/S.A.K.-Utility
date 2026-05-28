@@ -79,6 +79,8 @@ public:
 
     bool isChecked() const { return m_checked; }
     void setChecked(bool checked);
+    [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSizeHint() const override;
 
 Q_SIGNALS:
     void toggled(bool checked);

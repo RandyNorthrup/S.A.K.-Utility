@@ -52,8 +52,8 @@ public:
     struct DistroInfo {
         QString id;              ///< Unique identifier (e.g., "ubuntu-desktop")
         QString name;            ///< Display name (e.g., "Ubuntu Desktop")
-        QString version;         ///< Current known version (e.g., "24.04.4")
-        QString versionLabel;    ///< Optional label (e.g., "Noble Numbat", "LTS")
+        QString version;         ///< Current known version (e.g., "26.04")
+        QString versionLabel;    ///< Optional label (e.g., "Resolute", "LTS")
         QString description;     ///< Short description for UI
         Category category;       ///< Use-case category
         SourceType sourceType;   ///< How the URL is resolved

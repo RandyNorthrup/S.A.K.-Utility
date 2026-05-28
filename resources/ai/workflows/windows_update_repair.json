@@ -4,7 +4,7 @@
   "title": "Windows Update Repair",
   "role": "Windows Repair",
   "category": "Repair",
-  "description": "Diagnose and repair Windows Update failures with staged safety gates.",
+  "description": "Diagnose Windows Update failures with service, log, component-store, and policy evidence before staged approved repairs.",
   "starter_prompt": "Diagnose and repair Windows Update. Start with read-only checks and verify with an update scan.",
   "required_inputs": [
     {"id": "error_code", "label": "Update error code", "type": "string", "required": false}

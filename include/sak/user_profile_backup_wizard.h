@@ -359,6 +359,9 @@ private:
     void setupUi_destinationAndCompression(QVBoxLayout* layout);
     void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
+    bool validateDestination();
+    bool validateEncryptionSettings();
+    void installExecutePage();
 
     BackupManifest& m_manifest;
     QString m_destinationPath;

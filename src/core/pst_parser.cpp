@@ -103,6 +103,29 @@ static constexpr int kAnsiBbtEntrySize = 12;
 /// Unicode BTree entry size (Block BTree)
 static constexpr int kUnicodeBbtEntrySize = 24;
 
+static constexpr int kPstOpenProgressHeader = 0;
+static constexpr int kPstOpenProgressNodeBTree = 10;
+static constexpr int kPstOpenProgressBlockBTree = 30;
+static constexpr int kPstOpenProgressFolders = 60;
+static constexpr int kPstOpenProgressComplete = 100;
+
+static constexpr int kPstHeaderReadSize = 580;
+static constexpr int kHeaderMagicOffset = 0;
+static constexpr int kHeaderCrcOffset = 4;
+static constexpr int kHeaderContentTypeOffset = 8;
+static constexpr int kHeaderDataVersionOffset = 10;
+static constexpr int kHeaderClientVersionOffset = 12;
+static constexpr int kHeaderPlatformCreateOffset = 14;
+static constexpr int kHeaderPlatformAccessOffset = 15;
+static constexpr int kHeaderEncryptionOffset = 513;
+static constexpr int kUnicodeRootOffset = 0xB4;
+static constexpr int kAnsiRootOffset = 0xA4;
+static constexpr int kRootFileSizeOffset = 4;
+static constexpr int kUnicodeRootNbtOffset = 44;
+static constexpr int kUnicodeRootBbtOffset = 60;
+static constexpr int kAnsiRootNbtOffset = 24;
+static constexpr int kAnsiRootBbtOffset = 32;
+
 /// Heap-on-Node signature byte
 static constexpr uint8_t kHnSignature = 0xEC;
 
@@ -115,11 +138,95 @@ static constexpr uint8_t kTcSignature = 0x7C;
 /// Property Context signature byte
 static constexpr uint8_t kPcSignature = 0xBC;
 
+static constexpr uint16_t kPidTagLtpRowId = 0x67F2;
+static constexpr uint64_t kNidTypeMask = 0x1F;
+static constexpr uint64_t kNidLower32Mask = 0xFF'FF'FF'FF;
+static constexpr uint64_t kBidInternalFlag = 0x02;
+static constexpr int kHidOffsetRecordSize = 2;
+static constexpr int kUnicode4kEntrySizeOffset = 4;
+static constexpr int kUnicode4kLevelOffset = 5;
+static constexpr int kLegacyEntrySizeOffset = 2;
+static constexpr int kLegacyLevelOffset = 3;
+static constexpr int kBTreeChildPageOffsetUnicode = 16;
+static constexpr int kBTreeChildPageOffsetAnsi = 8;
+static constexpr int kNbtDataBidOffsetUnicode = 8;
+static constexpr int kNbtSubnodeBidOffsetUnicode = 16;
+static constexpr int kNbtParentNodeOffsetUnicode = 24;
+static constexpr int kNbtDataBidOffsetAnsi = 4;
+static constexpr int kNbtSubnodeBidOffsetAnsi = 8;
+static constexpr int kNbtParentNodeOffsetAnsi = 12;
+static constexpr int kBbtFileOffsetUnicode = 8;
+static constexpr int kBbtCbOffsetUnicode = 16;
+static constexpr int kBbtFileOffsetAnsi = 4;
+static constexpr int kBbtCbOffsetAnsi = 8;
+static constexpr int kBlockTreeHeaderSize = 8;
+static constexpr int kBlockTreeEntryCountOffset = 2;
+static constexpr int kDataTreeBidSizeUnicode = 8;
+static constexpr int kDataTreeBidSizeAnsi = 4;
+static constexpr uint8_t kDataTreeXBlockLevel = 1;
+static constexpr uint8_t kDataTreeXxBlockLevel = 2;
+static constexpr int kHnHeaderMinSize = 12;
+static constexpr int kHnSignatureOffset = 2;
+static constexpr int kHnClientSignatureOffset = 3;
+static constexpr int kHnRootHidOffset = 4;
+static constexpr int kBthHeaderMinSize = 8;
+static constexpr int kBthKeySizeOffset = 1;
+static constexpr int kBthDataSizeOffset = 2;
+static constexpr int kBthIndexLevelsOffset = 3;
+static constexpr int kBthRootHidOffset = 4;
+static constexpr int kBthChildHidSize = 4;
+static constexpr int kPropertyValueRefOffset = 2;
+static constexpr int kPropertyValueRefSize = 4;
+static constexpr int kPropertyRecordMinInlineSize = 6;
+static constexpr int kSubnodeLeafSizeUnicode = 24;
+static constexpr int kSubnodeLeafSizeAnsi = 12;
+static constexpr int kSubnodeDataBidOffsetUnicode = 8;
+static constexpr int kSubnodeSubnodeBidOffsetUnicode = 16;
+static constexpr int kSubnodeDataBidOffsetAnsi = 4;
+static constexpr int kSubnodeSubnodeBidOffsetAnsi = 8;
+static constexpr int kSubnodeIntermediateSizeUnicode = 16;
+static constexpr int kSubnodeIntermediateSizeAnsi = 8;
+static constexpr int kSubnodeIntermediateBidOffsetUnicode = 8;
+static constexpr int kSubnodeIntermediateBidOffsetAnsi = 4;
+static constexpr int kPropertyIdHexWidth = 4;
+static constexpr int kPropertyIdHexBase = 16;
+static constexpr int kSubjectPrefixMinChars = 2;
+static constexpr int kSubjectPrefixStripChars = 2;
+static constexpr ushort kSubjectPrefixMarker = 0x0001;
+static constexpr int kInt16PropertyBytes = 2;
+static constexpr int kInt32PropertyBytes = 4;
+static constexpr int kInt64PropertyBytes = 8;
+static constexpr int kFloat64DisplayPrecision = 6;
+static constexpr int64_t kFileTimeEpochDiff = 116'444'736'000'000'000LL;
+static constexpr int64_t kFileTimeTicksPerMillisecond = 10'000;
+static constexpr int kTcinfoHeaderSize = 22;
+static constexpr int kTcColumnDescriptorSize = 8;
+static constexpr int kTcColumnPropIdOffset = 2;
+static constexpr int kTcColumnDataOffset = 4;
+static constexpr int kTcColumnDataSizeOffset = 6;
+static constexpr int kTcColumnBitIndexOffset = 7;
+static constexpr int kTcHeaderRgibTci1bOffset = 6;
+static constexpr int kTcHeaderRgibTciBmOffset = 8;
+static constexpr int kTcHeaderRowIndexHidOffset = 10;
+static constexpr int kTcHeaderRowsHnidOffset = 14;
+static constexpr int kLegacyMetadataSize = 4;
+static constexpr int kBitPackingBitsPerByte = 8;
+static constexpr int kBitPackingHighBitIndex = 7;
+static constexpr int kHidIndexShift = 5;
+static constexpr int kHidIndexMask4k = 0x3FFF;
+static constexpr int kHidIndexMaskLegacy = 0x7FF;
+static constexpr int kHidBlockIndexShift4k = 19;
+static constexpr int kHidBlockIndexShiftLegacy = 16;
+static constexpr int kHidBlockIndexMask4k = 0x1FFF;
+static constexpr int kHidBlockIndexMaskLegacy = 0xFFFF;
+static constexpr int kResolvedRecipientPartCount = 2;
+static constexpr int kBthRowIdValueOffset = 4;
+
 // MS-OXCMSG: PR_SUBJECT may begin with a prefix marker (U+0001) followed by
 // a single character encoding the prefix length.  Strip these control bytes.
 static QString stripSubjectPrefix(const QString& subject) {
-    if (subject.size() >= 2 && subject.at(0) == QChar(0x0001)) {
-        return subject.mid(2);
+    if (subject.size() >= kSubjectPrefixMinChars && subject.at(0) == QChar(kSubjectPrefixMarker)) {
+        return subject.mid(kSubjectPrefixStripChars);
     }
     return subject;
 }
@@ -161,21 +268,21 @@ static T localReadLE(const QByteArray& data, int offset) {
 }
 
 static QString formatInt16Value(const QByteArray& raw) {
-    if (raw.size() < 2) {
+    if (raw.size() < kInt16PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
     return QString::number(localReadLE<int16_t>(raw, 0));
 }
 
 static QString formatInt32Value(const QByteArray& raw) {
-    if (raw.size() < 4) {
+    if (raw.size() < kInt32PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
     return QString::number(localReadLE<int32_t>(raw, 0));
 }
 
 static QString formatInt64Value(const QByteArray& raw) {
-    if (raw.size() < 8) {
+    if (raw.size() < kInt64PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
     return QString::number(localReadLE<int64_t>(raw, 0));
@@ -189,12 +296,12 @@ static QString formatBooleanValue(const QByteArray& raw) {
 }
 
 static QString formatFloat64Value(const QByteArray& raw) {
-    if (raw.size() < 8) {
+    if (raw.size() < kInt64PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
     double val;
-    std::memcpy(&val, raw.constData(), 8);
-    return QString::number(val, 'g', 6);
+    std::memcpy(&val, raw.constData(), kInt64PropertyBytes);
+    return QString::number(val, 'g', kFloat64DisplayPrecision);
 }
 
 static QString formatString8Value(const QByteArray& raw) {
@@ -225,11 +332,11 @@ static QString formatString8Value(const QByteArray& raw) {
 }
 
 static QString formatUnicodeValue(const QByteArray& raw) {
-    if (raw.size() < 2) {
+    if (raw.size() < kInt16PropertyBytes) {
         return QString();
     }
     auto result = QString::fromUtf16(reinterpret_cast<const char16_t*>(raw.constData()),
-                                     raw.size() / 2);
+                                     raw.size() / kInt16PropertyBytes);
     // Strip null terminators that PST files sometimes include
     while (!result.isEmpty() && result.back().isNull()) {
         result.chop(1);
@@ -238,12 +345,11 @@ static QString formatUnicodeValue(const QByteArray& raw) {
 }
 
 static QString formatSysTimeValue(const QByteArray& raw) {
-    if (raw.size() < 8) {
+    if (raw.size() < kInt64PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
     int64_t ft = localReadLE<int64_t>(raw, 0);
-    constexpr int64_t kFileTimeEpochDiff = 116'444'736'000'000'000LL;
-    int64_t unix_ms = (ft - kFileTimeEpochDiff) / 10'000;
+    int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
     return QDateTime::fromMSecsSinceEpoch(unix_ms, Qt::UTC).toString(Qt::ISODate);
 }
 
@@ -284,7 +390,7 @@ using FolderSetter = void (*)(sak::PstFolder&, const sak::MapiProperty&);
 using AttachSetter = void (*)(sak::PstAttachmentInfo&, const QString&);
 
 // clang-format off
-static const QHash<uint16_t, DetailSetter>& detailSetters() {
+static const QHash<uint16_t, DetailSetter>& messageIdentityDetailSetters() {
     static const QHash<uint16_t, DetailSetter> kMap = {
         {sak::email::kPropIdSubject,
          [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
@@ -324,6 +430,16 @@ static const QHash<uint16_t, DetailSetter>& detailSetters() {
          [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
              d.importance = p.display_value.toInt();
          }},
+        {sak::email::kPropIdMessageClass,
+         [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
+             d.item_type = PstParser::classifyMessageClass(p.display_value);
+         }},
+    };
+    return kMap;
+}
+
+static const QHash<uint16_t, DetailSetter>& messageBodyDetailSetters() {
+    static const QHash<uint16_t, DetailSetter> kMap = {
         {sak::email::kPropIdBody,
          [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
              d.body_plain = p.display_value;
@@ -360,10 +476,12 @@ static const QHash<uint16_t, DetailSetter>& detailSetters() {
          [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
              d.in_reply_to = p.display_value;
          }},
-        {sak::email::kPropIdMessageClass,
-         [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
-             d.item_type = PstParser::classifyMessageClass(p.display_value);
-         }},
+    };
+    return kMap;
+}
+
+static const QHash<uint16_t, DetailSetter>& contactTaskDetailSetters() {
+    static const QHash<uint16_t, DetailSetter> kMap = {
         {sak::email::kPropIdGivenName,
          [](sak::PstItemDetail& d, const sak::MapiProperty& p) {
              d.given_name = p.display_value;
@@ -404,11 +522,21 @@ static const QHash<uint16_t, DetailSetter>& detailSetters() {
     return kMap;
 }
 
+static const QHash<uint16_t, DetailSetter>& detailSetters() {
+    static const QHash<uint16_t, DetailSetter> kMap = [] {
+        auto map = messageIdentityDetailSetters();
+        map.insert(messageBodyDetailSetters());
+        map.insert(contactTaskDetailSetters());
+        return map;
+    }();
+    return kMap;
+}
+
 static const QHash<uint16_t, SummarySetter>& summarySetters() {
     static const QHash<uint16_t, SummarySetter> kMap = {
-        {0x67F2,  // PidTagLtpRowId — NID
+        {kPidTagLtpRowId,  // PidTagLtpRowId — NID
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
-             if (col.raw_value.size() >= 4)
+             if (col.raw_value.size() >= kPropertyValueRefSize)
                  item.node_id = localReadLE<uint32_t>(col.raw_value, 0);
          }},
         {sak::email::kPropIdSubject,
@@ -529,7 +657,7 @@ static QVector<uint64_t> extractChildNids(const QVector<QVector<sak::MapiPropert
     child_nids.reserve(htable.size());
     for (const auto& row : htable) {
         for (const auto& col : row) {
-            if (col.tag_id == 0x67F2 && col.raw_value.size() >= 4) {
+            if (col.tag_id == kPidTagLtpRowId && col.raw_value.size() >= kPropertyValueRefSize) {
                 uint64_t nid = localReadLE<uint32_t>(col.raw_value, 0);
                 if (nid != 0) {
                     child_nids.append(nid);
@@ -552,7 +680,7 @@ static std::expected<int, error_code> resolveHnBlockOffset(uint16_t hid_block_in
         return std::unexpected(error_code::pst_invalid_heap);
     }
     int offset = block_offsets[hid_block_index - 1];
-    if (offset + 2 > heap_size) {
+    if (offset + kHidOffsetRecordSize > heap_size) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
     return offset;
@@ -574,33 +702,32 @@ static const QByteArray* findPropertyById(const QVector<sak::MapiProperty>& prop
 // ============================================================================
 
 static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray& tc_raw) {
-    if (tc_raw.size() < 22) {
+    if (tc_raw.size() < kTcinfoHeaderSize) {
         return std::unexpected(error_code::pst_table_context_error);
     }
-    if (static_cast<uint8_t>(tc_raw[0]) != 0x7C) {
+    if (static_cast<uint8_t>(tc_raw[0]) != kTcSignature) {
         return std::unexpected(error_code::pst_table_context_error);
     }
 
     PstParser::TcInfo info;
     uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
-    info.rgib_tci_1b = localReadLE<uint16_t>(tc_raw, 6);
-    info.rgib_tci_bm = localReadLE<uint16_t>(tc_raw, 8);
-    info.hid_row_index = localReadLE<uint32_t>(tc_raw, 10);
-    info.hnid_rows = localReadLE<uint32_t>(tc_raw, 14);
+    info.rgib_tci_1b = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTci1bOffset);
+    info.rgib_tci_bm = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTciBmOffset);
+    info.hid_row_index = localReadLE<uint32_t>(tc_raw, kTcHeaderRowIndexHidOffset);
+    info.hnid_rows = localReadLE<uint32_t>(tc_raw, kTcHeaderRowsHnidOffset);
 
-    constexpr int kTcinfoHeaderSize = 22;
     info.columns.reserve(col_count);
     for (int col_idx = 0; col_idx < col_count; ++col_idx) {
-        int base = kTcinfoHeaderSize + (col_idx * 8);
-        if (base + 8 > tc_raw.size()) {
+        int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
+        if (base + kTcColumnDescriptorSize > tc_raw.size()) {
             break;
         }
         PstParser::TcColDesc col;
         col.prop_type = localReadLE<uint16_t>(tc_raw, base);
-        col.prop_id = localReadLE<uint16_t>(tc_raw, base + 2);
-        col.ib_data = localReadLE<uint16_t>(tc_raw, base + 4);
-        col.cb_data = static_cast<uint8_t>(tc_raw[base + 6]);
-        col.i_bit = static_cast<uint8_t>(tc_raw[base + 7]);
+        col.prop_id = localReadLE<uint16_t>(tc_raw, base + kTcColumnPropIdOffset);
+        col.ib_data = localReadLE<uint16_t>(tc_raw, base + kTcColumnDataOffset);
+        col.cb_data = static_cast<uint8_t>(tc_raw[base + kTcColumnDataSizeOffset]);
+        col.i_bit = static_cast<uint8_t>(tc_raw[base + kTcColumnBitIndexOffset]);
         info.columns.append(col);
     }
     return info;
@@ -616,15 +743,15 @@ static sak::PstNode readNodeLeafEntry(const QByteArray& data, int off, bool is_u
         // MS-PST §2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
         // files but only the lower 32 bits are the actual NID.  OST files
         // may have non-zero upper bits, so mask to 32 bits.
-        node.node_id = localReadLE<uint64_t>(data, off) & 0xFF'FF'FF'FF;
-        node.data_bid = localReadLE<uint64_t>(data, off + 8);
-        node.subnode_bid = localReadLE<uint64_t>(data, off + 16);
-        node.parent_node_id = localReadLE<uint32_t>(data, off + 24);
+        node.node_id = localReadLE<uint64_t>(data, off) & kNidLower32Mask;
+        node.data_bid = localReadLE<uint64_t>(data, off + kNbtDataBidOffsetUnicode);
+        node.subnode_bid = localReadLE<uint64_t>(data, off + kNbtSubnodeBidOffsetUnicode);
+        node.parent_node_id = localReadLE<uint32_t>(data, off + kNbtParentNodeOffsetUnicode);
     } else {
         node.node_id = localReadLE<uint32_t>(data, off);
-        node.data_bid = localReadLE<uint32_t>(data, off + 4);
-        node.subnode_bid = localReadLE<uint32_t>(data, off + 8);
-        node.parent_node_id = localReadLE<uint32_t>(data, off + 12);
+        node.data_bid = localReadLE<uint32_t>(data, off + kNbtDataBidOffsetAnsi);
+        node.subnode_bid = localReadLE<uint32_t>(data, off + kNbtSubnodeBidOffsetAnsi);
+        node.parent_node_id = localReadLE<uint32_t>(data, off + kNbtParentNodeOffsetAnsi);
     }
     return node;
 }
@@ -639,12 +766,12 @@ static BlockLeafEntry readBlockLeafEntry(const QByteArray& data, int off, bool i
     BlockLeafEntry entry;
     if (is_unicode) {
         entry.bid = localReadLE<uint64_t>(data, off);
-        entry.file_offset = localReadLE<uint64_t>(data, off + 8);
-        entry.cb = localReadLE<uint16_t>(data, off + 16);
+        entry.file_offset = localReadLE<uint64_t>(data, off + kBbtFileOffsetUnicode);
+        entry.cb = localReadLE<uint16_t>(data, off + kBbtCbOffsetUnicode);
     } else {
         entry.bid = localReadLE<uint32_t>(data, off);
-        entry.file_offset = localReadLE<uint32_t>(data, off + 4);
-        entry.cb = localReadLE<uint16_t>(data, off + 8);
+        entry.file_offset = localReadLE<uint32_t>(data, off + kBbtFileOffsetAnsi);
+        entry.cb = localReadLE<uint16_t>(data, off + kBbtCbOffsetAnsi);
     }
     return entry;
 }
@@ -663,73 +790,62 @@ PstParser::~PstParser() {
 // Public API
 // ============================================================================
 
-void PstParser::open(const QString& file_path) {
-    close();
-    m_cancelled.store(false, std::memory_order_relaxed);
-
-    m_file.setFileName(file_path);
-    if (!m_file.open(QIODevice::ReadOnly)) {
-        const auto message = QStringLiteral("Cannot open file: %1").arg(file_path);
-        sak::logError("PstParser: {}", message.toStdString());
-        Q_EMIT errorOccurred(message);
-        return;
+bool PstParser::failOpen(const QString& message, bool close_parser) {
+    sak::logError("PstParser: {}", message.toStdString());
+    Q_EMIT errorOccurred(message);
+    if (close_parser) {
+        close();
     }
+    return false;
+}
 
-    Q_EMIT progressUpdated(0, QStringLiteral("Parsing file header..."));
+bool PstParser::openReadOnlyFile(const QString& file_path) {
+    m_file.setFileName(file_path);
+    if (m_file.open(QIODevice::ReadOnly)) {
+        return true;
+    }
+    return failOpen(QStringLiteral("Cannot open file: %1").arg(file_path), false);
+}
+
+bool PstParser::loadPstStructure() {
+    Q_EMIT progressUpdated(kPstOpenProgressHeader, QStringLiteral("Parsing file header..."));
 
     auto header_result = parseHeader();
     if (!header_result) {
-        const auto message = QStringLiteral("Invalid PST header: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(header_result.error())));
-        sak::logError("PstParser: {}", message.toStdString());
-        Q_EMIT errorOccurred(message);
-        close();
-        return;
+        return failOpen(QStringLiteral("Invalid PST header: %1")
+                            .arg(QString::fromUtf8(sak::to_string(header_result.error()))),
+                        true);
     }
 
-    Q_EMIT progressUpdated(10, QStringLiteral("Loading Node BTree..."));
-
+    Q_EMIT progressUpdated(kPstOpenProgressNodeBTree, QStringLiteral("Loading Node BTree..."));
     auto nbt_result = loadNodeBTree(m_header.root_nbt_page);
     if (!nbt_result) {
-        const auto message = QStringLiteral("Failed to load Node BTree: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(nbt_result.error())));
-        sak::logError("PstParser: {}", message.toStdString());
-        Q_EMIT errorOccurred(message);
-        close();
-        return;
+        return failOpen(QStringLiteral("Failed to load Node BTree: %1")
+                            .arg(QString::fromUtf8(sak::to_string(nbt_result.error()))),
+                        true);
     }
 
-    Q_EMIT progressUpdated(30, QStringLiteral("Loading Block BTree..."));
-
-    sak::logInfo("PstParser: NBT cache loaded — {} nodes", m_nbt_cache.size());
-
+    Q_EMIT progressUpdated(kPstOpenProgressBlockBTree, QStringLiteral("Loading Block BTree..."));
     auto bbt_result = loadBlockBTree(m_header.root_bbt_page);
     if (!bbt_result) {
-        const auto message = QStringLiteral("Failed to load Block BTree: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(bbt_result.error())));
-        sak::logError("PstParser: {}", message.toStdString());
-        Q_EMIT errorOccurred(message);
-        close();
-        return;
+        return failOpen(QStringLiteral("Failed to load Block BTree: %1")
+                            .arg(QString::fromUtf8(sak::to_string(bbt_result.error()))),
+                        true);
     }
 
-    Q_EMIT progressUpdated(60, QStringLiteral("Building folder hierarchy..."));
-
-    sak::logInfo("PstParser: BBT cache loaded — {} blocks", m_bbt_cache.size());
-
+    Q_EMIT progressUpdated(kPstOpenProgressFolders, QStringLiteral("Building folder hierarchy..."));
     auto tree_result = buildFolderHierarchy(sak::email::kNidRootFolder);
     if (!tree_result) {
-        const auto message = QStringLiteral("Failed to build folder hierarchy: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(tree_result.error())));
-        sak::logError("PstParser: {}", message.toStdString());
-        Q_EMIT errorOccurred(message);
-        close();
-        return;
+        return failOpen(QStringLiteral("Failed to build folder hierarchy: %1")
+                            .arg(QString::fromUtf8(sak::to_string(tree_result.error()))),
+                        true);
     }
 
     m_folder_tree = std::move(*tree_result);
+    return true;
+}
 
-    // Fill file info
+void PstParser::populateFileInfo(const QString& file_path) {
     QFileInfo fi(file_path);
     m_file_info.file_path = file_path;
     m_file_info.file_size_bytes = fi.size();
@@ -739,23 +855,51 @@ void PstParser::open(const QString& file_path) {
     m_file_info.total_folders = countFolders(m_folder_tree);
     m_file_info.total_items = countTotalItems();
     m_file_info.last_modified = fi.lastModified();
+}
 
-    // Try to get the message store display name
+void PstParser::loadMessageStoreDisplayName() {
     auto store_it = m_nbt_cache.find(sak::email::kNidMessageStore);
-    if (store_it != m_nbt_cache.end()) {
-        auto props = readPropertyContext(sak::email::kNidMessageStore);
-        if (props) {
-            for (const auto& prop : *props) {
-                if (prop.tag_id == sak::email::kPropIdDisplayName) {
-                    m_file_info.display_name = prop.display_value;
-                    break;
-                }
-            }
-        }
+    if (store_it == m_nbt_cache.end()) {
+        return;
     }
 
+    auto props = readPropertyContext(sak::email::kNidMessageStore);
+    if (!props) {
+        return;
+    }
+
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::email::kPropIdDisplayName) {
+            m_file_info.display_name = prop.display_value;
+            break;
+        }
+    }
+}
+
+void PstParser::open(const QString& file_path) {
+    close();
+    m_cancelled.store(false, std::memory_order_relaxed);
+
+    if (!openReadOnlyFile(file_path)) {
+        return;
+    }
+
+    if (!loadPstStructure()) {
+        return;
+    }
+
+
+    sak::logInfo("PstParser: NBT cache loaded — {} nodes", m_nbt_cache.size());
+
+
+    sak::logInfo("PstParser: BBT cache loaded — {} blocks", m_bbt_cache.size());
+
+    populateFileInfo(file_path);
+
+    loadMessageStoreDisplayName();
+
     m_is_open = true;
-    Q_EMIT progressUpdated(100, QStringLiteral("File loaded successfully"));
+    Q_EMIT progressUpdated(kPstOpenProgressComplete, QStringLiteral("File loaded successfully"));
     Q_EMIT fileOpened(m_file_info);
     Q_EMIT folderTreeLoaded(m_folder_tree);
 }
@@ -873,8 +1017,7 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readFolderIte
 
     // Build the contents table NID from the folder NID
     // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
-    uint64_t contents_nid = (folder_node_id & ~static_cast<uint64_t>(0x1F)) |
-                            sak::email::kNidTypeContentsTable;
+    uint64_t contents_nid = (folder_node_id & ~kNidTypeMask) | sak::email::kNidTypeContentsTable;
 
     return readContentsTable(contents_nid, offset, limit);
 }
@@ -948,7 +1091,7 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
 
     int found_count = 0;
     for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & 0x1F);
+        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }
@@ -966,62 +1109,100 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
 // NDB Layer — Header Parsing
 // ============================================================================
 
-std::expected<void, error_code> PstParser::parseHeader() {
-    // Read the first 580 bytes (Unicode header is larger than ANSI)
-    constexpr int kHeaderReadSize = 580;
-    auto header_bytes = readBytes(0, kHeaderReadSize);
+std::expected<QByteArray, error_code> PstParser::readHeaderBytes() {
+    auto header_bytes = readBytes(kHeaderMagicOffset, kPstHeaderReadSize);
     if (!header_bytes) {
         return std::unexpected(header_bytes.error());
     }
-
-    const auto& data = *header_bytes;
-    if (data.size() < kHeaderReadSize) {
+    if (header_bytes->size() < kPstHeaderReadSize) {
         return std::unexpected(error_code::pst_invalid_header);
     }
+    return std::move(*header_bytes);
+}
 
-    // §2.2.2.6 — dwMagic at offset 0
-    m_header.magic = readLE<uint32_t>(data, 0);
+std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray& data) {
+    m_header.magic = readLE<uint32_t>(data, kHeaderMagicOffset);
     if (m_header.magic != sak::email::kPstMagic) {
         sak::logError("PstParser: Invalid magic: 0x{:08X}", m_header.magic);
         return std::unexpected(error_code::pst_invalid_header);
     }
 
-    // CRC at offset 4
-    m_header.crc = readLE<uint32_t>(data, 4);
-
-    // wMagicClient at offset 8 — content type (SM or SO)
-    m_header.content_type = readLE<uint16_t>(data, 8);
+    m_header.crc = readLE<uint32_t>(data, kHeaderCrcOffset);
+    m_header.content_type = readLE<uint16_t>(data, kHeaderContentTypeOffset);
     if (m_header.content_type != sak::email::kPstContentType &&
         m_header.content_type != sak::email::kOstContentType) {
         sak::logError("PstParser: Invalid content type: 0x{:04X}", m_header.content_type);
         return std::unexpected(error_code::pst_invalid_header);
     }
 
-    // wVer at offset 10 — version
-    m_header.data_version = readLE<uint16_t>(data, 10);
+    m_header.data_version = readLE<uint16_t>(data, kHeaderDataVersionOffset);
     m_is_unicode = (m_header.data_version >= sak::email::kUnicodeVersion);
     m_is_4k = (m_header.data_version == sak::email::kUnicode4kVersion);
-
     if (!isKnownDataVersion(m_header.data_version)) {
         sak::logWarning("PstParser: Unusual version: {}", m_header.data_version);
     }
 
-    // wVerClient at offset 12
-    m_header.client_version = readLE<uint16_t>(data, 12);
+    m_header.client_version = readLE<uint16_t>(data, kHeaderClientVersionOffset);
+    m_header.platform_create = static_cast<uint8_t>(data[kHeaderPlatformCreateOffset]);
+    m_header.platform_access = static_cast<uint8_t>(data[kHeaderPlatformAccessOffset]);
+    return {};
+}
 
-    // bPlatformCreate at offset 14, bPlatformAccess at offset 15
-    m_header.platform_create = static_cast<uint8_t>(data[14]);
-    m_header.platform_access = static_cast<uint8_t>(data[15]);
-
-    // bCryptMethod — encryption type
-    // ANSI: offset 513, Unicode: offset 513
-    int crypt_offset = m_is_unicode ? 513 : 513;
-    m_header.encryption_type = static_cast<uint8_t>(data[crypt_offset]);
+std::expected<void, error_code> PstParser::parseHeaderEncryption(const QByteArray& data) {
+    m_header.encryption_type = static_cast<uint8_t>(data[kHeaderEncryptionOffset]);
     m_encryption_type = m_header.encryption_type;
 
     if (m_encryption_type == sak::email::kEncryptHigh) {
         sak::logError("PstParser: High encryption not supported");
         return std::unexpected(error_code::pst_unsupported_encryption);
+    }
+    return {};
+}
+
+void PstParser::parseHeaderRootPointers(const QByteArray& data) {
+    if (m_is_unicode) {
+        m_header.file_size = readLE<uint64_t>(data, kUnicodeRootOffset + kRootFileSizeOffset);
+        m_header.root_nbt_page = readLE<uint64_t>(data, kUnicodeRootOffset + kUnicodeRootNbtOffset);
+        m_header.root_bbt_page = readLE<uint64_t>(data, kUnicodeRootOffset + kUnicodeRootBbtOffset);
+        return;
+    }
+
+    m_header.file_size = readLE<uint32_t>(data, kAnsiRootOffset + kRootFileSizeOffset);
+    m_header.root_nbt_page = readLE<uint32_t>(data, kAnsiRootOffset + kAnsiRootNbtOffset);
+    m_header.root_bbt_page = readLE<uint32_t>(data, kAnsiRootOffset + kAnsiRootBbtOffset);
+}
+
+void PstParser::logParsedHeader() const {
+    sak::logInfo(
+        "PstParser: Header parsed - version={}, unicode={}, encryption={}, NBT=0x{:X}, "
+        "BBT=0x{:X}",
+        m_header.data_version,
+        m_is_unicode,
+        m_encryption_type,
+        m_header.root_nbt_page,
+        m_header.root_bbt_page);
+}
+
+std::expected<void, error_code> PstParser::parseHeader() {
+    auto header_bytes = readHeaderBytes();
+    if (!header_bytes) {
+        return std::unexpected(header_bytes.error());
+    }
+
+    const auto& data = *header_bytes;
+    // §2.2.2.6 — dwMagic at offset 0
+    auto preamble_result = parseHeaderPreamble(data);
+    if (!preamble_result) {
+        return std::unexpected(preamble_result.error());
+    }
+
+    // wMagicClient at offset 8 — content type (SM or SO)
+    // wVer at offset 10 — version
+    // bCryptMethod — encryption type
+    // ANSI: offset 513, Unicode: offset 513
+    auto encryption_result = parseHeaderEncryption(data);
+    if (!encryption_result) {
+        return std::unexpected(encryption_result.error());
     }
 
     // Root structure pointers differ between ANSI and Unicode.
@@ -1034,36 +1215,9 @@ std::expected<void, error_code> PstParser::parseHeader() {
     //   +4  ibFileEof  (8 Unicode / 4 ANSI)
     //   +36 BREFNBT    (16 Unicode / 8 ANSI)
     //   +52 BREFBBT    (16 Unicode / 8 ANSI)
-    if (m_is_unicode) {
-        constexpr int root_offset = 0xB4;
+    parseHeaderRootPointers(data);
 
-        m_header.file_size = readLE<uint64_t>(data, root_offset + 4);
-
-        // BREFNBT.bid at ROOT+36, BREFNBT.ib at ROOT+44
-        m_header.root_nbt_page = readLE<uint64_t>(data, root_offset + 44);
-
-        // BREFBBT.bid at ROOT+52, BREFBBT.ib at ROOT+60
-        m_header.root_bbt_page = readLE<uint64_t>(data, root_offset + 60);
-    } else {
-        constexpr int root_offset = 0xA4;
-
-        m_header.file_size = readLE<uint32_t>(data, root_offset + 4);
-
-        // BREFNBT: bid at ROOT+20, ib at ROOT+24
-        m_header.root_nbt_page = readLE<uint32_t>(data, root_offset + 24);
-
-        // BREFBBT: bid at ROOT+28, ib at ROOT+32
-        m_header.root_bbt_page = readLE<uint32_t>(data, root_offset + 32);
-    }
-
-    sak::logInfo(
-        "PstParser: Header parsed — version={}, unicode={}, "
-        "encryption={}, NBT=0x{:X}, BBT=0x{:X}",
-        m_header.data_version,
-        m_is_unicode,
-        m_encryption_type,
-        m_header.root_nbt_page,
-        m_header.root_bbt_page);
+    logParsedHeader();
 
     return {};
 }
@@ -1078,8 +1232,8 @@ PstParser::PageFormatSizes PstParser::pageFormatSizes() const {
     fmt.trailer_size = m_is_4k        ? kUnicode4kPageTrailerSize
                        : m_is_unicode ? kUnicodePageTrailerSize
                                       : kAnsiPageTrailerSize;
-    fmt.meta_size = m_is_4k ? kUnicode4kMetadataSize : 4;
-    fmt.meta_pad = m_is_4k ? kUnicode4kPaddingSize : (m_is_unicode ? 4 : 0);
+    fmt.meta_size = m_is_4k ? kUnicode4kMetadataSize : kLegacyMetadataSize;
+    fmt.meta_pad = m_is_4k ? kUnicode4kPaddingSize : (m_is_unicode ? kLegacyMetadataSize : 0);
     return fmt;
 }
 
@@ -1117,12 +1271,12 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
     info.meta_offset = meta_offset;
     if (m_is_4k) {
         info.entry_count = readLE<uint16_t>(info.data, meta_offset);
-        info.entry_size = static_cast<uint8_t>(info.data[meta_offset + 4]);
-        info.level = static_cast<uint8_t>(info.data[meta_offset + 5]);
+        info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kUnicode4kEntrySizeOffset]);
+        info.level = static_cast<uint8_t>(info.data[meta_offset + kUnicode4kLevelOffset]);
     } else {
         info.entry_count = static_cast<uint8_t>(info.data[meta_offset]);
-        info.entry_size = static_cast<uint8_t>(info.data[meta_offset + 2]);
-        info.level = static_cast<uint8_t>(info.data[meta_offset + 3]);
+        info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kLegacyEntrySizeOffset]);
+        info.level = static_cast<uint8_t>(info.data[meta_offset + kLegacyLevelOffset]);
     }
     return info;
 }
@@ -1160,8 +1314,9 @@ std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, i
                 break;
             }
 
-            uint64_t child_page = m_is_unicode ? readLE<uint64_t>(data, off + 16)
-                                               : readLE<uint32_t>(data, off + 8);
+            uint64_t child_page = m_is_unicode
+                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
             auto child_result = loadNodeBTree(child_page, depth + 1);
             if (!child_result) {
                 return child_result;
@@ -1200,8 +1355,9 @@ std::expected<void, error_code> PstParser::loadBlockBTree(uint64_t page_offset, 
                 break;
             }
 
-            uint64_t child_page = m_is_unicode ? readLE<uint64_t>(data, off + 16)
-                                               : readLE<uint32_t>(data, off + 8);
+            uint64_t child_page = m_is_unicode
+                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
             auto child_result = loadBlockBTree(child_page, depth + 1);
             if (!child_result) {
                 return child_result;
@@ -1248,7 +1404,7 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
     }
 
     if (m_encryption_type == sak::email::kEncryptCompressible) {
-        bool is_internal = (bid & 0x02) != 0;
+        bool is_internal = (bid & kBidInternalFlag) != 0;
         if (!is_internal) {
             auto span = std::span<uint8_t>(reinterpret_cast<uint8_t*>(raw.data()),
                                            static_cast<size_t>(raw.size()));
@@ -1261,7 +1417,7 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
 
 std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
                                                               QVector<int>* block_offsets) {
-    bool is_internal = (bid & 0x02) != 0;
+    bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
         auto result = readBlock(bid);
         if (result && block_offsets) {
@@ -1276,20 +1432,20 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
     }
 
     const auto& data = *block_data;
-    if (data.size() < 8) {
+    if (data.size() < kBlockTreeHeaderSize) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
     uint8_t block_level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, 2);
+    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
     QByteArray result;
 
-    if (block_level == 1) {
+    if (block_level == kDataTreeXBlockLevel) {
         auto status = readXblockChildren(data, entry_count, result, block_offsets);
         if (!status) {
             return std::unexpected(status.error());
         }
-    } else if (block_level == 2) {
+    } else if (block_level == kDataTreeXxBlockLevel) {
         auto status = readXxblockChildren(data, entry_count, result, block_offsets);
         if (!status) {
             return std::unexpected(status.error());
@@ -1304,9 +1460,9 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
                                                               uint16_t entry_count,
                                                               QByteArray& result,
                                                               QVector<int>* block_offsets) {
-    int bid_size = m_is_unicode ? 8 : 4;
+    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = 8 + (idx * bid_size);
+        int offset = kBlockTreeHeaderSize + (idx * bid_size);
         uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
                                           : readLE<uint32_t>(data, offset);
         // Recurse through readDataTree so nested internal (XBLOCK/XXBLOCK) children
@@ -1332,9 +1488,9 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
                                                                uint16_t entry_count,
                                                                QByteArray& result,
                                                                QVector<int>* block_offsets) {
-    int bid_size = m_is_unicode ? 8 : 4;
+    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = 8 + (idx * bid_size);
+        int offset = kBlockTreeHeaderSize + (idx * bid_size);
         uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
                                           : readLE<uint32_t>(data, offset);
         int base_offset = result.size();
@@ -1383,9 +1539,9 @@ QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_o
     // qUncompress expects a 4-byte big-endian size prefix before the
     // raw zlib stream.
     QByteArray prefixed;
-    prefixed.reserve(4 + raw.size());
+    prefixed.reserve(kInt32PropertyBytes + raw.size());
     uint32_t be_size = qToBigEndian(static_cast<uint32_t>(uncompressed_size));
-    prefixed.append(reinterpret_cast<const char*>(&be_size), 4);
+    prefixed.append(reinterpret_cast<const char*>(&be_size), kInt32PropertyBytes);
     prefixed.append(raw);
 
     QByteArray decompressed = qUncompress(prefixed);
@@ -1422,7 +1578,7 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
         return *node_data;
     }
 
-    int entry_size = key_size + 4;
+    int entry_size = key_size + kBthChildHidSize;
     if (entry_size == 0) {
         return QByteArray{};
     }
@@ -1455,32 +1611,32 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
 
 std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafData(
     const HeapContext& ctx, uint8_t expected_client_sig) {
-    if (ctx.heap_data.size() < 12) {
+    if (ctx.heap_data.size() < kHnHeaderMinSize) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    if (static_cast<uint8_t>(ctx.heap_data[2]) != kHnSignature) {
+    if (static_cast<uint8_t>(ctx.heap_data[kHnSignatureOffset]) != kHnSignature) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    if (static_cast<uint8_t>(ctx.heap_data[3]) != expected_client_sig) {
+    if (static_cast<uint8_t>(ctx.heap_data[kHnClientSignatureOffset]) != expected_client_sig) {
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, 4);
+    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto bth_header = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!bth_header) {
         return std::unexpected(bth_header.error());
     }
-    if (bth_header->size() < 8) {
+    if (bth_header->size() < kBthHeaderMinSize) {
         return std::unexpected(error_code::pst_property_context_error);
     }
     if (static_cast<uint8_t>((*bth_header)[0]) != kBthSignature) {
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint8_t key_size = static_cast<uint8_t>((*bth_header)[1]);
-    uint8_t data_size = static_cast<uint8_t>((*bth_header)[2]);
-    uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[3]);
-    uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, 4);
+    uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
+    uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
+    uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
+    uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
     if (bth_root_hid == 0) {
         return BthLeafResult{};
     }
@@ -1515,9 +1671,10 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
         sak::MapiProperty prop;
         prop.tag_id = readLE<uint16_t>(bth.leaf_data, rec_off);
 
-        if (bth.data_size >= 6) {
+        if (bth.data_size >= kPropertyRecordMinInlineSize) {
             prop.tag_type = readLE<uint16_t>(bth.leaf_data, rec_off + bth.key_size);
-            uint32_t value_ref = readLE<uint32_t>(bth.leaf_data, rec_off + bth.key_size + 2);
+            uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
+                                                  rec_off + bth.key_size + kPropertyValueRefOffset);
 
             if (isPcVariableType(prop.tag_type)) {
                 auto resolved =
@@ -1526,8 +1683,8 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
                     prop.raw_value = std::move(*resolved);
                 }
             } else {
-                prop.raw_value.resize(4);
-                std::memcpy(prop.raw_value.data(), &value_ref, 4);
+                prop.raw_value.resize(kPropertyValueRefSize);
+                std::memcpy(prop.raw_value.data(), &value_ref, kPropertyValueRefSize);
             }
         }
 
@@ -1608,7 +1765,7 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return std::unexpected(valid.error());
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, 4);
+    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto tc_raw = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!tc_raw) {
         return std::unexpected(tc_raw.error());
@@ -1631,13 +1788,13 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
 }
 
 std::expected<void, sak::error_code> PstParser::validateHeapForTc(const QByteArray& heap_data) {
-    if (heap_data.size() < 12) {
+    if (heap_data.size() < kHnHeaderMinSize) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    if (static_cast<uint8_t>(heap_data[2]) != kHnSignature) {
+    if (static_cast<uint8_t>(heap_data[kHnSignatureOffset]) != kHnSignature) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    if (static_cast<uint8_t>(heap_data[3]) != kTcSignature) {
+    if (static_cast<uint8_t>(heap_data[kHnClientSignatureOffset]) != kTcSignature) {
         return std::unexpected(error_code::pst_table_context_error);
     }
     return {};
@@ -1657,7 +1814,7 @@ PstParser::TcRowMatrix PstParser::loadTcRowData(const TcInfo& tc,
         }
     }
 
-    if ((tc.hnid_rows & 0x1F) == 0) {
+    if ((tc.hnid_rows & kNidTypeMask) == 0) {
         // Heap-stored: single allocation, no inter-block padding.
         auto heap_r = readHeapOnNode(ctx.heap_data, tc.hnid_rows, ctx.block_offsets);
         if (heap_r) {
@@ -1772,16 +1929,16 @@ QVector<uint32_t> PstParser::collectTcLiveRowIndices(const TcInfo& tc, const Hea
         return live_row_indices;
     }
     auto bth_header = readHeapOnNode(ctx.heap_data, tc.hid_row_index, ctx.block_offsets);
-    if (!bth_header || bth_header->size() < 8 ||
+    if (!bth_header || bth_header->size() < kBthHeaderMinSize ||
         static_cast<uint8_t>((*bth_header)[0]) != kBthSignature) {
         return live_row_indices;
     }
-    const uint8_t key_size = static_cast<uint8_t>((*bth_header)[1]);
-    const uint8_t data_size = static_cast<uint8_t>((*bth_header)[2]);
-    const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[3]);
-    const uint32_t root_hid = readLE<uint32_t>(*bth_header, 4);
+    const uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
+    const uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
+    const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
+    const uint32_t root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
     // TCROWID record layout: dwRowID (key, 4 bytes) + dwRowIndex (data, 4 bytes).
-    if (key_size != 4 || data_size != 4 || root_hid == 0) {
+    if (key_size != kInt32PropertyBytes || data_size != kInt32PropertyBytes || root_hid == 0) {
         return live_row_indices;
     }
     auto leaf =
@@ -1800,7 +1957,8 @@ QVector<uint32_t> PstParser::extractTcRowIndicesFromLeaf(const QByteArray& leaf)
     const int record_count = leaf.size() / kTcRowIdRecordSize;
     live_row_indices.reserve(record_count);
     for (int rec = 0; rec < record_count; ++rec) {
-        live_row_indices.append(readLE<uint32_t>(leaf, rec * kTcRowIdRecordSize + 4));
+        live_row_indices.append(
+            readLE<uint32_t>(leaf, rec * kTcRowIdRecordSize + kBthRowIdValueOffset));
     }
     return live_row_indices;
 }
@@ -1815,8 +1973,8 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     prop.property_name = propertyIdToName(col.prop_id);
 
     bool cell_exists = true;
-    int ceb_byte = row_view.ceb_off + (col.i_bit / 8);
-    int ceb_bit = 7 - (col.i_bit % 8);
+    int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
+    int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
     if (ceb_byte < row_view.row_off + row_view.row_size) {
         cell_exists = (static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1;
     }
@@ -1824,7 +1982,7 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     int cell_off = row_view.row_off + col.ib_data;
     if (cell_exists && cell_off + col.cb_data <= row_data.size()) {
         prop.raw_value = row_data.mid(cell_off, col.cb_data);
-        if (isHnidResolvableType(col.prop_type) && col.cb_data == 4) {
+        if (isHnidResolvableType(col.prop_type) && col.cb_data == kPropertyValueRefSize) {
             uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
             auto resolved = resolveHnid(hnid, ctx.heap_data, ctx.block_offsets, ctx.subnode_map);
             if (resolved) {
@@ -1857,7 +2015,7 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
 
     uint16_t ib_hnpm = readLE<uint16_t>(heap_data, block_offset);
     int page_map_offset = block_offset + ib_hnpm;
-    if (page_map_offset + 4 > heap_data.size()) {
+    if (page_map_offset + kInt32PropertyBytes > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
@@ -1866,11 +2024,11 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
         return QByteArray{};
     }
 
-    int alloc_table_offset = page_map_offset + 4;
-    int entry_offset = alloc_table_offset + ((hid_index - 1) * 2);
-    int next_offset = alloc_table_offset + (hid_index * 2);
+    int alloc_table_offset = page_map_offset + kInt32PropertyBytes;
+    int entry_offset = alloc_table_offset + ((hid_index - 1) * kHidOffsetRecordSize);
+    int next_offset = alloc_table_offset + (hid_index * kHidOffsetRecordSize);
 
-    if (next_offset + 2 > heap_data.size()) {
+    if (next_offset + kHidOffsetRecordSize > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
@@ -1892,10 +2050,13 @@ PstParser::HidParts PstParser::unpackHid(uint32_t hn_id) const {
     // (type / hid_index / hid_block_index) instead of the standard 5/11/16.
     // Ref: libpff "64-bit 4k page table value reference".
     HidParts parts;
-    parts.hid_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 5) & 0x3FFF)
-                              : static_cast<uint16_t>((hn_id >> 5) & 0x7FF);
-    parts.hid_block_index = m_is_4k ? static_cast<uint16_t>((hn_id >> 19) & 0x1FFF)
-                                    : static_cast<uint16_t>((hn_id >> 16) & 0xFFFF);
+    parts.hid_index = m_is_4k
+                          ? static_cast<uint16_t>((hn_id >> kHidIndexShift) & kHidIndexMask4k)
+                          : static_cast<uint16_t>((hn_id >> kHidIndexShift) & kHidIndexMaskLegacy);
+    parts.hid_block_index =
+        m_is_4k ? static_cast<uint16_t>((hn_id >> kHidBlockIndexShift4k) & kHidBlockIndexMask4k)
+                : static_cast<uint16_t>((hn_id >> kHidBlockIndexShiftLegacy) &
+                                        kHidBlockIndexMaskLegacy);
     return parts;
 }
 
@@ -1918,7 +2079,7 @@ std::expected<QByteArray, error_code> PstParser::resolveHnid(
     }
 
     // 2. Non-zero low 5 bits → NID not in sub-node map
-    if ((hnid & 0x1F) != 0) {
+    if ((hnid & kNidTypeMask) != 0) {
         return QByteArray{};
     }
 
@@ -1942,12 +2103,12 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
     }
 
     const auto& data = *block_data;
-    if (data.size() < 8) {
+    if (data.size() < kBlockTreeHeaderSize) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
     uint8_t level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, 2);
+    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
     constexpr int kSubnodeHeaderSize = 8;
 
     if (level == 0) {
@@ -1960,7 +2121,7 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
                                                                 int header_size,
                                                                 uint16_t entry_count) {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? 24 : 12;
+    int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
         int offset = header_size + (entry_idx * entry_size);
@@ -1970,13 +2131,13 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
 
         sak::PstNode node;
         if (m_is_unicode) {
-            node.node_id = readLE<uint64_t>(data, offset) & 0xFF'FF'FF'FF;
-            node.data_bid = readLE<uint64_t>(data, offset + 8);
-            node.subnode_bid = readLE<uint64_t>(data, offset + 16);
+            node.node_id = readLE<uint64_t>(data, offset) & kNidLower32Mask;
+            node.data_bid = readLE<uint64_t>(data, offset + kSubnodeDataBidOffsetUnicode);
+            node.subnode_bid = readLE<uint64_t>(data, offset + kSubnodeSubnodeBidOffsetUnicode);
         } else {
             node.node_id = readLE<uint32_t>(data, offset);
-            node.data_bid = readLE<uint32_t>(data, offset + 4);
-            node.subnode_bid = readLE<uint32_t>(data, offset + 8);
+            node.data_bid = readLE<uint32_t>(data, offset + kSubnodeDataBidOffsetAnsi);
+            node.subnode_bid = readLE<uint32_t>(data, offset + kSubnodeSubnodeBidOffsetAnsi);
         }
         result.insert(node.node_id, node);
     }
@@ -1986,8 +2147,9 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeIntermediateEntries(
     const QByteArray& data, int header_size, uint16_t entry_count, int depth) {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? 16 : 8;
-    int bid_offset = m_is_unicode ? 8 : 4;
+    int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode : kSubnodeIntermediateSizeAnsi;
+    int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
+                                  : kSubnodeIntermediateBidOffsetAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
         int offset = header_size + (entry_idx * entry_size);
@@ -2030,11 +2192,11 @@ QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw
     }
     return QStringLiteral("(%1 bytes, type 0x%2)")
         .arg(raw_value.size())
-        .arg(prop_type, 4, 16, QLatin1Char('0'));
+        .arg(prop_type, kPropertyIdHexWidth, kPropertyIdHexBase, QLatin1Char('0'));
 }
 
 // clang-format off
-static const QHash<uint16_t, QString>& propertyNameTable() {
+static const QHash<uint16_t, QString>& corePropertyNameTable() {
     static const QHash<uint16_t, QString> kTable = {
         {sak::email::kPropIdSubject,              QStringLiteral("PR_SUBJECT")},
         {sak::email::kPropIdMessageClass,         QStringLiteral("PR_MESSAGE_CLASS")},
@@ -2079,6 +2241,12 @@ static const QHash<uint16_t, QString>& propertyNameTable() {
         {sak::email::kPropIdGivenName,            QStringLiteral("PR_GIVEN_NAME")},
         {sak::email::kPropIdSurname,              QStringLiteral("PR_SURNAME")},
         {sak::email::kPropIdTaskPriority,         QStringLiteral("PR_PRIORITY")},
+    };
+    return kTable;
+}
+
+static const QHash<uint16_t, QString>& extendedPropertyNameTable() {
+    static const QHash<uint16_t, QString> kTable = {
         {0x0029, QStringLiteral("PR_READ_RECEIPT_REQUESTED")},
         {0x003b, QStringLiteral("PR_SENT_REPRESENTING_SEARCH_KEY")},
         {0x003f, QStringLiteral("PR_RECEIVED_BY_ENTRYID")},
@@ -2121,6 +2289,15 @@ static const QHash<uint16_t, QString>& propertyNameTable() {
     };
     return kTable;
 }
+
+static const QHash<uint16_t, QString>& propertyNameTable() {
+    static const QHash<uint16_t, QString> kTable = [] {
+        auto table = corePropertyNameTable();
+        table.insert(extendedPropertyNameTable());
+        return table;
+    }();
+    return kTable;
+}
 // clang-format on
 
 QString PstParser::propertyIdToName(uint16_t prop_id) {
@@ -2129,7 +2306,8 @@ QString PstParser::propertyIdToName(uint16_t prop_id) {
     if (name_it != table.end()) {
         return name_it.value();
     }
-    return QStringLiteral("0x%1").arg(prop_id, 4, 16, QLatin1Char('0'));
+    return QStringLiteral("0x%1").arg(
+        prop_id, kPropertyIdHexWidth, kPropertyIdHexBase, QLatin1Char('0'));
 }
 
 // ============================================================================
@@ -2171,8 +2349,7 @@ std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(ui
 }
 
 void PstParser::loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int depth) {
-    uint64_t hierarchy_nid = (root_nid & ~static_cast<uint64_t>(0x1F)) |
-                             sak::email::kNidTypeHierarchyTable;
+    uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
 
     sak::logInfo(
         "PstParser: folder 0x{:X} hierarchy NID=0x{:X}, "
@@ -2300,7 +2477,7 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
 
     int record_count = bth.leaf_data.size() / record_size;
     const auto& slot_map = senderPropSlots();
-    QString results[2];  // 0=name, 1=email
+    QString results[kResolvedRecipientPartCount];
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
         int rec_offset = rec_idx * record_size;
@@ -2318,7 +2495,8 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
         }
 
         uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
-        uint32_t value_ref = readLE<uint32_t>(bth.leaf_data, rec_offset + bth.key_size + 2);
+        uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
+                                              rec_offset + bth.key_size + kPropertyValueRefOffset);
 
         QByteArray raw_value;
         if (isPcVariableType(prop_type)) {
@@ -2328,8 +2506,8 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
                 raw_value = std::move(*resolved);
             }
         } else {
-            raw_value.resize(4);
-            std::memcpy(raw_value.data(), &value_ref, 4);
+            raw_value.resize(kPropertyValueRefSize);
+            std::memcpy(raw_value.data(), &value_ref, kPropertyValueRefSize);
         }
 
         results[slot_it.value()] = formatPropertyValue(prop_type, raw_value);
@@ -2394,7 +2572,8 @@ QString PstParser::readBthRecordValue(const BthLeafResult& bth,
                                       const HeapContext& ctx,
                                       int rec_offset) {
     uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
-    uint32_t value_ref = readLE<uint32_t>(bth.leaf_data, rec_offset + bth.key_size + 2);
+    uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
+                                          rec_offset + bth.key_size + kPropertyValueRefOffset);
     QByteArray raw_value;
     if (isPcVariableType(prop_type)) {
         auto resolved = resolveHnid(value_ref, ctx.heap_data, ctx.block_offsets, ctx.subnode_map);
@@ -2402,8 +2581,8 @@ QString PstParser::readBthRecordValue(const BthLeafResult& bth,
             raw_value = std::move(*resolved);
         }
     } else {
-        raw_value.resize(4);
-        std::memcpy(raw_value.data(), &value_ref, 4);
+        raw_value.resize(kPropertyValueRefSize);
+        std::memcpy(raw_value.data(), &value_ref, kPropertyValueRefSize);
     }
     return formatPropertyValue(prop_type, raw_value);
 }
@@ -2549,7 +2728,8 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
 
         uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
         uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
-        uint32_t value_ref = readLE<uint32_t>(bth.leaf_data, rec_offset + bth.key_size + 2);
+        uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
+                                              rec_offset + bth.key_size + kPropertyValueRefOffset);
 
         QByteArray raw_val;
         if (isPcVariableType(prop_type)) {
@@ -2559,8 +2739,8 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
                 raw_val = std::move(*resolved);
             }
         } else {
-            raw_val.resize(4);
-            std::memcpy(raw_val.data(), &value_ref, 4);
+            raw_val.resize(kPropertyValueRefSize);
+            std::memcpy(raw_val.data(), &value_ref, kPropertyValueRefSize);
         }
 
         auto setter_it = setters.find(prop_id);
@@ -2590,7 +2770,7 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     int att_index = 0;
 
     for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & 0x1F);
+        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
         if (sub_type != sak::email::kNidTypeAttachment) {
             continue;
         }
@@ -2641,7 +2821,7 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
 }
 
 sak::PstNodeType PstParser::nodeType(uint64_t nid) {
-    return static_cast<sak::PstNodeType>(nid & 0x1F);
+    return static_cast<sak::PstNodeType>(nid & kNidTypeMask);
 }
 
 QVector<uint64_t> PstParser::allNodeIds() const {

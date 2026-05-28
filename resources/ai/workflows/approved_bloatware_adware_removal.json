@@ -4,7 +4,7 @@
   "title": "Approved Bloatware or Adware Removal",
   "role": "System Cleanup",
   "category": "Cleanup",
-  "description": "Remove one exact unwanted app after identifying install ownership, startup/persistence links, approval, uninstall, verification, and handoff report.",
+  "description": "Remove explicitly approved unwanted software with ownership, startup/persistence, uninstall, verification, cleanup, and handoff evidence.",
   "starter_prompt": "Remove this approved unwanted, bloatware, or adware application. Identify it first, uninstall only the exact approved target, preserve user data unless explicitly approved, verify removal, and report leftovers.",
   "required_inputs": [
     {"id": "app_name", "label": "Exact approved app or package name", "type": "string", "required": true}

@@ -12,6 +12,8 @@ namespace sak::ai {
 
 namespace {
 
+constexpr qsizetype kSessionMemoryPreviewChars = 500;
+
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
@@ -101,7 +103,7 @@ void recordWorkflowCompletion(const QString& command_id,
         callbacks.append_session_memory(QStringLiteral("Tool"),
                                         QStringLiteral("Workflow PowerShell finished"),
                                         QStringLiteral("%1 exit=%2 cancelled=%3 timed_out=%4")
-                                            .arg(preview.left(500))
+                                            .arg(preview.left(kSessionMemoryPreviewChars))
                                             .arg(command_result.exit_code)
                                             .arg(command_result.cancelled)
                                             .arg(command_result.timed_out));

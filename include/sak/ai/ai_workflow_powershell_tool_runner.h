@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/layout_constants.h"
 
 #include <QJsonObject>
 #include <QString>
@@ -13,8 +14,10 @@
 namespace sak::ai {
 
 struct AiWorkflowPowerShellToolOptions {
-    int default_output_bytes = 512 * 1024;
-    int min_output_bytes = 1024;
+    static constexpr int kDefaultOutputKilobytes = 512;
+
+    int default_output_bytes = kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
+    int min_output_bytes = static_cast<int>(sak::kBytesPerKB);
 };
 
 struct AiWorkflowPowerShellToolCallbacks {

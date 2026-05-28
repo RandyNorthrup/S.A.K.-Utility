@@ -6,6 +6,7 @@
 #include "sak/elevation_gate.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 #include "sak/windows_iso_downloader.h"
 
@@ -22,6 +23,16 @@
 #include <algorithm>
 
 namespace {
+
+constexpr int kFetchBuildsGridColumn = 2;
+constexpr int kFetchBuildsRowSpan = 2;
+constexpr int kFetchBuildsColumnSpan = 1;
+constexpr int kPrepareWeight = 5;
+constexpr int kDownloadWeight = 60;
+constexpr int kConvertWeight = 35;
+constexpr double kDownloadSpeedVisibleThresholdMBps = 0.01;
+constexpr int kTransferSpeedDisplayPrecision = 1;
+constexpr int kIsoSizeDisplayPrecision = 2;
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
     return std::any_of(keywords.begin(), keywords.end(), [&text](const auto& kw) {
@@ -66,7 +77,13 @@ void WindowsISODownloadDialog::setupUi() {
 // ----------------------------------------------------------------------------
 
 void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
-    // ---- Step 1: Architecture & Channel ----
+    setupUi_buildConfig(mainLayout);
+    setupUi_buildSelection(mainLayout);
+    setupUi_languageEdition(mainLayout);
+    setupUi_saveLocation(mainLayout);
+}
+
+void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* mainLayout) {
     auto* configGroup = new QGroupBox("Build Configuration", this);
     auto* configLayout = new QGridLayout(configGroup);
 
@@ -84,11 +101,16 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
     configLayout->addWidget(m_channelCombo, 1, 1);
 
     m_fetchBuildsButton = new QPushButton("Fetch Builds", configGroup);
-    configLayout->addWidget(m_fetchBuildsButton, 0, 2, 2, 1);
+    configLayout->addWidget(m_fetchBuildsButton,
+                            0,
+                            kFetchBuildsGridColumn,
+                            kFetchBuildsRowSpan,
+                            kFetchBuildsColumnSpan);
 
     mainLayout->addWidget(configGroup);
+}
 
-    // ---- Step 2: Build Selection ----
+void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* mainLayout) {
     auto* buildGroup = new QGroupBox("Available Builds", this);
     auto* buildLayout = new QVBoxLayout(buildGroup);
 
@@ -99,14 +121,14 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
 
     m_buildInfoLabel = new QLabel("", buildGroup);
     m_buildInfoLabel->setWordWrap(true);
-    m_buildInfoLabel->setStyleSheet(QString("color: %1; font-size: %2pt;")
-                                        .arg(sak::ui::kColorTextMuted)
-                                        .arg(sak::ui::kFontSizeNote));
+    m_buildInfoLabel->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
     buildLayout->addWidget(m_buildInfoLabel);
 
     mainLayout->addWidget(buildGroup);
+}
 
-    // ---- Step 3: Language & Edition ----
+void WindowsISODownloadDialog::setupUi_languageEdition(QVBoxLayout* mainLayout) {
     auto* selectionGroup = new QGroupBox("Language && Edition", this);
     auto* selectionLayout = new QGridLayout(selectionGroup);
 
@@ -121,8 +143,9 @@ void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
     selectionLayout->addWidget(m_editionCombo, 1, 1);
 
     mainLayout->addWidget(selectionGroup);
+}
 
-    // ---- Step 4: Save Location ----
+void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* mainLayout) {
     auto* saveGroup = new QGroupBox("Save Location", this);
     auto* saveLayout = new QHBoxLayout(saveGroup);
 
@@ -144,7 +167,7 @@ void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayou
     progressLayout->addWidget(m_statusLabel);
 
     m_phaseLabel = new QLabel("", progressGroup);
-    m_phaseLabel->setStyleSheet("font-weight: bold;");
+    m_phaseLabel->setStyleSheet(sak::ui::kFontWeightBoldStyle);
     progressLayout->addWidget(m_phaseLabel);
 
     auto* downloadProgressLabel = new QLabel("Download Phase", progressGroup);
@@ -152,16 +175,17 @@ void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayou
 
     m_downloadProgressBar = new QProgressBar(progressGroup);
     m_downloadProgressBar->setMinimum(0);
-    m_downloadProgressBar->setMaximum(100);
+    m_downloadProgressBar->setMaximum(sak::kPercentMax);
     m_downloadProgressBar->setValue(0);
     progressLayout->addWidget(m_downloadProgressBar);
 
-    auto* convertProgressLabel = new QLabel("Convert && Build Phase", progressGroup);
+    auto* convertProgressLabel = new QLabel("Convert & Build Phase", progressGroup);
+    convertProgressLabel->setTextFormat(Qt::PlainText);
     progressLayout->addWidget(convertProgressLabel);
 
     m_convertProgressBar = new QProgressBar(progressGroup);
     m_convertProgressBar->setMinimum(0);
-    m_convertProgressBar->setMaximum(100);
+    m_convertProgressBar->setMaximum(sak::kPercentMax);
     m_convertProgressBar->setValue(0);
     progressLayout->addWidget(m_convertProgressBar);
 
@@ -433,7 +457,7 @@ void WindowsISODownloadDialog::onStartDownload() {
 
     if (m_selectedUpdateId.isEmpty()) {
         sak::logWarning("No Build Selected: Please select a build first.");
-        QMessageBox::warning(this, "No Build Selected", "Please select a build first.");
+        sak::showWarningLogged(this, "No Build Selected", "Please select a build first.");
         return;
     }
 
@@ -443,12 +467,14 @@ void WindowsISODownloadDialog::onStartDownload() {
 
     if (langCode.isEmpty() || edition.isEmpty()) {
         sak::logWarning("Incomplete Selection: Please select a language and edition.");
-        QMessageBox::warning(this, "Incomplete Selection", "Please select a language and edition.");
+        sak::showWarningLogged(this,
+                               "Incomplete Selection",
+                               "Please select a language and edition.");
         return;
     }
     if (savePath.isEmpty()) {
         sak::logWarning("No Save Path: Please specify where to save the ISO.");
-        QMessageBox::warning(this, "No Save Path", "Please specify where to save the ISO.");
+        sak::showWarningLogged(this, "No Save Path", "Please specify where to save the ISO.");
         return;
     }
     if (!savePath.endsWith(".iso", Qt::CaseInsensitive)) {
@@ -478,28 +504,28 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
     // A11Y: prefix phase text so status is conveyed without relying on color alone
     switch (phase) {
     case UupIsoBuilder::Phase::PreparingDownload:
-        m_phaseLabel->setStyleSheet(
-            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorRunning));
+        m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
+                                                                     sak::ui::kStatusColorRunning));
         m_phaseLabel->setText(QStringLiteral("\u2699 ") + description);  // [*]
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
-        m_phaseLabel->setStyleSheet(
-            QString("font-weight: bold; color: %1;").arg(sak::ui::kColorAccentEmerald));
+        m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
+                                                                     sak::ui::kColorAccentEmerald));
         m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
-        m_phaseLabel->setStyleSheet(
-            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorWarning));
+        m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
+                                                                     sak::ui::kStatusColorWarning));
         m_phaseLabel->setText(QStringLiteral("\u23F3 ") + description);  // [...]
         break;
     case UupIsoBuilder::Phase::Completed:
-        m_phaseLabel->setStyleSheet(
-            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
+                                                                     sak::ui::kStatusColorSuccess));
         m_phaseLabel->setText(QStringLiteral("\u2714 ") + description);  // [x]
         break;
     case UupIsoBuilder::Phase::Failed:
         m_phaseLabel->setStyleSheet(
-            QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorError));
+            sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold, sak::ui::kStatusColorError));
         m_phaseLabel->setText(QStringLiteral("\u2718 ") + description);  // [X]
         break;
     default:
@@ -510,24 +536,21 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
 void WindowsISODownloadDialog::onProgressUpdated(int overallPercent, const QString& detail) {
     Q_ASSERT(m_downloadProgressBar);
     Q_ASSERT(m_convertProgressBar);
-    constexpr int kPrepareWeight = 5;
-    constexpr int kDownloadWeight = 60;
-    constexpr int kConvertWeight = 35;
-
     int downloadPercent = 0;
     int convertPercent = 0;
 
     if (overallPercent > kPrepareWeight) {
-        downloadPercent =
-            static_cast<int>(((overallPercent - kPrepareWeight) * 100.0) / kDownloadWeight);
+        downloadPercent = static_cast<int>(((overallPercent - kPrepareWeight) * sak::kPercentMaxF) /
+                                           kDownloadWeight);
     }
-    downloadPercent = std::clamp(downloadPercent, 0, 100);
+    downloadPercent = std::clamp(downloadPercent, 0, sak::kPercentMax);
 
     if (overallPercent > (kPrepareWeight + kDownloadWeight)) {
         convertPercent = static_cast<int>(
-            ((overallPercent - (kPrepareWeight + kDownloadWeight)) * 100.0) / kConvertWeight);
+            ((overallPercent - (kPrepareWeight + kDownloadWeight)) * sak::kPercentMaxF) /
+            kConvertWeight);
     }
-    convertPercent = std::clamp(convertPercent, 0, 100);
+    convertPercent = std::clamp(convertPercent, 0, sak::kPercentMax);
 
     if (m_currentPhase == UupIsoBuilder::Phase::PreparingDownload) {
         downloadPercent = 0;
@@ -535,10 +558,10 @@ void WindowsISODownloadDialog::onProgressUpdated(int overallPercent, const QStri
     } else if (m_currentPhase == UupIsoBuilder::Phase::DownloadingFiles) {
         convertPercent = 0;
     } else if (m_currentPhase == UupIsoBuilder::Phase::ConvertingToISO) {
-        downloadPercent = 100;
+        downloadPercent = sak::kPercentMax;
     } else if (m_currentPhase == UupIsoBuilder::Phase::Completed) {
-        downloadPercent = 100;
-        convertPercent = 100;
+        downloadPercent = sak::kPercentMax;
+        convertPercent = sak::kPercentMax;
     }
 
     m_downloadProgressBar->setValue(downloadPercent);
@@ -547,8 +570,9 @@ void WindowsISODownloadDialog::onProgressUpdated(int overallPercent, const QStri
 }
 
 void WindowsISODownloadDialog::onSpeedUpdated(double downloadSpeedMBps) {
-    if (downloadSpeedMBps > 0.01) {
-        m_speedLabel->setText(QString("%1 MB/s").arg(downloadSpeedMBps, 0, 'f', 1));
+    if (downloadSpeedMBps > kDownloadSpeedVisibleThresholdMBps) {
+        m_speedLabel->setText(
+            QString("%1 MB/s").arg(downloadSpeedMBps, 0, 'f', kTransferSpeedDisplayPrecision));
     }
 }
 
@@ -558,23 +582,24 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64
     m_downloadedFilePath = isoPath;
     m_isDownloading = false;
 
-    m_downloadProgressBar->setValue(100);
-    m_convertProgressBar->setValue(100);
+    m_downloadProgressBar->setValue(sak::kPercentMax);
+    m_convertProgressBar->setValue(sak::kPercentMax);
     double sizeGB = fileSize / sak::kBytesPerGBf;
-    m_statusLabel->setText(QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', 2));
+    m_statusLabel->setText(
+        QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
     m_phaseLabel->setText("Complete!");
     m_phaseLabel->setStyleSheet(
-        QString("font-weight: bold; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold, sak::ui::kStatusColorSuccess));
     m_speedLabel->clear();
     m_detailLabel->clear();
     m_cancelButton->setEnabled(false);
 
-    QMessageBox::information(this,
-                             "ISO Build Complete",
-                             QString("Windows ISO has been created successfully!\n\n"
-                                     "Saved to: %1\nSize: %2 GB\n\nClick OK to use this image.")
-                                 .arg(isoPath)
-                                 .arg(sizeGB, 0, 'f', 2));
+    sak::showInformationLogged(this,
+                               "ISO Build Complete",
+                               QString("Windows ISO has been created successfully!\n\n"
+                                       "Saved to: %1\nSize: %2 GB\n\nClick OK to use this image.")
+                                   .arg(isoPath)
+                                   .arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
 
     Q_EMIT downloadCompleted(isoPath);
     accept();
@@ -609,7 +634,7 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
     }
 
     sak::logError(("Build Error: Failed to create Windows ISO: " + error).toStdString());
-    QMessageBox::critical(
+    sak::showCriticalLogged(
         this,
         "Build Error",
         QString("Failed to create Windows ISO:\n\n%1\n\n%2").arg(error, guidance));
@@ -628,12 +653,12 @@ void WindowsISODownloadDialog::onStatusMessage(const QString& message) {
 void WindowsISODownloadDialog::onCancelDownload() {
     Q_ASSERT(m_downloader);
     Q_ASSERT(m_statusLabel);
-    auto reply = QMessageBox::question(this,
-                                       "Cancel Build",
-                                       "Are you sure you want to cancel?\n\n"
-                                       "Downloaded files will be preserved so the download "
-                                       "can be resumed if you retry the same build.",
-                                       QMessageBox::Yes | QMessageBox::No);
+    auto reply = sak::showQuestionLogged(this,
+                                         "Cancel Build",
+                                         "Are you sure you want to cancel?\n\n"
+                                         "Downloaded files will be preserved so the download "
+                                         "can be resumed if you retry the same build.",
+                                         QMessageBox::Yes | QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
         m_downloader->cancel();

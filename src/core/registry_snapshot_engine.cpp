@@ -12,6 +12,10 @@
 
 namespace sak {
 
+namespace {
+constexpr DWORD kRegistrySubkeyNameBufferChars = 256;
+}
+
 // Monitored registry paths for snapshot
 const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
     "HKLM\\SOFTWARE",
@@ -135,9 +139,9 @@ void RegistrySnapshotEngine::enumerateKeys(HKEY hive,
                      nullptr,
                      nullptr);
 
-    wchar_t subkey_name[256];
+    wchar_t subkey_name[kRegistrySubkeyNameBufferChars];
     for (DWORD i = 0; i < subkey_count; ++i) {
-        DWORD name_len = 256;
+        DWORD name_len = kRegistrySubkeyNameBufferChars;
         rc = RegEnumKeyExW(key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
             continue;

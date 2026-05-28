@@ -24,6 +24,14 @@ namespace sak {
 
 namespace {
 
+constexpr int kBracketHeaderDelimiterLength = 2;
+constexpr int kRoleDelimiterLength = 2;
+constexpr int kMaximumRolePrefixChars = 32;
+constexpr int kFallbackViewportWidth = 900;
+constexpr int kBubbleWidthPercent = 76;
+constexpr double kTranscriptBodyFontPointSize = 9.5;
+constexpr int kActivityAnimationFrameCount = 4;
+
 QScrollArea* createTranscriptScrollArea(QWidget* parent, QWidget* content) {
     auto* scroll = new QScrollArea(parent);
     scroll->setWidgetResizable(true);
@@ -36,11 +44,11 @@ void configureTranscriptButton(QPushButton* button, const QString& icon_path) {
     if (!button) {
         return;
     }
-    button->setMinimumHeight(34);
+    button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
     button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     if (!icon_path.isEmpty()) {
         button->setIcon(QIcon(icon_path));
-        button->setIconSize(QSize(16, 16));
+        button->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     }
 }
 
@@ -78,13 +86,14 @@ bool isUserChatRole(const QString& role) {
 
 AiTranscriptView::AiTranscriptView(QWidget* parent) : QWidget(parent) {
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    root->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    root->setSpacing(sak::ui::kSpacingNone);
 
     m_content = new QWidget(this);
     m_content->setObjectName(QStringLiteral("aiTranscriptContent"));
-    m_content->setStyleSheet(QStringLiteral("QWidget#aiTranscriptContent { background: %1; }")
-                                 .arg(sak::ui::kColorBgSurface));
+    m_content->setStyleSheet(
+        sak::ui::backgroundStyle("QWidget#aiTranscriptContent", sak::ui::kColorBgSurface));
     m_layout = new QVBoxLayout(m_content);
     m_layout->setContentsMargins(sak::ui::kMarginMedium,
                                  sak::ui::kMarginMedium,
@@ -95,10 +104,9 @@ AiTranscriptView::AiTranscriptView(QWidget* parent) : QWidget(parent) {
 
     m_scroll = createTranscriptScrollArea(this, m_content);
     m_scroll->setObjectName(QStringLiteral("aiTranscriptScroll"));
-    m_scroll->setMinimumHeight(320);
+    m_scroll->setMinimumHeight(sak::kDialogHeightSmall + sak::ui::kMarginXLarge);
     m_scroll->setStyleSheet(
-        QStringLiteral("QScrollArea#aiTranscriptScroll { background: %1; border: 0; }")
-            .arg(sak::ui::kColorBgSurface));
+        sak::ui::backgroundStyle("QScrollArea#aiTranscriptScroll", sak::ui::kColorBgSurface));
     setAccessible(m_scroll, QObject::tr("AI conversation transcript"));
     root->addWidget(m_scroll, 1);
 
@@ -159,14 +167,14 @@ bool AiTranscriptView::appendLoadedLine(const QString& line) {
         const int end = trimmed.indexOf(QStringLiteral("]\n"));
         if (end > 1) {
             role = trimmed.mid(1, end - 1).trimmed();
-            text = trimmed.mid(end + 2).trimmed();
+            text = trimmed.mid(end + kBracketHeaderDelimiterLength).trimmed();
         }
     }
     if (role.isEmpty()) {
         const int colon = trimmed.indexOf(QStringLiteral(": "));
-        if (colon > 0 && colon < 32) {
+        if (colon > 0 && colon < kMaximumRolePrefixChars) {
             role = trimmed.left(colon).trimmed();
-            text = trimmed.mid(colon + 2).trimmed();
+            text = trimmed.mid(colon + kRoleDelimiterLength).trimmed();
         }
     }
     if (role.isEmpty()) {
@@ -274,8 +282,8 @@ bool AiTranscriptView::shouldFollowNewest(bool scroll_to_bottom) const {
 
 int AiTranscriptView::transcriptBubbleMaxWidth() const {
     const int viewport_width = m_scroll && m_scroll->viewport() ? m_scroll->viewport()->width()
-                                                                : 900;
-    return qMax(360, (viewport_width * 76) / 100);
+                                                                : kFallbackViewportWidth;
+    return qMax(sak::kDetachLogMinW, (viewport_width * kBubbleWidthPercent) / sak::kPercentMax);
 }
 
 void AiTranscriptView::appendRenderedRows(int bubble_max_width) {
@@ -327,8 +335,9 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
     const QString body = messageBody(message, &long_text);
     auto* row = new QWidget(m_content);
     auto* row_layout = new QHBoxLayout(row);
-    row_layout->setContentsMargins(0, 0, 0, 0);
-    row_layout->setSpacing(0);
+    row_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    row_layout->setSpacing(sak::ui::kSpacingNone);
     if (user) {
         row_layout->addStretch();
     }
@@ -338,33 +347,26 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
                                : QStringLiteral("aiTranscriptBubbleResult"));
     bubble->setMaximumWidth(bubble_max_width);
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    bubble->setStyleSheet(
-        user ? QStringLiteral(
-                   "QFrame#aiTranscriptBubbleUser { background: %1; border: 2px solid #ffffff; "
-                   "border-radius: 12px; }")
-                   .arg(sak::ui::kColorPrimaryDark)
-             : QStringLiteral(
-                   "QFrame#aiTranscriptBubbleResult { background: %1; border: 1px solid %2; "
-                   "border-radius: 12px; }")
-                   .arg(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
+    bubble->setStyleSheet(sak::ui::transcriptBubbleStyle(user));
     auto* bubble_layout = new QVBoxLayout(bubble);
-    bubble_layout->setContentsMargins(12, 10, 12, 10);
+    bubble_layout->setContentsMargins(sak::ui::kMarginLarge,
+                                      sak::ui::kSpacingDefault,
+                                      sak::ui::kMarginLarge,
+                                      sak::ui::kSpacingDefault);
     bubble_layout->setSpacing(sak::ui::kSpacingSmall);
 
     auto* role_label = new QLabel(chatRoleHeading(message.role), bubble);
-    role_label->setStyleSheet(
-        QStringLiteral("background: transparent; border: 0; "
-                       "font-size: 8pt; font-weight: 700; color: %1;")
-            .arg(user ? QStringLiteral("#dbeafe") : QString::fromLatin1(sak::ui::kColorTextMuted)));
+    role_label->setStyleSheet(sak::ui::transparentTextStyle(sak::ui::kFontSizeSmall,
+                                                            sak::ui::kFontWeightBold,
+                                                            user ? sak::ui::kColorBgUserBubbleText
+                                                                 : sak::ui::kColorTextMuted));
     bubble_layout->addWidget(role_label);
 
     auto* body_label = new QLabel(body, bubble);
     body_label->setWordWrap(true);
     body_label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-    body_label->setStyleSheet(
-        QStringLiteral("background: transparent; border: 0; "
-                       "font-size: 9.5pt; line-height: 142%; color: %1;")
-            .arg(user ? QStringLiteral("#ffffff") : QString::fromLatin1(sak::ui::kColorTextBody)));
+    body_label->setStyleSheet(sak::ui::transparentBodyTextStyle(
+        kTranscriptBodyFontPointSize, user ? sak::ui::kColorBgWhite : sak::ui::kColorTextBody));
     bubble_layout->addWidget(body_label);
 
     if (long_text) {
@@ -373,10 +375,8 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
         toggle->setFlat(true);
         toggle->setCursor(Qt::PointingHandCursor);
         toggle->setStyleSheet(
-            QStringLiteral("QPushButton { border: 0; padding: 2px 0; text-align: left; "
-                           "font-weight: 700; color: %1; background: transparent; }")
-                .arg(user ? QStringLiteral("#ffffff")
-                          : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
+            sak::ui::transcriptToggleStyle(user ? QString::fromLatin1(sak::ui::kColorBgWhite)
+                                                : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
         const QString message_id = message.id;
         connect(toggle, &QPushButton::clicked, this, [this, message_id]() {
             toggleMessageExpanded(message_id);
@@ -394,33 +394,31 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
 QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {
     auto* row = new QWidget(m_content);
     auto* row_layout = new QHBoxLayout(row);
-    row_layout->setContentsMargins(0, 0, 0, 0);
-    row_layout->setSpacing(0);
+    row_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    row_layout->setSpacing(sak::ui::kSpacingNone);
 
     auto* bubble = new QFrame(row);
     bubble->setObjectName(QStringLiteral("aiTranscriptActivityBubble"));
-    bubble->setMaximumWidth(qMin(bubble_max_width, 520));
+    bubble->setMaximumWidth(qMin(bubble_max_width, sak::kDialogWidthLarge));
     bubble->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    bubble->setStyleSheet(QStringLiteral("QFrame#aiTranscriptActivityBubble { background: %1; "
-                                         "border: 1px solid %2; border-radius: 12px; }")
-                              .arg(sak::ui::kColorBgWhite, sak::ui::kStatusColorRunning));
+    bubble->setStyleSheet(sak::ui::transcriptActivityBubbleStyle());
 
     auto* bubble_layout = new QVBoxLayout(bubble);
-    bubble_layout->setContentsMargins(12, 8, 12, 8);
+    bubble_layout->setContentsMargins(
+        sak::ui::kMarginLarge, sak::ui::kMarginSmall, sak::ui::kMarginLarge, sak::ui::kMarginSmall);
     bubble_layout->setSpacing(sak::ui::kSpacingTight);
 
     auto* role_label = new QLabel(QObject::tr("Status"), bubble);
-    role_label->setStyleSheet(QStringLiteral("background: transparent; border: 0; "
-                                             "font-size: 8pt; font-weight: 700; color: %1;")
-                                  .arg(sak::ui::kColorTextMuted));
+    role_label->setStyleSheet(sak::ui::transparentTextStyle(
+        sak::ui::kFontSizeSmall, sak::ui::kFontWeightBold, sak::ui::kColorTextMuted));
     bubble_layout->addWidget(role_label);
 
     m_activityLabel = new QLabel(bubble);
     m_activityLabel->setWordWrap(true);
     m_activityLabel->setToolTip(QObject::tr("Current AI activity"));
-    m_activityLabel->setStyleSheet(QStringLiteral("background: transparent; border: 0; "
-                                                  "font-size: 9.5pt; font-weight: 700; color: %1;")
-                                       .arg(sak::ui::kStatusColorRunning));
+    m_activityLabel->setStyleSheet(sak::ui::transparentTextStyle(
+        kTranscriptBodyFontPointSize, sak::ui::kFontWeightBold, sak::ui::kStatusColorRunning));
     setAccessible(m_activityLabel, QObject::tr("AI activity indicator"));
     bubble_layout->addWidget(m_activityLabel);
 
@@ -465,9 +463,9 @@ void AiTranscriptView::applyActivityFrame() {
     if (!m_activityLabel || m_activityText.isEmpty()) {
         return;
     }
-    const QString dots = QString(m_activityStep % 4, QLatin1Char('.'));
+    const QString dots = QString(m_activityStep % kActivityAnimationFrameCount, QLatin1Char('.'));
     m_activityLabel->setText(QStringLiteral("%1%2").arg(m_activityText, dots));
-    m_activityStep = (m_activityStep + 1) % 4;
+    m_activityStep = (m_activityStep + 1) % kActivityAnimationFrameCount;
 }
 
 }  // namespace sak

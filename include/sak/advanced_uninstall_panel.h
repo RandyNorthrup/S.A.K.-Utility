@@ -107,6 +107,10 @@ private:
     void createProgramTable(QVBoxLayout* layout);
     void createLeftoverSection(QVBoxLayout* layout);
     void createStatusBar(QVBoxLayout* layout);
+    void connectEnumerationSignals();
+    void connectUninstallSignals();
+    void connectCleanupSignals();
+    void connectStatusSignals();
 
     // -- Context Menu Actions --
     void contextUninstall();

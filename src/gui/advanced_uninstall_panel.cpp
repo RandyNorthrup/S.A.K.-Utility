@@ -10,7 +10,9 @@
 #include "sak/advanced_uninstall_controller.h"
 #include "sak/detachable_log_window.h"
 #include "sak/format_utils.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/restore_point_manager.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -38,6 +40,19 @@ namespace sak {
 
 namespace {
 constexpr int kOriginalIndexRole = Qt::UserRole + 100;
+constexpr int kLeftoverCheckColumnWidth = 30;
+constexpr int kLeftoverRiskColumnWidth = 70;
+constexpr int kLeftoverTypeColumnWidth = 100;
+constexpr int kLeftoverSizeColumnWidth = 80;
+constexpr int kProgramCheckColumnWidth = sak::kCheckboxColumnW;
+constexpr int kProgramIconColumnWidth = sak::ui::kUiButtonSizeInline;
+constexpr int kProgramPublisherColumnWidth = 160;
+constexpr int kProgramVersionColumnWidth = sak::ui::kUiWideColumnWidth;
+constexpr int kProgramSizeColumnWidth = sak::ui::kUiMediumColumnWidth;
+constexpr int kProgramInstallDateColumnWidth = sak::ui::kUiWideColumnWidth;
+constexpr int kProgramTableStretch = 3;
+constexpr int kLeftoverSectionStretch = 2;
+constexpr qint64 kEstimatedSizeBytesPerKb = sak::kBytesPerKB;
 
 /// @brief Table item that sorts numerically by Qt::UserRole data
 class NumericSortItem : public QTableWidgetItem {
@@ -171,18 +186,18 @@ ProgramTableUi buildProgramTableUi(AdvancedUninstallPanel* panel,
 
     auto* header = ui.program_table->horizontalHeader();
     header->setSectionResizeMode(cols.check, QHeaderView::Fixed);
-    header->resizeSection(cols.check, 30);
+    header->resizeSection(cols.check, kProgramCheckColumnWidth);
     header->setSectionResizeMode(cols.icon, QHeaderView::Fixed);
-    header->resizeSection(cols.icon, 28);
+    header->resizeSection(cols.icon, kProgramIconColumnWidth);
     header->setSectionResizeMode(cols.name, QHeaderView::Stretch);
     header->setSectionResizeMode(cols.publisher, QHeaderView::Interactive);
-    header->resizeSection(cols.publisher, 160);
+    header->resizeSection(cols.publisher, kProgramPublisherColumnWidth);
     header->setSectionResizeMode(cols.version, QHeaderView::Interactive);
-    header->resizeSection(cols.version, 100);
+    header->resizeSection(cols.version, kProgramVersionColumnWidth);
     header->setSectionResizeMode(cols.size, QHeaderView::Interactive);
-    header->resizeSection(cols.size, 80);
+    header->resizeSection(cols.size, kProgramSizeColumnWidth);
     header->setSectionResizeMode(cols.date, QHeaderView::Interactive);
-    header->resizeSection(cols.date, 100);
+    header->resizeSection(cols.date, kProgramInstallDateColumnWidth);
 
     setAccessible(ui.program_table,
                   QObject::tr("Program list"),
@@ -191,12 +206,12 @@ ProgramTableUi buildProgramTableUi(AdvancedUninstallPanel* panel,
 
     auto* countRow = new QHBoxLayout();
     ui.program_count_label = new QLabel(QObject::tr("0 programs"), panel);
-    ui.program_count_label->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
+    ui.program_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     countRow->addWidget(ui.program_count_label);
     countRow->addStretch();
 
     ui.total_size_label = new QLabel(panel);
-    ui.total_size_label->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
+    ui.total_size_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     countRow->addWidget(ui.total_size_label);
     groupLayout->addLayout(countRow);
 
@@ -223,93 +238,113 @@ struct LeftoverSectionUi {
     QPushButton* delete_selected_button = nullptr;
 };
 
+void addLeftoverHeader(AdvancedUninstallPanel* panel,
+                       QVBoxLayout* sectionLayout,
+                       LeftoverSectionUi* ui) {
+    auto* headerRow = new QHBoxLayout();
+    ui->header_label = new QLabel(QObject::tr("Leftover Items"), panel);
+    QFont headerFont = ui->header_label->font();
+    headerFont.setBold(true);
+    headerFont.setPointSize(ui::kFontSizeStatus);
+    ui->header_label->setFont(headerFont);
+    headerRow->addWidget(ui->header_label);
+    headerRow->addStretch();
+
+    ui->count_label = new QLabel(panel);
+    ui->count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    headerRow->addWidget(ui->count_label);
+    sectionLayout->addLayout(headerRow);
+}
+
+void configureLeftoverTableHeader(QTableWidget* table, const LeftoverTableColumns& cols) {
+    auto* header = table->horizontalHeader();
+    header->setSectionResizeMode(cols.check, QHeaderView::Fixed);
+    header->resizeSection(cols.check, kLeftoverCheckColumnWidth);
+    header->setSectionResizeMode(cols.risk, QHeaderView::Interactive);
+    header->resizeSection(cols.risk, kLeftoverRiskColumnWidth);
+    header->setSectionResizeMode(cols.type, QHeaderView::Interactive);
+    header->resizeSection(cols.type, kLeftoverTypeColumnWidth);
+    header->setSectionResizeMode(cols.path, QHeaderView::Stretch);
+    header->setSectionResizeMode(cols.size, QHeaderView::Interactive);
+    header->resizeSection(cols.size, kLeftoverSizeColumnWidth);
+}
+
+void addLeftoverTable(AdvancedUninstallPanel* panel,
+                      QVBoxLayout* sectionLayout,
+                      const LeftoverTableColumns& cols,
+                      LeftoverSectionUi* ui) {
+    ui->table = new QTableWidget(panel);
+    ui->table->setColumnCount(cols.count);
+    ui->table->setHorizontalHeaderLabels({QString(),
+                                          QObject::tr("Risk"),
+                                          QObject::tr("Type"),
+                                          QObject::tr("Path"),
+                                          QObject::tr("Size")});
+    ui->table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    ui->table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    ui->table->setAlternatingRowColors(true);
+    ui->table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    ui->table->setSortingEnabled(true);
+    ui->table->verticalHeader()->setVisible(false);
+    configureLeftoverTableHeader(ui->table, cols);
+    setAccessible(
+        ui->table,
+        QObject::tr("Leftover items"),
+        QObject::tr(
+            "Files, folders, registry entries, and system objects left behind after uninstall"));
+    sectionLayout->addWidget(ui->table);
+}
+
+void addLeftoverButtons(AdvancedUninstallPanel* panel,
+                        QVBoxLayout* sectionLayout,
+                        LeftoverSectionUi* ui) {
+    auto* buttonRow = new QHBoxLayout();
+    ui->select_all_button = new QPushButton(QObject::tr("Select All"), panel);
+    ui->select_all_button->setToolTip(
+        QObject::tr("Select all leftover items regardless of risk level"));
+    setAccessible(ui->select_all_button, QObject::tr("Select all items"));
+    buttonRow->addWidget(ui->select_all_button);
+
+    ui->select_safe_button = new QPushButton(QObject::tr("Select Safe"), panel);
+    ui->select_safe_button->setStyleSheet(ui::kSuccessButtonStyle);
+    ui->select_safe_button->setToolTip(
+        QObject::tr("Select all items classified as Safe for removal"));
+    setAccessible(ui->select_safe_button, QObject::tr("Select safe items"));
+    buttonRow->addWidget(ui->select_safe_button);
+
+    ui->deselect_all_button = new QPushButton(QObject::tr("Deselect All"), panel);
+    ui->deselect_all_button->setToolTip(QObject::tr("Deselect all leftover items"));
+    setAccessible(ui->deselect_all_button, QObject::tr("Deselect all"));
+    buttonRow->addWidget(ui->deselect_all_button);
+
+    buttonRow->addStretch();
+
+    ui->delete_selected_button = new QPushButton(QObject::tr("Delete Selected"), panel);
+    ui->delete_selected_button->setStyleSheet(ui::kDangerButtonStyle);
+    ui->delete_selected_button->setToolTip(
+        QObject::tr("Permanently delete all checked leftover items"));
+    ui->delete_selected_button->setEnabled(false);
+    setAccessible(ui->delete_selected_button,
+                  QObject::tr("Delete selected leftovers"),
+                  QObject::tr("Permanently remove checked files, folders, and registry entries"));
+    buttonRow->addWidget(ui->delete_selected_button);
+
+    sectionLayout->addLayout(buttonRow);
+}
+
 LeftoverSectionUi buildLeftoverSectionUi(AdvancedUninstallPanel* panel,
                                          const LeftoverTableColumns& cols) {
     LeftoverSectionUi ui;
 
     ui.section = new QWidget(panel);
     auto* sectionLayout = new QVBoxLayout(ui.section);
-    sectionLayout->setContentsMargins(0, 0, 0, 0);
+    sectionLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     sectionLayout->setSpacing(ui::kSpacingSmall);
 
-    auto* headerRow = new QHBoxLayout();
-    ui.header_label = new QLabel(QObject::tr("Leftover Items"), panel);
-    QFont headerFont = ui.header_label->font();
-    headerFont.setBold(true);
-    headerFont.setPointSize(ui::kFontSizeStatus);
-    ui.header_label->setFont(headerFont);
-    headerRow->addWidget(ui.header_label);
-    headerRow->addStretch();
-
-    ui.count_label = new QLabel(panel);
-    ui.count_label->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
-    headerRow->addWidget(ui.count_label);
-    sectionLayout->addLayout(headerRow);
-
-    ui.table = new QTableWidget(panel);
-    ui.table->setColumnCount(cols.count);
-    ui.table->setHorizontalHeaderLabels({QString(),  // Check
-                                         QObject::tr("Risk"),
-                                         QObject::tr("Type"),
-                                         QObject::tr("Path"),
-                                         QObject::tr("Size")});
-    ui.table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    ui.table->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    ui.table->setAlternatingRowColors(true);
-    ui.table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    ui.table->setSortingEnabled(true);
-    ui.table->verticalHeader()->setVisible(false);
-
-    auto* header = ui.table->horizontalHeader();
-    header->setSectionResizeMode(cols.check, QHeaderView::Fixed);
-    header->resizeSection(cols.check, 30);
-    header->setSectionResizeMode(cols.risk, QHeaderView::Interactive);
-    header->resizeSection(cols.risk, 70);
-    header->setSectionResizeMode(cols.type, QHeaderView::Interactive);
-    header->resizeSection(cols.type, 100);
-    header->setSectionResizeMode(cols.path, QHeaderView::Stretch);
-    header->setSectionResizeMode(cols.size, QHeaderView::Interactive);
-    header->resizeSection(cols.size, 80);
-
-    setAccessible(
-        ui.table,
-        QObject::tr("Leftover items"),
-        QObject::tr(
-            "Files, folders, registry entries, and system objects left behind after uninstall"));
-    sectionLayout->addWidget(ui.table);
-
-    auto* buttonRow = new QHBoxLayout();
-    ui.select_all_button = new QPushButton(QObject::tr("Select All"), panel);
-    ui.select_all_button->setToolTip(
-        QObject::tr("Select all leftover items regardless of risk level"));
-    setAccessible(ui.select_all_button, QObject::tr("Select all items"));
-    buttonRow->addWidget(ui.select_all_button);
-
-    ui.select_safe_button = new QPushButton(QObject::tr("Select Safe"), panel);
-    ui.select_safe_button->setStyleSheet(ui::kSuccessButtonStyle);
-    ui.select_safe_button->setToolTip(
-        QObject::tr("Select all items classified as Safe for removal"));
-    setAccessible(ui.select_safe_button, QObject::tr("Select safe items"));
-    buttonRow->addWidget(ui.select_safe_button);
-
-    ui.deselect_all_button = new QPushButton(QObject::tr("Deselect All"), panel);
-    ui.deselect_all_button->setToolTip(QObject::tr("Deselect all leftover items"));
-    setAccessible(ui.deselect_all_button, QObject::tr("Deselect all"));
-    buttonRow->addWidget(ui.deselect_all_button);
-
-    buttonRow->addStretch();
-
-    ui.delete_selected_button = new QPushButton(QObject::tr("Delete Selected"), panel);
-    ui.delete_selected_button->setStyleSheet(ui::kDangerButtonStyle);
-    ui.delete_selected_button->setToolTip(
-        QObject::tr("Permanently delete all checked leftover items"));
-    ui.delete_selected_button->setEnabled(false);
-    setAccessible(ui.delete_selected_button,
-                  QObject::tr("Delete selected leftovers"),
-                  QObject::tr("Permanently remove checked files, folders, and registry entries"));
-    buttonRow->addWidget(ui.delete_selected_button);
-
-    sectionLayout->addLayout(buttonRow);
+    addLeftoverHeader(panel, sectionLayout, &ui);
+    addLeftoverTable(panel, sectionLayout, cols, &ui);
+    addLeftoverButtons(panel, sectionLayout, &ui);
     return ui;
 }
 }  // namespace
@@ -319,8 +354,19 @@ LeftoverSectionUi buildLeftoverSectionUi(AdvancedUninstallPanel* panel,
 AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<AdvancedUninstallController>(this)) {
     setupUi();
+    connectEnumerationSignals();
+    connectUninstallSignals();
+    connectCleanupSignals();
+    connectStatusSignals();
 
-    // Wire controller signals
+    logMessage("Advanced Uninstall panel initialized.");
+}
+
+AdvancedUninstallPanel::~AdvancedUninstallPanel() {
+    logMessage("Advanced Uninstall panel destroyed.");
+}
+
+void AdvancedUninstallPanel::connectEnumerationSignals() {
     connect(m_controller.get(),
             &AdvancedUninstallController::enumerationStarted,
             this,
@@ -337,7 +383,9 @@ AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
             &AdvancedUninstallController::enumerationFailed,
             this,
             &AdvancedUninstallPanel::onEnumerationFailed);
+}
 
+void AdvancedUninstallPanel::connectUninstallSignals() {
     connect(m_controller.get(),
             &AdvancedUninstallController::uninstallStarted,
             this,
@@ -362,7 +410,9 @@ AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
             &AdvancedUninstallController::uninstallCancelled,
             this,
             &AdvancedUninstallPanel::onUninstallCancelled);
+}
 
+void AdvancedUninstallPanel::connectCleanupSignals() {
     connect(m_controller.get(),
             &AdvancedUninstallController::cleanupStarted,
             this,
@@ -379,7 +429,9 @@ AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
             &AdvancedUninstallController::rebootPendingItems,
             this,
             &AdvancedUninstallPanel::onRebootPendingItems);
+}
 
+void AdvancedUninstallPanel::connectStatusSignals() {
     connect(m_controller.get(),
             &AdvancedUninstallController::statusMessage,
             this,
@@ -396,20 +448,15 @@ AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
                 logMessage(
                     QString("Batch complete: %1 succeeded, %2 failed").arg(succeeded).arg(failed));
             });
-
-    logMessage("Advanced Uninstall panel initialized.");
-}
-
-AdvancedUninstallPanel::~AdvancedUninstallPanel() {
-    logMessage("Advanced Uninstall panel destroyed.");
 }
 
 // -- UI Setup ----------------------------------------------------------------
 
 void AdvancedUninstallPanel::setupUi() {
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->setSpacing(0);
+    rootLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    rootLayout->setSpacing(sak::ui::kSpacingNone);
 
     auto* contentWidget = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(contentWidget);
@@ -489,7 +536,7 @@ void AdvancedUninstallPanel::createProgramTable(QVBoxLayout* layout) {
         m_total_size_label = ui.total_size_label;
     }
 
-    layout->addWidget(group, 3);  // Give program table more stretch
+    layout->addWidget(group, kProgramTableStretch);
 
     // Connections
     connect(m_program_table,
@@ -529,7 +576,7 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
         m_delete_selected_button = ui.delete_selected_button;
     }
 
-    layout->addWidget(m_leftover_section, 2);
+    layout->addWidget(m_leftover_section, kLeftoverSectionStretch);
 
     // Initially hidden
     m_leftover_section->setVisible(false);
@@ -555,7 +602,8 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
 void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(0, 4, 0, 0);
+    statusRow->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     // Log toggle on the left
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
@@ -588,7 +636,7 @@ void AdvancedUninstallPanel::onRefreshClicked() {
 void AdvancedUninstallPanel::onUninstallClicked() {
     auto program = selectedProgram();
     if (program.displayName.isEmpty()) {
-        Q_EMIT statusMessage(tr("No program selected."), 3000);
+        Q_EMIT statusMessage(tr("No program selected."), sak::kTimerStatusMessageMs);
         return;
     }
     showUninstallConfirmation(program);
@@ -597,7 +645,7 @@ void AdvancedUninstallPanel::onUninstallClicked() {
 void AdvancedUninstallPanel::onForcedUninstallClicked() {
     auto program = selectedProgram();
     if (program.displayName.isEmpty()) {
-        Q_EMIT statusMessage(tr("No program selected."), 3000);
+        Q_EMIT statusMessage(tr("No program selected."), sak::kTimerStatusMessageMs);
         return;
     }
     showForcedUninstallDialog(program);
@@ -607,7 +655,8 @@ void AdvancedUninstallPanel::onBatchUninstallClicked() {
     // Collect checked programs
     auto programs = selectedPrograms();
     if (programs.isEmpty()) {
-        Q_EMIT statusMessage(tr("No programs checked for batch uninstall."), 3000);
+        Q_EMIT statusMessage(tr("No programs checked for batch uninstall."),
+                             sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -650,30 +699,30 @@ void AdvancedUninstallPanel::onEnumerationFinished(QVector<ProgramInfo> programs
     applyFilter();
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
-    Q_EMIT statusMessage(tr("Ready"), 3000);
+    Q_EMIT statusMessage(tr("Ready"), sak::kTimerStatusMessageMs);
     logMessage(QString("Found %1 installed programs.").arg(programs.size()));
 }
 
 void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
-    Q_EMIT statusMessage(tr("Enumeration failed"), 5000);
+    Q_EMIT statusMessage(tr("Enumeration failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Enumeration failed: %1").arg(error));
     sak::logError("Enumeration failed: {}", error.toStdString());
-    QMessageBox::warning(this,
-                         tr("Enumeration Error"),
-                         tr("Failed to enumerate installed programs:\n%1").arg(error));
+    sak::showWarningLogged(this,
+                           tr("Enumeration Error"),
+                           tr("Failed to enumerate installed programs:\n%1").arg(error));
 }
 
 void AdvancedUninstallPanel::onUninstallStarted(const QString& programName) {
     setOperationRunning(true);
     Q_EMIT statusMessage(tr("Uninstalling: %1").arg(programName), 0);
-    Q_EMIT progressUpdate(0, 100);
+    Q_EMIT progressUpdate(0, kPercentMax);
     logMessage(QString("Uninstall started: %1").arg(programName));
 }
 
 void AdvancedUninstallPanel::onUninstallProgress(int percent, const QString& phase) {
-    Q_EMIT progressUpdate(percent, 100);
+    Q_EMIT progressUpdate(percent, kPercentMax);
     Q_EMIT statusMessage(phase, 0);
 }
 
@@ -714,7 +763,8 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
         break;
     }
 
-    Q_EMIT statusMessage(tr("Uninstall %1: %2").arg(resultStr, report.programName), 5000);
+    Q_EMIT statusMessage(tr("Uninstall %1: %2").arg(resultStr, report.programName),
+                         sak::kTimerStatusDefaultMs);
 
     logMessage(QString("Uninstall complete: %1 -- %2 (exit code: %3)")
                    .arg(report.programName, resultStr)
@@ -735,18 +785,18 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
 void AdvancedUninstallPanel::onUninstallFailed(const QString& error) {
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
-    Q_EMIT statusMessage(tr("Uninstall failed"), 5000);
+    Q_EMIT statusMessage(tr("Uninstall failed"), sak::kTimerStatusDefaultMs);
     logMessage(QString("ERROR: Uninstall failed: %1").arg(error));
     sak::logError("Uninstall failed: {}", error.toStdString());
-    QMessageBox::warning(this,
-                         tr("Uninstall Error"),
-                         tr("The uninstall operation failed:\n%1").arg(error));
+    sak::showWarningLogged(this,
+                           tr("Uninstall Error"),
+                           tr("The uninstall operation failed:\n%1").arg(error));
 }
 
 void AdvancedUninstallPanel::onUninstallCancelled() {
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
-    Q_EMIT statusMessage(tr("Uninstall cancelled"), 5000);
+    Q_EMIT statusMessage(tr("Uninstall cancelled"), sak::kTimerStatusDefaultMs);
     logMessage("Uninstall operation cancelled by user.");
 }
 
@@ -780,7 +830,7 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
     if (bytesRecovered > 0) {
         msg += tr(" (%1 recovered)").arg(formatSize(bytesRecovered));
     }
-    Q_EMIT statusMessage(msg, 5000);
+    Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     logMessage(msg);
 
     // Clear leftover section after cleanup
@@ -797,13 +847,14 @@ void AdvancedUninstallPanel::onRebootPendingItems(QStringList paths) {
         logMessage(QString("  Reboot removal: %1").arg(path));
     }
 
-    QMessageBox::information(this,
-                             tr("Reboot Required"),
-                             tr("<b>%1 locked item(s)</b> could not be removed immediately.<br><br>"
-                                "They have been scheduled for automatic removal on the next "
-                                "Windows restart. This is independent of this application -- "
-                                "Windows will handle the deletion at boot time.")
-                                 .arg(paths.size()));
+    sak::showInformationLogged(
+        this,
+        tr("Reboot Required"),
+        tr("<b>%1 locked item(s)</b> could not be removed immediately.<br><br>"
+           "They have been scheduled for automatic removal on the next "
+           "Windows restart. This is independent of this application -- "
+           "Windows will handle the deletion at boot time.")
+            .arg(paths.size()));
 }
 
 // -- Program Table Slots -----------------------------------------------------
@@ -999,7 +1050,7 @@ void AdvancedUninstallPanel::onDeleteSelectedLeftovers() {
                    .arg(risky);
     }
 
-    auto result = QMessageBox::warning(
+    auto result = sak::showWarningLogged(
         this, tr("Confirm Deletion"), msg, QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
 
     if (result == QMessageBox::Yes) {
@@ -1030,7 +1081,8 @@ void AdvancedUninstallPanel::contextAddToQueue() {
                                  m_controller->defaultScanLevel(),
                                  m_controller->autoCleanSafe());
         logMessage(QString("Added to batch queue: %1").arg(program.displayName));
-        Q_EMIT statusMessage(tr("Added %1 to batch queue.").arg(program.displayName), 3000);
+        Q_EMIT statusMessage(tr("Added %1 to batch queue.").arg(program.displayName),
+                             sak::kTimerStatusMessageMs);
     }
 }
 
@@ -1045,7 +1097,7 @@ void AdvancedUninstallPanel::contextCopyProgramName() {
     auto program = selectedProgram();
     if (!program.displayName.isEmpty()) {
         QApplication::clipboard()->setText(program.displayName);
-        Q_EMIT statusMessage(tr("Program name copied to clipboard."), 2000);
+        Q_EMIT statusMessage(tr("Program name copied to clipboard."), sak::kTimerStatusBriefMs);
     }
 }
 
@@ -1053,7 +1105,8 @@ void AdvancedUninstallPanel::contextCopyUninstallCommand() {
     auto program = selectedProgram();
     if (!program.uninstallString.isEmpty()) {
         QApplication::clipboard()->setText(program.uninstallString);
-        Q_EMIT statusMessage(tr("Uninstall command copied to clipboard."), 2000);
+        Q_EMIT statusMessage(tr("Uninstall command copied to clipboard."),
+                             sak::kTimerStatusBriefMs);
     }
 }
 
@@ -1071,16 +1124,16 @@ void AdvancedUninstallPanel::contextRemoveRegistryEntry() {
     }
 
     auto result =
-        QMessageBox::warning(this,
-                             tr("Remove Registry Entry"),
-                             tr("Remove the registry entry for '%1'?\n\n"
-                                "This will only remove the program's registration in Windows. "
-                                "Program files will NOT be deleted.\n\n"
-                                "This is useful for orphaned entries where the program "
-                                "is already uninstalled.")
-                                 .arg(program.displayName),
-                             QMessageBox::Yes | QMessageBox::No,
-                             QMessageBox::No);
+        sak::showWarningLogged(this,
+                               tr("Remove Registry Entry"),
+                               tr("Remove the registry entry for '%1'?\n\n"
+                                  "This will only remove the program's registration in Windows. "
+                                  "Program files will NOT be deleted.\n\n"
+                                  "This is useful for orphaned entries where the program "
+                                  "is already uninstalled.")
+                                   .arg(program.displayName),
+                               QMessageBox::Yes | QMessageBox::No,
+                               QMessageBox::No);
 
     if (result == QMessageBox::Yes) {
         m_controller->removeRegistryEntry(program);
@@ -1139,9 +1192,10 @@ void AdvancedUninstallPanel::populateProgramTable(const QVector<ProgramInfo>& pr
         m_program_table->setItem(row, kColVersion, verItem);
 
         // Size (uses NumericSortItem for correct numeric sorting)
-        auto* sizeItem = new NumericSortItem(formatSize(prog.estimatedSizeKB * 1024));
+        auto* sizeItem =
+            new NumericSortItem(formatSize(prog.estimatedSizeKB * kEstimatedSizeBytesPerKb));
         sizeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        sizeItem->setData(Qt::UserRole, prog.estimatedSizeKB * 1024);
+        sizeItem->setData(Qt::UserRole, prog.estimatedSizeKB * kEstimatedSizeBytesPerKb);
         sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_program_table->setItem(row, kColSize, sizeItem);
 
@@ -1416,7 +1470,7 @@ void AdvancedUninstallPanel::updateStatusCounts() {
 
     qint64 totalSize = 0;
     for (const auto& prog : m_filteredPrograms) {
-        totalSize += prog.estimatedSizeKB * 1024;
+        totalSize += prog.estimatedSizeKB * kEstimatedSizeBytesPerKb;
     }
 
     if (totalSize > 0) {

@@ -7,6 +7,7 @@
 #include "sak/email_search_worker.h"
 
 #include "sak/email_constants.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
@@ -24,6 +25,8 @@ EmailSearchWorker::EmailSearchWorker(QObject* parent) : QObject(parent) {}
 // ============================================================================
 
 namespace {
+constexpr int kSearchProgressInterval = 100;
+constexpr int kSnippetContextDivisor = 2;
 
 struct FolderEntry {
     sak::PstFolder folder;
@@ -78,7 +81,7 @@ void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria
         searchSingleFolder(parser, criteria, entry.path, entry.folder, state);
     }
 
-    double elapsed = timer.elapsed() / 1000.0;
+    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(state.total_hits, elapsed);
 }
 
@@ -121,7 +124,7 @@ void EmailSearchWorker::searchSingleFolder(PstParser* parser,
             ++state.total_hits;
         }
 
-        if (state.items_searched % 100 == 0) {
+        if (state.items_searched % kSearchProgressInterval == 0) {
             Q_EMIT progressUpdated(state.items_searched, state.total_items);
         }
     }
@@ -181,12 +184,12 @@ void EmailSearchWorker::searchMbox(MboxParser* parser, const sak::EmailSearchCri
             ++total_hits;
         }
 
-        if (msg_idx % 100 == 0) {
+        if (msg_idx % kSearchProgressInterval == 0) {
             Q_EMIT progressUpdated(msg_idx, total_items);
         }
     }
 
-    double elapsed = timer.elapsed() / 1000.0;
+    double elapsed = timer.elapsed() / sak::kMillisecondsPerSecondF;
     Q_EMIT searchComplete(total_hits, elapsed);
 }
 
@@ -224,7 +227,7 @@ QString EmailSearchWorker::extractContextSnippet(const QString& text,
         return text.left(context_chars);
     }
 
-    int start = std::max(0, pos - context_chars / 2);
+    int start = std::max(0, pos - context_chars / kSnippetContextDivisor);
     int length = std::min(context_chars, static_cast<int>(text.size()) - start);
 
     QString snippet = text.mid(start, length);

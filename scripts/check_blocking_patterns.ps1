@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 function Invoke-Rg([string[]]$RgArgs) {
     $rg = Get-Command rg -ErrorAction SilentlyContinue
     if (-not $rg) {
-        return Invoke-SelectStringFallback -RgArgs $RgArgs
+        throw "Required tool missing: rg"
     }
 
     $output = & rg @RgArgs 2>$null
@@ -16,41 +16,6 @@ function Invoke-Rg([string[]]$RgArgs) {
         throw "rg failed with exit code ${code}: rg $($RgArgs -join ' ')"
     }
     return @($output)
-}
-
-function Invoke-SelectStringFallback([string[]]$RgArgs) {
-    $search_args = @($RgArgs | Where-Object { $_ -ne "--line-number" -and $_ -ne "--no-heading" })
-    if ($search_args.Count -lt 2) {
-        throw "Invalid fallback search arguments: $($RgArgs -join ' ')"
-    }
-
-    $pattern = $search_args[0]
-    $roots = @($search_args | Select-Object -Skip 1)
-    $files = foreach ($searchRoot in $roots) {
-        if (Test-Path -LiteralPath $searchRoot) {
-            Get-ChildItem -LiteralPath $searchRoot -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object {
-                    $_.Extension -in @(".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx")
-                }
-        }
-    }
-
-    if (-not $files) {
-        return @()
-    }
-
-    $rootPath = (Get-Location).Path.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
-    $matches = Select-String -Path $files.FullName -Pattern $pattern -AllMatches -ErrorAction SilentlyContinue
-    return @($matches | ForEach-Object {
-            $fullPath = $_.Path
-            $relative = $fullPath
-            if ($fullPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $relative = $fullPath.Substring($rootPath.Length).TrimStart(
-                    [System.IO.Path]::DirectorySeparatorChar,
-                    [System.IO.Path]::AltDirectorySeparatorChar)
-            }
-            "{0}:{1}:{2}" -f ($relative -replace '\\', '/'), $_.LineNumber, $_.Line.Trim()
-        })
 }
 
 $repo = (Resolve-Path -LiteralPath $Root).Path

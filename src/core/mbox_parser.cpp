@@ -8,6 +8,7 @@
 
 #include "sak/email_constants.h"
 #include "sak/error_codes.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QRegularExpression>
@@ -17,6 +18,21 @@
 #include <algorithm>
 
 using sak::error_code;
+
+namespace {
+
+constexpr qint64 kFromLineProbeBytes = 1024;
+constexpr int kIndexProgressStepPercent = 5;
+constexpr int kCrLfHeaderBoundaryBytes = 4;
+constexpr int kLfHeaderBoundaryBytes = 2;
+constexpr int kQuotedPrintableHexDigitCount = 2;
+constexpr int kQuotedPrintableFirstHexOffset = 1;
+constexpr int kQuotedPrintableSecondHexOffset = 2;
+constexpr int kQuotedPrintableNibbleShift = 4;
+constexpr int kFromLineMinimumLength = 6;
+constexpr int kFromLineSenderOffset = 5;
+
+}  // namespace
 
 // ============================================================================
 // Constructor / Destructor
@@ -45,7 +61,7 @@ void MboxParser::open(const QString& file_path) {
     }
 
     // Quick validation — first line should start with "From "
-    QByteArray first_line = m_file.readLine(1024);
+    QByteArray first_line = m_file.readLine(kFromLineProbeBytes);
     if (!isFromLine(first_line)) {
         const auto message =
             QStringLiteral("Not a valid MBOX file (missing 'From ' header): %1").arg(file_path);
@@ -96,7 +112,7 @@ void MboxParser::indexMessages() {
     }
 
     m_is_indexed = true;
-    Q_EMIT progressUpdated(100, QStringLiteral("Indexing complete"));
+    Q_EMIT progressUpdated(sak::kPercentMax, QStringLiteral("Indexing complete"));
     Q_EMIT indexingComplete(m_message_offsets.size());
 }
 
@@ -282,8 +298,9 @@ void MboxParser::buildMessageIndex() {
 
         bytes_read = m_file.pos();
         if (file_size > 0) {
-            int progress = static_cast<int>((bytes_read * 100) / file_size);
-            if (progress > last_progress && (progress - last_progress) >= 5) {
+            int progress = static_cast<int>((bytes_read * sak::kPercentMax) / file_size);
+            if (progress > last_progress &&
+                (progress - last_progress) >= kIndexProgressStepPercent) {
                 last_progress = progress;
                 Q_EMIT progressUpdated(
                     progress,
@@ -324,7 +341,7 @@ std::expected<QByteArray, error_code> MboxParser::readRawMessage(int message_ind
     }
 
     // Skip the "From " line
-    QByteArray from_line = m_file.readLine(1024);
+    QByteArray from_line = m_file.readLine(kFromLineProbeBytes);
     Q_UNUSED(from_line);
 
     qint64 remaining = end_offset - m_file.pos();
@@ -410,10 +427,10 @@ namespace {
 /// Find header/body boundary (\r\n\r\n or \n\n)
 std::pair<int, int> findBodyBoundary(const QByteArray& data) {
     int header_end = data.indexOf("\r\n\r\n");
-    int body_start = header_end + 4;
+    int body_start = header_end + kCrLfHeaderBoundaryBytes;
     if (header_end < 0) {
         header_end = data.indexOf("\n\n");
-        body_start = header_end + 2;
+        body_start = header_end + kLfHeaderBoundaryBytes;
     }
     return {header_end, body_start};
 }
@@ -463,26 +480,27 @@ QByteArray decodeQuotedPrintable(const QByteArray& data) {
             result.append(current_char);
             continue;
         }
-        if (idx + 2 >= data.size()) {
+        if (idx + kQuotedPrintableHexDigitCount >= data.size()) {
             result.append(current_char);
             continue;
         }
-        const char hex1 = data[idx + 1];
-        const char hex2 = data[idx + 2];
+        const char hex1 = data[idx + kQuotedPrintableFirstHexOffset];
+        const char hex2 = data[idx + kQuotedPrintableSecondHexOffset];
 
         // Soft line break
         if (hex1 == '\r' || hex1 == '\n') {
-            idx += (hex1 == '\r' && hex2 == '\n') ? 2 : 1;
+            idx += (hex1 == '\r' && hex2 == '\n') ? kQuotedPrintableHexDigitCount
+                                                  : kQuotedPrintableFirstHexOffset;
             continue;
         }
         // Hex-encoded byte
         bool ok_first = false;
         bool ok_second = false;
-        int val1 = QByteArray(1, hex1).toInt(&ok_first, 16);
-        int val2 = QByteArray(1, hex2).toInt(&ok_second, 16);
+        int val1 = QByteArray(1, hex1).toInt(&ok_first, sak::kHexBase);
+        int val2 = QByteArray(1, hex2).toInt(&ok_second, sak::kHexBase);
         if (ok_first && ok_second) {
-            result.append(static_cast<char>((val1 << 4) | val2));
-            idx += 2;
+            result.append(static_cast<char>((val1 << kQuotedPrintableNibbleShift) | val2));
+            idx += kQuotedPrintableHexDigitCount;
             continue;
         }
         result.append(current_char);
@@ -758,8 +776,8 @@ QDateTime MboxParser::parseEmailDate(const QString& date_str) {
 bool MboxParser::isFromLine(const QByteArray& line) {
     // RFC 4155: "From " followed by email/sender and date
     // Practical check: starts with "From " and is followed by non-whitespace
-    if (line.size() < 6) {
+    if (line.size() < kFromLineMinimumLength) {
         return false;
     }
-    return line.startsWith("From ") && line[5] != ' ';
+    return line.startsWith("From ") && line[kFromLineSenderOffset] != ' ';
 }

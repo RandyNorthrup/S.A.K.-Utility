@@ -4,7 +4,7 @@
   "title": "Printer Troubleshooting",
   "role": "PC Technician",
   "category": "Devices",
-  "description": "Diagnose Windows printer issues with spooler, driver, queue, and connectivity checks.",
+  "description": "Diagnose Windows printer issues using spooler, queue, driver, port, and connectivity evidence before approved corrective actions.",
   "starter_prompt": "Troubleshoot this printer problem. Start with read-only checks and ask before clearing queues or restarting services.",
   "required_inputs": [
     {"id": "printer_name", "label": "Printer name or symptom", "type": "string", "required": true}

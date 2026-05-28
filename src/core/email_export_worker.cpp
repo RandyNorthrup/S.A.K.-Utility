@@ -7,6 +7,7 @@
 #include "sak/email_export_worker.h"
 
 #include "sak/email_constants.h"
+#include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
 
@@ -24,11 +25,17 @@ namespace {
 constexpr int kProgressInterval = 10;
 constexpr int kMaxFilenameLength = 200;
 constexpr int kCsvBodyPreviewLength = 500;
+constexpr int kRfc5322HeaderLineLimit = 78;
+constexpr int kRfc5322HeaderContinuationLimit = 76;
+constexpr int kImportanceHigh = 2;
+constexpr int kTaskStatusComplete = 2;
+constexpr ushort kMinimumPrintableCodePoint = 32;
+constexpr int kFirstConflictAttempt = 2;
 
 /// Fold a long header line per RFC 5322 §2.2.3 (max 78 chars)
 QString foldHeaderLine(const QString& name, const QString& value) {
     QString line = name + QStringLiteral(": ") + value;
-    if (line.length() <= 78) {
+    if (line.length() <= kRfc5322HeaderLineLimit) {
         return line;
     }
     // Fold at word boundaries
@@ -36,7 +43,7 @@ QString foldHeaderLine(const QString& name, const QString& value) {
     int pos = 0;
     while (pos < line.length()) {
         int remaining = line.length() - pos;
-        int chunk = (pos == 0) ? 78 : 76;  // Subsequent lines lose 2 for CRLF+space
+        const int chunk = (pos == 0) ? kRfc5322HeaderLineLimit : kRfc5322HeaderContinuationLimit;
         if (remaining <= chunk) {
             result += line.mid(pos);
             break;
@@ -137,7 +144,7 @@ void addEmailCsvFields(CsvFieldMap& map) {
         if (it.importance == 0) {
             return QStringLiteral("Low");
         }
-        if (it.importance == 2) {
+        if (it.importance == kImportanceHigh) {
             return QStringLiteral("High");
         }
         return QStringLiteral("Normal");
@@ -187,13 +194,13 @@ void addCalendarTaskCsvFields(CsvFieldMap& map) {
         if (it.task_status == 1) {
             return QStringLiteral("In Progress");
         }
-        if (it.task_status == 2) {
+        if (it.task_status == kTaskStatusComplete) {
             return QStringLiteral("Complete");
         }
         return QStringLiteral("Unknown");
     });
     map.insert(QStringLiteral("% Complete"), [](const auto& it) {
-        return QString::number(it.task_percent_complete * 100.0, 'f', 0);
+        return QString::number(it.task_percent_complete * sak::kPercentMaxF, 'f', 0);
     });
 }
 
@@ -445,17 +452,11 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
 
 void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExportConfig& config) {
     if (!parser) {
-        sak::EmailExportResult result;
-        result.errors.append(QStringLiteral("No MBOX file open for export"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("No MBOX file open for export"));
         return;
     }
     if (config.output_path.isEmpty()) {
-        sak::EmailExportResult result;
-        result.errors.append(QStringLiteral("Export output path is empty"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("Export output path is empty"));
         return;
     }
 
@@ -468,9 +469,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     QDir output_dir(config.output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
-        result.errors.append(QStringLiteral("Failed to create output directory"));
-        result.finished = QDateTime::currentDateTime();
-        Q_EMIT exportComplete(result);
+        emitEarlyFailure(QStringLiteral("Failed to create output directory"));
         return;
     }
 
@@ -483,30 +482,7 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
             break;
         }
 
-        auto detail = parser->readMessageDetail(indices[idx]);
-        if (!detail.has_value()) {
-            result.items_failed++;
-            continue;
-        }
-
-        const auto& msg = detail.value();
-        QString safe_sub = sanitizeFilename(msg.subject, kMaxFilenameLength);
-        if (safe_sub.isEmpty()) {
-            safe_sub = QStringLiteral("message_%1").arg(indices[idx]);
-        }
-        QString filename = safe_sub + QStringLiteral(".eml");
-        filename = resolveFilenameConflict(config.output_path, filename);
-
-        QFile file(config.output_path + QLatin1Char('/') + filename);
-        if (file.open(QIODevice::WriteOnly)) {
-            QByteArray content = buildMboxEmlContent(msg);
-            file.write(content);
-            file.close();
-            result.items_exported++;
-            result.total_bytes += content.size();
-        } else {
-            result.items_failed++;
-        }
+        exportSingleMboxMessage(parser, indices[idx], config, result);
 
         if ((idx + 1) % kProgressInterval == 0) {
             Q_EMIT exportProgress(idx + 1, indices.size(), result.total_bytes);
@@ -515,6 +491,37 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
+}
+
+void EmailExportWorker::exportSingleMboxMessage(MboxParser* parser,
+                                                int message_index,
+                                                const sak::EmailExportConfig& config,
+                                                sak::EmailExportResult& result) {
+    auto detail = parser->readMessageDetail(message_index);
+    if (!detail.has_value()) {
+        result.items_failed++;
+        return;
+    }
+
+    const auto& msg = detail.value();
+    QString safe_sub = sanitizeFilename(msg.subject, kMaxFilenameLength);
+    if (safe_sub.isEmpty()) {
+        safe_sub = QStringLiteral("message_%1").arg(message_index);
+    }
+
+    QString filename = resolveFilenameConflict(config.output_path,
+                                               safe_sub + QStringLiteral(".eml"));
+    QFile file(config.output_path + QLatin1Char('/') + filename);
+    if (!file.open(QIODevice::WriteOnly)) {
+        result.items_failed++;
+        return;
+    }
+
+    QByteArray content = buildMboxEmlContent(msg);
+    file.write(content);
+    file.close();
+    result.items_exported++;
+    result.total_bytes += content.size();
 }
 
 QByteArray EmailExportWorker::buildMboxEmlContent(const sak::MboxMessageDetail& msg) {
@@ -842,7 +849,7 @@ QString EmailExportWorker::sanitizeFilename(const QString& name, int max_length)
     QString result;
     result.reserve(safe.length());
     for (QChar character : safe) {
-        if (character.unicode() >= 32) {
+        if (character.unicode() >= kMinimumPrintableCodePoint) {
             result += character;
         }
     }
@@ -873,7 +880,7 @@ QString EmailExportWorker::resolveFilenameConflict(const QString& dir, const QSt
     QString ext = fi.suffix();
 
     constexpr int kMaxConflictAttempts = 9999;
-    for (int attempt = 2; attempt <= kMaxConflictAttempts; ++attempt) {
+    for (int attempt = kFirstConflictAttempt; attempt <= kMaxConflictAttempts; ++attempt) {
         QString candidate = base + QStringLiteral("_%1").arg(attempt);
         if (!ext.isEmpty()) {
             candidate += QLatin1Char('.') + ext;

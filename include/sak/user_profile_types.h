@@ -13,6 +13,9 @@
 
 namespace sak {
 
+inline constexpr qint64 kDefaultMaxSingleFileSizeBytes = 2 * sak::kBytesPerGB;
+inline constexpr qint64 kDefaultMaxFolderSizeBytes = 50 * sak::kBytesPerGB;
+
 /**
  * @brief Types of folders that can be backed up from user profiles
  */
@@ -128,11 +131,10 @@ struct SmartFilter {
     QStringList dangerous_files;  // NTUSER.DAT, etc.
 
     SmartFilter()
-        : enable_file_size_limit(false)                     // Optional by default
-        , enable_folder_size_limit(false)                   // Optional by default
-        , max_single_file_size_bytes(2 * sak::kBytesPerGB)  // 2 GB
-        , max_folder_size_bytes(50 * sak::kBytesPerGB)      // 50 GB
-    {
+        : enable_file_size_limit(false)    // Optional by default
+        , enable_folder_size_limit(false)  // Optional by default
+        , max_single_file_size_bytes(kDefaultMaxSingleFileSizeBytes)
+        , max_folder_size_bytes(kDefaultMaxFolderSizeBytes) {
         initializeDefaults();
     }
 

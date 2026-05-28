@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QByteArray>
 #include <QList>
 #include <QPair>
@@ -12,6 +14,8 @@
 #include <functional>
 
 namespace sak {
+
+inline constexpr int kDefaultNetworkTransferTimeoutMs = kTimeoutProcessLongMs;
 
 enum class NetworkTransferMethod {
     Get,
@@ -24,7 +28,7 @@ struct NetworkTransferRequest {
     NetworkTransferMethod method{NetworkTransferMethod::Get};
     QByteArray body;
     QList<QPair<QByteArray, QByteArray>> raw_headers;
-    int timeout_ms{30'000};
+    int timeout_ms{kDefaultNetworkTransferTimeoutMs};
 };
 
 struct NetworkTransferResult {

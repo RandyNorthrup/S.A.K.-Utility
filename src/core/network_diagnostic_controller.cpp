@@ -12,6 +12,7 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/ethernet_config_manager.h"
 #include "sak/firewall_rule_auditor.h"
+#include "sak/layout_constants.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_share_browser.h"
@@ -29,6 +30,20 @@
 #include <utility>
 
 namespace sak {
+
+namespace {
+constexpr int kNetworkMetricPrecision = 2;
+constexpr int kLanReportIntervalMs = sak::kTimerProgressPollMs;
+constexpr double kNetworkMillisecondsPerSecond = 1000.0;
+constexpr double kBitsPerByte = 8.0;
+constexpr double kMegabit = 1'000'000.0;
+constexpr unsigned char kBytePatternMask = 0xFF;
+constexpr int kLanUploadPumpIntervalMs = 20;
+constexpr int kLanUploadConnectTimeoutMs = sak::kTimeoutProcessShortMs;
+constexpr int kLanSocketQueueBlocks = 64;
+constexpr int kDefaultLanDurationSec = 10;
+constexpr int kDefaultLanBlockSizeKb = 64;
+}  // namespace
 
 NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObject(parent) {
     // Create all worker objects -- they live in this thread initially
@@ -356,8 +371,8 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
                 m_cachedBandwidth = result;
                 Q_EMIT bandwidthComplete(result);
                 Q_EMIT logOutput(QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
-                                     .arg(result.downloadMbps, 0, 'f', 2)
-                                     .arg(result.uploadMbps, 0, 'f', 2));
+                                     .arg(result.downloadMbps, 0, 'f', kNetworkMetricPrecision)
+                                     .arg(result.uploadMbps, 0, 'f', kNetworkMetricPrecision));
                 removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
@@ -367,8 +382,8 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
                 Q_EMIT httpSpeedComplete(dl, ul, latency);
                 Q_EMIT logOutput(QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, "
                                                 "latency %3 ms")
-                                     .arg(dl, 0, 'f', 2)
-                                     .arg(ul, 0, 'f', 2)
+                                     .arg(dl, 0, 'f', kNetworkMetricPrecision)
+                                     .arg(ul, 0, 'f', kNetworkMetricPrecision)
                                      .arg(latency, 0, 'f', 1));
                 removeOperation(State::RunningBandwidthTest);
             });
@@ -792,17 +807,19 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
         ctx->total_received += received_data.size();
 
         qint64 elapsed = ctx->timer.elapsed();
-        constexpr qint64 kReportIntervalMs = 1000;
-        if (elapsed - ctx->last_report_time >= kReportIntervalMs) {
+        if (elapsed - ctx->last_report_time >= kLanReportIntervalMs) {
             qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
-            double deltaSec = (elapsed - ctx->last_report_time) / 1000.0;
-            double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
+            double deltaSec = (elapsed - ctx->last_report_time) / kNetworkMillisecondsPerSecond;
+            double currentMbps = deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit))
+                                              : 0.0;
             ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
             ctx->speed_samples.append(currentMbps);
             ctx->last_report_time = elapsed;
             ctx->last_report_bytes = ctx->total_received;
 
-            Q_EMIT lanTransferProgress(currentMbps, elapsed / 1000.0, ctx->total_received);
+            Q_EMIT lanTransferProgress(currentMbps,
+                                       elapsed / kNetworkMillisecondsPerSecond,
+                                       ctx->total_received);
         }
     });
 
@@ -816,14 +833,15 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     Q_ASSERT(socket);
     Q_ASSERT(ctx);
 
-    double elapsed_sec = ctx->timer.elapsed() / 1000.0;
+    double elapsed_sec = ctx->timer.elapsed() / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = socket->peerAddress().toString();
     result.port = socket->localPort();
     result.bytesTransferred = ctx->total_received;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps = elapsed_sec > 0 ? (ctx->total_received * 8.0 / (elapsed_sec * 1e6)) : 0.0;
+    result.avgSpeedMbps =
+        elapsed_sec > 0 ? (ctx->total_received * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
     result.peakSpeedMbps = ctx->peak_mbps;
     result.isUpload = false;
     result.timestamp = QDateTime::currentDateTime();
@@ -832,7 +850,7 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer receive complete: "
                                     "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(ctx->total_received / (1024.0 * 1024.0), 0, 'f', 1)
+                         .arg(ctx->total_received / sak::kBytesPerMBf, 0, 'f', 1)
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
 
@@ -854,10 +872,10 @@ bool NetworkDiagnosticController::isLanTransferServerRunning() const {
 }
 
 static QByteArray createPatternBuffer(int blockSizeKB) {
-    const int blockSize = blockSizeKB * 1024;
+    const int blockSize = blockSizeKB * static_cast<int>(sak::kBytesPerKB);
     QByteArray buffer(blockSize, '\0');
     for (int idx = 0; idx < blockSize; ++idx) {
-        buffer[idx] = static_cast<char>(idx & 0xFF);
+        buffer[idx] = static_cast<char>(idx & kBytePatternMask);
     }
     return buffer;
 }
@@ -891,7 +909,7 @@ public:
         : m_request(std::move(request))
         , m_sinks(sinks)
         , m_sendBuffer(createPatternBuffer(m_request.block_size_kb))
-        , m_blockSize(m_request.block_size_kb * 1024) {}
+        , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {}
 
     void start() {
         m_socket = new QTcpSocket(this);
@@ -900,9 +918,9 @@ public:
         m_durationTimer = new QTimer(this);
         m_durationTimer->setSingleShot(true);
         m_pumpTimer = new QTimer(this);
-        m_pumpTimer->setInterval(20);
+        m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
         connectSignals();
-        m_connectTimer->start(5000);
+        m_connectTimer->start(kLanUploadConnectTimeoutMs);
         m_socket->connectToHost(m_request.target_addr, m_request.port);
     }
 
@@ -926,18 +944,19 @@ private:
 
     void report() {
         const qint64 elapsed = m_timer.elapsed();
-        if (elapsed - m_lastReportTime < 1000) {
+        if (elapsed - m_lastReportTime < kLanReportIntervalMs) {
             return;
         }
         const qint64 deltaBytes = m_totalSent - m_lastReportBytes;
-        const double deltaSec = (elapsed - m_lastReportTime) / 1000.0;
-        const double currentMbps = deltaSec > 0 ? (deltaBytes * 8.0 / (deltaSec * 1e6)) : 0.0;
+        const double deltaSec = (elapsed - m_lastReportTime) / kNetworkMillisecondsPerSecond;
+        const double currentMbps =
+            deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
         m_peakMbps = std::max(m_peakMbps, currentMbps);
         m_speedSamples.append(currentMbps);
         m_lastReportTime = elapsed;
         m_lastReportBytes = m_totalSent;
         if (m_request.progress) {
-            m_request.progress(currentMbps, elapsed / 1000.0, m_totalSent);
+            m_request.progress(currentMbps, elapsed / kNetworkMillisecondsPerSecond, m_totalSent);
         }
     }
 
@@ -945,7 +964,7 @@ private:
         if (m_finished || m_socket->state() != QAbstractSocket::ConnectedState) {
             return;
         }
-        while (m_socket->bytesToWrite() < m_blockSize * 64) {
+        while (m_socket->bytesToWrite() < m_blockSize * kLanSocketQueueBlocks) {
             const qint64 written = m_socket->write(m_sendBuffer);
             if (written < 0) {
                 finish(false,
@@ -978,7 +997,8 @@ private:
     void onConnected() {
         m_connectTimer->stop();
         m_timer.start();
-        m_durationTimer->start(m_request.duration_sec * 1000);
+        m_durationTimer->start(m_request.duration_sec *
+                               static_cast<int>(kNetworkMillisecondsPerSecond));
         m_pumpTimer->start();
         pump();
     }
@@ -1035,14 +1055,15 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
 
-    double elapsed_sec = data.elapsed_ms / 1000.0;
+    double elapsed_sec = data.elapsed_ms / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = data.target_addr;
     result.port = data.port;
     result.bytesTransferred = data.total_sent;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps = elapsed_sec > 0 ? (data.total_sent * 8.0 / (elapsed_sec * 1e6)) : 0.0;
+    result.avgSpeedMbps =
+        elapsed_sec > 0 ? (data.total_sent * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
     result.peakSpeedMbps = data.peak_mbps;
     result.isUpload = true;
     result.timestamp = QDateTime::currentDateTime();
@@ -1051,10 +1072,10 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer complete: "
                                     "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(data.total_sent / (1024.0 * 1024.0), 0, 'f', 1)
+                         .arg(data.total_sent / sak::kBytesPerMBf, 0, 'f', 1)
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
-    Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), 5000);
+    Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), sak::kTimerStatusDefaultMs);
 }
 
 void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
@@ -1066,10 +1087,10 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
         return;
     }
     if (durationSec < 1) {
-        durationSec = 10;
+        durationSec = kDefaultLanDurationSec;
     }
     if (blockSizeKB < 1) {
-        blockSizeKB = 64;
+        blockSizeKB = kDefaultLanBlockSizeKb;
     }
 
     Q_EMIT logOutput(QStringLiteral("Starting LAN transfer test to %1:%2 (%3s, %4 KB blocks)")
@@ -1217,7 +1238,7 @@ void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterN
     if (m_ethernetConfigManager->saveToFile(snapshot, filePath)) {
         Q_EMIT ethernetBackupComplete(filePath);
         Q_EMIT statusMessage(QStringLiteral("Ethernet settings backed up to: %1").arg(filePath),
-                             5000);
+                             sak::kTimerStatusDefaultMs);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to save backup to: %1").arg(filePath));
     }
@@ -1244,10 +1265,12 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
     Q_EMIT ethernetRestoreComplete(success);
 
     if (success) {
-        Q_EMIT statusMessage(QStringLiteral("Ethernet settings restored successfully"), 5000);
+        Q_EMIT statusMessage(QStringLiteral("Ethernet settings restored successfully"),
+                             sak::kTimerStatusDefaultMs);
     } else {
-        Q_EMIT statusMessage(
-            QStringLiteral("Some settings failed to restore -- check log for details"), 5000);
+        Q_EMIT statusMessage(QStringLiteral(
+                                 "Some settings failed to restore -- check log for details"),
+                             sak::kTimerStatusDefaultMs);
     }
 }
 
@@ -1280,7 +1303,7 @@ void NetworkDiagnosticController::cancel() {
     }
 
     Q_EMIT logOutput(QStringLiteral("Operation cancelled"));
-    Q_EMIT statusMessage(QStringLiteral("Cancelled"), 3000);
+    Q_EMIT statusMessage(QStringLiteral("Cancelled"), sak::kTimerStatusMessageMs);
 }
 
 }  // namespace sak

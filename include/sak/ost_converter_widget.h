@@ -85,6 +85,9 @@ private:
     // Sub-builders
     QWidget* createFileQueueSection();
     QWidget* createOutputSettingsSection();
+    void addOutputFormatRow(QVBoxLayout* layout, QWidget* group);
+    void addOutputOptionsRow(QVBoxLayout* layout, QWidget* group);
+    void addPstSplitRow(QVBoxLayout* layout, QWidget* group);
     QWidget* createFilterSection();
     QWidget* createRecoverySection();
     QWidget* createImapSection();

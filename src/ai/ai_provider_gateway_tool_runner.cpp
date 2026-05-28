@@ -6,9 +6,14 @@
 #include "sak/ai/ai_app_action_planner.h"
 #include "sak/ai/ai_credential_store.h"
 
+#include <QJsonDocument>
+#include <QJsonParseError>
+
 namespace sak::ai {
 
 namespace {
+
+constexpr qsizetype kSessionMemoryPreviewChars = 500;
 
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
@@ -36,6 +41,63 @@ QJsonObject finalizeResult(QJsonObject result, const QString& operation) {
     result[QStringLiteral("success")] = true;
     result[QStringLiteral("operation")] = operation;
     return result;
+}
+
+QJsonObject parseArgumentsString(const QString& text, QString* error_message) {
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty()) {
+        if (error_message) {
+            *error_message = QStringLiteral(
+                "Provider gateway arguments must be a JSON object string; use {} when unused");
+        }
+        return {};
+    }
+
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8(), &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("Provider gateway arguments must be a JSON object string: %1")
+                    .arg(parse_error.errorString());
+        }
+        return {};
+    }
+    if (!doc.isObject()) {
+        if (error_message) {
+            *error_message =
+                QStringLiteral("Provider gateway arguments JSON must decode to an object");
+        }
+        return {};
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return doc.object();
+}
+
+QJsonObject normalizedGatewayArgs(QJsonObject args, QString* error_message) {
+    const QJsonValue arguments = args.value(QStringLiteral("arguments"));
+    if (arguments.isUndefined() || arguments.isObject()) {
+        if (error_message) {
+            error_message->clear();
+        }
+        return args;
+    }
+    if (!arguments.isString()) {
+        if (error_message) {
+            *error_message = QStringLiteral(
+                "Provider gateway arguments must be an object or JSON object string");
+        }
+        return {};
+    }
+
+    const QJsonObject parsed = parseArgumentsString(arguments.toString(), error_message);
+    if (parsed.isEmpty() && error_message && !error_message->isEmpty()) {
+        return {};
+    }
+    args[QStringLiteral("arguments")] = parsed;
+    return args;
 }
 
 QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& plan,
@@ -208,7 +270,7 @@ void recordAppActionCompletion(const AiCommandResult& command_result,
         callbacks.append_session_memory(QStringLiteral("Tool"),
                                         QStringLiteral("App action finished"),
                                         QStringLiteral("%1 exit=%2 cancelled=%3 timed_out=%4")
-                                            .arg(plan.preview.left(500))
+                                            .arg(plan.preview.left(kSessionMemoryPreviewChars))
                                             .arg(command_result.exit_code)
                                             .arg(command_result.cancelled)
                                             .arg(command_result.timed_out));
@@ -338,19 +400,25 @@ QJsonObject AiProviderGatewayToolRunner::run(const QJsonObject& args,
         return toolError(QStringLiteral("Provider gateway is not configured"));
     }
 
+    QString argument_error;
+    const QJsonObject normalized_args = normalizedGatewayArgs(args, &argument_error);
+    if (!argument_error.isEmpty()) {
+        return toolError(argument_error);
+    }
+
     const QString operation =
-        args.value(QStringLiteral("operation")).toString().trimmed().toLower();
+        normalized_args.value(QStringLiteral("operation")).toString().trimmed().toLower();
     if (operation.isEmpty()) {
         return toolError(QStringLiteral("Provider gateway requires operation"));
     }
 
     if (operation == QLatin1String("win32_mcp_call")) {
-        return runWin32McpCall(args, gateway, access, callbacks);
+        return runWin32McpCall(normalized_args, gateway, access, callbacks);
     }
     if (operation == QLatin1String("app_run_action")) {
-        return runAppAction(args, gateway, access, callbacks, options);
+        return runAppAction(normalized_args, gateway, access, callbacks, options);
     }
-    return runGatewayReadOperation(operation, args, gateway);
+    return runGatewayReadOperation(operation, normalized_args, gateway);
 }
 
 }  // namespace sak::ai

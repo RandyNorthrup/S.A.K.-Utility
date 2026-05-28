@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include "drive_scanner.h"
 #include "image_source.h"
 
@@ -55,7 +57,7 @@ struct FlashProgress {
         if (totalBytes == 0) {
             return 0.0;
         }
-        return (static_cast<double>(bytesWritten) / totalBytes) * 100.0;
+        return (static_cast<double>(bytesWritten) / totalBytes) * kPercentMaxF;
     }
 };
 
@@ -176,7 +178,7 @@ public:
 
     /**
      * @brief Set buffer size for reading/writing
-     * @param sizeBytes Buffer size in bytes (default 64MB)
+     * @param sizeBytes Buffer size in bytes (default 256MB)
      */
     void setBufferSize(qint64 sizeBytes);
 

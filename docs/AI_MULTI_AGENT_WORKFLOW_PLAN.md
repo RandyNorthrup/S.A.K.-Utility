@@ -1531,12 +1531,12 @@ resources/ai/skills/*.md
 resources/ai/schemas/*.json
 ```
 
-User overrides:
+Portable user overrides:
 
 ```text
-%APPDATA%/SAK Utility/ai/workflows/*.json
-%APPDATA%/SAK Utility/ai/instructions/*.md
-%APPDATA%/SAK Utility/ai/skills/*.md
+<app>/data/ai/workflows/*.json
+<app>/data/ai/instructions/*.md
+<app>/data/ai/skills/*.md
 ```
 
 Session copies:

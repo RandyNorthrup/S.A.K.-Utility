@@ -15,6 +15,8 @@
 
 #include <expected>
 
+class QFile;
+
 namespace sak {
 
 /// @brief Writes MS-OXMSG compound files preserving all MAPI properties
@@ -59,6 +61,12 @@ private:
 
     [[nodiscard]] QByteArray buildCompoundFileHeader() const;
     [[nodiscard]] QByteArray buildFatSector(const QVector<int32_t>& fat_entries) const;
+    [[nodiscard]] QVector<int32_t> buildFatEntries(const QVector<QByteArray>& streams,
+                                                   int dir_sectors,
+                                                   QVector<int>& stream_start_sectors,
+                                                   int& dir_start_sector) const;
+    void writeCompoundHeader(QFile& file, int dir_start_sector, int fat_sector) const;
+    void writeDataSectors(QFile& file, const QVector<QByteArray>& streams) const;
     [[nodiscard]] QByteArray buildDirectoryEntry(const QString& name,
                                                  uint8_t type,
                                                  uint32_t start_sector,

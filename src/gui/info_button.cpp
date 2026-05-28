@@ -18,6 +18,24 @@
 
 namespace sak {
 
+namespace {
+
+constexpr int kInfoIconInsetPx = 1;
+constexpr int kInfoIconInsetTotalPx = 2;
+constexpr int kInfoGlyphMinBarWidthPx = 2;
+constexpr int kInfoGlyphBarWidthDivisor = 6;
+constexpr int kInfoGlyphBarTopPercent = 40;
+constexpr int kInfoGlyphBarBottomPercent = 78;
+constexpr int kInfoGlyphDotTopPercent = 28;
+constexpr int kInfoGlyphDotRadiusDivisor = 8;
+constexpr int kInfoGlyphCornerRadiusPx = 1;
+constexpr qreal kInfoPopupShadowBlurRadius = 16;
+constexpr int kInfoPopupShadowAlpha = 40;
+constexpr qreal kInfoPopupShadowYOffset = 2;
+constexpr int kInfoPopupScreenPaddingPx = 4;
+
+}  // namespace
+
 // ============================================================================
 // Icon rendering
 // ============================================================================
@@ -32,21 +50,29 @@ QIcon InfoButton::createInfoIcon(int size) {
 
     // Filled circle -- Windows 11 accent blue
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 120, 212));  // #0078D4
-    p.drawEllipse(1, 1, size - 2, size - 2);
+    p.setBrush(QColor(QString::fromLatin1(ui::kColorAccentWindows)));
+    p.drawEllipse(kInfoIconInsetPx,
+                  kInfoIconInsetPx,
+                  size - kInfoIconInsetTotalPx,
+                  size - kInfoIconInsetTotalPx);
 
     // White "i" body (vertical bar)
     p.setPen(Qt::NoPen);
     p.setBrush(Qt::white);
-    const int cx = size / 2;
-    const int barW = qMax(2, size / 6);
-    const int barTop = size * 40 / 100;
-    const int barBot = size * 78 / 100;
-    p.drawRoundedRect(cx - barW, barTop, barW * 2, barBot - barTop, 1, 1);
+    const int cx = size / kInfoIconInsetTotalPx;
+    const int barW = qMax(kInfoGlyphMinBarWidthPx, size / kInfoGlyphBarWidthDivisor);
+    const int barTop = size * kInfoGlyphBarTopPercent / kPercentMax;
+    const int barBot = size * kInfoGlyphBarBottomPercent / kPercentMax;
+    p.drawRoundedRect(cx - barW,
+                      barTop,
+                      barW * kInfoIconInsetTotalPx,
+                      barBot - barTop,
+                      kInfoGlyphCornerRadiusPx,
+                      kInfoGlyphCornerRadiusPx);
 
     // White "i" dot
-    const int dotR = qMax(1, size / 8);
-    p.drawEllipse(QPoint(cx, size * 28 / 100), dotR, dotR);
+    const int dotR = qMax(kInfoIconInsetPx, size / kInfoGlyphDotRadiusDivisor);
+    p.drawEllipse(QPoint(cx, size * kInfoGlyphDotTopPercent / kPercentMax), dotR, dotR);
 
     p.end();
     return QIcon(pixmap);
@@ -60,7 +86,7 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     : QToolButton(parent), m_infoText(infoText) {
     static const QIcon s_icon(QStringLiteral(":/icons/icons/icons8-settings_help.svg"));
     setIcon(s_icon);
-    setIconSize(QSize(16, 16));
+    setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
     setCursor(Qt::PointingHandCursor);
     setAutoRaise(true);
     setFixedSize(sak::kInfoButtonSize, sak::kInfoButtonSize);
@@ -70,10 +96,7 @@ InfoButton::InfoButton(const QString& infoText, QWidget* parent)
     setToolTip(QStringLiteral("Show more info"));
 
     // Transparent background -- the icon alone is the visual
-    setStyleSheet(
-        "QToolButton { background: transparent; border: none; padding: 0; }"
-        "QToolButton:hover { background: rgba(0, 120, 212, 0.08); border-radius: 10px; }"
-        "QToolButton:pressed { background: rgba(0, 120, 212, 0.15); border-radius: 10px; }");
+    setStyleSheet(ui::infoButtonStyle());
 
     connect(this, &QToolButton::clicked, this, &InfoButton::togglePopup);
 }
@@ -94,49 +117,41 @@ void InfoButton::togglePopup() {
     auto* popup = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setObjectName("sakInfoPopup");
-    popup->setStyleSheet(QString("#sakInfoPopup {"
-                                 "  background-color: rgba(255, 255, 255, 0.97);"
-                                 "  border: 1px solid %1;"
-                                 "  border-radius: 8px;"
-                                 "  padding: 0px;"
-                                 "}")
-                             .arg(sak::ui::kColorBorderDefault));
+    popup->setStyleSheet(sak::ui::infoPopupFrameStyle());
 
     auto* layout = new QVBoxLayout(popup);
-    layout->setContentsMargins(14, 10, 14, 10);
+    layout->setContentsMargins(sak::ui::kUiIconCompact,
+                               sak::ui::kSpacingDefault,
+                               sak::ui::kUiIconCompact,
+                               sak::ui::kSpacingDefault);
 
     auto* label = new QLabel(m_infoText, popup);
     label->setWordWrap(true);
     label->setMaximumWidth(sak::kTooltipMaxW);
-    label->setStyleSheet(QString("QLabel {"
-                                 "  color: %1;"
-                                 "  font-size: 9pt;"
-                                 "  background: transparent;"
-                                 "  border: none;"
-                                 "  padding: 0px;"
-                                 "}")
-                             .arg(sak::ui::kColorTextPrimary));
+    label->setStyleSheet(sak::ui::infoPopupLabelStyle());
     layout->addWidget(label);
 
     // Drop shadow
     auto* shadow = new QGraphicsDropShadowEffect(popup);
-    shadow->setBlurRadius(16);
-    shadow->setColor(QColor(0, 0, 0, 40));
-    shadow->setOffset(0, 2);
+    shadow->setBlurRadius(kInfoPopupShadowBlurRadius);
+    QColor shadow_color(Qt::black);
+    shadow_color.setAlpha(kInfoPopupShadowAlpha);
+    shadow->setColor(shadow_color);
+    shadow->setOffset(0, kInfoPopupShadowYOffset);
     popup->setGraphicsEffect(shadow);
 
     popup->adjustSize();
 
     // Position: below the button, left-aligned
-    QPoint globalPos = mapToGlobal(QPoint(0, height() + 4));
+    QPoint globalPos = mapToGlobal(QPoint(0, height() + kInfoPopupScreenPaddingPx));
     QRect screenRect = screen()->availableGeometry();
 
     // Ensure popup stays on screen
     if (globalPos.y() + popup->height() > screenRect.bottom()) {
-        globalPos.setY(mapToGlobal(QPoint(0, 0)).y() - popup->height() - 4);
+        globalPos.setY(mapToGlobal(QPoint(0, 0)).y() - popup->height() - kInfoPopupScreenPaddingPx);
     }
     if (globalPos.x() + popup->width() > screenRect.right()) {
-        globalPos.setX(screenRect.right() - popup->width() - 4);
+        globalPos.setX(screenRect.right() - popup->width() - kInfoPopupScreenPaddingPx);
     }
 
     popup->move(globalPos);
@@ -153,8 +168,9 @@ QWidget* InfoButton::createInfoLabel(const QString& labelText,
                                      QWidget* parent) {
     auto* container = new QWidget(parent);
     auto* layout = new QHBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    layout->setSpacing(sak::ui::kSpacingTight);
 
     auto* label = new QLabel(labelText, container);
     layout->addWidget(label);

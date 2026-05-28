@@ -149,8 +149,19 @@ private:
     void setupSearchAndQueueConnections();
     /** @brief Connect worker progress and completion signals */
     void setupWorkerConnections();
+    void setupWorkerLifecycleConnections();
+    void setupWorkerJobConnections();
     /** @brief Connect offline deployment signals */
     void setupOfflineConnections();
+    void setupOfflineInputConnections();
+    void setupOfflineActionConnections();
+    void setupOfflineWorkerConnections();
+    void setupOfflineWorkerProgressConnections();
+    void setupOfflineWorkerCompletionConnections();
+    void setupOfflinePresetRow(QVBoxLayout* offlineLayout);
+    void setupOfflineSearchGroup(QHBoxLayout* sideBySide);
+    void setupOfflineDeployListGroup(QHBoxLayout* sideBySide);
+    void setupOfflineActionsGroup(QVBoxLayout* offlineLayout);
     /** @brief Handle NuGet search completion on the main thread */
     void onOfflineSearchCompleted(bool success,
                                   const QString& output,
@@ -171,6 +182,8 @@ private:
     void importQueueEntries(const QJsonArray& arr, int& added, int& skipped);
     QIcon publisherIcon(const QString& packageId) const;
     static QString lookupPublisher(const QString& packageId);
+    std::shared_ptr<MigrationReport> buildInstallMigrationReport() const;
+    void setInstallInProgressUi(bool running);
 
     /** @brief Refresh the offline deploy list widget from m_offlineList */
     void updateOfflineListDisplay();

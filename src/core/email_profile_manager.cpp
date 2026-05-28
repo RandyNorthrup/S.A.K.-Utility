@@ -24,6 +24,9 @@ namespace {
 
 constexpr int kRegExportTimeoutMs = 10'000;
 constexpr int kRegImportTimeoutMs = 10'000;
+constexpr int kRegistryPathMinimumBytes = 4;
+constexpr qsizetype kMapiPropertyLeafNameLength = 8;
+constexpr qsizetype kMapiPropertyTypePrefixLength = 4;
 
 /// Outlook version keys in order of preference (newest first)
 const QStringList kOutlookVersions = {
@@ -59,7 +62,7 @@ QString parseRegistryPathValue(const QVariant& raw, bool is_unicode) {
     }
 
     QByteArray bytes = raw.toByteArray();
-    if (bytes.size() < 4) {
+    if (bytes.size() < kRegistryPathMinimumBytes) {
         return {};
     }
 
@@ -121,15 +124,15 @@ QVector<sak::EmailDataFile> findOutlookDataFiles(const QSettings& profile_key) {
             int last_slash = value_name.lastIndexOf(QLatin1Char('/'));
             QString leaf_name = (last_slash >= 0) ? value_name.mid(last_slash + 1) : value_name;
 
-            if (leaf_name.size() != 8) {
+            if (leaf_name.size() != kMapiPropertyLeafNameLength) {
                 continue;
             }
-            QString prop_id = leaf_name.mid(4);
+            QString prop_id = leaf_name.mid(kMapiPropertyTypePrefixLength);
             if (!kPathPropertyIds.contains(prop_id)) {
                 continue;
             }
 
-            QString type_prefix = leaf_name.left(4);
+            QString type_prefix = leaf_name.left(kMapiPropertyTypePrefixLength);
             if (!kValidTypePrefixes.contains(type_prefix)) {
                 continue;
             }

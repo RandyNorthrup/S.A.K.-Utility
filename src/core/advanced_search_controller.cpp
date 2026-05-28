@@ -8,6 +8,7 @@
 
 #include "sak/advanced_search_worker.h"
 #include "sak/config_manager.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QMetaType>
@@ -16,6 +17,22 @@
 #include <algorithm>
 
 namespace sak {
+
+namespace {
+
+constexpr int kWorkerStopTimeoutMs = kTimeoutProcessShortMs;
+constexpr int kSearchStatusMessageMs = kTimerStatusDefaultMs;
+constexpr int kDefaultPreviewFileSizeMb = 10;
+constexpr int kDefaultSearchFileSizeMb = 50;
+constexpr int kDefaultCacheSize = 50;
+constexpr int kDefaultContextLines = 2;
+constexpr int kMinimumPreferenceValue = 1;
+constexpr int kMaximumPreviewFileSizeMb = 500;
+constexpr int kMaximumSearchFileSizeMb = 1000;
+constexpr int kMaximumCacheSize = 1000;
+constexpr int kMaximumContextLines = 10;
+
+}  // namespace
 
 // -- Construction / Destruction ----------------------------------------------
 
@@ -65,7 +82,7 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
     }
     if (m_preferences.max_search_file_size_mb > 0) {
         effectiveConfig.max_file_size = static_cast<qint64>(m_preferences.max_search_file_size_mb) *
-                                        1024 * 1024;
+                                        kBytesPerMB;
     }
 
     m_worker = std::make_unique<AdvancedSearchWorker>(effectiveConfig);
@@ -109,7 +126,7 @@ void AdvancedSearchController::cleanupWorker() {
     if (m_worker) {
         if (m_worker->isRunning()) {
             m_worker->requestStop();
-            if (!m_worker->wait(5000)) {
+            if (!m_worker->wait(kWorkerStopTimeoutMs)) {
                 logError("AdvancedSearchController: worker did not stop within 5s");
             }
         }
@@ -127,7 +144,7 @@ void AdvancedSearchController::onWorkerFinished() {
     Q_EMIT searchFinished(m_total_matches, m_total_files);
     Q_EMIT statusMessage(
         tr("Search complete: %1 matches in %2 files").arg(m_total_matches).arg(m_total_files),
-        5000);
+        kSearchStatusMessageMs);
     setState(State::Idle);
 }
 
@@ -136,14 +153,15 @@ void AdvancedSearchController::onWorkerFailed(int errorCode, const QString& erro
              errorCode,
              errorMessage.toStdString());
     Q_EMIT searchFailed(errorMessage);
-    Q_EMIT statusMessage(tr("Search failed: %1").arg(errorMessage), 5000);
+    Q_EMIT statusMessage(tr("Search failed: %1").arg(errorMessage), kSearchStatusMessageMs);
     setState(State::Idle);
 }
 
 void AdvancedSearchController::onWorkerCancelled() {
     Q_EMIT searchCancelled();
     Q_EMIT statusMessage(
-        tr("Search cancelled: %1 matches found before cancellation").arg(m_total_matches), 5000);
+        tr("Search cancelled: %1 matches found before cancellation").arg(m_total_matches),
+        kSearchStatusMessageMs);
     setState(State::Idle);
 }
 
@@ -206,14 +224,22 @@ void AdvancedSearchController::loadPreferences() {
     auto& cfg = ConfigManager::instance();
 
     m_preferences.max_results = std::max(0, cfg.getValue("advsearch/max_results", 0).toInt());
-    m_preferences.max_preview_file_size_mb =
-        std::clamp(cfg.getValue("advsearch/max_preview_file_size_mb", 10).toInt(), 1, 500);
-    m_preferences.max_search_file_size_mb =
-        std::clamp(cfg.getValue("advsearch/max_search_file_size_mb", 50).toInt(), 1, 1000);
+    m_preferences.max_preview_file_size_mb = std::clamp(
+        cfg.getValue("advsearch/max_preview_file_size_mb", kDefaultPreviewFileSizeMb).toInt(),
+        kMinimumPreferenceValue,
+        kMaximumPreviewFileSizeMb);
+    m_preferences.max_search_file_size_mb = std::clamp(
+        cfg.getValue("advsearch/max_search_file_size_mb", kDefaultSearchFileSizeMb).toInt(),
+        kMinimumPreferenceValue,
+        kMaximumSearchFileSizeMb);
     m_preferences.max_cache_size =
-        std::clamp(cfg.getValue("advsearch/cache_size", 50).toInt(), 1, 1000);
+        std::clamp(cfg.getValue("advsearch/cache_size", kDefaultCacheSize).toInt(),
+                   kMinimumPreferenceValue,
+                   kMaximumCacheSize);
     m_preferences.context_lines =
-        std::clamp(cfg.getValue("advsearch/context_lines", 2).toInt(), 0, 10);
+        std::clamp(cfg.getValue("advsearch/context_lines", kDefaultContextLines).toInt(),
+                   0,
+                   kMaximumContextLines);
 
     // Load search history
     const QStringList history =

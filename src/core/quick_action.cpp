@@ -4,10 +4,18 @@
 #include "sak/quick_action.h"
 
 #include "sak/format_utils.h"
+#include "sak/layout_constants.h"
 
 #include <QDateTime>
+#include <QtGlobal>
 
 namespace sak {
+
+namespace {
+constexpr int kLogBoxContentWidth = 65;
+constexpr int kDurationPrecision = 2;
+constexpr int kCompletedInPrefixWidth = 15;
+}  // namespace
 
 QuickAction::QuickAction(QObject* parent) : QObject(parent) {}
 
@@ -89,23 +97,26 @@ QString QuickAction::formatLogBox(const QString& title,
         QStringLiteral("+================================================================+\n");
 
     QString box = top;
-    box += QString("| %1|\n").arg(title.leftJustified(65));
+    box += QString("| %1|\n").arg(title.leftJustified(kLogBoxContentWidth));
     box += sep;
 
     for (const QString& line : content_lines) {
         if (line == "---") {
             box += sep;
         } else {
-            box += QString("| %1|\n").arg(line.leftJustified(65));
+            box += QString("| %1|\n").arg(line.leftJustified(kLogBoxContentWidth));
         }
     }
 
     if (duration_ms >= 0) {
+        const double duration_seconds = duration_ms / kMillisecondsPerSecondF;
+        const QString duration_text = QString::number(duration_seconds, 'f', kDurationPrecision);
+        const int padding_width = kLogBoxContentWidth - kCompletedInPrefixWidth -
+                                  duration_text.length();
         box += sep;
         box += QString("| Completed in: %1 seconds%2|\n")
-                   .arg(duration_ms / 1000.0, 0, 'f', 2)
-                   .arg(QString(65 - 15 - QString::number(duration_ms / 1000.0, 'f', 2).length(),
-                                ' '));
+                   .arg(duration_seconds, 0, 'f', kDurationPrecision)
+                   .arg(QString(qMax(0, padding_width), ' '));
     }
 
     box += bottom;

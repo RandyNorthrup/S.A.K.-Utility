@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QDateTime>
 #include <QMetaType>
 #include <QString>
@@ -16,6 +18,12 @@
 #include <type_traits>
 
 namespace sak {
+
+inline constexpr uint16_t kDefaultImapSslPort = 993;
+inline constexpr int kDefaultImapTimeoutSeconds = 30;
+inline constexpr int kDefaultImapMaxRetries = 3;
+inline constexpr int kDefaultOstConversionThreads = 2;
+inline constexpr qint64 kDefaultPstCustomSplitMb = 5120;
 
 // ============================================================================
 // Output Format
@@ -71,13 +79,13 @@ enum class ImapAuthMethod {
 /// @brief IMAP server connection settings
 struct ImapServerConfig {
     QString host;
-    uint16_t port = 993;
+    uint16_t port = kDefaultImapSslPort;
     bool use_ssl = true;
     ImapAuthMethod auth_method = ImapAuthMethod::Plain;
     QString username;
     QString password;
-    int timeout_seconds = 30;
-    int max_retries = 3;
+    int timeout_seconds = kDefaultImapTimeoutSeconds;
+    int max_retries = kDefaultImapMaxRetries;
 };
 
 /// @brief Folder mapping for IMAP upload
@@ -133,7 +141,7 @@ struct OstConversionConfig {
     QString output_directory;
 
     // Threading
-    int max_threads = 2;  ///< Concurrent file conversions
+    int max_threads = kDefaultOstConversionThreads;  ///< Concurrent file conversions
 
     // Filtering
     QDateTime date_from;         ///< Null = no lower bound
@@ -149,7 +157,7 @@ struct OstConversionConfig {
 
     // PST output options
     PstSplitSize split_size = PstSplitSize::NoSplit;
-    qint64 custom_split_mb = 5120;  ///< Custom split size in MB
+    qint64 custom_split_mb = kDefaultPstCustomSplitMb;  ///< Custom split size in MB
 
     // EML/MSG options
     bool prefix_filename_with_date = true;

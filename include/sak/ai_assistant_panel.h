@@ -20,6 +20,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPointer>
 #include <QStringList>
 #include <QVector>
 #include <QWidget>
@@ -36,8 +37,10 @@ class QListWidget;
 class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
+class QSemaphore;
 class QSplitter;
 class QTextBrowser;
+class QThread;
 class QTimer;
 class QVBoxLayout;
 
@@ -205,7 +208,35 @@ private:
     QWidget* createContextPane();
     QWidget* createConversationPane();
     void createStatusStrip(QVBoxLayout* rootLayout);
+    void configureExecutionBrokers();
+    [[nodiscard]] bool initializeAccessibilityAuditUi();
+    [[nodiscard]] bool loadWorkflowDefaults(QStringList* workflow_errors);
+    [[nodiscard]] QString initializeToolHealthLedger();
+    void initializeStandardPanel(bool workflows_loaded,
+                                 const QStringList& workflow_errors,
+                                 const QString& health_ledger_error);
+    void initializePackageManager();
+    void setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneAgentSection(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneAccessSection(QVBoxLayout* layout, QWidget* pane);
+    void setupContextPaneCredentialSection(QVBoxLayout* layout, QWidget* pane);
+    void onWorkflowTemplatePickerChanged(int index);
+    void setupConversationHeader(QVBoxLayout* layout, QWidget* pane);
+    void setupConversationStatusRow(QVBoxLayout* layout, QWidget* header);
+    void setupConversationHeaderActions(QVBoxLayout* layout, QWidget* header);
+    void setupConversationTranscript(QVBoxLayout* layout, QWidget* pane);
+    void setupConversationComposer(QVBoxLayout* layout, QWidget* pane);
+    void setupComposerInput(QVBoxLayout* layout, QWidget* composer);
+    void setupComposerContextList(QVBoxLayout* layout, QWidget* composer);
+    void setupComposerActions(QVBoxLayout* layout, QWidget* composer);
     void connectAiClient();
+    void connectOpenAiClientSignals();
+    void connectExecutionBrokerSignals();
+    void connectElevationBrokerSignals();
+    void handleElevationBrokerProgress(int percent, const QString& status);
+    void ensureActivityTimer();
     void loadRememberedApiKey();
     void updateCredentialControls();
     void updateLoadKeyButton(bool has_key, bool busy);
@@ -224,6 +255,9 @@ private:
                                                   const QString& label) const;
     void populateWorkflowTemplatePicker(const QVector<ai::WorkflowTemplate>& workflows);
     void refreshContextList();
+    [[nodiscard]] int contextChipMaxWidth() const;
+    [[nodiscard]] int contextChipWidth(const QString& chip_text, int max_chip_width) const;
+    void addContextListItem(int index, int max_chip_width);
     [[nodiscard]] ContextChipPalette contextChipPalette(ContextItem::Type type) const;
     void reloadSessionPicker();
     void startNewPersistentSession(const QString& title);
@@ -286,6 +320,24 @@ private:
     [[nodiscard]] bool confirmCommandWithUser(const QString& shell,
                                               const QString& preview,
                                               bool risky_change);
+    [[nodiscard]] bool consumeResumedCommandApproval(const QString& shell,
+                                                     const QString& preview,
+                                                     bool risky_change,
+                                                     const QString& pending_call_id,
+                                                     bool* approval_result);
+    [[nodiscard]] QJsonObject commandApprovalMetadata(const QString& shell,
+                                                      const QString& preview,
+                                                      bool risky_change) const;
+    [[nodiscard]] QString beginCommandApprovalGate(QJsonObject* metadata);
+    [[nodiscard]] bool requestCommandApprovalFromUser(const QString& shell, const QString& preview);
+    [[nodiscard]] bool rejectCommandApproval(const QString& gate_id,
+                                             QJsonObject metadata,
+                                             const QString& shell,
+                                             ai::AiRunStatus previous_status);
+    void acceptCommandApproval(const QString& gate_id,
+                               QJsonObject metadata,
+                               const QString& shell,
+                               ai::AiRunStatus previous_status);
     [[nodiscard]] bool offerRestorePointIfNeeded(const QString& preview, bool risky_change);
     [[nodiscard]] bool consumeResumedRestoreDecision(const QString& preview, bool risky_change);
     [[nodiscard]] QJsonObject restorePointOfferMetadata(const QString& preview,
@@ -302,6 +354,15 @@ private:
     void restoreRunStatusAfterHumanDecision(ai::AiRunStatus previous_status,
                                             const QString& message);
     [[nodiscard]] bool createRestorePoint();
+    [[nodiscard]] bool handleRestorePointBrokerUnavailable();
+    [[nodiscard]] QString restorePointDescription() const;
+    [[nodiscard]] QString restorePointScript(const QString& description) const;
+    [[nodiscard]] QJsonObject restorePointPayload(const QString& script) const;
+    void traceRestorePointStart(QJsonObject* trace_metadata, const QString& description);
+    [[nodiscard]] bool handleRestorePointExecutionError(const QString& error_message,
+                                                        QJsonObject trace_metadata);
+    [[nodiscard]] bool handleRestorePointResponse(const QJsonObject& response_data,
+                                                  QJsonObject trace_metadata);
     [[nodiscard]] QString allocateCommandId();
     void appendCitationsToList(const QVector<ai::OpenAIUrlCitation>& citations);
     [[nodiscard]] QJsonObject runScreenshotTool(const QString& reason);
@@ -310,6 +371,14 @@ private:
                                                         const QString& command_preview);
     [[nodiscard]] ai::AiCommandResult executeWorkflowPowerShellRequest(
         const ai::AiCommandRequest& request, const QString& command_id);
+    [[nodiscard]] ai::AiCommandResult executeElevatedWorkflowPowerShellRequest(
+        const ai::AiCommandRequest& request);
+    [[nodiscard]] ai::AiCommandResult executeStandardWorkflowPowerShellRequest(
+        const ai::AiCommandRequest& request, const QString& command_id);
+    void connectWorkflowPowerShellLogging(ai::ExecutionBroker* broker, QObject* worker);
+    void connectWorkflowPowerShellCancelPolling(QTimer* cancel_timer,
+                                                ai::ExecutionBroker* broker,
+                                                QObject* worker);
     [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
@@ -359,6 +428,21 @@ private:
         const QVector<QPair<QString, QString>>& packages,
         const QString& output_dir,
         const QJsonObject& args);
+    [[nodiscard]] bool validateOfflineOperation(const QString& operation,
+                                                OfflineToolRunResult* run) const;
+    void appendOfflineOperationStartedEvent(const QString& operation,
+                                            const QString& output_dir,
+                                            const QJsonObject& args);
+    void connectOfflineWorkerSignals(OfflineDeploymentWorker* worker,
+                                     QObject* context,
+                                     QThread* offline_thread,
+                                     QSemaphore* done,
+                                     OfflineToolRunResult* run);
+    void startOfflineWorkerOperation(OfflineDeploymentWorker* worker,
+                                     const QString& operation,
+                                     const QVector<QPair<QString, QString>>& packages,
+                                     const QString& output_dir,
+                                     const QJsonObject& args);
     [[nodiscard]] QJsonObject offlineOperationResultJson(const QString& operation,
                                                          const QString& output_dir,
                                                          const OfflineToolRunResult& run_result);
@@ -545,6 +629,40 @@ private:
                                                   const WorkflowToolDispatchPlan& plan);
 
     class PanelToolExecutor;
+
+    struct WorkflowRunLaunch {
+        QPointer<AiAssistantPanel> panel_guard;
+        ai::WorkflowTemplate workflow;
+        QString run_id;
+        ai::CancellationToken token;
+        QString api_key;
+        QString model;
+        QString reasoning;
+        QJsonObject input_values;
+        QJsonObject resume_state;
+        QString user_message;
+        PanelToolExecutor* executor{nullptr};
+    };
+
+    void beginWorkflowRunUiState(const ai::WorkflowTemplate& workflow,
+                                 const QString& user_message,
+                                 const QJsonObject& input_values,
+                                 const QString& preferred_run_id,
+                                 const QJsonObject& resume_state);
+    void resetWorkflowRunWatcher();
+    void startWorkflowRunFuture(const ai::WorkflowTemplate& workflow,
+                                const QString& user_message,
+                                const QJsonObject& input_values,
+                                const QJsonObject& resume_state);
+    [[nodiscard]] static ai::AiOrchestratorResult executeWorkflowRun(
+        const WorkflowRunLaunch& launch);
+    static void configureWorkflowRunner(ai::AiSubagentRunner* runner);
+    [[nodiscard]] static ai::AiOrchestrationOptions workflowOrchestrationOptions(
+        const WorkflowRunLaunch& launch);
+    static void applyWorkflowResumeState(ai::AiOrchestrationOptions* options,
+                                         const QJsonObject& resume_state);
+    static void connectWorkflowOrchestratorCallbacks(ai::AiOrchestrator* orchestrator,
+                                                     QPointer<AiAssistantPanel> panel_guard);
 
     [[nodiscard]] bool handleBusySendPrompt(const QString& message);
     [[nodiscard]] WorkflowSendResult startAttachedWorkflowFromPrompt(const QString& message);

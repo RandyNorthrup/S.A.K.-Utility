@@ -39,6 +39,15 @@
 
 namespace sak {
 
+namespace {
+
+constexpr int kUserMigrationSettingsDialogMinWidth = 440;
+constexpr int kBackupThreadCountMin = 1;
+constexpr int kBackupThreadCountMax = 16;
+constexpr int kProgressBarMinimum = 0;
+
+}  // namespace
+
 UserMigrationPanel::UserMigrationPanel(QWidget* parent)
     : QWidget(parent), m_dataManager(std::make_shared<UserDataManager>()) {
     setupUi();
@@ -54,7 +63,8 @@ UserMigrationPanel::~UserMigrationPanel() = default;
 void UserMigrationPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -164,12 +174,13 @@ QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
     card->setStyleSheet(config.card_style);
     auto* lay = new QVBoxLayout(card);
     lay->setSpacing(sak::ui::kSpacingMedium);
-    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* logo = new QLabel(card);
     logo->setPixmap(QIcon(config.icon).pixmap(kLogoSize, kLogoSize));
     logo->setAlignment(Qt::AlignCenter);
-    logo->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
+    logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
     lay->addWidget(logo);
 
     auto* title_label = new QLabel(config.title, card);
@@ -262,9 +273,8 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
     layout->setSpacing(sak::ui::kSpacingDefault);
 
     auto* desc = new QLabel(tr("One-click system protection and documentation tools"), group);
-    desc->setStyleSheet(QString("color: %1; font-size: %2pt;")
-                            .arg(sak::ui::kColorTextSecondary)
-                            .arg(sak::ui::kFontSizeBody));
+    desc->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeBody));
     desc->setWordWrap(true);
     layout->addWidget(desc);
 
@@ -294,11 +304,11 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 
     // Status + progress
     m_action_status_label = new QLabel(tr("Ready"), group);
-    m_action_status_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextSecondary));
+    m_action_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     layout->addWidget(m_action_status_label);
 
     m_action_progress_bar = new QProgressBar(group);
-    m_action_progress_bar->setRange(0, 100);
+    m_action_progress_bar->setRange(kProgressBarMinimum, kPercentMax);
     m_action_progress_bar->setValue(0);
     m_action_progress_bar->setVisible(false);
     layout->addWidget(m_action_progress_bar);
@@ -397,13 +407,13 @@ void UserMigrationPanel::onSettingsClicked() {
 
     QDialog dialog(this);
     dialog.setWindowTitle(tr("User Migration Settings"));
-    dialog.setMinimumWidth(440);
+    dialog.setMinimumWidth(kUserMigrationSettingsDialogMinWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
     auto* formLayout = new QFormLayout();
 
     auto* threadSpin = new QSpinBox(&dialog);
-    threadSpin->setRange(1, 16);
+    threadSpin->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
     threadSpin->setValue(config.getBackupThreadCount());
     formLayout->addRow(
         InfoButton::createInfoLabel(

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/diagnostic_types.h"
+#include "sak/layout_constants.h"
 
 #include <QObject>
 #include <QStorageInfo>
@@ -16,6 +17,8 @@
 #include <atomic>
 
 namespace sak {
+
+inline constexpr int kDefaultWmiQueryTimeoutMs = kTimeoutProcessLongMs;
 
 /**
  * @brief Enumerates all system hardware components
@@ -117,7 +120,7 @@ private:
     /// @return Vector of property maps, one per WMI instance
     QVector<QVariantMap> wmiQuery(const QString& wmi_class,
                                   const QStringList& properties,
-                                  int timeout_ms = 30'000);
+                                  int timeout_ms = kDefaultWmiQueryTimeoutMs);
 };
 
 }  // namespace sak

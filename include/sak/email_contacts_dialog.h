@@ -46,6 +46,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupHeader(QVBoxLayout* layout);
+    void setupContactSplitter(QVBoxLayout* layout);
+    void setupButtonRow(QVBoxLayout* layout);
     void loadContacts();
     void filterContacts(const QString& text);
     void displayContactDetail(const sak::PstItemDetail& detail);

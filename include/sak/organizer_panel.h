@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/organizer_worker.h"
 #include "sak/widget_helpers.h"
 
 #include <QCheckBox>
@@ -23,7 +24,7 @@
 
 class QVBoxLayout;
 class QGroupBox;
-class OrganizerWorker;
+class QDir;
 class DuplicateFinderWorker;
 
 namespace sak {
@@ -107,6 +108,11 @@ private:
     void setupDefaultCategories();
     QMap<QString, QStringList> getCategoryMapping() const;
     bool validateCategoryMapping() const;
+    bool validateOrganizerTarget();
+    bool confirmOrganizerExecution(const QDir& targetDir);
+    OrganizerWorker::Config buildOrganizerConfig() const;
+    void connectOrganizerWorkerSignals();
+    void startOrganizerWorker(const OrganizerWorker::Config& config);
     void setOperationRunning(bool running);
     void setDedupRunning(bool running);
     void updateDirectorySummary();

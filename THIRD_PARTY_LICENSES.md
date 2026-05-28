@@ -322,12 +322,14 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ## Chocolatey
 
 **License:** Apache License 2.0
+**Version:** 2.7.2
 **Website:** https://chocolatey.org/
 **Used for:** Embedded portable package manager for application migration
+**Bundled at:** `tools/chocolatey/choco.exe`, `tools/chocolatey/bin/choco.exe`
 
 ```
-Copyright 2011-2024 Chocolatey Software, Inc.
-Copyright 2011-2024 RealDimensions Software, LLC
+Copyright (c) 2017 Chocolatey Software, Inc.
+Copyright (c) 2011-2017 RealDimensions Software, LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -355,13 +357,13 @@ limitations under the License.
 ## smartmontools
 
 **License:** GNU General Public License v2.0 (GPLv2)
-**Version:** 7.4
+**Version:** 7.5
 **Website:** https://www.smartmontools.org/
 **Source:** https://github.com/smartmontools/smartmontools
 **Used for:** S.M.A.R.T. disk health analysis in the Diagnostic & Benchmarking panel
 
 smartctl.exe is bundled as a standalone executable in `tools/smartmontools/`.
-The full GPLv2 license text is included alongside the binary as `COPYING`.
+The GPLv2 license notice is included in this third-party license inventory.
 
 As required by GPLv2, the complete source code for smartmontools is available at:
 https://github.com/smartmontools/smartmontools/releases
@@ -371,6 +373,7 @@ https://github.com/smartmontools/smartmontools/releases
 ## iPerf3
 
 **License:** BSD 3-Clause
+**Version:** 3.21
 **Website:** https://iperf.fr/
 **Source:** https://github.com/esnet/iperf
 **Used for:** LAN bandwidth testing in the Network Diagnostics panel

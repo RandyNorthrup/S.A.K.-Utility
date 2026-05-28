@@ -20,6 +20,7 @@
 #include "sak/image_flasher_panel.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/ost_converter_widget.h"
@@ -29,8 +30,11 @@
 #include "sak/vulnerability_panel.h"
 #include "sak/widget_helpers.h"
 #include "sak/wifi_manager_panel.h"
+#include "sak/windows11_theme.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QBoxLayout>
 #include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -47,9 +51,11 @@
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QTextBrowser>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -60,23 +66,37 @@ namespace sak {
 
 namespace {
 
-constexpr char kAboutTabHtml[] = R"SAKABOUT(
-<style>
-    body { font-family: 'Segoe UI', sans-serif; margin: 8px; }
-    h2 { color: #1e293b; margin-bottom: 4px; }
-    .subtitle { color: #64748b; font-size: 10pt; margin-bottom: 12px; }
-    .section { margin-bottom: 14px; }
-    .section-title {
-        font-weight: 700; font-size: 10pt; color: #3b82f6;
-        border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; margin-bottom: 6px;
-    }
-    ul { margin: 2px 0 0 16px; padding: 0; }
-    li { margin-bottom: 3px; color: #334155; }
-    a { color: #3b82f6; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .footer { color: #94a3b8; font-size: 9pt; margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
-</style>
+constexpr int kStatusIconSize = ui::kUiIconSmall;
+constexpr int kDefaultPanelStatusTimeoutMs = kTimerStatusDefaultMs;
+constexpr int kDirectTabShortcutCount = 9;
+constexpr int kTenthTabIndex = 9;
+constexpr int kTabShortcutBaseOffset = 10;
+constexpr int kShiftTabShortcutCount = 5;
 
+QBoxLayout* findBoxLayoutContainingWidget(QLayout* layout, QWidget* target, int& item_index) {
+    if (!layout || !target) {
+        return nullptr;
+    }
+
+    for (int index = 0; index < layout->count(); ++index) {
+        QLayoutItem* item = layout->itemAt(index);
+        if (!item) {
+            continue;
+        }
+        if (item->widget() == target) {
+            item_index = index;
+            return dynamic_cast<QBoxLayout*>(layout);
+        }
+        if (auto* child_layout = item->layout()) {
+            if (auto* found = findBoxLayoutContainingWidget(child_layout, target, item_index)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
+}
+
+constexpr char kAboutTabHtml[] = R"SAKABOUT(
 <h2>Swiss Army Knife (S.A.K.) Utility</h2>
 <div class="subtitle">A portable Windows toolkit for PC technicians, IT pros, and sysadmins.<br/>
 Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
@@ -136,8 +156,8 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Imaging</div>
     <ul>
         <li><b>Image Flasher</b> &mdash; Flash ISOs/IMGs to USB with streaming decompression and system-drive protection</li>
-        <li><b>Windows ISO Download</b> &mdash; Download directly from Microsoft via UUP Dump API</li>
-        <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
+        <li><b>Windows ISO Download</b> &mdash; Build Windows ISOs from Microsoft UUP payloads through the UUP Dump API and bundled UUP-to-ISO tooling</li>
+        <li><b>Linux ISO Download</b> &mdash; Built-in distro catalog (Ubuntu, Fedora, Debian, Arch, Mint, Kali, SystemRescue, Clonezilla, and more)</li>
     </ul>
 </div>
 
@@ -165,7 +185,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 </div>
 
 <div class="footer">
-    100% portable &mdash; no installer required. Drop on a USB drive and go.<br/>
+    Portable ZIP &mdash; no installer required. AI sessions and credentials stay app-local.<br/>
     <a href="https://github.com/RandyNorthrup/S.A.K.-Utility">GitHub</a> &middot; AGPL-3.0 license
 </div>
 )SAKABOUT";
@@ -191,16 +211,6 @@ for the full list.</p>
 )SAKLICENSE";
 
 constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
-<style>
-    body { font-family: 'Segoe UI', sans-serif; margin: 8px; }
-    h3 { color: #1e293b; margin-bottom: 6px; }
-    .dep { margin-bottom: 10px; }
-    .dep b { color: #334155; }
-    .dep .desc { color: #475569; font-size: 9pt; }
-    a { color: #3b82f6; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-</style>
-
 <h3>Development</h3>
 <p><b>Lead Developer:</b> Randy Northrup</p>
 
@@ -208,7 +218,7 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 
 <div class="dep">
     <b><a href="https://www.qt.io/">Qt Framework 6.5+</a></b> &mdash; LGPL v3<br/>
-    <span class="desc">GUI framework, threading, networking, cryptography</span>
+    <span class="desc">GUI framework, threading, networking, resources, and application infrastructure</span>
 </div>
 <div class="dep">
     <b><a href="https://www.nayuki.io/page/qr-code-generator-library">qrcodegen</a></b> &mdash; MIT (Project Nayuki)<br/>
@@ -256,7 +266,7 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 </div>
 <div class="dep">
     <b>Windows BCrypt API</b> &mdash; OS component<br/>
-    <span class="desc">AES-256 encryption, PBKDF2, SHA-256 (FIPS 140-2 validated)</span>
+    <span class="desc">AES-256 encryption, PBKDF2, and SHA-256 through Windows cryptography APIs</span>
 </div>
 
 <h3>Special Thanks</h3>
@@ -280,30 +290,12 @@ constexpr char kTooltipAiAssistant[] =
     "AI-assisted research, reports, and full-access PC repair workflows";
 #endif
 
-const QString kDiscordBtnStyle = QStringLiteral(
-    "QPushButton {"
-    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 rgba(108, 117, 252, 0.92),"
-    "    stop:0.5 rgba(88, 101, 242, 0.90),"
-    "    stop:1 rgba(71, 82, 196, 0.88));"
-    "  color: white; font-weight: 600;"
-    "  padding: 8px 14px; border-radius: 10px;"
-    "  border: 1px solid rgba(71, 82, 196, 0.7);"
-    "}"
-    "QPushButton:hover {"
-    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 rgba(128, 137, 253, 0.95),"
-    "    stop:0.5 rgba(109, 120, 247, 0.93),"
-    "    stop:1 rgba(88, 101, 242, 0.90));"
-    "}"
-    "QPushButton:pressed {"
-    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 rgba(71, 82, 196, 0.95),"
-    "    stop:0.5 rgba(57, 66, 164, 0.93),"
-    "    stop:1 rgba(45, 52, 140, 0.92));"
-    "}");
-
 constexpr int kTabIconSize = 20;
+
+bool IsAccessibilityAuditMode() {
+    const auto* app = QCoreApplication::instance();
+    return app && app->property("sakAccessibilityAudit").toBool();
+}
 
 void AddTabWithTooltip(QTabWidget* tabWidget,
                        QWidget* panel,
@@ -333,13 +325,89 @@ void AddTabWithTooltip(QTabWidget* tabWidget,
     tabWidget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
 }
 
-QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html) {
+QString HtmlBrowserStyleSheet() {
+    const bool dark = qApp && ui::currentThemeMode(*qApp) == ui::AppThemeMode::Dark;
+    const auto color = [](const char* token) {
+        return QString::fromLatin1(token);
+    };
+    const QString heading = color(dark ? ui::kColorDarkTextHeading : ui::kColorTextHeading);
+    const QString body = color(dark ? ui::kColorDarkTextBody : ui::kColorTextBody);
+    const QString secondary = color(dark ? ui::kColorDarkTextSecondary : ui::kColorTextSecondary);
+    const QString muted = color(dark ? ui::kColorDarkTextMuted : ui::kColorTextMuted);
+    const QString border = color(dark ? ui::kColorDarkBorderDefault : ui::kColorBorderDefault);
+    const QString link = color(ui::kColorPrimary);
+
+    return QStringLiteral(
+               "body { font-family: 'Segoe UI', sans-serif; margin: %1px; "
+               "color: %2; background: transparent; }"
+               "h2, h3 { color: %3; margin-bottom: %4px; }"
+               "p { color: %2; }"
+               ".subtitle { color: %5; font-size: %6pt; margin-bottom: %7px; }"
+               ".section, .dep { margin-bottom: %8px; }"
+               ".section-title { font-weight: %9; font-size: %6pt; color: %10; "
+               "border-bottom: %11px solid %12; padding-bottom: %13px; "
+               "margin-bottom: %14px; }"
+               "ul { margin: %13px 0 0 %15px; padding: 0; }"
+               "li { margin-bottom: %13px; color: %2; }"
+               "b { color: %3; }"
+               ".dep .desc { color: %5; font-size: %16pt; }"
+               "a { color: %10; text-decoration: none; }"
+               "a:hover { text-decoration: underline; }"
+               ".footer { color: %17; font-size: %16pt; margin-top: %8px; "
+               "border-top: %11px solid %12; padding-top: %14px; }")
+        .arg(ui::kMarginSmall)
+        .arg(body, heading)
+        .arg(ui::kSpacingTight)
+        .arg(secondary)
+        .arg(ui::kFontSizeBody)
+        .arg(ui::kSpacingLarge)
+        .arg(ui::kSpacingLarge)
+        .arg(ui::kFontWeightBold)
+        .arg(link)
+        .arg(ui::kCssBorderWidthDefaultPx)
+        .arg(border)
+        .arg(ui::kCssPaddingTinyPx)
+        .arg(ui::kCssPaddingMediumPx)
+        .arg(ui::kMarginLarge)
+        .arg(ui::kFontSizeNote)
+        .arg(muted);
+}
+
+void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
+    if (!browser) {
+        return;
+    }
+    browser->setStyleSheet(ui::textBrowserSurfaceStyle(ui::kColorBgWhite, ui::kColorBorderDefault));
+    browser->document()->setDefaultStyleSheet(HtmlBrowserStyleSheet());
+    const QString html = browser->property("sakHtmlContent").toString();
+    if (!html.isEmpty()) {
+        browser->setHtml(html);
+    }
+}
+
+void ApplyThemedHtmlBrowsers(QWidget* root) {
+    if (!root) {
+        return;
+    }
+    const auto browsers = root->findChildren<QTextBrowser*>();
+    for (QTextBrowser* browser : browsers) {
+        if (browser && browser->property("sakThemedHtmlBrowser").toBool()) {
+            ApplyHtmlBrowserTheme(browser);
+        }
+    }
+}
+
+QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html, const QString& accessibleName) {
     Q_ASSERT(parent);
     Q_ASSERT(html);
+    Q_ASSERT(!accessibleName.isEmpty());
 
     auto* browser = new QTextBrowser(parent);
     browser->setOpenExternalLinks(true);
-    browser->setHtml(QString::fromUtf8(html));
+    browser->setAccessibleName(accessibleName);
+    browser->setProperty("sakThemedHtmlBrowser", true);
+    browser->setProperty("sakHtmlContent", QString::fromUtf8(html));
+    ApplyHtmlBrowserTheme(browser);
     return browser;
 }
 
@@ -347,11 +415,15 @@ QTextBrowser* CreateHtmlBrowser(QWidget* parent, const char* html) {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setupUi();
-    loadWindowState();
+    if (!IsAccessibilityAuditMode()) {
+        loadWindowState();
+    }
 }
 
 MainWindow::~MainWindow() {
-    saveWindowState();
+    if (!IsAccessibilityAuditMode()) {
+        saveWindowState();
+    }
 }
 
 void MainWindow::setupUi() {
@@ -384,17 +456,22 @@ void MainWindow::setupUi() {
     createPanels();
     createKeyboardShortcuts();
 
-    // Apply chevron icons to the tab-bar scroll buttons.
-    // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
-    // re-apply after layout and on tab changes to cover all cases.
-    QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
-    connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
+    if (!IsAccessibilityAuditMode()) {
+        // Apply chevron icons to the tab-bar scroll buttons.
+        // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
+        // re-apply after layout and on tab changes to cover all cases.
         QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
-        updateVulnerabilityStatusBarVisibility();
-    });
+        connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
+            QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+            updateVulnerabilityStatusBarVisibility();
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+            updateAiStatusBarVisibility();
+#endif
+        });
 
-    // Enable mouse-wheel tab switching on the tab bar
-    m_tab_widget->tabBar()->installEventFilter(this);
+        // Enable mouse-wheel tab switching on the tab bar
+        m_tab_widget->tabBar()->installEventFilter(this);
+    }
 
     updateStatus("Ready", 0);
 }
@@ -408,15 +485,31 @@ void MainWindow::createMenuBar() {
 void MainWindow::createStatusBar() {
     // Persistent status label
     m_status_label = new QLabel("Ready", this);
-    m_status_label->setContentsMargins(6, 0, 6, 0);
+    m_status_label->setContentsMargins(
+        sak::ui::kMarginTight, sak::ui::kMarginNone, sak::ui::kMarginTight, sak::ui::kMarginNone);
     statusBar()->addWidget(m_status_label, 1);
 
     m_vulnerability_summary_label = new QLabel(this);
-    m_vulnerability_summary_label->setContentsMargins(10, 0, 10, 0);
+    m_vulnerability_summary_label->setContentsMargins(sak::ui::kSpacingDefault,
+                                                      sak::ui::kMarginNone,
+                                                      sak::ui::kSpacingDefault,
+                                                      sak::ui::kMarginNone);
     m_vulnerability_summary_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_vulnerability_summary_label->setStyleSheet(
-        QStringLiteral("color: %1; font-weight: 600;").arg(sak::ui::kColorTextSecondary));
+        sak::ui::fontWeightAndColorStyle(ui::kFontWeightSemibold, sak::ui::kColorTextSecondary));
     m_vulnerability_summary_label->setVisible(false);
+
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    m_ai_status_label = new QLabel(this);
+    m_ai_status_label->setContentsMargins(sak::ui::kSpacingDefault,
+                                          sak::ui::kMarginNone,
+                                          sak::ui::kSpacingDefault,
+                                          sak::ui::kMarginNone);
+    m_ai_status_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_ai_status_label->setStyleSheet(
+        sak::ui::fontWeightAndColorStyle(ui::kFontWeightSemibold, sak::ui::kColorTextSecondary));
+    m_ai_status_label->setVisible(false);
+#endif
 
     // Progress bar (hidden by default, fixed size to prevent resizing)
     m_progress_bar = new QProgressBar(this);
@@ -427,32 +520,26 @@ void MainWindow::createStatusBar() {
     statusBar()->addPermanentWidget(m_progress_bar);
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    m_ai_status_label = new QLabel(this);
-    m_ai_status_label->setContentsMargins(8, 0, 8, 0);
-    m_ai_status_label->setStyleSheet(
-        QStringLiteral("color: %1; font-weight: 600;").arg(sak::ui::kColorTextSecondary));
-    m_ai_status_label->setMinimumWidth(280);
-    m_ai_status_label->setMaximumWidth(760);
-    m_ai_status_label->setVisible(false);
     statusBar()->addPermanentWidget(m_ai_status_label);
 #endif
-
     statusBar()->addPermanentWidget(m_vulnerability_summary_label);
 
     // Elevation status indicator
     m_elevation_label = new QWidget(this);
     auto* elev_layout = new QHBoxLayout(m_elevation_label);
-    elev_layout->setContentsMargins(6, 0, 6, 0);
-    elev_layout->setSpacing(4);
+    elev_layout->setContentsMargins(
+        sak::ui::kMarginTight, sak::ui::kMarginNone, sak::ui::kMarginTight, sak::ui::kMarginNone);
+    elev_layout->setSpacing(sak::ui::kSpacingTight);
     auto* elev_icon = new QLabel(m_elevation_label);
     auto* elev_text = new QLabel(m_elevation_label);
     if (ElevationManager::isElevated()) {
-        elev_icon->setPixmap(
-            QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg")).pixmap(16, 16));
+        elev_icon->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg"))
+                                 .pixmap(kStatusIconSize, kStatusIconSize));
         elev_text->setText(tr("Administrator"));
         m_elevation_label->setToolTip(tr("Running with administrator privileges"));
     } else {
-        elev_icon->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-lock.svg")).pixmap(16, 16));
+        elev_icon->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-lock.svg"))
+                                 .pixmap(kStatusIconSize, kStatusIconSize));
         elev_text->setText(tr("Standard"));
         m_elevation_label->setToolTip(
             tr("Running as standard user. Some features will prompt "
@@ -467,13 +554,10 @@ void MainWindow::createStatusBar() {
         auto* elevate_btn = new QPushButton(this);
         elevate_btn->setText(tr("Run as Admin"));
         elevate_btn->setToolTip(tr("Restart S.A.K. Utility with administrator privileges"));
+        elevate_btn->setAccessibleName(tr("Run as Administrator"));
         elevate_btn->setFlat(true);
         elevate_btn->setCursor(Qt::PointingHandCursor);
-        elevate_btn->setStyleSheet(
-            QStringLiteral("QPushButton { border: none; padding: 2px 6px; "
-                           "color: black; font-size: %1pt; }"
-                           "QPushButton:hover { text-decoration: underline; }")
-                .arg(sak::ui::kFontSizeBody));
+        elevate_btn->setStyleSheet(sak::ui::compactLinkButtonStyle());
         connect(elevate_btn, &QPushButton::clicked, this, [this]() {
             auto result = ElevationManager::restartElevated();
             if (result) {
@@ -481,11 +565,11 @@ void MainWindow::createStatusBar() {
             } else {
                 sak::logError("Failed to restart elevated from status bar: {}",
                               to_string(result.error()));
-                QMessageBox::critical(this,
-                                      tr("Elevation Failed"),
-                                      tr("Failed to restart with administrator privileges.\n\n"
-                                         "Try right-clicking the application and selecting "
-                                         "\"Run as administrator\"."));
+                sak::showCriticalLogged(this,
+                                        tr("Elevation Failed"),
+                                        tr("Failed to restart with administrator privileges.\n\n"
+                                           "Try right-clicking the application and selecting "
+                                           "\"Run as administrator\"."));
             }
         });
         statusBar()->addPermanentWidget(elevate_btn);
@@ -496,6 +580,9 @@ void MainWindow::createPanels() {
     createToolPanels();
     createHelpPanel();
     createAboutPanel();
+    if (IsAccessibilityAuditMode()) {
+        return;
+    }
     connectPanelSignals();
     connectPanelLogs();
 }
@@ -518,7 +605,14 @@ void MainWindow::createToolPanels() {
 
 void MainWindow::createSimplePanels() {
     Q_ASSERT(m_tab_widget);
-    // -- Backup and Restore ----------------------------------------------
+    createBackupRestorePanel();
+    createFileManagementPanel();
+    createImageFlasherPanel();
+    createDiagnosticPanel();
+    createEmailToolsPanel();
+}
+
+void MainWindow::createBackupRestorePanel() {
     logInfo("MainWindow: creating Backup and Restore panel");
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     AddTabWithTooltip(m_tab_widget,
@@ -527,8 +621,9 @@ void MainWindow::createSimplePanels() {
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
     logInfo("MainWindow: Backup and Restore panel initialized");
+}
 
-    // -- File Management (Organizer + Duplicate Finder + Advanced Search) -
+void MainWindow::createFileManagementPanel() {
     logInfo("MainWindow: creating File Management panels");
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
@@ -539,8 +634,9 @@ void MainWindow::createSimplePanels() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
     logInfo("MainWindow: File Management panels initialized");
+}
 
-    // -- Image Flasher ---------------------------------------------------
+void MainWindow::createImageFlasherPanel() {
     logInfo("MainWindow: creating Image Flasher panel");
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     AddTabWithTooltip(m_tab_widget,
@@ -549,8 +645,9 @@ void MainWindow::createSimplePanels() {
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
     logInfo("MainWindow: Image Flasher panel initialized");
+}
 
-    // -- Benchmark and Diagnostics ---------------------------------------
+void MainWindow::createDiagnosticPanel() {
     logInfo("MainWindow: creating Benchmark and Diagnostics panel");
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
     AddTabWithTooltip(m_tab_widget,
@@ -559,8 +656,9 @@ void MainWindow::createSimplePanels() {
                       kTooltipDiagnostics,
                       ":/icons/icons/panel_diagnostic.svg");
     logInfo("MainWindow: Benchmark and Diagnostics panel initialized");
+}
 
-    // -- Email Tools ------------------------------------------------------
+void MainWindow::createEmailToolsPanel() {
     logInfo("MainWindow: creating Email Tools panels");
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
@@ -579,6 +677,7 @@ void MainWindow::createSimplePanels() {
         emailLayout);
 
     auto* emailTabs = new QTabWidget(emailWrapper);
+    emailTabs->setAccessibleName(tr("Email tools tabs"));
     emailTabs->addTab(m_email_inspector_panel.get(), tr("Email Inspector"));
     emailTabs->addTab(m_ost_converter_widget.get(), tr("OST Converter"));
     emailLayout->addWidget(emailTabs, 1);
@@ -611,7 +710,7 @@ void MainWindow::createSimplePanels() {
             &OstConverterWidget::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_ost_converter_widget.get(),
             &OstConverterWidget::progressUpdate,
@@ -629,16 +728,7 @@ void MainWindow::createSimplePanels() {
 void MainWindow::createAppManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_app_installation_panel);
-    logInfo("MainWindow: creating Application Management panels");
-    logInfo("MainWindow: creating App Installation panel");
-    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
-    logInfo("MainWindow: App Installation panel initialized");
-    logInfo("MainWindow: creating Advanced Uninstall panel");
-    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
-    logInfo("MainWindow: Advanced Uninstall panel initialized");
-    logInfo("MainWindow: creating Vulnerability Scanner panel");
-    m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(this);
-    logInfo("MainWindow: Vulnerability Scanner panel initialized");
+    createAppManagementChildPanels();
 
     logInfo("MainWindow: creating Application Management wrapper");
     auto* appMgmtWrapper = new QWidget(this);
@@ -655,6 +745,7 @@ void MainWindow::createAppManagementPanel() {
         appMgmtLayout);
 
     auto* appTabs = new QTabWidget(appMgmtWrapper);
+    appTabs->setAccessibleName(tr("Application management tabs"));
     m_application_tabs = appTabs;
     appTabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
     appTabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
@@ -699,6 +790,19 @@ void MainWindow::createAppManagementPanel() {
     logInfo("MainWindow: Application Management panels initialized");
 }
 
+void MainWindow::createAppManagementChildPanels() {
+    logInfo("MainWindow: creating Application Management panels");
+    logInfo("MainWindow: creating App Installation panel");
+    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
+    logInfo("MainWindow: App Installation panel initialized");
+    logInfo("MainWindow: creating Advanced Uninstall panel");
+    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
+    logInfo("MainWindow: Advanced Uninstall panel initialized");
+    logInfo("MainWindow: creating Vulnerability Scanner panel");
+    m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(this);
+    logInfo("MainWindow: Vulnerability Scanner panel initialized");
+}
+
 void MainWindow::createNetworkManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_network_diagnostic_panel);
@@ -724,23 +828,13 @@ void MainWindow::createNetworkManagementPanel() {
         netMgmtLayout);
 
     auto* netTabs = new QTabWidget(netMgmtWrapper);
+    netTabs->setAccessibleName(tr("Network management tabs"));
     netTabs->addTab(m_network_diagnostic_panel.get(), tr("Network Diagnostics"));
     netTabs->addTab(m_network_diagnostic_panel->adapterWidget(), tr("Network Adapters"));
     netTabs->addTab(m_wifi_manager_panel.get(), tr("WiFi Manager"));
     netMgmtLayout->addWidget(netTabs, 1);
 
-    // Connect adapter-tab log toggle to the shared log window
-    auto* adapterToggle = m_network_diagnostic_panel->adapterLogToggle();
-    if (adapterToggle && m_logWindow) {
-        connect(adapterToggle,
-                &LogToggleSwitch::toggled,
-                m_logWindow,
-                &DetachableLogWindow::setLogVisible);
-        connect(m_logWindow,
-                &DetachableLogWindow::visibilityChanged,
-                adapterToggle,
-                &LogToggleSwitch::setChecked);
-    }
+    connectNetworkAdapterLogToggle();
 
     connect(netTabs, &QTabWidget::currentChanged, this, [netHdr](int index) {
         struct TabMeta {
@@ -779,6 +873,19 @@ void MainWindow::createNetworkManagementPanel() {
                       ":/icons/icons/panel_network.svg");
 }
 
+void MainWindow::connectNetworkAdapterLogToggle() {
+    auto* adapterToggle = m_network_diagnostic_panel->adapterLogToggle();
+    if (!adapterToggle || !m_logWindow) {
+        return;
+    }
+    connect(
+        adapterToggle, &LogToggleSwitch::toggled, m_logWindow, &DetachableLogWindow::setLogVisible);
+    connect(m_logWindow,
+            &DetachableLogWindow::visibilityChanged,
+            adapterToggle,
+            &LogToggleSwitch::setChecked);
+}
+
 void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
     Q_ASSERT(iconLabel);
     Q_ASSERT(!QCoreApplication::applicationDirPath().isEmpty());
@@ -796,11 +903,9 @@ void MainWindow::loadAboutPanelIcon(QLabel* iconLabel) {
     }
     if (!splashPix.isNull()) {
         iconLabel->setPixmap(
-            splashPix.scaled(64, 64, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            splashPix.scaled(kIconSize, kIconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     } else {
-        iconLabel->setStyleSheet(QString("QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-                                         "stop:0 %1,stop:1 %2); border-radius: 12px; }")
-                                     .arg(ui::kColorPrimary, ui::kColorPrimaryDark));
+        iconLabel->setStyleSheet(ui::mainIconFallbackStyle());
     }
 }
 
@@ -809,7 +914,7 @@ void MainWindow::createAboutPanel() {
     Q_ASSERT(!QCoreApplication::applicationVersion().isEmpty());
     auto* aboutPanel = new QWidget(this);
     auto* aboutLayout = new QVBoxLayout(aboutPanel);
-    aboutLayout->setSpacing(12);
+    aboutLayout->setSpacing(ui::kSpacingLarge);
     aboutLayout->setContentsMargins(
         ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
 
@@ -823,13 +928,14 @@ void MainWindow::createAboutPanel() {
 
     auto* titleLayout = new QVBoxLayout();
     auto* title = new QLabel(QStringLiteral("<b>S.A.K. Utility</b>"), aboutPanel);
-    title->setStyleSheet(QString("font-size: %1pt; font-weight: 700;").arg(ui::kFontSizeTitle));
+    title->setStyleSheet(ui::fontSizeWeightColorStyle(
+        ui::kFontSizeTitle, ui::kFontWeightBold, ui::kColorTextPrimary));
     titleLayout->addWidget(title);
 
     auto* ver = new QLabel(QString("Version %1 \u2014 %2").arg(get_version(), get_build_date()),
                            aboutPanel);
     ver->setStyleSheet(
-        QString("font-size: %1pt; color: %2;").arg(ui::kFontSizeBody).arg(ui::kColorTextMuted));
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeBody));
     titleLayout->addWidget(ver);
 
     headerLayout->addLayout(titleLayout);
@@ -838,9 +944,13 @@ void MainWindow::createAboutPanel() {
 
     // Tabs inside about panel  --  all use QTextBrowser for uniform look
     auto* aboutTabs = new QTabWidget(aboutPanel);
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kAboutTabHtml), QStringLiteral("About"));
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kLicenseTabHtml), QStringLiteral("License"));
-    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kCreditsTabHtml), QStringLiteral("Credits"));
+    aboutTabs->setAccessibleName(tr("About information tabs"));
+    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kAboutTabHtml, tr("About S.A.K. Utility")),
+                      QStringLiteral("About"));
+    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kLicenseTabHtml, tr("License text")),
+                      QStringLiteral("License"));
+    aboutTabs->addTab(CreateHtmlBrowser(aboutPanel, kCreditsTabHtml, tr("Third-party credits")),
+                      QStringLiteral("Credits"));
 
     aboutLayout->addWidget(aboutTabs);
     const int aboutIdx =
@@ -864,7 +974,8 @@ void MainWindow::createHelpPanel() {
     // Panel header -- consistent with other panels
     auto* headerWidget = new QWidget(helpPanel);
     auto* headerLayout = new QVBoxLayout(headerWidget);
-    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     sak::createPanelHeader(headerWidget,
                            QStringLiteral(":/icons/icons/panel_help.svg"),
                            tr("Help and Support"),
@@ -872,41 +983,9 @@ void MainWindow::createHelpPanel() {
                            headerLayout);
     helpLayout->addWidget(headerWidget);
 
-    // -- Shared card styles ----------------------------------------------
-    const QString cardStyle = QString(
-                                  "QFrame {"
-                                  "  background-color: %1;"
-                                  "  border: 1px solid %2;"
-                                  "  border-radius: 10px;"
-                                  "  padding: %3px;"
-                                  "}"
-                                  "QFrame:hover {"
-                                  "  border-color: %4;"
-                                  "}")
-                                  .arg(ui::kColorBgWhite)
-                                  .arg(ui::kColorBorderDefault)
-                                  .arg(ui::kMarginMedium)
-                                  .arg(ui::kColorPrimary);
+    helpLayout->addLayout(createHelpRow_requestsAndBugs(helpPanel));
 
-    const QString titleStyle = QString(
-                                   "font-size: %1pt; font-weight: 700; color: %2;"
-                                   " border: none; background: transparent;")
-                                   .arg(ui::kFontSizeSection)
-                                   .arg(ui::kColorTextHeading);
-
-    const QString descStyle = QString(
-                                  "font-size: %1pt; color: %2;"
-                                  " border: none; background: transparent;")
-                                  .arg(ui::kFontSizeBody)
-                                  .arg(ui::kColorTextSecondary);
-
-    const QString logoStyle = QStringLiteral("border: none; background: transparent;");
-
-    helpLayout->addLayout(
-        createHelpRow_requestsAndBugs(helpPanel, cardStyle, titleStyle, descStyle, logoStyle));
-
-    helpLayout->addLayout(
-        createHelpRow_wikiAndCommunity(helpPanel, cardStyle, titleStyle, descStyle, logoStyle));
+    helpLayout->addLayout(createHelpRow_wikiAndCommunity(helpPanel));
 
     helpLayout->addStretch();
 
@@ -921,45 +1000,8 @@ void MainWindow::createHelpPanel() {
 // Help Panel -- Card Row Builders
 // ============================================================================
 
-QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent,
-                                                       const QString& cardStyle,
-                                                       const QString& titleStyle,
-                                                       const QString& descStyle,
-                                                       const QString& logoStyle) {
-    constexpr int kLogoSize = 48;
-
-    auto makeCard = [&](const QString& iconPath,
-                        const QString& title,
-                        const QString& description,
-                        QPushButton* button) -> QFrame* {
-        auto* card = new QFrame(parent);
-        card->setStyleSheet(cardStyle);
-        auto* layout = new QVBoxLayout(card);
-        layout->setSpacing(ui::kSpacingMedium);
-        layout->setContentsMargins(0, 0, 0, 0);
-
-        auto* logo = new QLabel(card);
-        logo->setPixmap(QIcon(iconPath).pixmap(kLogoSize, kLogoSize));
-        logo->setAlignment(Qt::AlignCenter);
-        logo->setStyleSheet(logoStyle);
-        layout->addWidget(logo);
-
-        auto* titleLabel = new QLabel(title, card);
-        titleLabel->setAlignment(Qt::AlignCenter);
-        titleLabel->setStyleSheet(titleStyle);
-        layout->addWidget(titleLabel);
-
-        auto* descLabel = new QLabel(description, card);
-        descLabel->setWordWrap(true);
-        descLabel->setAlignment(Qt::AlignCenter);
-        descLabel->setStyleSheet(descStyle);
-        layout->addWidget(descLabel);
-
-        layout->addStretch();
-        button->setParent(card);
-        layout->addWidget(button);
-        return card;
-    };
+QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent) {
+    Q_ASSERT(parent);
 
     auto* row = new QHBoxLayout();
     row->setSpacing(ui::kSpacingLarge);
@@ -975,11 +1017,13 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent,
                                 "?template=feature_request.yml&title=%5BFeature+Request%5D%3A+")));
     });
 
-    row->addWidget(makeCard(QStringLiteral(":/icons/icons/features.svg"),
-                            tr("Feature Requests"),
-                            tr("Have an idea to improve S.A.K. Utility?"
-                               " Submit a feature request on GitHub."),
-                            featureBtn));
+    row->addWidget(createActionCard(parent,
+                                    QStringLiteral(":/icons/icons/features.svg"),
+                                    tr("Feature Requests"),
+                                    tr("Have an idea to improve S.A.K. Utility?"
+                                       " Submit a feature request on GitHub."),
+                                    featureBtn)
+                       .card);
 
     auto* bugBtn = new QPushButton(tr("Report a Bug"), parent);
     bugBtn->setMinimumHeight(sak::kButtonHeightTall);
@@ -992,55 +1036,18 @@ QHBoxLayout* MainWindow::createHelpRow_requestsAndBugs(QWidget* parent,
                                 "?template=bug_report.yml&title=%5BBug%5D%3A+")));
     });
 
-    row->addWidget(makeCard(QStringLiteral(":/icons/icons/bugs.svg"),
-                            tr("Report a Bug"),
-                            tr("Found something broken? Let us know so we can fix it."),
-                            bugBtn));
+    row->addWidget(createActionCard(parent,
+                                    QStringLiteral(":/icons/icons/bugs.svg"),
+                                    tr("Report a Bug"),
+                                    tr("Found something broken? Let us know so we can fix it."),
+                                    bugBtn)
+                       .card);
 
     return row;
 }
 
-QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
-                                                        const QString& cardStyle,
-                                                        const QString& titleStyle,
-                                                        const QString& descStyle,
-                                                        const QString& logoStyle) {
+QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent) {
     Q_ASSERT(parent);
-    Q_ASSERT(!cardStyle.isEmpty());
-    constexpr int kLogoSize = 48;
-
-    auto makeCard = [&](const QString& iconPath,
-                        const QString& title,
-                        const QString& description,
-                        QPushButton* button) -> QFrame* {
-        auto* card = new QFrame(parent);
-        card->setStyleSheet(cardStyle);
-        auto* layout = new QVBoxLayout(card);
-        layout->setSpacing(ui::kSpacingMedium);
-        layout->setContentsMargins(0, 0, 0, 0);
-
-        auto* logo = new QLabel(card);
-        logo->setPixmap(QIcon(iconPath).pixmap(kLogoSize, kLogoSize));
-        logo->setAlignment(Qt::AlignCenter);
-        logo->setStyleSheet(logoStyle);
-        layout->addWidget(logo);
-
-        auto* titleLabel = new QLabel(title, card);
-        titleLabel->setAlignment(Qt::AlignCenter);
-        titleLabel->setStyleSheet(titleStyle);
-        layout->addWidget(titleLabel);
-
-        auto* descLabel = new QLabel(description, card);
-        descLabel->setWordWrap(true);
-        descLabel->setAlignment(Qt::AlignCenter);
-        descLabel->setStyleSheet(descStyle);
-        layout->addWidget(descLabel);
-
-        layout->addStretch();
-        button->setParent(card);
-        layout->addWidget(button);
-        return card;
-    };
 
     auto* row = new QHBoxLayout();
     row->setSpacing(ui::kSpacingLarge);
@@ -1055,64 +1062,37 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent,
             QUrl(QStringLiteral("https://github.com/RandyNorthrup/S.A.K.-Utility/wiki")));
     });
 
-    row->addWidget(makeCard(QStringLiteral(":/icons/icons/help.svg"),
-                            tr("Help & Documentation"),
-                            tr("Browse the wiki for guides, FAQ, and troubleshooting."),
-                            wikiBtn));
+    row->addWidget(createActionCard(parent,
+                                    QStringLiteral(":/icons/icons/help.svg"),
+                                    tr("Help & Documentation"),
+                                    tr("Browse the wiki for guides, FAQ, and troubleshooting."),
+                                    wikiBtn)
+                       .card);
 
-    row->addWidget(createCommunityCard(parent, cardStyle, titleStyle, descStyle, logoStyle));
+    row->addWidget(createCommunityCard(parent));
 
     return row;
 }
 
-QFrame* MainWindow::createCommunityCard(QWidget* parent,
-                                        const QString& cardStyle,
-                                        const QString& titleStyle,
-                                        const QString& descStyle,
-                                        const QString& logoStyle) {
+QFrame* MainWindow::createCommunityCard(QWidget* parent) {
     Q_ASSERT(parent);
-    Q_ASSERT(!cardStyle.isEmpty());
-    constexpr int kLogoSize = 48;
 
-    auto* communityCard = new QFrame(parent);
-    communityCard->setStyleSheet(cardStyle);
-    auto* communityLayout = new QVBoxLayout(communityCard);
-    communityLayout->setSpacing(ui::kSpacingMedium);
-    communityLayout->setContentsMargins(0, 0, 0, 0);
-
-    auto* communityLogo = new QLabel(communityCard);
-    communityLogo->setPixmap(
-        QIcon(QStringLiteral(":/icons/icons/discord.svg")).pixmap(kLogoSize, kLogoSize));
-    communityLogo->setAlignment(Qt::AlignCenter);
-    communityLogo->setStyleSheet(logoStyle);
-    communityLayout->addWidget(communityLogo);
-
-    auto* communityTitle = new QLabel(tr("Community"), communityCard);
-    communityTitle->setAlignment(Qt::AlignCenter);
-    communityTitle->setStyleSheet(titleStyle);
-    communityLayout->addWidget(communityTitle);
-
-    auto* communityDesc = new QLabel(tr("Join the Discord server for general discussion,"
-                                        " help, and announcements."),
-                                     communityCard);
-    communityDesc->setWordWrap(true);
-    communityDesc->setAlignment(Qt::AlignCenter);
-    communityDesc->setStyleSheet(descStyle);
-    communityLayout->addWidget(communityDesc);
-
-    communityLayout->addStretch();
-
-    auto* discordBtn = new QPushButton(tr("Join Discord"), communityCard);
+    auto* discordBtn = new QPushButton(tr("Join Discord"), parent);
     discordBtn->setMinimumHeight(sak::kButtonHeightTall);
-    discordBtn->setStyleSheet(kDiscordBtnStyle);
+    discordBtn->setStyleSheet(ui::kDiscordCompactButtonStyle);
     discordBtn->setAccessibleName(QStringLiteral("Join S.A.K. Utility Discord server"));
     discordBtn->setToolTip(QStringLiteral("Opens the general discussion Discord channel"));
-    communityLayout->addWidget(discordBtn);
     connect(discordBtn, &QPushButton::clicked, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://discord.gg/pMh2n9kSK3")));
     });
 
-    return communityCard;
+    return createActionCard(parent,
+                            QStringLiteral(":/icons/icons/discord.svg"),
+                            tr("Community"),
+                            tr("Join the Discord server for general discussion, help, and "
+                               "announcements."),
+                            discordBtn)
+        .card;
 }
 
 void MainWindow::connectPanelSignals() {
@@ -1121,13 +1101,13 @@ void MainWindow::connectPanelSignals() {
     connect(m_user_migration_panel.get(),
             &UserMigrationPanel::statusMessage,
             this,
-            [this](const QString& msg) { updateStatus(msg, 5000); });
+            [this](const QString& msg) { updateStatus(msg, kDefaultPanelStatusTimeoutMs); });
 
     connect(m_organizer_panel.get(),
             &OrganizerPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_organizer_panel.get(),
             &OrganizerPanel::progressUpdate,
@@ -1138,7 +1118,7 @@ void MainWindow::connectPanelSignals() {
             &AppInstallationPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_app_installation_panel.get(),
             &AppInstallationPanel::progressUpdated,
@@ -1148,7 +1128,7 @@ void MainWindow::connectPanelSignals() {
     connect(m_image_flasher_panel.get(),
             &ImageFlasherPanel::statusMessage,
             this,
-            [this](const QString& msg) { updateStatus(msg, 5000); });
+            [this](const QString& msg) { updateStatus(msg, kDefaultPanelStatusTimeoutMs); });
     connect(m_image_flasher_panel.get(),
             &ImageFlasherPanel::progressUpdate,
             this,
@@ -1160,12 +1140,32 @@ void MainWindow::connectPanelSignals() {
 void MainWindow::connectRemainingPanelSignals() {
     Q_ASSERT(m_network_diagnostic_panel);
     Q_ASSERT(m_diagnostic_benchmark_panel);
+    connectDiagnosticAndSearchSignals();
+    connectManagementAndVulnerabilitySignals();
+    connectNetworkAndEmailSignals();
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    if (m_ai_assistant_panel) {
+        connect(m_ai_assistant_panel.get(),
+                &AiAssistantPanel::statusDetailsChanged,
+                this,
+                [this](const QString& details) {
+                    if (m_ai_status_label) {
+                        m_ai_status_label->setText(details);
+                        m_ai_status_label->setToolTip(details);
+                    }
+                    updateAiStatusBarVisibility();
+                });
+        updateAiStatusBarVisibility();
+    }
+#endif
+}
 
+void MainWindow::connectDiagnosticAndSearchSignals() {
     connect(m_diagnostic_benchmark_panel.get(),
             &DiagnosticBenchmarkPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_diagnostic_benchmark_panel.get(),
             &DiagnosticBenchmarkPanel::progressUpdate,
@@ -1176,18 +1176,20 @@ void MainWindow::connectRemainingPanelSignals() {
             &AdvancedSearchPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_advanced_search_panel.get(),
             &AdvancedSearchPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+}
 
+void MainWindow::connectManagementAndVulnerabilitySignals() {
     connect(m_advanced_uninstall_panel.get(),
             &AdvancedUninstallPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_advanced_uninstall_panel.get(),
             &AdvancedUninstallPanel::progressUpdate,
@@ -1198,7 +1200,7 @@ void MainWindow::connectRemainingPanelSignals() {
             &VulnerabilityPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_vulnerability_panel.get(),
             &VulnerabilityPanel::summaryStatusChanged,
@@ -1211,12 +1213,14 @@ void MainWindow::connectRemainingPanelSignals() {
                 updateVulnerabilityStatusBarVisibility();
             });
     updateVulnerabilityStatusBarVisibility();
+}
 
+void MainWindow::connectNetworkAndEmailSignals() {
     connect(m_network_diagnostic_panel.get(),
             &NetworkDiagnosticPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_network_diagnostic_panel.get(),
             &NetworkDiagnosticPanel::progressUpdate,
@@ -1227,16 +1231,12 @@ void MainWindow::connectRemainingPanelSignals() {
             &EmailInspectorPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
     connect(m_email_inspector_panel.get(),
             &EmailInspectorPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
-
-#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    connectAiAssistantSignals();
-#endif
 }
 
 bool MainWindow::isVulnerabilityPanelActive() const {
@@ -1267,57 +1267,17 @@ bool MainWindow::isAiAssistantPanelActive() const {
 }
 
 void MainWindow::updateAiStatusBarVisibility() {
-    if (!m_ai_status_label || !m_ai_assistant_panel) {
+    if (!m_ai_status_label) {
         return;
     }
 
-    const QString details = m_ai_assistant_panel->statusDetails();
-    m_ai_status_label->setText(details);
-    m_ai_status_label->setToolTip(details);
-    m_ai_status_label->setVisible(isAiAssistantPanelActive() && !details.isEmpty());
-
-    if (isAiAssistantPanelActive()) {
-        if (m_ai_progress_active) {
-            updateProgress(m_ai_progress_current, m_ai_progress_maximum);
-            m_progress_owner_is_ai = true;
-        }
-    } else if (m_progress_owner_is_ai) {
-        setProgressVisible(false);
-        m_progress_owner_is_ai = false;
+    const bool active = isAiAssistantPanelActive();
+    if (active && m_ai_assistant_panel) {
+        const QString details = m_ai_assistant_panel->statusDetails();
+        m_ai_status_label->setText(details);
+        m_ai_status_label->setToolTip(details);
     }
-}
-
-void MainWindow::connectAiAssistantSignals() {
-    if (!m_ai_assistant_panel) {
-        return;
-    }
-
-    connect(m_ai_assistant_panel.get(),
-            &AiAssistantPanel::statusMessage,
-            this,
-            [this](const QString& msg, int timeout_ms) {
-                if (isAiAssistantPanelActive()) {
-                    updateStatus(msg, timeout_ms > 0 ? timeout_ms : 5000);
-                }
-            });
-    connect(m_ai_assistant_panel.get(),
-            &AiAssistantPanel::progressUpdate,
-            this,
-            [this](int current, int maximum) {
-                m_ai_progress_current = current;
-                m_ai_progress_maximum = maximum;
-                m_ai_progress_active = (current == 0 && maximum == 0) ||
-                                       (maximum > 0 && current < maximum);
-                if (isAiAssistantPanelActive()) {
-                    updateProgress(current, maximum);
-                    m_progress_owner_is_ai = true;
-                }
-            });
-    connect(m_ai_assistant_panel.get(),
-            &AiAssistantPanel::statusDetailsChanged,
-            this,
-            [this](const QString&) { updateAiStatusBarVisibility(); });
-    updateAiStatusBarVisibility();
+    m_ai_status_label->setVisible(active && !m_ai_status_label->text().isEmpty());
 }
 #endif
 
@@ -1367,6 +1327,7 @@ void MainWindow::connectPanelLogs() {
                     &DetachableLogWindow::visibilityChanged,
                     toggle,
                     &LogToggleSwitch::setChecked);
+            attachThemeToggleToLogToggle(toggle);
         }
     };
 
@@ -1401,6 +1362,49 @@ void MainWindow::connectPanelLogs() {
     });
 }
 
+void MainWindow::attachThemeToggleToLogToggle(LogToggleSwitch* logToggle) {
+    if (!logToggle || !logToggle->parentWidget()) {
+        return;
+    }
+
+    int item_index = -1;
+    QBoxLayout* box_layout =
+        findBoxLayoutContainingWidget(logToggle->parentWidget()->layout(), logToggle, item_index);
+    if (!box_layout || item_index < 0) {
+        return;
+    }
+
+    auto* theme_toggle = new LogToggleSwitch(tr("Dark"), logToggle->parentWidget());
+    theme_toggle->setToolTip(tr("Toggle dark mode"));
+    theme_toggle->setAccessibleName(tr("Toggle dark mode"));
+    theme_toggle->setChecked(m_dark_theme_enabled);
+    m_theme_toggles.append(theme_toggle);
+
+    connect(theme_toggle, &LogToggleSwitch::toggled, this, &MainWindow::setDarkThemeEnabled);
+    box_layout->insertWidget(item_index + 1, theme_toggle);
+}
+
+void MainWindow::setDarkThemeEnabled(bool enabled) {
+    if (m_dark_theme_enabled == enabled) {
+        return;
+    }
+
+    m_dark_theme_enabled = enabled;
+    if (qApp) {
+        sak::ui::applyWindows11Theme(
+            *qApp, enabled ? sak::ui::AppThemeMode::Dark : sak::ui::AppThemeMode::Light);
+    }
+
+    for (auto* toggle : m_theme_toggles) {
+        if (!toggle) {
+            continue;
+        }
+        const QSignalBlocker blocker(toggle);
+        toggle->setChecked(enabled);
+    }
+    ApplyThemedHtmlBrowsers(this);
+}
+
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
     Q_ASSERT(m_status_label);
     if (m_status_label) {
@@ -1415,9 +1419,6 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms) {
 void MainWindow::updateProgress(int current, int maximum) {
     Q_ASSERT(maximum >= 0);
     Q_ASSERT(current >= 0);
-#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    m_progress_owner_is_ai = false;
-#endif
     Q_ASSERT(m_progress_bar);
     if (!m_progress_bar) {
         return;
@@ -1462,6 +1463,7 @@ void MainWindow::setProgressVisible(bool visible) {
 void MainWindow::onTabChanged(int index) {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(index >= -1 && index < m_tab_widget->count());
+    updateVulnerabilityStatusBarVisibility();
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     updateAiStatusBarVisibility();
 #endif
@@ -1484,7 +1486,7 @@ void MainWindow::createKeyboardShortcuts() {
     const int tabCount = m_tab_widget->count();
 
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
-    for (int i = 0; i < qMin(tabCount, 9); ++i) {
+    for (int i = 0; i < qMin(tabCount, kDirectTabShortcutCount); ++i) {
         auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)),
                                        this);
         shortcut->setContext(Qt::ApplicationShortcut);
@@ -1494,15 +1496,17 @@ void MainWindow::createKeyboardShortcuts() {
     }
 
     // Ctrl+0: switches to tab index 9 (10th tab) -- browser convention
-    if (tabCount > 9) {
+    if (tabCount > kTenthTabIndex) {
         auto* tab10 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
         tab10->setContext(Qt::ApplicationShortcut);
-        connect(tab10, &QShortcut::activated, this, [this]() { m_tab_widget->setCurrentIndex(9); });
+        connect(tab10, &QShortcut::activated, this, [this]() {
+            m_tab_widget->setCurrentIndex(kTenthTabIndex);
+        });
     }
 
     // Ctrl+Shift+1..5: switches to tab index 10..14 (tabs beyond 10)
-    for (int i = 0; i < qMin(tabCount - 10, 5); ++i) {
-        const int tabIdx = 10 + i;
+    for (int i = 0; i < qMin(tabCount - kTabShortcutBaseOffset, kShiftTabShortcutCount); ++i) {
+        const int tabIdx = kTabShortcutBaseOffset + i;
         if (tabIdx >= tabCount) {
             break;
         }

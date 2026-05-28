@@ -4,7 +4,7 @@
   "title": "Technician Service Report",
   "role": "Report Writer",
   "category": "Reporting",
-  "description": "Create a technician/customer report from current session evidence.",
+  "description": "Create a technician/customer handoff report from current session evidence, actions, verification results, risks, and next steps.",
   "starter_prompt": "Create a technician service report from this AI session.",
   "required_inputs": [],
   "required_software": [

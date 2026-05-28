@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.5
+
+- **Dark theme completion** - Fixed local Qt CSS and in-app HTML surfaces so About/Credits content, action cards, AI panes, calendar/search surfaces, transcript bubbles, and email ribbon styling resolve through shared theme constants and palette-aware helpers instead of fixed light colors.
+- **Theme infrastructure** - Added light/dark application palettes, repolish on theme changes, and themed HTML browser restyling for existing widgets when the Dark slider changes.
+- **Documentation accuracy** - Removed false single-EXE/runtime-dependency/FIPS wording, corrected the local run path, refreshed the latest-version summary, and verified README/About/release descriptions against the current code and bundled tools.
+- **Workflow descriptions** - Renamed GitHub workflows and refreshed release-body wording so published releases describe the actual portable ZIP artifact and verification gates.
+- **Release metadata** - Bumped project/version metadata to 0.9.1.5.
+
+---
+
 ## v0.9.1.4
 
 - **Application vulnerability intelligence** - Added an Application Management > Vulnerability Scanner tab for installed-app and package checks against CISA KEV first, NVD CVE/CVSS details, GitHub Security Advisories, and OSV, with active-exploitation flags, affected products, patch recommendations, published dates, confidence scoring, details, and CSV/JSON export.

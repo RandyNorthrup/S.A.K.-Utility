@@ -91,16 +91,13 @@ QByteArray derive_key(const QString& password,
     return derived_key;
 }
 
-/// @brief AES-256-CBC encryption
-QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const QByteArray& iv) {
-    Q_ASSERT(!plaintext.isEmpty());
-    Q_ASSERT(!key.isEmpty());
-    BCRYPT_ALG_HANDLE hAlg = nullptr;
-    BCRYPT_KEY_HANDLE hKey = nullptr;
-
+bool initialize_aes_key(BCRYPT_ALG_HANDLE& hAlg,
+                        BCRYPT_KEY_HANDLE& hKey,
+                        const QByteArray& key,
+                        const char* operation) {
     if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0) != 0) {
-        sak::logError("BCrypt: Failed to open AES algorithm provider for encryption");
-        return {};
+        sak::logError("BCrypt: Failed to open AES algorithm provider for {}", operation);
+        return false;
     }
 
     if (BCryptSetProperty(hAlg,
@@ -108,9 +105,10 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                           reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)),
                           sizeof(BCRYPT_CHAIN_MODE_CBC),
                           0) != 0) {
-        sak::logError("BCrypt: Failed to set CBC chaining mode for encryption");
+        sak::logError("BCrypt: Failed to set CBC chaining mode for {}", operation);
         BCryptCloseAlgorithmProvider(hAlg, 0);
-        return {};
+        hAlg = nullptr;
+        return false;
     }
 
     if (BCryptGenerateSymmetricKey(hAlg,
@@ -120,8 +118,32 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                                    reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())),
                                    key.size(),
                                    0) != 0) {
-        sak::logError("BCrypt: Failed to generate symmetric key for encryption");
+        sak::logError("BCrypt: Failed to generate symmetric key for {}", operation);
         BCryptCloseAlgorithmProvider(hAlg, 0);
+        hAlg = nullptr;
+        return false;
+    }
+
+    return true;
+}
+
+void destroy_aes_key(BCRYPT_ALG_HANDLE hAlg, BCRYPT_KEY_HANDLE hKey) {
+    if (hKey) {
+        BCryptDestroyKey(hKey);
+    }
+    if (hAlg) {
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+    }
+}
+
+/// @brief AES-256-CBC encryption
+QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const QByteArray& iv) {
+    Q_ASSERT(!plaintext.isEmpty());
+    Q_ASSERT(!key.isEmpty());
+    BCRYPT_ALG_HANDLE hAlg = nullptr;
+    BCRYPT_KEY_HANDLE hKey = nullptr;
+
+    if (!initialize_aes_key(hAlg, hKey, key, "encryption")) {
         return {};
     }
 
@@ -140,8 +162,7 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                       BCRYPT_BLOCK_PADDING) != 0) {
         sak::logError("BCrypt: Failed to calculate encrypted output size ({} bytes input)",
                       plaintext.size());
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        destroy_aes_key(hAlg, hKey);
         return {};
     }
 
@@ -159,15 +180,12 @@ QByteArray aes_encrypt(const QByteArray& plaintext, const QByteArray& key, const
                       &ciphertext_len,
                       BCRYPT_BLOCK_PADDING) != 0) {
         sak::logError("BCrypt: AES-256-CBC encryption failed ({} bytes input)", plaintext.size());
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        destroy_aes_key(hAlg, hKey);
         return {};
     }
 
     ciphertext.resize(ciphertext_len);
-
-    BCryptDestroyKey(hKey);
-    BCryptCloseAlgorithmProvider(hAlg, 0);
+    destroy_aes_key(hAlg, hKey);
 
     return ciphertext;
 }
@@ -179,30 +197,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_KEY_HANDLE hKey = nullptr;
 
-    if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, nullptr, 0) != 0) {
-        sak::logError("BCrypt: Failed to open AES algorithm provider for decryption");
-        return {};
-    }
-
-    if (BCryptSetProperty(hAlg,
-                          BCRYPT_CHAINING_MODE,
-                          reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)),
-                          sizeof(BCRYPT_CHAIN_MODE_CBC),
-                          0) != 0) {
-        sak::logError("BCrypt: Failed to set CBC chaining mode for decryption");
-        BCryptCloseAlgorithmProvider(hAlg, 0);
-        return {};
-    }
-
-    if (BCryptGenerateSymmetricKey(hAlg,
-                                   &hKey,
-                                   nullptr,
-                                   0,
-                                   reinterpret_cast<PUCHAR>(const_cast<char*>(key.data())),
-                                   key.size(),
-                                   0) != 0) {
-        sak::logError("BCrypt: Failed to generate symmetric key for decryption");
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+    if (!initialize_aes_key(hAlg, hKey, key, "decryption")) {
         return {};
     }
 
@@ -221,8 +216,7 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
                       BCRYPT_BLOCK_PADDING) != 0) {
         sak::logError("BCrypt: Failed to calculate decrypted output size ({} bytes input)",
                       ciphertext.size());
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        destroy_aes_key(hAlg, hKey);
         return {};
     }
 
@@ -240,15 +234,12 @@ QByteArray aes_decrypt(const QByteArray& ciphertext, const QByteArray& key, cons
                       &plaintext_len,
                       BCRYPT_BLOCK_PADDING) != 0) {
         sak::logError("BCrypt: AES-256-CBC decryption failed ({} bytes input)", ciphertext.size());
-        BCryptDestroyKey(hKey);
-        BCryptCloseAlgorithmProvider(hAlg, 0);
+        destroy_aes_key(hAlg, hKey);
         return {};
     }
 
     plaintext.resize(plaintext_len);
-
-    BCryptDestroyKey(hKey);
-    BCryptCloseAlgorithmProvider(hAlg, 0);
+    destroy_aes_key(hAlg, hKey);
 
     return plaintext;
 }

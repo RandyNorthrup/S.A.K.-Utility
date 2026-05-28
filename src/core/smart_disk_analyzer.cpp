@@ -57,6 +57,16 @@ constexpr uint8_t kNvmeWearCriticalPercent = 95;
 constexpr uint32_t kNvmeMediaErrorWarning = 1;
 
 constexpr int kSmartctlTimeoutMs = 30'000;  // 30 seconds per drive
+constexpr int kSmartctlFatalExitMask = 0x07;
+constexpr uint8_t kSataAttrReallocatedSectorCount = 5;
+constexpr uint8_t kSataAttrCurrentPendingSector = 197;
+constexpr uint8_t kSataAttrUdmaCrcErrorCount = 199;
+constexpr int64_t kReallocatedSectorsCriticalAdviceThreshold = 50;
+constexpr uint32_t kUnsafeShutdownWarningThreshold = 100;
+constexpr double kElevatedTemperatureCelsius = 55.0;
+constexpr int64_t kHighPowerOnHoursThreshold = 50'000;
+constexpr int64_t kHoursPerYear = 8760;
+constexpr uint32_t kPhysicalDriveProbeCount = 16;
 
 }  // anonymous namespace
 
@@ -99,7 +109,7 @@ void SmartDiskAnalyzer::analyzeAll() {
             break;
         }
 
-        const int percent = static_cast<int>((i * 100) / drives.size());
+        const int percent = static_cast<int>((i * kPercentMax) / drives.size());
         Q_EMIT analysisProgress(percent,
                                 QString("Analyzing drive %1 (%2 of %3)...")
                                     .arg(drives[i])
@@ -109,7 +119,7 @@ void SmartDiskAnalyzer::analyzeAll() {
         analyzeDrive(drives[i]);
     }
 
-    Q_EMIT analysisProgress(100, "SMART analysis complete");
+    Q_EMIT analysisProgress(kPercentMax, "SMART analysis complete");
     Q_EMIT analysisComplete(m_reports);
     logInfo("SMART analysis complete -- {} report(s) generated", m_reports.size());
 }
@@ -204,7 +214,7 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     //   Bit 7: Self-test log has errors
     // Bits 3-7 are informational; only bits 0-2 are true failures
     const int exit_code = result.exit_code;
-    if (exit_code & 0x07) {
+    if (exit_code & kSmartctlFatalExitMask) {
         const QString stderr_text = result.std_err;
         logError("smartctl failed for drive {} (exit {}): {}",
                  disk_number,
@@ -316,10 +326,10 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 
         // Extract key metrics
         switch (attr.id) {
-        case 5:
+        case kSataAttrReallocatedSectorCount:
             report.reallocated_sectors = attr.raw_value;
             break;
-        case 197:
+        case kSataAttrCurrentPendingSector:
             report.pending_sectors = attr.raw_value;
             break;
         default:
@@ -421,7 +431,7 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report) {
         report.warnings.append(
             QString("Reallocated sectors detected: %1").arg(report.reallocated_sectors));
 
-        if (report.reallocated_sectors >= 50) {
+        if (report.reallocated_sectors >= kReallocatedSectorsCriticalAdviceThreshold) {
             report.recommendations.append(
                 "CRITICAL: Drive has significant sector damage -- back up data immediately and "
                 "replace drive");
@@ -440,7 +450,7 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report) {
 
     // Check for CRC errors (attribute 199)
     for (const auto& attr : report.attributes) {
-        if (attr.id == 199 && attr.raw_value > 0) {
+        if (attr.id == kSataAttrUdmaCrcErrorCount && attr.raw_value > 0) {
             report.warnings.append(QString("UDMA CRC errors detected: %1").arg(attr.raw_value));
             report.recommendations.append("Check SATA cable connections or replace SATA cable");
         }
@@ -470,7 +480,7 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report) {
             "Media errors indicate flash cell failure -- back up data and monitor closely");
     }
 
-    if (nvme.unsafe_shutdowns > 100) {
+    if (nvme.unsafe_shutdowns > kUnsafeShutdownWarningThreshold) {
         report.warnings.append(
             QString("High number of unsafe shutdowns: %1").arg(nvme.unsafe_shutdowns));
         report.recommendations.append(
@@ -488,7 +498,7 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     report.recommendations.clear();
 
     // -- Temperature warnings ------------------------------------
-    if (report.temperature_celsius > 55.0) {
+    if (report.temperature_celsius > kElevatedTemperatureCelsius) {
         report.warnings.append(QString("Drive temperature is elevated (%1 degC)")
                                    .arg(report.temperature_celsius, 0, 'f', 0));
         report.recommendations.append("Check case airflow and ensure drive has adequate cooling");
@@ -501,10 +511,10 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     generateNvmeRecommendations(report);
 
     // -- Power-on hours advisory ---------------------------------
-    if (report.power_on_hours > 50'000) {
+    if (report.power_on_hours > kHighPowerOnHoursThreshold) {
         report.warnings.append(QString("Drive has %1 power-on hours (~%2 years)")
                                    .arg(report.power_on_hours)
-                                   .arg(report.power_on_hours / 8760));
+                                   .arg(report.power_on_hours / kHoursPerYear));
         report.recommendations.append(
             "High usage drive -- consider proactive replacement for critical workloads");
     }
@@ -528,7 +538,7 @@ QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
 
 #ifdef SAK_PLATFORM_WINDOWS
     // Probe PhysicalDrive0..15
-    for (uint32_t i = 0; i < 16; ++i) {
+    for (uint32_t i = 0; i < kPhysicalDriveProbeCount; ++i) {
         const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(i);
         HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
                                0,  // No read/write access needed -- just checking existence

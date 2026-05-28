@@ -7,6 +7,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kZlibMaxWindowBits = 15;
+constexpr int kZlibGzipDetectionWindowBits = 16;
+}  // namespace
+
 GzipDecompressor::GzipDecompressor(QObject* parent) : StreamingDecompressor(parent) {
     memset(&m_zstream, 0, sizeof(m_zstream));
 }
@@ -16,8 +21,7 @@ GzipDecompressor::~GzipDecompressor() {
 }
 
 bool GzipDecompressor::initStream() {
-    // windowBits = 15 (max) + 16 (gzip format detection)
-    int ret = inflateInit2(&m_zstream, 15 + 16);
+    int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to initialize zlib: %1")
                           .arg(m_zstream.msg ? m_zstream.msg : "unknown error");

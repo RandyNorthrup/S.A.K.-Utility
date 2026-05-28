@@ -21,6 +21,24 @@
 
 #include <climits>
 
+namespace {
+bool writeReportFile(const QString& path, const QByteArray& content, const char* label) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        sak::logWarning("Report: could not write {}: {}", label, path.toStdString());
+        return false;
+    }
+
+    const qint64 bytes = file.write(content);
+    file.close();
+    if (bytes < 0) {
+        sak::logWarning("Report: {} write error: {}", label, path.toStdString());
+        return false;
+    }
+    return true;
+}
+}  // namespace
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -288,37 +306,12 @@ void EmailInspectorController::generateReport(const QString& output_path,
 
     bool any_written = false;
 
-    // Write HTML report
-    QString html = m_report_generator->generateHtml(data);
-    QString html_path = output_path + QStringLiteral("/email_report.html");
-    QFile html_file(html_path);
-    if (!html_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        sak::logWarning("Report: could not write HTML: {}", html_path.toStdString());
-    } else {
-        qint64 bytes = html_file.write(html.toUtf8());
-        html_file.close();
-        if (bytes < 0) {
-            sak::logWarning("Report: HTML write error: {}", html_path.toStdString());
-        } else {
-            any_written = true;
-        }
-    }
+    const QString html_path = output_path + QStringLiteral("/email_report.html");
+    any_written |=
+        writeReportFile(html_path, m_report_generator->generateHtml(data).toUtf8(), "HTML");
 
-    // Write JSON report
-    QByteArray json = m_report_generator->generateJson(data);
-    QString json_path = output_path + QStringLiteral("/email_report.json");
-    QFile json_file(json_path);
-    if (!json_file.open(QIODevice::WriteOnly)) {
-        sak::logWarning("Report: could not write JSON: {}", json_path.toStdString());
-    } else {
-        qint64 bytes = json_file.write(json);
-        json_file.close();
-        if (bytes < 0) {
-            sak::logWarning("Report: JSON write error: {}", json_path.toStdString());
-        } else {
-            any_written = true;
-        }
-    }
+    const QString json_path = output_path + QStringLiteral("/email_report.json");
+    any_written |= writeReportFile(json_path, m_report_generator->generateJson(data), "JSON");
 
     if (any_written) {
         sak::logInfo("Report generated at: {}", output_path.toStdString());

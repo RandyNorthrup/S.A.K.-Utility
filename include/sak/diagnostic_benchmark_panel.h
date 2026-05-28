@@ -114,11 +114,26 @@ private Q_SLOTS:
     void onQuickActionError(QuickAction* action, const QString& error_message);
 
 private:
+    static constexpr int kSuiteStepCount = 7;
+    enum SmartTableColumn {
+        SmartColDrive = 0,
+        SmartColType,
+        SmartColHealth,
+        SmartColTemperature,
+        SmartColPowerOnHours,
+        SmartColWear,
+        SmartColCount
+    };
+
     /// @brief Build the complete UI layout
     void setupUi();
 
     /// @brief Connect all controller signals to panel slots
     void connectController();
+    void connectHardwareSignals();
+    void connectBenchmarkSignals();
+    void connectSuiteSignals();
+    void connectStatusSignals();
 
     /// @brief Enable/disable inputs based on running state
     void setOperationRunning(bool running);
@@ -235,8 +250,8 @@ private:
     QProgressBar* m_thermal_disk_bar{nullptr};
 
     // -- Full Suite Widgets --------------------------------------
-    QLabel* m_suite_step_labels[7]{nullptr};
-    QString m_suite_step_names[7];  ///< Stored for safe label reconstruction
+    QLabel* m_suite_step_labels[kSuiteStepCount]{nullptr};
+    QString m_suite_step_names[kSuiteStepCount];  ///< Stored for safe label reconstruction
     QLabel* m_suite_status_label{nullptr};
     QPushButton* m_suite_run_button{nullptr};
     QPushButton* m_suite_cancel_button{nullptr};

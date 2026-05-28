@@ -6,6 +6,8 @@
 
 #include "sak/network_diagnostic_report_generator.h"
 
+#include "sak/report_style_constants.h"
+
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -16,11 +18,11 @@ namespace sak {
 
 namespace {
 constexpr auto kReportTitle = "S.A.K. Utility -- Network Diagnostic Report";
-// CSS color tokens for report
-constexpr auto kColorSuccess = "#16a34a";
-constexpr auto kColorWarning = "#d97706";
-constexpr auto kColorError = "#dc2626";
-constexpr auto kColorInfo = "#2563eb";
+constexpr qint64 kBitsPerMegabit = 1'000'000;
+constexpr int kReportMetricPrecision = 2;
+constexpr int kPortBannerPreviewLength = 80;
+constexpr int kWifiStrongSignalRssiDbm = -50;
+constexpr int kWifiUsableSignalRssiDbm = -70;
 }  // namespace
 
 NetworkDiagnosticReportGenerator::NetworkDiagnosticReportGenerator(QObject* parent)
@@ -134,30 +136,10 @@ QString NetworkDiagnosticReportGenerator::buildHtmlHeader() const {
                 "<meta charset=\"UTF-8\">\n"
                 "<title>%1</title>\n"
                 "<style>\n"
-                "body { font-family: 'Segoe UI', Tahoma, sans-serif; margin: 40px; "
-                "color: #334155; background: #f8fafc; }\n"
-                "h1 { color: #0f172a; border-bottom: 3px solid #3b82f6; padding-bottom: 8px; }\n"
-                "h2 { color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; "
-                "margin-top: 30px; }\n"
-                "table { border-collapse: collapse; width: 100%%; margin: 10px 0; }\n"
-                "th { background: #f1f5f9; padding: 8px 12px; text-align: left; "
-                "border: 1px solid #cbd5e1; font-weight: 600; }\n"
-                "td { padding: 6px 12px; border: 1px solid #e2e8f0; }\n"
-                "tr:nth-child(even) { background: #f8fafc; }\n"
-                ".success { color: %2; font-weight: 600; }\n"
-                ".warning { color: %3; font-weight: 600; }\n"
-                ".error { color: %4; font-weight: 600; }\n"
-                ".info { color: %5; }\n"
-                ".meta { color: #64748b; font-size: 0.9em; }\n"
-                ".stat-box { background: #e0f2fe; padding: 12px; border-radius: 8px; "
-                "margin: 8px 0; display: inline-block; }\n"
+                "%2\n"
                 "</style>\n</head>\n<body>\n"
                 "<h1>%1</h1>\n")
-                .arg(QLatin1String(kReportTitle),
-                     QLatin1String(kColorSuccess),
-                     QLatin1String(kColorWarning),
-                     QLatin1String(kColorError),
-                     QLatin1String(kColorInfo));
+                .arg(QLatin1String(kReportTitle), report::enterpriseReportStyleSheet());
 
     // Meta information
     html += QStringLiteral("<div class=\"meta\">\n");
@@ -192,7 +174,7 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
                                 : QStringLiteral("<span class=\"error\">Disconnected</span>");
         const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
         const auto speed = a.linkSpeedBps > 0
-                               ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / 1'000'000)
+                               ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / kBitsPerMegabit)
                                : QStringLiteral("--");
 
         html += QStringLiteral(
@@ -228,7 +210,7 @@ QString NetworkDiagnosticReportGenerator::buildPingSection() const {
                 .arg(m_pingResult.minRtt, 0, 'f', 1)
                 .arg(m_pingResult.maxRtt, 0, 'f', 1)
                 .arg(m_pingResult.avgRtt, 0, 'f', 1)
-                .arg(m_pingResult.jitter, 0, 'f', 2);
+                .arg(m_pingResult.jitter, 0, 'f', kReportMetricPrecision);
 
     return html;
 }
@@ -338,7 +320,7 @@ QString NetworkDiagnosticReportGenerator::buildPortScanSection() const {
                     .arg(r.port)
                     .arg(r.serviceName.toHtmlEscaped())
                     .arg(r.responseTimeMs, 0, 'f', 1)
-                    .arg(r.banner.left(80).toHtmlEscaped());
+                    .arg(r.banner.left(kPortBannerPreviewLength).toHtmlEscaped());
     }
     html += QStringLiteral("</table>\n");
     return html;
@@ -359,10 +341,10 @@ QString NetworkDiagnosticReportGenerator::buildBandwidthSection() const {
                 "Jitter: %5 ms | Packet Loss: %6%%"
                 "</div>\n")
                 .arg(modeStr, m_bandwidthResult.target.toHtmlEscaped())
-                .arg(m_bandwidthResult.downloadMbps, 0, 'f', 2)
-                .arg(m_bandwidthResult.uploadMbps, 0, 'f', 2)
-                .arg(m_bandwidthResult.jitterMs, 0, 'f', 2)
-                .arg(m_bandwidthResult.packetLossPercent, 0, 'f', 2);
+                .arg(m_bandwidthResult.downloadMbps, 0, 'f', kReportMetricPrecision)
+                .arg(m_bandwidthResult.uploadMbps, 0, 'f', kReportMetricPrecision)
+                .arg(m_bandwidthResult.jitterMs, 0, 'f', kReportMetricPrecision)
+                .arg(m_bandwidthResult.packetLossPercent, 0, 'f', kReportMetricPrecision);
 
     return html;
 }
@@ -375,9 +357,11 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
         "<th>Channel</th><th>Band</th><th>Security</th><th>Vendor</th></tr>\n");
 
     for (const auto& net : m_wifiNetworks) {
-        const auto signalClass = (net.rssiDbm >= -50)   ? QStringLiteral("success")
-                                 : (net.rssiDbm >= -70) ? QStringLiteral("warning")
-                                                        : QStringLiteral("error");
+        const auto signalClass = (net.rssiDbm >= kWifiStrongSignalRssiDbm)
+                                     ? QStringLiteral("success")
+                                 : (net.rssiDbm >= kWifiUsableSignalRssiDbm)
+                                     ? QStringLiteral("warning")
+                                     : QStringLiteral("error");
 
         const auto connected = net.isConnected ? QStringLiteral(" *") : QString();
 

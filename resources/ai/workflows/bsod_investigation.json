@@ -4,7 +4,7 @@
   "title": "BSOD Investigation",
   "role": "Windows Repair",
   "category": "Diagnostics",
-  "description": "Investigate bugchecks, dump metadata, likely drivers, and next safe tests.",
+  "description": "Collect crash, dump, driver, hardware, and event evidence to identify likely bugcheck causes and safe next diagnostics.",
   "starter_prompt": "Investigate recent blue screens. Collect evidence and recommend next diagnostics.",
   "required_inputs": [],
   "required_software": [

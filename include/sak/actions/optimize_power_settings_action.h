@@ -38,6 +38,15 @@ private:
         bool isActive{false};
     };
 
+    struct OptimizationResultContext {
+        QDateTime start_time;
+        QString report;
+        QString previous_plan_name;
+        QString high_perf_guid;
+        bool already_optimized{false};
+        bool success{false};
+    };
+
     QVector<PowerPlan> enumeratePowerPlans();
     PowerPlan queryPowerPlan(const QString& guid);
     PowerPlan getActivePowerPlan();
@@ -53,12 +62,7 @@ private:
     QString buildPowerPlanListReport(const PowerPlan& current_plan,
                                      const QVector<PowerPlan>& all_plans) const;
     /// @brief Create and emit the final execution result with recommendations
-    void finalizePowerOptimizationResult(const QDateTime& start_time,
-                                         const QString& report,
-                                         const QString& previous_plan_name,
-                                         const QString& high_perf_guid,
-                                         bool already_optimized,
-                                         bool success);
+    void finalizePowerOptimizationResult(const OptimizationResultContext& context);
 };
 
 }  // namespace sak

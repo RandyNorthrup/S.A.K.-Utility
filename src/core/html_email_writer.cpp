@@ -20,6 +20,9 @@ namespace sak {
 namespace {
 
 constexpr int kMaxFilenameLength = 200;
+constexpr qsizetype kWebpRiffMinimumBytes = 8;
+constexpr qsizetype kWebpSignatureOffset = 8;
+constexpr qsizetype kWebpSignatureLength = 4;
 
 /// Escape HTML special characters
 QString escapeHtml(const QString& text) {
@@ -42,7 +45,8 @@ QString detectImageMime(const QByteArray& data) {
     if (data.startsWith("GIF8")) {
         return QStringLiteral("image/gif");
     }
-    if (data.startsWith("RIFF") && data.size() > 8 && data.mid(8, 4) == "WEBP") {
+    if (data.startsWith("RIFF") && data.size() > kWebpRiffMinimumBytes &&
+        data.mid(kWebpSignatureOffset, kWebpSignatureLength) == "WEBP") {
         return QStringLiteral("image/webp");
     }
     return QString();

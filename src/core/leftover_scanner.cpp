@@ -22,6 +22,8 @@ namespace sak {
 namespace {
 constexpr int kPowerShellTimeoutMs = 15'000;
 constexpr int kMinConcatNameLen = 4;
+constexpr int kRegistryHivePrefixLength = 5;
+constexpr int kServiceOutputValueOffset = 14;
 
 #ifdef Q_OS_WIN
 constexpr DWORD kMaxRegistryValueNameLen = 256;
@@ -454,12 +456,12 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
     if (!m_program.registryKeyPath.isEmpty()) {
         if (m_program.registryKeyPath.startsWith("HKLM\\")) {
             checkKey(HKEY_LOCAL_MACHINE,
-                     m_program.registryKeyPath.mid(5),
+                     m_program.registryKeyPath.mid(kRegistryHivePrefixLength),
                      "HKLM",
                      "Program uninstall key still exists");
         } else if (m_program.registryKeyPath.startsWith("HKCU\\")) {
             checkKey(HKEY_CURRENT_USER,
-                     m_program.registryKeyPath.mid(5),
+                     m_program.registryKeyPath.mid(kRegistryHivePrefixLength),
                      "HKCU",
                      "Program uninstall key still exists");
         }
@@ -508,9 +510,9 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
         QString trimmed = line.trimmed();
 
         if (trimmed.startsWith("SERVICE_NAME:")) {
-            current_service = trimmed.mid(14).trimmed();
+            current_service = trimmed.mid(kServiceOutputValueOffset).trimmed();
         } else if (trimmed.startsWith("DISPLAY_NAME:")) {
-            current_display = trimmed.mid(14).trimmed();
+            current_display = trimmed.mid(kServiceOutputValueOffset).trimmed();
 
             if (matchesProgramStrict(current_service) || matchesProgramStrict(current_display)) {
                 LeftoverItem item;

@@ -16,6 +16,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kCompressionFastMaxLevel = 3;
+constexpr int kCompressionBalancedMaxLevel = 6;
+}  // namespace
+
 // ============================================================================
 // UserProfileBackupExecutePage
 // ============================================================================
@@ -41,7 +46,7 @@ void UserProfileBackupExecutePage::setupUi() {
     // Status label
     m_statusLabel = new QLabel(tr("Ready to start backup"), this);
     m_statusLabel->setStyleSheet(
-        QString("QLabel { font-weight: 600; color: %1; }").arg(sak::ui::kColorTextHeading));
+        sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold, sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
 
     // Current user being backed up
@@ -119,10 +124,10 @@ void UserProfileBackupExecutePage::onStartBackup() {
     QString password = wiz->getEncryptionPassword();
 
     appendLog(tr("Compression: %1")
-                  .arg(compressionLevel == 0   ? tr("None")
-                       : compressionLevel <= 3 ? tr("Fast")
-                       : compressionLevel <= 6 ? tr("Balanced")
-                                               : tr("Maximum")));
+                  .arg(compressionLevel == 0                              ? tr("None")
+                       : compressionLevel <= kCompressionFastMaxLevel     ? tr("Fast")
+                       : compressionLevel <= kCompressionBalancedMaxLevel ? tr("Balanced")
+                                                                          : tr("Maximum")));
 
     if (encrypt) {
         appendLog(tr("Encryption: Enabled (AES-256)"));

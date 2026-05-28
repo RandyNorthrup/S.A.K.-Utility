@@ -11,6 +11,7 @@
 
 #include "sak/elevation_manager.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 
 #include <QApplication>
 #include <QMessageBox>
@@ -46,7 +47,7 @@ enum class ElevationGateResult : uint8_t {
 
     sak::logInfo("Elevation gate triggered for: {}", feature.toStdString());
 
-    auto response = QMessageBox::question(
+    auto response = sak::showQuestionLogged(
         parent,
         QObject::tr("Administrator Required"),
         QObject::tr("%1 requires administrator privileges.\n\n"
@@ -66,11 +67,11 @@ enum class ElevationGateResult : uint8_t {
         QApplication::quit();
     } else {
         sak::logError("Failed to restart elevated: {}", to_string(result.error()));
-        QMessageBox::critical(parent,
-                              QObject::tr("Elevation Failed"),
-                              QObject::tr("Failed to restart with administrator privileges.\n\n"
-                                          "Try right-clicking the application and selecting "
-                                          "\"Run as administrator\"."));
+        sak::showCriticalLogged(parent,
+                                QObject::tr("Elevation Failed"),
+                                QObject::tr("Failed to restart with administrator privileges.\n\n"
+                                            "Try right-clicking the application and selecting "
+                                            "\"Run as administrator\"."));
     }
     return ElevationGateResult::RestartRequested;
 }

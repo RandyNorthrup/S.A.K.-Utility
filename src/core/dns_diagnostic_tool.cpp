@@ -25,6 +25,10 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kIpv4OctetCount = 4;
+}
+
 DnsDiagnosticTool::DnsDiagnosticTool(QObject* parent) : QObject(parent) {}
 
 void DnsDiagnosticTool::cancel() {
@@ -237,7 +241,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
 
     // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
     const auto parts = ipAddress.split(QLatin1Char('.'));
-    if (parts.size() != 4) {
+    if (parts.size() != kIpv4OctetCount) {
         Q_EMIT errorOccurred(QStringLiteral("Invalid IPv4 address format"));
         Q_EMIT queryComplete({});
         return;

@@ -6,6 +6,7 @@
 
 #include "sak/actions/screenshot_settings_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -20,6 +21,14 @@
 #include <Windows.h>
 
 namespace sak {
+
+namespace {
+constexpr int kSettingsCaptureFirstAttempt = 1;
+constexpr int kSettingsCaptureMaxAttempts = 3;
+constexpr int kSettingsCaptureInitialWaitMs = kTimerStatusBriefMs;
+constexpr int kSettingsCaptureRetryWaitMs = kTimerProgressPollMs;
+constexpr int kScreenshotReportFieldWidth = 61;
+}  // namespace
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
     : QuickAction(parent), m_output_location(output_location) {}
@@ -72,10 +81,10 @@ void ScreenshotSettingsAction::execute() {
     }
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_EMIT executionProgress("Detecting monitor configuration...", 3);
+    Q_EMIT executionProgress("Detecting monitor configuration...", progress::kStep3);
     int monitor_count = detectMonitorCount();
 
-    Q_EMIT executionProgress("Preparing screenshot directory...", 5);
+    Q_EMIT executionProgress("Preparing screenshot directory...", progress::kStep5);
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QDir output_dir(m_output_location + "/SettingsScreenshots/" + timestamp);
     if (!output_dir.mkpath(".")) {
@@ -95,7 +104,7 @@ void ScreenshotSettingsAction::execute() {
             return;
         }
 
-        int progress = 5 + (processed * 90) / settings_pages.size();
+        int progress = progress::kStep5 + (processed * progress::kStep90) / settings_pages.size();
         Q_EMIT executionProgress(QString("Capturing %1...").arg(it.value()), progress);
 
         if (captureSettingsPage(it.key(), it.value(), output_dir.absolutePath(), timestamp)) {
@@ -108,9 +117,9 @@ void ScreenshotSettingsAction::execute() {
         processed++;
     }
 
-    Q_EMIT executionProgress("Generating report...", 95);
+    Q_EMIT executionProgress("Generating report...", progress::kStep95);
     generateReport(output_dir.absolutePath(), timestamp, monitor_count, capture);
-    Q_EMIT executionProgress("Screenshots complete", 100);
+    Q_EMIT executionProgress("Screenshots complete", progress::kComplete);
 
     const CaptureContext context{
         static_cast<int>(settings_pages.size()), monitor_count, timestamp, start_time};
@@ -133,7 +142,7 @@ void ScreenshotSettingsAction::buildExecutionResult(const CaptureResult& capture
     structured_log += QString("FAILED_CAPTURES:%1\n").arg(capture.failed_attempts);
     structured_log += QString("TOTAL_PAGES:%1\n").arg(context.total_pages);
     structured_log += QString("SUCCESS_RATE:%1%\n")
-                          .arg(capture.captured_pages.size() * 100 / context.total_pages);
+                          .arg(capture.captured_pages.size() * kPercentMax / context.total_pages);
     structured_log +=
         QString("REPORT_PATH:%1\n")
             .arg(output_dir.filePath(QString("Screenshot_Report_%1.txt").arg(context.timestamp)));
@@ -241,11 +250,14 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
                                                    const QString& output_dir_path,
                                                    const QString& timestamp) {
     QDir output_dir(output_dir_path);
-    for (int attempt = 1; attempt <= 3; attempt++) {
+    for (int attempt = kSettingsCaptureFirstAttempt; attempt <= kSettingsCaptureMaxAttempts;
+         ++attempt) {
         QProcess::startDetached("explorer.exe",
                                 QStringList() << QString("ms-settings:%1").arg(ms_uri));
 
-        int wait_time = 2000 + (attempt - 1) * 1000;
+        const int wait_time = kSettingsCaptureInitialWaitMs +
+                              (attempt - kSettingsCaptureFirstAttempt) *
+                                  kSettingsCaptureRetryWaitMs;
         QThread::msleep(wait_time);
 
         if (!isProcessRunning("SystemSettings.exe")) {
@@ -298,7 +310,8 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
     report << "+==============================================================+\n";
 
     for (const QString& page : capture.captured_pages) {
-        report << QString("| [x] %1").arg(page).leftJustified(61, ' ') << "|\n";
+        report << QString("| [x] %1").arg(page).leftJustified(kScreenshotReportFieldWidth, ' ')
+               << "|\n";
     }
 
     if (!capture.failed_pages.isEmpty()) {
@@ -306,12 +319,15 @@ void ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
         report << "|                     FAILED PAGES                             |\n";
         report << "+==============================================================+\n";
         for (const QString& page : capture.failed_pages) {
-            report << QString("| [ ] %1").arg(page).leftJustified(61, ' ') << "|\n";
+            report << QString("| [ ] %1").arg(page).leftJustified(kScreenshotReportFieldWidth, ' ')
+                   << "|\n";
         }
     }
 
     report << "+==============================================================+\n";
-    report << QString("| Output Location: %1").arg(output_dir.absolutePath()).leftJustified(61, ' ')
+    report << QString("| Output Location: %1")
+                  .arg(output_dir.absolutePath())
+                  .leftJustified(kScreenshotReportFieldWidth, ' ')
            << "|\n";
     report << "+==============================================================+\n";
 

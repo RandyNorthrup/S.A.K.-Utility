@@ -19,6 +19,10 @@
 
 namespace sak {
 
+namespace {
+constexpr int kRestoreProgressDisplayPrecision = 2;
+}  // namespace
+
 // ============================================================================
 // Page 6: Execute Restore
 // ============================================================================
@@ -37,8 +41,8 @@ void UserProfileRestoreExecutePage::setupUi() {
 
     // Status
     m_statusLabel = new QLabel(tr("Ready to restore..."), this);
-    m_statusLabel->setStyleSheet(QString("QLabel { font-weight: 600; font-size: 11pt; color: %1; }")
-                                     .arg(sak::ui::kColorTextHeading));
+    m_statusLabel->setStyleSheet(sak::ui::fontSizeWeightColorStyle(
+        sak::ui::kFontSizeStatus, sak::ui::kFontWeightSemibold, sak::ui::kColorTextHeading));
     layout->addWidget(m_statusLabel);
 
     // Overall progress
@@ -55,7 +59,7 @@ void UserProfileRestoreExecutePage::setupUi() {
     m_currentProgressBar->setTextVisible(true);
     layout->addWidget(m_currentProgressBar);
 
-    layout->addSpacing(10);
+    layout->addSpacing(sak::ui::kSpacingDefault);
 
     // Log viewer
     auto* logLabel = new QLabel(tr("Operation Log:"), this);
@@ -117,7 +121,6 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     m_statusLabel->setText(tr("Restore in progress..."));
     m_logText->append(tr("[INFO] Restore started..."));
 
-    // Get restore configuration from wizard
     QString backupPath = wiz->backupPath();
     BackupManifest manifest = wiz->manifest();
     QVector<UserMapping> mappings = wiz->userMappings();
@@ -125,10 +128,8 @@ void UserProfileRestoreExecutePage::onStartRestore() {
     PermissionMode permMode = wiz->permissionMode();
     bool verify = wiz->verifyFiles();
 
-    // Create and configure restore worker
     auto worker = new UserProfileRestoreWorker(this);
 
-    // Connect signals for progress tracking
     connect(worker,
             &UserProfileRestoreWorker::overallProgress,
             this,
@@ -171,10 +172,8 @@ void UserProfileRestoreExecutePage::onStartRestore() {
                 worker->deleteLater();
             });
 
-    // Start restore operation
     worker->startRestore(backupPath, manifest, mappings, {conflictMode, permMode, verify});
 
-    // Configure progress bars
     m_overallProgressBar->setRange(0, mappings.size());
     m_currentProgressBar->setRange(0, 0);  // Indeterminate
 }
@@ -191,21 +190,22 @@ void UserProfileRestoreExecutePage::onOverallProgress(int current,
                                                       qint64 bytes,
                                                       qint64 totalBytes) {
     if (total > 0) {
-        int percent = (current * 100) / total;
+        int percent = (current * kPercentMax) / total;
         m_overallProgressBar->setValue(percent);
 
         double gbCopied = bytes / sak::kBytesPerGBf;
         double gbTotal = totalBytes / sak::kBytesPerGBf;
-        m_overallProgressBar->setFormat(QString("%1% - %2 / %3 GB")
-                                            .arg(percent)
-                                            .arg(gbCopied, 0, 'f', 2)
-                                            .arg(gbTotal, 0, 'f', 2));
+        m_overallProgressBar->setFormat(
+            QString("%1% - %2 / %3 GB")
+                .arg(percent)
+                .arg(gbCopied, 0, 'f', kRestoreProgressDisplayPrecision)
+                .arg(gbTotal, 0, 'f', kRestoreProgressDisplayPrecision));
     }
 }
 
 void UserProfileRestoreExecutePage::onFileProgress(int current, int total) {
     if (total > 0) {
-        int percent = (current * 100) / total;
+        int percent = (current * kPercentMax) / total;
         m_currentProgressBar->setValue(percent);
         m_currentProgressBar->setFormat(
             QString("%1% - %2 / %3 files").arg(percent).arg(current).arg(total));

@@ -8,12 +8,14 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/ost_converter_controller.h"
 #include "sak/style_constants.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateEdit>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -36,6 +38,13 @@ namespace sak {
 namespace {
 
 constexpr int kQueueTableMinHeight = 120;
+constexpr int kMaxTcpPort = 65'535;
+constexpr int kLargeByteDisplayPrecision = 2;
+
+bool IsAccessibilityAuditMode() {
+    const auto* app = QCoreApplication::instance();
+    return app && app->property("sakAccessibilityAudit").toBool();
+}
 
 }  // namespace
 
@@ -47,11 +56,15 @@ OstConverterWidget::OstConverterWidget(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<OstConverterController>(this)) {
     setupUi();
     connectController();
-    loadSettings();
+    if (!IsAccessibilityAuditMode()) {
+        loadSettings();
+    }
 }
 
 OstConverterWidget::~OstConverterWidget() {
-    saveSettings();
+    if (!IsAccessibilityAuditMode()) {
+        saveSettings();
+    }
 }
 
 // ============================================================================
@@ -71,7 +84,8 @@ void OstConverterWidget::setupUi() {
 
     auto* scroll_content = new QWidget(scroll);
     auto* content_layout = new QVBoxLayout(scroll_content);
-    content_layout->setContentsMargins(0, 0, 0, 0);
+    content_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     content_layout->setSpacing(ui::kSpacingMedium);
 
     content_layout->addWidget(createFileQueueSection());
@@ -145,10 +159,13 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     btn_layout->setSpacing(ui::kSpacingSmall);
 
     m_add_files_button = new QPushButton(tr("+ Add Files"), group);
+    m_add_files_button->setAccessibleName(tr("Add email files"));
     m_add_files_button->setToolTip(tr("Add OST or PST files to the conversion queue"));
     m_remove_button = new QPushButton(tr("Remove"), group);
+    m_remove_button->setAccessibleName(tr("Remove selected email file"));
     m_remove_button->setToolTip(tr("Remove selected file from the queue"));
     m_clear_button = new QPushButton(tr("Clear All"), group);
+    m_clear_button->setAccessibleName(tr("Clear conversion queue"));
     m_clear_button->setToolTip(tr("Remove all files from the queue"));
 
     btn_layout->addWidget(m_add_files_button);
@@ -164,6 +181,7 @@ QWidget* OstConverterWidget::createFileQueueSection() {
 
     // Queue table
     m_queue_table = new QTableWidget(0, ost::ColCount, group);
+    m_queue_table->setAccessibleName(tr("Email conversion queue"));
     m_queue_table->setHorizontalHeaderLabels(
         {tr("File"), tr("Size"), tr("Items"), tr("Status"), tr("Progress")});
     m_queue_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -174,29 +192,23 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_queue_table->setMinimumHeight(kQueueTableMinHeight);
 
     // Column widths
-    m_queue_table->setColumnWidth(ost::ColFile, 300);
-    m_queue_table->setColumnWidth(ost::ColSize, 80);
-    m_queue_table->setColumnWidth(ost::ColItems, 60);
-    m_queue_table->setColumnWidth(ost::ColStatus, 100);
+    m_queue_table->setColumnWidth(ost::ColFile, ost::kQueueFileColumnWidth);
+    m_queue_table->setColumnWidth(ost::ColSize, ost::kQueueSizeColumnWidth);
+    m_queue_table->setColumnWidth(ost::ColItems, ost::kQueueItemsColumnWidth);
+    m_queue_table->setColumnWidth(ost::ColStatus, ost::kQueueStatusColumnWidth);
 
     layout->addWidget(m_queue_table, 1);
 
     return group;
 }
 
-QWidget* OstConverterWidget::createOutputSettingsSection() {
-    auto* group = new QGroupBox(tr("Output Settings"), this);
-    auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
-
-    // Format row
+void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group) {
     auto* format_row = new QHBoxLayout();
     format_row->setSpacing(ui::kSpacingSmall);
     format_row->addWidget(new QLabel(tr("Format:"), group));
 
     m_format_combo = new QComboBox(group);
+    m_format_combo->setAccessibleName(tr("Output format"));
     m_format_combo->addItem(tr("PST (Microsoft Outlook)"), static_cast<int>(OstOutputFormat::Pst));
     m_format_combo->addItem(tr("EML (RFC 5322)"), static_cast<int>(OstOutputFormat::Eml));
     m_format_combo->addItem(tr("MSG (MAPI Properties)"), static_cast<int>(OstOutputFormat::Msg));
@@ -213,11 +225,13 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
     // Destination row
     format_row->addWidget(new QLabel(tr("Destination:"), group));
     m_output_dir_edit = new QLineEdit(group);
+    m_output_dir_edit->setAccessibleName(tr("Output directory"));
     m_output_dir_edit->setPlaceholderText(tr("Select output directory..."));
     m_output_dir_edit->setReadOnly(true);
     format_row->addWidget(m_output_dir_edit, 1);
 
     m_browse_button = new QPushButton(tr("Browse"), group);
+    m_browse_button->setAccessibleName(tr("Browse output directory"));
     connect(m_browse_button, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(this,
                                                         tr("Select Output Directory"),
@@ -234,16 +248,19 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
             &QComboBox::currentIndexChanged,
             this,
             &OstConverterWidget::onFormatChanged);
+}
 
-    // Options row
+void OstConverterWidget::addOutputOptionsRow(QVBoxLayout* layout, QWidget* group) {
     auto* options_row = new QHBoxLayout();
     options_row->setSpacing(ui::kSpacingMedium);
 
     m_preserve_folders_check = new QCheckBox(tr("Preserve folder structure"), group);
+    m_preserve_folders_check->setAccessibleName(tr("Preserve folder structure"));
     m_preserve_folders_check->setChecked(true);
     options_row->addWidget(m_preserve_folders_check);
 
     m_prefix_date_check = new QCheckBox(tr("Prefix filenames with date"), group);
+    m_prefix_date_check->setAccessibleName(tr("Prefix filenames with date"));
     m_prefix_date_check->setChecked(true);
     options_row->addWidget(m_prefix_date_check);
 
@@ -251,6 +268,7 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
 
     options_row->addWidget(new QLabel(tr("Threads:"), group));
     m_threads_spin = new QSpinBox(group);
+    m_threads_spin->setAccessibleName(tr("Conversion thread count"));
     m_threads_spin->setRange(ost::kMinThreads, ost::kMaxThreads);
     m_threads_spin->setValue(ost::kDefaultThreads);
     m_threads_spin->setToolTip(
@@ -258,14 +276,17 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
     options_row->addWidget(m_threads_spin);
 
     layout->addLayout(options_row);
+}
 
-    // PST split options (hidden initially since EML is default)
+void OstConverterWidget::addPstSplitRow(QVBoxLayout* layout, QWidget* group) {
     auto* split_row = new QHBoxLayout();
     m_split_check = new QCheckBox(tr("Split PST files:"), group);
+    m_split_check->setAccessibleName(tr("Split PST files"));
     m_split_check->setVisible(false);
     split_row->addWidget(m_split_check);
 
     m_split_size_combo = new QComboBox(group);
+    m_split_size_combo->setAccessibleName(tr("PST split size"));
     m_split_size_combo->addItem(tr("2 GB"), static_cast<int>(PstSplitSize::Split2Gb));
     m_split_size_combo->addItem(tr("5 GB"), static_cast<int>(PstSplitSize::Split5Gb));
     m_split_size_combo->addItem(tr("10 GB"), static_cast<int>(PstSplitSize::Split10Gb));
@@ -274,7 +295,18 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
     split_row->addWidget(m_split_size_combo);
     split_row->addStretch(1);
     layout->addLayout(split_row);
+}
 
+QWidget* OstConverterWidget::createOutputSettingsSection() {
+    auto* group = new QGroupBox(tr("Output Settings"), this);
+    auto* layout = new QVBoxLayout(group);
+    layout->setContentsMargins(
+        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
+    layout->setSpacing(ui::kSpacingSmall);
+
+    addOutputFormatRow(layout, group);
+    addOutputOptionsRow(layout, group);
+    addPstSplitRow(layout, group);
     return group;
 }
 
@@ -293,9 +325,11 @@ QWidget* OstConverterWidget::createFilterSection() {
     date_row->setSpacing(ui::kSpacingSmall);
 
     m_date_filter_check = new QCheckBox(tr("Date range:"), m_filter_group);
+    m_date_filter_check->setAccessibleName(tr("Enable date range filter"));
     date_row->addWidget(m_date_filter_check);
 
     m_date_from_edit = new QDateEdit(m_filter_group);
+    m_date_from_edit->setAccessibleName(tr("Filter start date"));
     m_date_from_edit->setCalendarPopup(true);
     m_date_from_edit->setDate(QDate::currentDate().addYears(-1));
     m_date_from_edit->setEnabled(false);
@@ -304,6 +338,7 @@ QWidget* OstConverterWidget::createFilterSection() {
     date_row->addWidget(new QLabel(tr("to"), m_filter_group));
 
     m_date_to_edit = new QDateEdit(m_filter_group);
+    m_date_to_edit->setAccessibleName(tr("Filter end date"));
     m_date_to_edit->setCalendarPopup(true);
     m_date_to_edit->setDate(QDate::currentDate());
     m_date_to_edit->setEnabled(false);
@@ -322,6 +357,7 @@ QWidget* OstConverterWidget::createFilterSection() {
     sender_row->setSpacing(ui::kSpacingSmall);
     sender_row->addWidget(new QLabel(tr("Sender:"), m_filter_group));
     m_sender_filter_edit = new QLineEdit(m_filter_group);
+    m_sender_filter_edit->setAccessibleName(tr("Sender filter"));
     m_sender_filter_edit->setPlaceholderText(tr("Filter by sender email (contains)"));
     sender_row->addWidget(m_sender_filter_edit, 1);
     layout->addLayout(sender_row);
@@ -331,6 +367,7 @@ QWidget* OstConverterWidget::createFilterSection() {
     recip_row->setSpacing(ui::kSpacingSmall);
     recip_row->addWidget(new QLabel(tr("Recipient:"), m_filter_group));
     m_recipient_filter_edit = new QLineEdit(m_filter_group);
+    m_recipient_filter_edit->setAccessibleName(tr("Recipient filter"));
     m_recipient_filter_edit->setPlaceholderText(tr("Filter by recipient email (contains)"));
     recip_row->addWidget(m_recipient_filter_edit, 1);
     layout->addLayout(recip_row);
@@ -348,16 +385,19 @@ QWidget* OstConverterWidget::createRecoverySection() {
 
     m_recover_deleted_check = new QCheckBox(
         tr("Recover deleted items (scan Recoverable Items folder)"), m_recovery_group);
+    m_recover_deleted_check->setAccessibleName(tr("Recover deleted email items"));
     layout->addWidget(m_recover_deleted_check);
 
     m_deep_recovery_check =
         new QCheckBox(tr("Deep recovery (scan orphaned nodes — slow, thorough)"), m_recovery_group);
+    m_deep_recovery_check->setAccessibleName(tr("Enable deep email recovery"));
     m_deep_recovery_check->setToolTip(
         tr("Walk all NBT nodes to find hard-deleted messages not in any folder"));
     layout->addWidget(m_deep_recovery_check);
 
     m_skip_corrupt_check = new QCheckBox(
         tr("Skip corrupt blocks (continue on errors, log skipped items)"), m_recovery_group);
+    m_skip_corrupt_check->setAccessibleName(tr("Skip corrupt email blocks"));
     layout->addWidget(m_skip_corrupt_check);
 
     return m_recovery_group;
@@ -378,16 +418,19 @@ QWidget* OstConverterWidget::createImapSection() {
 
     server_row->addWidget(new QLabel(tr("Host:"), m_imap_group));
     m_imap_host_edit = new QLineEdit(m_imap_group);
+    m_imap_host_edit->setAccessibleName(tr("IMAP server host"));
     m_imap_host_edit->setPlaceholderText(tr("imap.example.com"));
     server_row->addWidget(m_imap_host_edit, 1);
 
     server_row->addWidget(new QLabel(tr("Port:"), m_imap_group));
     m_imap_port_spin = new QSpinBox(m_imap_group);
-    m_imap_port_spin->setRange(1, 65'535);
-    m_imap_port_spin->setValue(993);
+    m_imap_port_spin->setAccessibleName(tr("IMAP server port"));
+    m_imap_port_spin->setRange(1, kMaxTcpPort);
+    m_imap_port_spin->setValue(kDefaultImapSslPort);
     server_row->addWidget(m_imap_port_spin);
 
     m_imap_ssl_check = new QCheckBox(tr("SSL/TLS"), m_imap_group);
+    m_imap_ssl_check->setAccessibleName(tr("Use IMAP SSL TLS"));
     m_imap_ssl_check->setChecked(true);
     server_row->addWidget(m_imap_ssl_check);
 
@@ -399,6 +442,7 @@ QWidget* OstConverterWidget::createImapSection() {
 
     auth_row->addWidget(new QLabel(tr("Auth:"), m_imap_group));
     m_imap_auth_combo = new QComboBox(m_imap_group);
+    m_imap_auth_combo->setAccessibleName(tr("IMAP authentication method"));
     m_imap_auth_combo->addItem(tr("PLAIN"), static_cast<int>(ImapAuthMethod::Plain));
     m_imap_auth_combo->addItem(tr("LOGIN"), static_cast<int>(ImapAuthMethod::Login));
     m_imap_auth_combo->addItem(tr("XOAUTH2"), static_cast<int>(ImapAuthMethod::XOAuth2));
@@ -406,11 +450,13 @@ QWidget* OstConverterWidget::createImapSection() {
 
     auth_row->addWidget(new QLabel(tr("User:"), m_imap_group));
     m_imap_user_edit = new QLineEdit(m_imap_group);
+    m_imap_user_edit->setAccessibleName(tr("IMAP username"));
     m_imap_user_edit->setPlaceholderText(tr("user@example.com"));
     auth_row->addWidget(m_imap_user_edit, 1);
 
     auth_row->addWidget(new QLabel(tr("Password:"), m_imap_group));
     m_imap_password_edit = new QLineEdit(m_imap_group);
+    m_imap_password_edit->setAccessibleName(tr("IMAP password"));
     m_imap_password_edit->setEchoMode(QLineEdit::Password);
     auth_row->addWidget(m_imap_password_edit, 1);
 
@@ -422,10 +468,12 @@ QWidget* OstConverterWidget::createImapSection() {
 QWidget* OstConverterWidget::createButtonBar() {
     auto* bar = new QWidget(this);
     auto* layout = new QHBoxLayout(bar);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     layout->setSpacing(ui::kSpacingMedium);
 
     m_view_report_button = new QPushButton(tr("View Report"), bar);
+    m_view_report_button->setAccessibleName(tr("View conversion report"));
     m_view_report_button->setEnabled(false);
     m_view_report_button->setToolTip(tr("Open the batch conversion report in your browser"));
     connect(m_view_report_button,
@@ -437,32 +485,16 @@ QWidget* OstConverterWidget::createButtonBar() {
     layout->addStretch(1);
 
     m_convert_button = new QPushButton(tr("Convert All"), bar);
+    m_convert_button->setAccessibleName(tr("Convert all queued email files"));
     m_convert_button->setToolTip(tr("Start converting all queued files"));
-    m_convert_button->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; color: white; padding: 8px 24px; "
-                       "border-radius: 4px; font-weight: bold; }"
-                       "QPushButton:hover { background: %2; }"
-                       "QPushButton:pressed { background: %3; }"
-                       "QPushButton:disabled { background: %4; }")
-            .arg(ui::kColorPrimary,
-                 ui::kColorPrimaryHover,
-                 ui::kColorPrimaryPressed,
-                 ui::kColorTextDisabled));
+    m_convert_button->setStyleSheet(ui::kSolidPrimaryButtonStyle);
     layout->addWidget(m_convert_button);
 
     m_cancel_button = new QPushButton(tr("Cancel"), bar);
+    m_cancel_button->setAccessibleName(tr("Cancel email conversion"));
     m_cancel_button->setEnabled(false);
     m_cancel_button->setToolTip(tr("Cancel all in-progress conversions"));
-    m_cancel_button->setStyleSheet(
-        QStringLiteral("QPushButton { background: %1; color: white; padding: 8px 24px; "
-                       "border-radius: 4px; font-weight: bold; }"
-                       "QPushButton:hover { background: %2; }"
-                       "QPushButton:pressed { background: %3; }"
-                       "QPushButton:disabled { background: %4; }")
-            .arg(ui::kColorDangerBtnNormal,
-                 ui::kColorDangerBtnHover,
-                 ui::kColorDangerBtnPressed,
-                 ui::kColorTextDisabled));
+    m_cancel_button->setStyleSheet(ui::kSolidDangerButtonStyle);
     layout->addWidget(m_cancel_button);
 
     connect(m_convert_button, &QPushButton::clicked, this, &OstConverterWidget::onConvertClicked);
@@ -504,17 +536,17 @@ void OstConverterWidget::onClearQueueClicked() {
 
 void OstConverterWidget::onConvertClicked() {
     if (m_output_dir_edit->text().isEmpty()) {
-        QMessageBox::warning(this,
-                             tr("Missing Output Directory"),
-                             tr("Please select an output directory before converting."));
+        sak::showWarningLogged(this,
+                               tr("Missing Output Directory"),
+                               tr("Please select an output directory before converting."));
         sak::logWarning("OST Converter: conversion started without output directory");
         return;
     }
 
     if (m_controller->queue().isEmpty()) {
-        QMessageBox::warning(this,
-                             tr("No Files"),
-                             tr("Please add at least one file to the queue."));
+        sak::showWarningLogged(this,
+                               tr("No Files"),
+                               tr("Please add at least one file to the queue."));
         return;
     }
 
@@ -743,7 +775,8 @@ QString OstConverterWidget::formatBytes(qint64 bytes) {
     if (bytes < kBytesPerGB) {
         return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
     }
-    return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', 2);
+    return QStringLiteral("%1 GB").arg(
+        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kLargeByteDisplayPrecision);
 }
 
 QString OstConverterWidget::statusLabel(OstConversionJob::Status status) {
@@ -785,7 +818,8 @@ void OstConverterWidget::loadSettings() {
 
     // IMAP settings (password intentionally not persisted)
     m_imap_host_edit->setText(settings.value(QStringLiteral("imapHost")).toString());
-    m_imap_port_spin->setValue(settings.value(QStringLiteral("imapPort"), 993).toInt());
+    m_imap_port_spin->setValue(
+        settings.value(QStringLiteral("imapPort"), kDefaultImapSslPort).toInt());
     m_imap_ssl_check->setChecked(settings.value(QStringLiteral("imapSsl"), true).toBool());
     m_imap_auth_combo->setCurrentIndex(settings.value(QStringLiteral("imapAuth"), 0).toInt());
     m_imap_user_edit->setText(settings.value(QStringLiteral("imapUser")).toString());

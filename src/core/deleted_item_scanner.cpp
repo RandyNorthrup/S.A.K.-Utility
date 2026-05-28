@@ -13,6 +13,10 @@
 namespace sak {
 
 namespace {
+constexpr uint64_t kPstNodeTypeMask = 0x1F;
+}
+
+namespace {
 /// Well-known NID for the Recoverable Items folder
 constexpr uint64_t kRecoverableItemsFolderNid = 0x0301;
 constexpr int kScanBatchSize = 200;
@@ -129,7 +133,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanOrphanedNodes() {
         ++nodes_scanned;
 
         // Only look at NormalMessage type nodes (low 5 bits == 0x04)
-        auto nid_type = static_cast<PstNodeType>(nid & 0x1F);
+        auto nid_type = static_cast<PstNodeType>(nid & kPstNodeTypeMask);
         if (nid_type != PstNodeType::NormalMessage) {
             continue;
         }

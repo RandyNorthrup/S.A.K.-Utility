@@ -20,6 +20,13 @@
 namespace sak {
 
 namespace {
+constexpr int kMimeBase64LineLength = 76;
+constexpr int kBase64WrapReserveSlackBytes = 4;
+constexpr ushort kAsciiMaxCodePoint = 0x7F;
+constexpr qint64 kDbxMessageCountOffset = 0x24;
+constexpr uint32_t kDbxVersionMarker = 0x00'00'00'06;
+constexpr int kDbxReservedFieldCount = 6;
+constexpr int kDbxFolderNameOffset = 0x68;
 
 /// Sanitize folder name for filesystem use
 QString sanitizeName(const QString& name) {
@@ -36,10 +43,10 @@ QString sanitizeName(const QString& name) {
 QByteArray encodeBase64Wrapped(const QByteArray& data) {
     QByteArray b64 = data.toBase64();
     QByteArray wrapped;
-    wrapped.reserve(b64.size() + (b64.size() / 76) + 4);
-    constexpr int kLineLen = 76;
-    for (int i = 0; i < b64.size(); i += kLineLen) {
-        wrapped.append(b64.mid(i, kLineLen));
+    wrapped.reserve(b64.size() + (b64.size() / kMimeBase64LineLength) +
+                    kBase64WrapReserveSlackBytes);
+    for (int i = 0; i < b64.size(); i += kMimeBase64LineLength) {
+        wrapped.append(b64.mid(i, kMimeBase64LineLength));
         wrapped.append("\r\n");
     }
     return wrapped;
@@ -47,8 +54,9 @@ QByteArray encodeBase64Wrapped(const QByteArray& data) {
 
 /// RFC 2047 encode a header value if it contains non-ASCII characters.
 QByteArray encodeHeaderValue(const QString& value) {
-    bool needs_encoding =
-        std::any_of(value.cbegin(), value.cend(), [](QChar c) { return c.unicode() > 0x7F; });
+    bool needs_encoding = std::any_of(value.cbegin(), value.cend(), [](QChar c) {
+        return c.unicode() > kAsciiMaxCodePoint;
+    });
     if (!needs_encoding) {
         return value.toUtf8();
     }
@@ -127,7 +135,7 @@ void DbxWriter::finalize() {
             // Update message count in header before closing
             auto it = m_message_counts.constFind(m_open_files.key(file));
             if (it != m_message_counts.constEnd()) {
-                file->seek(0x24);
+                file->seek(kDbxMessageCountOffset);
                 QDataStream ds(file);
                 ds.setByteOrder(QDataStream::LittleEndian);
                 ds << static_cast<uint32_t>(it.value());
@@ -155,20 +163,20 @@ void DbxWriter::writeDbxHeader(QFile& file, const QString& folder_name) {
     // Magic number (offset 0)
     ds << kDbxFolderMagic;
     // DBX version marker
-    ds << static_cast<uint32_t>(0x00'00'00'06);
+    ds << kDbxVersionMarker;
     // Reserved fields
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < kDbxReservedFieldCount; ++i) {
         ds << static_cast<uint32_t>(0);
     }
     // Folder name offset and length (simplified)
-    ds << static_cast<uint32_t>(0x68);  // name offset
+    ds << static_cast<uint32_t>(kDbxFolderNameOffset);
     ds << static_cast<uint32_t>(folder_name.size());
     // Message count placeholder (offset 0x24)
     ds << static_cast<uint32_t>(0);
 
     // Write folder name at offset 0x68
-    if (header.size() > 0x68 + folder_name.size()) {
-        header.replace(0x68, folder_name.size(), folder_name.toUtf8());
+    if (header.size() > kDbxFolderNameOffset + folder_name.size()) {
+        header.replace(kDbxFolderNameOffset, folder_name.size(), folder_name.toUtf8());
     }
 
     file.write(header);

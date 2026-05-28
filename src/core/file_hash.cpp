@@ -22,6 +22,13 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kMd5DigestBytes = 16;
+constexpr std::size_t kMd5HexChars = 32;
+constexpr qsizetype kSha256DigestBytes = 32;
+constexpr std::size_t kSha256HexChars = 64;
+}  // namespace
+
 file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexcept
     : m_algorithm(algorithm), m_chunk_size(chunk_size) {
     Q_ASSERT_X(chunk_size > 0, "file_hasher", "chunk_size must be positive");
@@ -115,9 +122,9 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
 
         // Get final hash as hex string
         QByteArray result = hash.result();
-        Q_ASSERT_X(result.size() == 16, "calculateMd5", "MD5 digest must be 16 bytes");
+        Q_ASSERT_X(result.size() == kMd5DigestBytes, "calculateMd5", "MD5 digest must be 16 bytes");
         auto hex = result.toHex().toStdString();
-        Q_ASSERT_X(hex.size() == 32, "calculateMd5", "MD5 hex string must be 32 chars");
+        Q_ASSERT_X(hex.size() == kMd5HexChars, "calculateMd5", "MD5 hex string must be 32 chars");
         return hex;
 
     } catch (const std::exception& e) {
@@ -151,9 +158,13 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
 
         // Get final hash as hex string
         QByteArray result = hash.result();
-        Q_ASSERT_X(result.size() == 32, "calculateSha256", "SHA-256 digest must be 32 bytes");
+        Q_ASSERT_X(result.size() == kSha256DigestBytes,
+                   "calculateSha256",
+                   "SHA-256 digest must be 32 bytes");
         auto hex = result.toHex().toStdString();
-        Q_ASSERT_X(hex.size() == 64, "calculateSha256", "SHA-256 hex string must be 64 chars");
+        Q_ASSERT_X(hex.size() == kSha256HexChars,
+                   "calculateSha256",
+                   "SHA-256 hex string must be 64 chars");
         return hex;
 
     } catch (const std::exception& e) {

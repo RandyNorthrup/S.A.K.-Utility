@@ -9,8 +9,10 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
+#include <initializer_list>
 
 namespace {
 
@@ -58,6 +60,14 @@ constexpr int kElToritoBootCatalogOffset = 71;
 
 // Boot catalog entry boot media type masks
 constexpr uint8_t kBootMediaEfi = 0xEF;
+constexpr int kDefaultBootCatalogEntryOffset = 32;
+constexpr int kCatalogEntrySize = 32;
+constexpr int kFirstCatalogSectionEntry = 2;
+constexpr int kMaxCatalogEntries = 16;
+constexpr uint8_t kBootCatalogSectionHeader = 0x90;
+constexpr uint8_t kBootCatalogFinalSectionHeader = 0x91;
+constexpr uint8_t kBootCatalogPlatformX86 = 0x00;
+constexpr uint8_t kBootCatalogPlatformEfi = 0xEF;
 
 // ============================================================================
 // Linux Distro Detection Patterns
@@ -148,6 +158,210 @@ constexpr DistroPattern kLinuxDistroPatterns[] = {
 constexpr int kLinuxDistroPatternCount =
     static_cast<int>(sizeof(kLinuxDistroPatterns) / sizeof(kLinuxDistroPatterns[0]));
 
+constexpr auto kVersionPattern = "(\\d{1,4}(?:\\.\\d{1,3}){0,2})";
+
+QString extractVersionFromText(const QString& text);
+
+struct BootCatalogFlags {
+    bool has_legacy{false};
+    bool has_efi{false};
+};
+
+bool containsAny(const QString& text, std::initializer_list<const char*> needles) {
+    return std::any_of(needles.begin(), needles.end(), [&text](const char* needle) {
+        return text.contains(QString::fromLatin1(needle));
+    });
+}
+
+bool isBootCatalogSectionHeader(uint8_t header_id) {
+    return header_id == kBootCatalogSectionHeader || header_id == kBootCatalogFinalSectionHeader;
+}
+
+bool readSectorAt(QIODevice& device, qint64 offset, std::array<char, kSectorSize>& sector) {
+    if (!device.seek(offset)) {
+        return false;
+    }
+    const qint64 bytes_read = device.read(sector.data(), kSectorSize);
+    return bytes_read >= kSectorSize;
+}
+
+void applyDefaultBootEntry(const std::array<char, kSectorSize>& catalog, BootCatalogFlags& flags) {
+    const auto default_media = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);
+    if (default_media == kBootMediaEfi) {
+        flags.has_efi = true;
+    } else {
+        flags.has_legacy = true;
+    }
+}
+
+void applyBootCatalogPlatform(uint8_t platform_id, BootCatalogFlags& flags) {
+    if (platform_id == kBootCatalogPlatformEfi) {
+        flags.has_efi = true;
+    } else if (platform_id == kBootCatalogPlatformX86) {
+        flags.has_legacy = true;
+    }
+}
+
+void scanBootCatalogSections(const std::array<char, kSectorSize>& catalog,
+                             BootCatalogFlags& flags) {
+    for (int entry_index = kFirstCatalogSectionEntry; entry_index < kMaxCatalogEntries;
+         ++entry_index) {
+        const int entry_offset = entry_index * kCatalogEntrySize;
+        if (entry_offset + kCatalogEntrySize > kSectorSize) {
+            break;
+        }
+
+        const auto header_id = static_cast<uint8_t>(catalog[entry_offset]);
+        if (isBootCatalogSectionHeader(header_id)) {
+            applyBootCatalogPlatform(static_cast<uint8_t>(catalog[entry_offset + 1]), flags);
+        }
+    }
+}
+
+QString bootTypeFromFlags(const BootCatalogFlags& flags) {
+    if (flags.has_efi && flags.has_legacy) {
+        return QStringLiteral("UEFI + Legacy BIOS");
+    }
+    if (flags.has_efi) {
+        return QStringLiteral("UEFI");
+    }
+    return QStringLiteral("Legacy BIOS");
+}
+
+bool hasWindowsMetadata(const QString& label, const QString& app) {
+    return containsAny(
+               label,
+               {"WIN", "CCCOMA", "J_CCSA", "SSS_X64", "CPBA_", "CCSA_", "CPRA_", "GSP1RM"}) ||
+           containsAny(app, {"MICROSOFT", "CDIMAGE"});
+}
+
+QString windowsNameFromLabel(const QString& label) {
+    if (containsAny(label, {"11", "W11"})) {
+        return QStringLiteral("Windows 11");
+    }
+    if (containsAny(label, {"10", "W10"})) {
+        return QStringLiteral("Windows 10");
+    }
+    if (containsAny(label, {"SERVER", "SRV"})) {
+        return QStringLiteral("Windows Server");
+    }
+    if (label.contains("8.1")) {
+        return QStringLiteral("Windows 8.1");
+    }
+    if (label.contains("8")) {
+        return QStringLiteral("Windows 8");
+    }
+    if (containsAny(label, {"7", "GSP1RM"})) {
+        return QStringLiteral("Windows 7");
+    }
+    return QStringLiteral("Windows");
+}
+
+QString windowsArchitectureFromLabel(const QString& label) {
+    if (containsAny(label, {"X64", "AMD64"})) {
+        return QStringLiteral("x64");
+    }
+    if (containsAny(label, {"X86", "I386"})) {
+        return QStringLiteral("x86");
+    }
+    if (label.contains("ARM64")) {
+        return QStringLiteral("ARM64");
+    }
+    return {};
+}
+
+void appendWindowsEditions(const QString& label, QStringList& editions) {
+    if (label.contains("PRO")) {
+        editions.append(QStringLiteral("Pro"));
+    }
+    if (containsAny(label, {"HOME", "CORE"})) {
+        editions.append(QStringLiteral("Home"));
+    }
+    if (containsAny(label, {"EDU", "EDUCATION"})) {
+        editions.append(QStringLiteral("Education"));
+    }
+    if (containsAny(label, {"ENT", "ENTERPRISE"})) {
+        editions.append(QStringLiteral("Enterprise"));
+    }
+}
+
+QString desktopEnvironmentFromLabel(const QString& label_upper) {
+    if (label_upper.contains("GNOME")) {
+        return QStringLiteral("GNOME");
+    }
+    if (containsAny(label_upper, {"KDE", "PLASMA"})) {
+        return QStringLiteral("KDE Plasma");
+    }
+    if (label_upper.contains("XFCE")) {
+        return QStringLiteral("XFCE");
+    }
+    if (label_upper.contains("CINNAMON")) {
+        return QStringLiteral("Cinnamon");
+    }
+    if (label_upper.contains("MATE")) {
+        return QStringLiteral("MATE");
+    }
+    if (label_upper.contains("BUDGIE")) {
+        return QStringLiteral("Budgie");
+    }
+    if (containsAny(label_upper, {"LXQT", "LXDE"})) {
+        return QStringLiteral("LXQt");
+    }
+    return {};
+}
+
+bool isLiveLinuxLabel(const QString& label_upper) {
+    return containsAny(label_upper, {"LIVE", "DESKTOP", "LIVECD", "LIVEDVD"});
+}
+
+void applyLinuxDistroMatch(sak::IsoInfo& info,
+                           const DistroPattern& pattern,
+                           const QString& search_text,
+                           const QString& label_upper) {
+    info.os_family = QStringLiteral("Linux");
+    info.distro_name = QString::fromLatin1(pattern.distro_name);
+    info.os_name = info.distro_name;
+
+    info.distro_version = extractVersionFromText(search_text);
+    if (!info.distro_version.isEmpty()) {
+        info.os_version = info.distro_version;
+        info.os_name = QString("%1 %2").arg(info.distro_name, info.distro_version);
+    }
+
+    info.is_live = isLiveLinuxLabel(label_upper);
+    info.desktop_env = desktopEnvironmentFromLabel(label_upper);
+}
+
+bool tryMatchLinuxDistro(sak::IsoInfo& info,
+                         const QString& search_text,
+                         const QString& label_upper) {
+    for (int idx = 0; idx < kLinuxDistroPatternCount; ++idx) {
+        const auto& pattern = kLinuxDistroPatterns[idx];
+        if (!search_text.contains(QString::fromLatin1(pattern.volume_prefix),
+                                  Qt::CaseInsensitive)) {
+            continue;
+        }
+
+        applyLinuxDistroMatch(info, pattern, search_text, label_upper);
+        return true;
+    }
+    return false;
+}
+
+bool hasGenericLinuxMetadata(const QString& label_upper, const QString& meta_upper) {
+    return containsAny(label_upper, {"LINUX", "LIVECD", "RESCUE"}) ||
+           containsAny(meta_upper, {"LINUX", "MKISOFS", "XORRISO", "GENISOIMAGE"});
+}
+
+void applyGenericLinuxMetadata(sak::IsoInfo& info, const QString& label) {
+    info.os_family = QStringLiteral("Linux");
+    info.os_name = label.isEmpty() ? QStringLiteral("Linux") : label;
+    info.distro_version = extractVersionFromText(label);
+    if (!info.distro_version.isEmpty()) {
+        info.os_version = info.distro_version;
+    }
+}
+
 // ============================================================================
 // Version Extraction Helpers
 // ============================================================================
@@ -155,7 +369,7 @@ constexpr int kLinuxDistroPatternCount =
 /// Try to extract a version number (e.g. "24.04", "41", "12.8") from text
 QString extractVersionFromText(const QString& text) {
     // Match patterns like 24.04.1, 24.04, 41, 12
-    static const QRegularExpression version_rx(R"((\d{1,4}(?:\.\d{1,3}){0,2}))");
+    static const QRegularExpression version_rx(QString::fromLatin1(kVersionPattern));
     auto match = version_rx.match(text);
     if (match.hasMatch()) {
         return match.captured(1);
@@ -314,8 +528,10 @@ void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
     }
 
     // Check El Torito identifier at bytes 7-29
+    constexpr int kElToritoIdentifierOffset = 7;
     constexpr int kElToritoIdLength = 23;
-    if (std::memcmp(sector.data() + 7, kElToritoId, kElToritoIdLength) != 0) {
+    if (std::memcmp(sector.data() + kElToritoIdentifierOffset, kElToritoId, kElToritoIdLength) !=
+        0) {
         return;
     }
 
@@ -342,57 +558,16 @@ QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba
     Q_ASSERT(device.isOpen());
     Q_ASSERT(catalog_lba > 0);
 
-    qint64 catalog_offset = static_cast<qint64>(catalog_lba) * kSectorSize;
-    if (!device.seek(catalog_offset)) {
-        return QStringLiteral("Legacy BIOS");
-    }
-
     std::array<char, kSectorSize> catalog{};
-    qint64 bytes_read = device.read(catalog.data(), kSectorSize);
-    if (bytes_read < kSectorSize) {
+    const qint64 catalog_offset = static_cast<qint64>(catalog_lba) * kSectorSize;
+    if (!readSectorAt(device, catalog_offset, catalog)) {
         return QStringLiteral("Legacy BIOS");
     }
 
-    bool has_legacy = false;
-    bool has_efi = false;
-
-    // Default entry at offset 32
-    auto default_media = static_cast<uint8_t>(catalog[32]);
-    if (default_media == kBootMediaEfi) {
-        has_efi = true;
-    } else {
-        has_legacy = true;
-    }
-
-    // Scan section headers (each 32 bytes starting at offset 64)
-    constexpr int kCatalogEntrySize = 32;
-    constexpr int kMaxCatalogEntries = 16;
-    for (int entry_index = 2; entry_index < kMaxCatalogEntries; ++entry_index) {
-        int entry_offset = entry_index * kCatalogEntrySize;
-        if (entry_offset + kCatalogEntrySize > kSectorSize) {
-            break;
-        }
-
-        auto header_id = static_cast<uint8_t>(catalog[entry_offset]);
-        // 0x90 = section header more follows, 0x91 = final section header
-        if (header_id == 0x90 || header_id == 0x91) {
-            auto platform_id = static_cast<uint8_t>(catalog[entry_offset + 1]);
-            // Platform: 0 = 80x86, 1 = PowerPC, 2 = Mac, 0xEF = EFI
-            if (platform_id == 0xEF) {
-                has_efi = true;
-            } else if (platform_id == 0x00) {
-                has_legacy = true;
-            }
-        }
-    }
-
-    if (has_efi && has_legacy) {
-        return QStringLiteral("UEFI + Legacy BIOS");
-    }
-    if (has_efi) {
-        return QStringLiteral("UEFI");
-    }
-    return QStringLiteral("Legacy BIOS");
+    BootCatalogFlags flags;
+    applyDefaultBootEntry(catalog, flags);
+    scanBootCatalogSections(catalog, flags);
+    return bootTypeFromFlags(flags);
 }
 
 // ============================================================================
@@ -440,69 +615,16 @@ void IsoAnalyzer::identifyWindows(IsoInfo& info) {
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.os_name.isEmpty());
 
-    // Common Windows ISO volume labels and patterns
-    QString label = info.volume_label.toUpper();
-    QString app = info.application.toUpper();
-
-    bool is_windows = false;
-
-    // Check volume label patterns
-    if (label.contains("WIN") || label.contains("CCCOMA") || label.contains("J_CCSA") ||
-        label.contains("SSS_X64") || label.contains("CPBA_") || label.contains("CCSA_") ||
-        label.contains("CPRA_") || label.contains("GSP1RM")) {
-        is_windows = true;
-    }
-
-    // Check application ID
-    if (app.contains("MICROSOFT") || app.contains("CDIMAGE")) {
-        is_windows = true;
-    }
-
-    if (!is_windows) {
+    const QString label = info.volume_label.toUpper();
+    const QString app = info.application.toUpper();
+    if (!hasWindowsMetadata(label, app)) {
         return;
     }
 
     info.os_family = QStringLiteral("Windows");
-
-    // Try to determine specific Windows version from volume label
-    if (label.contains("11") || label.contains("W11")) {
-        info.os_name = QStringLiteral("Windows 11");
-    } else if (label.contains("10") || label.contains("W10")) {
-        info.os_name = QStringLiteral("Windows 10");
-    } else if (label.contains("SERVER") || label.contains("SRV")) {
-        info.os_name = QStringLiteral("Windows Server");
-    } else if (label.contains("8.1")) {
-        info.os_name = QStringLiteral("Windows 8.1");
-    } else if (label.contains("8")) {
-        info.os_name = QStringLiteral("Windows 8");
-    } else if (label.contains("7") || label.contains("GSP1RM")) {
-        info.os_name = QStringLiteral("Windows 7");
-    } else {
-        info.os_name = QStringLiteral("Windows");
-    }
-
-    // Determine architecture
-    if (label.contains("X64") || label.contains("AMD64")) {
-        info.architecture = QStringLiteral("x64");
-    } else if (label.contains("X86") || label.contains("I386")) {
-        info.architecture = QStringLiteral("x86");
-    } else if (label.contains("ARM64")) {
-        info.architecture = QStringLiteral("ARM64");
-    }
-
-    // Detect editions from volume label substrings
-    if (label.contains("PRO")) {
-        info.windows_editions.append(QStringLiteral("Pro"));
-    }
-    if (label.contains("HOME") || label.contains("CORE")) {
-        info.windows_editions.append(QStringLiteral("Home"));
-    }
-    if (label.contains("EDU") || label.contains("EDUCATION")) {
-        info.windows_editions.append(QStringLiteral("Education"));
-    }
-    if (label.contains("ENT") || label.contains("ENTERPRISE")) {
-        info.windows_editions.append(QStringLiteral("Enterprise"));
-    }
+    info.os_name = windowsNameFromLabel(label);
+    info.architecture = windowsArchitectureFromLabel(label);
+    appendWindowsEditions(label, info.windows_editions);
 }
 
 // ============================================================================
@@ -510,92 +632,28 @@ void IsoAnalyzer::identifyWindows(IsoInfo& info) {
 // ============================================================================
 
 QString IsoAnalyzer::detectDesktopEnvironment(const QString& label_upper) {
-    if (label_upper.contains("GNOME")) {
-        return QStringLiteral("GNOME");
-    }
-    if (label_upper.contains("KDE") || label_upper.contains("PLASMA")) {
-        return QStringLiteral("KDE Plasma");
-    }
-    if (label_upper.contains("XFCE")) {
-        return QStringLiteral("XFCE");
-    }
-    if (label_upper.contains("CINNAMON")) {
-        return QStringLiteral("Cinnamon");
-    }
-    if (label_upper.contains("MATE")) {
-        return QStringLiteral("MATE");
-    }
-    if (label_upper.contains("BUDGIE")) {
-        return QStringLiteral("Budgie");
-    }
-    if (label_upper.contains("LXQT") || label_upper.contains("LXDE")) {
-        return QStringLiteral("LXQt");
-    }
-    return {};
+    return desktopEnvironmentFromLabel(label_upper);
 }
 
 void IsoAnalyzer::identifyLinux(IsoInfo& info) {
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.distro_name.isEmpty());
 
-    QString label = info.volume_label;
-    QString label_upper = label.toUpper();
+    const QString label = info.volume_label;
+    const QString label_upper = label.toUpper();
+    const QString all_metadata = label + " " + info.publisher + " " + info.preparer + " " +
+                                 info.application;
 
-    // Build a combined search corpus from all metadata fields
-    QString all_metadata = label + " " + info.publisher + " " + info.preparer + " " +
-                           info.application;
-
-    // Check against known distro patterns in label first, then all metadata
-    auto tryMatchDistro = [&](const QString& search_text) -> bool {
-        for (int idx = 0; idx < kLinuxDistroPatternCount; ++idx) {
-            const auto& pattern = kLinuxDistroPatterns[idx];
-            if (!search_text.contains(QString::fromLatin1(pattern.volume_prefix),
-                                      Qt::CaseInsensitive)) {
-                continue;
-            }
-
-            info.os_family = QStringLiteral("Linux");
-            info.distro_name = QString::fromLatin1(pattern.distro_name);
-            info.os_name = info.distro_name;
-
-            info.distro_version = extractVersionFromText(search_text);
-            if (!info.distro_version.isEmpty()) {
-                info.os_version = info.distro_version;
-                info.os_name = QString("%1 %2").arg(info.distro_name, info.distro_version);
-            }
-
-            if (label_upper.contains("LIVE") || label_upper.contains("DESKTOP") ||
-                label_upper.contains("LIVECD") || label_upper.contains("LIVEDVD")) {
-                info.is_live = true;
-            }
-
-            info.desktop_env = detectDesktopEnvironment(label_upper);
-            return true;
-        }
-        return false;
-    };
-
-    // Try matching against volume label first
-    if (tryMatchDistro(label)) {
+    if (tryMatchLinuxDistro(info, label, label_upper)) {
         return;
     }
-    // Then try broader metadata fields (publisher, preparer, application)
-    if (tryMatchDistro(all_metadata)) {
+    if (tryMatchLinuxDistro(info, all_metadata, label_upper)) {
         return;
     }
 
-    // Generic Linux detection from any metadata field
-    QString meta_upper = all_metadata.toUpper();
-    if (label_upper.contains("LINUX") || label_upper.contains("LIVECD") ||
-        label_upper.contains("RESCUE") || meta_upper.contains("LINUX") ||
-        meta_upper.contains("MKISOFS") || meta_upper.contains("XORRISO") ||
-        meta_upper.contains("GENISOIMAGE")) {
-        info.os_family = QStringLiteral("Linux");
-        info.os_name = label.isEmpty() ? QStringLiteral("Linux") : label;
-        info.distro_version = extractVersionFromText(label);
-        if (!info.distro_version.isEmpty()) {
-            info.os_version = info.distro_version;
-        }
+    const QString meta_upper = all_metadata.toUpper();
+    if (hasGenericLinuxMetadata(label_upper, meta_upper)) {
+        applyGenericLinuxMetadata(info, label);
     }
 }
 
@@ -610,6 +668,10 @@ QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
     // "YYYYMMDDHHMMSScc" + timezone offset byte
     // Digits are ASCII characters, not binary
     constexpr int kDateFieldLength = 16;
+    constexpr int kIsoDateDayOffset = 6;
+    constexpr int kIsoDateHourOffset = 8;
+    constexpr int kIsoDateMinuteOffset = 10;
+    constexpr int kIsoDateSecondOffset = 12;
 
     // Check if date is all zeros or spaces (means not set)
     bool all_blank = true;
@@ -629,10 +691,10 @@ QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
     constexpr int kFieldLength = 2;
     QString year = readFixedAscii(raw, kYearLength);
     QString month = readFixedAscii(raw + kYearLength, kFieldLength);
-    QString day = readFixedAscii(raw + 6, kFieldLength);
-    QString hour = readFixedAscii(raw + 8, kFieldLength);
-    QString minute = readFixedAscii(raw + 10, kFieldLength);
-    QString second = readFixedAscii(raw + 12, kFieldLength);
+    QString day = readFixedAscii(raw + kIsoDateDayOffset, kFieldLength);
+    QString hour = readFixedAscii(raw + kIsoDateHourOffset, kFieldLength);
+    QString minute = readFixedAscii(raw + kIsoDateMinuteOffset, kFieldLength);
+    QString second = readFixedAscii(raw + kIsoDateSecondOffset, kFieldLength);
 
     return QString("%1-%2-%3 %4:%5:%6").arg(year, month, day, hour, minute, second);
 }

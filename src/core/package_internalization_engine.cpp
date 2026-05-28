@@ -26,6 +26,47 @@
 
 namespace sak {
 
+namespace {
+NetworkTransferRequest makeVersionRequest(const QUrl& url) {
+    NetworkTransferRequest request;
+    request.url = url;
+    request.timeout_ms = offline::kApiRequestTimeoutMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{
+        QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
+    return request;
+}
+
+QString binaryFilenameForUrl(const QUrl& url, int index) {
+    QString filename = url.fileName();
+    if (filename.isEmpty()) {
+        filename = QString("binary_%1").arg(index + 1);
+    }
+    return filename;
+}
+
+NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
+    NetworkTransferRequest request;
+    request.url = url;
+    request.timeout_ms = offline::kDownloadTimeoutMs;
+    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
+                                                             QByteArrayLiteral("SAK-Utility/1.0")});
+    return request;
+}
+
+bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
+    QFile file(output_path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        error = "Cannot write file: " + output_path;
+        return false;
+    }
+    file.write(body);
+    file.close();
+    return true;
+}
+}  // namespace
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -44,9 +85,53 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
                                                       const QString& version,
                                                       const QString& output_dir,
                                                       const QString& work_dir) {
+    QString resolved_version;
+    InternalizationResult result;
+    if (!beginInternalization(package_id, version, resolved_version, result)) {
+        return;
+    }
+
+    const InternalizationPaths paths =
+        prepareInternalizationPaths(package_id, resolved_version, output_dir, work_dir);
+    if (!downloadAndExtractNupkg(paths, result)) {
+        return;
+    }
+
+    emitProgress(InternalizationStatus::ParsingScript, "Parsing install script...");
+    const QString script_path = findInstallScript(paths.extract_dir);
+    if (script_path.isEmpty()) {
+        sak::logInfo(
+            "[InternalizationEngine] No install script found, "
+            "skipping binary internalization");
+        repackAndFinish(result, paths.extract_dir, output_dir, "Repacking (no binaries)...");
+        return;
+    }
+
+    const auto parsed = m_parser.parseFile(script_path);
+    if (parsed.resources.isEmpty()) {
+        sak::logInfo(
+            "[InternalizationEngine] No download URLs in script "
+            "for {}",
+            package_id.toStdString());
+        repackAndFinish(
+            result, paths.extract_dir, output_dir, "Repacking (no external downloads)...");
+        return;
+    }
+
+    if (!downloadAndRewriteInstallScript(parsed, script_path, result)) {
+        return;
+    }
+
+    repackAndFinish(result, paths.extract_dir, output_dir, "Repacking .nupkg...");
+}
+
+bool PackageInternalizationEngine::beginInternalization(const QString& package_id,
+                                                        const QString& version,
+                                                        QString& resolved_version,
+                                                        InternalizationResult& result) {
     if (m_busy) {
         Q_EMIT errorOccurred(package_id, "Engine is already busy");
-        return;
+        return false;
     }
 
     m_busy = true;
@@ -56,96 +141,79 @@ void PackageInternalizationEngine::internalizePackage(const QString& package_id,
     m_current_progress.version = version;
 
     // Resolve latest version if none was specified
-    QString resolved_version = resolveAndLogVersion(package_id, version);
+    resolved_version = resolveAndLogVersion(package_id, version);
+    result.package_id = package_id;
+    result.version = resolved_version;
     if (resolved_version.isEmpty()) {
-        InternalizationResult err_result;
-        err_result.package_id = package_id;
-        finishWithError(err_result, "Could not resolve latest version for " + package_id);
-        return;
+        finishWithError(result, "Could not resolve latest version for " + package_id);
+        return false;
     }
     m_current_progress.version = resolved_version;
 
     sak::logInfo("[InternalizationEngine] Starting: {} v{}",
                  package_id.toStdString(),
                  resolved_version.toStdString());
+    return true;
+}
 
-    InternalizationResult result;
-    result.package_id = package_id;
-    result.version = resolved_version;
-
-    // Ensure work and output directories exist
+PackageInternalizationEngine::InternalizationPaths
+PackageInternalizationEngine::prepareInternalizationPaths(const QString& package_id,
+                                                          const QString& version,
+                                                          const QString& output_dir,
+                                                          const QString& work_dir) const {
     QDir(work_dir).mkpath(".");
     QDir(output_dir).mkpath(".");
 
-    QString extract_dir = work_dir + "/" + package_id + "." + resolved_version;
-    QDir(extract_dir).mkpath(".");
+    InternalizationPaths paths;
+    paths.extract_dir = work_dir + "/" + package_id + "." + version;
+    paths.nupkg_path = work_dir + "/" + package_id + "." + version + ".nupkg";
+    QDir(paths.extract_dir).mkpath(".");
+    return paths;
+}
 
-    // Step 1: Download the .nupkg
-    QString nupkg_path = work_dir + "/" + package_id + "." + resolved_version + ".nupkg";
-    if (!downloadNupkg(package_id, resolved_version, nupkg_path, result)) {
+bool PackageInternalizationEngine::downloadAndExtractNupkg(const InternalizationPaths& paths,
+                                                           InternalizationResult& result) {
+    if (!downloadNupkg(result.package_id, result.version, paths.nupkg_path, result)) {
         m_busy = false;
-        return;
+        return false;
     }
 
-    result.original_size = QFileInfo(nupkg_path).size();
+    result.original_size = QFileInfo(paths.nupkg_path).size();
     sak::logInfo("[InternalizationEngine] Downloaded {} bytes: {}",
                  result.original_size,
-                 nupkg_path.toStdString());
+                 paths.nupkg_path.toStdString());
 
-    // Step 2: Extract the nupkg
     emitProgress(InternalizationStatus::Extracting, "Extracting package...");
     QString extract_error;
-    if (!extractNupkg(nupkg_path, extract_dir, extract_error)) {
+    if (!extractNupkg(paths.nupkg_path, paths.extract_dir, extract_error)) {
         finishWithError(result, "Extraction failed: " + extract_error);
-        return;
+        return false;
     }
 
     if (m_cancelled) {
         m_busy = false;
-        return;
+        return false;
     }
 
-    // Step 3: Parse the install script
-    emitProgress(InternalizationStatus::ParsingScript, "Parsing install script...");
-    QString script_path = findInstallScript(extract_dir);
+    return true;
+}
 
-    if (script_path.isEmpty()) {
-        sak::logInfo(
-            "[InternalizationEngine] No install script found, "
-            "skipping binary internalization");
-        repackAndFinish(result, extract_dir, output_dir, "Repacking (no binaries)...");
-        return;
-    }
-
-    auto parsed = m_parser.parseFile(script_path);
-
-    if (parsed.resources.isEmpty()) {
-        sak::logInfo(
-            "[InternalizationEngine] No download URLs in script "
-            "for {}",
-            package_id.toStdString());
-        repackAndFinish(result, extract_dir, output_dir, "Repacking (no external downloads)...");
-        return;
-    }
-
-    // Step 4: Download all referenced binaries
-    QString tools_dir = QFileInfo(script_path).dir().absolutePath();
+bool PackageInternalizationEngine::downloadAndRewriteInstallScript(
+    const ParsedInstallScript& parsed, const QString& script_path, InternalizationResult& result) {
+    const QString tools_dir = QFileInfo(script_path).dir().absolutePath();
     if (!downloadAllBinaries(parsed, tools_dir, result)) {
         m_busy = false;
-        return;
+        return false;
     }
 
-    // Step 5: Rewrite the install script
     emitProgress(InternalizationStatus::RewritingScript, "Rewriting install script...");
     auto rewrite_result =
         m_rewriter.rewriteToFile(parsed, buildLocalFilenameMap(parsed), script_path);
     if (!rewrite_result.success) {
         finishWithError(result, "Script rewrite failed: " + rewrite_result.error_message);
-        return;
+        return false;
     }
-
-    // Steps 6-8: Clean, repack, and checksum
-    repackAndFinish(result, extract_dir, output_dir, "Repacking .nupkg...");
+    return true;
 }
 
 QString PackageInternalizationEngine::resolveAndLogVersion(const QString& package_id,
@@ -250,14 +318,7 @@ QString PackageInternalizationEngine::resolveLatestVersion(const QString& packag
             QThread::msleep(static_cast<unsigned long>(delay));
         }
 
-        NetworkTransferRequest request;
-        request.url = url;
-        request.timeout_ms = offline::kApiRequestTimeoutMs;
-        request.raw_headers.append(QPair<QByteArray, QByteArray>{
-            QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")});
-        request.raw_headers.append(QPair<QByteArray, QByteArray>{
-            QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
-
+        const NetworkTransferRequest request = makeVersionRequest(url);
         bool request_ok = false;
         const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
         if (transfer.cancelled) {
@@ -409,19 +470,10 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
             QString("Downloading binary %1 of %2...").arg(idx + 1).arg(urls_to_download.size()));
 
         const QString& url = urls_to_download[idx];
-        QUrl parsed_url(url);
-        QString filename = parsed_url.fileName();
-        if (filename.isEmpty()) {
-            filename = QString("binary_%1").arg(idx + 1);
-        }
-
-        QString output_path = tools_dir + "/" + filename;
-
-        NetworkTransferRequest request;
-        request.url = parsed_url;
-        request.timeout_ms = offline::kDownloadTimeoutMs;
-        request.raw_headers.append(QPair<QByteArray, QByteArray>{
-            QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")});
+        const QUrl parsed_url(url);
+        const QString filename = binaryFilenameForUrl(parsed_url, idx);
+        const QString output_path = tools_dir + "/" + filename;
+        const NetworkTransferRequest request = makeBinaryDownloadRequest(parsed_url);
 
         const auto transfer = runNetworkTransfer(
             request,
@@ -438,14 +490,7 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
         bool ok = transfer.success && !transfer.body.isEmpty();
         QString error = transfer.error_message;
         if (ok) {
-            QFile file(output_path);
-            if (!file.open(QIODevice::WriteOnly)) {
-                ok = false;
-                error = "Cannot write file: " + output_path;
-            } else {
-                file.write(transfer.body);
-                file.close();
-            }
+            ok = writeBinaryBody(output_path, transfer.body, error);
         }
 
         if (!ok) {

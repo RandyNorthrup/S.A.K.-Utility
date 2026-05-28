@@ -18,6 +18,19 @@
 
 namespace sak {
 
+namespace {
+
+constexpr int kVersionProbeTimeoutMs = kTimeoutProcessShortMs;
+constexpr int kSearchTimeoutMs = kTimeoutProcessLongMs;
+constexpr int kPackageQueryTimeoutMs = kTimeoutProcessMediumMs;
+constexpr int kPackageRecordMinimumParts = 2;
+constexpr int kOutdatedRecordMinimumParts = 3;
+constexpr int kExitRebootInitiated = 1641;
+constexpr int kMaxPackageNameLength = 100;
+constexpr int kMaxVersionLength = 50;
+
+}  // namespace
+
 ChocolateyManager::ChocolateyManager(QObject* parent)
     : QObject(parent)
     , m_initialized(false)
@@ -76,7 +89,7 @@ bool ChocolateyManager::verifyIntegrity() {
     }
 
     // Try to execute a simple command
-    Result result = executeChoco({"--version"}, 5000);
+    Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
     return result.success;
 }
 
@@ -89,7 +102,7 @@ QString ChocolateyManager::getChocoVersion() {
         return QString();
     }
 
-    Result result = executeChoco({"--version"}, 5000);
+    Result result = executeChoco({"--version"}, kVersionProbeTimeoutMs);
     if (result.success) {
         // Extract version number from output (e.g., "2.4.1")
         QRegularExpression versionRegex(R"(\d+\.\d+\.\d+)");
@@ -135,8 +148,9 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
     Q_EMIT installStarted(config.package_name);
 
     QStringList args = buildInstallArgs(config);
-    int timeout_ms = config.timeout_seconds > 0 ? config.timeout_seconds * 1000
-                                                : m_default_timeout_seconds * 1000;
+    int timeout_ms = config.timeout_seconds > 0
+                         ? config.timeout_seconds * kMillisecondsPerSecond
+                         : m_default_timeout_seconds * kMillisecondsPerSecond;
     Result result = executeChoco(args, timeout_ms);
 
     if (result.success) {
@@ -209,7 +223,7 @@ ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query,
         args << "--page-size" << QString::number(max_results);
     }
 
-    Result result = executeChoco(args, 30'000);  // 30 second timeout for search
+    Result result = executeChoco(args, kSearchTimeoutMs);
 
     if (result.success) {
         auto packages = parseSearchResults(result.output);
@@ -232,7 +246,7 @@ std::vector<ChocolateyManager::PackageInfo> ChocolateyManager::parseSearchResult
         }
 
         QStringList parts = line.split('|');
-        if (parts.size() >= 2) {
+        if (parts.size() >= kPackageRecordMinimumParts) {
             PackageInfo pkg;
             pkg.package_id = parts[0].trimmed();
             pkg.version = parts[1].trimmed();
@@ -254,7 +268,7 @@ bool ChocolateyManager::isPackageInstalled(const QString& package_name) {
     }
 
     QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, 10'000);
+    Result result = executeChoco(args, kPackageQueryTimeoutMs);
 
     return result.success && result.output.contains(package_name);
 }
@@ -268,7 +282,7 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
     }
 
     QStringList args = {"list", "--local-only", package_name, "--exact", "--limit-output"};
-    Result result = executeChoco(args, 10'000);
+    Result result = executeChoco(args, kPackageQueryTimeoutMs);
 
     if (!result.success) {
         return QString();
@@ -281,7 +295,7 @@ QString ChocolateyManager::getInstalledVersion(const QString& package_name) {
             continue;
         }
         QStringList parts = line.split('|');
-        if (parts.size() >= 2) {
+        if (parts.size() >= kPackageRecordMinimumParts) {
             return parts[1].trimmed();
         }
     }
@@ -316,7 +330,7 @@ QStringList ChocolateyManager::getOutdatedPackages() {
         return outdated;
     }
 
-    auto result = executeChoco({"outdated", "-r"}, 30'000);
+    auto result = executeChoco({"outdated", "-r"}, kSearchTimeoutMs);
     if (!result.success) {
         return outdated;
     }
@@ -324,7 +338,7 @@ QStringList ChocolateyManager::getOutdatedPackages() {
     QStringList lines = result.output.split('\n', Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         QStringList parts = line.split('|');
-        if (parts.size() >= 3) {
+        if (parts.size() >= kOutdatedRecordMinimumParts) {
             outdated.append(parts[0]);  // Package name
         }
     }
@@ -390,8 +404,8 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
 
     // Build command
     QString program = m_choco_path;
-    const int effective_timeout_ms = timeout_ms > 0 ? timeout_ms
-                                                    : sak::kChocoTimeoutExtendedSec * 1000;
+    const int effective_timeout_ms =
+        timeout_ms > 0 ? timeout_ms : sak::kChocoTimeoutExtendedSec * kMillisecondsPerSecond;
     const auto process_result =
         sak::runProcessWithEnvironment(program, args, effective_timeout_ms, env);
 
@@ -429,7 +443,8 @@ bool ChocolateyManager::parseExitCode(int exit_code) const {
     // 2 = nothing to do / no packages found
     // 1641/3010 = success with reboot required
 
-    return (exit_code == kExitSuccess || exit_code == 1641 || exit_code == kExitRebootRequired);
+    return (exit_code == kExitSuccess || exit_code == kExitRebootInitiated ||
+            exit_code == kExitRebootRequired);
 }
 
 QString ChocolateyManager::extractErrorMessage(const QString& output) const {
@@ -495,7 +510,7 @@ bool ChocolateyManager::isPermissionError(const QString& output) const {
 }
 
 bool ChocolateyManager::validatePackageName(const QString& package_name) const {
-    if (package_name.isEmpty() || package_name.length() > 100) {
+    if (package_name.isEmpty() || package_name.length() > kMaxPackageNameLength) {
         return false;
     }
 
@@ -505,7 +520,7 @@ bool ChocolateyManager::validatePackageName(const QString& package_name) const {
 }
 
 bool ChocolateyManager::validateVersion(const QString& version) const {
-    if (version.isEmpty() || version.length() > 50) {
+    if (version.isEmpty() || version.length() > kMaxVersionLength) {
         return false;
     }
 

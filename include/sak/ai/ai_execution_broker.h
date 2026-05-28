@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QObject>
@@ -20,13 +22,18 @@ class QProcess;
 
 namespace sak::ai {
 
+inline constexpr int kAiCommandDefaultTimeoutSeconds = 120;
+inline constexpr int kAiCommandDefaultMaxOutputKilobytes = 256;
+inline constexpr int kAiCommandDefaultMaxOutputBytes = kAiCommandDefaultMaxOutputKilobytes *
+                                                       static_cast<int>(sak::kBytesPerKB);
+
 struct AiCommandRequest {
     QString command;
     QString program;
     QStringList arguments;
-    int timeout_seconds{120};
+    int timeout_seconds{kAiCommandDefaultTimeoutSeconds};
     bool requires_admin{false};
-    int max_output_bytes{262'144};
+    int max_output_bytes{kAiCommandDefaultMaxOutputBytes};
 };
 
 struct AiCommandResult {
@@ -48,8 +55,8 @@ struct AiCommandResult {
 struct ProcessLaunchRequest {
     QString program;
     QStringList arguments;
-    int timeout_seconds{120};
-    int max_output_bytes{262'144};
+    int timeout_seconds{kAiCommandDefaultTimeoutSeconds};
+    int max_output_bytes{kAiCommandDefaultMaxOutputBytes};
     QString command_id;
     bool already_running_check{true};
 };
@@ -133,7 +140,7 @@ private:
     HANDLE m_job_handle{nullptr};
 #endif
     QString m_command_id;
-    int m_max_output_bytes{262'144};
+    int m_max_output_bytes{kAiCommandDefaultMaxOutputBytes};
     int m_timeout_ms{0};
     QElapsedTimer m_timer;
     QString m_stdout_buffer;

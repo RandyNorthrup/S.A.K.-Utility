@@ -31,6 +31,11 @@ constexpr int kMacAddrLen = 6;
 constexpr uint64_t kGigabit = 1'000'000'000ULL;
 constexpr uint64_t kMegabit = 1'000'000ULL;
 constexpr uint64_t kKilobit = 1000ULL;
+constexpr ULONG kIpv4PrefixBits = 32;
+constexpr uint32_t kIpv4OctetMask = 0xFF;
+constexpr int kIpv4OctetShift3 = 24;
+constexpr int kIpv4OctetShift2 = 16;
+constexpr int kIpv4OctetShift1 = 8;
 
 constexpr ULONG kGetAdapterFlags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
 
@@ -59,17 +64,20 @@ bool tryIpv6String(const sockaddr* sa, QString& out) {
 }
 
 QString subnetMaskFromPrefixLength(ULONG prefixLength) {
-    if (prefixLength > 32) {
+    if (prefixLength > kIpv4PrefixBits) {
         return {};
     }
 
     uint32_t mask = 0;
     if (prefixLength > 0) {
-        mask = ~((1U << (32U - prefixLength)) - 1U);
+        mask = ~((1U << (kIpv4PrefixBits - prefixLength)) - 1U);
     }
 
-    return QString::asprintf(
-        "%u.%u.%u.%u", (mask >> 24) & 0xFF, (mask >> 16) & 0xFF, (mask >> 8) & 0xFF, mask & 0xFF);
+    return QString::asprintf("%u.%u.%u.%u",
+                             (mask >> kIpv4OctetShift3) & kIpv4OctetMask,
+                             (mask >> kIpv4OctetShift2) & kIpv4OctetMask,
+                             (mask >> kIpv4OctetShift1) & kIpv4OctetMask,
+                             mask & kIpv4OctetMask);
 }
 
 QString adapterTypeFromIfType(ULONG ifType) {

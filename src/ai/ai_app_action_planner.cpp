@@ -12,6 +12,12 @@
 
 namespace sak::ai {
 
+namespace {
+constexpr int kAppActionDefaultTimeoutSeconds = 1800;
+constexpr int kAppActionMinTimeoutSeconds = 5;
+constexpr int kAppActionMaxTimeoutSeconds = 14'400;
+}  // namespace
+
 AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
                                               const QString& action,
                                               const QJsonObject& manifest,
@@ -40,11 +46,12 @@ AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
         plan.action_profile.value(QStringLiteral("command")).toString().trimmed();
     plan.request.requires_admin =
         plan.action_profile.value(QStringLiteral("requires_admin")).toBool(false);
-    plan.request.timeout_seconds = std::clamp(
-        arguments.value(QStringLiteral("timeout_seconds"))
-            .toInt(plan.action_profile.value(QStringLiteral("timeout_seconds")).toInt(1800)),
-        5,
-        14'400);
+    plan.request.timeout_seconds =
+        std::clamp(arguments.value(QStringLiteral("timeout_seconds"))
+                       .toInt(plan.action_profile.value(QStringLiteral("timeout_seconds"))
+                                  .toInt(kAppActionDefaultTimeoutSeconds)),
+                   kAppActionMinTimeoutSeconds,
+                   kAppActionMaxTimeoutSeconds);
     plan.request.max_output_bytes = std::clamp(
         arguments.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes),
         options.min_output_bytes,

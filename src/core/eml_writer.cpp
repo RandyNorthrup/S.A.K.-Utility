@@ -8,6 +8,7 @@
 
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
 
@@ -17,6 +18,101 @@
 #include <QRegularExpression>
 
 namespace sak {
+
+namespace {
+constexpr qsizetype kEmlInitialReserveBytes = 4096;
+
+void appendHeader(QByteArray& eml, const char* name, const QString& value) {
+    if (value.isEmpty()) {
+        return;
+    }
+
+    eml.append(name);
+    eml.append(": ");
+    eml.append(value.toUtf8());
+    eml.append("\r\n");
+}
+
+void appendStandardHeaders(QByteArray& eml, const PstItemDetail& item) {
+    appendHeader(eml,
+                 "From",
+                 item.sender_email.isEmpty() ? item.sender_name
+                                             : item.sender_name + " <" + item.sender_email + ">");
+    appendHeader(eml, "To", item.display_to);
+    appendHeader(eml, "Cc", item.display_cc);
+    appendHeader(eml, "Subject", item.subject);
+    appendHeader(eml, "Message-ID", item.message_id);
+    appendHeader(eml, "In-Reply-To", item.in_reply_to);
+    if (item.date.isValid()) {
+        appendHeader(eml, "Date", item.date.toString(Qt::RFC2822Date));
+    }
+}
+
+QByteArray emlBoundary(const PstItemDetail& item) {
+    return "----=_SAK_Part_" + QByteArray::number(qHash(item.subject), kHexBase) + "_" +
+           QByteArray::number(qHash(item.date.toString()), kHexBase);
+}
+
+void appendSimplePlainMessage(QByteArray& eml, const QString& body) {
+    eml.append("MIME-Version: 1.0\r\n");
+    eml.append("Content-Type: text/plain; charset=utf-8\r\n");
+    eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
+    eml.append("\r\n");
+    eml.append(body.toUtf8());
+}
+
+void appendBodyPart(QByteArray& eml,
+                    const QByteArray& boundary,
+                    const char* content_type,
+                    const QString& body) {
+    eml.append("--" + boundary + "\r\n");
+    eml.append(content_type);
+    eml.append("\r\n");
+    eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
+    eml.append("\r\n");
+    eml.append(body.toUtf8());
+    eml.append("\r\n");
+}
+
+void appendAttachmentParts(QByteArray& eml,
+                           const QByteArray& boundary,
+                           const QVector<QPair<QString, QByteArray>>& attachments) {
+    for (const auto& [name, data] : attachments) {
+        eml.append("--" + boundary + "\r\n");
+        eml.append("Content-Type: application/octet-stream; name=\"" + name.toUtf8() + "\"\r\n");
+        eml.append("Content-Transfer-Encoding: base64\r\n");
+        eml.append("Content-Disposition: attachment; filename=\"" + name.toUtf8() + "\"\r\n");
+        eml.append("\r\n");
+        eml.append(data.toBase64());
+        eml.append("\r\n");
+    }
+}
+
+void appendMultipartMessage(QByteArray& eml,
+                            const PstItemDetail& item,
+                            const QVector<QPair<QString, QByteArray>>& attachments) {
+    const QByteArray boundary = emlBoundary(item);
+    const bool has_attachments = !attachments.isEmpty();
+
+    eml.append("MIME-Version: 1.0\r\n");
+    if (has_attachments) {
+        eml.append("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n");
+    } else {
+        eml.append("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n");
+    }
+    eml.append("\r\n");
+
+    if (!item.body_plain.isEmpty()) {
+        appendBodyPart(eml, boundary, "Content-Type: text/plain; charset=utf-8", item.body_plain);
+    }
+    if (!item.body_html.isEmpty()) {
+        appendBodyPart(eml, boundary, "Content-Type: text/html; charset=utf-8", item.body_html);
+    }
+
+    appendAttachmentParts(eml, boundary, attachments);
+    eml.append("--" + boundary + "--\r\n");
+}
+}  // namespace
 
 // ============================================================================
 // Construction
@@ -81,89 +177,13 @@ std::expected<QString, error_code> EmlWriter::writeMessage(
 QByteArray EmlWriter::buildEmlContent(
     const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {
     QByteArray eml;
-    eml.reserve(4096);
+    eml.reserve(kEmlInitialReserveBytes);
 
-    // Standard headers
-    auto addHeader = [&eml](const char* name, const QString& value) {
-        if (!value.isEmpty()) {
-            eml.append(name);
-            eml.append(": ");
-            eml.append(value.toUtf8());
-            eml.append("\r\n");
-        }
-    };
-
-    addHeader("From",
-              item.sender_email.isEmpty() ? item.sender_name
-                                          : item.sender_name + " <" + item.sender_email + ">");
-    addHeader("To", item.display_to);
-    addHeader("Cc", item.display_cc);
-    addHeader("Subject", item.subject);
-    addHeader("Message-ID", item.message_id);
-    addHeader("In-Reply-To", item.in_reply_to);
-
-    if (item.date.isValid()) {
-        addHeader("Date", item.date.toString(Qt::RFC2822Date));
-    }
-
-    bool has_attachments = !attachments.isEmpty();
-    bool has_html = !item.body_html.isEmpty();
-    bool has_plain = !item.body_plain.isEmpty();
-
-    if (!has_attachments && !has_html) {
-        // Simple plain-text message
-        eml.append("MIME-Version: 1.0\r\n");
-        eml.append("Content-Type: text/plain; charset=utf-8\r\n");
-        eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
-        eml.append("\r\n");
-        eml.append(item.body_plain.toUtf8());
+    appendStandardHeaders(eml, item);
+    if (attachments.isEmpty() && item.body_html.isEmpty()) {
+        appendSimplePlainMessage(eml, item.body_plain);
     } else {
-        // Multipart message
-        QByteArray boundary = "----=_SAK_Part_" + QByteArray::number(qHash(item.subject), 16) +
-                              "_" + QByteArray::number(qHash(item.date.toString()), 16);
-
-        eml.append("MIME-Version: 1.0\r\n");
-
-        if (has_attachments) {
-            eml.append("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n");
-        } else {
-            eml.append("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n");
-        }
-        eml.append("\r\n");
-
-        // Plain text part
-        if (has_plain) {
-            eml.append("--" + boundary + "\r\n");
-            eml.append("Content-Type: text/plain; charset=utf-8\r\n");
-            eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
-            eml.append("\r\n");
-            eml.append(item.body_plain.toUtf8());
-            eml.append("\r\n");
-        }
-
-        // HTML part
-        if (has_html) {
-            eml.append("--" + boundary + "\r\n");
-            eml.append("Content-Type: text/html; charset=utf-8\r\n");
-            eml.append("Content-Transfer-Encoding: quoted-printable\r\n");
-            eml.append("\r\n");
-            eml.append(item.body_html.toUtf8());
-            eml.append("\r\n");
-        }
-
-        // Attachment parts
-        for (const auto& [name, data] : attachments) {
-            eml.append("--" + boundary + "\r\n");
-            eml.append("Content-Type: application/octet-stream; name=\"" + name.toUtf8() +
-                       "\"\r\n");
-            eml.append("Content-Transfer-Encoding: base64\r\n");
-            eml.append("Content-Disposition: attachment; filename=\"" + name.toUtf8() + "\"\r\n");
-            eml.append("\r\n");
-            eml.append(data.toBase64());
-            eml.append("\r\n");
-        }
-
-        eml.append("--" + boundary + "--\r\n");
+        appendMultipartMessage(eml, item, attachments);
     }
 
     return eml;

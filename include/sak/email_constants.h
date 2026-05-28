@@ -140,6 +140,64 @@ constexpr int kDetailPanelMinHeight = 200;
 /// Minimum width for detail/preview panel
 constexpr int kDetailPanelMinWidth = 400;
 
+/// Default width for item-list pane
+constexpr int kItemListDefaultWidth = 400;
+
+/// Default width for message preview pane
+constexpr int kPreviewPaneDefaultWidth = 500;
+
+/// Default content pane width beside the folder tree
+constexpr int kContentPaneDefaultWidth = 700;
+
+/// Width for progress indicators in the email inspector
+constexpr int kInspectorProgressMaxWidth = 200;
+
+/// Width for the page-size combo box
+constexpr int kPageSizeComboWidth = 80;
+
+/// Minimum width for the page indicator label
+constexpr int kPageIndicatorMinWidth = 110;
+
+/// Width for the attachment indicator column
+constexpr int kAttachmentIndicatorColumnWidth = 42;
+
+/// Width for the subject column
+constexpr int kSubjectColumnWidth = 260;
+
+/// Width for sender/name columns
+constexpr int kSenderColumnWidth = 180;
+
+/// Width for date columns
+constexpr int kDateColumnWidth = 150;
+
+/// Width for size columns
+constexpr int kSizeColumnWidth = 80;
+
+/// Width for type columns
+constexpr int kTypeColumnWidth = 90;
+
+/// Contacts dialog split widths
+constexpr int kContactsListPaneWidth = 550;
+constexpr int kContactsDetailPaneWidth = 350;
+
+/// Contacts table column widths
+constexpr int kContactsNameColumnWidth = 200;
+constexpr int kContactsEmailColumnWidth = 250;
+constexpr int kContactsCompanyColumnWidth = 180;
+constexpr int kContactsDetailMinWidth = 280;
+
+/// Attachment browser dimensions
+constexpr int kAttachmentBrowserExtraWidth = 100;
+constexpr int kAttachmentTypeFilterMinWidth = 140;
+constexpr int kAttachmentFilenameColumnWidth = 220;
+constexpr int kAttachmentSourceSubjectColumnWidth = 200;
+constexpr int kAttachmentSourceSenderColumnWidth = 140;
+
+/// File scanner table/progress dimensions
+constexpr int kFileScannerTypeColumnWidth = 80;
+constexpr int kFileScannerSizeColumnWidth = 100;
+constexpr int kFileScannerProgressMaxWidth = 200;
+
 /// Delay before triggering search (milliseconds)
 constexpr int kSearchDebounceMs = 300;
 
@@ -332,6 +390,26 @@ constexpr int kCalendarWorkEndHour = 18;
 /// Search debounce delay (milliseconds)
 constexpr int kCalendarSearchDebounceMs = 250;
 
+/// Calendar dialog extra width and height beyond wizard defaults
+constexpr int kCalendarDialogExtraWidth = 200;
+constexpr int kCalendarDialogExtraHeight = 100;
+
+/// Calendar main splitter defaults
+constexpr int kCalendarSidebarDefaultWidth = 220;
+constexpr int kCalendarContentDefaultWidth = 880;
+constexpr int kCalendarViewDefaultWidth = 600;
+constexpr int kCalendarDetailDefaultWidth = 300;
+
+/// Calendar sidebar width bounds
+constexpr int kCalendarSidebarMinWidth = 200;
+constexpr int kCalendarSidebarMaxWidth = 260;
+
+/// Calendar search and detail sizing
+constexpr int kCalendarSearchMaxWidth = 250;
+constexpr int kCalendarDayTimeColumnWidth = 70;
+constexpr int kCalendarDayListMaxHeight = 250;
+constexpr int kCalendarDetailMinWidth = 250;
+
 /// Rounded corner radius for event bars (pixels)
 constexpr int kCalendarBarCornerRadius = 3;
 
@@ -388,6 +466,11 @@ constexpr auto kCalColorWorkHoursBg = "#ffffff";
 constexpr auto kCalColorOffHoursBg = "#f8fafc";
 
 /// Busy-status count (Free, Tentative, Busy, OOF)
+constexpr int kCalBusyStatusUnknown = -1;
+constexpr int kCalBusyStatusFree = 0;
+constexpr int kCalBusyStatusTentative = 1;
+constexpr int kCalBusyStatusBusy = 2;
+constexpr int kCalBusyStatusOof = 3;
 constexpr int kCalBusyStatusCount = 4;
 
 }  // namespace sak::email

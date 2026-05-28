@@ -18,6 +18,7 @@
 #include "sak/linux_iso_download_dialog.h"
 #include "sak/linux_iso_downloader.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 #include "sak/windows_iso_download_dialog.h"
@@ -38,6 +39,18 @@
 #include <QVBoxLayout>
 
 namespace sak {
+
+namespace {
+
+constexpr int kImageSelectionPageIndex = 0;
+constexpr int kDriveSelectionPageIndex = 1;
+constexpr int kFlashProgressPageIndex = 2;
+constexpr int kCompletionPageIndex = 3;
+constexpr int kIsoInfoLabelColumnMinWidth = 100;
+constexpr int kCompletionMessageFontSize = 14;
+constexpr int kImageFlasherStatusTimeoutMs = kTimerStatusDefaultMs;
+
+}  // namespace
 
 ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     : QWidget(parent)
@@ -81,8 +94,9 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
             this,
             &ImageFlasherPanel::onWindowsISODownloaded);
 
-    // Start drive scanner
-    m_driveScanner->start();
+    if (!QCoreApplication::instance()->property("sakAccessibilityAudit").toBool()) {
+        m_driveScanner->start();
+    }
 
     logInfo("Image Flasher Panel initialized");
 }
@@ -94,7 +108,8 @@ ImageFlasherPanel::~ImageFlasherPanel() {
 void ImageFlasherPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -102,8 +117,11 @@ void ImageFlasherPanel::setupUi() {
 
     auto* contentWidget = new QWidget(scrollArea);
     auto* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setContentsMargins(12, 12, 12, 12);
-    mainLayout->setSpacing(8);
+    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium,
+                                   sak::ui::kMarginMedium);
+    mainLayout->setSpacing(sak::ui::kSpacingMedium);
 
     scrollArea->setWidget(contentWidget);
     rootLayout->addWidget(scrollArea);
@@ -112,7 +130,8 @@ void ImageFlasherPanel::setupUi() {
     auto* titleRow = new QHBoxLayout();
     auto* headerWidget = new QWidget(this);
     auto* headerLayout = new QVBoxLayout(headerWidget);
-    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     sak::createPanelHeader(headerWidget,
                            QStringLiteral(":/icons/icons/panel_image_flasher.svg"),
                            tr("Image Flasher"),
@@ -127,7 +146,7 @@ void ImageFlasherPanel::setupUi() {
         mainLayout->addWidget(banner);
     }
 
-    mainLayout->addSpacing(10);
+    mainLayout->addSpacing(sak::ui::kSpacingDefault);
 
     // Create pages
     createImageSelectionPage();
@@ -141,7 +160,7 @@ void ImageFlasherPanel::setupUi() {
     setupNavigationButtons(mainLayout);
 
     // Show first page
-    m_stackedWidget->setCurrentIndex(0);
+    m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);
     updateNavigationButtons();
 }
 
@@ -172,9 +191,9 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
             return;  // Never navigate away during flash
         }
 
-        if (currentIndex == 3) {
+        if (currentIndex == kCompletionPageIndex) {
             // From completion page, go back to image selection (skip progress page)
-            m_stackedWidget->setCurrentIndex(0);
+            m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);
         } else if (currentIndex > 0) {
             m_stackedWidget->setCurrentIndex(currentIndex - 1);
         }
@@ -215,9 +234,8 @@ void ImageFlasherPanel::createImageSelectionPage() {
     layout->setSpacing(sak::ui::kSpacingLarge);
 
     auto* stepLabel = new QLabel("Step 1: Select Image", m_imageSelectionPage);
-    stepLabel->setStyleSheet(QString("font-size: %1pt; font-weight: 700; color: %2;")
-                                 .arg(sak::ui::kFontSizeSection)
-                                 .arg(sak::ui::kColorTextHeading));
+    stepLabel->setStyleSheet(sak::ui::fontSizeWeightColorStyle(
+        sak::ui::kFontSizeSection, sak::ui::kFontWeightBold, sak::ui::kColorTextHeading));
     layout->addWidget(stepLabel);
 
     createDownloadCards(layout);
@@ -229,21 +247,16 @@ void ImageFlasherPanel::createImageSelectionPage() {
 
     // ISO detailed info group (hidden until an image is analyzed)
     m_isoInfoGroup = new QGroupBox("Image Details", m_imageSelectionPage);
-    m_isoInfoGroup->setStyleSheet(QString("QGroupBox { font-weight: 600; color: %1;"
-                                          " border: 1px solid %2; border-radius: 8px;"
-                                          " margin-top: 12px; padding-top: 18px; }"
-                                          "QGroupBox::title { subcontrol-origin: margin;"
-                                          " left: 10px; padding: 0 6px; }")
-                                      .arg(sak::ui::kColorTextHeading)
-                                      .arg(sak::ui::kColorBorderDefault));
+    m_isoInfoGroup->setStyleSheet(
+        sak::ui::groupBoxPanelStyle(sak::ui::kColorTextHeading, sak::ui::kColorBorderDefault));
     m_isoInfoGrid = new QGridLayout(m_isoInfoGroup);
     m_isoInfoGrid->setSpacing(sak::ui::kSpacingSmall);
-    m_isoInfoGrid->setColumnMinimumWidth(0, 100);
+    m_isoInfoGrid->setColumnMinimumWidth(0, kIsoInfoLabelColumnMinWidth);
 
     auto addInfoRow = [this](int row, const QString& label_text, QLabel*& value_out) {
         auto* key = new QLabel(label_text, m_isoInfoGroup);
-        key->setStyleSheet(
-            QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextSecondary));
+        key->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                            sak::ui::kColorTextSecondary));
         value_out = new QLabel("-", m_isoInfoGroup);
         value_out->setWordWrap(true);
         value_out->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -308,6 +321,7 @@ const QString kCardDescStyle = QString(
 const QString kLogoStyle = QStringLiteral("border: none; background: transparent;");
 
 constexpr int kCardLogoSize = 48;
+constexpr int kSelectImageButtonWidth = 260;
 
 }  // anonymous namespace
 
@@ -319,7 +333,8 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
     card->setCursor(Qt::PointingHandCursor);
     auto* layout = new QVBoxLayout(card);
     layout->setSpacing(sak::ui::kSpacingMedium);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* logo = new QLabel(card);
     logo->setPixmap(QIcon(config.icon_path).pixmap(kCardLogoSize, kCardLogoSize));
@@ -350,12 +365,7 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
     return card;
 }
 
-void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
-    Q_ASSERT(pageLayout);
-    auto* cardRow = new QHBoxLayout();
-    cardRow->setSpacing(sak::ui::kSpacingLarge);
-
-    // Card 1: Microsoft Windows Download
+void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* cardRow) {
     auto* msCard = buildIsoDownloadCard(m_imageSelectionPage,
                                         {QStringLiteral(":/icons/icons/microsoft_logo.svg"),
                                          tr("Windows from Microsoft"),
@@ -385,8 +395,9 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
             this,
             &ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked);
     cardRow->addWidget(msCard);
+}
 
-    // Card 2: UUP Windows Download
+void ImageFlasherPanel::addUupDownloadCard(QHBoxLayout* cardRow) {
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
                              {QStringLiteral(":/icons/icons/uup_logo.svg"),
@@ -401,8 +412,9 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
             &QPushButton::clicked,
             this,
             &ImageFlasherPanel::onDownloadWindowsClicked);
+}
 
-    // Card 3: Linux ISO Download
+void ImageFlasherPanel::addLinuxDownloadCard(QHBoxLayout* cardRow) {
     cardRow->addWidget(
         buildIsoDownloadCard(m_imageSelectionPage,
                              {QStringLiteral(":/icons/icons/tux_logo.svg"),
@@ -417,6 +429,16 @@ void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
             &QPushButton::clicked,
             this,
             &ImageFlasherPanel::onDownloadLinuxClicked);
+}
+
+void ImageFlasherPanel::createDownloadCards(QVBoxLayout* pageLayout) {
+    Q_ASSERT(pageLayout);
+    auto* cardRow = new QHBoxLayout();
+    cardRow->setSpacing(sak::ui::kSpacingLarge);
+
+    addMicrosoftDownloadCard(cardRow);
+    addUupDownloadCard(cardRow);
+    addLinuxDownloadCard(cardRow);
 
     pageLayout->addLayout(cardRow);
 
@@ -430,7 +452,7 @@ void ImageFlasherPanel::createSelectImageButton(QVBoxLayout* pageLayout) {
 
     m_selectImageButton = new QPushButton(tr("Select Image File"), m_imageSelectionPage);
     m_selectImageButton->setMinimumHeight(sak::kButtonHeightTall);
-    m_selectImageButton->setFixedWidth(260);
+    m_selectImageButton->setFixedWidth(kSelectImageButtonWidth);
     m_selectImageButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_selectImageButton->setAccessibleName(QStringLiteral("Browse ISO File"));
     m_selectImageButton->setToolTip(QStringLiteral("Browse for a local disk image file to flash"));
@@ -515,7 +537,7 @@ void ImageFlasherPanel::createCompletionPage() {
 
     m_completionMessageLabel = new QLabel("", groupBox);
     QFont msgFont = m_completionMessageLabel->font();
-    msgFont.setPointSize(14);
+    msgFont.setPointSize(kCompletionMessageFontSize);
     msgFont.setBold(true);
     m_completionMessageLabel->setFont(msgFont);
     groupLayout->addWidget(m_completionMessageLabel);
@@ -531,8 +553,8 @@ void ImageFlasherPanel::createCompletionPage() {
     m_flashAnotherButton->setToolTip(QStringLiteral("Start over and flash another drive"));
     groupLayout->addWidget(m_flashAnotherButton);
     connect(m_flashAnotherButton, &QPushButton::clicked, [this]() {
-        m_stackedWidget->setCurrentIndex(0);
-        m_currentPage = 0;
+        m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);
+        m_currentPage = kImageSelectionPageIndex;
         updateNavigationButtons();
     });
 
@@ -572,7 +594,7 @@ void ImageFlasherPanel::onDownloadWindowsClicked() {
             [this](const QString& filePath) {
                 onImageSelected(filePath);
 
-                auto reply = QMessageBox::question(
+                auto reply = sak::showQuestionLogged(
                     this,
                     "ISO Downloaded",
                     QString("Windows ISO downloaded successfully!\n\n%1\n\n"
@@ -594,9 +616,10 @@ void ImageFlasherPanel::onOpenMicrosoftWindowsDownloadClicked() {
     const QUrl microsoftWindowsIsoUrl("https://www.microsoft.com/software-download/windows11");
     if (!QDesktopServices::openUrl(microsoftWindowsIsoUrl)) {
         logWarning("Could not open the Microsoft download page in your default browser.");
-        QMessageBox::warning(this,
-                             "Unable to Open Browser",
-                             "Could not open the Microsoft download page in your default browser.");
+        sak::showWarningLogged(
+            this,
+            "Unable to Open Browser",
+            "Could not open the Microsoft download page in your default browser.");
     }
 }
 
@@ -609,7 +632,7 @@ void ImageFlasherPanel::onDownloadLinuxClicked() {
         dialog, &LinuxISODownloadDialog::downloadCompleted, this, [this](const QString& filePath) {
             onImageSelected(filePath);
 
-            auto reply = QMessageBox::question(
+            auto reply = sak::showQuestionLogged(
                 this,
                 "ISO Downloaded",
                 QString("Linux ISO downloaded successfully!\n\n%1\n\n"
@@ -680,7 +703,7 @@ void ImageFlasherPanel::onImageSelected(const QString& imagePath) {
 
     Q_EMIT statusMessage(QString("Image Flasher: %1 selected (%2)")
                              .arg(fileInfo.fileName(), formatFileSize(m_imageSize)),
-                         5000);
+                         kImageFlasherStatusTimeoutMs);
     logInfo(QString("Image selected: %1").arg(imagePath).toStdString());
 }
 
@@ -688,9 +711,10 @@ void ImageFlasherPanel::onWindowsISODownloaded(const QString& isoPath) {
     Q_ASSERT(!isoPath.isEmpty());
     onImageSelected(isoPath);
 
-    QMessageBox::information(this,
-                             "Download Complete",
-                             QString("Windows 11 ISO downloaded successfully!\n\n%1").arg(isoPath));
+    sak::showInformationLogged(
+        this,
+        "Download Complete",
+        QString("Windows 11 ISO downloaded successfully!\n\n%1").arg(isoPath));
 }
 
 void ImageFlasherPanel::onDriveListUpdated() {
@@ -752,7 +776,7 @@ void ImageFlasherPanel::onFlashClicked() {
 
 void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
     Q_ASSERT(progress.percentage >= 0);
-    Q_EMIT progressUpdate(static_cast<int>(progress.percentage), 100);
+    Q_EMIT progressUpdate(static_cast<int>(progress.percentage), kPercentMax);
     m_flashDetailsLabel->setText(QString("Written: %1 / %2")
                                      .arg(formatFileSize(progress.bytesWritten))
                                      .arg(formatFileSize(progress.totalBytes)));
@@ -773,10 +797,10 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
 
     if (result.success) {
         m_completionMessageLabel->setText("[x] Flash Completed Successfully!");
-        m_completionMessageLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorSuccess));
+        m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorSuccess));
     } else {
         m_completionMessageLabel->setText("\u2717 Flash Completed with Errors");
-        m_completionMessageLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorError));
+        m_completionMessageLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     }
 
     QString details = QString("Successful: %1\nFailed: %2")
@@ -792,7 +816,7 @@ void ImageFlasherPanel::onFlashCompleted(const FlashResult& result) {
                              .arg(result.success ? "completed" : "completed with errors")
                              .arg(result.successfulDrives.size())
                              .arg(result.failedDrives.size()),
-                         5000);
+                         kImageFlasherStatusTimeoutMs);
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
@@ -802,12 +826,12 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
     m_settingsButton->setEnabled(true);
 
     logError(("Flash Error: " + error).toStdString());
-    QMessageBox::critical(this,
-                          "Flash Error",
-                          QString("The flash operation failed:\n\n%1\n\n"
-                                  "The target drive(s) may be in an unusable state. "
-                                  "You may need to reformat them before they can be used again.")
-                              .arg(error));
+    sak::showCriticalLogged(this,
+                            "Flash Error",
+                            QString("The flash operation failed:\n\n%1\n\n"
+                                    "The target drive(s) may be in an unusable state. "
+                                    "You may need to reformat them before they can be used again.")
+                                .arg(error));
 
     // Return to drive selection so the user can see the state
     m_stackedWidget->setCurrentIndex(1);
@@ -821,7 +845,7 @@ void ImageFlasherPanel::onCancelClicked() {
     Q_ASSERT(m_flashStateLabel);
     Q_ASSERT(m_flashCoordinator);
     logWarning("Cancel Flash: User prompted to cancel flash operation.");
-    auto reply = QMessageBox::warning(
+    auto reply = sak::showWarningLogged(
         this,
         "Cancel Flash",
         "Are you sure you want to cancel the flash operation?\n\n"
@@ -855,31 +879,32 @@ void ImageFlasherPanel::updateNavigationButtons() {
 
     // Back button: enabled on pages 1 (drive selection) and 3 (completion)
     // Disabled during flashing (page 2) and on page 0 (nothing to go back to)
-    bool canGoBack = !m_isFlashing && (currentIndex == 1 || currentIndex == 3);
+    bool canGoBack = !m_isFlashing && (currentIndex == kDriveSelectionPageIndex ||
+                                       currentIndex == kCompletionPageIndex);
     m_backButton->setEnabled(canGoBack);
-    m_backButton->setVisible(currentIndex != 2);  // Hide entirely during flash
+    m_backButton->setVisible(currentIndex != kFlashProgressPageIndex);
 
     // Next button: enabled based on page state
     switch (currentIndex) {
-    case 0:  // Image selection page
+    case kImageSelectionPageIndex:
         m_nextButton->setEnabled(!m_selectedImagePath.isEmpty());
         m_nextButton->setVisible(true);
         break;
-    case 1:  // Drive selection page -- use Flash button instead
-    case 2:  // Progress page
-    case 3:  // Completion page
+    case kDriveSelectionPageIndex:
+    case kFlashProgressPageIndex:
+    case kCompletionPageIndex:
     default:
         m_nextButton->setEnabled(false);
-        m_nextButton->setVisible(currentIndex == 0);
+        m_nextButton->setVisible(currentIndex == kImageSelectionPageIndex);
         break;
     }
 
     // Flash button: only visible and enabled on drive selection page when not flashing
-    m_flashButton->setVisible(currentIndex == 1 && !m_isFlashing);
+    m_flashButton->setVisible(currentIndex == kDriveSelectionPageIndex && !m_isFlashing);
     m_flashButton->setEnabled(!m_selectedDrives.isEmpty() && !m_isFlashing);
 
     // Cancel button: visible during flashing
-    m_cancelButton->setVisible(currentIndex == 2);
+    m_cancelButton->setVisible(currentIndex == kFlashProgressPageIndex);
     m_cancelButton->setEnabled(m_isFlashing);
 }
 
@@ -890,35 +915,35 @@ void ImageFlasherPanel::validateImageFile(const QString& filePath) {
     // Check if file exists
     if (!fileInfo.exists()) {
         logWarning(QString("Invalid Image: File does not exist: %1").arg(filePath).toStdString());
-        QMessageBox::warning(this,
-                             "Invalid Image",
-                             QString("File does not exist: %1").arg(filePath));
+        sak::showWarningLogged(this,
+                               "Invalid Image",
+                               QString("File does not exist: %1").arg(filePath));
         return;
     }
 
     // Check if file is readable
     if (!fileInfo.isReadable()) {
         logWarning(QString("Invalid Image: File is not readable: %1").arg(filePath).toStdString());
-        QMessageBox::warning(this,
-                             "Invalid Image",
-                             QString("File is not readable: %1").arg(filePath));
+        sak::showWarningLogged(this,
+                               "Invalid Image",
+                               QString("File is not readable: %1").arg(filePath));
         return;
     }
 
     // Check if file is not empty
     if (fileInfo.size() == 0) {
         logWarning("Invalid Image: Image file is empty");
-        QMessageBox::warning(this, "Invalid Image", "Image file is empty");
+        sak::showWarningLogged(this, "Invalid Image", "Image file is empty");
         return;
     }
 
     // Detect and validate format
     ImageFormat format = FileImageSource::detectFormat(filePath);
     if (format == ImageFormat::Unknown) {
-        auto reply = QMessageBox::question(this,
-                                           "Unknown Format",
-                                           "Unable to detect image format. Continue anyway?",
-                                           QMessageBox::Yes | QMessageBox::No);
+        auto reply = sak::showQuestionLogged(this,
+                                             "Unknown Format",
+                                             "Unable to detect image format. Continue anyway?",
+                                             QMessageBox::Yes | QMessageBox::No);
 
         if (reply != QMessageBox::Yes) {
             return;
@@ -991,7 +1016,7 @@ void ImageFlasherPanel::showConfirmationDialog() {
     // Block system drive flashing with a hard error
     if (hasSystemDrive) {
         sak::logError("Operation blocked: user attempted to flash system drive");
-        QMessageBox::critical(
+        sak::showCriticalLogged(
             this,
             "Operation Blocked",
             "One or more selected drives is your SYSTEM DRIVE.\n\n"
@@ -1003,11 +1028,11 @@ void ImageFlasherPanel::showConfirmationDialog() {
 
     QString message = buildFlashConfirmationMessage(driveDetails, isWindowsISO);
 
-    auto reply = QMessageBox::warning(this,
-                                      "Confirm Flash -- Data Loss Warning",
-                                      message,
-                                      QMessageBox::Yes | QMessageBox::No,
-                                      QMessageBox::No);
+    auto reply = sak::showWarningLogged(this,
+                                        "Confirm Flash -- Data Loss Warning",
+                                        message,
+                                        QMessageBox::Yes | QMessageBox::No,
+                                        QMessageBox::No);
 
     if (reply != QMessageBox::Yes) {
         return;
@@ -1060,7 +1085,7 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
     });
 
     connect(creator, &WindowsUSBCreator::progressUpdated, this, [this](int percentage) {
-        Q_EMIT progressUpdate(percentage, 100);
+        Q_EMIT progressUpdate(percentage, kPercentMax);
     });
 
     connect(creator, &WindowsUSBCreator::completed, this, [this, creator]() {
@@ -1105,17 +1130,17 @@ void ImageFlasherPanel::createWindowsUSB() {
     Q_ASSERT(m_flashButton);
     if (m_selectedDrives.isEmpty()) {
         sak::logError("Windows USB creation attempted with no target drives selected");
-        QMessageBox::critical(this, "Error", "No target drives selected");
+        sak::showCriticalLogged(this, "Error", "No target drives selected");
         m_isFlashing = false;
         return;
     }
 
     // For Windows USB creation, we can only handle one drive at a time
     if (m_selectedDrives.size() > 1) {
-        QMessageBox::information(this,
-                                 "Multiple Drives",
-                                 "Windows USB creation will process drives one at a time.\n"
-                                 "This may take longer than raw imaging.");
+        sak::showInformationLogged(this,
+                                   "Multiple Drives",
+                                   "Windows USB creation will process drives one at a time.\n"
+                                   "This may take longer than raw imaging.");
     }
 
     // Initialize progress display

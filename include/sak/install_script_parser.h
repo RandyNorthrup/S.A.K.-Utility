@@ -16,6 +16,8 @@
 #include <QStringList>
 #include <QVector>
 
+class QRegularExpressionMatch;
+
 namespace sak {
 
 /// @brief A single downloadable resource extracted from an install script
@@ -89,6 +91,13 @@ private:
 
     /// @brief Extract resources from splatting patterns (@packageArgs)
     void parseSplattingPattern(const QString& script, ParsedInstallScript& result) const;
+
+    [[nodiscard]] DownloadResource buildSplattingResource(const QString& script,
+                                                          const QRegularExpressionMatch& match,
+                                                          ParsedInstallScript& result) const;
+
+    void appendUniqueSplattingResource(ParsedInstallScript& result,
+                                       const DownloadResource& resource) const;
 
     /// @brief Resolve PowerShell variable references ($varName) in a value
     [[nodiscard]] QString resolveVariables(const QString& value, const QString& script) const;

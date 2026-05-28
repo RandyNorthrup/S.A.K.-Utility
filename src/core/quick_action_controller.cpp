@@ -6,6 +6,7 @@
 #include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/quick_action_result_io.h"
 
@@ -13,9 +14,75 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QJsonObject>
 #include <QTextStream>
 
 namespace sak {
+
+namespace {
+constexpr int kThreadShutdownWaitMs = 10'000;
+}
+
+namespace {
+constexpr int kElevationRequestProgress = 5;
+constexpr auto kBackupBitLockerKeysAction = "Backup BitLocker Keys";
+constexpr auto kDefaultBackupLocation = "C:/SAK_Backups";
+constexpr auto kBackupLocationPayloadKey = "backup_location";
+constexpr auto kMessageResultKey = "message";
+constexpr auto kLogResultKey = "log";
+constexpr auto kStatusResultKey = "status";
+
+QJsonObject buildElevatedActionPayload(const QString& action_name,
+                                       const QString& configuredBackupLocation) {
+    QJsonObject payload;
+    if (action_name != QString::fromLatin1(kBackupBitLockerKeysAction)) {
+        return payload;
+    }
+
+    const QString backup_location = configuredBackupLocation.isEmpty()
+                                        ? QString::fromLatin1(kDefaultBackupLocation)
+                                        : configuredBackupLocation;
+    payload[QString::fromLatin1(kBackupLocationPayloadKey)] = backup_location;
+    return payload;
+}
+
+QuickAction::ExecutionResult makeElevationFailureResult(sak::error_code error) {
+    QuickAction::ExecutionResult result;
+    result.success = false;
+
+    if (error == sak::error_code::elevation_denied) {
+        result.message = QStringLiteral("Administrator privileges required but not granted");
+        result.log = QStringLiteral("User cancelled the UAC prompt");
+        return result;
+    }
+
+    result.message = QStringLiteral("Elevated helper error: %1")
+                         .arg(QString::fromStdString(std::string(sak::to_string(error))));
+    result.log = result.message;
+    return result;
+}
+
+QuickAction::ExecutionResult makeElevatedActionResult(
+    const std::expected<ElevatedTaskResult, sak::error_code>& broker_result,
+    QuickAction::ActionStatus& status) {
+    if (!broker_result) {
+        return makeElevationFailureResult(broker_result.error());
+    }
+
+    QuickAction::ExecutionResult result;
+    result.success = broker_result->success;
+    result.message = broker_result->data[QString::fromLatin1(kMessageResultKey)].toString();
+    result.log = broker_result->data[QString::fromLatin1(kLogResultKey)].toString();
+    status = static_cast<QuickAction::ActionStatus>(
+        broker_result->data[QString::fromLatin1(kStatusResultKey)].toInt(
+            static_cast<int>(QuickAction::ActionStatus::Failed)));
+
+    if (!broker_result->success && result.message.isEmpty()) {
+        result.message = broker_result->error_message;
+    }
+    return result;
+}
+}  // namespace
 
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
@@ -42,7 +109,7 @@ QuickActionController::~QuickActionController() {
         }
         if (thread->isRunning()) {
             thread->quit();
-            if (!thread->wait(10'000)) {
+            if (!thread->wait(kThreadShutdownWaitMs)) {
                 sak::logError("QuickAction thread did not stop within 10s");
             }
         }
@@ -200,16 +267,12 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     m_current_execution_action = action;
     Q_EMIT actionExecutionStarted(action);
     action->updateStatus(QuickAction::ActionStatus::Running);
-    Q_EMIT actionExecutionProgress(action, "Requesting administrator approval...", 5);
-    logOperation(action, "Requesting administrator elevation via helper");
+    Q_EMIT actionExecutionProgress(action,
+                                   QStringLiteral("Requesting administrator approval..."),
+                                   kElevationRequestProgress);
+    logOperation(action, QStringLiteral("Requesting administrator elevation via helper"));
 
-    // Build task payload
-    QJsonObject payload;
-    if (action_name == "Backup BitLocker Keys") {
-        QString backup_location = m_backup_location.isEmpty() ? "C:/SAK_Backups"
-                                                              : m_backup_location;
-        payload["backup_location"] = backup_location;
-    }
+    const QJsonObject payload = buildElevatedActionPayload(action_name, m_backup_location);
 
     m_execution_thread = new QThread(this);
     auto* thread = m_execution_thread;
@@ -232,33 +295,10 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
                 },
                 Qt::QueuedConnection);
 
-            auto broker_result = broker.executeTask(action_name, action_name, payload);
-
             QuickAction::ExecutionResult result;
             QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
-
-            if (broker_result) {
-                result.success = broker_result->success;
-                result.message = broker_result->data["message"].toString();
-                result.log = broker_result->data["log"].toString();
-                status = static_cast<QuickAction::ActionStatus>(broker_result->data["status"].toInt(
-                    static_cast<int>(QuickAction::ActionStatus::Failed)));
-                if (!broker_result->success && result.message.isEmpty()) {
-                    result.message = broker_result->error_message;
-                }
-            } else {
-                result.success = false;
-                auto error = broker_result.error();
-                if (error == sak::error_code::elevation_denied) {
-                    result.message = "Administrator privileges required but not granted";
-                    result.log = "User cancelled the UAC prompt";
-                } else {
-                    result.message =
-                        QString("Elevated helper error: %1")
-                            .arg(QString::fromStdString(std::string(sak::to_string(error))));
-                    result.log = result.message;
-                }
-            }
+            result = makeElevatedActionResult(broker.executeTask(action_name, action_name, payload),
+                                              status);
 
             QMetaObject::invokeMethod(
                 this,
@@ -338,7 +378,7 @@ void QuickActionController::onExecutionComplete() {
     Q_EMIT actionExecutionComplete(action);
 
     const auto& result = action->lastExecutionResult();
-    qint64 duration_sec = result.duration_ms / 1000;
+    qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
     QString log_msg = result.success ? QString("Execution complete: %1 (%2 bytes in %3s)")
                                            .arg(result.message)
                                            .arg(result.bytes_processed)

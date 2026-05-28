@@ -53,11 +53,12 @@ namespace sak {
     const int height = bm.bmHeight;
 
     BITMAPINFOHEADER bih{};
+    constexpr WORD kShieldIconBitmapBitCount = 32;
     bih.biSize = sizeof(bih);
     bih.biWidth = width;
     bih.biHeight = -height;  // top-down DIB
     bih.biPlanes = 1;
-    bih.biBitCount = 32;
+    bih.biBitCount = kShieldIconBitmapBitCount;
     bih.biCompression = BI_RGB;
 
     QImage image(width, height, QImage::Format_ARGB32_Premultiplied);

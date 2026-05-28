@@ -20,6 +20,20 @@
 #include <QTemporaryFile>
 #include <QThread>
 
+namespace {
+
+constexpr int kFormatVerificationProgress = 5;
+constexpr int kDriveRecognitionWaitIterations = 30;
+constexpr int kDriveRecognitionProgressSpan = 5;
+constexpr int kNtfsVerificationProgress = 10;
+constexpr int kExtractionPreparationProgress = 13;
+constexpr int kExtractionVerifiedProgress = 60;
+constexpr int kBootConfigurationStartProgress = 62;
+constexpr int kBootConfigurationCompleteProgress = 70;
+constexpr int kBootFlagVerifiedProgress = 85;
+
+}  // namespace
+
 WindowsUSBCreator::WindowsUSBCreator(QObject* parent) : QObject(parent) {}
 
 WindowsUSBCreator::~WindowsUSBCreator() {}
@@ -128,14 +142,15 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     }
 
     // VERIFY Step 1: Wait for partition and get drive letter
-    Q_EMIT progressUpdated(5);
+    Q_EMIT progressUpdated(kFormatVerificationProgress);
     Q_EMIT statusChanged("Waiting for partition to be recognized...");
     sak::logInfo("STEP 1: Verifying format and getting drive letter...");
 
     // Wait with progress updates
-    for (int i = 0; i < 30; ++i) {
+    for (int i = 0; i < kDriveRecognitionWaitIterations; ++i) {
         QThread::msleep(sak::kTimerPollingFastMs);
-        Q_EMIT progressUpdated(5 + (i * 5 / 30));  // 5% to 10%
+        Q_EMIT progressUpdated(kFormatVerificationProgress + (i * kDriveRecognitionProgressSpan /
+                                                              kDriveRecognitionWaitIterations));
         if (m_cancelled) {
             break;
         }
@@ -151,14 +166,14 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
         return {};
     }
 
-    Q_EMIT progressUpdated(10);
+    Q_EMIT progressUpdated(kNtfsVerificationProgress);
     Q_EMIT statusChanged("Verifying NTFS filesystem...");
 
     if (!verifyNtfsFilesystem(driveLetter)) {
         return {};
     }
 
-    Q_EMIT progressUpdated(13);
+    Q_EMIT progressUpdated(kExtractionPreparationProgress);
     Q_EMIT statusChanged("Format verified, preparing extraction...");
 
     return driveLetter;
@@ -242,7 +257,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     }
 
     sak::logInfo("[x] STEP 2 VERIFIED: All critical files extracted");
-    Q_EMIT progressUpdated(60);
+    Q_EMIT progressUpdated(kExtractionVerifiedProgress);
 
     return true;
 }
@@ -300,14 +315,14 @@ bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
     }
 
     sak::logInfo("[x] STEP 4 VERIFIED: Bootable flag is set (Active)");
-    Q_EMIT progressUpdated(85);
+    Q_EMIT progressUpdated(kBootFlagVerifiedProgress);
     return true;
 }
 
 bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
                                                const QString& driveLetter) {
     // ==================== STEP 3: MAKE BOOTABLE ====================
-    Q_EMIT progressUpdated(62);
+    Q_EMIT progressUpdated(kBootConfigurationStartProgress);
     Q_EMIT statusChanged("Step 3/5: Making drive bootable...");
     sak::logInfo("STEP 3: Making drive bootable...");
 
@@ -318,7 +333,7 @@ bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
     }
 
     sak::logInfo("[x] STEP 3 COMPLETED: Boot configuration done");
-    Q_EMIT progressUpdated(70);
+    Q_EMIT progressUpdated(kBootConfigurationCompleteProgress);
 
     if (m_cancelled) {
         setError("Operation cancelled");

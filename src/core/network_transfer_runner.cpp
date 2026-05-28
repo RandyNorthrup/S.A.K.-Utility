@@ -3,6 +3,8 @@
 
 #include "sak/network_transfer_runner.h"
 
+#include "sak/layout_constants.h"
+
 #include <QElapsedTimer>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -16,6 +18,8 @@
 namespace sak {
 
 namespace {
+
+constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 
 struct NetworkTransferSinks {
     NetworkTransferResult* result{nullptr};
@@ -85,7 +89,7 @@ private:
 
     QTimer* createCancelTimer(QNetworkReply* reply) {
         auto* cancel_timer = new QTimer(this);
-        cancel_timer->setInterval(100);
+        cancel_timer->setInterval(kCancellationPollIntervalMs);
         QObject::connect(cancel_timer, &QTimer::timeout, this, [this, reply]() {
             if (m_shouldCancel && m_shouldCancel()) {
                 m_sinks.result->cancelled = true;

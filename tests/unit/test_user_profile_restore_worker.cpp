@@ -527,17 +527,11 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     const QString destFile = destDir.path() + "/Users/NUser/Documents/data.txt";
     QVERIFY(writeFile(destFile, "old-dest"));
 
-    // Make destination file older by backdating it.
     QFile df(destFile);
     QVERIFY(df.open(QIODevice::ReadWrite));
     df.close();
-    // Set the dest file's modification time to the past.
     QFileInfo destInfo(destFile);
     QDateTime pastTime = QDateTime::currentDateTime().addDays(-30);
-    // Use platform-specific API or just rely on the backup being written after.
-    // Since we just created the backup file *before* this, and the dest was
-    // written just now, the backup is actually older. We need the backup to
-    // be *newer*. Let's backdate the dest file instead.
 #ifdef Q_OS_WIN
     {
         HANDLE hFile = CreateFileW(reinterpret_cast<LPCWSTR>(destFile.utf16()),
@@ -548,7 +542,6 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
                                    FILE_ATTRIBUTE_NORMAL,
                                    nullptr);
         if (hFile != INVALID_HANDLE_VALUE) {
-            // Set to 2020-01-01 00:00:00 UTC
             FILETIME ft;
             SYSTEMTIME st = {2020, 1, 0, 1, 0, 0, 0, 0};
             SystemTimeToFileTime(&st, &ft);
@@ -579,7 +572,6 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     QVERIFY(completeSpy.wait(5000));
     QCOMPARE(completeSpy.first().at(0).toBool(), true);
 
-    // The backup file (newer) should have replaced the old dest.
     QFile result(destFile);
     QVERIFY(result.open(QIODevice::ReadOnly));
     QCOMPARE(result.readAll(), QByteArray("newer-from-backup"));

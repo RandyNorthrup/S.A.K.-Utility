@@ -3,9 +3,15 @@
 
 #include "sak/ai/ai_lease_manager.h"
 
+#include "sak/layout_constants.h"
+
 #include <QMutexLocker>
 
 namespace sak::ai {
+
+namespace {
+constexpr int kLeaseIdWidth = 4;
+}
 
 AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
                                                       const QStringList& tool_scope,
@@ -21,7 +27,8 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
         return result;
     }
     Lease lease;
-    lease.lease_id = QStringLiteral("lease_%1").arg(m_next_id++, 4, 10, QLatin1Char('0'));
+    lease.lease_id =
+        QStringLiteral("lease_%1").arg(m_next_id++, kLeaseIdWidth, kDecimalBase, QLatin1Char('0'));
     lease.agent_id = agent_id;
     lease.tool_scope = tool_scope;
     lease.risk_level = risk_level;

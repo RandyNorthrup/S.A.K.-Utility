@@ -6,6 +6,7 @@
 
 #include "sak/email_file_scanner_dialog.h"
 
+#include "sak/email_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
@@ -36,6 +37,16 @@ struct ScannedFile {
     QString type;
 };
 
+enum FileScanColumn {
+    FileScanColPath = 0,
+    FileScanColType,
+    FileScanColSize,
+    FileScanColCount
+};
+
+constexpr qsizetype kExpectedEmailFileScanResults = 64;
+constexpr int kEmailFileSizeGigabytePrecision = 2;
+
 QString classifySuffix(const QString& suffix) {
     if (suffix == QLatin1String("pst")) {
         return QStringLiteral("PST");
@@ -53,7 +64,7 @@ QVector<ScannedFile> scanPathsWorker(const QStringList& paths) {
         QStringLiteral("*.mbox"),
     };
     QVector<ScannedFile> results;
-    results.reserve(64);
+    results.reserve(kExpectedEmailFileScanResults);
 
     auto harvest = [&](const QDir& dir) {
         const auto entries = dir.entryInfoList(kFilters, QDir::Files | QDir::Readable);
@@ -111,30 +122,18 @@ QString EmailFileScannerDialog::selectedFilePath() const {
 // UI Setup
 // ============================================================================
 
-void EmailFileScannerDialog::setupUi() {
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(
-        ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
-    layout->setSpacing(ui::kSpacingDefault);
-
-    auto* heading = new QLabel(tr("Scan common locations for PST, OST, and MBOX files"), this);
-    heading->setStyleSheet(QStringLiteral("font-size: %1pt; font-weight: 600; "
-                                          "color: %2;")
-                               .arg(ui::kFontSizeSection)
-                               .arg(ui::kColorTextHeading));
-    layout->addWidget(heading);
-
-    // Results table
+void EmailFileScannerDialog::setupResultsTable(QVBoxLayout* layout) {
     m_results_table = new QTableWidget(this);
-    m_results_table->setColumnCount(3);
+    m_results_table->setColumnCount(FileScanColCount);
     m_results_table->setHorizontalHeaderLabels({tr("File Path"), tr("Type"), tr("Size")});
     m_results_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_results_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_results_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_results_table->horizontalHeader()->setStretchLastSection(false);
-    m_results_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_results_table->setColumnWidth(1, 80);
-    m_results_table->setColumnWidth(2, 100);
+    m_results_table->horizontalHeader()->setSectionResizeMode(FileScanColPath,
+                                                              QHeaderView::Stretch);
+    m_results_table->setColumnWidth(FileScanColType, email::kFileScannerTypeColumnWidth);
+    m_results_table->setColumnWidth(FileScanColSize, email::kFileScannerSizeColumnWidth);
     m_results_table->verticalHeader()->setVisible(false);
     connect(m_results_table,
             &QTableWidget::cellDoubleClicked,
@@ -146,20 +145,22 @@ void EmailFileScannerDialog::setupUi() {
         m_open_folder_button->setEnabled(has_selection);
     });
     layout->addWidget(m_results_table, 1);
+}
 
-    // Status + progress
+void EmailFileScannerDialog::setupStatusRow(QVBoxLayout* layout) {
     auto* status_row = new QHBoxLayout();
     m_status_label = new QLabel(tr("Scanning for email files..."), this);
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     status_row->addWidget(m_status_label, 1);
 
     m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setMaximumWidth(200);
+    m_progress_bar->setMaximumWidth(email::kFileScannerProgressMaxWidth);
     m_progress_bar->setVisible(false);
     status_row->addWidget(m_progress_bar);
     layout->addLayout(status_row);
+}
 
-    // Button row
+void EmailFileScannerDialog::setupButtonRow(QVBoxLayout* layout) {
     auto* button_row = new QHBoxLayout();
 
     m_scan_button = new QPushButton(tr("Rescan"), this);
@@ -193,6 +194,21 @@ void EmailFileScannerDialog::setupUi() {
     layout->addLayout(button_row);
 }
 
+void EmailFileScannerDialog::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(
+        ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
+    layout->setSpacing(ui::kSpacingDefault);
+
+    auto* heading = new QLabel(tr("Scan common locations for PST, OST, and MBOX files"), this);
+    heading->setStyleSheet(ui::fontSizeWeightColorStyle(
+        ui::kFontSizeSection, ui::kFontWeightSemibold, ui::kColorTextHeading));
+    layout->addWidget(heading);
+    setupResultsTable(layout);
+    setupStatusRow(layout);
+    setupButtonRow(layout);
+}
+
 // ============================================================================
 // Slots
 // ============================================================================
@@ -223,12 +239,15 @@ void EmailFileScannerDialog::onScanClicked() {
         m_results_table->setRowCount(results.size());
         for (int row = 0; row < results.size(); ++row) {
             const auto& r = results.at(row);
-            m_results_table->setItem(row, 0, new QTableWidgetItem(r.path));
-            m_results_table->setItem(row, 1, new QTableWidgetItem(r.type));
+            m_results_table->setItem(row, FileScanColPath, new QTableWidgetItem(r.path));
+            m_results_table->setItem(row, FileScanColType, new QTableWidgetItem(r.type));
             QString size_str;
             if (r.size_bytes >= kBytesPerGB) {
-                size_str = QStringLiteral("%1 GB").arg(
-                    static_cast<double>(r.size_bytes) / kBytesPerGBf, 0, 'f', 2);
+                size_str =
+                    QStringLiteral("%1 GB").arg(static_cast<double>(r.size_bytes) / kBytesPerGBf,
+                                                0,
+                                                'f',
+                                                kEmailFileSizeGigabytePrecision);
             } else if (r.size_bytes >= kBytesPerMB) {
                 size_str = QStringLiteral("%1 MB").arg(
                     static_cast<double>(r.size_bytes) / kBytesPerMBf, 0, 'f', 1);
@@ -236,7 +255,7 @@ void EmailFileScannerDialog::onScanClicked() {
                 size_str = QStringLiteral("%1 KB").arg(
                     static_cast<double>(r.size_bytes) / kBytesPerKBf, 0, 'f', 0);
             }
-            m_results_table->setItem(row, 2, new QTableWidgetItem(size_str));
+            m_results_table->setItem(row, FileScanColSize, new QTableWidgetItem(size_str));
         }
         m_results_table->setSortingEnabled(true);
         m_results_table->setUpdatesEnabled(true);

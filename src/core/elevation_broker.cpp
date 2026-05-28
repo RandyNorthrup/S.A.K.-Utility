@@ -6,6 +6,7 @@
 
 #include "sak/elevation_broker.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -21,6 +22,10 @@
 #endif
 
 namespace sak {
+
+namespace {
+constexpr int kHelperExitWaitMs = kTimerStatusBriefMs;
+}  // namespace
 
 // ======================================================================
 // Construction / Destruction
@@ -298,12 +303,13 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
-    uint32_t payload_len = static_cast<uint8_t>(header[0]) |
-                           (static_cast<uint8_t>(header[1]) << 8) |
-                           (static_cast<uint8_t>(header[2]) << 16) |
-                           (static_cast<uint8_t>(header[3]) << 24);
+    uint32_t payload_len =
+        static_cast<uint8_t>(header[kPipeFrameLengthByte0]) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte1]) << kPipeFrameByteShift1) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte2]) << kPipeFrameByteShift2) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte3]) << kPipeFrameByteShift3);
 
-    auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[4]));
+    auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[kPipeFrameTypeByte]));
 
     if (payload_len > kPipeMaxPayload) {
         sak::logError("ElevationBroker: message too large: {} bytes", payload_len);
@@ -389,7 +395,7 @@ void ElevationBroker::cleanup() {
     }
     if (m_helper_process) {
         // Give the helper a moment to exit cleanly
-        WaitForSingleObject(m_helper_process, 2000);
+        WaitForSingleObject(m_helper_process, kHelperExitWaitMs);
         CloseHandle(m_helper_process);
         m_helper_process = nullptr;
     }

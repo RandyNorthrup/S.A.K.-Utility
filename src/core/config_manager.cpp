@@ -17,6 +17,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kDefaultBackupThreadCount = 4;
+constexpr int kDefaultLargeDriveThresholdGb = 128;
+}  // namespace
+
 ConfigManager& ConfigManager::instance() {
     static ConfigManager instance;
     return instance;
@@ -46,7 +51,7 @@ void ConfigManager::initializeDefaults() {
 void ConfigManager::initializeBackupAndOrganizerDefaults() {
     // Only set defaults if keys don't exist
     if (!contains("backup/thread_count")) {
-        setValue("backup/thread_count", 4);
+        setValue("backup/thread_count", kDefaultBackupThreadCount);
     }
     if (!contains("backup/verify_md5")) {
         setValue("backup/verify_md5", true);
@@ -79,7 +84,7 @@ void ConfigManager::initializeFlasherDefaults() {
         setValue("image_flasher/show_large_drive_warning", true);
     }
     if (!contains("image_flasher/large_drive_threshold")) {
-        setValue("image_flasher/large_drive_threshold", 128);
+        setValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb);
     }
     if (!contains("image_flasher/max_concurrent_writes")) {
         setValue("image_flasher/max_concurrent_writes", 1);
@@ -145,7 +150,7 @@ void ConfigManager::sync() {
 
 // Backup settings
 int ConfigManager::getBackupThreadCount() const {
-    return getValue("backup/thread_count", 4).toInt();
+    return getValue("backup/thread_count", kDefaultBackupThreadCount).toInt();
 }
 
 void ConfigManager::setBackupThreadCount(int count) {
@@ -256,7 +261,7 @@ void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show) {
 }
 
 int ConfigManager::getImageFlasherLargeDriveThreshold() const {
-    return getValue("image_flasher/large_drive_threshold", 128).toInt();
+    return getValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb).toInt();
 }
 
 void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {

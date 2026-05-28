@@ -14,6 +14,9 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultSubagentTimeoutSeconds = 600;
+inline constexpr int kDefaultSubagentTokenBudget = 8000;
+
 /// @brief Structured task description handed by the overseer to a subagent.
 struct AiSubagentTask {
     QString task_id;
@@ -26,8 +29,8 @@ struct AiSubagentTask {
     QStringList context_refs;
     QStringList instructions_refs;
     AiToolPolicy tool_policy{AiToolPolicy::NoLocalExecution};
-    int timeout_seconds{600};
-    int token_budget{8000};
+    int timeout_seconds{kDefaultSubagentTimeoutSeconds};
+    int token_budget{kDefaultSubagentTokenBudget};
     QString expected_output_schema;
     QString model;
     QString reasoning_effort;

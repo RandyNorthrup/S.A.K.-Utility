@@ -8,6 +8,10 @@
 
 namespace sak::ui {
 
+inline constexpr int kSplashCornerRadiusPx = 24;
+inline constexpr int kSplashShadowRadiusPx = 24;
+inline constexpr int kSplashShadowOffsetPx = 8;
+
 /// @brief Animated splash screen displayed during application startup
 class SplashScreen final : public QWidget {
     Q_OBJECT
@@ -24,9 +28,9 @@ protected:
 private:
     QPixmap m_pixmap;
     QPixmap m_rounded_pixmap;
-    int m_corner_radius{24};
-    int m_shadow_radius{24};
-    int m_shadow_offset{8};
+    int m_corner_radius{kSplashCornerRadiusPx};
+    int m_shadow_radius{kSplashShadowRadiusPx};
+    int m_shadow_offset{kSplashShadowOffsetPx};
 };
 
 }  // namespace sak::ui

@@ -31,6 +31,8 @@ constexpr int kProcessTimeout = 120'000;         // 2 minutes max for iPerf3
 constexpr int kServerStartTimeout = 3000;
 constexpr int kSpeedTestChunkBytes = 1'048'576;  // 1 MB
 constexpr int kSpeedTestDurationMs = 10'000;     // 10 seconds
+constexpr int kIperfProgressPollMs = kTimerRetryBaseMs;
+constexpr int kCloudflareLatencyTimeoutMs = kTimeoutProcessShortMs;
 constexpr double kBitsPerByte = 8.0;
 constexpr double kMegabit = 1'000'000.0;
 
@@ -82,16 +84,16 @@ IperfProcessResult runIperfClientProcess(const QString& program,
     std::thread progress_thread([tester, durationSec, &done, &started]() {
         qint64 elapsed_ms = 0;
         while (!done.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kIperfProgressPollMs));
             if (!started.load() || done.load()) {
                 continue;
             }
-            elapsed_ms += 500;
+            elapsed_ms += kIperfProgressPollMs;
             QMetaObject::invokeMethod(
                 tester,
                 [tester, durationSec, elapsed_ms]() {
                     Q_EMIT tester->testProgress(0.0,
-                                                elapsed_ms / 1000.0,
+                                                elapsed_ms / kMillisecondsPerSecondF,
                                                 static_cast<double>(durationSec));
                 },
                 Qt::QueuedConnection);
@@ -199,7 +201,7 @@ std::optional<double> BandwidthTester::measureTransferMbps(
     if (total_time_ms <= 0.0) {
         return 0.0;
     }
-    return (total_bytes * kBitsPerByte) / (total_time_ms / 1000.0) / kMegabit;
+    return (total_bytes * kBitsPerByte) / (total_time_ms / kMillisecondsPerSecondF) / kMegabit;
 }
 
 bool BandwidthTester::isIperf3Available() const {
@@ -294,7 +296,7 @@ void BandwidthTester::stopIperfServer() {
 
     if (m_serverProcess->state() == QProcess::Running) {
         m_serverProcess->terminate();
-        QTimer::singleShot(3000, m_serverProcess, [process = m_serverProcess]() {
+        QTimer::singleShot(kServerStartTimeout, m_serverProcess, [process = m_serverProcess]() {
             if (process->state() != QProcess::NotRunning) {
                 process->kill();
             }
@@ -454,7 +456,7 @@ void BandwidthTester::runHttpSpeedTest() {
     const QString uploadUrl = QStringLiteral("https://speed.cloudflare.com/__up");
 
     double latencyMs = measureHttpHeadLatencyMs(
-        QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), 5000);
+        QStringLiteral("https://speed.cloudflare.com/__down?bytes=0"), kCloudflareLatencyTimeoutMs);
 
     if (m_cancelled.load()) {
         Q_EMIT httpSpeedTestComplete(0.0, 0.0, 0.0);

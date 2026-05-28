@@ -3,7 +3,9 @@
 
 #include "sak/migration_report.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/report_style_constants.h"
 
 #include <QFile>
 #include <QJsonArray>
@@ -23,6 +25,13 @@
 #endif
 
 namespace sak {
+
+namespace {
+constexpr double kAutoSelectConfidenceThreshold = 0.8;
+constexpr int kConfidenceCsvPrecision = 2;
+constexpr int kMatchRateDisplayPrecision = 1;
+constexpr int kConfidencePercentPrecision = 0;
+}  // namespace
 
 MigrationReport::MigrationReport() {
     // Initialize metadata
@@ -59,7 +68,7 @@ void MigrationReport::generateReport(const std::vector<AppScanner::AppInfo>& app
         populateMatchFields(entry, match_map, app.name);
 
         // Migration control (default: auto-select high confidence matches)
-        entry.selected = (entry.confidence >= 0.8);
+        entry.selected = (entry.confidence >= kAutoSelectConfidenceThreshold);
         entry.version_lock = false;
         entry.locked_version.clear();
         entry.notes = "";
@@ -252,11 +261,12 @@ bool MigrationReport::exportToCsv(const QString& file_path) const {
             << escapeCsvField(entry.app_publisher) << "," << escapeCsvField(entry.install_location)
             << "," << escapeCsvField(entry.install_date.toString(Qt::ISODate)) << ","
             << escapeCsvField(entry.choco_package) << ","
-            << QString::number(entry.confidence, 'f', 2) << "," << entry.match_type << ","
-            << (entry.available ? "Yes" : "No") << "," << escapeCsvField(entry.available_version)
-            << "," << (entry.selected ? "Yes" : "No") << "," << (entry.version_lock ? "Yes" : "No")
-            << "," << escapeCsvField(entry.locked_version) << "," << escapeCsvField(entry.notes)
-            << "," << entry.status << "," << escapeCsvField(entry.error_message) << "\n";
+            << QString::number(entry.confidence, 'f', kConfidenceCsvPrecision) << ","
+            << entry.match_type << "," << (entry.available ? "Yes" : "No") << ","
+            << escapeCsvField(entry.available_version) << "," << (entry.selected ? "Yes" : "No")
+            << "," << (entry.version_lock ? "Yes" : "No") << ","
+            << escapeCsvField(entry.locked_version) << "," << escapeCsvField(entry.notes) << ","
+            << entry.status << "," << escapeCsvField(entry.error_message) << "\n";
     }
 
     file.close();
@@ -480,7 +490,7 @@ QString MigrationReport::formatHtmlReport() const {
     out << "<div class=\"stat-box\"><div class=\"stat-value\">" << m_metadata.selected_apps
         << "</div><div class=\"stat-label\">Selected Apps</div></div>\n";
     out << "<div class=\"stat-box\"><div class=\"stat-value\">"
-        << QString::number(m_metadata.match_rate * 100, 'f', 1)
+        << QString::number(m_metadata.match_rate * kPercentMaxF, 'f', kMatchRateDisplayPrecision)
         << "%</div><div class=\"stat-label\">Match Rate</div></div>\n";
     out << "</div>\n</div>\n";
 
@@ -503,31 +513,9 @@ QString MigrationReport::buildHtmlStyles() {
     QString css;
     QTextStream out(&css);
     out << "<style>\n";
-    out << "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }\n";
-    out << "h1 { color: #333; }\n";
-    out << ".metadata { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; "
-           "box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
+    out << report::enterpriseReportStyleSheet();
     out << ".metadata table { width: 100%; border-collapse: collapse; }\n";
-    out << ".metadata td { padding: 8px; border-bottom: 1px solid #eee; }\n";
     out << ".metadata td:first-child { font-weight: bold; width: 200px; }\n";
-    out << ".stats { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; "
-           "box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n";
-    out << ".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, "
-           "1fr)); gap: 15px; }\n";
-    out << ".stat-box { text-align: center; padding: 15px; background: #f8f9fa; border-radius: "
-           "5px; }\n";
-    out << ".stat-value { font-size: 32px; font-weight: bold; color: #007bff; }\n";
-    out << ".stat-label { color: #666; margin-top: 5px; }\n";
-    out << "table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px "
-           "4px rgba(0,0,0,0.1); }\n";
-    out << "th { background: #007bff; color: white; padding: 12px; text-align: left; font-weight: "
-           "bold; }\n";
-    out << "td { padding: 10px; border-bottom: 1px solid #eee; }\n";
-    out << "tr:hover { background: #f8f9fa; }\n";
-    out << ".selected { color: #28a745; font-weight: bold; }\n";
-    out << ".unmatched { color: #dc3545; }\n";
-    out << ".exact { background: #d4edda; }\n";
-    out << ".fuzzy { background: #fff3cd; }\n";
     out << ".confidence { font-weight: bold; }\n";
     out << "</style>\n";
     return css;
@@ -550,7 +538,8 @@ void MigrationReport::buildHtmlEntryRows(QTextStream& out) const {
                                                 "match</span>"
                                               : entry.choco_package)
             << "</td>\n";
-        out << "<td class=\"confidence\">" << QString::number(entry.confidence * 100, 'f', 0)
+        out << "<td class=\"confidence\">"
+            << QString::number(entry.confidence * kPercentMaxF, 'f', kConfidencePercentPrecision)
             << "%</td>\n";
         out << "<td>" << entry.match_type << "</td>\n";
         out << "<td>"

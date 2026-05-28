@@ -10,6 +10,11 @@
 namespace sak::ai {
 
 namespace {
+constexpr int kToolCommandSummaryMaxChars = 700;
+constexpr int kToolTruncationReserveChars = 64;
+constexpr int kToolErrorSummaryMaxChars = 900;
+constexpr int kToolStdoutSummaryMaxChars = 2400;
+constexpr int kToolStderrSummaryMaxChars = 1600;
 
 QString redact(const QString& text, const ToolResultTextRedactor& redactor) {
     return redactor ? redactor(text) : text;
@@ -22,7 +27,8 @@ void appendToolCommandSummary(QStringList* lines,
                                 .toString(result.value(QStringLiteral("command")).toString())
                                 .trimmed();
     if (!command.isEmpty()) {
-        *lines << QStringLiteral("Command: %1").arg(clippedToolResultText(command, 700, redactor));
+        *lines << QStringLiteral("Command: %1")
+                      .arg(clippedToolResultText(command, kToolCommandSummaryMaxChars, redactor));
     }
 }
 
@@ -113,7 +119,7 @@ void appendTranscriptRecord(ConversationStore* store,
 QString clippedToolResultText(QString text, int max_chars, const ToolResultTextRedactor& redactor) {
     text = redact(text, redactor).trimmed();
     if (max_chars > 0 && text.size() > max_chars) {
-        text = text.left(max_chars - 64).trimmed() +
+        text = text.left(max_chars - kToolTruncationReserveChars).trimmed() +
                QStringLiteral("\n...[output truncated for chat view]");
     }
     return text;
@@ -128,18 +134,21 @@ QString toolResultChatSummary(const QJsonObject& result, const ToolResultTextRed
     appendToolStatusSummary(&lines, result);
     const QString error = result.value(QStringLiteral("error_message")).toString().trimmed();
     if (!error.isEmpty()) {
-        lines << QStringLiteral("Error: %1").arg(clippedToolResultText(error, 900, redactor));
+        lines << QStringLiteral("Error: %1")
+                     .arg(clippedToolResultText(error, kToolErrorSummaryMaxChars, redactor));
     }
-    appendToolTextSummary(
-        &lines,
-        result,
-        {.field = QStringLiteral("stdout"), .label = QStringLiteral("Output"), .max_chars = 2400},
-        redactor);
-    appendToolTextSummary(
-        &lines,
-        result,
-        {.field = QStringLiteral("stderr"), .label = QStringLiteral("Errors"), .max_chars = 1600},
-        redactor);
+    appendToolTextSummary(&lines,
+                          result,
+                          {.field = QStringLiteral("stdout"),
+                           .label = QStringLiteral("Output"),
+                           .max_chars = kToolStdoutSummaryMaxChars},
+                          redactor);
+    appendToolTextSummary(&lines,
+                          result,
+                          {.field = QStringLiteral("stderr"),
+                           .label = QStringLiteral("Errors"),
+                           .max_chars = kToolStderrSummaryMaxChars},
+                          redactor);
     return lines.join(QStringLiteral("\n"));
 }
 

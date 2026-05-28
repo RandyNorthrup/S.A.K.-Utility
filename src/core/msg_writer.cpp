@@ -6,6 +6,7 @@
 
 #include "sak/msg_writer.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
 
@@ -45,6 +46,23 @@ constexpr uint16_t kPropTypeInt32 = 0x0003;
 constexpr uint16_t kPropTypeBinary = 0x0102;
 
 constexpr int kMaxFilenameLength = 200;
+constexpr int kPropertyTagHexWidth = 4;
+constexpr int kAttachmentStreamHexWidth = 8;
+constexpr uint16_t kByteMask = 0x00FF;
+constexpr int kByteShift = 8;
+constexpr int kDirectoryEntryChildStep = 2;
+constexpr int kDirectoryEntryFanout = 4;
+constexpr int kDirectoryEntryFanoutBias = 3;
+constexpr int kHeaderDirectoryStartSectorOffset = 48;
+constexpr int kHeaderDifatStartOffset = 76;
+constexpr int kClsIdBytes = 16;
+constexpr int kDirectoryEntryReservedBytes = 6;
+constexpr int kHeaderDifatEntryCount = 109;
+constexpr int kDirectoryNameMaxChars = 31;
+constexpr int kDirectoryNameBytes = 64;
+constexpr int kUtf16BytesPerChar = 2;
+constexpr uint32_t kPropAttrReadable = 0x02;
+constexpr int kInlinePropertyValueBytes = 8;
 
 }  // namespace
 
@@ -113,13 +131,13 @@ void MsgWriter::collectMessageStreams(const PstItemDetail& item,
 
     if (!item.subject.isEmpty()) {
         QString tag = QStringLiteral("__substg1.0_%1%2")
-                          .arg(kPropSubject, 4, 16, QChar('0'))
-                          .arg(kPropTypeUnicode, 4, 16, QChar('0'));
+                          .arg(kPropSubject, kPropertyTagHexWidth, sak::kHexBase, QChar('0'))
+                          .arg(kPropTypeUnicode, kPropertyTagHexWidth, sak::kHexBase, QChar('0'));
         QByteArray data;
         for (const auto& ch : item.subject) {
             uint16_t code = ch.unicode();
-            data.append(static_cast<char>(code & 0xFF));
-            data.append(static_cast<char>((code >> 8) & 0xFF));
+            data.append(static_cast<char>(code & kByteMask));
+            data.append(static_cast<char>((code >> kByteShift) & kByteMask));
         }
         streams.append(data);
         stream_names.append(tag.toUpper());
@@ -127,13 +145,13 @@ void MsgWriter::collectMessageStreams(const PstItemDetail& item,
 
     if (!item.body_plain.isEmpty()) {
         QString tag = QStringLiteral("__substg1.0_%1%2")
-                          .arg(kPropBody, 4, 16, QChar('0'))
-                          .arg(kPropTypeUnicode, 4, 16, QChar('0'));
+                          .arg(kPropBody, kPropertyTagHexWidth, sak::kHexBase, QChar('0'))
+                          .arg(kPropTypeUnicode, kPropertyTagHexWidth, sak::kHexBase, QChar('0'));
         QByteArray data;
         for (const auto& ch : item.body_plain) {
             uint16_t code = ch.unicode();
-            data.append(static_cast<char>(code & 0xFF));
-            data.append(static_cast<char>((code >> 8) & 0xFF));
+            data.append(static_cast<char>(code & kByteMask));
+            data.append(static_cast<char>((code >> kByteShift) & kByteMask));
         }
         streams.append(data);
         stream_names.append(tag.toUpper());
@@ -141,7 +159,8 @@ void MsgWriter::collectMessageStreams(const PstItemDetail& item,
 
     for (int i = 0; i < attachments.size(); ++i) {
         const auto& [att_name, att_data] = attachments[i];
-        QString stream_name = QStringLiteral("__attach_version1.0_#%1").arg(i, 8, 16, QChar('0'));
+        QString stream_name = QStringLiteral("__attach_version1.0_#%1")
+                                  .arg(i, kAttachmentStreamHexWidth, sak::kHexBase, QChar('0'));
         streams.append(att_data);
         stream_names.append(stream_name.toUpper());
     }
@@ -158,7 +177,7 @@ QByteArray MsgWriter::buildDirectoryData(const QVector<QByteArray>& streams,
     for (int i = 0; i < streams.size(); ++i) {
         int right = -1;
         if (i > 0 && i < streams.size() - 1) {
-            right = i + 2;
+            right = i + kDirectoryEntryChildStep;
         }
         dir_data.append(buildDirectoryEntry(stream_names[i],
                                             kDirTypeStream,
@@ -189,24 +208,40 @@ std::expected<void, error_code> MsgWriter::createCompoundFile(
     QStringList stream_names;
     collectMessageStreams(item, properties, attachments, streams, stream_names);
 
-    // Calculate total sectors
-    int data_sectors = 0;
     QVector<int> stream_start_sectors;
-    for (const auto& s : streams) {
+    int total_entries = 1 + streams.size();
+    int dir_sectors = (total_entries > kDirectoryEntryFanout)
+                          ? ((total_entries + kDirectoryEntryFanoutBias) / kDirectoryEntryFanout)
+                          : 1;
+    int dir_start_sector = 0;
+    QVector<int32_t> fat_entries =
+        buildFatEntries(streams, dir_sectors, stream_start_sectors, dir_start_sector);
+    const int fat_sector = fat_entries.size() - 1;
+
+    writeCompoundHeader(file, dir_start_sector, fat_sector);
+    writeDataSectors(file, streams);
+
+    file.write(buildDirectoryData(streams, stream_names, stream_start_sectors));
+    file.write(buildFatSector(fat_entries));
+
+    file.close();
+    return {};
+}
+
+QVector<int32_t> MsgWriter::buildFatEntries(const QVector<QByteArray>& streams,
+                                            int dir_sectors,
+                                            QVector<int>& stream_start_sectors,
+                                            int& dir_start_sector) const {
+    int data_sectors = 0;
+    for (const auto& stream : streams) {
         stream_start_sectors.append(data_sectors);
-        int sectors_needed = qMax(1, (s.size() + kSectorSize - 1) / kSectorSize);
-        data_sectors += sectors_needed;
+        data_sectors += qMax(1, (stream.size() + kSectorSize - 1) / kSectorSize);
     }
 
-    int total_entries = 1 + streams.size();
-    int dir_sectors = (total_entries > 4) ? ((total_entries + 3) / 4) : 1;
-    int total_sectors = data_sectors + dir_sectors + 1;
-
-    // Build FAT
-    QVector<int32_t> fat_entries(total_sectors, static_cast<int32_t>(kFreeSector));
+    QVector<int32_t> fat_entries(data_sectors + dir_sectors + 1, static_cast<int32_t>(kFreeSector));
     int sector_idx = 0;
-    for (const auto& s : streams) {
-        int sectors_needed = qMax(1, (s.size() + kSectorSize - 1) / kSectorSize);
+    for (const auto& stream : streams) {
+        const int sectors_needed = qMax(1, (stream.size() + kSectorSize - 1) / kSectorSize);
         for (int j = 0; j < sectors_needed - 1; ++j) {
             fat_entries[sector_idx + j] = sector_idx + j + 1;
         }
@@ -218,30 +253,26 @@ std::expected<void, error_code> MsgWriter::createCompoundFile(
         fat_entries[sector_idx + j] = sector_idx + j + 1;
     }
     fat_entries[sector_idx + dir_sectors - 1] = static_cast<int32_t>(kEndOfChain);
-    int dir_start_sector = sector_idx;
-    sector_idx += dir_sectors;
-    fat_entries[sector_idx] = static_cast<int32_t>(kFatSector);
+    dir_start_sector = sector_idx;
+    fat_entries[sector_idx + dir_sectors] = static_cast<int32_t>(kFatSector);
+    return fat_entries;
+}
 
-    // Write header
+void MsgWriter::writeCompoundHeader(QFile& file, int dir_start_sector, int fat_sector) const {
     QByteArray header = buildCompoundFileHeader();
-    {
-        QDataStream hs(&header, QIODevice::ReadWrite);
-        hs.setByteOrder(QDataStream::LittleEndian);
-        hs.device()->seek(48);
-        hs << static_cast<int32_t>(dir_start_sector);
-    }
-    {
-        QDataStream hs(&header, QIODevice::ReadWrite);
-        hs.setByteOrder(QDataStream::LittleEndian);
-        hs.device()->seek(76);
-        hs << static_cast<int32_t>(sector_idx);
-    }
+    QDataStream hs(&header, QIODevice::ReadWrite);
+    hs.setByteOrder(QDataStream::LittleEndian);
+    hs.device()->seek(kHeaderDirectoryStartSectorOffset);
+    hs << static_cast<int32_t>(dir_start_sector);
+    hs.device()->seek(kHeaderDifatStartOffset);
+    hs << static_cast<int32_t>(fat_sector);
     file.write(header);
+}
 
-    // Write data sectors
-    for (const auto& s : streams) {
-        QByteArray padded = s;
-        int rem = padded.size() % kSectorSize;
+void MsgWriter::writeDataSectors(QFile& file, const QVector<QByteArray>& streams) const {
+    for (const auto& stream : streams) {
+        QByteArray padded = stream;
+        const int rem = padded.size() % kSectorSize;
         if (rem != 0) {
             padded.append(QByteArray(kSectorSize - rem, '\0'));
         }
@@ -250,12 +281,6 @@ std::expected<void, error_code> MsgWriter::createCompoundFile(
         }
         file.write(padded);
     }
-
-    file.write(buildDirectoryData(streams, stream_names, stream_start_sectors));
-    file.write(buildFatSector(fat_entries));
-
-    file.close();
-    return {};
 }
 
 QByteArray MsgWriter::buildCompoundFileHeader() const {
@@ -266,7 +291,7 @@ QByteArray MsgWriter::buildCompoundFileHeader() const {
     // Magic number (8 bytes)
     ds << kCfbMagic;
     // CLSID (16 bytes)
-    ds.writeRawData(QByteArray(16, '\0').constData(), 16);
+    ds.writeRawData(QByteArray(kClsIdBytes, '\0').constData(), kClsIdBytes);
     // Minor version
     ds << kCfbMinorVersion;
     // Major version
@@ -278,7 +303,8 @@ QByteArray MsgWriter::buildCompoundFileHeader() const {
     // Mini sector size power
     ds << kMiniSectorSizePower;
     // Reserved (6 bytes)
-    ds.writeRawData(QByteArray(6, '\0').constData(), 6);
+    ds.writeRawData(QByteArray(kDirectoryEntryReservedBytes, '\0').constData(),
+                    kDirectoryEntryReservedBytes);
     // Total directory sectors (v3 = 0)
     ds << static_cast<int32_t>(0);
     // Total FAT sectors
@@ -300,7 +326,7 @@ QByteArray MsgWriter::buildCompoundFileHeader() const {
 
     // DIFAT array (109 entries, rest is 0xFFFFFFFF)
     // First entry is the FAT sector (filled later at offset 76)
-    for (int i = 0; i < 109; ++i) {
+    for (int i = 0; i < kHeaderDifatEntryCount; ++i) {
         ds << static_cast<int32_t>(kFreeSector);
     }
 
@@ -312,7 +338,7 @@ QByteArray MsgWriter::buildFatSector(const QVector<int32_t>& fat_entries) const 
     QDataStream ds(&sector, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
 
-    int count = qMin(fat_entries.size(), kSectorSize / 4);
+    int count = qMin(fat_entries.size(), kSectorSize / kDirectoryEntryFanout);
     for (int i = 0; i < count; ++i) {
         ds << fat_entries[i];
     }
@@ -331,20 +357,21 @@ QByteArray MsgWriter::buildDirectoryEntry(const QString& name,
     ds.setByteOrder(QDataStream::LittleEndian);
 
     // Entry name (64 bytes max, UTF-16LE)
-    int name_len = qMin(name.size(), 31);
+    int name_len = qMin(name.size(), kDirectoryNameMaxChars);
     for (int i = 0; i < name_len; ++i) {
         ds << static_cast<uint16_t>(name.at(i).unicode());
     }
     ds << static_cast<uint16_t>(0);  // null terminator
 
     // Pad to 64 bytes
-    int written = (name_len + 1) * 2;
-    if (written < 64) {
-        ds.writeRawData(QByteArray(64 - written, '\0').constData(), 64 - written);
+    int written = (name_len + 1) * kUtf16BytesPerChar;
+    if (written < kDirectoryNameBytes) {
+        ds.writeRawData(QByteArray(kDirectoryNameBytes - written, '\0').constData(),
+                        kDirectoryNameBytes - written);
     }
 
     // Name size in bytes (including null terminator)
-    ds << static_cast<uint16_t>((name_len + 1) * 2);
+    ds << static_cast<uint16_t>((name_len + 1) * kUtf16BytesPerChar);
     // Object type
     ds << type;
     // Color (red-black tree: 1=black)
@@ -356,7 +383,7 @@ QByteArray MsgWriter::buildDirectoryEntry(const QString& name,
     // Child
     ds << static_cast<int32_t>(links.child_id);
     // CLSID (16 bytes)
-    ds.writeRawData(QByteArray(16, '\0').constData(), 16);
+    ds.writeRawData(QByteArray(kClsIdBytes, '\0').constData(), kClsIdBytes);
     // State bits
     ds << static_cast<uint32_t>(0);
     // Created time (8 bytes)
@@ -388,13 +415,13 @@ QByteArray MsgWriter::buildPropertyStream(const QVector<MapiProperty>& propertie
         ds << prop.tag_type;
         ds << prop.tag_id;
         // Flags
-        ds << static_cast<uint32_t>(0x02);  // PROPATTR_READABLE
+        ds << static_cast<uint32_t>(kPropAttrReadable);  // PROPATTR_READABLE
 
         // Value (8 bytes, padded)
-        if (prop.raw_value.size() <= 8) {
+        if (prop.raw_value.size() <= kInlinePropertyValueBytes) {
             QByteArray padded = prop.raw_value;
-            padded.resize(8, '\0');
-            ds.writeRawData(padded.constData(), 8);
+            padded.resize(kInlinePropertyValueBytes, '\0');
+            ds.writeRawData(padded.constData(), kInlinePropertyValueBytes);
         } else {
             // Variable-length: store size
             ds << static_cast<uint32_t>(prop.raw_value.size());

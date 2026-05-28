@@ -19,6 +19,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kAdapterTypeCaptureGroup = 3;
+constexpr int kAdapterNameCaptureGroup = 4;
+}  // namespace
+
 // -- EthernetConfigSnapshot --------------------------------------------------
 
 QJsonObject EthernetConfigSnapshot::toJson() const {
@@ -307,8 +312,8 @@ QStringList EthernetConfigManager::listEthernetAdapters() {
 
         auto match = kAdapterLineRe.match(line.trimmed());
         if (match.hasMatch()) {
-            QString adapterType = match.captured(3);
-            QString adapterName = match.captured(4).trimmed();
+            QString adapterType = match.captured(kAdapterTypeCaptureGroup);
+            QString adapterName = match.captured(kAdapterNameCaptureGroup).trimmed();
             // Include Dedicated (Ethernet) adapters
             if (adapterType == "Dedicated") {
                 adapters.append(adapterName);

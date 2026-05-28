@@ -4,6 +4,7 @@
 #include "sak/chocolatey_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/windows_user_scanner.h"
@@ -24,6 +25,49 @@
 #include <algorithm>
 
 namespace sak {
+namespace {
+enum MappingColumn {
+    kMappingColumnSelect,
+    kMappingColumnSource,
+    kMappingColumnArrow,
+    kMappingColumnDestination,
+    kMappingColumnMergeMode,
+    kMappingColumnCount,
+};
+
+enum MergeColumn {
+    kMergeColumnSelect,
+    kMergeColumnFile,
+    kMergeColumnConflict,
+    kMergeColumnStatus,
+    kMergeColumnCount,
+};
+
+enum FolderColumn {
+    kFolderColumnSelect,
+    kFolderColumnPath,
+    kFolderColumnFolder,
+    kFolderColumnSize,
+    kFolderColumnFiles,
+    kFolderColumnCount,
+};
+
+enum EthernetColumn {
+    kEthernetColumnSelect,
+    kEthernetColumnAdapter,
+    kEthernetColumnDhcp,
+    kEthernetColumnIpAddress,
+    kEthernetColumnSubnet,
+    kEthernetColumnGateway,
+    kEthernetColumnDns,
+    kEthernetColumnCount,
+};
+
+constexpr int kTreePackageColumn = 2;
+constexpr int kTreeDetailColumn = 2;
+constexpr int kSizeDisplayPrecision = 2;
+constexpr int kMegabyteDisplayPrecision = 1;
+}  // namespace
 
 // ============================================================================
 // Page 2: User Mapping
@@ -60,7 +104,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     // Mapping table
-    m_mappingTable = new QTableWidget(0, 5, this);
+    m_mappingTable = new QTableWidget(0, kMappingColumnCount, this);
     m_mappingTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("Source User"), tr("->"), tr("Destination User"), tr("Merge Mode")});
     m_mappingTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -70,9 +114,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 
     // Connections
@@ -125,7 +167,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         auto* arrowItem = new QTableWidgetItem("->");
         arrowItem->setFlags(arrowItem->flags() & ~Qt::ItemIsEditable);
         arrowItem->setTextAlignment(Qt::AlignCenter);
-        m_mappingTable->setItem(row, 2, arrowItem);
+        m_mappingTable->setItem(row, kMappingColumnArrow, arrowItem);
 
         // Destination user combo
         auto* destCombo = new QComboBox();
@@ -133,7 +175,7 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         for (const auto& destUser : m_destinationUsers) {
             destCombo->addItem(destUser.username, destUser.username);
         }
-        m_mappingTable->setCellWidget(row, 3, destCombo);
+        m_mappingTable->setCellWidget(row, kMappingColumnDestination, destCombo);
 
         // Merge mode combo
         auto* modeCombo = new QComboBox();
@@ -142,17 +184,17 @@ void UserProfileRestoreUserMappingPage::loadMappingTable() {
         modeCombo->addItem(tr("Merge Into Destination"),
                            static_cast<int>(MergeMode::MergeIntoDestination));
         modeCombo->addItem(tr("Create New User"), static_cast<int>(MergeMode::CreateNewUser));
-        m_mappingTable->setCellWidget(row, 4, modeCombo);
+        m_mappingTable->setCellWidget(row, kMappingColumnMergeMode, modeCombo);
 
         // Connect signals
         connect(destCombo,
                 QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this,
-                [this, row](int) { onMappingChanged(row, 3); });
+                [this, row](int) { onMappingChanged(row, kMappingColumnDestination); });
         connect(modeCombo,
                 QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this,
-                [this, row](int) { onMappingChanged(row, 4); });
+                [this, row](int) { onMappingChanged(row, kMappingColumnMergeMode); });
     }
 }
 
@@ -166,7 +208,8 @@ void UserProfileRestoreUserMappingPage::onAutoMap() {
     BackupManifest manifest = wiz->manifest();
 
     for (int row = 0; row < m_mappingTable->rowCount(); ++row) {
-        auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+        auto* destCombo =
+            qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
         if (!destCombo) {
             continue;
         }
@@ -201,7 +244,8 @@ void UserProfileRestoreUserMappingPage::updateSummary() {
         }
         selectedMappings++;
 
-        auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+        auto* destCombo =
+            qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
         if (destCombo && destCombo->currentData().toString().isEmpty()) {
             newUsers++;
         } else {
@@ -231,7 +275,8 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
     }
 
     // Get destination user
-    auto* destCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 3));
+    auto* destCombo =
+        qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnDestination));
     if (destCombo) {
         mapping.destination_username = destCombo->currentData().toString();
     }
@@ -248,7 +293,8 @@ UserMapping UserProfileRestoreUserMappingPage::buildMappingForRow(
     }
 
     // Get merge mode
-    auto* modeCombo = qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, 4));
+    auto* modeCombo =
+        qobject_cast<QComboBox*>(m_mappingTable->cellWidget(row, kMappingColumnMergeMode));
     if (modeCombo) {
         mapping.mode = static_cast<MergeMode>(modeCombo->currentData().toInt());
     }
@@ -275,9 +321,9 @@ bool UserProfileRestoreUserMappingPage::validatePage() {
 
     if (mappings.isEmpty()) {
         sak::logWarning("No users selected for restore operation");
-        QMessageBox::warning(this,
-                             tr("No Users Selected"),
-                             tr("Please select at least one user to restore."));
+        sak::showWarningLogged(this,
+                               tr("No Users Selected"),
+                               tr("Please select at least one user to restore."));
         return false;
     }
 
@@ -308,7 +354,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
     layout->addWidget(infoLabel);
 
     // Merge table
-    m_mergeTable = new QTableWidget(0, 4, this);
+    m_mergeTable = new QTableWidget(0, kMergeColumnCount, this);
     m_mergeTable->setHorizontalHeaderLabels(
         {tr("Source -> Destination"), tr("Merge Mode"), tr("Conflict Resolution"), tr("Status")});
     m_mergeTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -318,9 +364,7 @@ void UserProfileRestoreMergeConfigPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 
     // Connections
@@ -375,18 +419,18 @@ void UserProfileRestoreMergeConfigPage::loadMergeTable() {
         conflictCombo->addItem(tr("Keep Larger"), static_cast<int>(ConflictResolution::KeepLarger));
         conflictCombo->addItem(tr("Prompt User"), static_cast<int>(ConflictResolution::PromptUser));
         conflictCombo->setCurrentIndex(1);  // Default to RenameWithSuffix
-        m_mergeTable->setCellWidget(row, 2, conflictCombo);
+        m_mergeTable->setCellWidget(row, kMergeColumnConflict, conflictCombo);
 
         // Status
         auto* statusItem = new QTableWidgetItem(tr("Ready"));
         statusItem->setFlags(statusItem->flags() & ~Qt::ItemIsEditable);
-        m_mergeTable->setItem(row, 3, statusItem);
+        m_mergeTable->setItem(row, kMergeColumnStatus, statusItem);
 
         // Connect signals
         connect(conflictCombo,
                 QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this,
-                [this, row](int) { onMergeSettingsChanged(row, 2); });
+                [this, row](int) { onMergeSettingsChanged(row, kMergeColumnConflict); });
     }
 }
 
@@ -432,7 +476,8 @@ bool UserProfileRestoreMergeConfigPage::validatePage() {
     QVector<UserMapping> mappings = wiz->userMappings();
 
     for (int row = 0; row < m_mergeTable->rowCount() && row < mappings.size(); ++row) {
-        auto* conflictCombo = qobject_cast<QComboBox*>(m_mergeTable->cellWidget(row, 2));
+        auto* conflictCombo =
+            qobject_cast<QComboBox*>(m_mergeTable->cellWidget(row, kMergeColumnConflict));
         if (conflictCombo) {
             mappings[row].conflict_resolution =
                 static_cast<ConflictResolution>(conflictCombo->currentData().toInt());
@@ -475,7 +520,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     // Folder table
-    m_folderTable = new QTableWidget(0, 5, this);
+    m_folderTable = new QTableWidget(0, kFolderColumnCount, this);
     m_folderTable->setHorizontalHeaderLabels(
         {tr("Select"), tr("User"), tr("Folder"), tr("Size"), tr("Files")});
     m_folderTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -485,9 +530,7 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 10px; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 
     // Connections
@@ -548,18 +591,19 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
             // Folder name
             auto* folderItem = new QTableWidgetItem(folder.display_name);
             folderItem->setFlags(folderItem->flags() & ~Qt::ItemIsEditable);
-            m_folderTable->setItem(row, 2, folderItem);
+            m_folderTable->setItem(row, kFolderColumnFolder, folderItem);
 
             // Size
             double sizeMB = folder.size_bytes / sak::kBytesPerMBf;
-            auto* sizeItem = new QTableWidgetItem(QString("%1 MB").arg(sizeMB, 0, 'f', 1));
+            auto* sizeItem = new QTableWidgetItem(
+                QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             sizeItem->setFlags(sizeItem->flags() & ~Qt::ItemIsEditable);
-            m_folderTable->setItem(row, 3, sizeItem);
+            m_folderTable->setItem(row, kFolderColumnSize, sizeItem);
 
             // File count
             auto* filesItem = new QTableWidgetItem(QString::number(folder.file_count));
             filesItem->setFlags(filesItem->flags() & ~Qt::ItemIsEditable);
-            m_folderTable->setItem(row, 4, filesItem);
+            m_folderTable->setItem(row, kFolderColumnFiles, filesItem);
         }
     }
 }
@@ -596,11 +640,11 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
         if (m_folderTable->item(row, 0)->checkState() == Qt::Checked) {
             selectedFolders++;
 
-            QString sizeText = m_folderTable->item(row, 3)->text();
+            QString sizeText = m_folderTable->item(row, kFolderColumnSize)->text();
             sizeText.remove(" MB");
             totalSize += static_cast<qint64>(sizeText.toDouble() * sak::kBytesPerMB);
 
-            totalFiles += m_folderTable->item(row, 4)->text().toInt();
+            totalFiles += m_folderTable->item(row, kFolderColumnFiles)->text().toInt();
         }
     }
 
@@ -610,7 +654,7 @@ void UserProfileRestoreFolderSelectionPage::updateSummary() {
                                 .arg(selectedFolders)
                                 .arg(totalFolders)
                                 .arg(totalFiles)
-                                .arg(totalGB, 0, 'f', 2));
+                                .arg(totalGB, 0, 'f', kSizeDisplayPrecision));
 }
 
 bool UserProfileRestoreFolderSelectionPage::validatePage() {
@@ -625,9 +669,9 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
 
     if (selectedCount == 0) {
         sak::logWarning("No folders selected for restore operation");
-        QMessageBox::warning(this,
-                             tr("No Folders Selected"),
-                             tr("Please select at least one folder to restore."));
+        sak::showWarningLogged(this,
+                               tr("No Folders Selected"),
+                               tr("Please select at least one folder to restore."));
         return false;
     }
 
@@ -669,7 +713,8 @@ void UserProfileRestoreAppDataPage::setupUi() {
     m_appDataTree->setRootIsDecorated(true);
     m_appDataTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_appDataTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_appDataTree->header()->setSectionResizeMode(kTreePackageColumn,
+                                                  QHeaderView::ResizeToContents);
     m_appDataTree->setEnabled(false);
     connect(m_appDataTree,
             &QTreeWidget::itemChanged,
@@ -697,9 +742,7 @@ void UserProfileRestoreAppDataPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No application data found in backup"));
     layout->addWidget(m_summaryLabel);
 }
@@ -794,7 +837,8 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
             item->setText(0, source->name);
             item->setText(1, source->relative_path);
             double sizeMB = source->size_bytes / sak::kBytesPerMBf;
-            item->setText(2, QString("%1 MB").arg(sizeMB, 0, 'f', 1));
+            item->setText(kTreeDetailColumn,
+                          QString("%1 MB").arg(sizeMB, 0, 'f', kMegabyteDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, Qt::Checked);  // All selected by default
             catSelected++;
@@ -957,9 +1001,7 @@ void UserProfileRestoreNetworksPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No WiFi profiles found in backup"));
     layout->addWidget(m_summaryLabel);
 }
@@ -1116,7 +1158,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     m_statusLabel = new QLabel(this);
     layout->addWidget(m_statusLabel);
 
-    m_ethernetTable = new QTableWidget(0, 7, this);
+    m_ethernetTable = new QTableWidget(0, kEthernetColumnCount, this);
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),
@@ -1150,9 +1192,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No ethernet configuration data found in backup"));
     layout->addWidget(m_summaryLabel);
 }
@@ -1244,19 +1284,19 @@ void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigI
 
         auto* dhcpItem = new QTableWidgetItem(config.dhcp_enabled ? tr("Yes") : tr("No"));
         dhcpItem->setFlags(dhcpItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 2, dhcpItem);
+        m_ethernetTable->setItem(row, kEthernetColumnDhcp, dhcpItem);
 
         auto* ipItem = new QTableWidgetItem(config.ip_address);
         ipItem->setFlags(ipItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 3, ipItem);
+        m_ethernetTable->setItem(row, kEthernetColumnIpAddress, ipItem);
 
         auto* subnetItem = new QTableWidgetItem(config.subnet_mask);
         subnetItem->setFlags(subnetItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 4, subnetItem);
+        m_ethernetTable->setItem(row, kEthernetColumnSubnet, subnetItem);
 
         auto* gwItem = new QTableWidgetItem(config.default_gateway);
         gwItem->setFlags(gwItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 5, gwItem);
+        m_ethernetTable->setItem(row, kEthernetColumnGateway, gwItem);
 
         QString dns = config.dns_primary;
         if (!config.dns_secondary.isEmpty()) {
@@ -1264,7 +1304,7 @@ void UserProfileRestoreEthernetPage::populateTable(const QVector<EthernetConfigI
         }
         auto* dnsItem = new QTableWidgetItem(dns);
         dnsItem->setFlags(dnsItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 6, dnsItem);
+        m_ethernetTable->setItem(row, kEthernetColumnDns, dnsItem);
     }
 
     int total = m_ethernetTable->rowCount();
@@ -1305,7 +1345,8 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     // Permission mode
     auto* permGroup = new QWidget(this);
     auto* permLayout = new QGridLayout(permGroup);
-    permLayout->setContentsMargins(0, 0, 0, 0);
+    permLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     permLayout->addWidget(new QLabel(tr("Permission Mode:"), permGroup), 0, 0);
     m_permissionModeCombo = new QComboBox(permGroup);
@@ -1324,7 +1365,8 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
     // Conflict resolution
     auto* conflictGroup = new QWidget(this);
     auto* conflictLayout = new QGridLayout(conflictGroup);
-    conflictLayout->setContentsMargins(0, 0, 0, 0);
+    conflictLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     conflictLayout->addWidget(new QLabel(tr("Conflict Resolution:"), conflictGroup), 0, 0);
     m_conflictResolutionCombo = new QComboBox(conflictGroup);
@@ -1346,7 +1388,7 @@ void UserProfileRestorePermissionSettingsPage::setupUi() {
 
 void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    layout->addSpacing(20);
+    layout->addSpacing(sak::ui::kMarginXLarge);
 
     // Options
     m_verifyCheckBox = new QCheckBox(tr("Verify file integrity after restore"), this);
@@ -1358,13 +1400,14 @@ void UserProfileRestorePermissionSettingsPage::setupUi_optionsAndConnections(QVB
     m_createBackupCheckBox->setChecked(false);
     layout->addWidget(m_createBackupCheckBox);
 
-    layout->addSpacing(20);
+    layout->addSpacing(sak::ui::kMarginXLarge);
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgWarningPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgWarningPanel,
+                                                          sak::ui::kColorTextBody,
+                                                          sak::ui::kCssPaddingXXLargePx,
+                                                          sak::ui::kCssRadiusXLargePx));
     m_summaryLabel->setWordWrap(true);
     layout->addWidget(m_summaryLabel);
 
@@ -1466,7 +1509,6 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    // Instructions
     auto* instructionLabel =
         new QLabel(tr("The backup contains a list of installed applications. "
                       "Select the ones you want to install on this machine via Chocolatey. "
@@ -1475,18 +1517,16 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
-    // Status
     m_statusLabel = new QLabel(this);
     layout->addWidget(m_statusLabel);
 
-    // Tree widget
     m_appTree = new QTreeWidget(this);
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Chocolatey Package")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
     m_appTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_appTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_appTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_appTree->header()->setSectionResizeMode(kTreePackageColumn, QHeaderView::ResizeToContents);
     m_appTree->setEnabled(false);
     connect(m_appTree,
             &QTreeWidget::itemChanged,
@@ -1494,7 +1534,6 @@ void UserProfileRestoreAppRestorePage::setupUi() {
             &UserProfileRestoreAppRestorePage::onItemChanged);
     layout->addWidget(m_appTree);
 
-    // Selection buttons
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
@@ -1525,16 +1564,12 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
     layout->addLayout(buttonLayout);
 
-    // Progress
     m_progressBar = new QProgressBar(this);
     m_progressBar->setVisible(false);
     layout->addWidget(m_progressBar);
 
-    // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No application data found in backup"));
     layout->addWidget(m_summaryLabel);
 }
@@ -1633,12 +1668,13 @@ int UserProfileRestoreAppRestorePage::populateCategoryApps(
         auto* appItem = new QTreeWidgetItem(categoryItem);
         appItem->setText(0, app->name);
         appItem->setText(1, app->version);
-        appItem->setText(2, app->choco_package.isEmpty() ? tr("(no match)") : app->choco_package);
+        appItem->setText(kTreePackageColumn,
+                         app->choco_package.isEmpty() ? tr("(no match)") : app->choco_package);
         appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
 
         if (app->choco_package.isEmpty()) {
             appItem->setCheckState(0, Qt::Unchecked);
-            appItem->setForeground(2, QBrush(Qt::gray));
+            appItem->setForeground(kTreePackageColumn, QBrush(Qt::gray));
             appItem->setFlags(appItem->flags() & ~Qt::ItemIsEnabled);
             continue;
         }
@@ -1808,9 +1844,9 @@ void UserProfileRestoreAppRestorePage::onInstallApps() {
     QVector<RestoreAppInfo> selectedApps = collectSelectedApps();
 
     if (selectedApps.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("No Apps Selected"),
-                                 tr("Please select at least one application to install."));
+        sak::showInformationLogged(this,
+                                   tr("No Apps Selected"),
+                                   tr("Please select at least one application to install."));
         return;
     }
 
@@ -1867,7 +1903,7 @@ QVector<RestoreAppInfo> UserProfileRestoreAppRestorePage::collectSelectedApps() 
             if ((appItem->flags() & Qt::ItemIsEnabled) && appItem->checkState(0) == Qt::Checked) {
                 RestoreAppInfo info;
                 info.name = appItem->text(0);
-                info.choco_package = appItem->text(2);
+                info.choco_package = appItem->text(kTreePackageColumn);
                 selectedApps.append(info);
             }
         }

@@ -11,6 +11,7 @@
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/organizer_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -36,6 +37,19 @@
 
 namespace sak {
 
+namespace {
+
+constexpr int kCategoryTableMinHeight = 200;
+constexpr int kOrganizerWorkerStopTimeoutMs = sak::kTimeoutThreadShutdownMs;
+constexpr int kCategoryTableColumnCount = 2;
+constexpr int kProgressMaximum = 100;
+constexpr int kDedupMinSizeMaxKb = 1'000'000;
+constexpr int kDedupThreadCountMax = 64;
+constexpr int kSizeGbPrecision = 2;
+constexpr int kFallbackCpuCoreCount = 4;
+
+}  // namespace
+
 OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(nullptr) {
     setupUi();
     setupDefaultCategories();
@@ -45,13 +59,13 @@ OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(null
 OrganizerPanel::~OrganizerPanel() {
     if (m_worker) {
         m_worker->requestStop();
-        if (!m_worker->wait(15'000)) {
+        if (!m_worker->wait(kOrganizerWorkerStopTimeoutMs)) {
             logError("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
         }
     }
     if (m_dedup_worker) {
         m_dedup_worker->requestStop();
-        if (!m_dedup_worker->wait(15'000)) {
+        if (!m_dedup_worker->wait(kOrganizerWorkerStopTimeoutMs)) {
             logError(
                 "DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
         }
@@ -114,7 +128,8 @@ void OrganizerPanel::setupUi() {
 
     // Shared status bar with log toggle
     auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(0, ui::kSpacingTight, 0, 0);
+    statusRow->setContentsMargins(
+        sak::ui::kMarginNone, ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     statusRow->addWidget(m_logToggle);
     statusRow->addStretch();
@@ -147,9 +162,8 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     group_layout->addLayout(path_row);
 
     m_dir_summary_label = new QLabel(tr("No directory selected"), this);
-    m_dir_summary_label->setStyleSheet(QString("color: %1; font-size: %2pt; padding: 2px 0;")
-                                           .arg(ui::kColorTextMuted)
-                                           .arg(ui::kFontSizeNote));
+    m_dir_summary_label->setStyleSheet(
+        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     m_dir_summary_label->setAccessibleName(QStringLiteral("Directory Summary"));
     group_layout->addWidget(m_dir_summary_label);
 
@@ -161,13 +175,13 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
     auto* group_layout = new QVBoxLayout(group);
 
     m_category_table = new QTableWidget(this);
-    m_category_table->setColumnCount(2);
+    m_category_table->setColumnCount(kCategoryTableColumnCount);
     m_category_table->setHorizontalHeaderLabels(
         {tr("Category"), tr("Extensions (comma-separated)")});
     m_category_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_category_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_category_table->setAlternatingRowColors(true);
-    m_category_table->setMinimumHeight(200);
+    m_category_table->setMinimumHeight(kCategoryTableMinHeight);
     m_category_table->setAccessibleName(QStringLiteral("Category Mappings Table"));
     m_category_table->setToolTip(QStringLiteral("File categories and their associated extensions"));
     group_layout->addWidget(m_category_table);
@@ -218,16 +232,18 @@ QWidget* OrganizerPanel::createOrganizerTab() {
     m_collision_strategy->setVisible(false);
 
     m_preview_mode_checkbox = new QCheckBox(tr("Preview Mode (Dry Run)"), this);
+    m_preview_mode_checkbox->setAccessibleName(QStringLiteral("Preview mode dry run"));
     m_preview_mode_checkbox->setChecked(true);
     m_preview_mode_checkbox->setVisible(false);
 
     m_create_subdirs_checkbox = new QCheckBox(tr("Create Subdirectories"), this);
+    m_create_subdirs_checkbox->setAccessibleName(QStringLiteral("Create category subdirectories"));
     m_create_subdirs_checkbox->setChecked(true);
     m_create_subdirs_checkbox->setVisible(false);
 
     // Progress bar
     m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setRange(0, 100);
+    m_progress_bar->setRange(0, kProgressMaximum);
     m_progress_bar->setValue(0);
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
@@ -325,9 +341,8 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     group_layout->addLayout(btn_row);
 
     m_dedup_summary_label = new QLabel(tr("No directories added"), this);
-    m_dedup_summary_label->setStyleSheet(QString("color: %1; font-size: %2pt; padding: 2px 0;")
-                                             .arg(ui::kColorTextMuted)
-                                             .arg(ui::kFontSizeNote));
+    m_dedup_summary_label->setStyleSheet(
+        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     m_dedup_summary_label->setAccessibleName(QStringLiteral("Scan Directories Summary"));
     group_layout->addWidget(m_dedup_summary_label);
 
@@ -381,19 +396,23 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     layout->addWidget(createScanDirectoriesGroup());
     // Hidden options (managed via Settings dialog)
     m_dedup_min_size = new QSpinBox(this);
+    m_dedup_min_size->setAccessibleName(QStringLiteral("Duplicate finder minimum file size"));
     m_dedup_min_size->setMinimum(0);
-    m_dedup_min_size->setMaximum(1'000'000);
+    m_dedup_min_size->setMaximum(kDedupMinSizeMaxKb);
     m_dedup_min_size->setValue(0);
     m_dedup_min_size->setVisible(false);
     m_dedup_recursive = new QCheckBox(tr("Recursive Scan"), this);
+    m_dedup_recursive->setAccessibleName(QStringLiteral("Recursive duplicate scan"));
     m_dedup_recursive->setChecked(true);
     m_dedup_recursive->setVisible(false);
     m_dedup_parallel_hashing = new QCheckBox(tr("Parallel Hashing"), this);
+    m_dedup_parallel_hashing->setAccessibleName(QStringLiteral("Parallel duplicate hashing"));
     m_dedup_parallel_hashing->setChecked(true);
     m_dedup_parallel_hashing->setVisible(false);
     m_dedup_thread_count = new QSpinBox(this);
+    m_dedup_thread_count->setAccessibleName(QStringLiteral("Duplicate finder thread count"));
     m_dedup_thread_count->setMinimum(0);
-    m_dedup_thread_count->setMaximum(64);
+    m_dedup_thread_count->setMaximum(kDedupThreadCountMax);
     m_dedup_thread_count->setValue(0);
     m_dedup_thread_count->setVisible(false);
 
@@ -406,7 +425,7 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
 
     // Progress bar
     m_dedup_progress_bar = new QProgressBar(this);
-    m_dedup_progress_bar->setRange(0, 100);
+    m_dedup_progress_bar->setRange(0, kProgressMaximum);
     m_dedup_progress_bar->setValue(0);
     m_dedup_progress_bar->setTextVisible(true);
     m_dedup_progress_bar->setVisible(false);
@@ -490,7 +509,7 @@ void OrganizerPanel::updateDirectorySummary() {
 
     QString sizeStr;
     if (totalSize >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', 2);
+        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else if (totalSize >= sak::kBytesPerMB) {
         sizeStr = QString("%1 MB").arg(totalSize / sak::kBytesPerMBf, 0, 'f', 1);
     } else {
@@ -523,49 +542,47 @@ void OrganizerPanel::onPreviewClicked() {
     onExecuteClicked();
 }
 
-void OrganizerPanel::onExecuteClicked() {
-    Q_ASSERT(m_target_path);
-    Q_ASSERT(m_preview_mode_checkbox);
+bool OrganizerPanel::validateOrganizerTarget() {
     if (m_target_path->text().isEmpty()) {
         sak::logWarning("Organization: no target directory selected");
-        QMessageBox::warning(this, tr("Validation Error"), tr("Please select a target directory."));
-        return;
+        sak::showWarningLogged(this,
+                               tr("Validation Error"),
+                               tr("Please select a target directory."));
+        return false;
     }
 
     QDir targetDir(m_target_path->text());
     if (!targetDir.exists()) {
         sak::logWarning("Organization: target directory does not exist: {}",
                         m_target_path->text().toStdString());
-        QMessageBox::warning(this, tr("Validation Error"), tr("Target directory does not exist."));
-        return;
+        sak::showWarningLogged(this,
+                               tr("Validation Error"),
+                               tr("Target directory does not exist."));
+        return false;
+    }
+    return validateCategoryMapping();
+}
+
+bool OrganizerPanel::confirmOrganizerExecution(const QDir& targetDir) {
+    if (m_preview_mode_checkbox->isChecked()) {
+        return true;
     }
 
-    if (!validateCategoryMapping()) {
-        return;
-    }
+    const int fileCount = targetDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size();
+    auto result = sak::showQuestionLogged(
+        this,
+        tr("Confirm Organization"),
+        tr("This will move up to %1 files in:\n%2\n\n"
+           "Collision strategy: %3\n\n"
+           "This operation cannot be automatically undone. Continue?")
+            .arg(fileCount)
+            .arg(m_target_path->text(), m_collision_strategy->currentText()),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    return result == QMessageBox::Yes;
+}
 
-    // Confirmation dialog for destructive (non-preview) operations
-    if (!m_preview_mode_checkbox->isChecked()) {
-        const auto entries = targetDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-        int fileCount = entries.size();
-
-        auto result = QMessageBox::question(
-            this,
-            tr("Confirm Organization"),
-            tr("This will move up to %1 files in:\n%2\n\n"
-               "Collision strategy: %3\n\n"
-               "This operation cannot be automatically undone. Continue?")
-                .arg(fileCount)
-                .arg(m_target_path->text(), m_collision_strategy->currentText()),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
-        if (result != QMessageBox::Yes) {
-            return;
-        }
-    }
-
-    m_worker.reset();
-
+OrganizerWorker::Config OrganizerPanel::buildOrganizerConfig() const {
     OrganizerWorker::Config config;
     config.target_directory = m_target_path->text();
     config.category_mapping = getCategoryMapping();
@@ -574,9 +591,11 @@ void OrganizerPanel::onExecuteClicked() {
 
     QString strategy = m_collision_strategy->currentText().toLower();
     config.collision_strategy = strategy;
+    return config;
+}
 
-    m_worker = std::make_unique<OrganizerWorker>(config, this);
-
+void OrganizerPanel::connectOrganizerWorkerSignals() {
+    Q_ASSERT(m_worker);
     connect(m_worker.get(), &OrganizerWorker::started, this, &OrganizerPanel::onWorkerStarted);
     connect(m_worker.get(), &OrganizerWorker::finished, this, &OrganizerPanel::onWorkerFinished);
     connect(m_worker.get(), &OrganizerWorker::failed, this, &OrganizerPanel::onWorkerFailed);
@@ -584,6 +603,11 @@ void OrganizerPanel::onExecuteClicked() {
     connect(m_worker.get(), &OrganizerWorker::fileProgress, this, &OrganizerPanel::onFileProgress);
     connect(
         m_worker.get(), &OrganizerWorker::previewResults, this, &OrganizerPanel::onPreviewResults);
+}
+
+void OrganizerPanel::startOrganizerWorker(const OrganizerWorker::Config& config) {
+    m_worker = std::make_unique<OrganizerWorker>(config, this);
+    connectOrganizerWorkerSignals();
 
     setOperationRunning(true);
     m_progress_bar->setValue(0);
@@ -595,6 +619,22 @@ void OrganizerPanel::onExecuteClicked() {
     logInfo("Organization operation initiated ({}): {}",
             mode.toStdString(),
             config.target_directory.toStdString());
+}
+
+void OrganizerPanel::onExecuteClicked() {
+    Q_ASSERT(m_target_path);
+    Q_ASSERT(m_preview_mode_checkbox);
+    if (!validateOrganizerTarget()) {
+        return;
+    }
+
+    QDir targetDir(m_target_path->text());
+    if (!confirmOrganizerExecution(targetDir)) {
+        return;
+    }
+
+    m_worker.reset();
+    startOrganizerWorker(buildOrganizerConfig());
 }
 
 void OrganizerPanel::onCancelClicked() {
@@ -615,12 +655,12 @@ void OrganizerPanel::onAddCategoryClicked() {
 }
 
 void OrganizerPanel::onResetCategoriesClicked() {
-    auto result = QMessageBox::question(this,
-                                        tr("Reset Categories"),
-                                        tr("Reset all categories to their default values?\n"
-                                           "Any custom categories will be lost."),
-                                        QMessageBox::Yes | QMessageBox::No,
-                                        QMessageBox::No);
+    auto result = sak::showQuestionLogged(this,
+                                          tr("Reset Categories"),
+                                          tr("Reset all categories to their default values?\n"
+                                             "Any custom categories will be lost."),
+                                          QMessageBox::Yes | QMessageBox::No,
+                                          QMessageBox::No);
     if (result == QMessageBox::Yes) {
         setupDefaultCategories();
         logMessage(tr("Category mappings reset to defaults"));
@@ -631,9 +671,9 @@ void OrganizerPanel::onRemoveCategoryClicked() {
     Q_ASSERT(m_category_table);
     auto selected = m_category_table->selectedItems();
     if (selected.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("No Selection"),
-                                 tr("Please select a category to remove."));
+        sak::showInformationLogged(this,
+                                   tr("No Selection"),
+                                   tr("Please select a category to remove."));
         return;
     }
 
@@ -653,14 +693,14 @@ void OrganizerPanel::onWorkerFinished() {
     Q_ASSERT(m_progress_bar);
     Q_ASSERT(m_preview_mode_checkbox);
     setOperationRunning(false);
-    m_progress_bar->setValue(100);
+    m_progress_bar->setValue(kProgressMaximum);
     QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
     Q_EMIT statusMessage(QString("%1 complete").arg(mode), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(100, 100);
+    Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
     logMessage(QString("%1 completed successfully").arg(mode));
-    QMessageBox::information(this,
-                             QString("%1 Complete").arg(mode),
-                             QString("%1 operation completed successfully.").arg(mode));
+    sak::showInformationLogged(this,
+                               QString("%1 Complete").arg(mode),
+                               QString("%1 operation completed successfully.").arg(mode));
     logInfo("Organization operation completed successfully");
     updateDirectorySummary();
 }
@@ -672,11 +712,11 @@ void OrganizerPanel::onWorkerFailed(int errorCode, const QString& errorMessage) 
     const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
                                                                 : errorMessage;
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(0, 100);
+    Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Organization failed: Error %1: %2").arg(errorCode).arg(safe_error));
-    QMessageBox::warning(this,
-                         tr("Organization Failed"),
-                         QString("Error %1: %2").arg(errorCode).arg(safe_error));
+    sak::showWarningLogged(this,
+                           tr("Organization Failed"),
+                           QString("Error %1: %2").arg(errorCode).arg(safe_error));
     logError("Organization failed: {}", safe_error.toStdString());
 }
 
@@ -685,7 +725,7 @@ void OrganizerPanel::onWorkerCancelled() {
     m_progress_bar->setVisible(false);
     logMessage(tr("Organization cancelled by user"));
     Q_EMIT statusMessage(tr("Organization cancelled"), sak::kTimerStatusMessageMs);
-    Q_EMIT progressUpdate(0, 100);
+    Q_EMIT progressUpdate(0, kProgressMaximum);
 }
 
 void OrganizerPanel::onFileProgress(int current, int total, const QString& filePath) {
@@ -693,7 +733,7 @@ void OrganizerPanel::onFileProgress(int current, int total, const QString& fileP
     Q_EMIT progressUpdate(current, total);
 
     if (total > 0) {
-        int pct = static_cast<int>(static_cast<double>(current) / total * 100);
+        int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
         m_progress_bar->setValue(pct);
     }
 
@@ -769,7 +809,7 @@ bool OrganizerPanel::validateCategoryMapping() const {
     auto mapping = getCategoryMapping();
     if (mapping.isEmpty()) {
         sak::logWarning("No valid category mappings defined in organizer");
-        QMessageBox::warning(
+        sak::showWarningLogged(
             const_cast<OrganizerPanel*>(this),
             tr("Validation Error"),
             tr("No valid category mappings defined.\n"
@@ -782,11 +822,11 @@ bool OrganizerPanel::validateCategoryMapping() const {
         QString lower = it.key().toLower();
         if (seen.contains(lower)) {
             sak::logWarning("Duplicate category name in organizer: {}", it.key().toStdString());
-            QMessageBox::warning(const_cast<OrganizerPanel*>(this),
-                                 tr("Validation Error"),
-                                 tr("Duplicate category name: \"%1\".\n"
-                                    "Each category must have a unique name.")
-                                     .arg(it.key()));
+            sak::showWarningLogged(const_cast<OrganizerPanel*>(this),
+                                   tr("Validation Error"),
+                                   tr("Duplicate category name: \"%1\".\n"
+                                      "Each category must have a unique name.")
+                                       .arg(it.key()));
             return false;
         }
         seen.insert(lower);
@@ -904,7 +944,7 @@ void OrganizerPanel::updateDedupDirectorySummary() {
 
     QString sizeStr;
     if (totalSize >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', 2);
+        sizeStr = QString("%1 GB").arg(totalSize / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else if (totalSize >= sak::kBytesPerMB) {
         sizeStr = QString("%1 MB").arg(totalSize / sak::kBytesPerMBf, 0, 'f', 1);
     } else {
@@ -929,9 +969,9 @@ void OrganizerPanel::onDedupAddDirectoryClicked() {
         // Prevent duplicate directory entries
         for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
             if (QDir(m_dedup_directory_list->item(i)->text()) == QDir(dir)) {
-                QMessageBox::information(this,
-                                         tr("Duplicate Directory"),
-                                         tr("This directory is already in the scan list."));
+                sak::showInformationLogged(this,
+                                           tr("Duplicate Directory"),
+                                           tr("This directory is already in the scan list."));
                 return;
             }
         }
@@ -945,9 +985,9 @@ void OrganizerPanel::onDedupRemoveDirectoryClicked() {
     Q_ASSERT(m_dedup_directory_list);
     auto selected = m_dedup_directory_list->selectedItems();
     if (selected.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("No Selection"),
-                                 tr("Please select a directory to remove."));
+        sak::showInformationLogged(this,
+                                   tr("No Selection"),
+                                   tr("Please select a directory to remove."));
         return;
     }
 
@@ -964,11 +1004,11 @@ void OrganizerPanel::onDedupClearAllClicked() {
         return;
     }
 
-    auto result = QMessageBox::question(this,
-                                        tr("Clear All"),
-                                        tr("Remove all directories from the scan list?"),
-                                        QMessageBox::Yes | QMessageBox::No,
-                                        QMessageBox::No);
+    auto result = sak::showQuestionLogged(this,
+                                          tr("Clear All"),
+                                          tr("Remove all directories from the scan list?"),
+                                          QMessageBox::Yes | QMessageBox::No,
+                                          QMessageBox::No);
     if (result == QMessageBox::Yes) {
         m_dedup_directory_list->clear();
         updateDedupDirectorySummary();
@@ -982,9 +1022,9 @@ void OrganizerPanel::onDedupScanClicked() {
     Q_ASSERT(m_dedup_min_size);
     if (m_dedup_directory_list->count() == 0) {
         sak::logWarning("Duplicate scan attempted with no directories selected");
-        QMessageBox::warning(this,
-                             tr("Validation Error"),
-                             tr("Please add at least one directory to scan for duplicates."));
+        sak::showWarningLogged(this,
+                               tr("Validation Error"),
+                               tr("Please add at least one directory to scan for duplicates."));
         return;
     }
 
@@ -1055,7 +1095,7 @@ void OrganizerPanel::onDedupSettingsClicked() {
 
     auto* minSizeSpin = new QSpinBox(&dialog);
     minSizeSpin->setMinimum(0);
-    minSizeSpin->setMaximum(1'000'000);
+    minSizeSpin->setMaximum(kDedupMinSizeMaxKb);
     minSizeSpin->setValue(m_dedup_min_size->value());
     minSizeSpin->setSuffix(tr(" KB"));
     layout->addRow(InfoButton::createInfoLabel(
@@ -1084,9 +1124,10 @@ void OrganizerPanel::onDedupSettingsClicked() {
     int cpuCores = QThread::idealThreadCount();
     auto* threadSpin = new QSpinBox(&dialog);
     threadSpin->setMinimum(0);
-    threadSpin->setMaximum(64);
+    threadSpin->setMaximum(kDedupThreadCountMax);
     threadSpin->setValue(m_dedup_thread_count->value());
-    threadSpin->setSpecialValueText(tr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : 4));
+    threadSpin->setSpecialValueText(
+        tr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : kFallbackCpuCoreCount));
     threadSpin->setEnabled(parallelCheck->isChecked());
     connect(parallelCheck, &QCheckBox::toggled, threadSpin, &QSpinBox::setEnabled);
     layout->addRow(InfoButton::createInfoLabel(tr("Thread Count:"),
@@ -1121,9 +1162,9 @@ void OrganizerPanel::onDedupWorkerStarted() {
 
 void OrganizerPanel::onDedupWorkerFinished() {
     setDedupRunning(false);
-    m_dedup_progress_bar->setValue(100);
+    m_dedup_progress_bar->setValue(kProgressMaximum);
     Q_EMIT statusMessage(tr("Duplicate scan complete"), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(100, 100);
+    Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
     logMessage(tr("Duplicate scan completed successfully"));
     logInfo("Duplicate finder scan completed successfully");
 }
@@ -1135,11 +1176,11 @@ void OrganizerPanel::onDedupWorkerFailed(int errorCode, const QString& errorMess
     const QString safe_error = errorMessage.trimmed().isEmpty() ? tr("Unknown error")
                                                                 : errorMessage;
     Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(0, 100);
+    Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Duplicate scan failed: Error %1: %2").arg(errorCode).arg(safe_error));
-    QMessageBox::warning(this,
-                         tr("Scan Failed"),
-                         QString("Error %1: %2").arg(errorCode).arg(safe_error));
+    sak::showWarningLogged(this,
+                           tr("Scan Failed"),
+                           QString("Error %1: %2").arg(errorCode).arg(safe_error));
     logError("Duplicate finder scan failed: {}", safe_error.toStdString());
 }
 
@@ -1148,7 +1189,7 @@ void OrganizerPanel::onDedupWorkerCancelled() {
     m_dedup_progress_bar->setVisible(false);
     logMessage(tr("Duplicate scan cancelled by user"));
     Q_EMIT statusMessage(tr("Duplicate scan cancelled"), sak::kTimerStatusMessageMs);
-    Q_EMIT progressUpdate(0, 100);
+    Q_EMIT progressUpdate(0, kProgressMaximum);
 }
 
 void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& path) {
@@ -1156,7 +1197,7 @@ void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& 
     Q_EMIT progressUpdate(current, total);
 
     if (total > 0) {
-        int pct = static_cast<int>(static_cast<double>(current) / total * 100);
+        int pct = static_cast<int>(static_cast<double>(current) / total * kProgressMaximum);
         m_dedup_progress_bar->setValue(pct);
     }
 
@@ -1169,9 +1210,9 @@ void OrganizerPanel::onDedupResultsReady(const QString& summary,
                                          qint64 wastedSpace) {
     QString sizeStr;
     if (wastedSpace >= sak::kBytesPerGB) {
-        sizeStr = QString("%1 GB").arg(wastedSpace / sak::kBytesPerGBf, 0, 'f', 2);
+        sizeStr = QString("%1 GB").arg(wastedSpace / sak::kBytesPerGBf, 0, 'f', kSizeGbPrecision);
     } else {
-        sizeStr = QString("%1 MB").arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', 2);
+        sizeStr = QString("%1 MB").arg(wastedSpace / sak::kBytesPerMBf, 0, 'f', kSizeGbPrecision);
     }
 
     QString resultsText =
@@ -1179,15 +1220,11 @@ void OrganizerPanel::onDedupResultsReady(const QString& summary,
 
     // Show persistent results label
     if (duplicateCount > 0) {
-        m_dedup_results_label->setStyleSheet(QString("background: %1; color: %2; padding: 8px; "
-                                                     "border-radius: 6px; font-weight: 600;")
-                                                 .arg(ui::kColorBgWarningPanel)
-                                                 .arg(ui::kColorWarning));
+        m_dedup_results_label->setStyleSheet(
+            ui::resultBadgeStyle(ui::kColorBgWarningPanel, ui::kColorWarning));
     } else {
-        m_dedup_results_label->setStyleSheet(QString("background: %1; color: %2; padding: 8px; "
-                                                     "border-radius: 6px; font-weight: 600;")
-                                                 .arg(ui::kColorBgInfoPanel)
-                                                 .arg(ui::kColorSuccess));
+        m_dedup_results_label->setStyleSheet(
+            ui::resultBadgeStyle(ui::kColorBgInfoPanel, ui::kColorSuccess));
     }
     m_dedup_results_label->setText(resultsText);
     m_dedup_results_label->setVisible(true);

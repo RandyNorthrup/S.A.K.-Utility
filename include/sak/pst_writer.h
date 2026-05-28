@@ -111,8 +111,10 @@ private:
     QString m_display_name;
     bool m_is_open = false;
 
-    uint64_t m_next_nid = 0x100;
-    uint64_t m_next_bid = 0x100;
+    static constexpr uint64_t kInitialNodeId = 0x100;
+    static constexpr uint64_t kInitialBlockId = 0x100;
+    uint64_t m_next_nid = kInitialNodeId;
+    uint64_t m_next_bid = kInitialBlockId;
     qint64 m_write_offset = 0;
 
     QVector<NbtEntry> m_nbt_entries;

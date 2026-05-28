@@ -27,6 +27,30 @@
 #endif
 
 namespace {
+constexpr int kScanProgressCpu = 0;
+constexpr int kScanProgressMemory = 15;
+constexpr int kScanProgressStorage = 30;
+constexpr int kScanProgressGpu = 50;
+constexpr int kScanProgressMotherboard = 65;
+constexpr int kScanProgressBattery = 80;
+constexpr int kScanProgressOs = 90;
+constexpr int kScanProgressComplete = sak::kPercentMax;
+constexpr uint32_t kCpuArchitectureX64 = 9;
+constexpr uint32_t kCpuArchitectureArm64 = 12;
+constexpr int kWmiDatePrefixLength = 10;
+constexpr uint32_t kMemoryTypeDdr = 20;
+constexpr uint32_t kMemoryTypeDdr2 = 21;
+constexpr uint32_t kMemoryTypeDdr3 = 22;
+constexpr uint32_t kMemoryTypeDdr3Synchronous = 24;
+constexpr uint32_t kMemoryTypeDdr4 = 26;
+constexpr uint32_t kMemoryTypeDdr5 = 30;
+constexpr uint32_t kMemoryTypeLpDdr5 = 34;
+constexpr uint32_t kMemoryFormFactorDimm = 8;
+constexpr uint32_t kMemoryFormFactorSoDimm = 12;
+constexpr int kDriveRootPrefixLength = 2;
+constexpr unsigned int kVendorIdNvidia = 0x10DE;
+constexpr unsigned int kVendorIdAmd = 0x1002;
+constexpr unsigned int kVendorIdIntel = 0x8086;
 
 QString classifyInterfaceType(const QString& iface, const QString& model) {
     if (iface.contains("NVMe", Qt::CaseInsensitive) ||
@@ -81,54 +105,54 @@ void HardwareInventoryScanner::scan() {
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(0, "Scanning CPU...");
+    Q_EMIT scanProgress(kScanProgressCpu, "Scanning CPU...");
     m_inventory.cpu = queryCpu();
 
     // Memory ------------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(15, "Scanning Memory...");
+    Q_EMIT scanProgress(kScanProgressMemory, "Scanning Memory...");
     m_inventory.memory = queryMemory();
 
     // Storage -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(30, "Scanning Storage...");
+    Q_EMIT scanProgress(kScanProgressStorage, "Scanning Storage...");
     m_inventory.storage = queryStorage();
 
     // GPU ---------------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(50, "Scanning GPU...");
+    Q_EMIT scanProgress(kScanProgressGpu, "Scanning GPU...");
     m_inventory.gpus = queryGpu();
 
     // Motherboard -------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(65, "Scanning Motherboard...");
+    Q_EMIT scanProgress(kScanProgressMotherboard, "Scanning Motherboard...");
     m_inventory.motherboard = queryMotherboard();
 
     // Battery -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(80, "Scanning Battery...");
+    Q_EMIT scanProgress(kScanProgressBattery, "Scanning Battery...");
     m_inventory.battery = queryBattery();
 
     // OS info -----------------------------------------------------
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return;
     }
-    Q_EMIT scanProgress(90, "Querying OS information...");
+    Q_EMIT scanProgress(kScanProgressOs, "Querying OS information...");
     queryOsInfo();
 
     m_inventory.scan_timestamp = QDateTime::currentDateTime();
 
-    Q_EMIT scanProgress(100, "Scan complete");
+    Q_EMIT scanProgress(kScanProgressComplete, "Scan complete");
     Q_EMIT scanComplete(m_inventory);
     logInfo("Hardware inventory scan completed successfully");
 }
@@ -281,10 +305,10 @@ CpuInfo HardwareInventoryScanner::queryCpu() {
     case 0:
         info.architecture = "x86";
         break;
-    case 9:
+    case kCpuArchitectureX64:
         info.architecture = "x64";
         break;
-    case 12:
+    case kCpuArchitectureArm64:
         info.architecture = "ARM64";
         break;
     default:
@@ -367,21 +391,21 @@ MemoryModuleInfo HardwareInventoryScanner::parseMemoryModule(const QVariantMap& 
     // SMBIOSMemoryType mapping (key values)
     const uint32_t smbios_type = mod.value("SMBIOSMemoryType").toUInt();
     switch (smbios_type) {
-    case 20:
+    case kMemoryTypeDdr:
         module.memory_type = "DDR";
         break;
-    case 21:
+    case kMemoryTypeDdr2:
         module.memory_type = "DDR2";
         break;
-    case 22:  // intentional fallthrough
-    case 24:
+    case kMemoryTypeDdr3:
+    case kMemoryTypeDdr3Synchronous:
         module.memory_type = "DDR3";
         break;
-    case 26:
+    case kMemoryTypeDdr4:
         module.memory_type = "DDR4";
         break;
-    case 30:  // intentional fallthrough
-    case 34:
+    case kMemoryTypeDdr5:
+    case kMemoryTypeLpDdr5:
         module.memory_type = "DDR5";
         break;
     default:
@@ -392,10 +416,10 @@ MemoryModuleInfo HardwareInventoryScanner::parseMemoryModule(const QVariantMap& 
     // FormFactor mapping
     const uint32_t form = mod.value("FormFactor").toUInt();
     switch (form) {
-    case 8:
+    case kMemoryFormFactorDimm:
         module.form_factor = "DIMM";
         break;
-    case 12:
+    case kMemoryFormFactorSoDimm:
         module.form_factor = "SODIMM";
         break;
     default:
@@ -465,7 +489,7 @@ void HardwareInventoryScanner::enrichDeviceWithVolumes(StorageDeviceInfo& dev,
         }
 
         PartitionInfo part;
-        part.drive_letter = root.left(2);  // "C:"
+        part.drive_letter = root.left(kDriveRootPrefixLength);
         part.label = vol.name();
         part.file_system = QString::fromUtf8(vol.fileSystemType());
         part.total_bytes = static_cast<uint64_t>(vol.bytesTotal());
@@ -499,7 +523,7 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
 
     for (int i = 0; i < gpus.size() && i < wmi_gpus.size(); ++i) {
         gpus[i].driver_version = wmi_gpus[i].value("DriverVersion").toString().trimmed();
-        gpus[i].driver_date = wmi_gpus[i].value("DriverDate").toString().left(10);
+        gpus[i].driver_date = wmi_gpus[i].value("DriverDate").toString().left(kWmiDatePrefixLength);
         gpus[i].current_res_x = wmi_gpus[i].value("CurrentHorizontalResolution").toUInt();
         gpus[i].current_res_y = wmi_gpus[i].value("CurrentVerticalResolution").toUInt();
         gpus[i].refresh_rate = wmi_gpus[i].value("CurrentRefreshRate").toUInt();
@@ -511,7 +535,7 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
             GpuInfo gpu;
             gpu.name = wmi_gpu.value("Name").toString().trimmed();
             gpu.driver_version = wmi_gpu.value("DriverVersion").toString().trimmed();
-            gpu.driver_date = wmi_gpu.value("DriverDate").toString().left(10);
+            gpu.driver_date = wmi_gpu.value("DriverDate").toString().left(kWmiDatePrefixLength);
             gpu.current_res_x = wmi_gpu.value("CurrentHorizontalResolution").toUInt();
             gpu.current_res_y = wmi_gpu.value("CurrentVerticalResolution").toUInt();
             gpu.refresh_rate = wmi_gpu.value("CurrentRefreshRate").toUInt();
@@ -544,13 +568,13 @@ void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
 
         // Determine manufacturer from vendor ID
         switch (desc.VendorId) {
-        case 0x10DE:
+        case kVendorIdNvidia:
             gpu.manufacturer = "NVIDIA";
             break;
-        case 0x1002:
+        case kVendorIdAmd:
             gpu.manufacturer = "AMD";
             break;
-        case 0x8086:
+        case kVendorIdIntel:
             gpu.manufacturer = "Intel";
             break;
         default:
@@ -582,7 +606,7 @@ MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
     if (!bioses.isEmpty()) {
         const auto& bios = bioses.first();
         info.bios_version = bios.value("SMBIOSBIOSVersion").toString().trimmed();
-        info.bios_date = bios.value("ReleaseDate").toString().left(10);
+        info.bios_date = bios.value("ReleaseDate").toString().left(kWmiDatePrefixLength);
         info.bios_manufacturer = bios.value("Manufacturer").toString().trimmed();
     }
 
@@ -607,7 +631,7 @@ bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
 
     info.estimated_minutes = (power_status.BatteryLifeTime == static_cast<DWORD>(-1))
                                  ? 0
-                                 : power_status.BatteryLifeTime / 60;
+                                 : power_status.BatteryLifeTime / sak::kSecondsPerMinute;
 
     switch (power_status.ACLineStatus) {
     case 0:
@@ -650,7 +674,7 @@ BatteryInfo HardwareInventoryScanner::queryBattery() {
         if (info.design_capacity > 0 && info.full_charge_capacity > 0) {
             info.health_percent = (static_cast<double>(info.full_charge_capacity) /
                                    static_cast<double>(info.design_capacity)) *
-                                  100.0;
+                                  sak::kPercentMaxF;
         }
     }
 
@@ -682,7 +706,7 @@ void HardwareInventoryScanner::queryOsInfo() {
 
     // Uptime: parse LastBootUpTime (CIM_DATETIME format) or use GetTickCount64
 #ifdef SAK_PLATFORM_WINDOWS
-    m_inventory.uptime_seconds = GetTickCount64() / 1000ULL;
+    m_inventory.uptime_seconds = GetTickCount64() / sak::kMillisecondsPerSecond;
 #endif
 
     logInfo("OS: {} (Build {})",

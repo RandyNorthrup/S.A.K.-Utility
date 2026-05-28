@@ -18,6 +18,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultUdpBandwidthMbps = 100;
+
 /// @brief Bandwidth testing via bundled iPerf3 and HTTP download
 ///
 /// For LAN: wraps iperf3.exe (bundled in tools/iperf3/) using QProcess
@@ -33,7 +35,7 @@ public:
         int parallelStreams = 1;
         bool bidirectional = true;
         bool udpMode = false;
-        int udpBandwidthMbps = 100;
+        int udpBandwidthMbps = kDefaultUdpBandwidthMbps;
     };
 
     explicit BandwidthTester(QObject* parent = nullptr);

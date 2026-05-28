@@ -4,7 +4,7 @@
   "title": "Full PC Health Check",
   "role": "PC Technician",
   "category": "Diagnostics",
-  "description": "Run a broad read-only health review, then recommend fixes and verification.",
+  "description": "Run a broad read-only PC health review across system, storage, security, performance, and event evidence before recommending fixes.",
   "starter_prompt": "Perform a full PC health check. Start read-only and report findings before making changes.",
   "required_inputs": [],
   "required_software": [

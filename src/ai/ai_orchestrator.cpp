@@ -18,6 +18,23 @@ namespace sak::ai {
 
 namespace {
 
+constexpr int kDefaultContextStringLimit = 1200;
+constexpr int kDefaultContextArrayLimit = 50;
+constexpr int kMaxContextJsonDepth = 8;
+constexpr int kToolScalarContextLimit = 900;
+constexpr int kToolStdoutContextLimit = 2400;
+constexpr int kToolStderrContextLimit = 1400;
+constexpr int kPackagesContextStringLimit = 600;
+constexpr int kPackagesContextArrayLimit = 12;
+constexpr int kFilesContextStringLimit = 500;
+constexpr int kFilesContextArrayLimit = 20;
+constexpr int kPhaseSkipReasonLimit = 800;
+constexpr int kPhaseErrorMessageLimit = 1200;
+constexpr int kMetadataSummaryLimit = 1200;
+constexpr int kUserMessageContextLimit = 1600;
+constexpr int kInputValuesContextStringLimit = 900;
+constexpr int kInputValuesContextArrayLimit = 20;
+
 bool isDelegatePhase(const WorkflowPhase& phase) {
     return phase.type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0;
 }
@@ -69,10 +86,10 @@ QString cappedContextString(const QString& value, int limit) {
 }
 
 QJsonValue truncatedWorkflowContextValue(const QJsonValue& value,
-                                         int string_limit = 1200,
-                                         int array_limit = 50,
+                                         int string_limit = kDefaultContextStringLimit,
+                                         int array_limit = kDefaultContextArrayLimit,
                                          int depth = 0) {
-    if (depth > 8) {
+    if (depth > kMaxContextJsonDepth) {
         return QStringLiteral("[truncated: maximum depth reached]");
     }
     if (value.isString()) {
@@ -132,28 +149,32 @@ QJsonObject compactToolResultForDelegate(const QJsonObject& tool_result) {
     };
     for (const auto& key : scalar_keys) {
         if (tool_result.contains(key)) {
-            compact.insert(key, truncatedWorkflowContextValue(tool_result.value(key), 900));
+            compact.insert(key,
+                           truncatedWorkflowContextValue(tool_result.value(key),
+                                                         kToolScalarContextLimit));
         }
     }
     if (tool_result.contains(QStringLiteral("stdout"))) {
         compact.insert(QStringLiteral("stdout"),
                        cappedContextString(tool_result.value(QStringLiteral("stdout")).toString(),
-                                           2400));
+                                           kToolStdoutContextLimit));
     }
     if (tool_result.contains(QStringLiteral("stderr"))) {
         compact.insert(QStringLiteral("stderr"),
                        cappedContextString(tool_result.value(QStringLiteral("stderr")).toString(),
-                                           1400));
+                                           kToolStderrContextLimit));
     }
     if (tool_result.contains(QStringLiteral("packages"))) {
-        compact.insert(
-            QStringLiteral("packages"),
-            truncatedWorkflowContextValue(tool_result.value(QStringLiteral("packages")), 600, 12));
+        compact.insert(QStringLiteral("packages"),
+                       truncatedWorkflowContextValue(tool_result.value(QStringLiteral("packages")),
+                                                     kPackagesContextStringLimit,
+                                                     kPackagesContextArrayLimit));
     }
     if (tool_result.contains(QStringLiteral("files"))) {
-        compact.insert(
-            QStringLiteral("files"),
-            truncatedWorkflowContextValue(tool_result.value(QStringLiteral("files")), 500, 20));
+        compact.insert(QStringLiteral("files"),
+                       truncatedWorkflowContextValue(tool_result.value(QStringLiteral("files")),
+                                                     kFilesContextStringLimit,
+                                                     kFilesContextArrayLimit));
     }
     return compact;
 }
@@ -168,10 +189,12 @@ QJsonObject compactPhaseForDelegate(const AiPhaseExecution& phase) {
     compact[QStringLiteral("success")] = phase.success;
     compact[QStringLiteral("duration_ms")] = static_cast<double>(phase.duration_ms);
     if (!phase.skip_reason.isEmpty()) {
-        compact[QStringLiteral("skip_reason")] = cappedContextString(phase.skip_reason, 800);
+        compact[QStringLiteral("skip_reason")] = cappedContextString(phase.skip_reason,
+                                                                     kPhaseSkipReasonLimit);
     }
     if (!phase.error_message.isEmpty()) {
-        compact[QStringLiteral("error_message")] = cappedContextString(phase.error_message, 1200);
+        compact[QStringLiteral("error_message")] = cappedContextString(phase.error_message,
+                                                                       kPhaseErrorMessageLimit);
     }
     if (!phase.tool_result.isEmpty()) {
         compact[QStringLiteral("tool_result")] = compactToolResultForDelegate(phase.tool_result);
@@ -180,7 +203,8 @@ QJsonObject compactPhaseForDelegate(const AiPhaseExecution& phase) {
         QJsonObject metadata;
         const QString summary = phase.metadata.value(QStringLiteral("summary")).toString();
         if (!summary.isEmpty()) {
-            metadata[QStringLiteral("summary")] = cappedContextString(summary, 1200);
+            metadata[QStringLiteral("summary")] = cappedContextString(summary,
+                                                                      kMetadataSummaryLimit);
         }
         if (phase.metadata.contains(QStringLiteral("status"))) {
             metadata[QStringLiteral("status")] = phase.metadata.value(QStringLiteral("status"));
@@ -203,9 +227,13 @@ QString workflowContextForDelegate(const AiWorkflowPhaseContext& context) {
     QJsonObject root;
     root[QStringLiteral("run_id")] = context.run_id;
     root[QStringLiteral("workflow_id")] = context.workflow_id;
-    root[QStringLiteral("user_message")] = cappedContextString(context.user_message, 1600);
+    root[QStringLiteral("user_message")] = cappedContextString(context.user_message,
+                                                               kUserMessageContextLimit);
     root[QStringLiteral("input_values")] =
-        truncatedWorkflowContextValue(context.input_values, 900, 20).toObject();
+        truncatedWorkflowContextValue(context.input_values,
+                                      kInputValuesContextStringLimit,
+                                      kInputValuesContextArrayLimit)
+            .toObject();
     QJsonArray flags;
     for (const auto& flag : context.flags) {
         flags.append(flag);

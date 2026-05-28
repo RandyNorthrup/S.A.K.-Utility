@@ -21,7 +21,7 @@ Write-Host "=== iPerf3 Bundle Script ===" -ForegroundColor Cyan
 Write-Host ""
 
 $ToolName = "iperf3"
-$Version = "3.20"
+$Version = "3.21"
 
 if ([string]::IsNullOrEmpty($DestinationPath)) {
     $DestinationPath = Join-Path $PSScriptRoot "..\tools\iperf3"
@@ -142,7 +142,7 @@ iPerf3 v$Version
 =================
 Bundled for S.A.K. Utility network diagnostic panel.
 
-License: BSD 3-Clause — see LICENSE
+License: BSD 3-Clause -- see THIRD_PARTY_LICENSES.md
 Source:  https://github.com/esnet/iperf
 Builds:  https://github.com/ar51an/iperf3-win-builds
 

@@ -37,6 +37,7 @@ constexpr int kDefaultMaxConcurrent = 50;
 constexpr int kDefaultBandwidthDuration = 10;
 constexpr uint16_t kDefaultIperfPort = 5201;
 constexpr int kDefaultWifiScanIntervalMs = 5000;
+constexpr int kDefaultWifiChannelWidthMHz = 20;
 constexpr int kDefaultConnRefreshMs = 2000;
 constexpr int kBannerGrabTimeoutMs = 2000;
 constexpr int kBannerMaxBytes = 512;
@@ -297,7 +298,7 @@ struct WiFiNetworkInfo {
     uint32_t channelFrequencyKHz = 0;
     int channelNumber = 0;
     QString band;
-    int channelWidthMHz = 20;
+    int channelWidthMHz = netdiag::kDefaultWifiChannelWidthMHz;
 
     QString authentication;
     QString encryption;

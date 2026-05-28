@@ -27,6 +27,10 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kInstallErrorPreviewChars = 200;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -166,12 +170,25 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
 bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
                                                     const BuildBundleContext& ctx,
                                                     DeploymentManifest& manifest) {
-    QMutexLocker lock(&m_mutex);
-    QString pkg_id = m_jobs[idx].package_id;
-    QString version = m_jobs[idx].version;
-    m_jobs[idx].status = InternalizationStatus::DownloadingNupkg;
-    lock.unlock();
+    const BatchInternalizationJob job = beginInternalizationJob(idx);
+    emitInternalizationStarted(ctx, job.package_id);
 
+    const InternalizationResult result = runInternalizationJob(job, ctx);
+    applyInternalizationResult(idx, result, manifest);
+    emitInternalizationResult(job.package_id, result);
+
+    return result.success;
+}
+
+BatchInternalizationJob OfflineDeploymentWorker::beginInternalizationJob(int idx) {
+    QMutexLocker lock(&m_mutex);
+    BatchInternalizationJob job = m_jobs[idx];
+    m_jobs[idx].status = InternalizationStatus::DownloadingNupkg;
+    return job;
+}
+
+void OfflineDeploymentWorker::emitInternalizationStarted(const BuildBundleContext& ctx,
+                                                         const QString& pkg_id) {
     QMetaObject::invokeMethod(
         this,
         [this, completed_count = ctx.completed_count, total_jobs = ctx.total_jobs, pkg_id]() {
@@ -179,7 +196,10 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
             Q_EMIT logMessage(QString("Internalizing: %1").arg(pkg_id));
         },
         Qt::QueuedConnection);
+}
 
+InternalizationResult OfflineDeploymentWorker::runInternalizationJob(
+    const BatchInternalizationJob& job, const BuildBundleContext& ctx) {
     InternalizationResult result;
     bool got_result = false;
 
@@ -194,7 +214,7 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
     connect(&engine,
             &PackageInternalizationEngine::progressChanged,
             this,
-            [this, pkg_id](const InternalizationProgress& progress) {
+            [this, pkg_id = job.package_id](const InternalizationProgress& progress) {
                 QMetaObject::invokeMethod(
                     this,
                     [this, pkg_id, progress]() {
@@ -203,23 +223,28 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
                     Qt::QueuedConnection);
             });
 
-    engine.internalizePackage(pkg_id, version, ctx.packages_dir, ctx.work_dir);
+    engine.internalizePackage(job.package_id, job.version, ctx.packages_dir, ctx.work_dir);
 
     if (!got_result) {
-        result.package_id = pkg_id;
-        result.version = version;
+        result.package_id = job.package_id;
+        result.version = job.version;
         result.error_message = QStringLiteral("Internalization finished without a result");
     }
+    return result;
+}
 
-    lock.relock();
+void OfflineDeploymentWorker::applyInternalizationResult(int idx,
+                                                         const InternalizationResult& result,
+                                                         DeploymentManifest& manifest) {
+    QMutexLocker lock(&m_mutex);
     if (result.success) {
         m_jobs[idx].status = InternalizationStatus::Complete;
         m_jobs[idx].output_path = result.output_nupkg_path;
         m_jobs[idx].checksum = result.checksum;
 
         DeploymentManifestEntry entry;
-        entry.package_id = pkg_id;
-        entry.version = version;
+        entry.package_id = result.package_id;
+        entry.version = result.version;
         entry.nupkg_filename = QFileInfo(result.output_nupkg_path).fileName();
         entry.checksum = result.checksum;
         entry.size_bytes = result.internalized_size;
@@ -230,8 +255,10 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
         m_jobs[idx].status = InternalizationStatus::Failed;
         m_jobs[idx].error_message = result.error_message;
     }
-    lock.unlock();
+}
 
+void OfflineDeploymentWorker::emitInternalizationResult(const QString& pkg_id,
+                                                        const InternalizationResult& result) {
     QMetaObject::invokeMethod(
         this,
         [this, pkg_id, result]() {
@@ -240,8 +267,6 @@ bool OfflineDeploymentWorker::internalizeOnePackage(int idx,
                                    result.success ? "Complete" : result.error_message);
         },
         Qt::QueuedConnection);
-
-    return result.success;
 }
 
 void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
@@ -369,11 +394,12 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
                                     [this]() { return m_cancelled.load(); });
 
     const bool success = !process.timed_out && !process.cancelled && process.exit_code == 0;
-    const QString output =
-        process.cancelled   ? QStringLiteral("Installation cancelled")
-        : process.timed_out ? QStringLiteral("Installation timed out")
-        : success ? QStringLiteral("Installed")
-                  : (process.std_out.isEmpty() ? process.std_err : process.std_out).left(200);
+    const QString output = process.cancelled   ? QStringLiteral("Installation cancelled")
+                           : process.timed_out ? QStringLiteral("Installation timed out")
+                           : success
+                               ? QStringLiteral("Installed")
+                               : (process.std_out.isEmpty() ? process.std_err : process.std_out)
+                                     .left(kInstallErrorPreviewChars);
     QMetaObject::invokeMethod(
         this,
         [this, entry, success, output]() {

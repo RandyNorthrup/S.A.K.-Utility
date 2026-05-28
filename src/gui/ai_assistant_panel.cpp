@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 Randy Northrup. All rights reserved.
+// Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file ai_assistant_panel.cpp
@@ -42,9 +42,11 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
+#include "sak/report_style_constants.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -133,6 +135,143 @@ constexpr int kDefaultOutputCapKb = 256;
 constexpr qint64 kContextMaxFileBytes = 50LL * sak::kBytesPerMB;
 constexpr qint64 kContextTextPreviewBytes = 512LL * sak::kBytesPerKB;
 constexpr const char* kWheelRequiresFocusProperty = "sakWheelRequiresFocus";
+constexpr int kApprovalDialogWidth = 760;
+constexpr int kApprovalDialogHeight = 520;
+constexpr int kApprovalDialogMinWidth = 620;
+constexpr int kApprovalDialogMinHeight = 420;
+constexpr int kApprovalCommandMinHeight = 170;
+constexpr int kApprovalCommandCollapsedMaxHeight = 260;
+constexpr int kApprovalCommandExpandedMaxHeight = 520;
+constexpr int kApprovalExpandedDialogMinWidth = 860;
+constexpr int kApprovalExpandedDialogMinHeight = 680;
+constexpr int kReadableComboMinHeight = sak::ui::kUiButtonSizeInline;
+constexpr int kContextSplitterConversationWidth = 860;
+constexpr int kContextSplitterRailWidth = 280;
+constexpr int kContextPaneMinWidth = 320;
+constexpr int kContextPaneMaxWidth = 440;
+constexpr int kWorkflowDetailsMinHeight = 140;
+constexpr int kWorkflowDetailsMaxHeight = 320;
+constexpr int kConnectionStatusIconWidth = sak::ui::kUiIconSmall;
+constexpr int kContextScrollMinWidth = 340;
+constexpr int kContextScrollMaxWidth = 460;
+constexpr int kWorkflowProgressMinWidth = 160;
+constexpr int kWorkflowProgressMaxWidth = 520;
+constexpr int kMessageEditMinHeight = 92;
+constexpr int kMessageEditMaxHeight = 160;
+constexpr int kContextListMinHeight = 42;
+constexpr int kContextListMaxHeight = 122;
+constexpr int kContextChipViewportReserve = sak::ui::kUiButtonSizeMicro;
+constexpr int kContextChipMinAvailableWidth = 220;
+constexpr int kContextChipMinWidth = 180;
+constexpr int kContextChipTargetMinWidth = 260;
+constexpr int kContextChipTargetMaxWidth = 460;
+constexpr int kContextChipTextReserve = 44;
+constexpr int kContextChipMetricPadding = 48;
+constexpr int kContextChipHeight = 26;
+constexpr int kContextChipRowHeight = sak::ui::kUiButtonSizeInline;
+constexpr int kContextChipTextMinWidth = 80;
+constexpr int kRunDetailsDialogWidth = 880;
+constexpr int kRunDetailsDialogHeight = 700;
+constexpr int kFontWeightBold = 700;
+constexpr int kFontWeightExtraBold = 800;
+constexpr int kDefaultCleanReportMaxChars = 700;
+constexpr int kReportNormalizedKeyMaxChars = 160;
+constexpr int kReportFindingSeverityMaxChars = 80;
+constexpr int kReportFindingDetailMaxChars = 500;
+constexpr int kReportChatNameMaxChars = 240;
+constexpr int kReportPathMaxChars = 500;
+constexpr int kReportSummaryMaxChars = 420;
+constexpr int kReportWarningMaxChars = 500;
+constexpr int kReportTranscriptExcerptLimit = 25;
+constexpr int kReportTranscriptExcerptMaxChars = 900;
+constexpr int kReportHtmlSessionMaxChars = 80;
+constexpr int kReportHtmlSeverityMaxChars = 80;
+constexpr int kReportHtmlFindingTitleMaxChars = 300;
+constexpr int kReportHtmlFindingDetailMaxChars = 700;
+constexpr int kReportHtmlArtifactLabelMaxChars = 260;
+constexpr int kReportHtmlPhaseIdMaxChars = 120;
+constexpr int kReportHtmlStatusMaxChars = 80;
+constexpr int kReportHtmlDurationMaxChars = 40;
+constexpr int kReportHtmlPhaseSummaryMaxChars = 500;
+constexpr int kReportHtmlTimestampMaxChars = 80;
+constexpr int kReportHtmlActivityKindMaxChars = 80;
+constexpr int kReportHtmlActivitySummaryMaxChars = 600;
+constexpr int kReportHtmlPathMaxChars = 700;
+constexpr int kReportHtmlSummaryItemLimit = 3;
+constexpr int kReportHtmlEvidenceItemLimit = 18;
+constexpr int kReportHtmlNextStepItemLimit = 10;
+constexpr int kReportHtmlRiskItemLimit = 10;
+constexpr int kReportHtmlActionItemLimit = 10;
+constexpr int kReportHtmlEvidenceNoteItemLimit = 8;
+constexpr int kReportHtmlWarningItemLimit = 3;
+constexpr int kReportHtmlFindingLimit = 12;
+constexpr int kReportHtmlTimelineActivityLimit = 18;
+constexpr int kReadableDurationMillisecondsPerSecond = 1000;
+constexpr double kReadableDurationMillisecondsPerSecondF = 1000.0;
+constexpr int kReadableComboDefaultContentsLength = 24;
+constexpr int kReadableComboDefaultPopupMinWidth = 420;
+constexpr int kReadableComboMaxVisibleItems = 18;
+constexpr int kToolHealthLedgerRetentionHours = 24;
+constexpr int kSessionComboContentsLength = 26;
+constexpr int kSessionComboPopupMinWidth = 440;
+constexpr int kReasoningComboContentsLength = 14;
+constexpr int kReasoningComboPopupMinWidth = 260;
+constexpr int kWorkflowComboContentsLength = 32;
+constexpr int kWorkflowComboPopupMinWidth = 620;
+constexpr ushort kStatusMarkerSuccess = 0x2714;
+constexpr ushort kStatusMarkerError = 0x2718;
+constexpr int kActivityTimerIntervalMs = 450;
+constexpr int kCommandIdWidth = 3;
+constexpr int kCommandIdBase = 10;
+constexpr int kArtifactCountDisplayLimit = 999;
+constexpr int kContextChipColumns = 2;
+constexpr int kContextItemTooltipMaxChars = 400;
+constexpr int kWorkflowWorkerCancelPollMs = 150;
+constexpr int kWorkflowRunnerMaxRetries = 1;
+constexpr int kWorkflowWallClockTimeoutMs = 300'000;
+constexpr int kWorkflowMaxParallelSubagents = 1;
+constexpr int kRestorePointTimeoutSec = 180;
+constexpr int kRestorePointMaxOutputBytes = 32 * sak::kBytesPerKB;
+constexpr int kRestorePointSuccessExitCode = 0;
+constexpr int kRestorePointErrorPreviewChars = 1000;
+constexpr int kNoisyLogLineMaxChars = 6000;
+constexpr ushort kUnicodeReplacementCharacter = 0xfffd;
+constexpr ushort kAsciiControlCharacterLimit = 0x20;
+constexpr int kNoisyLogMinCheckedChars = 40;
+constexpr int kNoisyLogMinSuspiciousChars = 8;
+constexpr int kNoisyLogSuspiciousDivisor = 12;
+constexpr int kDefaultPreviewMaxChars = 500;
+constexpr int kActivitySummaryMaxChars = 500;
+constexpr int kWorkflowCatalogReserveBase = 4;
+constexpr int kWorkflowCatalogReservePerWorkflow = 3;
+constexpr int kReportRiskLineLimit = 12;
+constexpr int kReportActionLineLimit = 14;
+constexpr int kReportEvidenceSnapshotLineLimit = 24;
+constexpr int kReportArtifactMarkdownLabelMaxChars = 220;
+constexpr int kReportDefaultHtmlListItemLimit = 12;
+constexpr int kInlineToolListLimit = 5;
+constexpr int kSessionMemoryMaxChars = 12'000;
+constexpr int kTraceTokenIdChars = 12;
+constexpr int kShortTraceTokenIdChars = 8;
+constexpr int kMetadataPreviewMaxChars = 1000;
+constexpr int kPackageResultOutputMaxChars = 8000;
+constexpr int kPackageFileResultLimit = 200;
+constexpr int kPackageArtifactDisplayLimit = 20;
+constexpr int kPackageLogLineResultLimit = 80;
+constexpr int kToolOutputMaxBytes = 4 * static_cast<int>(sak::kBytesPerMB);
+constexpr int kAccessModeUnattendedComboIndex = 2;
+constexpr int kWorkflowPhaseStatusMessageMs = 2500;
+constexpr int kRunStateMessageMaxChars = 200;
+constexpr int kHumanApprovalInfoMaxChars = 600;
+constexpr int kCommandPreviewMaxChars = 500;
+constexpr int kCommandResultPreviewMaxChars = 1200;
+constexpr int kOpenAiResponsePreviewMaxChars = 3000;
+constexpr int kSubagentTranscriptFindingLimit = 4;
+constexpr int kSubagentTranscriptActionLimit = 4;
+constexpr int kSubagentTranscriptNextStepLimit = 3;
+constexpr int kSubagentPhaseFindingLimit = 6;
+constexpr int kSubagentSummarySectionLimit = 8;
+constexpr int kProgressCompletedStepWeight = 2;
 
 QString statusLabelStyle(const char* color) {
     return QStringLiteral("color: %1; font-weight: 600;").arg(QString::fromLatin1(color));
@@ -148,7 +287,7 @@ bool containsAny(const QString& value, std::initializer_list<const char*> needle
 }
 
 bool looksLikeNoisyBinaryLogLine(const QString& line) {
-    if (line.size() > 6000) {
+    if (line.size() > kNoisyLogLineMaxChars) {
         return true;
     }
     int suspicious = 0;
@@ -157,12 +296,14 @@ bool looksLikeNoisyBinaryLogLine(const QString& line) {
     for (qsizetype i = 0; i < limit; ++i) {
         const QChar ch = line.at(i);
         const ushort code = ch.unicode();
-        if (code == 0xfffd || (code < 0x20 && ch != QLatin1Char('\t'))) {
+        if (code == kUnicodeReplacementCharacter ||
+            (code < kAsciiControlCharacterLimit && ch != QLatin1Char('\t'))) {
             ++suspicious;
         }
         ++checked;
     }
-    return checked >= 40 && suspicious >= qMax(8, checked / 12);
+    return checked >= kNoisyLogMinCheckedChars &&
+           suspicious >= qMax(kNoisyLogMinSuspiciousChars, checked / kNoisyLogSuspiciousDivisor);
 }
 
 QString trimmedLogLine(QString line) {
@@ -225,13 +366,13 @@ QString activitySummaryFromTrace(const QString& name,
                                  const QJsonObject& metadata) {
     const QString explicit_summary = metadata.value(QStringLiteral("summary")).toString().trimmed();
     if (!explicit_summary.isEmpty()) {
-        return explicit_summary.left(500);
+        return explicit_summary.left(kActivitySummaryMaxChars);
     }
     const QString title = metadata.value(QStringLiteral("title")).toString().trimmed();
     if (!title.isEmpty()) {
-        return QStringLiteral("%1: %2").arg(status, title).left(500);
+        return QStringLiteral("%1: %2").arg(status, title).left(kActivitySummaryMaxChars);
     }
-    return QStringLiteral("%1: %2").arg(status, name).left(500);
+    return QStringLiteral("%1: %2").arg(status, name).left(kActivitySummaryMaxChars);
 }
 
 QString runTimelineStateColor(const QString& state) {
@@ -294,10 +435,18 @@ QString runTimelineBadge(const QString& text, const QString& color) {
         return {};
     }
     return QStringLiteral(
-               "<span style=\"display:inline-block;border:1px solid %1;"
-               "color:%1;background:%2;border-radius:4px;padding:1px 5px;"
-               "font-size:8pt;font-weight:600;white-space:nowrap;\">%3</span>")
-        .arg(color, QString::fromLatin1(sak::ui::kColorBgSurface), text.toHtmlEscaped());
+               "<span style=\"display:inline-block;border:%1px solid %2;"
+               "color:%2;background:%3;border-radius:%4px;padding:%5px %6px;"
+               "font-size:%7pt;font-weight:%8;white-space:nowrap;\">%9</span>")
+        .arg(sak::ui::kHtmlTimelineBadgeBorderPx)
+        .arg(color)
+        .arg(sak::ui::htmlColor(sak::ui::kColorBgSurface))
+        .arg(sak::ui::kHtmlTimelineBadgeRadiusPx)
+        .arg(sak::ui::kHtmlTimelineBadgePaddingVerticalPx)
+        .arg(sak::ui::kHtmlTimelineBadgePaddingHorizontalPx)
+        .arg(sak::ui::kFontSizeSmall)
+        .arg(sak::ui::kFontWeightSemibold)
+        .arg(text.toHtmlEscaped());
 }
 
 QString runTimelineMeta(const QStringList& tags) {
@@ -311,8 +460,11 @@ QString runTimelineMeta(const QStringList& tags) {
     if (clean.isEmpty()) {
         return {};
     }
-    return QStringLiteral("<div style=\"color:%1;font-size:8pt;margin-top:2px;\">%2</div>")
-        .arg(sak::ui::kColorTextMuted, clean.join(QStringLiteral(" | ")));
+    return QStringLiteral("<div style=\"color:%1;font-size:%2pt;margin-top:%3px;\">%4</div>")
+        .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
+        .arg(sak::ui::kFontSizeSmall)
+        .arg(sak::ui::kHtmlTimelineMetaMarginTopPx)
+        .arg(clean.join(QStringLiteral(" | ")));
 }
 
 enum class ApprovalPromptChoice {
@@ -344,7 +496,7 @@ struct ApprovalPromptSpec {
     QVector<ApprovalPromptButton> buttons;
 };
 
-const char* approvalButtonStyle(ApprovalPromptButtonStyle style) {
+QString approvalButtonStyle(ApprovalPromptButtonStyle style) {
     switch (style) {
     case ApprovalPromptButtonStyle::Primary:
         return sak::ui::kPrimaryButtonStyle;
@@ -356,95 +508,91 @@ const char* approvalButtonStyle(ApprovalPromptButtonStyle style) {
     }
 }
 
-ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
-    QDialog dialog(spec.parent);
-    dialog.setWindowTitle(spec.window_title);
-    dialog.setModal(true);
-    dialog.resize(760, 520);
-    dialog.setMinimumSize(620, 420);
-    dialog.setStyleSheet(
-        QStringLiteral("QDialog { background: %1; }"
-                       "QLabel#approvalHeading { color: %2; font-size: 20px; "
-                       "font-weight: 800; }"
-                       "QLabel#approvalBody { color: %3; font-size: 10pt; }"
-                       "QLabel#approvalCommandLabel { color: %2; font-size: 9pt; "
-                       "font-weight: 700; }"
-                       "QPlainTextEdit#approvalCommandBox { background: %4; color: %3; "
-                       "border: 1px solid %5; border-radius: 6px; padding: 8px; "
-                       "font-family: Consolas, 'Cascadia Mono', monospace; font-size: 9pt; }")
-            .arg(sak::ui::kColorBgWhite,
-                 sak::ui::kColorTextHeading,
-                 sak::ui::kColorTextBody,
-                 sak::ui::kColorBgSurface,
-                 sak::ui::kColorBorderDefault));
+void configureApprovalDialog(QDialog* dialog, const QString& window_title) {
+    dialog->setWindowTitle(window_title);
+    dialog->setModal(true);
+    dialog->resize(kApprovalDialogWidth, kApprovalDialogHeight);
+    dialog->setMinimumSize(kApprovalDialogMinWidth, kApprovalDialogMinHeight);
+    dialog->setStyleSheet(sak::ui::approvalPromptStyle());
+}
 
-    auto* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(
-        sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
-    layout->setSpacing(sak::ui::kSpacingMedium);
-
-    auto* header = new QLabel(spec.heading, &dialog);
+void addApprovalText(QVBoxLayout* layout, QDialog* dialog, const ApprovalPromptSpec& spec) {
+    auto* header = new QLabel(spec.heading, dialog);
     header->setObjectName(QStringLiteral("approvalHeading"));
     header->setWordWrap(true);
     layout->addWidget(header);
 
     if (!spec.body.trimmed().isEmpty()) {
-        auto* body_label = new QLabel(spec.body, &dialog);
+        auto* body_label = new QLabel(spec.body, dialog);
         body_label->setObjectName(QStringLiteral("approvalBody"));
         body_label->setWordWrap(true);
         layout->addWidget(body_label);
     }
+}
 
-    auto* command_label = new QLabel(QObject::tr("Command preview"), &dialog);
+QPlainTextEdit* addApprovalCommandBox(QVBoxLayout* layout,
+                                      QDialog* dialog,
+                                      const QString& command_text) {
+    auto* command_label = new QLabel(QObject::tr("Command preview"), dialog);
     command_label->setObjectName(QStringLiteral("approvalCommandLabel"));
     layout->addWidget(command_label);
 
-    const QString redacted_command = ai::CredentialStore::redactSecrets(spec.command_text);
-    auto* command_box = new QPlainTextEdit(&dialog);
+    const QString redacted_command = ai::CredentialStore::redactSecrets(command_text);
+    auto* command_box = new QPlainTextEdit(dialog);
     command_box->setObjectName(QStringLiteral("approvalCommandBox"));
     command_box->setReadOnly(true);
     command_box->setLineWrapMode(QPlainTextEdit::NoWrap);
     command_box->setPlainText(redacted_command.trimmed().isEmpty()
                                   ? QObject::tr("(No command preview available)")
                                   : redacted_command);
-    command_box->setMinimumHeight(170);
-    command_box->setMaximumHeight(260);
+    command_box->setMinimumHeight(kApprovalCommandMinHeight);
+    command_box->setMaximumHeight(kApprovalCommandCollapsedMaxHeight);
     command_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(command_box, 1);
+    return command_box;
+}
 
+void addApprovalCommandControls(QVBoxLayout* layout, QDialog* dialog, QPlainTextEdit* command_box) {
     auto* command_controls = new QHBoxLayout();
     command_controls->addStretch();
-    auto* expand_button = new QPushButton(QObject::tr("Expand"), &dialog);
+    auto* expand_button = new QPushButton(QObject::tr("Expand"), dialog);
+    expand_button->setCheckable(true);
     expand_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     expand_button->setToolTip(QObject::tr("Expand or collapse the command preview box"));
     command_controls->addWidget(expand_button);
     layout->addLayout(command_controls);
 
-    bool expanded = false;
-    QObject::connect(expand_button, &QPushButton::clicked, &dialog, [&]() {
-        expanded = !expanded;
-        command_box->setMaximumHeight(expanded ? 520 : 260);
-        expand_button->setText(expanded ? QObject::tr("Collapse") : QObject::tr("Expand"));
-        if (expanded) {
-            dialog.resize(qMax(dialog.width(), 860), qMax(dialog.height(), 680));
-        }
-    });
+    QObject::connect(
+        expand_button, &QPushButton::clicked, dialog, [dialog, command_box, expand_button]() {
+            const bool expanded = expand_button->isChecked();
+            command_box->setMaximumHeight(expanded ? kApprovalCommandExpandedMaxHeight
+                                                   : kApprovalCommandCollapsedMaxHeight);
+            expand_button->setText(expanded ? QObject::tr("Collapse") : QObject::tr("Expand"));
+            if (expanded) {
+                dialog->resize(qMax(dialog->width(), kApprovalExpandedDialogMinWidth),
+                               qMax(dialog->height(), kApprovalExpandedDialogMinHeight));
+            }
+        });
+}
 
+void addApprovalButtons(QVBoxLayout* layout,
+                        QDialog* dialog,
+                        const QVector<ApprovalPromptButton>& buttons,
+                        ApprovalPromptChoice* choice) {
     auto* button_row = new QHBoxLayout();
     button_row->addStretch();
-    ApprovalPromptChoice choice = ApprovalPromptChoice::Cancel;
     QPushButton* default_button = nullptr;
-    for (const auto& button_spec : spec.buttons) {
-        auto* button = new QPushButton(button_spec.text, &dialog);
-        button->setMinimumHeight(34);
+    for (const auto& button_spec : buttons) {
+        auto* button = new QPushButton(button_spec.text, dialog);
+        button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
         button->setStyleSheet(approvalButtonStyle(button_spec.style));
         button_row->addWidget(button);
         if (button_spec.default_button) {
             default_button = button;
         }
-        QObject::connect(button, &QPushButton::clicked, &dialog, [&, button_spec]() {
-            choice = button_spec.choice;
-            dialog.accept();
+        QObject::connect(button, &QPushButton::clicked, dialog, [dialog, choice, button_spec]() {
+            *choice = button_spec.choice;
+            dialog->accept();
         });
     }
     layout->addLayout(button_row);
@@ -452,6 +600,24 @@ ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
         default_button->setDefault(true);
         default_button->setFocus();
     }
+}
+
+ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
+    QDialog dialog(spec.parent);
+    configureApprovalDialog(&dialog, spec.window_title);
+    dialog.setModal(true);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(
+        sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
+    layout->setSpacing(sak::ui::kSpacingMedium);
+
+    ApprovalPromptChoice choice = ApprovalPromptChoice::Cancel;
+    addApprovalText(layout, &dialog, spec);
+    addApprovalCommandControls(layout,
+                               &dialog,
+                               addApprovalCommandBox(layout, &dialog, spec.command_text));
+    addApprovalButtons(layout, &dialog, spec.buttons, &choice);
 
     return dialog.exec() == QDialog::Accepted ? choice : ApprovalPromptChoice::Cancel;
 }
@@ -556,7 +722,7 @@ QStringList findingSummaries(const QJsonValue& value, int max_items) {
             line += line.isEmpty() ? recommendation : QStringLiteral(" -> %1").arg(recommendation);
         }
         if (!line.trimmed().isEmpty()) {
-            summaries << line.simplified().left(500);
+            summaries << line.simplified().left(kDefaultPreviewMaxChars);
         }
     }
     return summaries;
@@ -740,7 +906,8 @@ QString workflowCatalogInstructions(const ai::WorkflowStore* store) {
     }
 
     QStringList lines;
-    lines.reserve(4 + (workflows.size() * 3));
+    lines.reserve(kWorkflowCatalogReserveBase +
+                  (workflows.size() * kWorkflowCatalogReservePerWorkflow));
     appendWorkflowCatalogPreamble(&lines);
     QString current_role;
     for (const auto& workflow : workflows) {
@@ -1270,7 +1437,7 @@ QJsonArray packageInfoToJson(const std::vector<ChocolateyManager::PackageInfo>& 
         item[QStringLiteral("package_id")] = package.package_id;
         item[QStringLiteral("version")] = package.version;
         item[QStringLiteral("title")] = package.title;
-        item[QStringLiteral("description")] = package.description.left(500);
+        item[QStringLiteral("description")] = package.description.left(kDefaultPreviewMaxChars);
         item[QStringLiteral("approved")] = package.is_approved;
         item[QStringLiteral("download_count")] = package.download_count;
         array.append(item);
@@ -1512,7 +1679,7 @@ QString reportSuffix(PanelReportFormat format) {
     }
 }
 
-QString cleanReportText(const QString& value, int max_chars = 700) {
+QString cleanReportText(const QString& value, int max_chars = kDefaultCleanReportMaxChars) {
     QString text = ai::CredentialStore::redactSecrets(value).simplified();
     if (max_chars > 0 && text.size() > max_chars) {
         text = text.left(max_chars - 3) + QStringLiteral("...");
@@ -1525,7 +1692,7 @@ QString normalizedReportKey(QString value) {
     value.remove(QRegularExpression(QStringLiteral(
         R"(\b(low|medium|high|critical|info|informational|unknown|review|risk|issue)\s*:)")));
     value.replace(QRegularExpression(QStringLiteral(R"([^a-z0-9]+)")), QStringLiteral(" "));
-    return value.simplified().left(160);
+    return value.simplified().left(kReportNormalizedKeyMaxChars);
 }
 
 void appendUniqueReportLine(QStringList* lines, const QString& value, int max_items) {
@@ -1564,14 +1731,16 @@ void appendReportFinding(QVector<PanelReportFinding>* findings,
             return;
         }
     }
-    findings->append({cleanReportText(severity, 80), clean_title, cleanReportText(detail, 500)});
+    findings->append({cleanReportText(severity, kReportFindingSeverityMaxChars),
+                      clean_title,
+                      cleanReportText(detail, kReportFindingDetailMaxChars)});
 }
 
 void appendReportRisk(PanelReportData* data, const QString& risk) {
     if (!data || reportLineLooksOperationalNoise(risk)) {
         return;
     }
-    appendUniqueReportLine(&data->risks, risk, 12);
+    appendUniqueReportLine(&data->risks, risk, kReportRiskLineLimit);
 }
 
 QVector<PanelReportArtifact> collectReportArtifacts(const QString& artifact_root_path,
@@ -1659,7 +1828,9 @@ void appendSubagentReportData(const QJsonObject& result, PanelReportData* data) 
     if (!data || result.isEmpty()) {
         return;
     }
-    appendUniqueReportLine(&data->summaries, result.value(QStringLiteral("summary")).toString(), 3);
+    appendUniqueReportLine(&data->summaries,
+                           result.value(QStringLiteral("summary")).toString(),
+                           kReportHtmlSummaryItemLimit);
     const auto findings = result.value(QStringLiteral("findings")).toArray();
     for (const auto& entry : findings) {
         if (entry.isObject()) {
@@ -1668,12 +1839,12 @@ void appendSubagentReportData(const QJsonObject& result, PanelReportData* data) 
     }
     for (const auto& action : jsonStringList(result.value(QStringLiteral("actions_taken")))) {
         if (!reportLineLooksOperationalNoise(action)) {
-            appendUniqueReportLine(&data->actions, action, 14);
+            appendUniqueReportLine(&data->actions, action, kReportActionLineLimit);
         }
     }
     for (const auto& step :
          jsonStringList(result.value(QStringLiteral("recommended_next_steps")))) {
-        appendUniqueReportLine(&data->next_steps, step, 12);
+        appendUniqueReportLine(&data->next_steps, step, kReportRiskLineLimit);
     }
     for (const auto& risk : jsonStringList(result.value(QStringLiteral("risks")))) {
         appendReportRisk(data, risk);
@@ -1727,18 +1898,20 @@ void appendToolEvidenceSnapshot(const QJsonObject& tool_result, PanelReportData*
     const QString stdout_text = tool_result.value(QStringLiteral("stdout")).toString();
     const auto lines = stdout_text.split(QRegularExpression(QStringLiteral(R"(\r?\n)")));
     for (const auto& line : lines) {
-        if (data->evidence_snapshot.size() >= 24) {
+        if (data->evidence_snapshot.size() >= kReportEvidenceSnapshotLineLimit) {
             break;
         }
         if (isUsefulEvidenceLine(line)) {
-            appendUniqueReportLine(&data->evidence_snapshot, line, 24);
+            appendUniqueReportLine(&data->evidence_snapshot,
+                                   line,
+                                   kReportEvidenceSnapshotLineLimit);
         }
     }
     const QString stderr_text = tool_result.value(QStringLiteral("stderr")).toString().trimmed();
     if (!stderr_text.isEmpty()) {
         appendUniqueReportLine(&data->evidence_notes,
                                QStringLiteral("Command stderr: %1").arg(stderr_text),
-                               18);
+                               kReportHtmlEvidenceItemLimit);
     }
 }
 
@@ -1751,7 +1924,9 @@ void appendPhaseReportData(const ai::AiPhaseExecution& phase, PanelReportData* d
             &data->findings, QStringLiteral("Issue"), phase.phase_id, phase.error_message);
     }
     if (!phase.skip_reason.trimmed().isEmpty()) {
-        appendUniqueReportLine(&data->evidence_notes, phase.skip_reason, 18);
+        appendUniqueReportLine(&data->evidence_notes,
+                               phase.skip_reason,
+                               kReportHtmlEvidenceItemLimit);
     }
     appendSubagentReportData(phase.metadata.value(QStringLiteral("result")).toObject(), data);
     appendSubagentReportData(phase.metadata.value(QStringLiteral("subagent_result")).toObject(),
@@ -1768,7 +1943,9 @@ void appendActivityReportData(const ai::AiActivityEvent& activity, PanelReportDa
             &data->findings, QStringLiteral("Issue"), activity.kind, activity.error);
     }
     if (!activity.question_for_human.trimmed().isEmpty()) {
-        appendUniqueReportLine(&data->evidence_notes, activity.question_for_human, 18);
+        appendUniqueReportLine(&data->evidence_notes,
+                               activity.question_for_human,
+                               kReportHtmlEvidenceItemLimit);
     }
     const QJsonObject tool_result =
         activity.metadata.value(QStringLiteral("tool_result")).toObject();
@@ -1810,7 +1987,8 @@ void appendListSection(QStringList* lines,
         lines->append(QStringLiteral("- %1").arg(empty_text));
     } else {
         for (const auto& item : items) {
-            lines->append(QStringLiteral("- %1").arg(cleanReportText(item, 700)));
+            lines->append(
+                QStringLiteral("- %1").arg(cleanReportText(item, kDefaultCleanReportMaxChars)));
         }
     }
     lines->append(QString());
@@ -1824,7 +2002,7 @@ void appendFindingSection(QStringList* lines, const QVector<PanelReportFinding>&
     } else {
         int emitted = 0;
         for (const auto& finding : findings) {
-            if (emitted >= 12) {
+            if (emitted >= kReportHtmlFindingLimit) {
                 lines->append(QStringLiteral(
                     "- Additional lower-priority findings are retained in the session trace."));
                 break;
@@ -1855,7 +2033,9 @@ void appendArtifactSection(QStringList* lines,
                                        ? ai::CredentialStore::redactSecrets(artifact.target)
                                        : QUrl::fromLocalFile(artifact.target).toString();
             lines->append(
-                QStringLiteral("- [%1](%2)").arg(cleanReportText(artifact.label, 220), target));
+                QStringLiteral("- [%1](%2)")
+                    .arg(cleanReportText(artifact.label, kReportArtifactMarkdownLabelMaxChars),
+                         target));
         }
     }
     lines->append(QString());
@@ -1877,7 +2057,7 @@ void appendActivitySection(QStringList* lines, const QVector<ai::AiActivityEvent
                               .arg(when,
                                    activity.state,
                                    activity.kind,
-                                   cleanReportText(activity.summary, 700)));
+                                   cleanReportText(activity.summary, kDefaultCleanReportMaxChars)));
         }
     }
     lines->append(QString());
@@ -1906,92 +2086,108 @@ QString phaseSummary(const ai::AiPhaseExecution& phase) {
     if (summary.isEmpty() && !phase.skip_reason.trimmed().isEmpty()) {
         summary = phase.skip_reason.trimmed();
     }
-    return cleanReportText(summary.isEmpty() ? phase.phase_id : summary, 420);
+    return cleanReportText(summary.isEmpty() ? phase.phase_id : summary, kReportSummaryMaxChars);
 }
 
 QString durationText(qint64 duration_ms) {
     if (duration_ms <= 0) {
         return QStringLiteral("<1 sec");
     }
-    if (duration_ms < 1000) {
+    if (duration_ms < kReadableDurationMillisecondsPerSecond) {
         return QStringLiteral("%1 ms").arg(duration_ms);
     }
-    return QStringLiteral("%1 sec").arg(QString::number(duration_ms / 1000.0, 'f', 1));
+    return QStringLiteral("%1 sec").arg(
+        QString::number(duration_ms / kReadableDurationMillisecondsPerSecondF, 'f', 1));
 }
 
-QString renderReportMarkdown(const PanelReportData& data, const QString& report_path) {
-    QStringList lines;
+void appendReportMetadataMarkdown(QStringList* lines,
+                                  const PanelReportData& data,
+                                  const QString& report_path) {
     const QString session_url = QUrl::fromLocalFile(data.session.path).toString();
     const QString report_dir = QFileInfo(report_path).absolutePath();
-    lines << QStringLiteral("# PC Health Report") << QString();
-    lines << QStringLiteral("- Status: **%1**").arg(overallReportStatus(data));
-    lines << QStringLiteral("- Generated: %1 UTC").arg(reportGeneratedAtUtc());
-    lines << QStringLiteral("- Session: `%1`").arg(data.session.id);
-    lines << QStringLiteral("- Chat name: %1").arg(cleanReportText(data.session.title, 240));
-    lines << QStringLiteral("- Report directory: [%1](%2)")
-                 .arg(cleanReportText(QDir::toNativeSeparators(report_dir), 500),
-                      QUrl::fromLocalFile(report_dir).toString());
-    lines << QStringLiteral("- Session directory: [%1](%2)")
-                 .arg(cleanReportText(QDir::toNativeSeparators(data.session.path), 500),
-                      session_url);
-    lines << QStringLiteral("- Tool calls: %1").arg(data.tool_calls);
-    lines << QStringLiteral("- Total tokens: %1").arg(data.tokens.total_tokens);
-    lines << QString();
+    *lines << QStringLiteral("# PC Health Report") << QString();
+    *lines << QStringLiteral("- Status: **%1**").arg(overallReportStatus(data));
+    *lines << QStringLiteral("- Generated: %1 UTC").arg(reportGeneratedAtUtc());
+    *lines << QStringLiteral("- Session: `%1`").arg(data.session.id);
+    *lines << QStringLiteral("- Chat name: %1")
+                  .arg(cleanReportText(data.session.title, kReportChatNameMaxChars));
+    *lines << QStringLiteral("- Report directory: [%1](%2)")
+                  .arg(cleanReportText(QDir::toNativeSeparators(report_dir), kReportPathMaxChars),
+                       QUrl::fromLocalFile(report_dir).toString());
+    *lines << QStringLiteral("- Session directory: [%1](%2)")
+                  .arg(cleanReportText(QDir::toNativeSeparators(data.session.path),
+                                       kReportPathMaxChars),
+                       session_url);
+    *lines << QStringLiteral("- Tool calls: %1").arg(data.tool_calls);
+    *lines << QStringLiteral("- Total tokens: %1").arg(data.tokens.total_tokens);
+    *lines << QString();
+}
 
-    appendListSection(&lines,
+void appendReportBodyMarkdown(QStringList* lines, const PanelReportData& data) {
+    appendListSection(lines,
                       QStringLiteral("Executive Summary"),
                       data.summaries,
                       QStringLiteral(
                           "The workflow completed, but no narrative summary was recorded."));
-    appendFindingSection(&lines, data.findings);
-    appendListSection(&lines,
+    appendFindingSection(lines, data.findings);
+    appendListSection(lines,
                       QStringLiteral("Evidence Snapshot"),
                       data.evidence_snapshot,
                       QStringLiteral("No structured evidence snapshot was available."));
-    appendListSection(&lines,
+    appendListSection(lines,
                       QStringLiteral("Recommended Next Steps"),
                       data.next_steps,
                       data.findings.isEmpty()
                           ? QStringLiteral("Continue normal monitoring.")
                           : QStringLiteral(
                                 "Review the findings and rerun incomplete checks as needed."));
-    appendListSection(&lines,
+    appendListSection(lines,
                       QStringLiteral("Evidence Limits and Risks"),
                       data.risks,
                       QStringLiteral("No evidence limitations were recorded."));
-    appendListSection(&lines,
+    appendListSection(lines,
                       QStringLiteral("Work Performed"),
                       data.actions,
                       QStringLiteral("No change actions were recorded."));
-    appendListSection(&lines,
+    appendListSection(lines,
                       QStringLiteral("Evidence Notes"),
                       data.evidence_notes,
                       QStringLiteral("No extra evidence notes were recorded."));
-    appendActivitySection(&lines, data.activities);
-    appendArtifactSection(&lines, QStringLiteral("Evidence Artifacts"), data.artifacts);
-    appendArtifactSection(&lines, QStringLiteral("Sources"), data.sources);
+    appendActivitySection(lines, data.activities);
+    appendArtifactSection(lines, QStringLiteral("Evidence Artifacts"), data.artifacts);
+    appendArtifactSection(lines, QStringLiteral("Sources"), data.sources);
+}
 
-    lines << QStringLiteral("## Appendix: Raw Transcript Excerpts") << QString();
+void appendReportTranscriptMarkdown(QStringList* lines, const PanelReportData& data) {
+    *lines << QStringLiteral("## Appendix: Raw Transcript Excerpts") << QString();
     if (data.transcript.isEmpty()) {
-        lines << QStringLiteral("- No transcript entries were recorded.");
+        *lines << QStringLiteral("- No transcript entries were recorded.");
     } else {
-        lines << QStringLiteral(
+        *lines << QStringLiteral(
             "These excerpts are for audit/debugging. The sections above are the technician "
             "report.");
-        lines << QString();
-        for (const auto& entry : data.transcript.mid(0, 25)) {
-            lines << QStringLiteral("- %1").arg(cleanReportText(entry, 900));
+        *lines << QString();
+        for (const auto& entry : data.transcript.mid(0, kReportTranscriptExcerptLimit)) {
+            *lines << QStringLiteral("- %1").arg(
+                cleanReportText(entry, kReportTranscriptExcerptMaxChars));
         }
     }
-    lines << QString();
+    *lines << QString();
     if (!data.activity_warning.isEmpty()) {
-        lines << QStringLiteral("- Activity warning: %1")
-                     .arg(cleanReportText(data.activity_warning, 500));
+        *lines << QStringLiteral("- Activity warning: %1")
+                      .arg(cleanReportText(data.activity_warning, kReportWarningMaxChars));
     }
     if (!data.memory_warning.isEmpty()) {
-        lines << QStringLiteral("- Memory warning: %1")
-                     .arg(cleanReportText(data.memory_warning, 500));
+        *lines << QStringLiteral("- Memory warning: %1")
+                      .arg(cleanReportText(data.memory_warning, kReportWarningMaxChars));
     }
+}
+
+QString renderReportMarkdown(const PanelReportData& data, const QString& report_path) {
+    QStringList lines;
+    appendReportMetadataMarkdown(&lines, data, report_path);
+    appendReportBodyMarkdown(&lines, data);
+    appendReportTranscriptMarkdown(&lines, data);
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }
 
@@ -2012,7 +2208,9 @@ QString htmlText(const QString& value, int max_chars = 0) {
     return cleanReportText(value, max_chars).toHtmlEscaped();
 }
 
-QString htmlList(const QStringList& items, const QString& empty_text, int max_items = 12) {
+QString htmlList(const QStringList& items,
+                 const QString& empty_text,
+                 int max_items = kReportDefaultHtmlListItemLimit) {
     QStringList lines;
     if (items.isEmpty()) {
         return QStringLiteral("<p class=\"empty\">%1</p>").arg(htmlText(empty_text));
@@ -2020,7 +2218,8 @@ QString htmlList(const QStringList& items, const QString& empty_text, int max_it
     const int limit = std::min(max_items, static_cast<int>(items.size()));
     lines << QStringLiteral("<ul>");
     for (int i = 0; i < limit; ++i) {
-        lines << QStringLiteral("<li>%1</li>").arg(htmlText(items.at(i), 900));
+        lines << QStringLiteral("<li>%1</li>")
+                     .arg(htmlText(items.at(i), kReportTranscriptExcerptMaxChars));
     }
     if (items.size() > limit) {
         lines << QStringLiteral("<li>%1 more item(s) retained in the session trace.</li>")
@@ -2052,7 +2251,7 @@ QString htmlFindingCards(const QVector<PanelReportFinding>& findings) {
     }
     QStringList cards;
     cards << QStringLiteral("<div class=\"finding-grid\">");
-    const int limit = std::min(12, static_cast<int>(findings.size()));
+    const int limit = std::min(kReportHtmlFindingLimit, static_cast<int>(findings.size()));
     for (int i = 0; i < limit; ++i) {
         const auto& finding = findings.at(i);
         const QString severity = finding.severity.isEmpty() ? QStringLiteral("Review")
@@ -2061,10 +2260,11 @@ QString htmlFindingCards(const QVector<PanelReportFinding>& findings) {
                      "<article class=\"finding %1\"><div class=\"severity\">%2</div>"
                      "<h3>%3</h3>")
                      .arg(htmlSeverityClass(severity),
-                          htmlText(severity, 80),
-                          htmlText(finding.title, 300));
+                          htmlText(severity, kReportHtmlSeverityMaxChars),
+                          htmlText(finding.title, kReportHtmlFindingTitleMaxChars));
         if (!finding.detail.isEmpty()) {
-            cards << QStringLiteral("<p>%1</p>").arg(htmlText(finding.detail, 700));
+            cards << QStringLiteral("<p>%1</p>")
+                         .arg(htmlText(finding.detail, kReportHtmlFindingDetailMaxChars));
         }
         cards << QStringLiteral("</article>");
     }
@@ -2089,7 +2289,8 @@ QString htmlArtifactList(const QVector<PanelReportArtifact>& artifacts) {
                                    ? ai::CredentialStore::redactSecrets(artifact.target)
                                    : QUrl::fromLocalFile(artifact.target).toString();
         lines << QStringLiteral("<li><a href=\"%1\">%2</a></li>")
-                     .arg(target.toHtmlEscaped(), htmlText(artifact.label, 260));
+                     .arg(target.toHtmlEscaped(),
+                          htmlText(artifact.label, kReportHtmlArtifactLabelMaxChars));
     }
     lines << QStringLiteral("</ul>");
     return lines.join(QString());
@@ -2104,10 +2305,10 @@ QString htmlWorkflowTimeline(const QVector<ai::AiPhaseExecution>& phases,
             "tr></thead><tbody>");
         for (const auto& phase : phases) {
             rows << QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
-                        .arg(htmlText(phase.phase_id, 120),
-                             htmlText(phaseStatusLabel(phase), 80),
-                             htmlText(durationText(phase.duration_ms), 40),
-                             htmlText(phaseSummary(phase), 500));
+                        .arg(htmlText(phase.phase_id, kReportHtmlPhaseIdMaxChars),
+                             htmlText(phaseStatusLabel(phase), kReportHtmlStatusMaxChars),
+                             htmlText(durationText(phase.duration_ms), kReportHtmlDurationMaxChars),
+                             htmlText(phaseSummary(phase), kReportHtmlPhaseSummaryMaxChars));
         }
         rows << QStringLiteral("</tbody></table>");
         return rows.join(QString());
@@ -2116,16 +2317,17 @@ QString htmlWorkflowTimeline(const QVector<ai::AiPhaseExecution>& phases,
         return QStringLiteral("<p class=\"empty\">No workflow timeline was recorded.</p>");
     }
     rows << QStringLiteral("<ul>");
-    const int start = std::max(0, static_cast<int>(activities.size()) - 18);
+    const int start =
+        std::max(0, static_cast<int>(activities.size()) - kReportHtmlTimelineActivityLimit);
     for (int i = start; i < activities.size(); ++i) {
         const auto& activity = activities.at(i);
         const QString when = activity.timestamp_utc.isValid()
                                  ? activity.timestamp_utc.toString(Qt::ISODateWithMs)
                                  : QStringLiteral("unknown-time");
         rows << QStringLiteral("<li><span class=\"mono\">%1</span> %2: %3</li>")
-                    .arg(htmlText(when, 80),
-                         htmlText(activity.kind, 80),
-                         htmlText(activity.summary, 600));
+                    .arg(htmlText(when, kReportHtmlTimestampMaxChars),
+                         htmlText(activity.kind, kReportHtmlActivityKindMaxChars),
+                         htmlText(activity.summary, kReportHtmlActivitySummaryMaxChars));
     }
     rows << QStringLiteral("</ul>");
     return rows.join(QString());
@@ -2141,143 +2343,140 @@ QString htmlTranscriptAppendix(const QStringList& transcript) {
     lines << QStringLiteral(
         "<p class=\"note\">The sections above are the technician report. "
         "This appendix is intentionally abridged.</p><ol>");
-    for (const auto& entry : transcript.mid(0, 25)) {
-        lines << QStringLiteral("<li>%1</li>").arg(htmlText(entry, 900));
+    for (const auto& entry : transcript.mid(0, kReportTranscriptExcerptLimit)) {
+        lines
+            << QStringLiteral("<li>%1</li>").arg(htmlText(entry, kReportTranscriptExcerptMaxChars));
     }
     lines << QStringLiteral("</ol></details>");
     return lines.join(QString());
 }
 
-QString renderReportHtml(const PanelReportData& data, const QString& report_path) {
-    const QString report_dir = QFileInfo(report_path).absolutePath();
-    const int completed_phases =
+int completedReportPhaseCount(const PanelReportData& data) {
+    return static_cast<int>(
         std::count_if(data.phases.cbegin(), data.phases.cend(), [](const auto& phase) {
             return phase.ran && phase.success && !phase.skipped;
-        });
-    QStringList html;
-    html << QStringLiteral(
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<title>PC Health Report</title><style>"
-        ":root{--text:#172033;--muted:#5b6475;--line:#d7dde8;--bg:#f5f7fb;--panel:#fff;"
-        "--high:#b42318;--med:#b54708;--low:#166534;--blue:#175cd3;}"
-        "body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe "
-        "UI',Arial,sans-serif;"
-        "font-size:14px;line-height:1.5;}main{max-width:1080px;margin:0 auto;padding:28px 28px "
-        "42px;}"
-        ".hero{background:linear-gradient(135deg,#172033,#274060);color:#fff;border-radius:8px;"
-        "padding:28px 30px;margin-bottom:18px;}.hero h1{margin:0 0 8px;font-size:30px;}"
-        ".hero "
-        "p{margin:0;color:#dbe5f5}.badge{display:inline-block;border-radius:999px;padding:4px 10px;"
-        "font-weight:700;background:#fff;color:#172033;margin-bottom:14px}.grid{display:grid;"
-        "grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0 22px;}"
-        ".card,section{background:var(--panel);border:1px solid var(--line);border-radius:8px;"
-        "box-shadow:0 1px 2px rgba(16,24,40,.05)}.card{padding:14px}.label{color:var(--muted);"
-        "font-size:12px;text-transform:uppercase;letter-spacing:.04em}.value{font-size:18px;"
-        "font-weight:750;margin-top:3px}section{padding:20px;margin:14px 0}h2{font-size:19px;"
-        "margin:0 0 12px}h3{font-size:15px;margin:6px 0}.finding-grid{display:grid;"
-        "grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.finding{border-left:"
-        "4px solid var(--blue);"
-        "padding:12px "
-        "14px;background:#fbfcff;border-radius:6px}.severity{font-size:12px;font-weight:800;"
-        "text-transform:uppercase;color:var(--blue)}.sev-high{border-left-color:var(--high)}"
-        ".sev-high .severity{color:var(--high)}.sev-med{border-left-color:var(--med)}"
-        ".sev-med .severity{color:var(--med)}.sev-low{border-left-color:var(--low)}"
-        ".sev-low .severity{color:var(--low)}ul{padding-left:20px;margin:6px 0}li{margin:5px 0}"
-        ".empty,.note{color:var(--muted)}table{width:100%;border-collapse:collapse;font-size:13px}"
-        "th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}"
-        "th{color:var(--muted);font-size:12px;text-transform:uppercase}.mono{font-family:Consolas,'"
-        "Cascadia Mono',monospace}"
-        "a{color:#0969da}details{background:#fff;border:1px solid "
-        "var(--line);border-radius:8px;padding:14px}"
-        "summary{cursor:pointer;font-weight:700}@media "
-        "print{body{background:#fff}main{padding:0}.hero{border-radius:0}}"
-        "</style></head><body><main>");
-    html << QStringLiteral(
-                "<div class=\"hero\"><span class=\"badge\">%1</span><h1>PC Health Report</h1>"
-                "<p>Generated %2 UTC from S.A.K. Utility AI workflow evidence.</p></div>")
-                .arg(htmlText(overallReportStatus(data)), htmlText(reportGeneratedAtUtc()));
-    html << QStringLiteral("<div class=\"grid\">");
-    html << QStringLiteral(
-                "<div class=\"card\"><div class=\"label\">Session</div><div class=\"value "
-                "mono\">%1</div></div>")
-                .arg(htmlText(data.session.id, 80));
-    html << QStringLiteral(
-                "<div class=\"card\"><div class=\"label\">Workflow Phases</div><div "
-                "class=\"value\">%1/%2 completed</div></div>")
-                .arg(completed_phases)
-                .arg(data.phases.size());
-    html << QStringLiteral(
-                "<div class=\"card\"><div class=\"label\">Findings</div><div "
-                "class=\"value\">%1</div></div>")
-                .arg(data.findings.size());
-    html << QStringLiteral(
-                "<div class=\"card\"><div class=\"label\">Artifacts</div><div "
-                "class=\"value\">%1</div></div>")
-                .arg(data.artifacts.size());
-    html << QStringLiteral("</div>");
+        }));
+}
 
-    html << QStringLiteral("<section><h2>Executive Summary</h2>%1</section>")
-                .arg(htmlList(data.summaries,
+void appendReportHtmlDocumentStart(QStringList* html, const PanelReportData& data) {
+    *html << QStringLiteral(
+                 "<!doctype html><html><head><meta charset=\"utf-8\">"
+                 "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+                 "<title>PC Health Report</title><style>%1</style></head><body><main>")
+                 .arg(report::aiHealthReportStyleSheet());
+    *html << QStringLiteral(
+                 "<div class=\"hero\"><span class=\"badge\">%1</span><h1>PC Health Report</h1>"
+                 "<p>Generated %2 UTC from S.A.K. Utility AI workflow evidence.</p></div>")
+                 .arg(htmlText(overallReportStatus(data)), htmlText(reportGeneratedAtUtc()));
+}
+
+void appendReportHtmlMetricGrid(QStringList* html, const PanelReportData& data) {
+    *html << QStringLiteral("<div class=\"grid\">");
+    *html << QStringLiteral(
+                 "<div class=\"card\"><div class=\"label\">Session</div><div class=\"value "
+                 "mono\">%1</div></div>")
+                 .arg(htmlText(data.session.id, kReportHtmlSessionMaxChars));
+    *html << QStringLiteral(
+                 "<div class=\"card\"><div class=\"label\">Workflow Phases</div><div "
+                 "class=\"value\">%1/%2 completed</div></div>")
+                 .arg(completedReportPhaseCount(data))
+                 .arg(data.phases.size());
+    *html << QStringLiteral(
+                 "<div class=\"card\"><div class=\"label\">Findings</div><div "
+                 "class=\"value\">%1</div></div>")
+                 .arg(data.findings.size());
+    *html << QStringLiteral(
+                 "<div class=\"card\"><div class=\"label\">Artifacts</div><div "
+                 "class=\"value\">%1</div></div>")
+                 .arg(data.artifacts.size());
+    *html << QStringLiteral("</div>");
+}
+
+void appendReportHtmlNarrativeSections(QStringList* html, const PanelReportData& data) {
+    *html << QStringLiteral("<section><h2>Executive Summary</h2>%1</section>")
+                 .arg(
+                     htmlList(data.summaries,
                               QStringLiteral(
                                   "The workflow completed, but no narrative summary was recorded."),
-                              3));
-    html << QStringLiteral("<section><h2>Key Findings</h2>%1</section>")
-                .arg(htmlFindingCards(data.findings));
-    html << QStringLiteral("<section><h2>Evidence Snapshot</h2>%1</section>")
-                .arg(htmlList(data.evidence_snapshot,
-                              QStringLiteral("No structured evidence snapshot was available."),
-                              18));
-    html << QStringLiteral("<section><h2>Recommended Next Steps</h2>%1</section>")
-                .arg(htmlList(data.next_steps,
-                              data.findings.isEmpty()
-                                  ? QStringLiteral("Continue normal monitoring.")
-                                  : QStringLiteral(
-                                        "Review findings and rerun incomplete checks as needed."),
-                              10));
-    html << QStringLiteral("<section><h2>Evidence Limits and Risks</h2>%1</section>")
-                .arg(htmlList(
-                    data.risks, QStringLiteral("No evidence limitations were recorded."), 10));
-    html << QStringLiteral("<section><h2>Work Performed</h2>%1</section>")
-                .arg(
-                    htmlList(data.actions, QStringLiteral("No change actions were recorded."), 10));
-    html << QStringLiteral("<section><h2>Evidence Notes</h2>%1</section>")
-                .arg(htmlList(data.evidence_notes,
-                              QStringLiteral("No extra evidence notes were recorded."),
-                              8));
-    html << QStringLiteral("<section><h2>Workflow Timeline</h2>%1</section>")
-                .arg(htmlWorkflowTimeline(data.phases, data.activities));
-    html << QStringLiteral("<section><h2>Evidence Artifacts</h2>%1</section>")
-                .arg(htmlArtifactList(data.artifacts));
-    html << QStringLiteral("<section><h2>Sources</h2>%1</section>")
-                .arg(htmlArtifactList(data.sources));
-    html << QStringLiteral(
-                "<section><h2>Report Paths</h2><ul>"
-                "<li>Report directory: <span class=\"mono\">%1</span></li>"
-                "<li>Session directory: <span class=\"mono\">%2</span></li></ul></section>")
-                .arg(htmlText(QDir::toNativeSeparators(report_dir), 700),
-                     htmlText(QDir::toNativeSeparators(data.session.path), 700));
-    html << QStringLiteral("<section><h2>Appendix</h2>%1</section>")
-                .arg(htmlTranscriptAppendix(data.transcript));
+                              kReportHtmlSummaryItemLimit));
+    *html << QStringLiteral("<section><h2>Key Findings</h2>%1</section>")
+                 .arg(htmlFindingCards(data.findings));
+    *html << QStringLiteral("<section><h2>Evidence Snapshot</h2>%1</section>")
+                 .arg(htmlList(data.evidence_snapshot,
+                               QStringLiteral("No structured evidence snapshot was available."),
+                               kReportHtmlEvidenceItemLimit));
+    *html << QStringLiteral("<section><h2>Recommended Next Steps</h2>%1</section>")
+                 .arg(htmlList(data.next_steps,
+                               data.findings.isEmpty()
+                                   ? QStringLiteral("Continue normal monitoring.")
+                                   : QStringLiteral(
+                                         "Review findings and rerun incomplete checks as needed."),
+                               kReportHtmlNextStepItemLimit));
+}
+
+void appendReportHtmlEvidenceSections(QStringList* html, const PanelReportData& data) {
+    *html << QStringLiteral("<section><h2>Evidence Limits and Risks</h2>%1</section>")
+                 .arg(htmlList(data.risks,
+                               QStringLiteral("No evidence limitations were recorded."),
+                               kReportHtmlRiskItemLimit));
+    *html << QStringLiteral("<section><h2>Work Performed</h2>%1</section>")
+                 .arg(htmlList(data.actions,
+                               QStringLiteral("No change actions were recorded."),
+                               kReportHtmlActionItemLimit));
+    *html << QStringLiteral("<section><h2>Evidence Notes</h2>%1</section>")
+                 .arg(htmlList(data.evidence_notes,
+                               QStringLiteral("No extra evidence notes were recorded."),
+                               kReportHtmlEvidenceNoteItemLimit));
+    *html << QStringLiteral("<section><h2>Workflow Timeline</h2>%1</section>")
+                 .arg(htmlWorkflowTimeline(data.phases, data.activities));
+    *html << QStringLiteral("<section><h2>Evidence Artifacts</h2>%1</section>")
+                 .arg(htmlArtifactList(data.artifacts));
+    *html << QStringLiteral("<section><h2>Sources</h2>%1</section>")
+                 .arg(htmlArtifactList(data.sources));
+}
+
+void appendReportHtmlAppendix(QStringList* html,
+                              const PanelReportData& data,
+                              const QString& report_path) {
+    const QString report_dir = QFileInfo(report_path).absolutePath();
+    *html << QStringLiteral(
+                 "<section><h2>Report Paths</h2><ul>"
+                 "<li>Report directory: <span class=\"mono\">%1</span></li>"
+                 "<li>Session directory: <span class=\"mono\">%2</span></li></ul></section>")
+                 .arg(htmlText(QDir::toNativeSeparators(report_dir), kReportHtmlPathMaxChars),
+                      htmlText(QDir::toNativeSeparators(data.session.path),
+                               kReportHtmlPathMaxChars));
+    *html << QStringLiteral("<section><h2>Appendix</h2>%1</section>")
+                 .arg(htmlTranscriptAppendix(data.transcript));
+}
+
+void appendReportHtmlWarnings(QStringList* html, const PanelReportData& data) {
     if (!data.activity_warning.isEmpty() || !data.memory_warning.isEmpty()) {
         QStringList warnings;
-        appendUniqueReportLine(&warnings, data.activity_warning, 3);
-        appendUniqueReportLine(&warnings, data.memory_warning, 3);
-        html << QStringLiteral("<section><h2>Report Generation Warnings</h2>%1</section>")
-                    .arg(htmlList(warnings, QStringLiteral("No report generation warnings."), 3));
+        appendUniqueReportLine(&warnings, data.activity_warning, kReportHtmlWarningItemLimit);
+        appendUniqueReportLine(&warnings, data.memory_warning, kReportHtmlWarningItemLimit);
+        *html << QStringLiteral("<section><h2>Report Generation Warnings</h2>%1</section>")
+                     .arg(htmlList(warnings,
+                                   QStringLiteral("No report generation warnings."),
+                                   kReportHtmlWarningItemLimit));
     }
+}
+
+QString renderReportHtml(const PanelReportData& data, const QString& report_path) {
+    QStringList html;
+    appendReportHtmlDocumentStart(&html, data);
+    appendReportHtmlMetricGrid(&html, data);
+    appendReportHtmlNarrativeSections(&html, data);
+    appendReportHtmlEvidenceSections(&html, data);
+    appendReportHtmlAppendix(&html, data, report_path);
+    appendReportHtmlWarnings(&html, data);
     html << QStringLiteral("</main></body></html>");
     return html.join(QString());
 }
 
 QString markdownReportToHtml(const QString& markdown) {
     QTextDocument document;
-    document.setDefaultStyleSheet(QStringLiteral(
-        "body{font-family:'Segoe UI',Arial,sans-serif;line-height:1.48;color:#1f2328;"
-        "max-width:980px;margin:24px auto;padding:0 24px;background:#fff;}"
-        "h1{font-size:26px;margin:0 0 18px;color:#111827;}"
-        "h2{font-size:18px;margin-top:24px;border-bottom:1px solid #d0d7de;"
-        "padding-bottom:6px;color:#111827;}li{margin:5px 0;}a{color:#0969da;}"));
+    document.setDefaultStyleSheet(report::markdownReportStyleSheet());
     document.setMarkdown(markdown);
     return document.toHtml();
 }
@@ -2388,7 +2587,7 @@ PanelReportData collectPanelReportData(const PanelReportInputs& inputs,
     QString artifact_error;
     data.artifacts = collectReportArtifacts(
         inputs.conversation->artifactRootDirectory(&artifact_error), report_path);
-    appendUniqueReportLine(&data.evidence_notes, artifact_error, 18);
+    appendUniqueReportLine(&data.evidence_notes, artifact_error, kReportHtmlEvidenceItemLimit);
     return data;
 }
 
@@ -2410,7 +2609,9 @@ void evaluatePanelReportData(PanelReportData* data) {
     }
     for (const auto& gate : data->gates) {
         if (gate.isPending()) {
-            appendUniqueReportLine(&data->evidence_notes, gate.question, 18);
+            appendUniqueReportLine(&data->evidence_notes,
+                                   gate.question,
+                                   kReportHtmlEvidenceItemLimit);
         }
     }
 }
@@ -2572,15 +2773,15 @@ void requireFocusForWheel(QWidget* widget, QObject* owner) {
 }
 
 void configureReadableCombo(QComboBox* combo,
-                            int minimum_contents_length = 24,
-                            int popup_min_width = 420) {
+                            int minimum_contents_length = kReadableComboDefaultContentsLength,
+                            int popup_min_width = kReadableComboDefaultPopupMinWidth) {
     if (!combo) {
         return;
     }
-    combo->setMinimumHeight(28);
+    combo->setMinimumHeight(kReadableComboMinHeight);
     combo->setMinimumContentsLength(minimum_contents_length);
     combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    combo->setMaxVisibleItems(18);
+    combo->setMaxVisibleItems(kReadableComboMaxVisibleItems);
     if (auto* view = combo->view()) {
         view->setMinimumWidth(popup_min_width);
         view->setTextElideMode(Qt::ElideNone);
@@ -2613,18 +2814,18 @@ void configureCompactButton(QPushButton* button, const QString& icon_path = {}) 
     if (!button) {
         return;
     }
-    button->setMinimumHeight(34);
+    button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
     button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     if (!icon_path.isEmpty()) {
         button->setIcon(QIcon(icon_path));
-        button->setIconSize(QSize(16, 16));
+        button->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     }
 }
 
 QLabel* makeRailTitle(QWidget* parent, const QString& text) {
     auto* label = new QLabel(text, parent);
     label->setStyleSheet(
-        QStringLiteral("font-weight: 700; color: %1;").arg(sak::ui::kColorTextHeading));
+        sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextHeading));
     return label;
 }
 
@@ -2648,6 +2849,22 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
     , m_packageListManager(std::make_unique<PackageListManager>())
     , m_offlineWorker(std::make_unique<OfflineDeploymentWorker>(this)) {
+    configureExecutionBrokers();
+    m_taskStatus = tr("Idle");
+    if (initializeAccessibilityAuditUi()) {
+        return;
+    }
+
+    QStringList workflow_errors;
+    const bool workflows_loaded = loadWorkflowDefaults(&workflow_errors);
+    const QString health_ledger_error = initializeToolHealthLedger();
+    registerToolDispatcherHandlers();
+    initializeStandardPanel(workflows_loaded, workflow_errors, health_ledger_error);
+    initializePackageManager();
+    logInfo("AiAssistantPanel initialized");
+}
+
+void AiAssistantPanel::configureExecutionBrokers() {
     m_executionBroker->setElevatedRunner(
         [this](const ai::AiCommandRequest& request) { return runElevatedPowerShell(request); });
     m_executionBroker->setElevatedCancel([this]() {
@@ -2655,17 +2872,40 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
             m_elevationBroker->cancelCurrentTask();
         }
     });
-    m_taskStatus = tr("Idle");
-    QStringList workflow_errors;
-    const bool workflows_loaded = m_workflowStore->loadDefaults(&workflow_errors);
+}
+
+bool AiAssistantPanel::initializeAccessibilityAuditUi() {
+    const bool accessibility_audit = qApp->property("sakAccessibilityAudit").toBool();
+    if (!accessibility_audit) {
+        return false;
+    }
+    setupUi();
+    connectAiClient();
+    updateCredentialControls();
+    updateTokenLabels();
+    updateAccessStatus();
+    logInfo("AiAssistantPanel initialized");
+    return true;
+}
+
+bool AiAssistantPanel::loadWorkflowDefaults(QStringList* workflow_errors) {
+    return m_workflowStore && m_workflowStore->loadDefaults(workflow_errors);
+}
+
+QString AiAssistantPanel::initializeToolHealthLedger() {
     QString health_ledger_error;
     if (m_toolHealthLedger) {
         const QString path =
             QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/tool_health_ledger.json"));
-        m_toolHealthLedger->setPersistencePath(path, 24);
+        m_toolHealthLedger->setPersistencePath(path, kToolHealthLedgerRetentionHours);
         (void)m_toolHealthLedger->load(&health_ledger_error);
     }
-    registerToolDispatcherHandlers();
+    return health_ledger_error;
+}
+
+void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
+                                               const QStringList& workflow_errors,
+                                               const QString& health_ledger_error) {
     setupUi();
     connectAiClient();
     loadRememberedApiKey();
@@ -2686,6 +2926,9 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     for (const auto& error : workflow_errors) {
         appendLocalEvent(tr("Workflow catalog: %1").arg(error));
     }
+}
+
+void AiAssistantPanel::initializePackageManager() {
     const QString choco_path =
         QDir(QApplication::applicationDirPath()).filePath(QStringLiteral("tools/chocolatey"));
     if (m_chocoManager->initialize(choco_path)) {
@@ -2693,7 +2936,6 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     } else {
         appendLocalEvent(tr("SAK package manager unavailable at %1").arg(choco_path));
     }
-    logInfo("AiAssistantPanel initialized");
 }
 
 AiAssistantPanel::~AiAssistantPanel() {
@@ -2830,10 +3072,11 @@ void AiAssistantPanel::setupUi() {
 
 QWidget* AiAssistantPanel::createChatWorkspace() {
     auto* content = new QWidget(this);
-    content->setStyleSheet(QStringLiteral("background: %1;").arg(sak::ui::kColorBgWhite));
+    content->setStyleSheet(sak::ui::bareBackgroundStyle(sak::ui::kColorBgWhite));
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    layout->setSpacing(sak::ui::kSpacingNone);
 
     auto* splitter = new QSplitter(Qt::Horizontal, content);
     splitter->setChildrenCollapsible(false);
@@ -2841,7 +3084,7 @@ QWidget* AiAssistantPanel::createChatWorkspace() {
     splitter->addWidget(createContextPane());
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
-    splitter->setSizes({860, 280});
+    splitter->setSizes({kContextSplitterConversationWidth, kContextSplitterRailWidth});
     layout->addWidget(splitter, 1);
 
     return content;
@@ -2850,20 +3093,9 @@ QWidget* AiAssistantPanel::createChatWorkspace() {
 QWidget* AiAssistantPanel::createContextPane() {
     auto* pane = new QFrame(this);
     pane->setObjectName(QStringLiteral("aiContextPane"));
-    pane->setMinimumWidth(320);
-    pane->setMaximumWidth(440);
-    pane->setStyleSheet(
-        QStringLiteral(
-            "QFrame#aiContextPane { background: %1; border-left: 1px solid %2; }"
-            "QLabel { color: %3; }"
-            "QComboBox, QLineEdit { background: %4; border: 1px solid %2; border-radius: 4px; "
-            "padding: 4px 6px; color: %3; }"
-            "QComboBox:focus, QLineEdit:focus { border-color: %5; }")
-            .arg(sak::ui::kColorBgSurface,
-                 sak::ui::kColorBorderDefault,
-                 sak::ui::kColorTextBody,
-                 sak::ui::kColorBgWhite,
-                 sak::ui::kColorPrimaryDark));
+    pane->setMinimumWidth(kContextPaneMinWidth);
+    pane->setMaximumWidth(kContextPaneMaxWidth);
+    pane->setStyleSheet(sak::ui::aiContextPaneStyle());
     auto* layout = new QVBoxLayout(pane);
     layout->setContentsMargins(sak::ui::kMarginMedium,
                                sak::ui::kMarginMedium,
@@ -2871,10 +3103,28 @@ QWidget* AiAssistantPanel::createContextPane() {
                                sak::ui::kMarginMedium);
     layout->setSpacing(sak::ui::kSpacingSmall);
 
+    setupContextPaneSessionSection(layout, pane);
+    setupContextPaneAgentSection(layout, pane);
+    setupContextPaneAccessSection(layout, pane);
+    setupContextPaneCredentialSection(layout, pane);
+    layout->addStretch();
+
+    auto* scroll = createScrollArea(this, pane);
+    scroll->setObjectName(QStringLiteral("aiContextScroll"));
+    scroll->setMinimumWidth(kContextScrollMinWidth);
+    scroll->setMaximumWidth(kContextScrollMaxWidth);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setStyleSheet(
+        sak::ui::backgroundStyle("QScrollArea#aiContextScroll", sak::ui::kColorBgSurface));
+    return scroll;
+}
+
+void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addWidget(makeRailTitle(pane, tr("Session")));
 
     m_sessionCombo = new QComboBox(pane);
-    configureReadableCombo(m_sessionCombo, 26, 440);
+    configureReadableCombo(m_sessionCombo, kSessionComboContentsLength, kSessionComboPopupMinWidth);
     requireFocusForWheel(m_sessionCombo, this);
     m_sessionCombo->setToolTip(tr("Switch between saved AI chat sessions"));
     setAccessible(m_sessionCombo, tr("AI session"), tr("Open or switch AI chat session"));
@@ -2921,12 +3171,14 @@ QWidget* AiAssistantPanel::createContextPane() {
         m_resumeGateButton, &QPushButton::clicked, this, &AiAssistantPanel::onResumeGateClicked);
     m_resumeGateButton->setVisible(false);
     layout->addWidget(m_resumeGateButton);
+}
 
+void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
     layout->addWidget(makeRailTitle(pane, tr("Agent")));
 
     m_modelCombo = new QComboBox(pane);
-    configureReadableCombo(m_modelCombo, 24, 420);
+    configureReadableCombo(m_modelCombo);
     requireFocusForWheel(m_modelCombo, this);
     m_modelCombo->setEditable(true);
     m_modelCombo->addItems(
@@ -2936,7 +3188,7 @@ QWidget* AiAssistantPanel::createContextPane() {
     layout->addWidget(m_modelCombo);
 
     m_agentProfileCombo = new QComboBox(pane);
-    configureReadableCombo(m_agentProfileCombo, 24, 420);
+    configureReadableCombo(m_agentProfileCombo);
     requireFocusForWheel(m_agentProfileCombo, this);
     m_agentProfileCombo->addItems({tr("PC Technician"),
                                    tr("Research Assistant"),
@@ -2954,40 +3206,40 @@ QWidget* AiAssistantPanel::createContextPane() {
             this,
             &AiAssistantPanel::onAgentProfileChanged);
     layout->addWidget(m_agentProfileCombo);
+    setupContextPaneWorkflowPicker(layout, pane);
+    setupContextPaneWorkflowDetails(layout, pane);
 
+    refreshPromptTemplates();
+
+    m_reasoningEffortCombo = new QComboBox(pane);
+    configureReadableCombo(m_reasoningEffortCombo,
+                           kReasoningComboContentsLength,
+                           kReasoningComboPopupMinWidth);
+    requireFocusForWheel(m_reasoningEffortCombo, this);
+    m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
+    m_reasoningEffortCombo->setCurrentIndex(1);
+    m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported OpenAI models"));
+    setAccessible(m_reasoningEffortCombo,
+                  tr("Reasoning effort"),
+                  tr("Reasoning effort sent to supported models"));
+    layout->addWidget(m_reasoningEffortCombo);
+}
+
+void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane) {
     m_promptTemplateCombo = new QComboBox(pane);
-    configureReadableCombo(m_promptTemplateCombo, 32, 620);
+    configureReadableCombo(m_promptTemplateCombo,
+                           kWorkflowComboContentsLength,
+                           kWorkflowComboPopupMinWidth);
     requireFocusForWheel(m_promptTemplateCombo, this);
     m_promptTemplateCombo->setToolTip(
         tr("Choose a multi-step workflow. The list shows category, job name, and phase count."));
     setAccessible(m_promptTemplateCombo,
                   tr("Workflow library"),
                   tr("Role-specific AI workflow templates"));
-    connect(m_promptTemplateCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
-        const bool has_selection = index > 0;
-        if (m_addWorkflowButton) {
-            m_addWorkflowButton->setEnabled(has_selection);
-        }
-        if (!has_selection) {
-            hideWorkflowDetails();
-            return;
-        }
-        if (!m_workflowStore || !m_promptTemplateCombo) {
-            return;
-        }
-        const QString item_data = m_promptTemplateCombo->itemData(index).toString();
-        if (const auto* workflow = m_workflowStore->workflowById(item_data)) {
-            showWorkflowDetails(*workflow);
-            return;
-        }
-        if (m_workflowDetailsPanel && m_workflowDetailsBody && m_workflowDetailsTitle) {
-            m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
-            m_workflowDetailsBody->setPlainText(
-                tr("No structured details available for this entry."));
-            m_workflowDetailsPanel->setVisible(true);
-            m_workflowDetailsCurrentId.clear();
-        }
-    });
+    connect(m_promptTemplateCombo,
+            &QComboBox::currentIndexChanged,
+            this,
+            &AiAssistantPanel::onWorkflowTemplatePickerChanged);
     auto* workflowRow = new QHBoxLayout();
     workflowRow->setSpacing(sak::ui::kSpacingSmall);
     workflowRow->addWidget(m_promptTemplateCombo, 1);
@@ -3003,13 +3255,37 @@ QWidget* AiAssistantPanel::createContextPane() {
     workflowRow->addWidget(m_addWorkflowButton);
 
     layout->addLayout(workflowRow);
+}
 
+void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
+    const bool has_selection = index > 0;
+    if (m_addWorkflowButton) {
+        m_addWorkflowButton->setEnabled(has_selection);
+    }
+    if (!has_selection) {
+        hideWorkflowDetails();
+        return;
+    }
+    if (!m_workflowStore || !m_promptTemplateCombo) {
+        return;
+    }
+    const QString item_data = m_promptTemplateCombo->itemData(index).toString();
+    if (const auto* workflow = m_workflowStore->workflowById(item_data)) {
+        showWorkflowDetails(*workflow);
+        return;
+    }
+    if (m_workflowDetailsPanel && m_workflowDetailsBody && m_workflowDetailsTitle) {
+        m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
+        m_workflowDetailsBody->setPlainText(tr("No structured details available for this entry."));
+        m_workflowDetailsPanel->setVisible(true);
+        m_workflowDetailsCurrentId.clear();
+    }
+}
+
+void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWidget* pane) {
     m_workflowDetailsPanel = new QFrame(pane);
     m_workflowDetailsPanel->setObjectName(QStringLiteral("aiWorkflowDetailsPanel"));
-    m_workflowDetailsPanel->setStyleSheet(
-        QStringLiteral("QFrame#aiWorkflowDetailsPanel { background: %1; "
-                       "border: 1px solid %2; border-radius: 4px; }")
-            .arg(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
+    m_workflowDetailsPanel->setStyleSheet(sak::ui::aiWorkflowDetailsPanelStyle());
     m_workflowDetailsPanel->setVisible(false);
     auto* detailsLayout = new QVBoxLayout(m_workflowDetailsPanel);
     detailsLayout->setContentsMargins(
@@ -3019,7 +3295,7 @@ QWidget* AiAssistantPanel::createContextPane() {
     detailsHeaderRow->setSpacing(sak::ui::kSpacingSmall);
     m_workflowDetailsTitle = new QLabel(tr("Workflow"), m_workflowDetailsPanel);
     m_workflowDetailsTitle->setStyleSheet(
-        QStringLiteral("font-weight: 700; color: %1;").arg(sak::ui::kColorTextHeading));
+        sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextHeading));
     detailsHeaderRow->addWidget(m_workflowDetailsTitle, 1);
     m_workflowDetailsCloseButton = new QPushButton(tr("Close"), m_workflowDetailsPanel);
     configureCompactButton(m_workflowDetailsCloseButton,
@@ -3036,35 +3312,21 @@ QWidget* AiAssistantPanel::createContextPane() {
     m_workflowDetailsBody = new QTextBrowser(m_workflowDetailsPanel);
     m_workflowDetailsBody->setReadOnly(true);
     m_workflowDetailsBody->setOpenExternalLinks(false);
-    m_workflowDetailsBody->setMinimumHeight(140);
-    m_workflowDetailsBody->setMaximumHeight(320);
-    m_workflowDetailsBody->setStyleSheet(
-        QStringLiteral(
-            "QTextBrowser { background: %1; border: 0; color: %2; padding: 4px; font-size: 9pt; }")
-            .arg(sak::ui::kColorBgWhite, sak::ui::kColorTextBody));
+    m_workflowDetailsBody->setMinimumHeight(kWorkflowDetailsMinHeight);
+    m_workflowDetailsBody->setMaximumHeight(kWorkflowDetailsMaxHeight);
+    m_workflowDetailsBody->setStyleSheet(sak::ui::aiWorkflowDetailsBodyStyle());
     setAccessible(m_workflowDetailsBody, tr("Workflow details preview"));
     requireFocusForWheel(m_workflowDetailsBody, this);
     detailsLayout->addWidget(m_workflowDetailsBody);
     layout->addWidget(m_workflowDetailsPanel);
+}
 
-    refreshPromptTemplates();
-
-    m_reasoningEffortCombo = new QComboBox(pane);
-    configureReadableCombo(m_reasoningEffortCombo, 14, 260);
-    requireFocusForWheel(m_reasoningEffortCombo, this);
-    m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
-    m_reasoningEffortCombo->setCurrentIndex(1);
-    m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported OpenAI models"));
-    setAccessible(m_reasoningEffortCombo,
-                  tr("Reasoning effort"),
-                  tr("Reasoning effort sent to supported models"));
-    layout->addWidget(m_reasoningEffortCombo);
-
+void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
     layout->addWidget(makeRailTitle(pane, tr("Access")));
 
     m_accessModeCombo = new QComboBox(pane);
-    configureReadableCombo(m_accessModeCombo, 24, 420);
+    configureReadableCombo(m_accessModeCombo);
     requireFocusForWheel(m_accessModeCombo, this);
     m_accessModeCombo->addItems(
         {tr("Chat and Research"), tr("Assisted Full Access"), tr("Unattended Full Access")});
@@ -3084,7 +3346,9 @@ QWidget* AiAssistantPanel::createContextPane() {
     m_accessStatusLabel->setToolTip(tr("Current local execution mode"));
     setAccessible(m_accessStatusLabel, tr("Access mode status"));
     layout->addWidget(m_accessStatusLabel);
+}
 
+void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
     auto* keyRow = new QHBoxLayout();
     keyRow->setSpacing(sak::ui::kSpacingSmall);
@@ -3101,7 +3365,7 @@ QWidget* AiAssistantPanel::createContextPane() {
     auto* keyStatusRow = new QHBoxLayout();
     keyStatusRow->setSpacing(sak::ui::kSpacingTight);
     m_connectionStatusIconLabel = new QLabel(pane);
-    m_connectionStatusIconLabel->setFixedWidth(16);
+    m_connectionStatusIconLabel->setFixedWidth(kConnectionStatusIconWidth);
     m_connectionStatusIconLabel->setAlignment(Qt::AlignCenter);
     m_connectionStatusIconLabel->setToolTip(tr("OpenAI API key status indicator"));
     setAccessible(m_connectionStatusIconLabel, tr("OpenAI key status indicator"));
@@ -3114,38 +3378,29 @@ QWidget* AiAssistantPanel::createContextPane() {
     layout->addLayout(keyStatusRow);
     setApiKeyStatus(tr("Not loaded"),
                     sak::ui::kStatusColorError,
-                    QString(QChar(0x2718)),
+                    QString(QChar(kStatusMarkerError)),
                     sak::ui::kStatusColorError);
-
-    layout->addStretch();
-
-    auto* scroll = createScrollArea(this, pane);
-    scroll->setObjectName(QStringLiteral("aiContextScroll"));
-    scroll->setMinimumWidth(340);
-    scroll->setMaximumWidth(460);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll->setStyleSheet(QStringLiteral("QScrollArea#aiContextScroll { background: %1; }")
-                              .arg(sak::ui::kColorBgSurface));
-    return scroll;
 }
 
 QWidget* AiAssistantPanel::createConversationPane() {
     auto* pane = new QFrame(this);
     pane->setObjectName(QStringLiteral("aiConversationPane"));
-    pane->setStyleSheet(QStringLiteral("QFrame#aiConversationPane { background: %1; border: 1px "
-                                       "solid %2; border-radius: 4px; }")
-                            .arg(sak::ui::kColorBgWhite, sak::ui::kColorBorderDefault));
+    pane->setStyleSheet(sak::ui::aiConversationPaneStyle());
     auto* layout = new QVBoxLayout(pane);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    layout->setSpacing(sak::ui::kSpacingNone);
 
+    setupConversationHeader(layout, pane);
+    setupConversationTranscript(layout, pane);
+    setupConversationComposer(layout, pane);
+    return pane;
+}
+
+void AiAssistantPanel::setupConversationHeader(QVBoxLayout* layout, QWidget* pane) {
     auto* chatHeader = new QFrame(pane);
     chatHeader->setObjectName(QStringLiteral("aiConversationHeader"));
-    chatHeader->setStyleSheet(
-        QStringLiteral(
-            "QFrame#aiConversationHeader { background: %1; border-bottom: 1px solid %2; }")
-            .arg(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault));
+    chatHeader->setStyleSheet(sak::ui::aiConversationHeaderStyle());
     auto* chatHeaderLayout = new QVBoxLayout(chatHeader);
     chatHeaderLayout->setContentsMargins(sak::ui::kMarginMedium,
                                          sak::ui::kMarginTight,
@@ -3153,40 +3408,41 @@ QWidget* AiAssistantPanel::createConversationPane() {
                                          sak::ui::kMarginTight);
     chatHeaderLayout->setSpacing(sak::ui::kSpacingTight);
 
+    setupConversationStatusRow(chatHeaderLayout, chatHeader);
+    setupConversationHeaderActions(chatHeaderLayout, chatHeader);
+    layout->addWidget(chatHeader);
+}
+
+void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* header) {
     auto* statusRow = new QHBoxLayout();
     statusRow->setSpacing(sak::ui::kSpacingSmall);
-    statusRow->addWidget(makeRailTitle(chatHeader, tr("Chat")));
+    statusRow->addWidget(makeRailTitle(header, tr("Chat")));
 
-    m_workflowProgressBar = new QProgressBar(chatHeader);
+    m_workflowProgressBar = new QProgressBar(header);
     m_workflowProgressBar->setVisible(false);
     m_workflowProgressBar->setTextVisible(true);
-    m_workflowProgressBar->setMinimumWidth(160);
-    m_workflowProgressBar->setMaximumWidth(520);
-    m_workflowProgressBar->setFixedHeight(18);
+    m_workflowProgressBar->setMinimumWidth(kWorkflowProgressMinWidth);
+    m_workflowProgressBar->setMaximumWidth(kWorkflowProgressMaxWidth);
+    m_workflowProgressBar->setFixedHeight(sak::ui::kUiProgressBarHeight);
     m_workflowProgressBar->setRange(0, 1);
     m_workflowProgressBar->setValue(0);
     m_workflowProgressBar->setFormat(tr("Workflow idle"));
     m_workflowProgressBar->setToolTip(
         tr("Live workflow progress. Shows the active phase and completed phase count."));
-    m_workflowProgressBar->setStyleSheet(
-        QStringLiteral("QProgressBar { background: %1; border: 1px solid %2; border-radius: 3px; "
-                       "color: %3; text-align: center; font-size: 8pt; font-weight: 600; }"
-                       "QProgressBar::chunk { background: %4; border-radius: 2px; }")
-            .arg(sak::ui::kColorBgWhite,
-                 sak::ui::kColorBorderDefault,
-                 sak::ui::kColorTextBody,
-                 sak::ui::kColorPrimaryDark));
+    m_workflowProgressBar->setStyleSheet(sak::ui::aiWorkflowProgressStyle());
     setAccessible(m_workflowProgressBar,
                   tr("AI workflow progress"),
                   tr("Shows live workflow phase progress while a multi-agent workflow runs"));
     statusRow->addWidget(m_workflowProgressBar, 1);
-    chatHeaderLayout->addLayout(statusRow);
+    layout->addLayout(statusRow);
+}
 
+void AiAssistantPanel::setupConversationHeaderActions(QVBoxLayout* layout, QWidget* header) {
     auto* headerActionRow = new QHBoxLayout();
     headerActionRow->setSpacing(sak::ui::kSpacingSmall);
     headerActionRow->addStretch();
 
-    m_runDetailsButton = new QPushButton(tr("Details"), chatHeader);
+    m_runDetailsButton = new QPushButton(tr("Details"), header);
     configureCompactButton(m_runDetailsButton, QStringLiteral(":/icons/icons/panel_about.svg"));
     m_runDetailsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_runDetailsButton->setToolTip(
@@ -3198,7 +3454,7 @@ QWidget* AiAssistantPanel::createConversationPane() {
         m_runDetailsButton, &QPushButton::clicked, this, &AiAssistantPanel::onRunDetailsClicked);
     headerActionRow->addWidget(m_runDetailsButton);
 
-    m_artifactsButton = new QPushButton(tr("Artifacts"), chatHeader);
+    m_artifactsButton = new QPushButton(tr("Artifacts"), header);
     configureCompactButton(m_artifactsButton,
                            QStringLiteral(":/icons/icons/icons8-opened-folder.svg"));
     m_artifactsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -3212,7 +3468,7 @@ QWidget* AiAssistantPanel::createConversationPane() {
     headerActionRow->addWidget(m_artifactsButton);
     refreshArtifactList();
 
-    m_generateReportButton = new QPushButton(tr("Report"), chatHeader);
+    m_generateReportButton = new QPushButton(tr("Report"), header);
     configureCompactButton(m_generateReportButton,
                            QStringLiteral(":/icons/icons/icons8-export.svg"));
     m_generateReportButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
@@ -3224,18 +3480,19 @@ QWidget* AiAssistantPanel::createConversationPane() {
             this,
             &AiAssistantPanel::onGenerateReportClicked);
     headerActionRow->addWidget(m_generateReportButton);
-    chatHeaderLayout->addLayout(headerActionRow);
-    layout->addWidget(chatHeader);
+    layout->addLayout(headerActionRow);
+}
 
+void AiAssistantPanel::setupConversationTranscript(QVBoxLayout* layout, QWidget* pane) {
     m_transcriptView = new AiTranscriptView(pane);
     m_transcriptView->setTextRedactor(ai::CredentialStore::redactSecrets);
     layout->addWidget(m_transcriptView, 1);
+}
 
+void AiAssistantPanel::setupConversationComposer(QVBoxLayout* layout, QWidget* pane) {
     auto* composer = new QFrame(pane);
     composer->setObjectName(QStringLiteral("aiComposer"));
-    composer->setStyleSheet(
-        QStringLiteral("QFrame#aiComposer { background: %1; border-top: 1px solid %2; }")
-            .arg(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault));
+    composer->setStyleSheet(sak::ui::aiComposerStyle());
     auto* composerLayout = new QVBoxLayout(composer);
     composerLayout->setContentsMargins(sak::ui::kMarginMedium,
                                        sak::ui::kMarginSmall,
@@ -3243,13 +3500,20 @@ QWidget* AiAssistantPanel::createConversationPane() {
                                        sak::ui::kMarginSmall);
     composerLayout->setSpacing(sak::ui::kSpacingSmall);
 
+    setupComposerInput(composerLayout, composer);
+    setupComposerContextList(composerLayout, composer);
+    setupComposerActions(composerLayout, composer);
+    layout->addWidget(composer);
+}
+
+void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer) {
     m_messageEdit = new QPlainTextEdit(composer);
     m_messageEdit->setPlaceholderText(tr("Ask S.A.K. AI"));
     m_messageEdit->setToolTip(
         tr("Type your request. Press Ctrl+Enter to send. Up/Down at the start/end cycles prompt "
            "history."));
-    m_messageEdit->setMinimumHeight(92);
-    m_messageEdit->setMaximumHeight(160);
+    m_messageEdit->setMinimumHeight(kMessageEditMinHeight);
+    m_messageEdit->setMaximumHeight(kMessageEditMaxHeight);
     m_messageEdit->setFrameShape(QFrame::NoFrame);
     m_messageEdit->setStyleSheet(composerEditStyle());
     m_messageEdit->installEventFilter(this);
@@ -3257,8 +3521,10 @@ QWidget* AiAssistantPanel::createConversationPane() {
     connect(m_messageEdit, &QPlainTextEdit::textChanged, this, [this]() {
         updateCredentialControls();
     });
-    composerLayout->addWidget(m_messageEdit);
+    layout->addWidget(m_messageEdit);
+}
 
+void AiAssistantPanel::setupComposerContextList(QVBoxLayout* layout, QWidget* composer) {
     m_contextList = new QListWidget(composer);
     m_contextList->setObjectName(QStringLiteral("aiContextChips"));
     m_contextList->setViewMode(QListView::IconMode);
@@ -3269,18 +3535,18 @@ QWidget* AiAssistantPanel::createConversationPane() {
     m_contextList->setSelectionMode(QAbstractItemView::NoSelection);
     m_contextList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_contextList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_contextList->setMinimumHeight(42);
-    m_contextList->setMaximumHeight(122);
+    m_contextList->setMinimumHeight(kContextListMinHeight);
+    m_contextList->setMaximumHeight(kContextListMaxHeight);
     m_contextList->setGridSize(QSize());
-    m_contextList->setSpacing(4);
-    m_contextList->setStyleSheet(QStringLiteral(
-        "QListWidget#aiContextChips { background: transparent; border: 0; padding: 0; }"
-        "QListWidget#aiContextChips::item { background: transparent; border: 0; }"));
+    m_contextList->setSpacing(sak::ui::kSpacingTight);
+    m_contextList->setStyleSheet(sak::ui::aiContextChipsListStyle());
     setAccessible(m_contextList, tr("AI context attachments"));
     requireFocusForWheel(m_contextList, this);
     m_contextList->hide();
-    composerLayout->addWidget(m_contextList);
+    layout->addWidget(m_contextList);
+}
 
+void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* composer) {
     auto* actionRow = new QHBoxLayout();
     actionRow->setSpacing(sak::ui::kSpacingSmall);
 
@@ -3325,8 +3591,8 @@ QWidget* AiAssistantPanel::createConversationPane() {
 
     m_sendButton = new QPushButton(tr("Send"), composer);
     m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
-    m_sendButton->setIconSize(QSize(16, 16));
-    m_sendButton->setMinimumHeight(30);
+    m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
+    m_sendButton->setMinimumHeight(sak::ui::kUiButtonHeightMini);
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_sendButton->setToolTip(tr("Send the message to the AI assistant"));
     setAccessible(m_sendButton, tr("Send AI message"));
@@ -3339,17 +3605,15 @@ QWidget* AiAssistantPanel::createConversationPane() {
     });
     actionRow->addWidget(m_sendButton);
     updatePrimaryActionButton();
-    composerLayout->addLayout(actionRow);
-
-    layout->addWidget(composer);
-    return pane;
+    layout->addLayout(actionRow);
 }
 
 void AiAssistantPanel::createStatusStrip(QVBoxLayout* rootLayout) {
     Q_ASSERT(rootLayout);
 
     auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(0, sak::ui::kSpacingTight, 0, 0);
+    statusRow->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     statusRow->addWidget(m_logToggle);
     statusRow->addStretch();
@@ -3357,8 +3621,15 @@ void AiAssistantPanel::createStatusStrip(QVBoxLayout* rootLayout) {
 }
 
 void AiAssistantPanel::connectAiClient() {
-    Q_ASSERT(m_client);
+    connectOpenAiClientSignals();
+    connectExecutionBrokerSignals();
+    connectElevationBrokerSignals();
+    ensureActivityTimer();
+}
+
+void AiAssistantPanel::connectOpenAiClientSignals() {
     qRegisterMetaType<sak::ai::AiCommandResult>("sak::ai::AiCommandResult");
+    Q_ASSERT(m_client);
     connect(m_client.get(),
             &ai::OpenAIResponsesClient::requestStarted,
             this,
@@ -3379,7 +3650,9 @@ void AiAssistantPanel::connectAiClient() {
             &ai::OpenAIResponsesClient::requestFailed,
             this,
             &AiAssistantPanel::onRequestFailed);
+}
 
+void AiAssistantPanel::connectExecutionBrokerSignals() {
     Q_ASSERT(m_executionBroker);
     connect(m_executionBroker.get(),
             &ai::ExecutionBroker::started,
@@ -3397,47 +3670,52 @@ void AiAssistantPanel::connectAiClient() {
             &ai::ExecutionBroker::finished,
             this,
             &AiAssistantPanel::onBrokerFinished);
+}
 
+void AiAssistantPanel::connectElevationBrokerSignals() {
     Q_ASSERT(m_elevationBroker);
     connect(m_elevationBroker.get(),
             &ElevationBroker::progressUpdated,
             this,
             [this](int percent, const QString& status) {
-                if (m_currentCommandId.isEmpty()) {
-                    return;
-                }
-                if (status.startsWith(QLatin1String("STDOUT|"))) {
-                    const QString chunk = status.mid(7);
-                    m_currentStdoutBuffer.append(chunk);
-                    emitPrefixedLogLines(
-                        [this](const QString& line) {
-                            Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
-                        },
-                        QStringLiteral("[%1 *ADMIN*]").arg(m_currentCommandId),
-                        chunk);
-                    return;
-                }
-                if (status.startsWith(QLatin1String("STDERR|"))) {
-                    const QString chunk = status.mid(7);
-                    m_currentStderrBuffer.append(chunk);
-                    emitPrefixedLogLines(
-                        [this](const QString& line) {
-                            Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
-                        },
-                        QStringLiteral("[%1 *ADMIN* err]").arg(m_currentCommandId),
-                        chunk);
-                    return;
-                }
-                Q_EMIT logOutput(
-                    ai::CredentialStore::redactSecrets(QStringLiteral("[%1 *ADMIN* %2%%] %3")
-                                                           .arg(m_currentCommandId)
-                                                           .arg(percent)
-                                                           .arg(status)));
+                handleElevationBrokerProgress(percent, status);
             });
+}
 
+void AiAssistantPanel::handleElevationBrokerProgress(int percent, const QString& status) {
+    if (m_currentCommandId.isEmpty()) {
+        return;
+    }
+    if (status.startsWith(QLatin1String("STDOUT|"))) {
+        const QString chunk = status.mid(7);
+        m_currentStdoutBuffer.append(chunk);
+        emitPrefixedLogLines(
+            [this](const QString& line) {
+                Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
+            },
+            QStringLiteral("[%1 *ADMIN*]").arg(m_currentCommandId),
+            chunk);
+        return;
+    }
+    if (status.startsWith(QLatin1String("STDERR|"))) {
+        const QString chunk = status.mid(7);
+        m_currentStderrBuffer.append(chunk);
+        emitPrefixedLogLines(
+            [this](const QString& line) {
+                Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
+            },
+            QStringLiteral("[%1 *ADMIN* err]").arg(m_currentCommandId),
+            chunk);
+        return;
+    }
+    Q_EMIT logOutput(ai::CredentialStore::redactSecrets(
+        QStringLiteral("[%1 *ADMIN* %2%%] %3").arg(m_currentCommandId).arg(percent).arg(status)));
+}
+
+void AiAssistantPanel::ensureActivityTimer() {
     if (!m_activityTimer) {
         m_activityTimer = new QTimer(this);
-        m_activityTimer->setInterval(450);
+        m_activityTimer->setInterval(kActivityTimerIntervalMs);
         connect(m_activityTimer,
                 &QTimer::timeout,
                 this,
@@ -3453,13 +3731,13 @@ void AiAssistantPanel::loadRememberedApiKey() {
         m_apiKey = remembered_key;
         setApiKeyStatus(tr("Remembered key loaded"),
                         sak::ui::kStatusColorSuccess,
-                        QString(QChar(0x2714)),
+                        QString(QChar(kStatusMarkerSuccess)),
                         sak::ui::kStatusColorSuccess);
         appendLocalEvent(tr("Remembered OpenAI key loaded from encrypted app credential file"));
     } else if (!error.isEmpty()) {
         setApiKeyStatus(tr("Credential load failed"),
                         sak::ui::kStatusColorError,
-                        QString(QChar(0x2718)),
+                        QString(QChar(kStatusMarkerError)),
                         sak::ui::kStatusColorError);
         appendLocalEvent(tr("Credential load failed: %1").arg(error));
     }
@@ -3471,8 +3749,8 @@ void AiAssistantPanel::setApiKeyStatus(const QString& text,
                                        const char* marker_color) {
     if (m_connectionStatusIconLabel) {
         m_connectionStatusIconLabel->setText(marker);
-        m_connectionStatusIconLabel->setStyleSheet(
-            QStringLiteral("font-weight: 800; color: %1;").arg(QString::fromLatin1(marker_color)));
+        m_connectionStatusIconLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            kFontWeightExtraBold, QString::fromLatin1(marker_color)));
     }
     if (m_connectionStatusLabel) {
         m_connectionStatusLabel->setText(text);
@@ -3569,7 +3847,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
     if (isAiBusy()) {
         m_sendButton->setText(tr("Stop"));
         m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
-        m_sendButton->setIconSize(QSize(16, 16));
+        m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
         m_sendButton->setToolTip(tr("Stop the active AI request or running local command"));
         m_sendButton->setStyleSheet(sak::ui::kDangerButtonStyle);
         m_sendButton->setEnabled(true);
@@ -3582,7 +3860,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
     const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
     m_sendButton->setText(tr("Send"));
     m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
-    m_sendButton->setIconSize(QSize(16, 16));
+    m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
     m_sendButton->setToolTip(tr("Send the message to the AI assistant"));
     m_sendButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_sendButton->setEnabled(has_key && !messageText().isEmpty());
@@ -3730,7 +4008,7 @@ AiAssistantPanel::BusyPromptAction AiAssistantPanel::askBusyPromptAction(const Q
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("AI Task In Progress"));
     box.setText(tr("The assistant is already working. What should SAK do with this new request?"));
-    box.setInformativeText(message.left(600));
+    box.setInformativeText(message.left(kHumanApprovalInfoMaxChars));
     auto* steer = box.addButton(tr("Apply as Steering"), QMessageBox::AcceptRole);
     auto* queue = box.addButton(tr("Queue Next"), QMessageBox::ActionRole);
     auto* cancel_queue = box.addButton(tr("Stop and Queue"), QMessageBox::DestructiveRole);
@@ -3861,7 +4139,7 @@ QStringList limitedWorkflowTools(const ai::WorkflowTemplate& workflow) {
         if (!requirement.id.trimmed().isEmpty()) {
             tools << requirement.id.trimmed();
         }
-        if (tools.size() >= 5) {
+        if (tools.size() >= kInlineToolListLimit) {
             break;
         }
     }
@@ -3872,7 +4150,7 @@ QStringList limitedWorkflowInputs(const ai::WorkflowTemplate& workflow) {
     QStringList inputs;
     for (const auto& input : workflow.required_inputs) {
         inputs << (input.label.trimmed().isEmpty() ? input.id.trimmed() : input.label.trimmed());
-        if (inputs.size() >= 5) {
+        if (inputs.size() >= kInlineToolListLimit) {
             break;
         }
     }
@@ -4048,7 +4326,7 @@ QString AiAssistantPanel::buildInstructions() const {
     input.unattended_full_access = currentAccessMode() == AccessMode::UnattendedFullAccess;
     if (m_conversationStore) {
         QString error;
-        input.session_memory = m_conversationStore->memoryText(12'000, &error);
+        input.session_memory = m_conversationStore->memoryText(kSessionMemoryMaxChars, &error);
     }
     return ai::AiPromptAssembler::assemble(input);
 }
@@ -4127,8 +4405,8 @@ void AiAssistantPanel::beginToolTurn(const ai::OpenAIResponseResult& response) {
         return;
     }
     if (m_runToken.isValid()) {
-        m_pendingTurnToken =
-            m_runToken.createChild(QStringLiteral("turn_%1").arg(response.id.left(12)));
+        m_pendingTurnToken = m_runToken.createChild(
+            QStringLiteral("turn_%1").arg(response.id.left(kTraceTokenIdChars)));
     } else {
         m_pendingTurnToken = {};
     }
@@ -4180,12 +4458,13 @@ bool AiAssistantPanel::preparePendingToolCall(const ai::OpenAIFunctionCall& call
         QStringLiteral("tool_call"), call.name, QStringLiteral("started"), context->metadata);
     recordToolLoopObservation(call.name);
 
-    m_pendingCallToken =
-        m_pendingTurnToken.isValid()
-            ? m_pendingTurnToken.createChild(QStringLiteral("call_%1").arg(call.call_id.left(12)))
-        : m_runToken.isValid()
-            ? m_runToken.createChild(QStringLiteral("call_%1").arg(call.call_id.left(12)))
-            : ai::CancellationToken{};
+    m_pendingCallToken = m_pendingTurnToken.isValid()
+                             ? m_pendingTurnToken.createChild(QStringLiteral("call_%1").arg(
+                                   call.call_id.left(kTraceTokenIdChars)))
+                         : m_runToken.isValid()
+                             ? m_runToken.createChild(QStringLiteral("call_%1").arg(
+                                   call.call_id.left(kTraceTokenIdChars)))
+                             : ai::CancellationToken{};
     if ((m_runToken.isValid() && m_runToken.isCancellationRequested()) ||
         (m_pendingCallToken.isValid() && m_pendingCallToken.isCancellationRequested())) {
         *output = ai::AiToolCallRouter::cancelledOutput(call);
@@ -4250,7 +4529,8 @@ bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& con
         result.value(QStringLiteral("success")).toBool(false);
     const QString result_error = result.value(QStringLiteral("error_message")).toString();
     if (!result_error.isEmpty()) {
-        metadata[QStringLiteral("result_error_message")] = result_error.left(1000);
+        metadata[QStringLiteral("result_error_message")] =
+            result_error.left(kMetadataPreviewMaxChars);
     }
     const QString status = outcome.dispatched
                                ? (result.value(QStringLiteral("success")).toBool(false)
@@ -4435,7 +4715,7 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
         QJsonObject metadata = context.metadata;
         metadata[QStringLiteral("guard_blocked")] = true;
         metadata[QStringLiteral("reason")] = plan.guard_block_error;
-        metadata[QStringLiteral("preview")] = plan.preview.left(1000);
+        metadata[QStringLiteral("preview")] = plan.preview.left(kMetadataPreviewMaxChars);
         traceAiEvent(
             QStringLiteral("tool_call"), context.call->name, QStringLiteral("blocked"), metadata);
         appendLocalEvent(
@@ -4454,32 +4734,67 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
 }
 
 QString AiAssistantPanel::allocateCommandId() {
-    return QStringLiteral("cmd_%1").arg(m_nextCommandSequence++, 3, 10, QLatin1Char('0'));
+    return QStringLiteral("cmd_%1").arg(
+        m_nextCommandSequence++, kCommandIdWidth, kCommandIdBase, QLatin1Char('0'));
 }
 
 bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
                                               const QString& preview,
                                               bool risky_change) {
     const QString pending_call_id = currentPendingToolCallId();
-    if (!pending_call_id.isEmpty() && m_resumedApprovedToolCallIds.removeAll(pending_call_id) > 0) {
-        QJsonObject metadata;
-        metadata[QStringLiteral("shell")] = shell;
-        metadata[QStringLiteral("preview")] = preview.left(1000);
-        metadata[QStringLiteral("risky_change")] = risky_change;
-        metadata[QStringLiteral("tool_call_id")] = pending_call_id;
-        metadata[QStringLiteral("summary")] = tr("Resumed command approval: %1").arg(shell);
-        traceAiEvent(QStringLiteral("approval"),
-                     QStringLiteral("command_approval"),
-                     QStringLiteral("resumed"),
-                     metadata);
-        appendLocalEvent(tr("Resumed approval for %1 command").arg(shell));
-        return offerRestorePointIfNeeded(preview, risky_change);
+    bool resumed_approval_result = false;
+    if (consumeResumedCommandApproval(
+            shell, preview, risky_change, pending_call_id, &resumed_approval_result)) {
+        return resumed_approval_result;
     }
 
     const ai::AiRunStatus previous_status = m_runState.status;
+    QJsonObject metadata = commandApprovalMetadata(shell, preview, risky_change);
+    const QString gate_id = beginCommandApprovalGate(&metadata);
+    if (!requestCommandApprovalFromUser(shell, preview)) {
+        return rejectCommandApproval(gate_id, metadata, shell, previous_status);
+    }
+    acceptCommandApproval(gate_id, metadata, shell, previous_status);
+
+    const bool restore_ok = offerRestorePointIfNeeded(preview, risky_change);
+    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                 : ai::AiRunStatus::Running;
+    saveRunStateSnapshot();
+    emitStatusDetails();
+    return restore_ok;
+}
+
+bool AiAssistantPanel::consumeResumedCommandApproval(const QString& shell,
+                                                     const QString& preview,
+                                                     bool risky_change,
+                                                     const QString& pending_call_id,
+                                                     bool* approval_result) {
+    if (pending_call_id.isEmpty() || m_resumedApprovedToolCallIds.removeAll(pending_call_id) <= 0) {
+        return false;
+    }
     QJsonObject metadata;
     metadata[QStringLiteral("shell")] = shell;
-    metadata[QStringLiteral("preview")] = preview.left(1000);
+    metadata[QStringLiteral("preview")] = preview.left(kRestorePointErrorPreviewChars);
+    metadata[QStringLiteral("risky_change")] = risky_change;
+    metadata[QStringLiteral("tool_call_id")] = pending_call_id;
+    metadata[QStringLiteral("summary")] = tr("Resumed command approval: %1").arg(shell);
+    traceAiEvent(QStringLiteral("approval"),
+                 QStringLiteral("command_approval"),
+                 QStringLiteral("resumed"),
+                 metadata);
+    appendLocalEvent(tr("Resumed approval for %1 command").arg(shell));
+    if (approval_result) {
+        *approval_result = offerRestorePointIfNeeded(preview, risky_change);
+    }
+    return true;
+}
+
+QJsonObject AiAssistantPanel::commandApprovalMetadata(const QString& shell,
+                                                      const QString& preview,
+                                                      bool risky_change) const {
+    QJsonObject metadata;
+    metadata[QStringLiteral("shell")] = shell;
+    metadata[QStringLiteral("preview")] = preview.left(kRestorePointErrorPreviewChars);
     metadata[QStringLiteral("risky_change")] = risky_change;
     const QJsonObject turn_state = pendingToolTurnState();
     if (!turn_state.isEmpty()) {
@@ -4492,21 +4807,29 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
     }
     metadata[QStringLiteral("summary")] = tr("Waiting for command approval: %1").arg(shell);
     metadata[QStringLiteral("question_for_human")] = tr("Approve AI command?");
+    return metadata;
+}
+
+QString AiAssistantPanel::beginCommandApprovalGate(QJsonObject* metadata) {
     const QString gate_id =
         beginHumanGate(QStringLiteral("approval"),
                        QStringLiteral("command_approval"),
-                       metadata.value(QStringLiteral("question_for_human")).toString(),
-                       metadata);
-    metadata[QStringLiteral("gate_id")] = gate_id;
+                       metadata->value(QStringLiteral("question_for_human")).toString(),
+                       *metadata);
+    (*metadata)[QStringLiteral("gate_id")] = gate_id;
     traceAiEvent(QStringLiteral("approval"),
                  QStringLiteral("command_approval"),
                  QStringLiteral("waiting_for_human"),
-                 metadata);
+                 *metadata);
     m_runState.status = ai::AiRunStatus::WaitingForHuman;
-    m_runState.message = metadata.value(QStringLiteral("summary")).toString();
+    m_runState.message = metadata->value(QStringLiteral("summary")).toString();
     saveRunStateSnapshot();
     emitStatusDetails();
+    return gate_id;
+}
 
+bool AiAssistantPanel::requestCommandApprovalFromUser(const QString& shell,
+                                                      const QString& preview) {
     const auto approval = showApprovalPrompt(
         {this,
          tr("Approve AI Command"),
@@ -4520,25 +4843,36 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
               false},
              {tr("Reject"), ApprovalPromptChoice::Reject, ApprovalPromptButtonStyle::Danger, true},
          }});
-    if (approval != ApprovalPromptChoice::Accept) {
-        metadata[QStringLiteral("decision")] = QStringLiteral("rejected");
-        metadata[QStringLiteral("summary")] = tr("Command approval rejected: %1").arg(shell);
-        resolveHumanGate(gate_id,
-                         ai::humanGateRejectedStatus(),
-                         QStringLiteral("rejected"),
-                         metadata.value(QStringLiteral("summary")).toString(),
-                         metadata);
-        traceAiEvent(QStringLiteral("approval"),
-                     QStringLiteral("command_approval"),
+    return approval == ApprovalPromptChoice::Accept;
+}
+
+bool AiAssistantPanel::rejectCommandApproval(const QString& gate_id,
+                                             QJsonObject metadata,
+                                             const QString& shell,
+                                             ai::AiRunStatus previous_status) {
+    metadata[QStringLiteral("decision")] = QStringLiteral("rejected");
+    metadata[QStringLiteral("summary")] = tr("Command approval rejected: %1").arg(shell);
+    resolveHumanGate(gate_id,
+                     ai::humanGateRejectedStatus(),
                      QStringLiteral("rejected"),
+                     metadata.value(QStringLiteral("summary")).toString(),
                      metadata);
-        m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                     : ai::AiRunStatus::Running;
-        m_runState.message = tr("Command rejected");
-        saveRunStateSnapshot();
-        emitStatusDetails();
-        return false;
-    }
+    traceAiEvent(QStringLiteral("approval"),
+                 QStringLiteral("command_approval"),
+                 QStringLiteral("rejected"),
+                 metadata);
+    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
+                                                                 : ai::AiRunStatus::Running;
+    m_runState.message = tr("Command rejected");
+    saveRunStateSnapshot();
+    emitStatusDetails();
+    return false;
+}
+
+void AiAssistantPanel::acceptCommandApproval(const QString& gate_id,
+                                             QJsonObject metadata,
+                                             const QString& shell,
+                                             ai::AiRunStatus previous_status) {
     metadata[QStringLiteral("decision")] = QStringLiteral("approved");
     metadata[QStringLiteral("summary")] = tr("Command approval granted: %1").arg(shell);
     resolveHumanGate(gate_id,
@@ -4555,13 +4889,6 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
     m_runState.message = tr("Command approved");
     saveRunStateSnapshot();
     emitStatusDetails();
-
-    const bool restore_ok = offerRestorePointIfNeeded(preview, risky_change);
-    m_runState.status = previous_status == ai::AiRunStatus::Idle ? ai::AiRunStatus::Idle
-                                                                 : ai::AiRunStatus::Running;
-    saveRunStateSnapshot();
-    emitStatusDetails();
-    return restore_ok;
 }
 
 bool AiAssistantPanel::offerRestorePointIfNeeded(const QString& preview, bool risky_change) {
@@ -4617,7 +4944,7 @@ bool AiAssistantPanel::consumeResumedRestoreDecision(const QString& preview, boo
     }
     m_restorePointOfferedThisSession = true;
     QJsonObject metadata;
-    metadata[QStringLiteral("preview")] = preview.left(1000);
+    metadata[QStringLiteral("preview")] = preview.left(kMetadataPreviewMaxChars);
     metadata[QStringLiteral("risky_change")] = risky_change;
     metadata[QStringLiteral("tool_call_id")] = pending_call_id;
     metadata[QStringLiteral("summary")] = tr("Resumed restore-point decision");
@@ -4632,7 +4959,7 @@ bool AiAssistantPanel::consumeResumedRestoreDecision(const QString& preview, boo
 QJsonObject AiAssistantPanel::restorePointOfferMetadata(const QString& preview,
                                                         bool risky_change) const {
     QJsonObject metadata;
-    metadata[QStringLiteral("preview")] = preview.left(1000);
+    metadata[QStringLiteral("preview")] = preview.left(kMetadataPreviewMaxChars);
     metadata[QStringLiteral("risky_change")] = risky_change;
     const QJsonObject turn_state = pendingToolTurnState();
     if (!turn_state.isEmpty()) {
@@ -4772,60 +5099,87 @@ void AiAssistantPanel::restoreRunStatusAfterHumanDecision(ai::AiRunStatus previo
 }
 bool AiAssistantPanel::createRestorePoint() {
     if (!m_elevationBroker) {
-        appendLocalEvent(tr("Elevation broker unavailable; cannot create restore point"));
-        QJsonObject metadata;
-        metadata[QStringLiteral("summary")] =
-            tr("Restore point failed: elevation broker unavailable");
-        metadata[QStringLiteral("error_message")] = QStringLiteral("Elevation broker unavailable");
-        traceAiEvent(QStringLiteral("restore_point"),
-                     QStringLiteral("windows_restore_point"),
-                     QStringLiteral("failed"),
-                     metadata);
-        return false;
+        return handleRestorePointBrokerUnavailable();
     }
-    const QString description =
-        QStringLiteral("SAK AI session %1")
-            .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
-    const QString script =
-        QStringLiteral(
-            "try { Checkpoint-Computer -Description '%1' -RestorePointType MODIFY_SETTINGS; "
-            "Write-Output 'restore-point-created' } "
-            "catch { Write-Error $_; exit 1 }")
-            .arg(description);
 
-    QJsonObject payload;
-    payload[QStringLiteral("command")] = script;
-    payload[QStringLiteral("timeout_seconds")] = 180;
-    payload[QStringLiteral("max_output_bytes")] = 32 * 1024;
-
+    const QString description = restorePointDescription();
+    const QJsonObject payload = restorePointPayload(restorePointScript(description));
     appendLocalEvent(tr("Requesting Windows restore point (requires admin)"));
     Q_EMIT statusMessage(tr("Creating Windows restore point..."), sak::kTimerStatusDefaultMs);
     QJsonObject trace_metadata;
-    trace_metadata[QStringLiteral("summary")] = tr("Creating Windows restore point");
-    trace_metadata[QStringLiteral("description")] = description;
-    traceAiEvent(QStringLiteral("restore_point"),
-                 QStringLiteral("windows_restore_point"),
-                 QStringLiteral("running"),
-                 trace_metadata);
+    traceRestorePointStart(&trace_metadata, description);
     const auto result = m_elevationBroker->executeTask(QStringLiteral("RunPowerShell"),
                                                        tr("Create AI session restore point"),
                                                        payload);
     if (!result) {
-        appendLocalEvent(
-            tr("Restore point request failed: %1").arg(fromStringView(to_string(result.error()))));
-        Q_EMIT statusMessage(tr("Restore point failed"), sak::kTimerStatusDefaultMs);
-        trace_metadata[QStringLiteral("summary")] = tr("Restore point request failed");
-        trace_metadata[QStringLiteral("error_message")] = fromStringView(to_string(result.error()));
-        traceAiEvent(QStringLiteral("restore_point"),
-                     QStringLiteral("windows_restore_point"),
-                     QStringLiteral("failed"),
-                     trace_metadata);
-        return false;
+        return handleRestorePointExecutionError(fromStringView(to_string(result.error())),
+                                                trace_metadata);
     }
-    const QJsonObject response_data = result->data;
+    return handleRestorePointResponse(result->data, trace_metadata);
+}
+
+bool AiAssistantPanel::handleRestorePointBrokerUnavailable() {
+    appendLocalEvent(tr("Elevation broker unavailable; cannot create restore point"));
+    QJsonObject metadata;
+    metadata[QStringLiteral("summary")] = tr("Restore point failed: elevation broker unavailable");
+    metadata[QStringLiteral("error_message")] = QStringLiteral("Elevation broker unavailable");
+    traceAiEvent(QStringLiteral("restore_point"),
+                 QStringLiteral("windows_restore_point"),
+                 QStringLiteral("failed"),
+                 metadata);
+    return false;
+}
+
+QString AiAssistantPanel::restorePointDescription() const {
+    return QStringLiteral("SAK AI session %1")
+        .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+}
+
+QString AiAssistantPanel::restorePointScript(const QString& description) const {
+    return QStringLiteral(
+               "try { Checkpoint-Computer -Description '%1' -RestorePointType MODIFY_SETTINGS; "
+               "Write-Output 'restore-point-created' } "
+               "catch { Write-Error $_; exit 1 }")
+        .arg(description);
+}
+
+QJsonObject AiAssistantPanel::restorePointPayload(const QString& script) const {
+    QJsonObject payload;
+    payload[QStringLiteral("command")] = script;
+    payload[QStringLiteral("timeout_seconds")] = kRestorePointTimeoutSec;
+    payload[QStringLiteral("max_output_bytes")] = kRestorePointMaxOutputBytes;
+    return payload;
+}
+
+void AiAssistantPanel::traceRestorePointStart(QJsonObject* trace_metadata,
+                                              const QString& description) {
+    (*trace_metadata)[QStringLiteral("summary")] = tr("Creating Windows restore point");
+    (*trace_metadata)[QStringLiteral("description")] = description;
+    traceAiEvent(QStringLiteral("restore_point"),
+                 QStringLiteral("windows_restore_point"),
+                 QStringLiteral("running"),
+                 *trace_metadata);
+}
+
+bool AiAssistantPanel::handleRestorePointExecutionError(const QString& error_message,
+                                                        QJsonObject trace_metadata) {
+    appendLocalEvent(tr("Restore point request failed: %1").arg(error_message));
+    Q_EMIT statusMessage(tr("Restore point failed"), sak::kTimerStatusDefaultMs);
+    trace_metadata[QStringLiteral("summary")] = tr("Restore point request failed");
+    trace_metadata[QStringLiteral("error_message")] = error_message;
+    traceAiEvent(QStringLiteral("restore_point"),
+                 QStringLiteral("windows_restore_point"),
+                 QStringLiteral("failed"),
+                 trace_metadata);
+    return false;
+}
+
+bool AiAssistantPanel::handleRestorePointResponse(const QJsonObject& response_data,
+                                                  QJsonObject trace_metadata) {
     const QString stdout_text = response_data.value(QStringLiteral("stdout")).toString();
     const int exit_code = response_data.value(QStringLiteral("exit_code")).toInt(-1);
-    if (exit_code == 0 && stdout_text.contains(QStringLiteral("restore-point-created"))) {
+    if (exit_code == kRestorePointSuccessExitCode &&
+        stdout_text.contains(QStringLiteral("restore-point-created"))) {
         appendLocalEvent(tr("Windows restore point created"));
         Q_EMIT statusMessage(tr("Restore point created"), sak::kTimerStatusDefaultMs);
         trace_metadata[QStringLiteral("summary")] = tr("Windows restore point created");
@@ -4844,9 +5198,10 @@ bool AiAssistantPanel::createRestorePoint() {
     Q_EMIT statusMessage(tr("Restore point not created (see log)"), sak::kTimerStatusDefaultMs);
     trace_metadata[QStringLiteral("summary")] = tr("Restore point creation failed");
     trace_metadata[QStringLiteral("exit_code")] = exit_code;
-    trace_metadata[QStringLiteral("error_message")] = stderr_text.trimmed().isEmpty()
-                                                          ? stdout_text.trimmed().left(1000)
-                                                          : stderr_text.trimmed().left(1000);
+    trace_metadata[QStringLiteral("error_message")] =
+        stderr_text.trimmed().isEmpty()
+            ? stdout_text.trimmed().left(kRestorePointErrorPreviewChars)
+            : stderr_text.trimmed().left(kRestorePointErrorPreviewChars);
     traceAiEvent(QStringLiteral("restore_point"),
                  QStringLiteral("windows_restore_point"),
                  QStringLiteral("failed"),
@@ -4984,30 +5339,39 @@ QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const QJsonObject& args,
 
 ai::AiCommandResult AiAssistantPanel::executeWorkflowPowerShellRequest(
     const ai::AiCommandRequest& request, const QString& command_id) {
-    ai::AiCommandResult command_result;
     if (request.requires_admin) {
-        if (QThread::currentThread() == thread()) {
-            return runElevatedPowerShell(request);
-        }
+        return executeElevatedWorkflowPowerShellRequest(request);
+    }
+    return executeStandardWorkflowPowerShellRequest(request, command_id);
+}
 
-        QSemaphore done;
-        const bool invoked = QMetaObject::invokeMethod(
-            this,
-            [this, request, &command_result, &done]() {
-                command_result = runElevatedPowerShell(request);
-                done.release();
-            },
-            Qt::QueuedConnection);
-        if (!invoked) {
-            command_result.elevated = true;
-            command_result.error_message =
-                QStringLiteral("Could not marshal elevated PowerShell execution to UI thread");
-            return command_result;
-        }
-        done.acquire();
+ai::AiCommandResult AiAssistantPanel::executeElevatedWorkflowPowerShellRequest(
+    const ai::AiCommandRequest& request) {
+    if (QThread::currentThread() == thread()) {
+        return runElevatedPowerShell(request);
+    }
+    ai::AiCommandResult command_result;
+    QSemaphore done;
+    const bool invoked = QMetaObject::invokeMethod(
+        this,
+        [this, request, &command_result, &done]() {
+            command_result = runElevatedPowerShell(request);
+            done.release();
+        },
+        Qt::QueuedConnection);
+    if (!invoked) {
+        command_result.elevated = true;
+        command_result.error_message =
+            QStringLiteral("Could not marshal elevated PowerShell execution to UI thread");
         return command_result;
     }
+    done.acquire();
+    return command_result;
+}
 
+ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
+    const ai::AiCommandRequest& request, const QString& command_id) {
+    ai::AiCommandResult command_result;
     bool finished = false;
     QSemaphore done;
     QThread command_thread;
@@ -5015,83 +5379,35 @@ ai::AiCommandResult AiAssistantPanel::executeWorkflowPowerShellRequest(
     worker->moveToThread(&command_thread);
     QObject::connect(&command_thread, &QThread::finished, worker, &QObject::deleteLater);
     const bool caller_is_ui_thread = QThread::currentThread() == thread();
-    QObject::connect(
-        &command_thread,
-        &QThread::started,
-        worker,
-        [this,
-         worker,
-         request,
-         command_id,
-         caller_is_ui_thread,
-         &command_result,
-         &finished,
-         &done,
-         &command_thread]() {
-            auto* broker = new ai::ExecutionBroker(worker);
-            auto* cancel_timer = new QTimer(worker);
-            cancel_timer->setInterval(150);
-            QObject::connect(broker,
-                             &ai::ExecutionBroker::stdoutChunk,
-                             worker,
-                             [this](const QString& id, const QString& chunk) {
-                                 emitPrefixedLogLines(
-                                     [this](const QString& line) {
-                                         QMetaObject::invokeMethod(
-                                             this,
-                                             [this, line]() {
-                                                 Q_EMIT logOutput(
-                                                     ai::CredentialStore::redactSecrets(line));
-                                             },
-                                             Qt::QueuedConnection);
-                                     },
-                                     QStringLiteral("[%1]").arg(id),
-                                     chunk);
-                             });
-            QObject::connect(broker,
-                             &ai::ExecutionBroker::stderrChunk,
-                             worker,
-                             [this](const QString& id, const QString& chunk) {
-                                 emitPrefixedLogLines(
-                                     [this](const QString& line) {
-                                         QMetaObject::invokeMethod(
-                                             this,
-                                             [this, line]() {
-                                                 Q_EMIT logOutput(
-                                                     ai::CredentialStore::redactSecrets(line));
-                                             },
-                                             Qt::QueuedConnection);
-                                     },
-                                     QStringLiteral("[%1 err]").arg(id),
-                                     chunk);
-                             });
-            QObject::connect(broker,
-                             &ai::ExecutionBroker::finished,
-                             worker,
-                             [&](const QString&, const ai::AiCommandResult& result) {
-                                 command_result = result;
-                                 finished = true;
-                                 done.release();
-                                 command_thread.quit();
-                             });
-            if (!caller_is_ui_thread) {
-                QObject::connect(cancel_timer, &QTimer::timeout, worker, [this, broker]() {
-                    bool should_cancel = false;
-                    const bool invoked = QMetaObject::invokeMethod(
-                        this,
-                        [this, &should_cancel]() {
-                            should_cancel = m_runToken.isValid() &&
-                                            m_runToken.isCancellationRequested();
-                        },
-                        Qt::BlockingQueuedConnection);
-                    if (invoked && should_cancel && broker->isRunning()) {
-                        broker->cancel();
-                    }
-                });
-                cancel_timer->start();
-            }
-            (void)broker->startPowerShell(request, command_id);
-        });
+    QObject::connect(&command_thread,
+                     &QThread::started,
+                     worker,
+                     [this,
+                      worker,
+                      request,
+                      command_id,
+                      caller_is_ui_thread,
+                      &command_result,
+                      &finished,
+                      &done,
+                      &command_thread]() {
+                         auto* broker = new ai::ExecutionBroker(worker);
+                         auto* cancel_timer = new QTimer(worker);
+                         connectWorkflowPowerShellLogging(broker, worker);
+                         QObject::connect(broker,
+                                          &ai::ExecutionBroker::finished,
+                                          worker,
+                                          [&](const QString&, const ai::AiCommandResult& result) {
+                                              command_result = result;
+                                              finished = true;
+                                              done.release();
+                                              command_thread.quit();
+                                          });
+                         if (!caller_is_ui_thread) {
+                             connectWorkflowPowerShellCancelPolling(cancel_timer, broker, worker);
+                         }
+                         (void)broker->startPowerShell(request, command_id);
+                     });
     command_thread.start();
     done.acquire();
     command_thread.quit();
@@ -5101,6 +5417,61 @@ ai::AiCommandResult AiAssistantPanel::executeWorkflowPowerShellRequest(
             QStringLiteral("Workflow PowerShell command did not report completion");
     }
     return command_result;
+}
+
+void AiAssistantPanel::connectWorkflowPowerShellLogging(ai::ExecutionBroker* broker,
+                                                        QObject* worker) {
+    QObject::connect(broker,
+                     &ai::ExecutionBroker::stdoutChunk,
+                     worker,
+                     [this](const QString& id, const QString& chunk) {
+                         emitPrefixedLogLines(
+                             [this](const QString& line) {
+                                 QMetaObject::invokeMethod(
+                                     this,
+                                     [this, line]() {
+                                         Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
+                                     },
+                                     Qt::QueuedConnection);
+                             },
+                             QStringLiteral("[%1]").arg(id),
+                             chunk);
+                     });
+    QObject::connect(broker,
+                     &ai::ExecutionBroker::stderrChunk,
+                     worker,
+                     [this](const QString& id, const QString& chunk) {
+                         emitPrefixedLogLines(
+                             [this](const QString& line) {
+                                 QMetaObject::invokeMethod(
+                                     this,
+                                     [this, line]() {
+                                         Q_EMIT logOutput(ai::CredentialStore::redactSecrets(line));
+                                     },
+                                     Qt::QueuedConnection);
+                             },
+                             QStringLiteral("[%1 err]").arg(id),
+                             chunk);
+                     });
+}
+
+void AiAssistantPanel::connectWorkflowPowerShellCancelPolling(QTimer* cancel_timer,
+                                                              ai::ExecutionBroker* broker,
+                                                              QObject* worker) {
+    cancel_timer->setInterval(kWorkflowWorkerCancelPollMs);
+    QObject::connect(cancel_timer, &QTimer::timeout, worker, [this, broker]() {
+        bool should_cancel = false;
+        const bool invoked = QMetaObject::invokeMethod(
+            this,
+            [this, &should_cancel]() {
+                should_cancel = m_runToken.isValid() && m_runToken.isCancellationRequested();
+            },
+            Qt::BlockingQueuedConnection);
+        if (invoked && should_cancel && broker->isRunning()) {
+            broker->cancel();
+        }
+    });
+    cancel_timer->start();
 }
 
 QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
@@ -5176,7 +5547,7 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
         callbacks,
         ai::AiProviderGatewayToolOptions{static_cast<int>(kDefaultOutputCapKb * sak::kBytesPerKB),
                                          static_cast<int>(sak::kBytesPerKB),
-                                         4 * static_cast<int>(sak::kBytesPerMB)});
+                                         kToolOutputMaxBytes});
 }
 
 QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) const {
@@ -5361,7 +5732,7 @@ QJsonObject AiAssistantPanel::packageManagerSearchResult(const QJsonObject& args
                                                           offline::kSearchResultsDefault);
         all_success = all_success && search.success;
         if (!search.success) {
-            errors << (search.error_message.isEmpty() ? search.output.left(1000)
+            errors << (search.error_message.isEmpty() ? search.output.left(kMetadataPreviewMaxChars)
                                                       : search.error_message);
         }
         const auto packages = m_chocoManager->parseSearchResults(search.output);
@@ -5447,7 +5818,7 @@ QJsonObject AiAssistantPanel::runPackageManagerChange(const QString& operation,
     result[QStringLiteral("version")] = version;
     result[QStringLiteral("success")] = package_result.success;
     result[QStringLiteral("exit_code")] = package_result.exit_code;
-    result[QStringLiteral("output")] = package_result.output.left(8000);
+    result[QStringLiteral("output")] = package_result.output.left(kPackageResultOutputMaxChars);
     result[QStringLiteral("error_message")] = package_result.error_message;
     result[QStringLiteral("tool_path")] = m_chocoManager->getChocoPath();
     return result;
@@ -5509,10 +5880,11 @@ void AiAssistantPanel::appendOfflineArtifacts(const QString& operation,
     if (!output_dir.isEmpty() && QDir(output_dir).exists()) {
         const QStringList files = filesUnderDirectory(output_dir);
         if (result) {
-            (*result)[QStringLiteral("files")] = QJsonArray::fromStringList(files.mid(0, 200));
+            (*result)[QStringLiteral("files")] =
+                QJsonArray::fromStringList(files.mid(0, kPackageFileResultLimit));
             (*result)[QStringLiteral("file_count")] = files.size();
         }
-        for (const auto& file : files.mid(0, 20)) {
+        for (const auto& file : files.mid(0, kPackageArtifactDisplayLimit)) {
             appendArtifactRow(file, operation);
         }
     }
@@ -5590,24 +5962,11 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     const QString& output_dir,
     const QJsonObject& args) {
     OfflineToolRunResult run;
-    if (operation != QLatin1String("direct_download") &&
-        operation != QLatin1String("build_bundle") &&
-        operation != QLatin1String("install_bundle")) {
-        run.operation_error =
-            QStringLiteral("Unsupported offline downloader operation: %1").arg(operation);
+    if (!validateOfflineOperation(operation, &run)) {
         return run;
     }
 
-    if (operation == QLatin1String("direct_download")) {
-        appendLocalEvent(tr("SAK offline direct download to %1").arg(output_dir));
-    } else if (operation == QLatin1String("build_bundle")) {
-        appendLocalEvent(tr("SAK offline bundle build to %1").arg(output_dir));
-    } else {
-        appendLocalEvent(
-            tr("SAK offline bundle install: %1")
-                .arg(args.value(QStringLiteral("manifest_path")).toString().trimmed()));
-    }
-
+    appendOfflineOperationStartedEvent(operation, output_dir, args);
     QSemaphore done;
     QThread offline_thread;
     auto* worker = new OfflineDeploymentWorker;
@@ -5616,72 +5975,116 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     context->moveToThread(&offline_thread);
     QObject::connect(&offline_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&offline_thread, &QThread::finished, context, &QObject::deleteLater);
-    QObject::connect(worker,
-                     &OfflineDeploymentWorker::operationCompleted,
+    connectOfflineWorkerSignals(worker, context, &offline_thread, &done, &run);
+    QObject::connect(&offline_thread,
+                     &QThread::started,
                      context,
-                     [&](const BatchStats& stats) {
-                         run.final_stats = stats;
-                         run.completed = true;
-                         done.release();
-                         offline_thread.quit();
+                     [this, worker, operation, packages, output_dir, args]() {
+                         startOfflineWorkerOperation(worker, operation, packages, output_dir, args);
                      });
-    QObject::connect(
-        worker, &OfflineDeploymentWorker::operationError, context, [&](const QString& error) {
-            run.operation_error = error;
-            done.release();
-            offline_thread.quit();
-        });
-    QObject::connect(worker,
-                     &OfflineDeploymentWorker::manifestWritten,
-                     context,
-                     [&](const QString& manifest_path) { run.manifest_written = manifest_path; });
-    QObject::connect(worker,
-                     &OfflineDeploymentWorker::logMessage,
-                     context,
-                     [this, &run](const QString& message) {
-                         run.log_lines.append(message);
-                         QMetaObject::invokeMethod(
-                             this,
-                             [this, message]() {
-                                 Q_EMIT logOutput(QStringLiteral("[SAK Offline] %1").arg(message));
-                             },
-                             Qt::QueuedConnection);
-                     });
-    QObject::connect(worker,
-                     &OfflineDeploymentWorker::packageProgress,
-                     context,
-                     [&](const QString& package_id, bool success, const QString& message) {
-                         QJsonObject event;
-                         event[QStringLiteral("package_id")] = package_id;
-                         event[QStringLiteral("success")] = success;
-                         event[QStringLiteral("message")] = message.left(1000);
-                         run.package_events.append(event);
-                     });
-    QObject::connect(
-        &offline_thread,
-        &QThread::started,
-        context,
-        [worker, operation, packages, output_dir, args]() {
-            if (operation == QLatin1String("direct_download")) {
-                worker->directDownload(packages, output_dir);
-            } else if (operation == QLatin1String("build_bundle")) {
-                worker->buildDeploymentBundle(packages,
-                                              output_dir,
-                                              QStringLiteral(
-                                                  "S.A.K. Utility AI offline deployment bundle"));
-            } else {
-                const QString manifest_path =
-                    args.value(QStringLiteral("manifest_path")).toString().trimmed();
-                const QString packages_dir =
-                    QFileInfo(manifest_path).dir().filePath(QStringLiteral("packages"));
-                worker->installFromBundle(manifest_path, packages_dir);
-            }
-        });
     offline_thread.start();
     done.acquire();
     offline_thread.quit();
     offline_thread.wait();
     return run;
+}
+
+bool AiAssistantPanel::validateOfflineOperation(const QString& operation,
+                                                OfflineToolRunResult* run) const {
+    const bool supported = operation == QLatin1String("direct_download") ||
+                           operation == QLatin1String("build_bundle") ||
+                           operation == QLatin1String("install_bundle");
+    if (!supported && run) {
+        run->operation_error =
+            QStringLiteral("Unsupported offline downloader operation: %1").arg(operation);
+    }
+    return supported;
+}
+
+void AiAssistantPanel::appendOfflineOperationStartedEvent(const QString& operation,
+                                                          const QString& output_dir,
+                                                          const QJsonObject& args) {
+    if (operation == QLatin1String("direct_download")) {
+        appendLocalEvent(tr("SAK offline direct download to %1").arg(output_dir));
+        return;
+    }
+    if (operation == QLatin1String("build_bundle")) {
+        appendLocalEvent(tr("SAK offline bundle build to %1").arg(output_dir));
+        return;
+    }
+    appendLocalEvent(tr("SAK offline bundle install: %1")
+                         .arg(args.value(QStringLiteral("manifest_path")).toString().trimmed()));
+}
+
+void AiAssistantPanel::connectOfflineWorkerSignals(OfflineDeploymentWorker* worker,
+                                                   QObject* context,
+                                                   QThread* offline_thread,
+                                                   QSemaphore* done,
+                                                   OfflineToolRunResult* run) {
+    QObject::connect(worker,
+                     &OfflineDeploymentWorker::operationCompleted,
+                     context,
+                     [offline_thread, done, run](const BatchStats& stats) {
+                         run->final_stats = stats;
+                         run->completed = true;
+                         done->release();
+                         offline_thread->quit();
+                     });
+    QObject::connect(worker,
+                     &OfflineDeploymentWorker::operationError,
+                     context,
+                     [offline_thread, done, run](const QString& error) {
+                         run->operation_error = error;
+                         done->release();
+                         offline_thread->quit();
+                     });
+    QObject::connect(worker,
+                     &OfflineDeploymentWorker::manifestWritten,
+                     context,
+                     [run](const QString& manifest_path) {
+                         run->manifest_written = manifest_path;
+                     });
+    QObject::connect(
+        worker, &OfflineDeploymentWorker::logMessage, context, [this, run](const QString& message) {
+            run->log_lines.append(message);
+            QMetaObject::invokeMethod(
+                this,
+                [this, message]() {
+                    Q_EMIT logOutput(QStringLiteral("[SAK Offline] %1").arg(message));
+                },
+                Qt::QueuedConnection);
+        });
+    QObject::connect(worker,
+                     &OfflineDeploymentWorker::packageProgress,
+                     context,
+                     [run](const QString& package_id, bool success, const QString& message) {
+                         QJsonObject event;
+                         event[QStringLiteral("package_id")] = package_id;
+                         event[QStringLiteral("success")] = success;
+                         event[QStringLiteral("message")] =
+                             message.left(kRestorePointErrorPreviewChars);
+                         run->package_events.append(event);
+                     });
+}
+
+void AiAssistantPanel::startOfflineWorkerOperation(OfflineDeploymentWorker* worker,
+                                                   const QString& operation,
+                                                   const QVector<QPair<QString, QString>>& packages,
+                                                   const QString& output_dir,
+                                                   const QJsonObject& args) {
+    if (operation == QLatin1String("direct_download")) {
+        worker->directDownload(packages, output_dir);
+        return;
+    }
+    if (operation == QLatin1String("build_bundle")) {
+        worker->buildDeploymentBundle(
+            packages, output_dir, QStringLiteral("S.A.K. Utility AI offline deployment bundle"));
+        return;
+    }
+    const QString manifest_path = args.value(QStringLiteral("manifest_path")).toString().trimmed();
+    const QString packages_dir =
+        QFileInfo(manifest_path).dir().filePath(QStringLiteral("packages"));
+    worker->installFromBundle(manifest_path, packages_dir);
 }
 
 QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operation,
@@ -5694,7 +6097,8 @@ QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operatio
     result[QStringLiteral("error_message")] = run_result.operation_error;
     result[QStringLiteral("output_dir")] = QDir::toNativeSeparators(output_dir);
     result[QStringLiteral("manifest_path")] = QDir::toNativeSeparators(run_result.manifest_written);
-    result[QStringLiteral("logs")] = QJsonArray::fromStringList(run_result.log_lines.mid(0, 80));
+    result[QStringLiteral("logs")] =
+        QJsonArray::fromStringList(run_result.log_lines.mid(0, kPackageLogLineResultLimit));
     result[QStringLiteral("package_events")] = run_result.package_events;
 
     QJsonObject stats;
@@ -5739,7 +6143,7 @@ void AiAssistantPanel::refreshArtifactList() {
     while (iter.hasNext()) {
         iter.next();
         ++count;
-        if (count > 999) {
+        if (count > kArtifactCountDisplayLimit) {
             break;
         }
     }
@@ -6019,9 +6423,9 @@ void AiAssistantPanel::restorePendingRunIdentity(const QString& run_id,
         return;
     }
     m_pendingTurnToken =
-        m_runToken.createChild(QStringLiteral("turn_%1").arg(response_id.left(12)));
+        m_runToken.createChild(QStringLiteral("turn_%1").arg(response_id.left(kTraceTokenIdChars)));
     m_pendingCallToken = m_pendingTurnToken.createChild(
-        QStringLiteral("call_%1").arg(currentPendingToolCallId().left(12)));
+        QStringLiteral("call_%1").arg(currentPendingToolCallId().left(kTraceTokenIdChars)));
 }
 
 bool AiAssistantPanel::completeResumedToolGateWithOutput(const ai::AiHumanGate& gate,
@@ -6123,7 +6527,7 @@ AiAssistantPanel::AccessMode AiAssistantPanel::currentAccessMode() const {
     switch (m_accessModeCombo->currentIndex()) {
     case 0:
         return AccessMode::ChatAndResearch;
-    case 2:
+    case kAccessModeUnattendedComboIndex:
         return AccessMode::UnattendedFullAccess;
     case 1:
     default:
@@ -6168,6 +6572,71 @@ QString AiAssistantPanel::contextItemLabel(const ContextItem& item) {
     return QStringLiteral("%1 (%2)").arg(name, compactByteCount(item.original_size));
 }
 
+int AiAssistantPanel::contextChipMaxWidth() const {
+    const QWidget* viewport = m_contextList->viewport();
+    const int source_width = viewport ? viewport->width() : m_contextList->width();
+    const int available_width = std::max(kContextChipMinAvailableWidth,
+                                         source_width - kContextChipViewportReserve);
+    int target_chip_width = std::clamp(available_width / kContextChipColumns,
+                                       kContextChipTargetMinWidth,
+                                       kContextChipTargetMaxWidth);
+    target_chip_width = std::min(target_chip_width, available_width);
+    return std::max(kContextChipMinWidth, target_chip_width);
+}
+
+int AiAssistantPanel::contextChipWidth(const QString& chip_text, int max_chip_width) const {
+    const int measured_width = QFontMetrics(m_contextList->font()).horizontalAdvance(chip_text) +
+                               kContextChipMetricPadding;
+    return std::clamp(measured_width, kContextChipMinWidth, max_chip_width);
+}
+
+void AiAssistantPanel::addContextListItem(int index, int max_chip_width) {
+    const auto& item = m_contextItems.at(index);
+    const QString kind_label = contextItemKindLabel(item.type);
+    const QString chip_text = QStringLiteral("%1: %2").arg(kind_label, contextItemLabel(item));
+    const int chip_width = contextChipWidth(chip_text, max_chip_width);
+
+    auto* row = new QListWidgetItem(m_contextList);
+    row->setToolTip(item.path.isEmpty() ? item.text.left(kContextItemTooltipMaxChars) : item.path);
+    row->setSizeHint(QSize(chip_width, kContextChipRowHeight));
+
+    const ContextChipPalette palette = contextChipPalette(item.type);
+    auto* chip = new QFrame(m_contextList);
+    chip->setObjectName(QStringLiteral("aiContextChip"));
+    chip->setFixedSize(chip_width, kContextChipHeight);
+    chip->setStyleSheet(sak::ui::aiContextChipStyle(palette.background, palette.border));
+
+    auto* chip_layout = new QHBoxLayout(chip);
+    chip_layout->setContentsMargins(sak::ui::kMarginSmall,
+                                    sak::ui::kCssBorderWidthDefaultPx,
+                                    sak::ui::kSpacingTight,
+                                    sak::ui::kCssBorderWidthDefaultPx);
+    chip_layout->setSpacing(sak::ui::kSpacingTight);
+
+    const int text_width = std::max(kContextChipTextMinWidth, chip_width - kContextChipTextReserve);
+    const QString display_text =
+        QFontMetrics(m_contextList->font()).elidedText(chip_text, Qt::ElideMiddle, text_width);
+    auto* text = new QLabel(display_text, chip);
+    text->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(palette.text_color, sak::ui::kFontSizeNote));
+    text->setToolTip(chip_text + QStringLiteral("\n") + row->toolTip());
+    text->setMinimumWidth(sak::ui::kUiWidthNoMinimum);
+    text->setMaximumWidth(text_width);
+    text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    chip_layout->addWidget(text, 1);
+
+    auto* remove = new QPushButton(chip);
+    remove->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
+    remove->setIconSize(QSize(sak::ui::kUiIconTiny, sak::ui::kUiIconTiny));
+    remove->setFixedSize(sak::ui::kUiButtonSizeMicro, sak::ui::kUiButtonSizeMicro);
+    remove->setToolTip(tr("Remove %1").arg(kind_label));
+    remove->setStyleSheet(sak::ui::aiContextChipRemoveStyle());
+    connect(remove, &QPushButton::clicked, this, [this, index]() { removeContextItem(index); });
+    chip_layout->addWidget(remove);
+
+    m_contextList->setItemWidget(row, chip);
+}
+
 void AiAssistantPanel::refreshContextList() {
     if (!m_contextList) {
         return;
@@ -6175,66 +6644,9 @@ void AiAssistantPanel::refreshContextList() {
 
     m_contextList->clear();
     m_contextList->setVisible(!m_contextItems.isEmpty());
-    const int available_width = std::max(
-        220,
-        (m_contextList->viewport() ? m_contextList->viewport()->width() : m_contextList->width()) -
-            18);
-    int target_chip_width = std::max(260, available_width / 2);
-    target_chip_width = std::min(target_chip_width, 460);
-    target_chip_width = std::min(target_chip_width, available_width);
-    const int max_chip_width = std::max(180, target_chip_width);
+    const int max_chip_width = contextChipMaxWidth();
     for (int i = 0; i < m_contextItems.size(); ++i) {
-        const auto& item = m_contextItems.at(i);
-        const QString label = contextItemLabel(item);
-        const QString chip_text = QStringLiteral("%1: %2").arg(contextItemKindLabel(item.type),
-                                                               label);
-        const int chip_width =
-            std::clamp(QFontMetrics(m_contextList->font()).horizontalAdvance(chip_text) + 48,
-                       180,
-                       max_chip_width);
-        auto* row = new QListWidgetItem(m_contextList);
-        row->setToolTip(item.path.isEmpty() ? item.text.left(400) : item.path);
-        row->setSizeHint(QSize(chip_width, 28));
-
-        const ContextChipPalette palette = contextChipPalette(item.type);
-
-        auto* chip = new QFrame(m_contextList);
-        chip->setObjectName(QStringLiteral("aiContextChip"));
-        chip->setFixedSize(chip_width, 26);
-        chip->setStyleSheet(
-            QStringLiteral("QFrame#aiContextChip { background: %1; border: 1px solid %2; "
-                           "border-radius: 4px; }")
-                .arg(palette.background, palette.border));
-        auto* chipLayout = new QHBoxLayout(chip);
-        chipLayout->setContentsMargins(8, 1, 4, 1);
-        chipLayout->setSpacing(4);
-
-        const int text_width = std::max(80, chip_width - 44);
-        const QString display_text =
-            QFontMetrics(m_contextList->font()).elidedText(chip_text, Qt::ElideMiddle, text_width);
-        auto* text = new QLabel(display_text, chip);
-        text->setStyleSheet(QStringLiteral("color: %1; font-size: 9pt;").arg(palette.text_color));
-        text->setToolTip(chip_text + QStringLiteral("\n") + row->toolTip());
-        text->setMinimumWidth(0);
-        text->setMaximumWidth(text_width);
-        text->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        chipLayout->addWidget(text, 1);
-
-        auto* remove = new QPushButton(chip);
-        remove->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-close-window.svg")));
-        remove->setIconSize(QSize(12, 12));
-        remove->setFixedSize(18, 18);
-        remove->setToolTip(tr("Remove %1").arg(contextItemKindLabel(item.type)));
-        remove->setStyleSheet(
-            QStringLiteral("QPushButton { background: transparent; border: 1px solid transparent; "
-                           "border-radius: 3px; padding: 1px; }"
-                           "QPushButton:hover { background: %1; border-color: %2; }"
-                           "QPushButton:pressed { background: %2; }")
-                .arg(sak::ui::kColorBgPageHover, sak::ui::kColorBorderDefault));
-        connect(remove, &QPushButton::clicked, this, [this, i]() { removeContextItem(i); });
-        chipLayout->addWidget(remove);
-
-        m_contextList->setItemWidget(row, chip);
+        addContextListItem(i, max_chip_width);
     }
     if (m_clearContextButton) {
         m_clearContextButton->setEnabled(!m_contextItems.isEmpty());
@@ -6644,8 +7056,8 @@ QString AiAssistantPanel::beginHumanGate(const QString& kind,
                                          const QString& question,
                                          const QJsonObject& metadata) {
     ai::AiHumanGate gate;
-    gate.gate_id =
-        QStringLiteral("gate_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(12));
+    gate.gate_id = QStringLiteral("gate_%1").arg(
+        QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceTokenIdChars));
     gate.run_id = !m_runState.run_id.isEmpty() ? m_runState.run_id : m_currentRunId;
     if (gate.run_id.isEmpty() && m_conversationStore) {
         gate.run_id = QStringLiteral("gate_wait_%1").arg(m_conversationStore->currentSessionId());
@@ -6704,10 +7116,11 @@ ai::AiHumanGate AiAssistantPanel::resolvedGateFromState(const QString& gate_id,
                             m_runState.pending_human_gate.gate_id == gate_id)
                                ? m_runState.pending_human_gate
                                : ai::AiHumanGate{};
-    gate.gate_id = gate_id.isEmpty()
-                       ? QStringLiteral("gate_%1").arg(
-                             QUuid::createUuid().toString(QUuid::WithoutBraces).left(12))
-                       : gate_id;
+    gate.gate_id =
+        gate_id.isEmpty()
+            ? QStringLiteral("gate_%1").arg(
+                  QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceTokenIdChars))
+            : gate_id;
     if (gate.run_id.isEmpty()) {
         gate.run_id = !m_runState.run_id.isEmpty() ? m_runState.run_id : m_currentRunId;
     }
@@ -7026,19 +7439,21 @@ bool AiAssistantPanel::collectClarifyingWorkflowInputs(const ai::WorkflowTemplat
 }
 bool AiAssistantPanel::resumeWorkflowInputGate(const ai::AiHumanGate& gate) {
     Q_UNUSED(gate);
-    QMessageBox::information(this,
-                             tr("Workflow Input"),
-                             tr("This workflow input gate is not active in the current chat. Start "
-                                "the workflow again to provide fresh inputs."));
+    sak::showInformationLogged(
+        this,
+        tr("Workflow Input"),
+        tr("This workflow input gate is not active in the current chat. Start "
+           "the workflow again to provide fresh inputs."));
     updateCredentialControls();
     return false;
 }
 bool AiAssistantPanel::resumeApprovalGate(const ai::AiHumanGate& gate) {
     Q_UNUSED(gate);
-    QMessageBox::information(this,
-                             tr("AI Approval"),
-                             tr("This approval prompt is no longer active. Re-run the action so "
-                                "SAK can show a fresh approval prompt with the current command."));
+    sak::showInformationLogged(
+        this,
+        tr("AI Approval"),
+        tr("This approval prompt is no longer active. Re-run the action so "
+           "SAK can show a fresh approval prompt with the current command."));
     updateCredentialControls();
     return false;
 }
@@ -7060,9 +7475,9 @@ bool AiAssistantPanel::resumeWorkflowRecoveryGate(const ai::AiHumanGate& gate) {
     const QJsonObject input_values = resume_state.value(QStringLiteral("input_values")).toObject();
     if (user_message.isEmpty()) {
         appendLocalEvent(tr("Workflow recovery resume failed: original request missing"));
-        QMessageBox::warning(this,
-                             tr("Resume Blocked"),
-                             tr("This recovery gate is missing the original workflow request."));
+        sak::showWarningLogged(this,
+                               tr("Resume Blocked"),
+                               tr("This recovery gate is missing the original workflow request."));
         return false;
     }
 
@@ -7082,10 +7497,10 @@ const ai::WorkflowTemplate* AiAssistantPanel::recoveryWorkflowForGate(const ai::
                                                                       QJsonObject* resume_state) {
     if (!gate.isPending() || gate.kind != QLatin1String("workflow_recovery") ||
         gate.name != QLatin1String("phase_needs_human")) {
-        QMessageBox::information(this,
-                                 tr("AI Run Waiting"),
-                                 tr("This pending gate is not a workflow recovery gate. Open Run "
-                                    "Details to review it."));
+        sak::showInformationLogged(this,
+                                   tr("AI Run Waiting"),
+                                   tr("This pending gate is not a workflow recovery gate. Open Run "
+                                      "Details to review it."));
         showRunDetails();
         return nullptr;
     }
@@ -7097,7 +7512,7 @@ const ai::WorkflowTemplate* AiAssistantPanel::recoveryWorkflowForGate(const ai::
     *resume_state = metadata->value(QStringLiteral("workflow_resume")).toObject();
     if (resume_state->isEmpty()) {
         appendLocalEvent(tr("Workflow recovery resume failed: missing resume state"));
-        QMessageBox::warning(
+        sak::showWarningLogged(
             this,
             tr("Resume Blocked"),
             tr("This recovery gate does not have enough workflow state to resume automatically."));
@@ -7109,16 +7524,16 @@ const ai::WorkflowTemplate* AiAssistantPanel::recoveryWorkflowForGate(const ai::
     if (!workflow) {
         appendLocalEvent(
             tr("Workflow recovery resume failed: unknown workflow %1").arg(workflow_id));
-        QMessageBox::warning(this,
-                             tr("Workflow Missing"),
-                             tr("The workflow for this waiting run is no longer available."));
+        sak::showWarningLogged(this,
+                               tr("Workflow Missing"),
+                               tr("The workflow for this waiting run is no longer available."));
     }
     return workflow;
 }
 
 bool AiAssistantPanel::resolveWorkflowRecoveryChoice(const ai::AiHumanGate& gate,
                                                      QJsonObject* metadata) {
-    const auto choice = QMessageBox::question(
+    const auto choice = sak::showQuestionLogged(
         this,
         tr("Resume Workflow?"),
         tr("The workflow paused after a phase needed human input. Continue from the next phase?"),
@@ -7458,7 +7873,7 @@ void AiAssistantPanel::appendPhaseStartedToTranscript(const ai::WorkflowPhase& p
     emitStatusDetails();
     saveRunStateSnapshot();
     setActivityIndicator(tr("Workflow: %1").arg(phase.id), true);
-    Q_EMIT statusMessage(tr("Workflow phase: %1").arg(phase.id), 2500);
+    Q_EMIT statusMessage(tr("Workflow phase: %1").arg(phase.id), kWorkflowPhaseStatusMessageMs);
 }
 
 void AiAssistantPanel::appendPhaseToTranscript(const ai::AiPhaseExecution& execution) {
@@ -7602,27 +8017,32 @@ void AiAssistantPanel::appendSubagentTranscriptDetails(const QJsonObject& subage
     (*metadata)[QStringLiteral("subagent_result")] = subagent_result;
     const QString summary = subagent_result.value(QStringLiteral("summary")).toString().trimmed();
     if (!summary.isEmpty()) {
-        (*metadata)[QStringLiteral("summary")] = summary.left(500);
-        *transcript_details
-            << tr("  summary: %1").arg(ai::CredentialStore::redactSecrets(summary.left(700)));
+        (*metadata)[QStringLiteral("summary")] = summary.left(kDefaultPreviewMaxChars);
+        *transcript_details << tr("  summary: %1")
+                                   .arg(ai::CredentialStore::redactSecrets(
+                                       summary.left(kDefaultCleanReportMaxChars)));
     }
-    for (const auto& finding :
-         findingSummaries(subagent_result.value(QStringLiteral("findings")), 4)) {
+    for (const auto& finding : findingSummaries(subagent_result.value(QStringLiteral("findings")),
+                                                kSubagentTranscriptFindingLimit)) {
         *transcript_details << tr("  finding: %1").arg(ai::CredentialStore::redactSecrets(finding));
     }
     const QStringList actions =
-        jsonStringList(subagent_result.value(QStringLiteral("actions_taken"))).mid(0, 4);
+        jsonStringList(subagent_result.value(QStringLiteral("actions_taken")))
+            .mid(0, kSubagentTranscriptActionLimit);
     if (!actions.isEmpty()) {
-        *transcript_details << tr("  actions: %1")
-                                   .arg(ai::CredentialStore::redactSecrets(
-                                       actions.join(QStringLiteral("; ")).left(700)));
+        *transcript_details
+            << tr("  actions: %1")
+                   .arg(ai::CredentialStore::redactSecrets(
+                       actions.join(QStringLiteral("; ")).left(kDefaultCleanReportMaxChars)));
     }
     const QStringList next_steps =
-        jsonStringList(subagent_result.value(QStringLiteral("recommended_next_steps"))).mid(0, 3);
+        jsonStringList(subagent_result.value(QStringLiteral("recommended_next_steps")))
+            .mid(0, kSubagentTranscriptNextStepLimit);
     if (!next_steps.isEmpty()) {
-        *transcript_details << tr("  next: %1")
-                                   .arg(ai::CredentialStore::redactSecrets(
-                                       next_steps.join(QStringLiteral("; ")).left(700)));
+        *transcript_details
+            << tr("  next: %1")
+                   .arg(ai::CredentialStore::redactSecrets(
+                       next_steps.join(QStringLiteral("; ")).left(kDefaultCleanReportMaxChars)));
     }
 }
 
@@ -7672,7 +8092,8 @@ QString AiAssistantPanel::workflowResultText(const ai::AiOrchestratorResult& res
     for (const auto& phase : result.phases) {
         const QJsonObject subagent_result =
             phase.metadata.value(QStringLiteral("result")).toObject();
-        findings << findingSummaries(subagent_result.value(QStringLiteral("findings")), 6);
+        findings << findingSummaries(subagent_result.value(QStringLiteral("findings")),
+                                     kSubagentPhaseFindingLimit);
         actions << jsonStringList(subagent_result.value(QStringLiteral("actions_taken")));
         next_steps << jsonStringList(
             subagent_result.value(QStringLiteral("recommended_next_steps")));
@@ -7680,12 +8101,18 @@ QString AiAssistantPanel::workflowResultText(const ai::AiOrchestratorResult& res
     findings.removeDuplicates();
     actions.removeDuplicates();
     next_steps.removeDuplicates();
-    appendListSection(
-        &lines, tr("Findings"), findings.mid(0, 8), tr("No structured findings recorded."));
-    appendListSection(
-        &lines, tr("Actions completed"), actions.mid(0, 8), tr("No actions recorded."));
-    appendListSection(
-        &lines, tr("Next steps"), next_steps.mid(0, 8), tr("No next steps recorded."));
+    appendListSection(&lines,
+                      tr("Findings"),
+                      findings.mid(0, kSubagentSummarySectionLimit),
+                      tr("No structured findings recorded."));
+    appendListSection(&lines,
+                      tr("Actions completed"),
+                      actions.mid(0, kSubagentSummarySectionLimit),
+                      tr("No actions recorded."));
+    appendListSection(&lines,
+                      tr("Next steps"),
+                      next_steps.mid(0, kSubagentSummarySectionLimit),
+                      tr("No next steps recorded."));
     return lines.join(QLatin1Char('\n'));
 }
 
@@ -7748,6 +8175,16 @@ void AiAssistantPanel::runWorkflowAsync(const ai::WorkflowTemplate& workflow,
         appendLocalEvent(tr("Workflow run already in progress"));
         return;
     }
+    beginWorkflowRunUiState(workflow, user_message, input_values, preferred_run_id, resume_state);
+    resetWorkflowRunWatcher();
+    startWorkflowRunFuture(workflow, user_message, input_values, resume_state);
+}
+
+void AiAssistantPanel::beginWorkflowRunUiState(const ai::WorkflowTemplate& workflow,
+                                               const QString& user_message,
+                                               const QJsonObject& input_values,
+                                               const QString& preferred_run_id,
+                                               const QJsonObject& resume_state) {
     setUiBusy(true);
     setActivityIndicator(tr("Running workflow"), true);
     startAiRunTrace(user_message, m_modelCombo->currentText().trimmed(), preferred_run_id);
@@ -7778,7 +8215,9 @@ void AiAssistantPanel::runWorkflowAsync(const ai::WorkflowTemplate& workflow,
                                     .arg(workflow.title)
                                     .arg(workflow.phases.size()));
     }
+}
 
+void AiAssistantPanel::resetWorkflowRunWatcher() {
     if (m_workflowRunWatcher) {
         m_workflowRunWatcher->disconnect();
         m_workflowRunWatcher->deleteLater();
@@ -7789,7 +8228,12 @@ void AiAssistantPanel::runWorkflowAsync(const ai::WorkflowTemplate& workflow,
             &QFutureWatcher<ai::AiOrchestratorResult>::finished,
             this,
             &AiAssistantPanel::onWorkflowRunFinished);
+}
 
+void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workflow,
+                                              const QString& user_message,
+                                              const QJsonObject& input_values,
+                                              const QJsonObject& resume_state) {
     const QString api_key = apiKey();
     const QString model = m_modelCombo->currentText().trimmed();
     const QString reasoning = m_reasoningEffortCombo->currentText().trimmed().toLower();
@@ -7800,96 +8244,117 @@ void AiAssistantPanel::runWorkflowAsync(const ai::WorkflowTemplate& workflow,
     const QJsonObject resume_state_copy = resume_state;
     QPointer<AiAssistantPanel> panel_guard(this);
     PanelToolExecutor* executor = new PanelToolExecutor(this);
+    const WorkflowRunLaunch launch{panel_guard,
+                                   workflow_copy,
+                                   run_id,
+                                   token,
+                                   api_key,
+                                   model,
+                                   reasoning,
+                                   input_values_copy,
+                                   resume_state_copy,
+                                   user_message,
+                                   executor};
 
-    QFuture<ai::AiOrchestratorResult> future = QtConcurrent::run([panel_guard,
-                                                                  workflow_copy,
-                                                                  run_id,
-                                                                  token,
-                                                                  api_key,
-                                                                  model,
-                                                                  reasoning,
-                                                                  input_values_copy,
-                                                                  resume_state_copy,
-                                                                  user_message,
-                                                                  executor]() {
-        ai::OpenAIResponsesModelClient model_client;
-        model_client.setEnableWebSearch(true);
-        ai::AiSubagentRunner runner(&model_client);
-        ai::AiSubagentRunnerOptions runner_opts;
-        runner_opts.max_retries = 1;
-        runner_opts.wall_clock_timeout_ms = 300'000;
-        runner.setOptions(runner_opts);
-        ai::AiOrchestrator orchestrator(&runner, executor);
-        ai::AiOrchestrationOptions opts;
-        opts.api_key = api_key;
-        opts.default_model = model;
-        opts.default_reasoning_effort = reasoning;
-        // The current OpenAI model adapter owns Qt network objects and is
-        // not safe to invoke concurrently from std::async worker threads.
-        opts.max_parallel_subagents = 1;
-        opts.user_message = user_message;
-        opts.input_values = input_values_copy;
-        if (!resume_state_copy.isEmpty()) {
-            opts.resume_enabled = true;
-            opts.resume_start_phase_index =
-                resume_state_copy.value(QStringLiteral("resume_start_phase_index")).toInt(0);
-            opts.resume_prior_phases = phaseHistoryFromJson(
-                resume_state_copy.value(QStringLiteral("phase_history")).toArray());
-            opts.resume_flags =
-                stringSetFromJson(resume_state_copy.value(QStringLiteral("flags")).toArray());
-            opts.resume_phase_results =
-                resume_state_copy.value(QStringLiteral("phase_results")).toObject();
-        }
-        orchestrator.setOptions(opts);
-        orchestrator.setPhaseStartedCallback([panel_guard](const ai::WorkflowPhase& phase) {
-            if (!panel_guard) {
-                return;
-            }
-            QMetaObject::invokeMethod(
-                panel_guard.data(),
-                [panel_guard, phase]() {
-                    if (panel_guard) {
-                        panel_guard->appendPhaseStartedToTranscript(phase);
-                    }
-                },
-                Qt::QueuedConnection);
-        });
-        orchestrator.setPhaseCompletedCallback(
-            [panel_guard](const ai::AiPhaseExecution& execution) {
-                if (!panel_guard) {
-                    return;
-                }
-                QMetaObject::invokeMethod(
-                    panel_guard.data(),
-                    [panel_guard, execution]() {
-                        if (panel_guard) {
-                            panel_guard->appendPhaseToTranscript(execution);
-                        }
-                    },
-                    Qt::QueuedConnection);
-            });
-        const auto result = orchestrator.run(workflow_copy, run_id, token);
-        delete executor;
-        return result;
-    });
+    QFuture<ai::AiOrchestratorResult> future =
+        QtConcurrent::run([launch]() { return AiAssistantPanel::executeWorkflowRun(launch); });
     m_workflowRunWatcher->setFuture(future);
+}
+
+ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunLaunch& launch) {
+    ai::OpenAIResponsesModelClient model_client;
+    model_client.setEnableWebSearch(true);
+    ai::AiSubagentRunner runner(&model_client);
+    configureWorkflowRunner(&runner);
+    ai::AiOrchestrator orchestrator(&runner, launch.executor);
+    orchestrator.setOptions(workflowOrchestrationOptions(launch));
+    connectWorkflowOrchestratorCallbacks(&orchestrator, launch.panel_guard);
+    const auto result = orchestrator.run(launch.workflow, launch.run_id, launch.token);
+    delete launch.executor;
+    return result;
+}
+
+void AiAssistantPanel::configureWorkflowRunner(ai::AiSubagentRunner* runner) {
+    ai::AiSubagentRunnerOptions runner_opts;
+    runner_opts.max_retries = kWorkflowRunnerMaxRetries;
+    runner_opts.wall_clock_timeout_ms = kWorkflowWallClockTimeoutMs;
+    runner->setOptions(runner_opts);
+}
+
+ai::AiOrchestrationOptions AiAssistantPanel::workflowOrchestrationOptions(
+    const WorkflowRunLaunch& launch) {
+    ai::AiOrchestrationOptions opts;
+    opts.api_key = launch.api_key;
+    opts.default_model = launch.model;
+    opts.default_reasoning_effort = launch.reasoning;
+    opts.max_parallel_subagents = kWorkflowMaxParallelSubagents;
+    opts.user_message = launch.user_message;
+    opts.input_values = launch.input_values;
+    applyWorkflowResumeState(&opts, launch.resume_state);
+    return opts;
+}
+
+void AiAssistantPanel::applyWorkflowResumeState(ai::AiOrchestrationOptions* options,
+                                                const QJsonObject& resume_state) {
+    if (resume_state.isEmpty()) {
+        return;
+    }
+    options->resume_enabled = true;
+    options->resume_start_phase_index =
+        resume_state.value(QStringLiteral("resume_start_phase_index")).toInt(0);
+    options->resume_prior_phases =
+        phaseHistoryFromJson(resume_state.value(QStringLiteral("phase_history")).toArray());
+    options->resume_flags =
+        stringSetFromJson(resume_state.value(QStringLiteral("flags")).toArray());
+    options->resume_phase_results = resume_state.value(QStringLiteral("phase_results")).toObject();
+}
+
+void AiAssistantPanel::connectWorkflowOrchestratorCallbacks(
+    ai::AiOrchestrator* orchestrator, QPointer<AiAssistantPanel> panel_guard) {
+    orchestrator->setPhaseStartedCallback([panel_guard](const ai::WorkflowPhase& phase) {
+        if (!panel_guard) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            panel_guard.data(),
+            [panel_guard, phase]() {
+                if (panel_guard) {
+                    panel_guard->appendPhaseStartedToTranscript(phase);
+                }
+            },
+            Qt::QueuedConnection);
+    });
+    orchestrator->setPhaseCompletedCallback([panel_guard](const ai::AiPhaseExecution& execution) {
+        if (!panel_guard) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            panel_guard.data(),
+            [panel_guard, execution]() {
+                if (panel_guard) {
+                    panel_guard->appendPhaseToTranscript(execution);
+                }
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void AiAssistantPanel::startAiRunTrace(const QString& message,
                                        const QString& model,
                                        const QString& preferred_run_id) {
     const QString requested_run_id = preferred_run_id.trimmed();
-    m_currentRunId = requested_run_id.isEmpty()
-                         ? QStringLiteral("run_%1_%2")
-                               .arg(QDateTime::currentDateTimeUtc().toString(
-                                        QStringLiteral("yyyyMMddHHmmsszzz")),
-                                    QUuid::createUuid().toString(QUuid::WithoutBraces).left(8))
-                         : requested_run_id;
+    m_currentRunId = requested_run_id.isEmpty() ? QStringLiteral("run_%1_%2")
+                                                      .arg(QDateTime::currentDateTimeUtc().toString(
+                                                               QStringLiteral("yyyyMMddHHmmsszzz")),
+                                                           QUuid::createUuid()
+                                                               .toString(QUuid::WithoutBraces)
+                                                               .left(kShortTraceTokenIdChars))
+                                                : requested_run_id;
     m_runToken = ai::CancellationToken::createRoot(m_currentRunId);
     m_runState = {};
     m_runState.run_id = m_currentRunId;
     m_runState.status = ai::AiRunStatus::Running;
-    m_runState.message = message.left(200);
+    m_runState.message = message.left(kRunStateMessageMaxChars);
     clearWorkflowProgressUi();
     saveRunStateSnapshot();
 
@@ -8081,7 +8546,7 @@ void AiAssistantPanel::onResumeGateClicked() {
     } else if (gate.kind == QLatin1String("workflow_recovery")) {
         resumed = resumeWorkflowRecoveryGate(gate);
     } else {
-        QMessageBox::information(
+        sak::showInformationLogged(
             this,
             tr("AI Run Waiting"),
             tr("This waiting gate is not resumable yet. Open Run Details to review it."));
@@ -8331,7 +8796,7 @@ void AiAssistantPanel::showRunDetails() {
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setWindowTitle(tr("AI Run Details"));
     dialog->setWindowModality(Qt::ApplicationModal);
-    dialog->resize(880, 700);
+    dialog->resize(kRunDetailsDialogWidth, kRunDetailsDialogHeight);
 
     auto* layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(sak::ui::kMarginMedium,
@@ -8341,8 +8806,8 @@ void AiAssistantPanel::showRunDetails() {
     layout->setSpacing(sak::ui::kSpacingSmall);
 
     auto* title = new QLabel(tr("Run Details"), dialog);
-    title->setStyleSheet(QStringLiteral("font-weight: 700; color: %1; font-size: 12pt;")
-                             .arg(sak::ui::kColorTextHeading));
+    title->setStyleSheet(sak::ui::fontSizeWeightColorStyle(
+        sak::ui::kFontSizeSection, kFontWeightBold, sak::ui::kColorTextHeading));
     title->setToolTip(tr("Current or most recent AI run state"));
     setAccessible(title, tr("AI run details title"));
     layout->addWidget(title);
@@ -8351,10 +8816,7 @@ void AiAssistantPanel::showRunDetails() {
     body->setReadOnly(true);
     body->setOpenExternalLinks(false);
     body->setHtml(runDetailsHtml());
-    body->setStyleSheet(
-        QStringLiteral("QTextBrowser { background: %1; border: 1px solid %2; border-radius: 4px; "
-                       "color: %3; padding: 8px; font-size: 9pt; }")
-            .arg(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault, sak::ui::kColorTextBody));
+    body->setStyleSheet(sak::ui::aiRunDetailsBodyStyle());
     body->setToolTip(tr("Run summary, live phase timeline, pending gates, and recent activity"));
     setAccessible(body,
                   tr("AI run details timeline"),
@@ -8533,7 +8995,9 @@ QString AiAssistantPanel::workflowProgressFormat(int completed,
 
 int AiAssistantPanel::workflowProgressValue(int completed, int total, bool has_active_phase) const {
     const int maximum = std::max(1, total * 2);
-    return std::clamp((completed * 2) + (has_active_phase ? 1 : 0), 0, maximum);
+    return std::clamp((completed * kProgressCompletedStepWeight) + (has_active_phase ? 1 : 0),
+                      0,
+                      maximum);
 }
 
 void AiAssistantPanel::rebuildWorkflowDetailsView() {
@@ -8647,12 +9111,12 @@ void AiAssistantPanel::onNewSessionClicked() {
 void AiAssistantPanel::onLoadApiKeyClicked() {
     if (ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
         const auto choice =
-            QMessageBox::question(this,
-                                  tr("Clear OpenAI API Key"),
-                                  tr("Clear the loaded OpenAI API key from this session and the "
-                                     "encrypted app credential file?"),
-                                  QMessageBox::Yes | QMessageBox::No,
-                                  QMessageBox::No);
+            sak::showQuestionLogged(this,
+                                    tr("Clear OpenAI API Key"),
+                                    tr("Clear the loaded OpenAI API key from this session and the "
+                                       "encrypted app credential file?"),
+                                    QMessageBox::Yes | QMessageBox::No,
+                                    QMessageBox::No);
         if (choice != QMessageBox::Yes) {
             return;
         }
@@ -8663,14 +9127,14 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
         if (deleted) {
             setApiKeyStatus(tr("Not loaded"),
                             sak::ui::kStatusColorError,
-                            QString(QChar(0x2718)),
+                            QString(QChar(kStatusMarkerError)),
                             sak::ui::kStatusColorError);
             appendLocalEvent(tr("OpenAI API key cleared"));
             Q_EMIT statusMessage(tr("OpenAI API key cleared"), sak::kTimerStatusDefaultMs);
         } else {
             setApiKeyStatus(tr("Credential clear failed"),
                             sak::ui::kStatusColorError,
-                            QString(QChar(0x2718)),
+                            QString(QChar(kStatusMarkerError)),
                             sak::ui::kStatusColorError);
             appendLocalEvent(tr("Credential clear failed: %1").arg(error));
             Q_EMIT statusMessage(tr("OpenAI credential clear failed"), sak::kTimerStatusDefaultMs);
@@ -8694,7 +9158,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
         m_apiKey.clear();
         setApiKeyStatus(tr("Not loaded"),
                         sak::ui::kStatusColorError,
-                        QString(QChar(0x2718)),
+                        QString(QChar(kStatusMarkerError)),
                         sak::ui::kStatusColorError);
         updateCredentialControls();
         return;
@@ -8923,7 +9387,7 @@ void AiAssistantPanel::onBrokerStarted(const QString& command_id) {
     setActivityIndicator(tr("Running tool"), true);
     QJsonObject metadata;
     metadata[QStringLiteral("command_id")] = command_id;
-    metadata[QStringLiteral("preview")] = m_currentCommandPreview.left(500);
+    metadata[QStringLiteral("preview")] = m_currentCommandPreview.left(kDefaultPreviewMaxChars);
     traceAiEvent(QStringLiteral("tool_call"),
                  QStringLiteral("local_command"),
                  QStringLiteral("running"),
@@ -8972,14 +9436,15 @@ void AiAssistantPanel::onBrokerFinished(const QString& command_id,
     m_currentStderrBuffer.clear();
     recordBrokerResult(command_id, result, result_json);
     appendBrokerResultToTranscript(result_json, trace_metadata);
-    appendSessionMemory(
-        QStringLiteral("Tool"),
-        QStringLiteral("Command finished"),
-        tr("%1 exit=%2 cancelled=%3 timed_out=%4")
-            .arg(m_currentCommandPreview.isEmpty() ? command_id : m_currentCommandPreview.left(500))
-            .arg(result.exit_code)
-            .arg(result.cancelled)
-            .arg(result.timed_out));
+    appendSessionMemory(QStringLiteral("Tool"),
+                        QStringLiteral("Command finished"),
+                        tr("%1 exit=%2 cancelled=%3 timed_out=%4")
+                            .arg(m_currentCommandPreview.isEmpty()
+                                     ? command_id
+                                     : m_currentCommandPreview.left(kDefaultPreviewMaxChars))
+                            .arg(result.exit_code)
+                            .arg(result.cancelled)
+                            .arg(result.timed_out));
     m_currentCommandPreview.clear();
 
     if (!m_toolTurn.active()) {
@@ -9006,8 +9471,8 @@ QJsonObject AiAssistantPanel::brokerResultJson(const QString& command_id,
     QJsonObject result_json = result.toJson();
     result_json[QStringLiteral("command_id")] = command_id;
     if (!m_currentCommandPreview.isEmpty()) {
-        result_json[QStringLiteral("preview")] =
-            ai::CredentialStore::redactSecrets(m_currentCommandPreview.left(1200));
+        result_json[QStringLiteral("preview")] = ai::CredentialStore::redactSecrets(
+            m_currentCommandPreview.left(kCommandResultPreviewMaxChars));
     }
     return result_json;
 }
@@ -9199,7 +9664,7 @@ void AiAssistantPanel::handleAssistantResponse(const ai::OpenAIResponseResult& r
     }
     appendSessionMemory(QStringLiteral("Assistant"),
                         QStringLiteral("Response"),
-                        result.output_text.left(3000));
+                        result.output_text.left(kOpenAiResponsePreviewMaxChars));
     appendLocalEvent(tr("OpenAI response complete (%1 tokens, %2 sources)")
                          .arg(result.usage.total_tokens)
                          .arg(result.citations.size()));
@@ -9225,7 +9690,7 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     const bool saved = m_credentialStore && m_credentialStore->saveApiKey(apiKey(), &save_error);
     setApiKeyStatus(saved ? tr("Key valid and saved") : tr("Key valid"),
                     sak::ui::kStatusColorSuccess,
-                    QString(QChar(0x2714)),
+                    QString(QChar(kStatusMarkerSuccess)),
                     sak::ui::kStatusColorSuccess);
     if (!saved && !save_error.isEmpty()) {
         appendLocalEvent(tr("OpenAI key valid but credential save failed: %1").arg(save_error));
@@ -9249,14 +9714,14 @@ void AiAssistantPanel::onRequestFailed(const QString& error_message) {
     }
     setApiKeyStatus(tr("Request failed"),
                     sak::ui::kStatusColorError,
-                    QString(QChar(0x2718)),
+                    QString(QChar(kStatusMarkerError)),
                     sak::ui::kStatusColorError);
     m_taskStatus = tr("Request failed");
     emitStatusDetails();
     appendLocalEvent(tr("AI request failed: %1").arg(redacted));
     appendSessionMemory(QStringLiteral("Error"), QStringLiteral("AI request failed"), redacted);
     QJsonObject metadata;
-    metadata[QStringLiteral("error")] = redacted.left(1000);
+    metadata[QStringLiteral("error")] = redacted.left(kMetadataPreviewMaxChars);
     finishAiRunTrace(QStringLiteral("failed"), metadata);
     m_activeUserMessage.clear();
     m_pendingSteeringMessages.clear();

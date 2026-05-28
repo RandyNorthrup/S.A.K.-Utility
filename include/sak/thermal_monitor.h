@@ -16,6 +16,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultThermalPollIntervalMs = kTimerBroadcastMs;
+
 /// @brief Polls system thermal sensors at a configurable interval
 ///
 /// Uses a single PowerShell process per poll cycle to query CPU (WMI ACPI
@@ -51,7 +53,7 @@ public:
 
     /// @brief Start periodic temperature polling
     /// @param interval_ms Poll interval in milliseconds (default: 2000)
-    void start(int interval_ms = 2000);
+    void start(int interval_ms = kDefaultThermalPollIntervalMs);
 
     /// @brief Stop temperature polling
     void stop();

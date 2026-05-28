@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QLabel>
+#include <QList>
 #include <QMainWindow>
 #include <QMap>
 #include <QMenuBar>
@@ -121,12 +122,19 @@ private:
 
     /// @brief Create simple standalone panel tabs
     void createSimplePanels();
+    void createBackupRestorePanel();
+    void createFileManagementPanel();
+    void createImageFlasherPanel();
+    void createDiagnosticPanel();
+    void createEmailToolsPanel();
 
     /// @brief Create the Application Management composite panel tab
     void createAppManagementPanel();
+    void createAppManagementChildPanels();
 
     /// @brief Create the Network Management composite panel tab
     void createNetworkManagementPanel();
+    void connectNetworkAdapterLogToggle();
 
     /// @brief Create the About information panel tab
     void createAboutPanel();
@@ -135,25 +143,13 @@ private:
     void createHelpPanel();
 
     /// @brief Build the Feature Request + Bug Report card row
-    QHBoxLayout* createHelpRow_requestsAndBugs(QWidget* parent,
-                                               const QString& cardStyle,
-                                               const QString& titleStyle,
-                                               const QString& descStyle,
-                                               const QString& logoStyle);
+    QHBoxLayout* createHelpRow_requestsAndBugs(QWidget* parent);
 
     /// @brief Build the Wiki + Community card row
-    QHBoxLayout* createHelpRow_wikiAndCommunity(QWidget* parent,
-                                                const QString& cardStyle,
-                                                const QString& titleStyle,
-                                                const QString& descStyle,
-                                                const QString& logoStyle);
+    QHBoxLayout* createHelpRow_wikiAndCommunity(QWidget* parent);
 
     /// @brief Build the Discord community card
-    QFrame* createCommunityCard(QWidget* parent,
-                                const QString& cardStyle,
-                                const QString& titleStyle,
-                                const QString& descStyle,
-                                const QString& logoStyle);
+    QFrame* createCommunityCard(QWidget* parent);
 
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);
@@ -163,17 +159,9 @@ private:
 
     /// @brief Connect remaining panel status/progress signals
     void connectRemainingPanelSignals();
-
-#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    /// @brief Connect AI assistant status/progress signals
-    void connectAiAssistantSignals();
-
-    /// @brief True when the AI Assistant panel is the selected main tab.
-    [[nodiscard]] bool isAiAssistantPanelActive() const;
-
-    /// @brief Show AI status details only while the AI Assistant panel is active.
-    void updateAiStatusBarVisibility();
-#endif
+    void connectDiagnosticAndSearchSignals();
+    void connectManagementAndVulnerabilitySignals();
+    void connectNetworkAndEmailSignals();
 
     /// @brief True when the Vulnerability Scanner sub-tab is selected.
     [[nodiscard]] bool isVulnerabilityPanelActive() const;
@@ -181,8 +169,22 @@ private:
     /// @brief Show vulnerability scan summary only while its panel is active.
     void updateVulnerabilityStatusBarVisibility();
 
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    /// @brief True when the AI Assistant main tab is selected.
+    [[nodiscard]] bool isAiAssistantPanelActive() const;
+
+    /// @brief Show AI token/run details only while the AI Assistant tab is active.
+    void updateAiStatusBarVisibility();
+#endif
+
     /// @brief Connect panel log signals to the shared log window
     void connectPanelLogs();
+
+    /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
+    void attachThemeToggleToLogToggle(LogToggleSwitch* logToggle);
+
+    /// @brief Apply light or dark theme and synchronize all theme toggle widgets.
+    void setDarkThemeEnabled(bool enabled);
 
     /// @brief Find the main tab index containing this panel widget
     [[nodiscard]] int findPanelTabIndex(QWidget* panel) const;
@@ -244,16 +246,14 @@ private:
     QLabel* m_vulnerability_summary_label{nullptr};
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     QLabel* m_ai_status_label{nullptr};
-    bool m_progress_owner_is_ai{false};
-    bool m_ai_progress_active{false};
-    int m_ai_progress_current{1};
-    int m_ai_progress_maximum{1};
 #endif
     QWidget* m_elevation_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
 
     // Shared log window
     DetachableLogWindow* m_logWindow{nullptr};
+    QList<LogToggleSwitch*> m_theme_toggles;
+    bool m_dark_theme_enabled{false};
 
     // Per-panel log storage for tab-aware log switching
     QMap<int, QStringList> m_panelLogs;

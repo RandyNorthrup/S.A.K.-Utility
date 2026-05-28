@@ -40,6 +40,10 @@ void appendExistingVariants(QStringList& paths,
 
 namespace sak {
 
+namespace {
+constexpr int kFastCompressionMaxLevel = 3;
+}
+
 UserDataManager::UserDataManager(QObject* parent) : QObject(parent) {}
 
 std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
@@ -176,7 +180,7 @@ bool UserDataManager::restoreAppData(const QString& backup_path,
 
     // Verify checksum
     if (config.verify_checksum && !entry.checksum.isEmpty()) {
-        Q_EMIT progressUpdate(0, 100, "Verifying backup integrity...");
+        Q_EMIT progressUpdate(0, kPercentMax, "Verifying backup integrity...");
         QString current_checksum = generateChecksum(backup_path);
         if (current_checksum != entry.checksum) {
             Q_EMIT operationError(entry.app_name, "Checksum mismatch - backup may be corrupted");
@@ -392,7 +396,7 @@ QString UserDataManager::mapCompressionLevel(int level) {
     if (level == 0) {
         return QStringLiteral("NoCompression");
     }
-    if (level <= 3) {
+    if (level <= kFastCompressionMaxLevel) {
         return QStringLiteral("Fastest");
     }
     return QStringLiteral("Optimal");  // PowerShell doesn't have higher levels

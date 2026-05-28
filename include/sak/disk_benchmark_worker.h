@@ -101,6 +101,10 @@ private:
     /// @brief Run all benchmark phases (sequential + random I/O)
     /// @return Success or error code (cancellation)
     auto runAllBenchmarks() -> std::expected<void, sak::error_code>;
+    auto runSequentialBenchmarks() -> std::expected<void, sak::error_code>;
+    auto runRandomQd1Benchmarks() -> std::expected<void, sak::error_code>;
+    auto runRandomQd32Benchmarks() -> std::expected<void, sak::error_code>;
+    auto continueOrCancelBenchmark() -> std::expected<void, sak::error_code>;
 
     /// Accumulated I/O stats for random benchmark loops
     struct RandomIoStats {

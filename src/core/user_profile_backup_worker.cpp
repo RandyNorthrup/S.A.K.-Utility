@@ -22,6 +22,15 @@
 
 namespace sak {
 
+namespace {
+constexpr int kBackupWorkerMaxCompressionLevel = 9;
+constexpr int kBackupSizeDisplayPrecision = 2;
+constexpr int kProgressEmitFileInterval = 100;
+constexpr qint64 kProgressEmitByteInterval = kProgressEmitFileInterval * kBytesPerMB;
+constexpr double kDiskSpaceSafetyMultiplier = 1.1;
+constexpr int kDiskSpaceDisplayPrecision = 1;
+}  // namespace
+
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
     : QThread(parent)
     , m_fileFilter(new SmartFileFilter())
@@ -30,7 +39,7 @@ UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
 UserProfileBackupWorker::~UserProfileBackupWorker() {
     if (isRunning()) {
         cancel();
-        wait(5000);
+        wait(kTimeoutThreadTerminateMs);
     }
 }
 
@@ -41,7 +50,8 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
                                           const BackupOptions& options) {
     Q_ASSERT_X(!users.isEmpty(), "startBackup", "users must not be empty");
     Q_ASSERT_X(!destinationPath.isEmpty(), "startBackup", "destinationPath must not be empty");
-    Q_ASSERT_X(options.compression_level >= 0 && options.compression_level <= 9,
+    Q_ASSERT_X(options.compression_level >= 0 &&
+                   options.compression_level <= kBackupWorkerMaxCompressionLevel,
                "startBackup",
                "compressionLevel must be 0-9");
     if (m_running) {
@@ -104,7 +114,8 @@ void UserProfileBackupWorker::run() {
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
     Q_EMIT logMessage(
-        tr("Total estimated size: %1 GB").arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', 2),
+        tr("Total estimated size: %1 GB")
+            .arg(m_totalBytesToCopy / sak::kBytesPerGBf, 0, 'f', kBackupSizeDisplayPrecision),
         false);
 
     // Create backup directory structure
@@ -460,12 +471,11 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
     Q_ASSERT(bytesAdded >= 0);
     m_bytesCopied += bytesAdded;
 
-    // Emit progress every 100 files or 100MB
     static int lastFileCount = 0;
     static qint64 lastByteCount = 0;
 
-    if (m_filesCopied - lastFileCount >= 100 ||
-        m_bytesCopied - lastByteCount >= 100 * sak::kBytesPerMB) {
+    if (m_filesCopied - lastFileCount >= kProgressEmitFileInterval ||
+        m_bytesCopied - lastByteCount >= kProgressEmitByteInterval) {
         int currentUser = 0, totalUsers = 0;
         countSelectedUsers(currentUser, totalUsers);
 
@@ -538,16 +548,15 @@ bool UserProfileBackupWorker::checkDiskSpace() {
     qint64 availableBytes = storage.bytesAvailable();
     qint64 requiredBytes = m_totalBytesToCopy;
 
-    // Add 10% buffer for overhead
-    requiredBytes = requiredBytes * 1.1;
+    requiredBytes = qRound64(static_cast<double>(requiredBytes) * kDiskSpaceSafetyMultiplier);
 
     if (availableBytes < requiredBytes) {
         double availableGB = availableBytes / sak::kBytesPerGBf;
         double requiredGB = requiredBytes / sak::kBytesPerGBf;
 
         Q_EMIT logMessage(tr("Insufficient disk space. Available: %1 GB, Required: %2 GB")
-                              .arg(availableGB, 0, 'f', 1)
-                              .arg(requiredGB, 0, 'f', 1),
+                              .arg(availableGB, 0, 'f', kDiskSpaceDisplayPrecision)
+                              .arg(requiredGB, 0, 'f', kDiskSpaceDisplayPrecision),
                           true);
         return false;
     }

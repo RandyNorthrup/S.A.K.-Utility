@@ -11,6 +11,9 @@ namespace sak::ai {
 
 namespace {
 
+constexpr qsizetype kMinimumSpecificAppValueChars = 2;
+constexpr qsizetype kGenericUserMessageWordLimit = 3;
+
 bool hasValue(const QJsonValue& value) {
     if (value.isString()) {
         return !value.toString().trimmed().isEmpty();
@@ -54,7 +57,7 @@ bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
     if (text.isEmpty()) {
         return true;
     }
-    if (text.size() < 2) {
+    if (text.size() < kMinimumSpecificAppValueChars) {
         return true;
     }
     static const QStringList generic_terms{
@@ -76,7 +79,7 @@ bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
     if (text.split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts).size() == 1 &&
         user_message.trimmed()
                 .split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts)
-                .size() <= 3 &&
+                .size() <= kGenericUserMessageWordLimit &&
         generic_terms.contains(user_message.trimmed().toLower())) {
         return true;
     }

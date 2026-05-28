@@ -6,6 +6,7 @@
 
 #include "sak/actions/generate_system_report_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -17,6 +18,16 @@
 #include <QSysInfo>
 
 namespace sak {
+
+namespace {
+
+constexpr int kTextReportRuleWidth = 78;
+constexpr int kDurationDisplayPrecision = 1;
+constexpr int kReportSizeDisplayPrecision = 1;
+constexpr int kStorageDisplayPrecision = 2;
+constexpr int kPercentDisplayPrecision = 1;
+
+}  // namespace
 
 GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location,
                                                        QObject* parent)
@@ -43,13 +54,13 @@ void GenerateSystemReportAction::execute() {
 
     setStatus(ActionStatus::Running);
     QDateTime start_time = QDateTime::currentDateTime();
-    Q_EMIT executionProgress("Gathering comprehensive system information...", 5);
+    Q_EMIT executionProgress("Gathering comprehensive system information...", progress::kStep5);
 
     // Phase 1: Report header
     QString report = buildReportHeader();
 
     // Phase 2: OS and hardware
-    Q_EMIT executionProgress("Collecting OS and hardware information...", 15);
+    Q_EMIT executionProgress("Collecting OS and hardware information...", progress::kStep15);
     report += gatherOsAndHardwareInfo();
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
@@ -57,7 +68,7 @@ void GenerateSystemReportAction::execute() {
     }
 
     // Phase 3: Storage
-    Q_EMIT executionProgress("Collecting storage information...", 40);
+    Q_EMIT executionProgress("Collecting storage information...", progress::kStep40);
     report += gatherStorageInfo();
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
@@ -65,7 +76,7 @@ void GenerateSystemReportAction::execute() {
     }
 
     // Phase 4: Network
-    Q_EMIT executionProgress("Collecting network configuration...", 60);
+    Q_EMIT executionProgress("Collecting network configuration...", progress::kStep60);
     report += gatherNetworkInfo();
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
@@ -73,7 +84,7 @@ void GenerateSystemReportAction::execute() {
     }
 
     // Phase 5: Qt/Volume info
-    Q_EMIT executionProgress("Adding supplemental system data...", 80);
+    Q_EMIT executionProgress("Adding supplemental system data...", progress::kStep80);
     report += gatherQtAndVolumeInfo();
     if (isCancelled()) {
         emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
@@ -81,7 +92,7 @@ void GenerateSystemReportAction::execute() {
     }
 
     // Phase 6: Save
-    Q_EMIT executionProgress("Saving report...", 95);
+    Q_EMIT executionProgress("Saving report...", progress::kStep95);
 
     QDir output_dir(m_output_location);
     if (!output_dir.exists()) {
@@ -95,9 +106,12 @@ void GenerateSystemReportAction::execute() {
                            .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     QString filepath = output_dir.filePath(filename);
 
-    report += QString("-").repeated(78) + "\n";
+    report += QString("-").repeated(kTextReportRuleWidth) + "\n";
     report += QString("Report completed in %1 seconds\n")
-                  .arg(start_time.msecsTo(QDateTime::currentDateTime()) / 1000.0, 0, 'f', 1);
+                  .arg(start_time.msecsTo(QDateTime::currentDateTime()) / kMillisecondsPerSecondF,
+                       0,
+                       'f',
+                       kDurationDisplayPrecision);
 
     saveReportAndFinish(report, filepath, start_time);
 }
@@ -107,7 +121,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                                                      const QDateTime& start_time) {
     bool save_success = saveReport(report, filepath);
 
-    Q_EMIT executionProgress("Report complete", 100);
+    Q_EMIT executionProgress("Report complete", progress::kComplete);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
@@ -120,10 +134,11 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
         result.message = QString("Comprehensive system report generated: %1")
                              .arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
-        result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
-                         .arg(filepath)
-                         .arg(report.size() / sak::kBytesPerKBf, 0, 'f', 1)
-                         .arg(duration_ms / 1000.0, 0, 'f', 1);
+        result.log =
+            QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
+                .arg(filepath)
+                .arg(report.size() / sak::kBytesPerKBf, 0, 'f', kReportSizeDisplayPrecision)
+                .arg(duration_ms / kMillisecondsPerSecondF, 0, 'f', kDurationDisplayPrecision);
     } else {
         result.success = false;
         result.message = "Failed to save system report";
@@ -139,9 +154,12 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 
 QString GenerateSystemReportAction::buildReportHeader() const {
     QString header;
-    header += "+" + QString("=").repeated(78) + "+\n";
-    header += "|" + QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(78) + "|\n";
-    header += "+" + QString("=").repeated(78) + "+\n\n";
+    header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n";
+    header +=
+        "|" +
+        QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(kTextReportRuleWidth) +
+        "|\n";
+    header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n\n";
     header += QString("Generated: %1\n\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
                                                              "HH:mm:ss"));
@@ -341,17 +359,22 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
         section +=
-            QString("  Total: %1 GB\n").arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', 2);
+            QString("  Total: %1 GB\n")
+                .arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
         section +=
-            QString("  Free: %1 GB\n").arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', 2);
+            QString("  Free: %1 GB\n")
+                .arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
         section += QString("  Available: %1 GB\n")
-                       .arg(storage.bytesAvailable() / sak::kBytesPerGBf, 0, 'f', 2);
-        section += QString("  Used: %1%%\n\n")
-                       .arg(100.0 * (1.0 - static_cast<double>(storage.bytesFree()) /
-                                               storage.bytesTotal()),
+                       .arg(storage.bytesAvailable() / sak::kBytesPerGBf,
                             0,
                             'f',
-                            1);
+                            kStorageDisplayPrecision);
+        section += QString("  Used: %1%%\n\n")
+                       .arg(kPercentMaxF * (1.0 - static_cast<double>(storage.bytesFree()) /
+                                                      storage.bytesTotal()),
+                            0,
+                            'f',
+                            kPercentDisplayPrecision);
     }
 
     return section;

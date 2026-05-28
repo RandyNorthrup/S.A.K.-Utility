@@ -49,13 +49,19 @@ constexpr int kChocoMaxPackageBatch = 10;      ///< Max packages in batch instal
 /// logical phases of their workflow.
 namespace progress {
 constexpr int kStart = 0;
+constexpr int kStep3 = 3;
+constexpr int kStep5 = 5;
 constexpr int kStep10 = 10;
+constexpr int kStep15 = 15;
 constexpr int kStep20 = 20;
 constexpr int kStep25 = 25;
 constexpr int kStep30 = 30;
+constexpr int kStep35 = 35;
 constexpr int kStep40 = 40;
+constexpr int kStep45 = 45;
 constexpr int kStep50 = 50;
 constexpr int kStep60 = 60;
+constexpr int kStep65 = 65;
 constexpr int kStep70 = 70;
 constexpr int kStep75 = 75;
 constexpr int kStep80 = 80;

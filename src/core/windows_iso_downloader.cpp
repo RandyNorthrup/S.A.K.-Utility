@@ -17,6 +17,8 @@
 
 #include <numeric>
 
+constexpr int kGbDisplayPrecision = 2;
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -142,7 +144,7 @@ void WindowsISODownloader::onFilesFetched(const QString& updateName,
     Q_EMIT downloadStarted(files.size(), totalBytes);
     Q_EMIT statusMessage(QString("Downloading %1 files (%2 GB)...")
                              .arg(files.size())
-                             .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', 2));
+                             .arg(totalBytes / sak::kBytesPerGBf, 0, 'f', kGbDisplayPrecision));
 
     m_builder->startBuild(
         files, m_pendingSavePath, m_pendingEdition, m_pendingLang, m_pendingUpdateId);

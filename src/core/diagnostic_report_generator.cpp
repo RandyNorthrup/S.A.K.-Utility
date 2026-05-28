@@ -9,6 +9,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/report_style_constants.h"
 
 #include <QDir>
 #include <QFile>
@@ -24,6 +25,8 @@ namespace sak {
 
 namespace {
 
+constexpr qsizetype kDiagnosticHtmlInitialReserveChars = 32'768;
+
 /// @brief Escape a value for CSV output (RFC 4180 compliant)
 /// If the value contains commas, quotes, or newlines, wrap in quotes and
 /// double any embedded quotes.
@@ -35,6 +38,49 @@ QString csvEscape(const QString& value) {
         return QLatin1Char('"') + escaped + QLatin1Char('"');
     }
     return value;
+}
+
+QJsonArray stringListToJsonArray(const QStringList& values) {
+    QJsonArray array;
+    for (const auto& value : values) {
+        array.append(value);
+    }
+    return array;
+}
+
+QJsonObject serializeStressTestJson(const StressTestResult& stress_test) {
+    QJsonObject stress;
+    stress["passed"] = stress_test.passed;
+    stress["duration_seconds"] = stress_test.duration_seconds;
+    stress["errors"] = stress_test.errors_detected;
+    stress["max_cpu_temp"] = stress_test.max_cpu_temp;
+    stress["throttle_events"] = stress_test.thermal_throttle_events;
+    stress["abort_reason"] = stress_test.abort_reason;
+    return stress;
+}
+
+bool writeJsonDocument(const QString& output_path, const QJsonObject& root, QString* error) {
+    const QString json_dir = QFileInfo(output_path).absolutePath();
+    if (!QDir().mkpath(json_dir)) {
+        logWarning("Failed to create directory: {}", json_dir.toStdString());
+    }
+
+    QFile file(output_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (error) {
+            *error = QString("Failed to open %1: %2").arg(output_path, file.errorString());
+        }
+        return false;
+    }
+
+    const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(data) != data.size()) {
+        if (error) {
+            *error = QString("Incomplete write to %1").arg(output_path);
+        }
+        return false;
+    }
+    return true;
 }
 
 }  // anonymous namespace
@@ -109,51 +155,19 @@ bool DiagnosticReportGenerator::generateJson(const QString& output_path) {
     root["smart"] = serializeSmartSection();
     root["benchmarks"] = serializeBenchmarkSection();
 
-    // Stress test
     if (m_data.stress_test.has_value()) {
-        const auto& st = m_data.stress_test.value();
-        QJsonObject stress;
-        stress["passed"] = st.passed;
-        stress["duration_seconds"] = st.duration_seconds;
-        stress["errors"] = st.errors_detected;
-        stress["max_cpu_temp"] = st.max_cpu_temp;
-        stress["throttle_events"] = st.thermal_throttle_events;
-        stress["abort_reason"] = st.abort_reason;
-        root["stress_test"] = stress;
+        root["stress_test"] = serializeStressTestJson(m_data.stress_test.value());
     }
 
-    // Issues and recommendations
-    QJsonArray critical_arr, warn_arr, rec_arr;
-    for (const auto& issue : m_data.critical_issues) {
-        critical_arr.append(issue);
-    }
-    for (const auto& warning : m_data.warnings) {
-        warn_arr.append(warning);
-    }
-    for (const auto& recommendation : m_data.recommendations) {
-        rec_arr.append(recommendation);
-    }
-    root["critical_issues"] = critical_arr;
-    root["warnings"] = warn_arr;
-    root["recommendations"] = rec_arr;
+    root["critical_issues"] = stringListToJsonArray(m_data.critical_issues);
+    root["warnings"] = stringListToJsonArray(m_data.warnings);
+    root["recommendations"] = stringListToJsonArray(m_data.recommendations);
 
-    // Write to file
-    const QString json_dir = QFileInfo(output_path).absolutePath();
-    if (!QDir().mkpath(json_dir)) {
-        logWarning("Failed to create directory: {}", json_dir.toStdString());
-    }
-    QFile file(output_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        Q_EMIT errorOccurred(QString("Failed to open %1: %2").arg(output_path, file.errorString()));
+    QString error;
+    if (!writeJsonDocument(output_path, root, &error)) {
+        Q_EMIT errorOccurred(error);
         return false;
     }
-
-    const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (file.write(data) != data.size()) {
-        Q_EMIT errorOccurred(QString("Incomplete write to %1").arg(output_path));
-        return false;
-    }
-    file.close();
 
     logInfo("JSON report generated: {}", output_path.toStdString());
     Q_EMIT reportGenerated("JSON", output_path);
@@ -429,7 +443,7 @@ void DiagnosticReportGenerator::writeCsvBenchmarks(QTextStream& out) const {
 
 QString DiagnosticReportGenerator::renderHtml() const {
     QString html;
-    html.reserve(32'768);
+    html.reserve(kDiagnosticHtmlInitialReserveChars);
 
     html += buildHtmlHeader();
     html += "<body>\n";
@@ -482,43 +496,18 @@ QString DiagnosticReportGenerator::renderHtml() const {
 }
 
 QString DiagnosticReportGenerator::buildHtmlHeader() {
-    return R"(<!DOCTYPE html>
+    return QStringLiteral(R"(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>S.A.K. Diagnostic Report</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana,
-      sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
-  .container { max-width: 900px; margin: 20px auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-  h1 { color: #1a237e; margin-bottom: 10px; font-size: 24px; }
-  h2 { color: #283593; margin: 25px 0 10px; padding-bottom: 5px; border-bottom: 2px solid #e8eaf6; font-size: 18px; }
-  .meta-bar { display: flex; gap: 20px; flex-wrap: wrap; margin: 10px 0 20px; padding: 10px; background: #e8eaf6; border-radius: 4px; font-size: 14px; }
-  .overall-status { text-align: center; padding: 15px; border-radius: 6px; font-weight: bold; font-size: 18px; margin: 15px 0; color: #fff; }
-  .status-healthy { background: #2e7d32; }
-  .status-warning { background: #f57f17; }
-  .status-critical { background: #c62828; }
-  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
-  th { background: #3949ab; color: #fff; padding: 8px 12px; text-align: left; }
-  td { padding: 6px 12px; border-bottom: 1px solid #e0e0e0; }
-  tr:nth-child(even) td { background: #f9f9ff; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; color: #fff; }
-  .badge-healthy { background: #2e7d32; }
-  .badge-warning { background: #f57f17; }
-  .badge-critical { background: #c62828; }
-  .badge-unknown { background: #757575; }
-  .score { font-size: 28px; font-weight: bold; color: #1a237e; }
-  .rec-list { margin: 10px 0; padding-left: 20px; }
-  .rec-list li { margin: 5px 0; }
-  .rec-critical { color: #c62828; font-weight: bold; }
-  .rec-warning { color: #f57f17; }
-  .footer { text-align: center; margin-top: 30px; padding-top: 15px; border-top: 1px solid #e0e0e0; color: #9e9e9e; font-size: 12px; }
-  @media print { body { background: #fff; } .container { box-shadow: none; margin: 0; padding: 15px; } }
+%1
 </style>
 </head>
-)";
+)")
+        .arg(report::enterpriseReportStyleSheet());
 }
 
 QString DiagnosticReportGenerator::buildHardwareSection() const {
@@ -656,7 +645,7 @@ QString DiagnosticReportGenerator::buildBenchmarkSection() const {
         html += QString("<tr><td>Multi-Thread Score</td><td class=\"score\">%1</td></tr>\n")
                     .arg(cb.multi_thread_score);
         html += QString("<tr><td>Thread Scaling</td><td>%1%</td></tr>\n")
-                    .arg(cb.thread_scaling_efficiency * 100.0, 0, 'f', 1);
+                    .arg(cb.thread_scaling_efficiency * kPercentMaxF, 0, 'f', 1);
         html += QString("<tr><td>ZLIB Throughput</td><td>%1 MB/s</td></tr>\n")
                     .arg(cb.zlib_throughput_mbps, 0, 'f', 1);
         html += QString("<tr><td>AES Throughput</td><td>%1 MB/s</td></tr>\n")

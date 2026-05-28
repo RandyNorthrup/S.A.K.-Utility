@@ -12,11 +12,16 @@
 #include <QThread>
 #include <QTimer>
 
+#include <memory>
+#include <utility>
+
 namespace sak {
 
 namespace {
 constexpr int kBannerGrabTimeout = netdiag::kBannerGrabTimeoutMs;
 constexpr int kBannerMaxRead = netdiag::kBannerMaxBytes;
+constexpr auto kHttpHeadProbe = "HEAD / HTTP/1.0\r\nHost: ";
+constexpr auto kHttpHeaderTerminator = "\r\n\r\n";
 
 struct TcpProbeResult {
     bool connected{false};
@@ -25,6 +30,131 @@ struct TcpProbeResult {
     QByteArray banner;
     double response_time_ms{0.0};
 };
+
+struct TcpProbeSettings {
+    QString target;
+    int banner_timeout_ms{0};
+    bool grab_banner{false};
+};
+
+struct TcpProbeContext {
+    TcpProbeContext(TcpProbeResult& resultRef,
+                    QThread& workerThread,
+                    QSemaphore& completionSignal,
+                    TcpProbeSettings probeSettings)
+        : result(resultRef)
+        , thread(workerThread)
+        , done(completionSignal)
+        , target(std::move(probeSettings.target))
+        , banner_timeout_ms(probeSettings.banner_timeout_ms)
+        , grab_banner(probeSettings.grab_banner) {}
+
+    TcpProbeResult& result;
+    QThread& thread;
+    QSemaphore& done;
+    QString target;
+    int banner_timeout_ms{0};
+    bool grab_banner{false};
+    QObject* owner{nullptr};
+    QTcpSocket* socket{nullptr};
+    QTimer* connect_timer{nullptr};
+    QTimer* banner_timer{nullptr};
+    QTimer* probe_timer{nullptr};
+    QElapsedTimer elapsed;
+    bool finished{false};
+    bool probe_sent{false};
+};
+
+using TcpProbeContextPtr = std::shared_ptr<TcpProbeContext>;
+
+void finishTcpProbe(const TcpProbeContextPtr& probe) {
+    if (probe->finished) {
+        return;
+    }
+    probe->finished = true;
+    probe->result.response_time_ms = probe->elapsed.elapsed();
+    probe->socket->disconnectFromHost();
+    probe->socket->deleteLater();
+    probe->owner->deleteLater();
+    probe->thread.quit();
+    probe->done.release();
+}
+
+void sendHttpBannerProbe(const TcpProbeContextPtr& probe) {
+    if (probe->probe_sent) {
+        return;
+    }
+    probe->probe_sent = true;
+    QByteArray request{kHttpHeadProbe};
+    request += probe->target.toLatin1();
+    request += kHttpHeaderTerminator;
+    probe->socket->write(request);
+    probe->socket->flush();
+    probe->banner_timer->start(probe->banner_timeout_ms);
+}
+
+void connectTcpProbeTimers(const TcpProbeContextPtr& probe) {
+    QObject::connect(probe->connect_timer, &QTimer::timeout, probe->owner, [probe]() {
+        probe->result.timed_out = true;
+        probe->result.error_message = QStringLiteral("Connection timed out");
+        probe->socket->abort();
+        finishTcpProbe(probe);
+    });
+    QObject::connect(probe->banner_timer, &QTimer::timeout, probe->owner, [probe]() {
+        finishTcpProbe(probe);
+    });
+    QObject::connect(probe->probe_timer, &QTimer::timeout, probe->owner, [probe]() {
+        sendHttpBannerProbe(probe);
+    });
+}
+
+void connectTcpProbeSocket(const TcpProbeContextPtr& probe) {
+    QObject::connect(probe->socket, &QTcpSocket::connected, probe->owner, [probe]() {
+        probe->connect_timer->stop();
+        probe->result.connected = true;
+        probe->result.response_time_ms = probe->elapsed.elapsed();
+        if (!probe->grab_banner) {
+            finishTcpProbe(probe);
+            return;
+        }
+        probe->probe_timer->start(probe->banner_timeout_ms);
+    });
+    QObject::connect(probe->socket, &QTcpSocket::readyRead, probe->owner, [probe]() {
+        probe->result.banner += probe->socket->read(kBannerMaxRead);
+        finishTcpProbe(probe);
+    });
+    QObject::connect(probe->socket, &QTcpSocket::disconnected, probe->owner, [probe]() {
+        if (probe->result.connected) {
+            finishTcpProbe(probe);
+        }
+    });
+    QObject::connect(probe->socket,
+                     &QTcpSocket::errorOccurred,
+                     probe->owner,
+                     [probe](QAbstractSocket::SocketError error) {
+                         if (probe->finished || error == QAbstractSocket::RemoteHostClosedError) {
+                             return;
+                         }
+                         probe->result.error_message = probe->socket->errorString();
+                         finishTcpProbe(probe);
+                     });
+}
+
+void startTcpProbe(const TcpProbeContextPtr& probe, uint16_t port, int connectTimeoutMs) {
+    probe->socket = new QTcpSocket(probe->owner);
+    probe->connect_timer = new QTimer(probe->owner);
+    probe->connect_timer->setSingleShot(true);
+    probe->banner_timer = new QTimer(probe->owner);
+    probe->banner_timer->setSingleShot(true);
+    probe->probe_timer = new QTimer(probe->owner);
+    probe->probe_timer->setSingleShot(true);
+    connectTcpProbeTimers(probe);
+    connectTcpProbeSocket(probe);
+
+    probe->elapsed.start();
+    probe->connect_timer->start(connectTimeoutMs);
+    probe->socket->connectToHost(probe->target, port);
+}
 
 TcpProbeResult runTcpProbe(const QString& target,
                            uint16_t port,
@@ -36,79 +166,12 @@ TcpProbeResult runTcpProbe(const QString& target,
     QSemaphore done;
     auto* context = new QObject();
     context->moveToThread(&thread);
+    TcpProbeSettings settings{target, bannerTimeoutMs, grabBanner};
+    auto probe = std::make_shared<TcpProbeContext>(result, thread, done, std::move(settings));
+    probe->owner = context;
 
-    QObject::connect(&thread, &QThread::started, context, [&]() {
-        auto* socket = new QTcpSocket(context);
-        auto* connectTimer = new QTimer(context);
-        connectTimer->setSingleShot(true);
-        auto* bannerTimer = new QTimer(context);
-        bannerTimer->setSingleShot(true);
-        auto* probeTimer = new QTimer(context);
-        probeTimer->setSingleShot(true);
-        QElapsedTimer elapsed;
-        bool finished = false;
-        bool probeSent = false;
-
-        auto finish = [&]() {
-            if (finished) {
-                return;
-            }
-            finished = true;
-            result.response_time_ms = elapsed.elapsed();
-            socket->disconnectFromHost();
-            socket->deleteLater();
-            context->deleteLater();
-            thread.quit();
-            done.release();
-        };
-
-        QObject::connect(connectTimer, &QTimer::timeout, context, [&]() {
-            result.timed_out = true;
-            result.error_message = QStringLiteral("Connection timed out");
-            socket->abort();
-            finish();
-        });
-        QObject::connect(bannerTimer, &QTimer::timeout, context, [&]() { finish(); });
-        QObject::connect(probeTimer, &QTimer::timeout, context, [&]() {
-            if (probeSent) {
-                return;
-            }
-            probeSent = true;
-            socket->write("HEAD / HTTP/1.0\r\nHost: " + target.toLatin1() + "\r\n\r\n");
-            socket->flush();
-            bannerTimer->start(bannerTimeoutMs);
-        });
-        QObject::connect(socket, &QTcpSocket::connected, context, [&]() {
-            connectTimer->stop();
-            result.connected = true;
-            result.response_time_ms = elapsed.elapsed();
-            if (!grabBanner) {
-                finish();
-                return;
-            }
-            probeTimer->start(bannerTimeoutMs);
-        });
-        QObject::connect(socket, &QTcpSocket::readyRead, context, [&]() {
-            result.banner += socket->read(kBannerMaxRead);
-            finish();
-        });
-        QObject::connect(socket, &QTcpSocket::disconnected, context, [&]() {
-            if (result.connected) {
-                finish();
-            }
-        });
-        QObject::connect(
-            socket, &QTcpSocket::errorOccurred, context, [&](QAbstractSocket::SocketError error) {
-                if (finished || error == QAbstractSocket::RemoteHostClosedError) {
-                    return;
-                }
-                result.error_message = socket->errorString();
-                finish();
-            });
-
-        elapsed.start();
-        connectTimer->start(connectTimeoutMs);
-        socket->connectToHost(target, port);
+    QObject::connect(&thread, &QThread::started, context, [probe, port, connectTimeoutMs]() {
+        startTcpProbe(probe, port, connectTimeoutMs);
     });
 
     thread.start();
@@ -217,6 +280,25 @@ const QHash<uint16_t, QString> kServiceDatabase = {
     {27'018, QStringLiteral("MongoDB Shard")},
     {28'017, QStringLiteral("MongoDB Web")},
 };
+
+const QVector<PortPreset> kPortPresets = {
+    {QStringLiteral("Common Services"), {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
+                                         143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
+    {QStringLiteral("Web Servers"), {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
+    {QStringLiteral("Database"), {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
+    {QStringLiteral("File Sharing"), {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
+    {QStringLiteral("Email"), {25, 110, 143, 465, 587, 993, 995}},
+    {QStringLiteral("Remote Access"), {22, 23, 3389, 5900, 5901, 5938, 8291}},
+    {QStringLiteral("Top 100"),
+     {7,    9,    13,     21,     22,     23,     25,    26,   37,   53,   79,   80,   81,
+      88,   106,  110,    111,    113,    119,    135,   139,  143,  144,  179,  199,  389,
+      427,  443,  444,    445,    465,    513,    514,   515,  543,  544,  548,  554,  587,
+      631,  646,  873,    990,    993,    995,    1025,  1026, 1027, 1028, 1029, 1110, 1433,
+      1720, 1723, 1755,   1900,   2000,   2001,   2049,  2121, 2717, 3000, 3128, 3306, 3389,
+      3986, 4899, 5000,   5009,   5051,   5060,   5101,  5190, 5357, 5432, 5631, 5666, 5800,
+      5900, 5901, 6000,   6001,   6646,   7070,   8000,  8008, 8009, 8080, 8081, 8443, 8888,
+      9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
+};
 }  // namespace
 
 PortScanner::PortScanner(QObject* parent) : QObject(parent) {}
@@ -319,25 +401,7 @@ QString PortScanner::grabBannerData(const QString& target, uint16_t port, int ti
 }
 
 QVector<PortPreset> PortScanner::getPresets() {
-    return {
-        {QStringLiteral("Common Services"),
-         {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
-          143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
-        {QStringLiteral("Web Servers"), {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
-        {QStringLiteral("Database"), {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
-        {QStringLiteral("File Sharing"), {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
-        {QStringLiteral("Email"), {25, 110, 143, 465, 587, 993, 995}},
-        {QStringLiteral("Remote Access"), {22, 23, 3389, 5900, 5901, 5938, 8291}},
-        {QStringLiteral("Top 100"),
-         {7,    9,    13,     21,     22,     23,     25,    26,   37,   53,   79,   80,   81,
-          88,   106,  110,    111,    113,    119,    135,   139,  143,  144,  179,  199,  389,
-          427,  443,  444,    445,    465,    513,    514,   515,  543,  544,  548,  554,  587,
-          631,  646,  873,    990,    993,    995,    1025,  1026, 1027, 1028, 1029, 1110, 1433,
-          1720, 1723, 1755,   1900,   2000,   2001,   2049,  2121, 2717, 3000, 3128, 3306, 3389,
-          3986, 4899, 5000,   5009,   5051,   5060,   5101,  5190, 5357, 5432, 5631, 5666, 5800,
-          5900, 5901, 6000,   6001,   6646,   7070,   8000,  8008, 8009, 8080, 8081, 8443, 8888,
-          9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
-    };
+    return kPortPresets;
 }
 
 QString PortScanner::getServiceName(uint16_t port) {

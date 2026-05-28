@@ -23,6 +23,13 @@
 #pragma comment(lib, "setupapi.lib")
 
 namespace {
+constexpr int kDosDeviceInitialBufferChars = 32'768;
+constexpr int kDosDeviceQueryAttempts = 3;
+constexpr int kDosDeviceBufferGrowthFactor = 2;
+constexpr DWORD kStorageDescriptorBufferBytes = 1024;
+constexpr quint32 kDefaultDiskBlockSizeBytes = 512;
+constexpr int kVolumePathBufferMultiplier = 4;
+
 /// @brief Check if any drive in the list has the given devicePath
 bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devicePath) {
     return std::any_of(drives.begin(), drives.end(), [&devicePath](const auto& drive) {
@@ -32,9 +39,9 @@ bool containsDevicePath(const QList<sak::DriveInfo>& drives, const QString& devi
 
 QVector<int> enumeratePhysicalDriveNumbers() {
     QVector<int> drive_numbers;
-    std::vector<wchar_t> buffer(32'768);
+    std::vector<wchar_t> buffer(kDosDeviceInitialBufferChars);
 
-    for (int attempt = 0; attempt < 3; ++attempt) {
+    for (int attempt = 0; attempt < kDosDeviceQueryAttempts; ++attempt) {
         const DWORD chars =
             QueryDosDeviceW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (chars != 0) {
@@ -57,7 +64,7 @@ QVector<int> enumeratePhysicalDriveNumbers() {
         if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             break;
         }
-        buffer.resize(buffer.size() * 2);
+        buffer.resize(buffer.size() * kDosDeviceBufferGrowthFactor);
     }
 
     std::sort(drive_numbers.begin(), drive_numbers.end());
@@ -257,7 +264,7 @@ QString DriveScanner::getDriveName(int driveNumber) {
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
 
-    BYTE buffer[1024] = {};
+    BYTE buffer[kStorageDescriptorBufferBytes] = {};
     DWORD bytesReturned = 0;
 
     if (DeviceIoControl(hDrive,
@@ -334,7 +341,7 @@ quint32 DriveScanner::getBlockSize(HANDLE hDrive) {
         return geometry.BytesPerSector;
     }
 
-    return 512;  // Default
+    return kDefaultDiskBlockSizeBytes;
 }
 
 QString DriveScanner::getBusType(HANDLE hDrive) {
@@ -343,7 +350,7 @@ QString DriveScanner::getBusType(HANDLE hDrive) {
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
 
-    BYTE buffer[1024] = {};
+    BYTE buffer[kStorageDescriptorBufferBytes] = {};
     DWORD bytesReturned = 0;
 
     if (DeviceIoControl(hDrive,
@@ -398,7 +405,7 @@ bool DriveScanner::isDriveRemovable(int driveNumber) {
     query.PropertyId = StorageDeviceProperty;
     query.QueryType = PropertyStandardQuery;
 
-    BYTE buffer[1024] = {};
+    BYTE buffer[kStorageDescriptorBufferBytes] = {};
     DWORD bytesReturned = 0;
 
     bool removable = false;
@@ -523,7 +530,7 @@ void DriveScanner::collectMountPaths(wchar_t* volumeName,
                                      QStringList& mountPoints) {
     volumeName[nameLen - 1] = L'\\';
 
-    wchar_t pathNames[MAX_PATH * 4];
+    wchar_t pathNames[MAX_PATH * kVolumePathBufferMultiplier];
     DWORD pathLen = 0;
     if (!GetVolumePathNamesForVolumeNameW(
             volumeName, pathNames, sizeof(pathNames) / sizeof(wchar_t), &pathLen)) {

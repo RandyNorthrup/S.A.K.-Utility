@@ -30,6 +30,36 @@
 
 static const QRegularExpression kAria2SpeedPattern(R"(\[DL:(\d+)\])");
 static const QRegularExpression kAria2HrSpeedPattern(R"(DL:([0-9.]+)\s*(KiB|MiB|GiB))");
+constexpr int kProgressCreateWorkDir = 1;
+constexpr int kProgressDownloadManifest = 2;
+constexpr int kPercentComplete = 100;
+constexpr int kPercentAlmostComplete = 99;
+constexpr int kGbDisplayPrecision = 2;
+constexpr int kResumeGbLogScale = 100;
+constexpr double kMinimumDisplaySpeedMbps = 0.01;
+constexpr int kSecondsPerMinute = 60;
+constexpr int kEtaSecondsFieldWidth = 2;
+constexpr int kEtaSecondsBase = 10;
+constexpr int kAria2SpeedValueCaptureGroup = 1;
+constexpr int kAria2SpeedUnitCaptureGroup = 2;
+constexpr int kImageIndexCaptureGroup = 1;
+constexpr int kImageCountCaptureGroup = 2;
+constexpr qint64 kSmallAria2FileThresholdBytes = 5 * sak::kBytesPerMB;
+constexpr int kAria2PartialSuccessExitCode = 7;
+constexpr int kAria2ErrorPreviewChars = 500;
+constexpr int kConverterStartedProgressDelta = 1;
+constexpr int kConverterProgressBaseApplyImage = 5;
+constexpr int kConverterProgressWeightApplyImage = 45;
+constexpr int kConverterProgressBasePrepareFiles = 50;
+constexpr int kConverterProgressWeightPrepareFiles = 40;
+constexpr int kConverterProgressBaseCreateIso = 90;
+constexpr int kConverterProgressWeightCreateIso = 9;
+constexpr int kConverterHeuristicImageBase = 20;
+constexpr int kConverterHeuristicImageWeight = 30;
+constexpr int kConverterHeuristicMetadataProgress = 5;
+constexpr int kConverterHeuristicApplyImageProgress = 45;
+constexpr int kConverterDoneLineMaxChars = 30;
+constexpr int kConverterErrorPreviewChars = 2000;
 
 /// Convert a human-readable aria2 speed value+unit to MB/s.
 static double convertHrSpeedToMBps(double value, const QString& unit) {
@@ -125,23 +155,12 @@ QString UupIsoBuilder::findAria2Path() const {
     Q_ASSERT(!tools.toolsPath().isEmpty());
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
-    // Primary location: tools/uup/aria2c.exe
-    QString path = tools.toolPath("uup", "aria2c.exe");
+    const QString path = tools.toolPath("uup", "aria2c.exe");
     if (QFileInfo::exists(path)) {
         return path;
     }
 
-    // Fallback: recursive search in tools/uup/
-    QDir uupDir(tools.toolsPath() + "/uup");
-    if (uupDir.exists()) {
-        QDirIterator it(
-            uupDir.absolutePath(), {"aria2c.exe"}, QDir::Files, QDirIterator::Subdirectories);
-        if (it.hasNext()) {
-            return it.next();
-        }
-    }
-
-    sak::logError("aria2c.exe not found in bundled tools");
+    sak::logError("aria2c.exe not found at required bundled path");
     return {};
 }
 
@@ -150,31 +169,13 @@ QString UupIsoBuilder::findUupMediaConverterPath() const {
     Q_ASSERT(!tools.toolsPath().isEmpty());
     Q_ASSERT(QDir(tools.toolsPath()).exists());
 
-    // Preferred location if bundled explicitly.
-    QString path = tools.toolPath("uup", "UUPMediaConverter.exe");
+    const QString path = tools.toolPath("uup/uupmc", "UUPMediaConverter.exe");
     if (QFileInfo::exists(path)) {
         return path;
-    }
-
-    path = tools.toolPath("uup", "uupmediaconverter.exe");
-    if (QFileInfo::exists(path)) {
-        return path;
-    }
-
-    // Fallback: recursive search under tools/uup.
-    QDir uupDir(tools.toolsPath() + "/uup");
-    if (uupDir.exists()) {
-        QDirIterator it(uupDir.absolutePath(),
-                        {"UUPMediaConverter.exe", "uupmediaconverter.exe"},
-                        QDir::Files,
-                        QDirIterator::Subdirectories);
-        if (it.hasNext()) {
-            return it.next();
-        }
     }
 
     sak::logWarning(
-        "UUPMediaConverter.exe not found in bundled tools. "
+        "UUPMediaConverter.exe not found at required bundled path. "
         "Run 'powershell -File scripts/bundle_uup_tools.ps1' "
         "to bundle required tools.");
     return {};
@@ -223,7 +224,7 @@ void UupIsoBuilder::prepareWorkspace() {
     sak::logInfo("Found aria2c: " + aria2Path.toStdString());
 
     // ---- Create work directory (deterministic name for resume support) ----
-    Q_EMIT progressUpdated(1, "Creating work directory...");
+    Q_EMIT progressUpdated(kProgressCreateWorkDir, "Creating work directory...");
 
     const QString tempBase = sak::app_paths::tempDirectory();
     if (!sak::app_paths::ensureDirectory(tempBase)) {
@@ -287,20 +288,21 @@ void UupIsoBuilder::checkResumedDownloads() {
     }
 
     double existingGB = existingBytes / sak::kBytesPerGBf;
-    sak::logInfo("Resuming download -- found " + std::to_string(existingFiles) +
-                 " existing files (" + std::to_string(static_cast<int>(existingGB * 100) / 100) +
-                 " GB) in work directory");
-    Q_EMIT progressUpdated(1,
+    sak::logInfo(
+        "Resuming download -- found " + std::to_string(existingFiles) + " existing files (" +
+        std::to_string(static_cast<int>(existingGB * kResumeGbLogScale) / kResumeGbLogScale) +
+        " GB) in work directory");
+    Q_EMIT progressUpdated(kProgressCreateWorkDir,
                            QString("Resuming download \u2014 %1 files already present (%2 GB)")
                                .arg(existingFiles)
-                               .arg(existingGB, 0, 'f', 2));
+                               .arg(existingGB, 0, 'f', kGbDisplayPrecision));
 }
 
 void UupIsoBuilder::downloadPackages() {
     QDir workDir(m_workDir);
 
     // ---- Generate aria2c input file ----
-    Q_EMIT progressUpdated(2, "Generating download manifest...");
+    Q_EMIT progressUpdated(kProgressDownloadManifest, "Generating download manifest...");
 
     QString aria2InputPath = workDir.filePath("aria2_script.txt");
     if (!generateAria2InputFile(aria2InputPath)) {
@@ -360,7 +362,7 @@ void UupIsoBuilder::writeAria2Entry(QTextStream& stream, const UupDumpApi::FileI
     }
 
     // Smaller files don't benefit from many connections; save slots for large files
-    if (fileInfo.size > 0 && fileInfo.size < 5 * sak::kBytesPerMB) {
+    if (fileInfo.size > 0 && fileInfo.size < kSmallAria2FileThresholdBytes) {
         stream << "  split=" << sak::kAria2SingleSplit << "\n";
         stream << "  max-connection-per-server=" << sak::kAria2SingleConn << "\n";
     }
@@ -417,7 +419,7 @@ void UupIsoBuilder::logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes) 
     double skippedMB = skippedBytes / sak::kBytesPerMBf;
     sak::logInfo("Resume: skipped " + std::to_string(skippedFiles) + " already-downloaded files (" +
                  std::to_string(static_cast<int>(skippedMB)) + " MB)");
-    Q_EMIT progressUpdated(2,
+    Q_EMIT progressUpdated(kProgressDownloadManifest,
                            QString("Skipped %1 already-downloaded files (%2 MB)")
                                .arg(skippedFiles)
                                .arg(skippedMB, 0, 'f', 0));
@@ -552,12 +554,13 @@ void UupIsoBuilder::parseAria2Progress(const QString& line) {
         Q_EMIT speedUpdated(m_currentSpeedMBps);
     }
 
-    // Parse human-readable speed fallback: DL:50MiB or DL:1.2GiB
+    // Parse human-readable speed: DL:50MiB or DL:1.2GiB
     if (!speedMatch.hasMatch()) {
         QRegularExpressionMatch hrMatch = kAria2HrSpeedPattern.match(line);
         if (hrMatch.hasMatch()) {
-            m_currentSpeedMBps = convertHrSpeedToMBps(hrMatch.captured(1).toDouble(),
-                                                      hrMatch.captured(2));
+            m_currentSpeedMBps =
+                convertHrSpeedToMBps(hrMatch.captured(kAria2SpeedValueCaptureGroup).toDouble(),
+                                     hrMatch.captured(kAria2SpeedUnitCaptureGroup));
             Q_EMIT speedUpdated(m_currentSpeedMBps);
         }
     }
@@ -599,29 +602,32 @@ void UupIsoBuilder::pollDownloadProgress() {
     }
 
     m_downloadedBytes = totalDownloaded;
-    m_downloadPercent = static_cast<int>((totalDownloaded * 100) / m_totalDownloadBytes);
-    if (m_downloadPercent > 100) {
-        m_downloadPercent = 100;
+    m_downloadPercent =
+        static_cast<int>((totalDownloaded * kPercentComplete) / m_totalDownloadBytes);
+    if (m_downloadPercent > kPercentComplete) {
+        m_downloadPercent = kPercentComplete;
     }
 
     // Build progress detail string
     double downloadedGB = totalDownloaded / sak::kBytesPerGBf;
     double totalGB = m_totalDownloadBytes / sak::kBytesPerGBf;
-    QString detail =
-        QString("Downloaded %1 GB / %2 GB").arg(downloadedGB, 0, 'f', 2).arg(totalGB, 0, 'f', 2);
+    QString detail = QString("Downloaded %1 GB / %2 GB")
+                         .arg(downloadedGB, 0, 'f', kGbDisplayPrecision)
+                         .arg(totalGB, 0, 'f', kGbDisplayPrecision);
 
-    if (m_currentSpeedMBps > 0.01) {
+    if (m_currentSpeedMBps > kMinimumDisplaySpeedMbps) {
         double remainingMB = (m_totalDownloadBytes - totalDownloaded) / sak::kBytesPerMBf;
         int etaSec = static_cast<int>(remainingMB / m_currentSpeedMBps);
-        int etaMin = etaSec / 60;
-        etaSec %= 60;
+        int etaMin = etaSec / kSecondsPerMinute;
+        etaSec %= kSecondsPerMinute;
         detail += QString(" | %1 MB/s | ETA: %2:%3")
                       .arg(m_currentSpeedMBps, 0, 'f', 1)
                       .arg(etaMin)
-                      .arg(etaSec, 2, 10, QChar('0'));
+                      .arg(etaSec, kEtaSecondsFieldWidth, kEtaSecondsBase, QChar('0'));
     }
 
-    int overall = PHASE_PREPARE_WEIGHT + (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / 100);
+    int overall = PHASE_PREPARE_WEIGHT +
+                  (m_downloadPercent * PHASE_DOWNLOAD_WEIGHT / kPercentComplete);
     Q_EMIT progressUpdated(overall, detail);
 }
 
@@ -642,20 +648,20 @@ void UupIsoBuilder::pollConversionProgress() {
         qint64 isoSize = outputIso.size();
         double sizeGB = isoSize / sak::kBytesPerGBf;
         int conversionProgress = m_conversionPercent;
-        if (conversionProgress >= 100) {
-            conversionProgress = 99;
+        if (conversionProgress >= kPercentComplete) {
+            conversionProgress = kPercentAlmostComplete;
         }
-        Q_EMIT progressUpdated(
-            PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                (conversionProgress * PHASE_CONVERT_WEIGHT / 100),
-            QString("Building bootable ISO (%1 GB written)...").arg(sizeGB, 0, 'f', 2));
+        Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
+                                   (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete),
+                               QString("Building bootable ISO (%1 GB written)...")
+                                   .arg(sizeGB, 0, 'f', kGbDisplayPrecision));
     } else if (m_converterProcess && m_converterProcess->state() == QProcess::Running) {
         int conversionProgress = m_conversionPercent;
-        if (conversionProgress >= 100) {
-            conversionProgress = 99;
+        if (conversionProgress >= kPercentComplete) {
+            conversionProgress = kPercentAlmostComplete;
         }
         int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                      (conversionProgress * PHASE_CONVERT_WEIGHT / 100);
+                      (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
         Q_EMIT progressUpdated(overall,
                                QString("Building Windows ISO... (%1%)").arg(conversionProgress));
     }
@@ -676,18 +682,19 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
         return;
     }
 
-    if (exitCode != 0 && exitCode != 7) {
+    if (exitCode != 0 && exitCode != kAria2PartialSuccessExitCode) {
         m_phase = Phase::Failed;
         QString errorDetail;
         if (m_aria2Process) {
-            errorDetail = QString::fromUtf8(m_aria2Process->readAllStandardOutput()).right(500);
+            errorDetail = QString::fromUtf8(m_aria2Process->readAllStandardOutput())
+                              .right(kAria2ErrorPreviewChars);
         }
         Q_EMIT buildError(
             QString("Download failed (aria2c exit code %1). %2").arg(exitCode).arg(errorDetail));
         return;
     }
 
-    if (exitCode == 7) {
+    if (exitCode == kAria2PartialSuccessExitCode) {
         sak::logWarning("aria2c: some downloads may be incomplete (exit code 7)");
     }
 
@@ -709,7 +716,7 @@ void UupIsoBuilder::onAria2Finished(int exitCode, QProcess::ExitStatus exitStatu
         return;
     }
 
-    m_downloadPercent = 100;
+    m_downloadPercent = kPercentComplete;
     sak::logInfo("UUP file download complete: " + std::to_string(fileCount) + " files");
 
     Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT,
@@ -789,7 +796,8 @@ void UupIsoBuilder::connectConverterSignals() {
             &UupIsoBuilder::onConverterFinished);
     connect(m_converterProcess.get(), &QProcess::started, this, [this]() {
         sak::logInfo("UUPMediaConverter process started");
-        Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT + 1,
+        Q_EMIT progressUpdated(PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
+                                   kConverterStartedProgressDelta,
                                "UUP conversion started...");
         m_progressPollTimer->start();
     });
@@ -906,15 +914,15 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
     bool hasPercent = false;
     QString detail;
 
-    // Try stage-tagged percentages first, then fallback patterns
+    // Try stage-tagged percentages first, then heuristic progress patterns.
     if (!parseConverterStagePercent(line, hasPercent, detail)) {
-        parseConverterFallbackPatterns(line, hasPercent, detail);
+        parseConverterProgressPatterns(line, hasPercent, detail);
     }
 
     if (detail.isEmpty() && hasPercent) {
         int visiblePercent = m_conversionPercent;
-        if (visiblePercent >= 100) {
-            visiblePercent = 99;
+        if (visiblePercent >= kPercentComplete) {
+            visiblePercent = kPercentAlmostComplete;
         }
         detail = QString("Building Windows ISO... (%1%)").arg(visiblePercent);
     }
@@ -923,11 +931,11 @@ void UupIsoBuilder::parseConverterProgress(const QString& line) {
 
     if (!detail.isEmpty()) {
         int conversionProgress = m_conversionPercent;
-        if (conversionProgress >= 100) {
-            conversionProgress = 99;
+        if (conversionProgress >= kPercentComplete) {
+            conversionProgress = kPercentAlmostComplete;
         }
         int overall = PHASE_PREPARE_WEIGHT + PHASE_DOWNLOAD_WEIGHT +
-                      (conversionProgress * PHASE_CONVERT_WEIGHT / 100);
+                      (conversionProgress * PHASE_CONVERT_WEIGHT / kPercentComplete);
         Q_EMIT progressUpdated(overall, detail);
     }
 }
@@ -963,13 +971,16 @@ bool UupIsoBuilder::parseConverterStagePercent(const QString& line,
     int mappedProgress = m_conversionPercent;
 
     if (stage == "creatingwindowsinstaller") {
-        mappedProgress = 5 + (stagePct * 45 / 100);  // 5..50
+        mappedProgress = kConverterProgressBaseApplyImage +
+                         (stagePct * kConverterProgressWeightApplyImage / kPercentComplete);
         detail = QString("Applying Windows image (%1%)...").arg(stagePct);
     } else if (stage == "preparingfiles") {
-        mappedProgress = 50 + (stagePct * 40 / 100);  // 50..90
+        mappedProgress = kConverterProgressBasePrepareFiles +
+                         (stagePct * kConverterProgressWeightPrepareFiles / kPercentComplete);
         detail = QString("Integrating updates and components (%1%)...").arg(stagePct);
     } else if (stage == "creatingiso") {
-        mappedProgress = 90 + (stagePct * 9 / 100);  // 90..99
+        mappedProgress = kConverterProgressBaseCreateIso +
+                         (stagePct * kConverterProgressWeightCreateIso / kPercentComplete);
         detail = QString("Writing bootable ISO file (%1%)...").arg(stagePct);
     }
 
@@ -980,7 +991,7 @@ bool UupIsoBuilder::parseConverterStagePercent(const QString& line,
     return true;
 }
 
-void UupIsoBuilder::parseConverterFallbackPatterns(const QString& line,
+void UupIsoBuilder::parseConverterProgressPatterns(const QString& line,
                                                    bool& hasPercent,
                                                    QString& detail) {
     const bool isImageLine = line.contains("Exporting image", Qt::CaseInsensitive) ||
@@ -992,38 +1003,42 @@ void UupIsoBuilder::parseConverterFallbackPatterns(const QString& line,
         QRegularExpressionMatch imgMatch = imagePattern.match(line);
         if (!imgMatch.hasMatch()) {
             detail = "Preparing Windows installation images...";
-            m_conversionPercent = (std::max)(m_conversionPercent, 20);
+            m_conversionPercent = (std::max)(m_conversionPercent, kConverterHeuristicImageBase);
             return;
         }
 
         detail = QString("Processing Windows image %1 of %2")
-                     .arg(imgMatch.captured(1), imgMatch.captured(2));
-        const int current = imgMatch.captured(1).toInt();
-        const int total = imgMatch.captured(2).toInt();
+                     .arg(imgMatch.captured(kImageIndexCaptureGroup),
+                          imgMatch.captured(kImageCountCaptureGroup));
+        const int current = imgMatch.captured(kImageIndexCaptureGroup).toInt();
+        const int total = imgMatch.captured(kImageCountCaptureGroup).toInt();
         if (total <= 0) {
             return;
         }
 
-        m_conversionPercent = (std::max)(m_conversionPercent, 20 + (current * 30 / total));
+        m_conversionPercent = (std::max)(m_conversionPercent,
+                                         kConverterHeuristicImageBase +
+                                             (current * kConverterHeuristicImageWeight / total));
         hasPercent = true;
         return;
     }
 
     if (line.contains("[ReadingMetadata]", Qt::CaseInsensitive)) {
         detail = "Analyzing Windows build metadata...";
-        m_conversionPercent = (std::max)(m_conversionPercent, 5);
+        m_conversionPercent = (std::max)(m_conversionPercent, kConverterHeuristicMetadataProgress);
         return;
     }
 
     if (line.contains("[ApplyingImage]", Qt::CaseInsensitive)) {
         detail = "Applying Windows installation image...";
-        m_conversionPercent = (std::max)(m_conversionPercent, 45);
+        m_conversionPercent = (std::max)(m_conversionPercent,
+                                         kConverterHeuristicApplyImageProgress);
         return;
     }
 
-    if (line.contains("Done", Qt::CaseInsensitive) && line.length() < 30) {
+    if (line.contains("Done", Qt::CaseInsensitive) && line.length() < kConverterDoneLineMaxChars) {
         detail = "Finalizing ISO image...";
-        m_conversionPercent = 100;
+        m_conversionPercent = kPercentComplete;
     }
 }
 
@@ -1048,8 +1063,8 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
         if (errorDetail.isEmpty() && m_converterProcess) {
             errorDetail = QString::fromUtf8(m_converterProcess->readAllStandardOutput()).trimmed();
         }
-        if (errorDetail.length() > 2000) {
-            errorDetail = errorDetail.right(2000);
+        if (errorDetail.length() > kConverterErrorPreviewChars) {
+            errorDetail = errorDetail.right(kConverterErrorPreviewChars);
         }
         Q_EMIT buildError(
             QString("Converter failed with exit code %1. %2").arg(exitCode).arg(errorDetail));
@@ -1070,7 +1085,7 @@ void UupIsoBuilder::onConverterFinished(int exitCode, QProcess::ExitStatus exitS
     cleanupWorkDir();
     m_phase = Phase::Completed;
     Q_EMIT phaseChanged(Phase::Completed, "ISO build complete!");
-    Q_EMIT progressUpdated(100, "ISO build complete!");
+    Q_EMIT progressUpdated(kPercentComplete, "ISO build complete!");
     Q_EMIT buildCompleted(m_outputIsoPath, fileSize);
     sak::logInfo("UUP ISO build complete: " + m_outputIsoPath.toStdString() + " (" +
                  std::to_string(fileSize / sak::kBytesPerMB) + " MB)");

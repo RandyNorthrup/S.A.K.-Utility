@@ -12,6 +12,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultChocoSearchResults = 10;
+
 /**
  * @brief ChocolateyManager - Manages embedded portable Chocolatey operations
  *
@@ -80,7 +82,7 @@ public:
     Result installPackage(const InstallConfig& config);
     Result uninstallPackage(const QString& package_name, bool auto_confirm = true);
     Result upgradePackage(const QString& package_name, bool auto_confirm = true);
-    Result searchPackage(const QString& query, int max_results = 10);
+    Result searchPackage(const QString& query, int max_results = kDefaultChocoSearchResults);
 
     // Package information
     std::vector<PackageInfo> parseSearchResults(const QString& output);

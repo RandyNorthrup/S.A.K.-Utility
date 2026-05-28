@@ -14,6 +14,7 @@
 namespace sak::ai {
 
 namespace {
+constexpr qsizetype kSubagentSummaryMaxChars = 2000;
 
 QStringList readStringList(const QJsonValue& value) {
     QStringList out;
@@ -119,14 +120,14 @@ QString fallbackSummaryFromPayload(const QJsonObject& payload) {
     for (const auto& key : summary_keys) {
         const auto value = payload.value(key);
         if (value.isString() && !value.toString().trimmed().isEmpty()) {
-            return value.toString().trimmed().left(2000);
+            return value.toString().trimmed().left(kSubagentSummaryMaxChars);
         }
         if (value.isObject() || value.isArray()) {
             return QString::fromUtf8(QJsonDocument(value.isObject()
                                                        ? QJsonDocument(value.toObject())
                                                        : QJsonDocument(value.toArray()))
                                          .toJson(QJsonDocument::Compact))
-                .left(2000);
+                .left(kSubagentSummaryMaxChars);
         }
     }
     return {};
@@ -335,8 +336,10 @@ AiSubagentTask AiSubagentTask::fromJson(const QJsonObject& object) {
     task.context_refs = readStringList(object.value(QStringLiteral("context_refs")));
     task.instructions_refs = readStringList(object.value(QStringLiteral("instructions_refs")));
     task.tool_policy = toolPolicyFromString(object.value(QStringLiteral("tool_policy")).toString());
-    task.timeout_seconds = object.value(QStringLiteral("timeout_seconds")).toInt(600);
-    task.token_budget = object.value(QStringLiteral("token_budget")).toInt(8000);
+    task.timeout_seconds =
+        object.value(QStringLiteral("timeout_seconds")).toInt(kDefaultSubagentTimeoutSeconds);
+    task.token_budget =
+        object.value(QStringLiteral("token_budget")).toInt(kDefaultSubagentTokenBudget);
     task.expected_output_schema = object.value(QStringLiteral("expected_output_schema")).toString();
     task.model = object.value(QStringLiteral("model")).toString();
     task.reasoning_effort = object.value(QStringLiteral("reasoning_effort")).toString();

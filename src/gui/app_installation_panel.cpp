@@ -11,6 +11,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/elevation_banner.h"
 #include "sak/install_summary_dialog.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/migration_report.h"
 #include "sak/offline_deployment_worker.h"
@@ -46,6 +47,9 @@ enum ResultColumn {
     RColCount
 };
 
+constexpr int kPackageResultColumnCount = 3;
+constexpr int kPublisherResultColumn = 2;
+
 AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
     , m_choco_manager(std::make_shared<ChocolateyManager>())
@@ -56,6 +60,11 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     sak::logInfo("[AppInstallationPanel] setupUi start");
     setupUi();
     sak::logInfo("[AppInstallationPanel] setupUi complete");
+    if (qApp->property("sakAccessibilityAudit").toBool()) {
+        sak::logInfo(
+            "[AppInstallationPanel] Accessibility audit: connections and external init skipped");
+        return;
+    }
     sak::logInfo("[AppInstallationPanel] setupConnections start");
     setupConnections();
     sak::logInfo("[AppInstallationPanel] setupConnections complete");
@@ -90,7 +99,8 @@ AppInstallationPanel::~AppInstallationPanel() {
 void AppInstallationPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
+    rootLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -104,9 +114,6 @@ void AppInstallationPanel::setupUi() {
                                    sak::ui::kMarginMedium,
                                    sak::ui::kMarginMedium);
 
-    scrollArea->setWidget(contentWidget);
-    rootLayout->addWidget(scrollArea);
-
     // Elevation info banner (hidden when already admin)
     if (auto* banner = sak::createElevationBanner(contentWidget)) {
         mainLayout->addWidget(banner);
@@ -114,11 +121,13 @@ void AppInstallationPanel::setupUi() {
 
     // === Tab Widget: Online Install | Offline Deploy ===
     m_tabWidget = new QTabWidget(this);
+    m_tabWidget->setAccessibleName(tr("Application installation mode tabs"));
 
     // --- Tab 0: Online Install ---
     auto* onlineTab = new QWidget(this);
     auto* onlineLayout = new QVBoxLayout(onlineTab);
-    onlineLayout->setContentsMargins(0, sak::ui::kMarginSmall, 0, 0);
+    onlineLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
     onlineLayout->setSpacing(sak::ui::kSpacingDefault);
 
     setupUi_searchBar(onlineLayout);
@@ -133,12 +142,14 @@ void AppInstallationPanel::setupUi() {
 
     m_tabWidget->addTab(onlineTab, tr("Online Install"));
 
-    // --- Tab 1: Offline Deploy ---
     setupUi_offlineTab(m_tabWidget);
 
     mainLayout->addWidget(m_tabWidget, 1);
 
     setupUi_bottomBar(mainLayout);
+
+    scrollArea->setWidget(contentWidget);
+    rootLayout->addWidget(scrollArea);
 }
 
 void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* mainLayout) {
@@ -176,7 +187,7 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
     searchRow->addWidget(m_searchButton);
     searchLayout->addLayout(searchRow);
 
-    m_onlineResultsModel = new QStandardItemModel(0, 3, this);
+    m_onlineResultsModel = new QStandardItemModel(0, kPackageResultColumnCount, this);
     m_onlineResultsModel->setHorizontalHeaderLabels(
         {tr("Package"), tr("Version"), tr("Publisher")});
 
@@ -189,10 +200,9 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
     m_onlineResultsTable->verticalHeader()->setVisible(false);
     m_onlineResultsTable->horizontalHeader()->setStretchLastSection(true);
     m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(1,
-                                                                   QHeaderView::ResizeToContents);
-    m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(2,
-                                                                   QHeaderView::ResizeToContents);
+    m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_onlineResultsTable->horizontalHeader()->setSectionResizeMode(kPublisherResultColumn,
+                                                                   QHeaderView::Interactive);
     m_onlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_onlineResultsTable->setToolTip(tr("Select a package and click Add to Queue"));
     searchLayout->addWidget(m_onlineResultsTable, 1);
@@ -285,7 +295,8 @@ void AppInstallationPanel::setupUi_installActions(QVBoxLayout* mainLayout) {
 void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout) {
     m_logToggle = new sak::LogToggleSwitch(tr("Log"), this);
     auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(0, 4, 0, 0);
+    bottomLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
     bottomLayout->addWidget(m_logToggle);
     bottomLayout->addStretch();
     mainLayout->addLayout(bottomLayout);
@@ -343,6 +354,11 @@ void AppInstallationPanel::setupSearchAndQueueConnections() {
 }
 
 void AppInstallationPanel::setupWorkerConnections() {
+    setupWorkerLifecycleConnections();
+    setupWorkerJobConnections();
+}
+
+void AppInstallationPanel::setupWorkerLifecycleConnections() {
     connect(m_worker.get(), &AppInstallationWorker::migrationStarted, this, [this](int totalJobs) {
         m_progressBar->setRange(0, totalJobs);
         m_progressBar->setValue(0);
@@ -354,6 +370,43 @@ void AppInstallationPanel::setupWorkerConnections() {
         Q_EMIT logOutput(QString("Installation started: %1 package(s)").arg(totalJobs));
     });
 
+    connect(m_worker.get(),
+            &AppInstallationWorker::migrationCompleted,
+            this,
+            [this](const AppInstallationWorker::Stats& stats) {
+                sak::logInfo(
+                    "[AppInstallationPanel] Installation complete: {} succeeded, "
+                    "{} failed, {} skipped",
+                    stats.success,
+                    stats.failed,
+                    stats.skipped);
+                Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 "
+                                         "skipped")
+                                     .arg(stats.success)
+                                     .arg(stats.failed)
+                                     .arg(stats.skipped));
+                Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
+                                         .arg(stats.success)
+                                         .arg(stats.failed),
+                                     sak::kTimerStatusDefaultMs);
+
+                Q_EMIT statusMessage(tr("Installation complete"), sak::kTimerStatusDefaultMs);
+                m_progressBar->setVisible(false);
+                m_progressLabel->setVisible(false);
+                m_install_in_progress = false;
+                m_cancelButton->setVisible(false);
+                m_cancelButton->setEnabled(false);
+                m_installButton->setVisible(true);
+                enableControls(true);
+
+                // Show summary modal with per-package results
+                auto jobs = m_worker->getJobs();
+                sak::InstallSummaryDialog dialog(stats, jobs, this);
+                dialog.exec();
+            });
+}
+
+void AppInstallationPanel::setupWorkerJobConnections() {
     connect(m_worker.get(),
             &AppInstallationWorker::jobProgress,
             this,
@@ -389,54 +442,13 @@ void AppInstallationPanel::setupWorkerConnections() {
             m_progressLabel->setText(tr("Installing %1 of %2...").arg(completed).arg(stats.total));
             Q_EMIT progressUpdated(completed, stats.total);
         });
-
-    connect(m_worker.get(),
-            &AppInstallationWorker::migrationCompleted,
-            this,
-            [this](const AppInstallationWorker::Stats& stats) {
-                sak::logInfo(
-                    "[AppInstallationPanel] Installation complete: {} succeeded, "
-                    "{} failed, {} skipped",
-                    stats.success,
-                    stats.failed,
-                    stats.skipped);
-                Q_EMIT logOutput(QString("Installation complete: %1 succeeded, %2 failed, %3 "
-                                         "skipped")
-                                     .arg(stats.success)
-                                     .arg(stats.failed)
-                                     .arg(stats.skipped));
-                Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
-                                         .arg(stats.success)
-                                         .arg(stats.failed),
-                                     5000);
-
-                Q_EMIT statusMessage(tr("Installation complete"), 5000);
-                m_progressBar->setVisible(false);
-                m_progressLabel->setVisible(false);
-                m_install_in_progress = false;
-                m_cancelButton->setVisible(false);
-                m_cancelButton->setEnabled(false);
-                m_installButton->setVisible(true);
-                enableControls(true);
-
-                // Show summary modal with per-package results
-                auto jobs = m_worker->getJobs();
-                sak::InstallSummaryDialog dialog(stats, jobs, this);
-                dialog.exec();
-            });
 }
 
 // ============================================================================
 // Offline Deployment Tab
 // ============================================================================
 
-void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
-    auto* offlineTab = new QWidget(this);
-    auto* offlineLayout = new QVBoxLayout(offlineTab);
-    offlineLayout->setContentsMargins(0, sak::ui::kMarginSmall, 0, 0);
-    offlineLayout->setSpacing(sak::ui::kSpacingDefault);
-
-    // --- Preset row (spans full width) ---
+void AppInstallationPanel::setupOfflinePresetRow(QVBoxLayout* offlineLayout) {
     auto* presetRow = new QHBoxLayout();
     auto* presetLabel = new QLabel(tr("Preset:"), this);
     presetRow->addWidget(presetLabel);
@@ -450,12 +462,9 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     m_presetCombo->setToolTip(tr("Select a preset package list to populate"));
     presetRow->addWidget(m_presetCombo, 1);
     offlineLayout->addLayout(presetRow);
+}
 
-    // --- Side-by-side: Search (left) | Deploy List (right) ---
-    auto* sideBySide = new QHBoxLayout();
-    sideBySide->setSpacing(sak::ui::kSpacingDefault);
-
-    // Left: Search panel
+void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
     auto* searchGroup = new QGroupBox(tr("Search Packages"), this);
     auto* searchLayout = new QVBoxLayout(searchGroup);
 
@@ -472,7 +481,7 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     searchRow->addWidget(m_offlineSearchButton);
     searchLayout->addLayout(searchRow);
 
-    m_offlineResultsModel = new QStandardItemModel(0, 3, this);
+    m_offlineResultsModel = new QStandardItemModel(0, kPackageResultColumnCount, this);
     m_offlineResultsModel->setHorizontalHeaderLabels(
         {tr("Package"), tr("Version"), tr("Publisher")});
 
@@ -485,10 +494,9 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     m_offlineResultsTable->verticalHeader()->setVisible(false);
     m_offlineResultsTable->horizontalHeader()->setStretchLastSection(true);
     m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(1,
-                                                                    QHeaderView::ResizeToContents);
-    m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(2,
-                                                                    QHeaderView::ResizeToContents);
+    m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_offlineResultsTable->horizontalHeader()->setSectionResizeMode(kPublisherResultColumn,
+                                                                    QHeaderView::Interactive);
     m_offlineResultsTable->setAccessibleName(QStringLiteral("Package Search Results"));
     m_offlineResultsTable->setToolTip(tr("Select a package from the search results and click Add"));
     searchLayout->addWidget(m_offlineResultsTable, 1);
@@ -501,8 +509,9 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     searchLayout->addWidget(m_offlineAddButton);
 
     sideBySide->addWidget(searchGroup, 1);
+}
 
-    // Right: Deploy list
+void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* sideBySide) {
     auto* listGroup = new QGroupBox(tr("Packages to Deploy"), this);
     auto* listLayout = new QVBoxLayout(listGroup);
 
@@ -523,7 +532,6 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     m_offlineClearButton->setEnabled(false);
     m_offlineClearButton->setAccessibleName(QStringLiteral("Clear Offline List"));
     listBtnRow->addWidget(m_offlineClearButton);
-
     listBtnRow->addStretch();
 
     m_saveOfflineListButton = new QPushButton(tr("Save List"), this);
@@ -539,13 +547,11 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
 
     listLayout->addLayout(listBtnRow);
     sideBySide->addWidget(listGroup, 1);
+}
 
-    offlineLayout->addLayout(sideBySide, 1);
-
-    // --- Actions ---
+void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offlineLayout) {
     auto* actionsGroup = new QGroupBox(tr("Deployment Actions"), this);
     auto* actionsLayout = new QVBoxLayout(actionsGroup);
-
     auto* actionBtnRow = new QHBoxLayout();
 
     m_buildBundleButton = new QPushButton(tr("Build Offline Bundle"), this);
@@ -572,7 +578,6 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
 
     actionsLayout->addLayout(actionBtnRow);
 
-    // Progress
     m_offlineProgressLabel = new QLabel(this);
     m_offlineProgressLabel->setVisible(false);
     actionsLayout->addWidget(m_offlineProgressLabel);
@@ -580,12 +585,12 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     m_offlineProgressBar = new QProgressBar(this);
     m_offlineProgressBar->setVisible(false);
     m_offlineProgressBar->setTextVisible(true);
-    m_offlineProgressBar->setFormat("%v / %m");
+    m_offlineProgressBar->setFormat(QStringLiteral("%v / %m"));
     actionsLayout->addWidget(m_offlineProgressBar);
 
     m_offlineStatusLabel = new QLabel(this);
     m_offlineStatusLabel->setVisible(false);
-    m_offlineStatusLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
+    m_offlineStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     actionsLayout->addWidget(m_offlineStatusLabel);
 
     m_cancelOfflineButton = new QPushButton(tr("Cancel"), this);
@@ -595,6 +600,23 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     actionsLayout->addWidget(m_cancelOfflineButton);
 
     offlineLayout->addWidget(actionsGroup);
+}
+
+void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
+    auto* offlineTab = new QWidget(this);
+    auto* offlineLayout = new QVBoxLayout(offlineTab);
+    offlineLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    offlineLayout->setSpacing(sak::ui::kSpacingDefault);
+
+    setupOfflinePresetRow(offlineLayout);
+
+    auto* sideBySide = new QHBoxLayout();
+    sideBySide->setSpacing(sak::ui::kSpacingDefault);
+    setupOfflineSearchGroup(sideBySide);
+    setupOfflineDeployListGroup(sideBySide);
+    offlineLayout->addLayout(sideBySide, 1);
+    setupOfflineActionsGroup(offlineLayout);
 
     tabs->addTab(offlineTab, tr("Offline Deploy"));
 }
@@ -604,6 +626,11 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
 // ============================================================================
 
 void AppInstallationPanel::setupOfflineConnections() {
+    setupOfflineInputConnections();
+    setupOfflineWorkerConnections();
+}
+
+void AppInstallationPanel::setupOfflineInputConnections() {
     connect(m_presetCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
@@ -670,8 +697,14 @@ void AppInstallationPanel::setupOfflineConnections() {
         m_offlineRemoveButton->setEnabled(!m_offlineListWidget->selectedItems().isEmpty() &&
                                           !m_offline_in_progress);
     });
+}
 
-    // Worker signals
+void AppInstallationPanel::setupOfflineWorkerConnections() {
+    setupOfflineWorkerProgressConnections();
+    setupOfflineWorkerCompletionConnections();
+}
+
+void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
     connect(m_offline_worker.get(),
             &OfflineDeploymentWorker::operationStarted,
             this,
@@ -708,7 +741,9 @@ void AppInstallationPanel::setupOfflineConnections() {
             &OfflineDeploymentWorker::logMessage,
             this,
             [this](const QString& msg) { Q_EMIT logOutput(msg); });
+}
 
+void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
     connect(m_offline_worker.get(),
             &OfflineDeploymentWorker::operationCompleted,
             this,
@@ -727,7 +762,7 @@ void AppInstallationPanel::setupOfflineConnections() {
                 Q_EMIT statusMessage(tr("Offline operation complete: %1 succeeded, %2 failed")
                                          .arg(stats.completed)
                                          .arg(stats.failed),
-                                     5000);
+                                     sak::kTimerStatusDefaultMs);
             });
 
     connect(m_offline_worker.get(),

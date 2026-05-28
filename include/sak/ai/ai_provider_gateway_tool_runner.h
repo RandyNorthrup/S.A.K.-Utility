@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_provider_gateway.h"
+#include "sak/layout_constants.h"
 
 #include <QJsonObject>
 #include <QString>
@@ -20,9 +21,12 @@ enum class AiProviderGatewayToolAccess {
 };
 
 struct AiProviderGatewayToolOptions {
-    int default_output_bytes = 512 * 1024;
-    int min_output_bytes = 1024;
-    int max_output_bytes = 4 * 1024 * 1024;
+    static constexpr int kDefaultOutputKilobytes = 512;
+    static constexpr int kMaximumOutputMegabytes = 4;
+
+    int default_output_bytes = kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
+    int min_output_bytes = static_cast<int>(sak::kBytesPerKB);
+    int max_output_bytes = kMaximumOutputMegabytes * static_cast<int>(sak::kBytesPerMB);
 };
 
 struct AiProviderGatewayToolCallbacks {

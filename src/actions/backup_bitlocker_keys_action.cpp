@@ -6,6 +6,7 @@
 
 #include "sak/actions/backup_bitlocker_keys_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -71,6 +72,142 @@ static constexpr CodeDescriptionEntry kProtectorTypes[] = {
     {10, "Clear Key (Unprotected)"},
 };
 
+constexpr int kVolumeTypeOperatingSystem = 0;
+constexpr int kVolumeTypeFixedData = 1;
+constexpr int kVolumeTypeRemovableData = 2;
+constexpr int kEstimatedDurationPerVolumeMs = kTimeoutProcessShortMs;
+constexpr int kKeyRetrievalProgressSpan = 40;
+constexpr qsizetype kBitlockerSummaryLineReserve = 14;
+constexpr int kVolumeSizeDisplayPrecision = 2;
+
+static constexpr auto kDetectEncryptedVolumesScript = R"PS(
+try {
+    $vols = Get-WmiObject -Namespace "Root\CIMv2\Security\MicrosoftVolumeEncryption" `
+        -Class Win32_EncryptableVolume -ErrorAction Stop
+
+    $results = @()
+    foreach ($vol in $vols) {
+        $status = $vol.GetProtectionStatus()
+        $encMethod = $vol.GetEncryptionMethod()
+        $convStatus = $vol.GetConversionStatus()
+        $lockStatus = $vol.GetLockStatus()
+
+        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
+            '') -ErrorAction SilentlyContinue
+
+        $obj = @{
+            DriveLetter      = $vol.DriveLetter
+            DeviceID         = $vol.DeviceID
+            VolumeLabel      = if ($driveInfo) { $driveInfo.FileSystemLabel } else { "" }
+            VolumeType       = $vol.VolumeType
+            ProtectionStatus = $status.ProtectionStatus
+            EncryptionMethod = $encMethod.EncryptionMethod
+            EncryptionPct    = $convStatus.EncryptionPercentage
+            LockStatus       = $lockStatus.LockStatus
+            SizeBytes        = if ($driveInfo) { $driveInfo.Size } else { 0 }
+        }
+        $results += $obj
+    }
+    $results | ConvertTo-Json -Depth 3
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+)PS";
+
+static constexpr auto kRestrictPermissionsScriptTemplate = R"PS(
+try {
+    $path = '%1'
+
+    # Disable inheritance and remove inherited ACEs
+    $acl = Get-Acl -Path $path
+    $acl.SetAccessRuleProtection($true, $false)
+
+    # Clear all existing rules
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+
+    # Grant current user Full Control
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $userRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $currentUser, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+    $acl.AddAccessRule($userRule)
+
+    # Grant Administrators Full Control
+    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        'BUILTIN\Administrators', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+    $acl.AddAccessRule($adminRule)
+
+    # Grant SYSTEM Full Control (needed for Windows services)
+    $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        'NT AUTHORITY\SYSTEM', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+    $acl.AddAccessRule($systemRule)
+
+    Set-Acl -Path $path -AclObject $acl
+
+    # Apply same ACL to all child items
+    Get-ChildItem -Path $path -Recurse -Force | ForEach-Object {
+        Set-Acl -Path $_.FullName -AclObject $acl
+    }
+
+    Write-Output "SUCCESS"
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+)PS";
+
+static constexpr auto kKeyProtectorScriptTemplate = R"PS(
+try {
+    $vol = Get-WmiObject -Namespace "Root\CIMv2\Security\MicrosoftVolumeEncryption" `
+        -Class Win32_EncryptableVolume -Filter "DriveLetter='%1'" -ErrorAction Stop
+
+    if (-not $vol) {
+        Write-Error "Volume %1 not found"
+        exit 1
+    }
+
+    $protectorIds = $vol.GetKeyProtectors(0).VolumeKeyProtectorID
+    if (-not $protectorIds) {
+        @() | ConvertTo-Json
+        exit 0
+    }
+
+    $results = @()
+    foreach ($id in $protectorIds) {
+        $typeResult = $vol.GetKeyProtectorType($id)
+        $type = $typeResult.KeyProtectorType
+
+        $recoveryPassword = ""
+        if ($type -eq 3) {
+            $pwResult = $vol.GetKeyProtectorNumericalPassword($id)
+            if ($pwResult.ReturnValue -eq 0) {
+                $recoveryPassword = $pwResult.NumericalPassword
+            }
+        }
+
+        $keyFileName = ""
+        if ($type -eq 2) {
+            $fnResult = $vol.GetKeyProtectorFileName($id)
+            if ($fnResult.ReturnValue -eq 0) {
+                $keyFileName = $fnResult.FileName
+            }
+        }
+
+        $obj = @{
+            ProtectorID      = $id
+            ProtectorType    = $type
+            RecoveryPassword = $recoveryPassword
+            KeyFileName      = $keyFileName
+        }
+        $results += $obj
+    }
+    $results | ConvertTo-Json -Depth 3
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}
+)PS";
+
 template <std::size_t N>
 QString lookupCodeDescription(const CodeDescriptionEntry (&table)[N], int code) {
     auto it = std::find_if(std::begin(table), std::end(table), [code](const auto& e) {
@@ -100,11 +237,11 @@ QString BackupBitlockerKeysAction::formatProtectorType(int type_code) {
 
 QString BackupBitlockerKeysAction::formatVolumeType(int type_code) {
     switch (type_code) {
-    case 0:
+    case kVolumeTypeOperatingSystem:
         return "Operating System";
-    case 1:
+    case kVolumeTypeFixedData:
         return "Fixed Data";
-    case 2:
+    case kVolumeTypeRemovableData:
         return "Removable Data";
     default:
         return QString("Unknown (%1)").arg(type_code);
@@ -185,42 +322,7 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
 }
 
 QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detectEncryptedVolumes() {
-    // PowerShell script to query BitLocker volumes via WMI
-    // Returns JSON array of volume objects with protection details
-    const QString script = R"PS(
-try {
-    $vols = Get-WmiObject -Namespace "Root\CIMv2\Security\MicrosoftVolumeEncryption" `
-        -Class Win32_EncryptableVolume -ErrorAction Stop
-
-    $results = @()
-    foreach ($vol in $vols) {
-        $status = $vol.GetProtectionStatus()
-        $encMethod = $vol.GetEncryptionMethod()
-        $convStatus = $vol.GetConversionStatus()
-        $lockStatus = $vol.GetLockStatus()
-
-        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
-            '') -ErrorAction SilentlyContinue
-
-        $obj = @{
-            DriveLetter      = $vol.DriveLetter
-            DeviceID         = $vol.DeviceID
-            VolumeLabel      = if ($driveInfo) { $driveInfo.FileSystemLabel } else { "" }
-            VolumeType       = $vol.VolumeType
-            ProtectionStatus = $status.ProtectionStatus
-            EncryptionMethod = $encMethod.EncryptionMethod
-            EncryptionPct    = $convStatus.EncryptionPercentage
-            LockStatus       = $lockStatus.LockStatus
-            SizeBytes        = if ($driveInfo) { $driveInfo.Size } else { 0 }
-        }
-        $results += $obj
-    }
-    $results | ConvertTo-Json -Depth 3
-} catch {
-    Write-Error $_.Exception.Message
-    exit 1
-}
-)PS";
+    const QString script = QString::fromUtf8(kDetectEncryptedVolumesScript);
 
     Q_EMIT logMessage("Querying BitLocker volume encryption status...");
 
@@ -272,58 +374,7 @@ QString BackupBitlockerKeysAction::buildKeyProtectorScript(const QString& drive_
     if (drive_letter.isEmpty()) {
         return {};
     }
-    return QString(R"PS(
-try {
-    $vol = Get-WmiObject -Namespace "Root\CIMv2\Security\MicrosoftVolumeEncryption" `
-        -Class Win32_EncryptableVolume -Filter "DriveLetter='%1'" -ErrorAction Stop
-
-    if (-not $vol) {
-        Write-Error "Volume %1 not found"
-        exit 1
-    }
-
-    $protectorIds = $vol.GetKeyProtectors(0).VolumeKeyProtectorID
-    if (-not $protectorIds) {
-        @() | ConvertTo-Json
-        exit 0
-    }
-
-    $results = @()
-    foreach ($id in $protectorIds) {
-        $typeResult = $vol.GetKeyProtectorType($id)
-        $type = $typeResult.KeyProtectorType
-
-        $recoveryPassword = ""
-        if ($type -eq 3) {
-            $pwResult = $vol.GetKeyProtectorNumericalPassword($id)
-            if ($pwResult.ReturnValue -eq 0) {
-                $recoveryPassword = $pwResult.NumericalPassword
-            }
-        }
-
-        $keyFileName = ""
-        if ($type -eq 2) {
-            $fnResult = $vol.GetKeyProtectorFileName($id)
-            if ($fnResult.ReturnValue -eq 0) {
-                $keyFileName = $fnResult.FileName
-            }
-        }
-
-        $obj = @{
-            ProtectorID      = $id
-            ProtectorType    = $type
-            RecoveryPassword = $recoveryPassword
-            KeyFileName      = $keyFileName
-        }
-        $results += $obj
-    }
-    $results | ConvertTo-Json -Depth 3
-} catch {
-    Write-Error $_.Exception.Message
-    exit 1
-}
-)PS")
-        .arg(drive_letter);
+    return QString::fromUtf8(kKeyProtectorScriptTemplate).arg(drive_letter);
 }
 
 QVector<BackupBitlockerKeysAction::KeyProtectorInfo>
@@ -395,7 +446,7 @@ void BackupBitlockerKeysAction::scan() {
         }
         result.details = volume_details.join("\n");
         result.files_count = m_volumes.size();
-        result.estimated_duration_ms = m_volumes.size() * 5000;  // ~5s per volume
+        result.estimated_duration_ms = m_volumes.size() * kEstimatedDurationPerVolumeMs;
         result.warning = "Recovery keys are sensitive -- store the backup securely";
     }
 
@@ -443,7 +494,7 @@ void BackupBitlockerKeysAction::execute() {
 }
 
 bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_time) {
-    Q_EMIT executionProgress("Detecting BitLocker volumes...", 5);
+    Q_EMIT executionProgress("Detecting BitLocker volumes...", progress::kStep5);
 
     if (m_volumes.isEmpty()) {
         m_volumes = detectEncryptedVolumes();
@@ -467,7 +518,7 @@ bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_ti
 bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
                                                    int& total_keys_found,
                                                    int& total_recovery_passwords) {
-    Q_EMIT executionProgress("Retrieving recovery keys...", 15);
+    Q_EMIT executionProgress("Retrieving recovery keys...", progress::kStep15);
 
     for (qsizetype i = 0; i < m_volumes.size(); ++i) {
         if (isCancelled()) {
@@ -476,12 +527,14 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
         }
 
         auto& vol = m_volumes[i];
-        int progress = 15 + static_cast<int>((static_cast<double>(i) / m_volumes.size()) * 40);
+        const int progress_percent = progress::kStep15 +
+                                     static_cast<int>((static_cast<double>(i) / m_volumes.size()) *
+                                                      kKeyRetrievalProgressSpan);
         Q_EMIT executionProgress(QString("Retrieving keys for %1 (%2/%3)...")
                                      .arg(vol.drive_letter)
                                      .arg(i + 1)
                                      .arg(m_volumes.size()),
-                                 progress);
+                                 progress_percent);
 
         vol.key_protectors = getKeyProtectors(vol.drive_letter);
         total_keys_found += vol.key_protectors.size();
@@ -515,7 +568,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
                                                     QString& backup_dir_path,
                                                     int& key_files_written,
                                                     bool& permissions_set) {
-    Q_EMIT executionProgress("Creating backup directory...", 60);
+    Q_EMIT executionProgress("Creating backup directory...", progress::kStep60);
 
     QString timestamp = backupTimestamp();
     QString backup_dir_name = QString("BitLocker_Keys_%1").arg(timestamp);
@@ -534,7 +587,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("Writing recovery key document...", 70);
+    Q_EMIT executionProgress("Writing recovery key document...", progress::kStep70);
 
     bool doc_written = writeRecoveryDocument(backup_dir_path);
     if (!doc_written) {
@@ -547,7 +600,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("Writing per-volume key files...", 80);
+    Q_EMIT executionProgress("Writing per-volume key files...", progress::kStep80);
 
     key_files_written = writePerVolumeKeyFiles(backup_dir_path);
 
@@ -556,7 +609,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("Writing JSON backup...", 85);
+    Q_EMIT executionProgress("Writing JSON backup...", progress::kStep85);
 
     if (!writeJsonBackup(backup_dir_path)) {
         emitFailedResult("Failed to write BitLocker key backup file", QString(), start_time);
@@ -568,7 +621,7 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
         return false;
     }
 
-    Q_EMIT executionProgress("Securing backup files...", 90);
+    Q_EMIT executionProgress("Securing backup files...", progress::kStep90);
 
     permissions_set = restrictFilePermissions(backup_dir_path);
     if (!permissions_set) {
@@ -613,7 +666,7 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path) 
 
 void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
                                                    const BitlockerReportData& data) {
-    Q_EMIT executionProgress("Finalizing backup...", 95);
+    Q_EMIT executionProgress("Finalizing backup...", progress::kStep95);
 
     qint64 total_bytes = 0;
     int total_files = 0;
@@ -624,7 +677,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
         total_files++;
     }
 
-    Q_EMIT executionProgress("Backup complete", 100);
+    Q_EMIT executionProgress("Backup complete", progress::kComplete);
 
     qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
@@ -640,7 +693,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
                          .arg(m_volumes.size());
 
     QStringList log_lines;
-    log_lines.reserve(14);
+    log_lines.reserve(kBitlockerSummaryLineReserve);
     log_lines.append("=== BitLocker Recovery Key Backup Summary ===");
     log_lines.append(QString("Computer: %1").arg(QSysInfo::machineHostName()));
     log_lines.append(QString("Date: %1").arg(QDateTime::currentDateTime().toString(Qt::ISODate)));
@@ -729,7 +782,8 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
 
         if (vol.volume_size_bytes > 0) {
             double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
-            out << "  Volume Size:          " << QString::number(size_gb, 'f', 2) << " GB\n";
+            out << "  Volume Size:          "
+                << QString::number(size_gb, 'f', kVolumeSizeDisplayPrecision) << " GB\n";
         }
 
         out << "\n";
@@ -837,49 +891,8 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
 
 bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
     Q_ASSERT(!path.isEmpty());
-    // Use icacls to restrict the backup directory to current user + Administrators only
-    // Remove inherited permissions, then grant explicit access
-    const QString script = QString(R"PS(
-try {
-    $path = '%1'
-
-    # Disable inheritance and remove inherited ACEs
-    $acl = Get-Acl -Path $path
-    $acl.SetAccessRuleProtection($true, $false)
-
-    # Clear all existing rules
-    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-
-    # Grant current user Full Control
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $userRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        $currentUser, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-    $acl.AddAccessRule($userRule)
-
-    # Grant Administrators Full Control
-    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        'BUILTIN\Administrators', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-    $acl.AddAccessRule($adminRule)
-
-    # Grant SYSTEM Full Control (needed for Windows services)
-    $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        'NT AUTHORITY\SYSTEM', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-    $acl.AddAccessRule($systemRule)
-
-    Set-Acl -Path $path -AclObject $acl
-
-    # Apply same ACL to all child items
-    Get-ChildItem -Path $path -Recurse -Force | ForEach-Object {
-        Set-Acl -Path $_.FullName -AclObject $acl
-    }
-
-    Write-Output "SUCCESS"
-} catch {
-    Write-Error $_.Exception.Message
-    exit 1
-}
-)PS")
-                               .arg(QString(path).replace("'", "''"));
+    const QString script =
+        QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));
 
     ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
     return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");

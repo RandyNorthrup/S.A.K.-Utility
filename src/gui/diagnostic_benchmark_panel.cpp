@@ -39,9 +39,34 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+#include <array>
 #include <iterator>
 
 namespace sak {
+
+namespace {
+
+constexpr int kDiagnosticLabelColumnWidth = 100;
+constexpr int kDiagnosticValueColumnWidth = 60;
+constexpr int kBenchmarkDriveComboMinWidth = 300;
+constexpr int kReportNotesMaxHeight = 60;
+constexpr int kThermalMonitorIntervalMs = sak::kTimerBroadcastMs;
+constexpr int kCpuScoreMax = 3000;
+constexpr int kBenchmarkScoreMax = 2000;
+constexpr int kFontWeightSemibold = 600;
+constexpr int kStressDurationMaxMinutes = 1440;
+constexpr int kStressDurationDefaultMinutes = 10;
+constexpr ushort kDegreeSymbol = 0x00B0;
+constexpr int kStressThermalMinC = 60;
+constexpr int kStressThermalMaxC = 110;
+constexpr int kStressThermalDefaultC = 95;
+constexpr int kCpuThermalMaxC = 100;
+constexpr int kGpuThermalMaxC = 100;
+constexpr int kDiskThermalMaxC = 70;
+constexpr ushort kSuitePendingSymbol = 0x23F3;
+constexpr int kProgressMaximum = 100;
+
+}  // namespace
 
 // ============================================================================
 // Construction / Destruction
@@ -60,9 +85,11 @@ DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     createQuickActions();
     logInfo("DiagnosticBenchmarkPanel: createQuickActions complete");
 
-    // Start thermal monitoring on panel creation
-    logInfo("DiagnosticBenchmarkPanel: startThermalMonitoring start");
-    m_controller->startThermalMonitoring(2000);
+    // Runtime only. Accessibility audit must not start hardware polling side effects.
+    if (!qApp->property("sakAccessibilityAudit").toBool()) {
+        logInfo("DiagnosticBenchmarkPanel: startThermalMonitoring start");
+        m_controller->startThermalMonitoring(kThermalMonitorIntervalMs);
+    }
     logInfo("DiagnosticBenchmarkPanel: constructed");
 }
 
@@ -94,6 +121,9 @@ void DiagnosticBenchmarkPanel::setupUi() {
 
     // Tabbed content -- Diagnostics tab and Benchmark tab
     m_tabs = new QTabWidget(this);
+    setAccessible(m_tabs,
+                  tr("Diagnostics and benchmarks tabs"),
+                  tr("Switch between system diagnostics and benchmark tools"));
     m_tabs->addTab(createDiagnosticsTab(), tr("Diagnostics"));
     m_tabs->addTab(createBenchmarkTab(), tr("Benchmarks"));
     root_layout->addWidget(m_tabs, 1);
@@ -187,8 +217,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
     auto add_info_row = [&](const QString& label_text, QLabel*& value_label) {
         auto* row = new QHBoxLayout();
         auto* key_label = new QLabel(label_text, this);
-        key_label->setFixedWidth(100);
-        key_label->setStyleSheet("font-weight: 600;");
+        key_label->setFixedWidth(kDiagnosticLabelColumnWidth);
+        key_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
         row->addWidget(key_label);
 
         value_label = new QLabel("--", this);
@@ -246,10 +276,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
     auto* layout = new QVBoxLayout(group);
 
     // Table
-    m_smart_table = new QTableWidget(0, 6, this);
+    m_smart_table = new QTableWidget(0, SmartColCount, this);
     m_smart_table->setHorizontalHeaderLabels({"Drive", "Type", "Health", "Temp", "Hours", "Wear"});
     m_smart_table->horizontalHeader()->setStretchLastSection(true);
-    m_smart_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_smart_table->horizontalHeader()->setSectionResizeMode(SmartColDrive, QHeaderView::Stretch);
     m_smart_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_smart_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_smart_table->setMaximumHeight(sak::kListAreaMaxH);
@@ -261,7 +291,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
     // Warnings label
     m_smart_warnings_label = new QLabel("", this);
     m_smart_warnings_label->setWordWrap(true);
-    m_smart_warnings_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorWarning));
+    m_smart_warnings_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
     layout->addWidget(m_smart_warnings_label);
 
     // Button
@@ -318,18 +348,18 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
 
     auto* cpu_scores = new QHBoxLayout();
     m_cpu_single_score_label = new QLabel("Single-Thread: \u2014", this);
-    m_cpu_single_score_label->setStyleSheet("font-weight: 600;");
+    m_cpu_single_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     cpu_scores->addWidget(m_cpu_single_score_label);
 
     m_cpu_multi_score_label = new QLabel("Multi-Thread: \u2014", this);
-    m_cpu_multi_score_label->setStyleSheet("font-weight: 600;");
+    m_cpu_multi_score_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     cpu_scores->addWidget(m_cpu_multi_score_label);
 
     cpu_scores->addStretch();
     cpu_layout->addLayout(cpu_scores);
 
     m_cpu_score_bar = new QProgressBar(this);
-    m_cpu_score_bar->setRange(0, 3000);
+    m_cpu_score_bar->setRange(0, kCpuScoreMax);
     m_cpu_score_bar->setValue(0);
     m_cpu_score_bar->setTextVisible(true);
     m_cpu_score_bar->setFormat("Score: %v / 3000 (baseline i5-12400 = 1000)");
@@ -344,9 +374,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
 
     m_cpu_details_label = new QLabel("", this);
     m_cpu_details_label->setWordWrap(true);
-    m_cpu_details_label->setStyleSheet(QString("color: %1; font-size: %2pt;")
-                                           .arg(sak::ui::kColorTextSecondary)
-                                           .arg(sak::ui::kFontSizeStatus));
+    m_cpu_details_label->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeStatus));
     cpu_layout->addWidget(m_cpu_details_label);
 
     auto* cpu_btn_layout = new QHBoxLayout();
@@ -370,7 +399,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     auto* drive_row = new QHBoxLayout();
     drive_row->addWidget(new QLabel("Drive:", this));
     m_disk_drive_combo = new QComboBox(this);
-    m_disk_drive_combo->setMinimumWidth(300);
+    m_disk_drive_combo->setMinimumWidth(kBenchmarkDriveComboMinWidth);
     m_disk_drive_combo->setAccessibleName(QStringLiteral("Benchmark Drive"));
     m_disk_drive_combo->setToolTip(QStringLiteral("Select a drive to benchmark"));
     drive_row->addWidget(m_disk_drive_combo);
@@ -378,7 +407,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     disk_layout->addLayout(drive_row);
 
     m_disk_seq_label = new QLabel("Sequential: \u2014", this);
-    m_disk_seq_label->setStyleSheet("font-weight: 600;");
+    m_disk_seq_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     disk_layout->addWidget(m_disk_seq_label);
 
     m_disk_rand_label = new QLabel("Random 4K: \u2014", this);
@@ -389,11 +418,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
 
     m_disk_score_label = new QLabel("Score: \u2014", this);
     m_disk_score_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorPrimaryDark));
     disk_layout->addWidget(m_disk_score_label);
 
     m_disk_score_bar = new QProgressBar(this);
-    m_disk_score_bar->setRange(0, 2000);
+    m_disk_score_bar->setRange(0, kBenchmarkScoreMax);
     m_disk_score_bar->setValue(0);
     m_disk_score_bar->setTextVisible(true);
     m_disk_score_bar->setFormat("Score: %v / 2000 (baseline 980 PRO = 1000)");
@@ -421,7 +450,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     auto* mem_layout = new QVBoxLayout(mem_group);
 
     m_mem_bandwidth_label = new QLabel("Bandwidth: \u2014", this);
-    m_mem_bandwidth_label->setStyleSheet("font-weight: 600;");
+    m_mem_bandwidth_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
     mem_layout->addWidget(m_mem_bandwidth_label);
 
     m_mem_latency_label = new QLabel("Random Latency: \u2014", this);
@@ -429,11 +458,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
 
     m_mem_score_label = new QLabel("Score: \u2014", this);
     m_mem_score_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorPrimaryDark));
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorPrimaryDark));
     mem_layout->addWidget(m_mem_score_label);
 
     m_mem_score_bar = new QProgressBar(this);
-    m_mem_score_bar->setRange(0, 2000);
+    m_mem_score_bar->setRange(0, kBenchmarkScoreMax);
     m_mem_score_bar->setValue(0);
     m_mem_score_bar->setTextVisible(true);
     m_mem_score_bar->setFormat("Score: %v / 2000 (baseline DDR4-3200 = 1000)");
@@ -469,7 +498,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createStressTestSection() {
     // Status
     m_stress_status_label = new QLabel("Status: Not Running", this);
     m_stress_status_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextHeading));
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorTextHeading));
     layout->addWidget(m_stress_status_label);
 
     // Live stats row
@@ -518,20 +547,21 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow() {
     m_stress_gpu_check->setToolTip(QStringLiteral("Include GPU compute in the stress test"));
     config_row->addWidget(m_stress_gpu_check);
 
-    config_row->addSpacing(20);
+    config_row->addSpacing(sak::ui::kMarginXLarge);
     config_row->addWidget(new QLabel("Duration (min):", this));
     m_stress_duration_spin = new QSpinBox(this);
-    m_stress_duration_spin->setRange(1, 1440);
-    m_stress_duration_spin->setValue(10);
+    m_stress_duration_spin->setRange(1, kStressDurationMaxMinutes);
+    m_stress_duration_spin->setValue(kStressDurationDefaultMinutes);
     m_stress_duration_spin->setAccessibleName(QStringLiteral("Stress Duration"));
     m_stress_duration_spin->setToolTip(QStringLiteral("Duration of the stress test in minutes"));
     config_row->addWidget(m_stress_duration_spin);
 
-    config_row->addSpacing(20);
-    config_row->addWidget(new QLabel(QString("Thermal Limit (%1C):").arg(QChar(0x00B0)), this));
+    config_row->addSpacing(sak::ui::kMarginXLarge);
+    config_row->addWidget(
+        new QLabel(QString("Thermal Limit (%1C):").arg(QChar(kDegreeSymbol)), this));
     m_stress_thermal_limit_spin = new QSpinBox(this);
-    m_stress_thermal_limit_spin->setRange(60, 110);
-    m_stress_thermal_limit_spin->setValue(95);
+    m_stress_thermal_limit_spin->setRange(kStressThermalMinC, kStressThermalMaxC);
+    m_stress_thermal_limit_spin->setValue(kStressThermalDefaultC);
     m_stress_thermal_limit_spin->setAccessibleName(QStringLiteral("Thermal Limit"));
     m_stress_thermal_limit_spin->setToolTip(
         QStringLiteral("Maximum temperature before the stress "
@@ -583,12 +613,12 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
         [&](const QString& name, QLabel*& label, QProgressBar*& bar, int max_temp) {
             auto* row = new QHBoxLayout();
             auto* name_label = new QLabel(name, this);
-            name_label->setFixedWidth(100);
-            name_label->setStyleSheet("font-weight: 600;");
+            name_label->setFixedWidth(kDiagnosticLabelColumnWidth);
+            name_label->setStyleSheet(sak::ui::kFontWeightSemiboldStyle);
             row->addWidget(name_label);
 
             label = new QLabel("0\u00B0C", this);
-            label->setFixedWidth(60);
+            label->setFixedWidth(kDiagnosticValueColumnWidth);
             row->addWidget(label);
 
             bar = new QProgressBar(this);
@@ -606,9 +636,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
             layout->addLayout(row);
         };
 
-    add_thermal_row("CPU:", m_thermal_cpu_label, m_thermal_cpu_bar, 100);
-    add_thermal_row("GPU:", m_thermal_gpu_label, m_thermal_gpu_bar, 100);
-    add_thermal_row("Disk 0:", m_thermal_disk_label, m_thermal_disk_bar, 70);
+    add_thermal_row("CPU:", m_thermal_cpu_label, m_thermal_cpu_bar, kCpuThermalMaxC);
+    add_thermal_row("GPU:", m_thermal_gpu_label, m_thermal_gpu_bar, kGpuThermalMaxC);
+    add_thermal_row("Disk 0:", m_thermal_disk_label, m_thermal_disk_bar, kDiskThermalMaxC);
 
     return group;
 }
@@ -621,26 +651,26 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
     auto* group = new QGroupBox("Full Diagnostic Suite", this);
     auto* layout = new QVBoxLayout(group);
 
-    // Step labels -- names stored in member array for safe reconstruction
-    m_suite_step_names[0] = "Hardware Inventory";
-    m_suite_step_names[1] = "SMART Disk Health";
-    m_suite_step_names[2] = "CPU Benchmark";
-    m_suite_step_names[3] = "Disk I/O Benchmark";
-    m_suite_step_names[4] = "Memory Benchmark";
-    m_suite_step_names[5] = "Stress Test";
-    m_suite_step_names[6] = "Generate Report";
-
-    for (int i = 0; i < 7; ++i) {
-        m_suite_step_labels[i] =
-            new QLabel(QString("  %1  %2").arg(QChar(0x23F3)).arg(m_suite_step_names[i]), this);
-        m_suite_step_labels[i]->setStyleSheet(
-            QString("color: %1;").arg(sak::ui::kColorTextDisabled));
+    static constexpr std::array<const char*, kSuiteStepCount> kSuiteStepNames = {
+        "Hardware Inventory",
+        "SMART Disk Health",
+        "CPU Benchmark",
+        "Disk I/O Benchmark",
+        "Memory Benchmark",
+        "Stress Test",
+        "Generate Report",
+    };
+    for (int i = 0; i < kSuiteStepCount; ++i) {
+        m_suite_step_names[i] = QString::fromLatin1(kSuiteStepNames[i]);
+        m_suite_step_labels[i] = new QLabel(
+            QString("  %1  %2").arg(QChar(kSuitePendingSymbol)).arg(m_suite_step_names[i]), this);
+        m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
         layout->addWidget(m_suite_step_labels[i]);
     }
 
     m_suite_status_label = new QLabel("Suite not started", this);
     m_suite_status_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kColorTextHeading));
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorTextHeading));
     layout->addWidget(m_suite_status_label);
 
     // Buttons
@@ -713,7 +743,7 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
                        "report"));
     info_row->addWidget(m_report_technician_edit);
 
-    info_row->addSpacing(20);
+    info_row->addSpacing(sak::ui::kMarginXLarge);
     info_row->addWidget(new QLabel("Ticket #:", this));
     m_report_ticket_edit = new QLineEdit(this);
     m_report_ticket_edit->setPlaceholderText("Ticket number");
@@ -727,8 +757,9 @@ void DiagnosticBenchmarkPanel::createReportInfoFields(QVBoxLayout* layout) {
     auto* notes_row = new QHBoxLayout();
     notes_row->addWidget(new QLabel("Notes:", this));
     m_report_notes_edit = new QTextEdit(this);
-    m_report_notes_edit->setMaximumHeight(60);
+    m_report_notes_edit->setMaximumHeight(kReportNotesMaxHeight);
     m_report_notes_edit->setPlaceholderText("Additional notes for the report...");
+    m_report_notes_edit->setAccessibleName(QStringLiteral("Diagnostic report notes"));
     notes_row->addWidget(m_report_notes_edit);
     layout->addLayout(notes_row);
 }
@@ -789,19 +820,28 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
 
 void DiagnosticBenchmarkPanel::connectController() {
     Q_ASSERT(m_controller);
-    // Hardware scan
+    connectHardwareSignals();
+    connectBenchmarkSignals();
+    connectSuiteSignals();
+    connectStatusSignals();
+}
+
+void DiagnosticBenchmarkPanel::connectHardwareSignals() {
     connect(m_controller.get(),
             &DiagnosticController::hardwareScanComplete,
             this,
             &DiagnosticBenchmarkPanel::onHardwareScanComplete);
-
-    // SMART analysis
     connect(m_controller.get(),
             &DiagnosticController::smartAnalysisComplete,
             this,
             &DiagnosticBenchmarkPanel::onSmartAnalysisComplete);
+    connect(m_controller.get(),
+            &DiagnosticController::thermalReadingsUpdated,
+            this,
+            &DiagnosticBenchmarkPanel::onThermalReadingsUpdated);
+}
 
-    // Benchmarks
+void DiagnosticBenchmarkPanel::connectBenchmarkSignals() {
     connect(m_controller.get(),
             &DiagnosticController::cpuBenchmarkComplete,
             this,
@@ -824,8 +864,9 @@ void DiagnosticBenchmarkPanel::connectController() {
             &DiagnosticController::stressTestStatus,
             this,
             &DiagnosticBenchmarkPanel::onStressTestStatus);
+}
 
-    // Suite
+void DiagnosticBenchmarkPanel::connectSuiteSignals() {
     connect(m_controller.get(),
             &DiagnosticController::suiteStateChanged,
             this,
@@ -838,14 +879,9 @@ void DiagnosticBenchmarkPanel::connectController() {
             &DiagnosticController::suiteComplete,
             this,
             &DiagnosticBenchmarkPanel::onSuiteComplete);
+}
 
-    // Thermal
-    connect(m_controller.get(),
-            &DiagnosticController::thermalReadingsUpdated,
-            this,
-            &DiagnosticBenchmarkPanel::onThermalReadingsUpdated);
-
-    // Progress & errors
+void DiagnosticBenchmarkPanel::connectStatusSignals() {
     connect(m_controller.get(),
             &DiagnosticController::operationProgress,
             this,
@@ -881,10 +917,10 @@ void DiagnosticBenchmarkPanel::setOperationRunning(bool running) {
 
     if (running) {
         Q_EMIT statusMessage("Running...", 0);
-        Q_EMIT progressUpdate(0, 100);
+        Q_EMIT progressUpdate(0, kProgressMaximum);
     } else {
-        Q_EMIT statusMessage("Ready", 3000);
-        Q_EMIT progressUpdate(100, 100);
+        Q_EMIT statusMessage("Ready", sak::kTimerStatusMessageMs);
+        Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
     }
 }
 
@@ -925,9 +961,8 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
     layout->setSpacing(sak::ui::kSpacingDefault);
 
     auto* desc = new QLabel(tr("One-click system verification and optimization tools"), group);
-    desc->setStyleSheet(QString("color: %1; font-size: %2pt;")
-                            .arg(sak::ui::kColorTextSecondary)
-                            .arg(sak::ui::kFontSizeBody));
+    desc->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextSecondary, sak::ui::kFontSizeBody));
     desc->setWordWrap(true);
     layout->addWidget(desc);
 
@@ -961,11 +996,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
     layout->addLayout(btn_layout);
 
     m_qa_status_label = new QLabel(tr("Ready"), group);
-    m_qa_status_label->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextSecondary));
+    m_qa_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     layout->addWidget(m_qa_status_label);
 
     m_qa_progress_bar = new QProgressBar(group);
-    m_qa_progress_bar->setRange(0, 100);
+    m_qa_progress_bar->setRange(0, kProgressMaximum);
     m_qa_progress_bar->setValue(0);
     m_qa_progress_bar->setVisible(false);
     layout->addWidget(m_qa_progress_bar);

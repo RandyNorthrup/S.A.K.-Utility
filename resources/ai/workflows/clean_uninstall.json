@@ -4,7 +4,7 @@
   "title": "Clean Uninstall",
   "role": "Software Installer",
   "category": "Software",
-  "description": "Uninstall software safely, preserving user data unless explicitly approved.",
+  "description": "Uninstall selected software with approval gates, user-data preservation by default, leftover review, verification, and reportable evidence.",
   "starter_prompt": "Uninstall the requested application cleanly. Preserve user data unless I explicitly ask otherwise.",
   "required_inputs": [
     {"id": "app_name", "label": "Application name", "type": "string", "required": true}

@@ -4,7 +4,7 @@
   "title": "Drive Health Deep Check",
   "role": "PC Technician",
   "category": "Diagnostics",
-  "description": "Inspect drive health with SMART/storage/event evidence before any repair.",
+  "description": "Inspect drive and volume health using SMART, Windows storage, filesystem, and event evidence before recommending repair.",
   "starter_prompt": "Check my drive health deeply. Use read-only checks first and explain any repair risk.",
   "required_inputs": [
     {"id": "drive_hint", "label": "Drive letter or disk number", "type": "string", "required": false}

@@ -19,6 +19,12 @@
 
 namespace sak {
 
+namespace {
+constexpr int kRegistrySubKeyNameChars = 256;
+constexpr int kRegistryValueBufferChars = 1024;
+constexpr int kChocolateyListFieldCount = 2;
+}  // namespace
+
 // Registry paths for installed applications
 static const wchar_t* REGISTRY_UNINSTALL_HKLM =
     L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
@@ -89,14 +95,14 @@ std::vector<AppScanner::AppInfo> AppScanner::scanRegistryHive(void* hive, const 
 
     // Enumerate subkeys (each represents an app)
     DWORD index = 0;
-    wchar_t subKeyName[256];
-    DWORD subKeyNameSize = 256;
+    wchar_t subKeyName[kRegistrySubKeyNameChars];
+    DWORD subKeyNameSize = kRegistrySubKeyNameChars;
 
     while (RegEnumKeyExW(
                hKey, index, subKeyName, &subKeyNameSize, nullptr, nullptr, nullptr, nullptr) ==
            ERROR_SUCCESS) {
         index++;
-        subKeyNameSize = 256;
+        subKeyNameSize = kRegistrySubKeyNameChars;
 
         // Open this application's registry key
         HKEY appKey;
@@ -133,7 +139,7 @@ QString AppScanner::readRegistryValue(void* key,
     Q_ASSERT(key);
     Q_ASSERT(!valueName.isEmpty());
     HKEY hKey = static_cast<HKEY>(key);
-    wchar_t buffer[1024];
+    wchar_t buffer[kRegistryValueBufferChars];
     DWORD bufferSize = sizeof(buffer);
     DWORD type;
 
@@ -274,7 +280,7 @@ std::vector<AppScanner::AppInfo> AppScanner::scanChocolatey() {
         }
 
         QStringList parts = line.split('|');
-        if (parts.size() >= 2) {
+        if (parts.size() >= kChocolateyListFieldCount) {
             AppInfo app;
             app.source = AppInfo::Source::Chocolatey;
             app.name = parts[0].trimmed();

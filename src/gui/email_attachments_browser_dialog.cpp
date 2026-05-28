@@ -31,6 +31,11 @@
 
 namespace sak {
 
+namespace {
+constexpr int kAttachMethodEmbeddedMessage = 5;
+constexpr int kAttachMethodOleObject = 6;
+}  // namespace
+
 // ============================================================================
 // Table column indices
 // ============================================================================
@@ -66,7 +71,7 @@ EmailAttachmentsBrowserDialog::EmailAttachmentsBrowserDialog(::EmailInspectorCon
     : QDialog(parent), m_controller(controller) {
     setWindowTitle(tr("Attachments Browser"));
     setModal(true);
-    resize(kWizardLargeWidth + 100, kWizardLargeHeight);
+    resize(kWizardLargeWidth + email::kAttachmentBrowserExtraWidth, kWizardLargeHeight);
     setupUi();
     collectFolderIds(folder_tree);
     QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::startScan);
@@ -118,7 +123,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
     m_type_filter = new QComboBox(this);
     m_type_filter->addItems(
         {kFilterAll, kFilterImages, kFilterDocuments, kFilterArchives, kFilterAudio, kFilterOther});
-    m_type_filter->setMinimumWidth(140);
+    m_type_filter->setMinimumWidth(email::kAttachmentTypeFilterMinWidth);
     connect(m_type_filter,
             &QComboBox::currentIndexChanged,
             this,
@@ -141,11 +146,11 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->verticalHeader()->setVisible(false);
 
-    m_table->setColumnWidth(ColFilename, 220);
-    m_table->setColumnWidth(ColSize, 80);
-    m_table->setColumnWidth(ColType, 100);
-    m_table->setColumnWidth(ColSourceSubject, 200);
-    m_table->setColumnWidth(ColSourceSender, 140);
+    m_table->setColumnWidth(ColFilename, email::kAttachmentFilenameColumnWidth);
+    m_table->setColumnWidth(ColSize, email::kSizeColumnWidth);
+    m_table->setColumnWidth(ColType, email::kTypeColumnWidth);
+    m_table->setColumnWidth(ColSourceSubject, email::kAttachmentSourceSubjectColumnWidth);
+    m_table->setColumnWidth(ColSourceSender, email::kAttachmentSourceSenderColumnWidth);
 
     connect(m_table,
             &QTableWidget::itemSelectionChanged,
@@ -166,7 +171,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     buttons->setSpacing(ui::kSpacingMedium);
 
     m_status_label = new QLabel(this);
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextSecondary));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     buttons->addWidget(m_status_label, 1);
 
     m_save_selected_button = new QPushButton(tr("Save Selected"), this);
@@ -321,7 +326,8 @@ void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
 void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail) {
     for (const auto& att : detail.attachments) {
         // Skip embedded messages (method 5) and OLE objects (method 6)
-        if (att.attach_method == 5 || att.attach_method == 6) {
+        if (att.attach_method == kAttachMethodEmbeddedMessage ||
+            att.attach_method == kAttachMethodOleObject) {
             continue;
         }
         AttachmentEntry entry;

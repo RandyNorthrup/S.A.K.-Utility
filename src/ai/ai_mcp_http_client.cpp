@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_mcp_http_client.h"
 
+#include "sak/layout_constants.h"
+
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QNetworkAccessManager>
@@ -20,6 +22,8 @@ namespace sak::ai {
 namespace {
 
 constexpr int kMaxResponseBytes = 1024 * 1024;
+constexpr qsizetype kSseDataPrefixLength = 5;
+constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 
 struct HttpCallState {
     QVariant status;
@@ -76,7 +80,7 @@ struct HttpWorkerSinks {
         if (!line.startsWith("data:")) {
             continue;
         }
-        QByteArray data = line.mid(5).trimmed();
+        QByteArray data = line.mid(kSseDataPrefixLength).trimmed();
         if (data == "[DONE]") {
             continue;
         }
@@ -130,7 +134,7 @@ public:
             m_reply->abort();
             finish(true);
         });
-        m_timer->start(qMax(m_timeoutMs, 1000));
+        m_timer->start(qMax(m_timeoutMs, kMinimumRequestTimeoutMs));
     }
 
 private:

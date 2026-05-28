@@ -51,19 +51,18 @@ public:
 private:
     [[nodiscard]] static bool matchesAnyPattern(const QString& key, const QStringList& patterns);
 #ifdef Q_OS_WIN
+    static constexpr int kDefaultMaxDepth = 3;
+
     /// @brief Enumerate all subkeys under a registry path
     static void enumerateKeys(HKEY hive,
                               const QString& subkey,
                               const QString& hiveName,
                               QSet<QString>& output,
-                              int maxDepth = 3);
+                              int maxDepth = kDefaultMaxDepth);
 #endif
 
     /// @brief Monitored registry paths for snapshots
     static const QStringList kMonitoredPaths;
-
-    /// @brief Maximum enumeration depth to limit scan time
-    static constexpr int kDefaultMaxDepth = 3;
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

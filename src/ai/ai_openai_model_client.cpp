@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_openai_model_client.h"
 
+#include "sak/layout_constants.h"
+
 #include <QSemaphore>
 #include <QThread>
 #include <QTimer>
@@ -15,6 +17,7 @@ namespace sak::ai {
 namespace {
 
 constexpr int kModelInvokeTimeoutMs = 300'000;
+constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 
 struct ModelInvokeState {
     OpenAIResponseResult result;
@@ -107,7 +110,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
         auto* client = new OpenAIResponsesClient(worker);
         auto* cancel_timer = new QTimer(worker);
         auto* timeout_timer = new QTimer(worker);
-        cancel_timer->setInterval(100);
+        cancel_timer->setInterval(kCancellationPollIntervalMs);
         timeout_timer->setSingleShot(true);
         const auto completed = std::make_shared<std::atomic_bool>(false);
         const auto finish = [&, client, completed]() {

@@ -20,6 +20,12 @@ namespace sak::ai {
 
 namespace {
 
+constexpr qsizetype kMcpResultPreviewChars = 49'152;
+constexpr qsizetype kMcpInlineResultJsonBytes = 65'536;
+constexpr int kWin32McpDefaultTimeoutMs = 20'000;
+constexpr int kWin32McpMinimumTimeoutMs = 1000;
+constexpr int kWin32McpMaximumTimeoutMs = 120'000;
+
 QString cappedString(const QString& value, qsizetype max_chars, bool* truncated = nullptr) {
     if (value.size() <= max_chars) {
         if (truncated) {
@@ -77,13 +83,14 @@ QJsonObject mcpDocsQueryResult(const QJsonObject& provider,
     result[QStringLiteral("query")] = query;
     result[QStringLiteral("mcp_request_arguments")] = tool_arguments;
     result[QStringLiteral("mcp_result_preview_json")] =
-        cappedString(compact_result, 49'152, &json_truncated);
+        cappedString(compact_result, kMcpResultPreviewChars, &json_truncated);
     result[QStringLiteral("mcp_result_truncated")] = json_truncated;
-    if (compact_result.toUtf8().size() <= 65'536) {
+    if (compact_result.toUtf8().size() <= kMcpInlineResultJsonBytes) {
         result[QStringLiteral("mcp_result")] = result_value;
     }
     if (!text.isEmpty()) {
-        result[QStringLiteral("result_text")] = cappedString(text, 49'152, &text_truncated);
+        result[QStringLiteral("result_text")] =
+            cappedString(text, kMcpResultPreviewChars, &text_truncated);
         result[QStringLiteral("result_text_truncated")] = text_truncated;
     }
     return result;
@@ -392,7 +399,9 @@ void populateWin32Plan(AiProviderGateway::Win32McpCallPlan* plan,
                              : plan->high_risk ? QStringLiteral("unrestricted")
                                                : QStringLiteral("interactive");
     plan->timeout_ms =
-        std::clamp(extra.value(QStringLiteral("timeout_ms")).toInt(20'000), 1000, 120'000);
+        std::clamp(extra.value(QStringLiteral("timeout_ms")).toInt(kWin32McpDefaultTimeoutMs),
+                   kWin32McpMinimumTimeoutMs,
+                   kWin32McpMaximumTimeoutMs);
     plan->preview =
         QStringLiteral("Win32 MCP %1 %2")
             .arg(tool_name,
@@ -634,15 +643,16 @@ QJsonObject AiProviderGateway::win32McpResult(const QJsonObject& provider,
     result[QStringLiteral("read_only_tool")] = isWin32ReadOnlyTool(tool_name);
     result[QStringLiteral("high_risk_tool")] = isWin32HighRiskTool(tool_name);
     result[QStringLiteral("mcp_result_preview_json")] =
-        cappedString(compact_result, 49'152, &json_truncated);
+        cappedString(compact_result, kMcpResultPreviewChars, &json_truncated);
     result[QStringLiteral("mcp_result_truncated")] = json_truncated;
-    if (compact_result.toUtf8().size() <= 65'536) {
+    if (compact_result.toUtf8().size() <= kMcpInlineResultJsonBytes) {
         result[QStringLiteral("mcp_result")] = result_value;
     }
     const QString text = mcpTextContent(result_value);
     if (!text.isEmpty()) {
         bool text_truncated = false;
-        result[QStringLiteral("result_text")] = cappedString(text, 49'152, &text_truncated);
+        result[QStringLiteral("result_text")] =
+            cappedString(text, kMcpResultPreviewChars, &text_truncated);
         result[QStringLiteral("result_text_truncated")] = text_truncated;
     }
     return result;

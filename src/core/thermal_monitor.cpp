@@ -15,6 +15,12 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kDiskKeyPrefixLength = 4;
+constexpr double kWmiTenthsKelvinDivisor = 10.0;
+constexpr double kKelvinZeroCelsius = 273.15;
+}  // namespace
+
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
@@ -180,7 +186,7 @@ QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output
         } else if (key == QLatin1String("gpu")) {
             readings.append({"GPU", temp, now});
         } else if (key.startsWith(QLatin1String("disk"))) {
-            readings.append({QString("Disk %1").arg(key.mid(4)), temp, now});
+            readings.append({QString("Disk %1").arg(key.mid(kDiskKeyPrefixLength)), temp, now});
         }
     }
     return readings;
@@ -237,7 +243,7 @@ double ThermalMonitor::queryCpuTemperature() {
     }
 
     // WMI returns temperature in tenths of Kelvin
-    return (raw_value / 10.0) - 273.15;
+    return (raw_value / kWmiTenthsKelvinDivisor) - kKelvinZeroCelsius;
 }
 
 }  // namespace sak

@@ -8,6 +8,7 @@
 #include "sak/diagnostic_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
@@ -34,6 +35,15 @@
 
 
 namespace sak {
+namespace {
+constexpr int kDefaultDiskTestFileSizeMb = 1024;
+constexpr int kReferenceBenchmarkScore = 1000;
+constexpr int kTemperatureWarningCelsius = 60;
+constexpr int kTemperatureCriticalCelsius = 80;
+constexpr int kSuiteStepDoneSymbol = 0x2705;
+constexpr int kSuiteStepRunningSymbol = 0x25B6;
+constexpr int kBenchmarkMetricPrecision = 2;
+}  // namespace
 
 // ============================================================================
 // Slot: Hardware Inventory
@@ -171,8 +181,8 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
 
-        m_smart_table->setItem(row, 0, new QTableWidgetItem(report.model));
-        m_smart_table->setItem(row, 1, new QTableWidgetItem(report.interface_type));
+        m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
+        m_smart_table->setItem(row, SmartColType, new QTableWidgetItem(report.interface_type));
 
         // Health with icon
         auto* health_item = new QTableWidgetItem();
@@ -193,22 +203,22 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
             health_item->setText("N/A");
             break;
         }
-        m_smart_table->setItem(row, 2, health_item);
+        m_smart_table->setItem(row, SmartColHealth, health_item);
 
         m_smart_table->setItem(row,
-                               3,
+                               SmartColTemperature,
                                new QTableWidgetItem(
                                    QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)));
 
         m_smart_table->setItem(row,
-                               4,
+                               SmartColPowerOnHours,
                                new QTableWidgetItem(QString::number(report.power_on_hours)));
 
         // Wear level: NVMe percentage or "--" for SATA
         const QString wear = report.nvme_health.has_value()
                                  ? QString("%1%").arg(report.nvme_health->percentage_used)
                                  : "--";
-        m_smart_table->setItem(row, 5, new QTableWidgetItem(wear));
+        m_smart_table->setItem(row, SmartColWear, new QTableWidgetItem(wear));
 
         // Collect warnings
         for (const auto& warning : report.warnings) {
@@ -247,16 +257,17 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
     const double baseline_pct = result.multi_thread_score > 0 ? (result.multi_thread_score / 10.0)
                                                               : 0.0;
 
-    m_cpu_details_label->setText(QString("Prime Sieve: %1 ms | Matrix: %2 ms (%3 GFLOPS) | "
-                                         "ZLIB: %4 MB/s | AES: %5 MB/s | Scaling: %6% | "
-                                         "%7% of baseline (i5-12400)")
-                                     .arg(result.prime_sieve_time_ms, 0, 'f', 1)
-                                     .arg(result.matrix_multiply_time_ms, 0, 'f', 1)
-                                     .arg(result.matrix_gflops, 0, 'f', 2)
-                                     .arg(result.zlib_throughput_mbps, 0, 'f', 1)
-                                     .arg(result.aes_throughput_mbps, 0, 'f', 1)
-                                     .arg(result.thread_scaling_efficiency * 100.0, 0, 'f', 1)
-                                     .arg(baseline_pct, 0, 'f', 0));
+    m_cpu_details_label->setText(
+        QString("Prime Sieve: %1 ms | Matrix: %2 ms (%3 GFLOPS) | "
+                "ZLIB: %4 MB/s | AES: %5 MB/s | Scaling: %6% | "
+                "%7% of baseline (i5-12400)")
+            .arg(result.prime_sieve_time_ms, 0, 'f', 1)
+            .arg(result.matrix_multiply_time_ms, 0, 'f', 1)
+            .arg(result.matrix_gflops, 0, 'f', kBenchmarkMetricPrecision)
+            .arg(result.zlib_throughput_mbps, 0, 'f', 1)
+            .arg(result.aes_throughput_mbps, 0, 'f', 1)
+            .arg(result.thread_scaling_efficiency * sak::kPercentMaxF, 0, 'f', 1)
+            .arg(baseline_pct, 0, 'f', 0));
 
     logMessage(QString("CPU benchmark complete -- Score: %1 (ST) / %2 (MT)")
                    .arg(result.single_thread_score)
@@ -279,7 +290,7 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
 
     DiskBenchmarkConfig config;
     config.drive_path = m_disk_drive_combo->currentData().toString();
-    config.test_file_size_mb = 1024;
+    config.test_file_size_mb = kDefaultDiskTestFileSizeMb;
 
     logMessage(QString("Starting disk benchmark on %1...").arg(config.drive_path));
     setOperationRunning(true);
@@ -314,8 +325,9 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
                                       .arg(result.avg_write_latency_us, 0, 'f', 1)
                                       .arg(result.p99_write_latency_us, 0, 'f', 1));
 
-    m_disk_score_label->setText(
-        QString("Score: %1 (Samsung 980 PRO = 1000)").arg(result.overall_score));
+    m_disk_score_label->setText(QString("Score: %1 (Samsung 980 PRO = %2)")
+                                    .arg(result.overall_score)
+                                    .arg(kReferenceBenchmarkScore));
 
     m_disk_score_bar->setValue(result.overall_score);
 
@@ -350,8 +362,9 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
                                      .arg(result.alloc_dealloc_ops_per_sec, 0, 'f', 0)
                                      .arg(result.max_contiguous_alloc_mb));
 
-    m_mem_score_label->setText(
-        QString("Score: %1 (DDR4-3200 dual-channel = 1000)").arg(result.overall_score));
+    m_mem_score_label->setText(QString("Score: %1 (DDR4-3200 dual-channel = %2)")
+                                   .arg(result.overall_score)
+                                   .arg(kReferenceBenchmarkScore));
 
     m_mem_score_bar->setValue(result.overall_score);
 
@@ -386,8 +399,8 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
     m_stress_start_button->setEnabled(false);
     m_stress_stop_button->setEnabled(true);
     m_stress_status_label->setText("Status: Running");
-    m_stress_status_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+    m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+        sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
 
     m_controller->runStressTest(config);
 }
@@ -407,13 +420,13 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
 
     if (result.passed) {
         m_stress_status_label->setText("Status: PASSED");
-        m_stress_status_label->setStyleSheet(
-            QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+        m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
     } else {
         m_stress_status_label->setText(
             QString("Status: FAILED \u2014 %1").arg(result.abort_reason));
-        m_stress_status_label->setStyleSheet(
-            QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorError));
+        m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
 
     logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4 degC)")
@@ -421,29 +434,32 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
                    .arg(result.max_cpu_temp, 0, 'f', 1));
-    Q_EMIT statusMessage(result.passed ? "Stress test passed" : "Stress test FAILED", 5000);
+    Q_EMIT statusMessage(result.passed ? "Stress test passed" : "Stress test FAILED",
+                         sak::kTimerStatusDefaultMs);
 }
 
 void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
                                                   double cpu_temp,
                                                   int errors) {
     Q_ASSERT(elapsed_seconds >= 0);
-    const int duration_sec = m_stress_duration_spin->value() * 60;
-    const int percent = duration_sec > 0 ? (elapsed_seconds * 100 / duration_sec) : 0;
-    Q_EMIT progressUpdate(percent, 100);
+    const int duration_sec = m_stress_duration_spin->value() * sak::kSecondsPerMinute;
+    const int percent = duration_sec > 0 ? (elapsed_seconds * sak::kPercentMax / duration_sec) : 0;
+    Q_EMIT progressUpdate(percent, sak::kPercentMax);
 
-    const int min = elapsed_seconds / 60;
-    const int sec = elapsed_seconds % 60;
+    const int min = elapsed_seconds / sak::kSecondsPerMinute;
+    const int sec = elapsed_seconds % sak::kSecondsPerMinute;
     m_stress_elapsed_label->setText(
-        QString("Elapsed: %1:%2").arg(min, 2, 10, QChar('0')).arg(sec, 2, 10, QChar('0')));
+        QString("Elapsed: %1:%2")
+            .arg(min, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0'))
+            .arg(sec, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0')));
 
     m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
 
     m_stress_errors_label->setText(QString("Errors: %1").arg(errors));
 
     if (errors > 0) {
-        m_stress_errors_label->setStyleSheet(
-            QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorError));
+        m_stress_errors_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
 }
 
@@ -478,9 +494,8 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
     m_suite_skip_button->setEnabled(true);
 
     // Reset step labels
-    for (int i = 0; i < 7; ++i) {
-        m_suite_step_labels[i]->setStyleSheet(
-            QString("color: %1;").arg(sak::ui::kColorTextDisabled));
+    for (int i = 0; i < kSuiteStepCount; ++i) {
+        m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -524,26 +539,26 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
     const int step = state_to_step[state_idx];
 
     // Mark completed steps with checkmark, current with arrow icon
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < kSuiteStepCount; ++i) {
         if (step >= 0 && i < step) {
             // Completed -- reconstruct label from stored step name
             m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(0x2705)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(
-                QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorSuccess));
+                QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
+            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
         } else if (i == step) {
             // Current \u2014 use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
             m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(0x25B6)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(
-                QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorRunning));
+                QString("  %1  %2").arg(QChar(kSuiteStepRunningSymbol)).arg(m_suite_step_names[i]));
+            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorRunning));
         }
     }
 }
 
 void DiagnosticBenchmarkPanel::onSuiteProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= 100);
-    Q_EMIT progressUpdate(percent, 100);
+    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    Q_EMIT progressUpdate(percent, sak::kPercentMax);
     m_suite_status_label->setText(message);
 }
 
@@ -555,15 +570,15 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite complete!");
-    m_suite_status_label->setStyleSheet(
-        QString("font-weight: 600; color: %1;").arg(sak::ui::kStatusColorSuccess));
+    m_suite_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+        sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
 
     // Mark all steps as complete \u2014 reconstruct from stored step names
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < kSuiteStepCount; ++i) {
         m_suite_step_labels[i]->setText(
-            QString("  %1  %2").arg(QChar(0x2705)).arg(m_suite_step_names[i]));
-        m_suite_step_labels[i]->setStyleSheet(
-            QString("color: %1; font-weight: 600;").arg(sak::ui::kStatusColorSuccess));
+            QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
+        m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
     }
 
     logMessage("Full diagnostic suite complete");
@@ -586,18 +601,19 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
     for (const auto& reading : readings) {
         const int temp = static_cast<int>(reading.temperature_celsius);
 
-        // Color code: green < 60, yellow 60-80, red >= 80
+        // Color code by thermal warning thresholds.
         QString color = sak::ui::kStatusColorSuccess;
-        if (temp >= 80) {
+        if (temp >= kTemperatureCriticalCelsius) {
             color = sak::ui::kStatusColorError;
-        } else if (temp >= 60) {
+        } else if (temp >= kTemperatureWarningCelsius) {
             color = sak::ui::kColorWarning;
         }
 
         const QString temp_text = QString(
-                                      "<span style='color:%1; font-weight:600;'>"
-                                      "%2 \u00B0C</span>")
+                                      "<span style='color:%1; font-weight:%2;'>"
+                                      "%3 \u00B0C</span>")
                                       .arg(color)
+                                      .arg(sak::ui::kFontWeightSemibold)
                                       .arg(temp);
 
         if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
@@ -616,17 +632,20 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
     }
 
     // Show "N/A" for sensors that returned no data
-    constexpr auto* kNotAvailable = "<span style='color:gray; font-weight:600;'>N/A</span>";
+    const QString not_available =
+        QStringLiteral("<span style='color:%1; font-weight:%2;'>N/A</span>")
+            .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
+            .arg(sak::ui::kFontWeightSemibold);
     if (!cpu_found) {
-        m_thermal_cpu_label->setText(kNotAvailable);
+        m_thermal_cpu_label->setText(not_available);
         m_thermal_cpu_bar->setValue(0);
     }
     if (!gpu_found) {
-        m_thermal_gpu_label->setText(kNotAvailable);
+        m_thermal_gpu_label->setText(not_available);
         m_thermal_gpu_bar->setValue(0);
     }
     if (!disk_found) {
-        m_thermal_disk_label->setText(kNotAvailable);
+        m_thermal_disk_label->setText(not_available);
         m_thermal_disk_bar->setValue(0);
     }
 }
@@ -656,9 +675,9 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
     logMessage(QString("Reports generated in %1").arg(output_dir));
     Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
-    QMessageBox::information(this,
-                             "Reports Generated",
-                             QString("Diagnostic reports saved to:\n%1").arg(output_dir));
+    sak::showInformationLogged(this,
+                               "Reports Generated",
+                               QString("Diagnostic reports saved to:\n%1").arg(output_dir));
 }
 
 // ============================================================================
@@ -666,8 +685,8 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
 // ============================================================================
 
 void DiagnosticBenchmarkPanel::onOperationProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= 100);
-    Q_EMIT progressUpdate(percent, 100);
+    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    Q_EMIT progressUpdate(percent, sak::kPercentMax);
     Q_EMIT statusMessage(message, 0);
 }
 

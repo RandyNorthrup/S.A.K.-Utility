@@ -12,6 +12,14 @@ namespace sak::ui {
 
 namespace {
 
+constexpr int kSplashDefaultSize = 600;
+constexpr int kSplashMaxSize = 640;
+constexpr int kSplashPaddingSides = 2;
+constexpr int kSplashShadowRed = 0;
+constexpr int kSplashShadowGreen = 0;
+constexpr int kSplashShadowBlue = 0;
+constexpr int kSplashShadowAlpha = 90;
+
 QPixmap createRoundedPixmap(const QPixmap& source, int radius) {
     Q_ASSERT(radius >= 0);
     if (source.isNull()) {
@@ -38,7 +46,7 @@ QPixmap createRoundedPixmap(const QPixmap& source, int radius) {
 SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(parent) {
     Q_ASSERT(!pixmap.isNull());
     Q_ASSERT(parent != nullptr);
-    const QSize max_size(640, 640);
+    const QSize max_size(kSplashMaxSize, kSplashMaxSize);
     if (!pixmap.isNull() &&
         (pixmap.width() > max_size.width() || pixmap.height() > max_size.height())) {
         m_pixmap = pixmap.scaled(max_size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -52,9 +60,11 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(par
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
 
-    const QSize content_size = m_pixmap.isNull() ? QSize(600, 600) : m_pixmap.size();
+    const QSize content_size = m_pixmap.isNull() ? QSize(kSplashDefaultSize, kSplashDefaultSize)
+                                                 : m_pixmap.size();
     const int padding = m_shadow_radius + m_shadow_offset;
-    resize(content_size.width() + padding * 2, content_size.height() + padding * 2);
+    resize(content_size.width() + padding * kSplashPaddingSides,
+           content_size.height() + padding * kSplashPaddingSides);
 }
 
 void SplashScreen::showCentered() {
@@ -89,7 +99,8 @@ void SplashScreen::paintEvent(QPaintEvent* event) {
     // Drop shadow
     QPainterPath shadow;
     shadow.addRoundedRect(content_rect, m_corner_radius, m_corner_radius);
-    QColor shadow_color(0, 0, 0, 90);
+    QColor shadow_color(
+        kSplashShadowRed, kSplashShadowGreen, kSplashShadowBlue, kSplashShadowAlpha);
     for (int i = 0; i < m_shadow_radius; ++i) {
         QColor c = shadow_color;
         c.setAlpha(shadow_color.alpha() * (m_shadow_radius - i) / m_shadow_radius);

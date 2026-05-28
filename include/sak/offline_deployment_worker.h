@@ -164,6 +164,14 @@ private:
     [[nodiscard]] bool internalizeOnePackage(int idx,
                                              const BuildBundleContext& ctx,
                                              DeploymentManifest& manifest);
+    [[nodiscard]] BatchInternalizationJob beginInternalizationJob(int idx);
+    void emitInternalizationStarted(const BuildBundleContext& ctx, const QString& pkg_id);
+    [[nodiscard]] InternalizationResult runInternalizationJob(const BatchInternalizationJob& job,
+                                                              const BuildBundleContext& ctx);
+    void applyInternalizationResult(int idx,
+                                    const InternalizationResult& result,
+                                    DeploymentManifest& manifest);
+    void emitInternalizationResult(const QString& pkg_id, const InternalizationResult& result);
 
     /// @brief Finalize the bundle: write manifest, clean up, emit completion
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);

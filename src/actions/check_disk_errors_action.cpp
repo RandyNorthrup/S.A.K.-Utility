@@ -6,6 +6,7 @@
 
 #include "sak/actions/check_disk_errors_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -14,13 +15,19 @@
 namespace sak {
 
 namespace {
+constexpr qsizetype kMinimumDriveRootLength = 2;
+constexpr int kDiskReportWidth = 78;
+constexpr int kMinimumScanKeyValueParts = 2;
+constexpr int kDriveScanProgressStart = 10;
+constexpr int kDriveScanProgressSpan = 80;
 
 QVector<QChar> enumerateWritableDriveLetters() {
     QVector<QChar> drives;
     const auto volumes = QStorageInfo::mountedVolumes();
     drives.reserve(volumes.size());
     for (const QStorageInfo& storage : volumes) {
-        if (!storage.isValid() || storage.isReadOnly() || storage.rootPath().length() < 2) {
+        if (!storage.isValid() || storage.isReadOnly() ||
+            storage.rootPath().length() < kMinimumDriveRootLength) {
             continue;
         }
         QChar drive = storage.rootPath().at(0);
@@ -76,7 +83,7 @@ void CheckDiskErrorsAction::execute() {
 bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
                                                     QVector<QChar>& drives,
                                                     QString& report) {
-    Q_EMIT executionProgress("Detecting disk drives...", 5);
+    Q_EMIT executionProgress("Detecting disk drives...", progress::kStep5);
 
     drives = enumerateWritableDriveLetters();
 
@@ -90,9 +97,10 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
         return false;
     }
 
-    report += "+" + QString("=").repeated(78) + "+\n";
-    report += "|" + QString(" DISK ERROR CHECK & REPAIR REPORT").leftJustified(78) + "|\n";
-    report += "+" + QString("=").repeated(78) + "+\n\n";
+    report += "+" + QString("=").repeated(kDiskReportWidth) + "+\n";
+    report += "|" + QString(" DISK ERROR CHECK & REPAIR REPORT").leftJustified(kDiskReportWidth) +
+              "|\n";
+    report += "+" + QString("=").repeated(kDiskReportWidth) + "+\n\n";
 
     return true;
 }
@@ -159,7 +167,7 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
         }
 
         QStringList parts = trimmed.split(':', Qt::SkipEmptyParts);
-        if (parts.size() < 2) {
+        if (parts.size() < kMinimumScanKeyValueParts) {
             continue;
         }
 
@@ -222,7 +230,8 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
     for (int i = 0; i < drives.count(); ++i) {
         const QChar& drive = drives[i];
 
-        int progress = 10 + ((i * 80) / drives.count());
+        const int progress = kDriveScanProgressStart +
+                             ((i * kDriveScanProgressSpan) / drives.count());
         Q_EMIT executionProgress(QString("Scanning drive %1: with Repair-Volume...").arg(drive),
                                  progress);
 
@@ -241,7 +250,7 @@ void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
         parseDriveScanResult(proc.std_out, report, drives_scanned, errors_found, errors_fixed);
     }
 
-    Q_EMIT executionProgress("Disk error check complete", 100);
+    Q_EMIT executionProgress("Disk error check complete", progress::kComplete);
 }
 
 void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
@@ -250,7 +259,7 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
                                                int errors_found,
                                                int errors_fixed) {
     QString final_report = report;
-    final_report += QString("-").repeated(78) + "\n";
+    final_report += QString("-").repeated(kDiskReportWidth) + "\n";
     final_report += QString(
                         "Summary: %1 drive(s) scanned, %2 error(s) found, %3 repair(s) "
                         "scheduled\n")

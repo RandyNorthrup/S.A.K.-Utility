@@ -15,6 +15,7 @@
 #include "sak/email_file_scanner_dialog.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
@@ -53,6 +54,30 @@ namespace sak {
 
 namespace {
 
+constexpr double kRibbonPrimaryHoverAlpha = ui::kHoverAlphaSubtle;
+constexpr double kRibbonPrimaryHoverBorderAlpha = 0.25;
+constexpr double kRibbonPrimaryPressedAlpha = ui::kPressedAlphaSubtle;
+constexpr double kRibbonPrimaryPressedBorderAlpha = 0.40;
+constexpr int kPropertiesTableColumnCount = 2;
+constexpr int kAttachmentTableColumnFilename = 0;
+constexpr int kAttachmentTableColumnSize = 1;
+constexpr int kAttachmentTableColumnMimeType = 2;
+constexpr int kAttachmentTableColumnContentId = 3;
+constexpr int kAttachmentTableColumnCount = 4;
+constexpr int kPropertiesDetailTabIndex = 2;
+constexpr int kFolderSortSentItems = 2;
+constexpr int kFolderSortDeletedItems = 3;
+constexpr int kFolderSortArchive = 4;
+constexpr int kFolderSortJunkEmail = 5;
+constexpr int kFolderSortOutbox = 6;
+constexpr int kFolderSortUserFolder = 10;
+constexpr int kTaskStatusCount = 5;
+constexpr int kDefaultNoteColorIndex = 3;
+constexpr int kInlineImageAttrPrefixCaptureGroup = 1;
+constexpr int kInlineImageAttrQuoteCaptureGroup = 2;
+constexpr int kInlineImageSrcCaptureGroup = 3;
+constexpr int kLargeByteDisplayPrecision = 2;
+
 /// Detect an image MIME type from raw bytes using `QImageReader`.
 /// Returns the IANA name (e.g. `image/png`) or an empty `QByteArray` if the
 /// format is not recognised.
@@ -78,12 +103,12 @@ QByteArray detectImageMime(const QByteArray& data) {
 /// references are preserved.
 QString stripRemoteContent(QString html) {
     static const QRegularExpression kRemoteAttr(
-        QStringLiteral(R"((\bsrc|\bbackground|\bposter)\s*=\s*["'](?:https?:|//)[^"']*["'])"),
+        QStringLiteral("(\\bsrc|\\bbackground|\\bposter)\\s*=\\s*[\"'](?:https?:|//)[^\"']*[\"']"),
         QRegularExpression::CaseInsensitiveOption);
     html.replace(kRemoteAttr, QStringLiteral("\\1=\"\""));
 
     static const QRegularExpression kCssRemoteUrl(
-        QStringLiteral(R"(url\(\s*['"]?(?:https?:|//)[^)'"]*['"]?\s*\))"),
+        QStringLiteral("url\\(\\s*['\"]?(?:https?:|//)[^)'\"]*['\"]?\\s*\\)"),
         QRegularExpression::CaseInsensitiveOption);
     html.replace(kCssRemoteUrl, QStringLiteral("none"));
     return html;
@@ -97,9 +122,12 @@ QString stripRemoteContent(QString html) {
 
 EmailInspectorPanel::EmailInspectorPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<EmailInspectorController>(this)) {
-    // Coalesce rapid-fire redraws caused by inline/remote image arrivals
-    // into a single `setHtml` call.  A 50 ms debounce is short enough to
-    // feel instantaneous while still absorbing dozens of completions.
+    setupRedrawTimer();
+    setupUi();
+    connectController();
+}
+
+void EmailInspectorPanel::setupRedrawTimer() {
     constexpr int kRedrawDebounceMs = 50;
     m_redraw_timer = new QTimer(this);
     m_redraw_timer->setSingleShot(true);
@@ -109,9 +137,6 @@ EmailInspectorPanel::EmailInspectorPanel(QWidget* parent)
             displayItemDetail(m_current_detail);
         }
     });
-
-    setupUi();
-    connectController();
 }
 
 EmailInspectorPanel::~EmailInspectorPanel() {
@@ -146,17 +171,17 @@ void EmailInspectorPanel::setupUi() {
     m_main_splitter->setChildrenCollapsible(false);
     m_main_splitter->addWidget(createFolderTreePanel());
     m_main_splitter->addWidget(createContentArea());
-    m_main_splitter->setSizes({email::kFolderTreeDefaultWidth, 700});
+    m_main_splitter->setSizes({email::kFolderTreeDefaultWidth, email::kContentPaneDefaultWidth});
     root_layout->addWidget(m_main_splitter, 1);
 
     // Status bar
     auto* status_row = new QHBoxLayout();
     m_status_label = new QLabel(tr("Ready"), this);
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     status_row->addWidget(m_status_label, 1);
 
     m_progress_bar = new QProgressBar(this);
-    m_progress_bar->setMaximumWidth(200);
+    m_progress_bar->setMaximumWidth(email::kInspectorProgressMaxWidth);
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setFormat(QStringLiteral("%p%"));
     m_progress_bar->setVisible(false);
@@ -187,7 +212,7 @@ void EmailInspectorPanel::setupUi() {
     log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
     log_toggle_layout->addWidget(m_images_toggle_switch);
-    log_toggle_layout->addSpacing(12);
+    log_toggle_layout->addSpacing(sak::ui::kSpacingLarge);
     log_toggle_layout->addWidget(m_html_toggle_switch);
     root_layout->addLayout(log_toggle_layout);
 }
@@ -199,39 +224,65 @@ void EmailInspectorPanel::setupUi() {
 namespace {
 
 constexpr int kRibbonIconSize = 28;
+constexpr int kRibbonSearchIconInset = 6;
 constexpr int kRibbonButtonWidth = 64;
 constexpr int kRibbonButtonHeight = 56;
 
-constexpr auto kRibbonStyle =
-    "QWidget#ribbonBar {"
-    "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-    "    stop:0 #f8fafc, stop:1 #eef2f7);"
-    "  border: 1px solid #cbd5e1;"
-    "  border-radius: 8px;"
-    "}";
+QString ribbonStyle() {
+    return QStringLiteral(
+               "QWidget#ribbonBar {"
+               "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+               "    stop:0 %1, stop:1 %2);"
+               "  border: %3px solid %4;"
+               "  border-radius: %5px;"
+               "}")
+        .arg(ui::cssColor(ui::kColorBgSurface),
+             ui::cssColor(ui::kColorBgPageHover),
+             QString::number(ui::kCssBorderWidthDefaultPx),
+             ui::cssColor(ui::kColorBorderDefault),
+             QString::number(ui::kCssRadiusLargePx));
+}
 
-constexpr auto kRibbonButtonStyle =
-    "QToolButton {"
-    "  background: transparent;"
-    "  border: 1px solid transparent;"
-    "  border-radius: 6px;"
-    "  padding: 4px 2px;"
-    "  font-size: 9px; font-weight: 500;"
-    "  color: #334155;"
-    "}"
-    "QToolButton:hover {"
-    "  background: rgba(59, 130, 246, 0.08);"
-    "  border: 1px solid rgba(59, 130, 246, 0.25);"
-    "}"
-    "QToolButton:pressed {"
-    "  background: rgba(59, 130, 246, 0.15);"
-    "  border: 1px solid rgba(59, 130, 246, 0.4);"
-    "}"
-    "QToolButton:disabled {"
-    "  color: #94a3b8;"
-    "}";
+QString ribbonButtonStyle() {
+    return QStringLiteral(
+               "QToolButton {"
+               "  background: transparent;"
+               "  border: %1px solid transparent;"
+               "  border-radius: %2px;"
+               "  padding: %3px %4px;"
+               "  font-size: %5px; font-weight: %6;"
+               "  color: %7;"
+               "}"
+               "QToolButton:hover {"
+               "  background: %8;"
+               "  border: %1px solid %9;"
+               "}"
+               "QToolButton:pressed {"
+               "  background: %10;"
+               "  border: %1px solid %11;"
+               "}"
+               "QToolButton:disabled {"
+               "  color: %12;"
+               "}")
+        .arg(ui::kCssBorderWidthDefaultPx)
+        .arg(ui::kCssRadiusMediumPx)
+        .arg(ui::kCssPaddingSmallPx)
+        .arg(ui::kCssPaddingTinyPx)
+        .arg(ui::kFontSizeNote)
+        .arg(ui::kFontWeightMedium)
+        .arg(ui::cssColor(ui::kColorTextBody),
+             ui::colorWithAlpha(ui::kColorPrimary, kRibbonPrimaryHoverAlpha),
+             ui::colorWithAlpha(ui::kColorPrimary, kRibbonPrimaryHoverBorderAlpha),
+             ui::colorWithAlpha(ui::kColorPrimary, kRibbonPrimaryPressedAlpha),
+             ui::colorWithAlpha(ui::kColorPrimary, kRibbonPrimaryPressedBorderAlpha),
+             ui::cssColor(ui::kColorTextDisabled));
+}
 
-constexpr auto kRibbonSeparatorStyle = "background: #cbd5e1; margin: 6px 0px;";
+QString ribbonSeparatorStyle() {
+    return QStringLiteral("background: %1; margin: %2px 0px;")
+        .arg(ui::cssColor(ui::kColorBorderDefault))
+        .arg(ui::kSpacingSmall);
+}
 
 QToolButton* makeRibbonButton(const QString& text,
                               const QString& icon_path,
@@ -243,31 +294,23 @@ QToolButton* makeRibbonButton(const QString& text,
     button->setIconSize(QSize(kRibbonIconSize, kRibbonIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     button->setToolTip(tooltip);
+    button->setAccessibleName(text);
     button->setFixedSize(kRibbonButtonWidth, kRibbonButtonHeight);
-    button->setStyleSheet(kRibbonButtonStyle);
+    button->setStyleSheet(ribbonButtonStyle());
     return button;
 }
 
 QFrame* makeRibbonSeparator(QWidget* parent) {
     auto* sep = new QFrame(parent);
     sep->setFrameShape(QFrame::VLine);
-    sep->setFixedWidth(1);
-    sep->setStyleSheet(QLatin1String(kRibbonSeparatorStyle));
+    sep->setFixedWidth(ui::kUiSeparatorWidth);
+    sep->setStyleSheet(ribbonSeparatorStyle());
     return sep;
 }
 
 }  // anonymous namespace
 
-QWidget* EmailInspectorPanel::createRibbon() {
-    auto* ribbon = new QWidget(this);
-    ribbon->setObjectName(QStringLiteral("ribbonBar"));
-    ribbon->setStyleSheet(QLatin1String(kRibbonStyle));
-    auto* layout = new QHBoxLayout(ribbon);
-    layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginTight, ui::kMarginSmall, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingTight);
-
-    // -- File Group -------------------------------------------------------
+void EmailInspectorPanel::addRibbonFileGroup(QHBoxLayout* layout, QWidget* ribbon) {
     m_scan_files_button = makeRibbonButton(tr("Scan"),
                                            QStringLiteral(":/icons/icons/icons8-radar.svg"),
                                            tr("Scan common locations for email data files"),
@@ -294,40 +337,35 @@ QWidget* EmailInspectorPanel::createRibbon() {
     layout->addWidget(m_close_button);
 
     layout->addWidget(makeRibbonSeparator(ribbon));
+}
 
-    // -- Search Group -----------------------------------------------------
+void EmailInspectorPanel::addRibbonSearchGroup(QHBoxLayout* layout, QWidget* ribbon) {
     m_search_edit = new QLineEdit(ribbon);
     m_search_edit->setPlaceholderText(tr("Search emails..."));
-    m_search_edit->setMinimumWidth(180);
-    m_search_edit->setMaximumWidth(280);
+    m_search_edit->setMinimumWidth(ui::kUiSearchMinWidth);
+    m_search_edit->setMaximumWidth(ui::kUiSearchMaxWidth);
     m_search_edit->setEnabled(false);
-    m_search_edit->setStyleSheet(
-        QStringLiteral("QLineEdit { border: 1px solid #cbd5e1;"
-                       " border-radius: 6px; padding: 6px 10px;"
-                       " background: white; color: #334155; }"));
+    m_search_edit->setStyleSheet(ui::emailInspectorSearchStyle());
     m_search_edit->setAccessibleName(QStringLiteral("Email Search"));
     layout->addWidget(m_search_edit);
 
     m_search_button = new QPushButton(ribbon);
     m_search_button->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-search.svg")));
-    m_search_button->setIconSize(QSize(kRibbonIconSize - 6, kRibbonIconSize - 6));
-    m_search_button->setFixedSize(34, 34);
+    m_search_button->setIconSize(
+        QSize(kRibbonIconSize - kRibbonSearchIconInset, kRibbonIconSize - kRibbonSearchIconInset));
+    m_search_button->setFixedSize(ui::kUiButtonHeightDialog, ui::kUiButtonHeightDialog);
     m_search_button->setEnabled(false);
     m_search_button->setToolTip(tr("Search"));
-    m_search_button->setStyleSheet(
-        QStringLiteral("QPushButton { background: transparent;"
-                       " border: 1px solid transparent;"
-                       " border-radius: 6px; }"
-                       "QPushButton:hover { background:"
-                       " rgba(59, 130, 246, 0.1); }"));
+    m_search_button->setStyleSheet(ui::transparentHoverButtonStyle(ui::kColorBgInfoPanel));
     m_search_button->setAccessibleName(QStringLiteral("Search Emails"));
     connect(m_search_button, &QPushButton::clicked, this, &EmailInspectorPanel::onSearchClicked);
     connect(m_search_edit, &QLineEdit::returnPressed, this, &EmailInspectorPanel::onSearchClicked);
     layout->addWidget(m_search_button);
 
     layout->addWidget(makeRibbonSeparator(ribbon));
+}
 
-    // -- Actions Group ----------------------------------------------------
+void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon) {
     m_export_emails_button = makeRibbonButton(tr("Export"),
                                               QStringLiteral(":/icons/icons/icons8-export.svg"),
                                               tr("Export emails as EML or CSV"),
@@ -349,8 +387,9 @@ QWidget* EmailInspectorPanel::createRibbon() {
     layout->addWidget(m_attachments_button);
 
     layout->addWidget(makeRibbonSeparator(ribbon));
+}
 
-    // -- People & Calendar Group ------------------------------------------
+void EmailInspectorPanel::addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* ribbon) {
     m_contacts_button = makeRibbonButton(tr("Contacts"),
                                          QStringLiteral(":/icons/icons/icons8-address-book.svg"),
                                          tr("Open the address book to view and export contacts"),
@@ -368,7 +407,21 @@ QWidget* EmailInspectorPanel::createRibbon() {
     connect(
         m_calendar_button, &QToolButton::clicked, this, &EmailInspectorPanel::onCalendarClicked);
     layout->addWidget(m_calendar_button);
+}
 
+QWidget* EmailInspectorPanel::createRibbon() {
+    auto* ribbon = new QWidget(this);
+    ribbon->setObjectName(QStringLiteral("ribbonBar"));
+    ribbon->setStyleSheet(ribbonStyle());
+    auto* layout = new QHBoxLayout(ribbon);
+    layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginTight, ui::kMarginSmall, ui::kMarginTight);
+    layout->setSpacing(ui::kSpacingTight);
+
+    addRibbonFileGroup(layout, ribbon);
+    addRibbonSearchGroup(layout, ribbon);
+    addRibbonActionsGroup(layout, ribbon);
+    addRibbonPeopleGroup(layout, ribbon);
     layout->addStretch();
     return ribbon;
 }
@@ -404,34 +457,29 @@ QWidget* EmailInspectorPanel::createContentArea() {
     m_content_splitter->setChildrenCollapsible(false);
     m_content_splitter->addWidget(createItemListPanel());
     m_content_splitter->addWidget(createDetailPanel());
-    m_content_splitter->setSizes({400, 500});
+    m_content_splitter->setSizes({email::kItemListDefaultWidth, email::kPreviewPaneDefaultWidth});
     m_content_splitter->setStretchFactor(0, 0);
     m_content_splitter->setStretchFactor(1, 1);
     return m_content_splitter;
 }
 
-QWidget* EmailInspectorPanel::createItemListPanel() {
-    auto* group = new QGroupBox(tr("Items"), this);
-    auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingTight);
-
+QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     m_item_count_label = new QLabel(group);
-    m_item_count_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_item_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
 
-    // Page size dropdown
     m_page_size_combo = new QComboBox(group);
     m_page_size_combo->addItems(
         {tr("50"), tr("100"), tr("250"), tr("500"), tr("1000"), tr("5000")});
     m_page_size_combo->setCurrentIndex(1);  // Default 100
     m_page_size_combo->setToolTip(tr("Items per page"));
-    m_page_size_combo->setFixedWidth(80);
+    m_page_size_combo->setAccessibleName(tr("Email items per page"));
+    m_page_size_combo->setFixedWidth(email::kPageSizeComboWidth);
     connect(m_page_size_combo, &QComboBox::currentIndexChanged, this, [this] { applyPageSize(); });
 
     m_prev_page_button = new QToolButton(group);
     m_prev_page_button->setText(QStringLiteral("\u25C0"));
     m_prev_page_button->setToolTip(tr("Previous page"));
+    m_prev_page_button->setAccessibleName(tr("Previous email page"));
     m_prev_page_button->setEnabled(false);
     connect(m_prev_page_button, &QToolButton::clicked, this, [this] {
         if (m_current_page > 0) {
@@ -441,12 +489,13 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
     });
 
     m_page_label = new QLabel(group);
-    m_page_label->setMinimumWidth(110);
+    m_page_label->setMinimumWidth(email::kPageIndicatorMinWidth);
     m_page_label->setAlignment(Qt::AlignCenter);
 
     m_next_page_button = new QToolButton(group);
     m_next_page_button->setText(QStringLiteral("\u25B6"));
     m_next_page_button->setToolTip(tr("Next page"));
+    m_next_page_button->setAccessibleName(tr("Next email page"));
     m_next_page_button->setEnabled(false);
     connect(m_next_page_button, &QToolButton::clicked, this, [this] {
         const int page_size = currentPageSize();
@@ -462,11 +511,13 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
     filter_row->addWidget(m_prev_page_button);
     filter_row->addWidget(m_page_label);
     filter_row->addWidget(m_next_page_button);
-    filter_row->addSpacing(8);
+    filter_row->addSpacing(sak::ui::kSpacingMedium);
     filter_row->addWidget(new QLabel(tr("Per page:"), group));
     filter_row->addWidget(m_page_size_combo);
-    layout->addLayout(filter_row);
+    return filter_row;
+}
 
+void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list = new QTableWidget(group);
     m_item_list->setColumnCount(ColCount);
     m_item_list->setAccessibleName(QStringLiteral("Email Items List"));
@@ -479,12 +530,12 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
     m_item_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_item_list->horizontalHeader()->setStretchLastSection(true);
     m_item_list->horizontalHeader()->setSectionResizeMode(ColAttachment, QHeaderView::Fixed);
-    m_item_list->setColumnWidth(ColAttachment, 42);
-    m_item_list->setColumnWidth(ColSubject, 260);
-    m_item_list->setColumnWidth(ColFrom, 180);
-    m_item_list->setColumnWidth(ColDate, 150);
-    m_item_list->setColumnWidth(ColSize, 80);
-    m_item_list->setColumnWidth(ColType, 90);
+    m_item_list->setColumnWidth(ColAttachment, email::kAttachmentIndicatorColumnWidth);
+    m_item_list->setColumnWidth(ColSubject, email::kSubjectColumnWidth);
+    m_item_list->setColumnWidth(ColFrom, email::kSenderColumnWidth);
+    m_item_list->setColumnWidth(ColDate, email::kDateColumnWidth);
+    m_item_list->setColumnWidth(ColSize, email::kSizeColumnWidth);
+    m_item_list->setColumnWidth(ColType, email::kTypeColumnWidth);
     m_item_list->verticalHeader()->setVisible(false);
 
     connect(
@@ -493,7 +544,17 @@ QWidget* EmailInspectorPanel::createItemListPanel() {
             &QTableWidget::customContextMenuRequested,
             this,
             &EmailInspectorPanel::onItemListContextMenu);
+}
 
+QWidget* EmailInspectorPanel::createItemListPanel() {
+    auto* group = new QGroupBox(tr("Items"), this);
+    auto* layout = new QVBoxLayout(group);
+    layout->setContentsMargins(
+        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
+    layout->setSpacing(ui::kSpacingTight);
+
+    layout->addLayout(createItemPagingRow(group));
+    configureItemListTable(group);
     layout->addWidget(m_item_list, 1);
     return group;
 }
@@ -507,6 +568,7 @@ QWidget* EmailInspectorPanel::createDetailPanel() {
     group->setMinimumWidth(email::kDetailPanelMinWidth);
 
     m_detail_tabs = new QTabWidget(group);
+    m_detail_tabs->setAccessibleName(tr("Email preview detail tabs"));
     m_detail_tabs->addTab(createContentTab(), tr("Content"));
     m_detail_tabs->addTab(createHeadersTab(), tr("Headers"));
     m_detail_tabs->addTab(createPropertiesTab(), tr("Properties"));
@@ -519,7 +581,8 @@ QWidget* EmailInspectorPanel::createDetailPanel() {
 QWidget* EmailInspectorPanel::createContentTab() {
     auto* container = new QWidget(this);
     auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     layout->setSpacing(ui::kSpacingTight);
 
 
@@ -527,10 +590,7 @@ QWidget* EmailInspectorPanel::createContentTab() {
     m_content_browser->setOpenExternalLinks(false);
     m_content_browser->setReadOnly(true);
     m_content_browser->setAccessibleName(QStringLiteral("Email Content"));
-    m_content_browser->setStyleSheet(
-        QStringLiteral("QTextBrowser { font-family: 'Segoe UI', sans-serif;"
-                       " font-size: 13px; padding: 8px;"
-                       " background: white; }"));
+    m_content_browser->setStyleSheet(ui::emailContentBrowserStyle());
     layout->addWidget(m_content_browser, 1);
 
     return container;
@@ -540,14 +600,14 @@ QWidget* EmailInspectorPanel::createHeadersTab() {
     m_headers_browser = new QTextBrowser(this);
     m_headers_browser->setReadOnly(true);
     m_headers_browser->setAccessibleName(QStringLiteral("Email Headers"));
-    QFont mono_font(QStringLiteral("Consolas"), 9);
+    QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
     m_headers_browser->setFont(mono_font);
     return m_headers_browser;
 }
 
 QWidget* EmailInspectorPanel::createPropertiesTab() {
     m_properties_table = new QTableWidget(this);
-    m_properties_table->setColumnCount(2);
+    m_properties_table->setColumnCount(kPropertiesTableColumnCount);
     m_properties_table->setAccessibleName(QStringLiteral("MAPI Properties Table"));
     m_properties_table->setHorizontalHeaderLabels({tr("Name"), tr("Value")});
     m_properties_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -561,10 +621,11 @@ QWidget* EmailInspectorPanel::createPropertiesTab() {
 QWidget* EmailInspectorPanel::createAttachmentsTab() {
     auto* container = new QWidget(this);
     auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     m_attachments_table = new QTableWidget(container);
-    m_attachments_table->setColumnCount(4);
+    m_attachments_table->setColumnCount(kAttachmentTableColumnCount);
     m_attachments_table->setAccessibleName(QStringLiteral("Email Attachments Table"));
     m_attachments_table->setHorizontalHeaderLabels(
         {tr("Filename"), tr("Size"), tr("MIME Type"), tr("Content ID")});
@@ -664,8 +725,15 @@ void EmailInspectorPanel::reconnectDialogSignals() {
 
 void EmailInspectorPanel::connectController() {
     Q_ASSERT(m_controller);
+    connectControllerFileSignals();
+    connectControllerNavigationSignals();
+    connectControllerSearchSignals();
+    connectControllerExportSignals();
+    connectControllerCommonSignals();
+    connectControllerMboxSignals();
+}
 
-    // State
+void EmailInspectorPanel::connectControllerFileSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::stateChanged,
             this,
@@ -684,8 +752,9 @@ void EmailInspectorPanel::connectController() {
             &EmailInspectorController::fileClosed,
             this,
             &EmailInspectorPanel::onFileClosed);
+}
 
-    // Navigation
+void EmailInspectorPanel::connectControllerNavigationSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::folderItemsLoaded,
             this,
@@ -702,8 +771,9 @@ void EmailInspectorPanel::connectController() {
             &EmailInspectorController::attachmentContentReady,
             this,
             &EmailInspectorPanel::onAttachmentContentReady);
+}
 
-    // Search
+void EmailInspectorPanel::connectControllerSearchSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::searchHit,
             this,
@@ -712,8 +782,9 @@ void EmailInspectorPanel::connectController() {
             &EmailInspectorController::searchComplete,
             this,
             &EmailInspectorPanel::onSearchComplete);
+}
 
-    // Export
+void EmailInspectorPanel::connectControllerExportSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::exportStarted,
             this,
@@ -726,8 +797,9 @@ void EmailInspectorPanel::connectController() {
             &EmailInspectorController::exportComplete,
             this,
             &EmailInspectorPanel::onExportComplete);
+}
 
-    // Common
+void EmailInspectorPanel::connectControllerCommonSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::errorOccurred,
             this,
@@ -746,8 +818,9 @@ void EmailInspectorPanel::connectController() {
                 m_progress_bar->setValue(percent);
                 updateStatusBar(status);
             });
+}
 
-    // MBOX-specific
+void EmailInspectorPanel::connectControllerMboxSignals() {
     connect(m_controller.get(),
             &EmailInspectorController::mboxOpened,
             this,
@@ -855,7 +928,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
             if (subject_item) {
                 uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
                 m_controller->loadItemProperties(nid);
-                m_detail_tabs->setCurrentIndex(2);
+                m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
             }
         }
     });
@@ -1168,7 +1241,7 @@ void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
 }
 
 void EmailInspectorPanel::onErrorOccurred(QString message) {
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorError));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     updateStatusBar(tr("Error: %1").arg(message));
     sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
@@ -1250,10 +1323,12 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
                                   "<html><head>"
                                   "<meta charset=\"utf-8\">"
                                   "<style>body { font-family: 'Segoe UI', sans-serif;"
-                                  " font-size: 13px; margin: 0; padding: 8px;"
+                                  " font-size: %1px; margin: 0; padding: %2px;"
                                   " word-wrap: break-word; }"
                                   " img { max-width: 100%%; height: auto; }</style>"
-                                  "</head><body>%1</body></html>")
+                                  "</head><body>%3</body></html>")
+                                  .arg(ui::kHtmlPreviewBodyFontPx)
+                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
                                   .arg(buildPreviewHtml(detail.body_html));
             m_content_browser->setHtml(wrapped);
         }
@@ -1410,21 +1485,21 @@ int EmailInspectorPanel::folderSortOrder(const QString& name, const QString& /*c
         return 1;
     }
     if (name.compare(QLatin1String("Sent Items"), Qt::CaseInsensitive) == 0) {
-        return 2;
+        return kFolderSortSentItems;
     }
     if (name.compare(QLatin1String("Deleted Items"), Qt::CaseInsensitive) == 0) {
-        return 3;
+        return kFolderSortDeletedItems;
     }
     if (name.compare(QLatin1String("Archive"), Qt::CaseInsensitive) == 0) {
-        return 4;
+        return kFolderSortArchive;
     }
     if (name.compare(QLatin1String("Junk Email"), Qt::CaseInsensitive) == 0) {
-        return 5;
+        return kFolderSortJunkEmail;
     }
     if (name.compare(QLatin1String("Outbox"), Qt::CaseInsensitive) == 0) {
-        return 6;
+        return kFolderSortOutbox;
     }
-    return 10;  // All other user folders
+    return kFolderSortUserFolder;
 }
 
 // static
@@ -1501,9 +1576,9 @@ void EmailInspectorPanel::onScanForFilesClicked() {
 
 void EmailInspectorPanel::onContactsClicked() {
     if (m_contact_folder_ids.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("No Contacts"),
-                                 tr("No contact folders were found in this file."));
+        sak::showInformationLogged(this,
+                                   tr("No Contacts"),
+                                   tr("No contact folders were found in this file."));
         return;
     }
     m_dialog_active = true;
@@ -1516,9 +1591,9 @@ void EmailInspectorPanel::onContactsClicked() {
 
 void EmailInspectorPanel::onCalendarClicked() {
     if (m_calendar_folder_ids.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("No Calendar"),
-                                 tr("No calendar folders were found in this file."));
+        sak::showInformationLogged(this,
+                                   tr("No Calendar"),
+                                   tr("No calendar folders were found in this file."));
         return;
     }
     m_dialog_active = true;
@@ -1565,17 +1640,17 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
 void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
     QString html = QStringLiteral(
                        "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: 12px;'>"
-                       "<h2 style='color: %1;'>%2</h2>")
-                       .arg(ui::kColorTextHeading)
+                       "padding: %1px;'>"
+                       "<h2 style='color: %2;'>%3</h2>")
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(detail.subject.toHtmlEscaped());
     static const char* const kTaskStatus[] = {
         "Not Started", "In Progress", "Complete", "Waiting", "Deferred"};
-    constexpr int kTaskStatusCount = 5;
     if (detail.task_status >= 0 && detail.task_status < kTaskStatusCount) {
         html += QStringLiteral("<p><b>Status:</b> %1 (%2%)</p>")
                     .arg(QLatin1String(kTaskStatus[detail.task_status]))
-                    .arg(static_cast<int>(detail.task_percent_complete * 100));
+                    .arg(static_cast<int>(detail.task_percent_complete * sak::kPercentMax));
     }
     if (detail.task_due_date.isValid()) {
         html += QStringLiteral("<p><b>Due:</b> %1</p>")
@@ -1585,7 +1660,9 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
         html += QStringLiteral("<p><b>Start:</b> %1</p>")
                     .arg(detail.task_start_date.toString(Qt::RFC2822Date));
     }
-    html += QStringLiteral("<hr style='border: 1px solid %1;'>").arg(ui::kColorBorderDefault);
+    html += QStringLiteral("<hr style='border: %1px solid %2;'>")
+                .arg(ui::kCssBorderWidthDefaultPx)
+                .arg(ui::htmlColor(ui::kColorBorderDefault));
     if (!detail.body_html.isEmpty()) {
         html += detail.body_html;
     } else if (!detail.body_plain.isEmpty()) {
@@ -1604,22 +1681,29 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
 }
 
 void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
-    static const char* const kNoteColors[] = {
-        "#DBEAFE", "#D1FAE5", "#FCE7F3", "#FEF9C3", "#F3F4F6"};
+    static const char* const kNoteColors[] = {ui::kColorNoteBlue,
+                                              ui::kColorNoteGreen,
+                                              ui::kColorNotePink,
+                                              ui::kColorNoteYellow,
+                                              ui::kColorNoteGray};
     constexpr int kNoteColorCount = 5;
-    int color_idx =
-        (detail.note_color >= 0 && detail.note_color < kNoteColorCount) ? detail.note_color : 3;
+    int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
+                        ? detail.note_color
+                        : kDefaultNoteColorIndex;
     QString html = QStringLiteral(
                        "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: 16px; background: %1; "
-                       "border-radius: 8px; min-height: 200px;'>"
-                       "<h3 style='color: %2;'>%3</h3>"
+                       "padding: %1px; background: %2; "
+                       "border-radius: %3px; min-height: %4px;'>"
+                       "<h3 style='color: %5;'>%6</h3>"
                        "<p style='white-space: pre-wrap; "
-                       "color: %4;'>%5</p></div>")
-                       .arg(QLatin1String(kNoteColors[color_idx]))
-                       .arg(ui::kColorTextHeading)
+                       "color: %7;'>%8</p></div>")
+                       .arg(ui::kHtmlDetailLargePaddingPx)
+                       .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
+                       .arg(ui::kCssRadiusLargePx)
+                       .arg(ui::kHtmlNoteMinHeightPx)
+                       .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(detail.subject.toHtmlEscaped())
-                       .arg(ui::kColorTextBody)
+                       .arg(ui::htmlColor(ui::kColorTextBody))
                        .arg(detail.body_plain.toHtmlEscaped());
     m_content_browser->setHtml(html);
     m_headers_browser->setPlainText(tr("No transport headers available"));
@@ -1643,7 +1727,7 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
         out.append(body_html.mid(pos, m.capturedStart() - pos));
         pos = m.capturedEnd();
 
-        const QString src = m.captured(3).trimmed();
+        const QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
         const QString lower = src.toLower();
 
         if (lower.startsWith(QStringLiteral("data:"))) {
@@ -1690,11 +1774,11 @@ QByteArray EmailInspectorPanel::resolveInlineImageData(const QString& src,
 void EmailInspectorPanel::appendInlineImageAttr(QString& out,
                                                 const QRegularExpressionMatch& m,
                                                 const QByteArray& image_data) {
-    out.append(m.captured(1));
-    out.append(m.captured(2));
+    out.append(m.captured(kInlineImageAttrPrefixCaptureGroup));
+    out.append(m.captured(kInlineImageAttrQuoteCaptureGroup));
     if (image_data.isEmpty()) {
         // Unknown scheme, or data not yet loaded, or images disabled.
-        out.append(m.captured(2));
+        out.append(m.captured(kInlineImageAttrQuoteCaptureGroup));
         return;
     }
     QByteArray mime = detectImageMime(image_data);
@@ -1705,7 +1789,7 @@ void EmailInspectorPanel::appendInlineImageAttr(QString& out,
     out.append(QString::fromLatin1(mime));
     out.append(QStringLiteral(";base64,"));
     out.append(QString::fromLatin1(image_data.toBase64()));
-    out.append(m.captured(2));
+    out.append(m.captured(kInlineImageAttrQuoteCaptureGroup));
 }
 
 void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
@@ -1719,7 +1803,7 @@ void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
     auto it = kImgSrc.globalMatch(body_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
-        QString src = m.captured(3).trimmed();
+        QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
         const QString lower = src.toLower();
         if (lower.startsWith(QStringLiteral("//"))) {
             src = QStringLiteral("https:") + src;
@@ -1782,10 +1866,12 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
                                   "<html><head>"
                                   "<meta charset=\"utf-8\">"
                                   "<style>body { font-family: 'Segoe UI', sans-serif;"
-                                  " font-size: 13px; margin: 0; padding: 8px;"
+                                  " font-size: %1px; margin: 0; padding: %2px;"
                                   " word-wrap: break-word; }"
                                   " img { max-width: 100%%; height: auto; }</style>"
-                                  "</head><body>%1</body></html>")
+                                  "</head><body>%3</body></html>")
+                                  .arg(ui::kHtmlPreviewBodyFontPx)
+                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
                                   .arg(buildPreviewHtml(detail.body_html));
             m_content_browser->setHtml(wrapped);
         }
@@ -1832,8 +1918,12 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
         QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         m_attachments_table->setItem(row, 0, new QTableWidgetItem(name));
         m_attachments_table->setItem(row, 1, new QTableWidgetItem(formatBytes(att.size_bytes)));
-        m_attachments_table->setItem(row, 2, new QTableWidgetItem(att.mime_type));
-        m_attachments_table->setItem(row, 3, new QTableWidgetItem(att.content_id));
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnMimeType,
+                                     new QTableWidgetItem(att.mime_type));
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnContentId,
+                                     new QTableWidgetItem(att.content_id));
     }
     m_attachments_table->setUpdatesEnabled(true);
     m_attachments_table->setSortingEnabled(true);
@@ -1849,7 +1939,7 @@ void EmailInspectorPanel::updateFileInfoBar(const sak::PstFileInfo& info) {
 }
 
 void EmailInspectorPanel::updateStatusBar(const QString& message) {
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     m_status_label->setText(message);
     Q_EMIT statusMessage(message, kTimerStatusDefaultMs);
 }
@@ -1956,7 +2046,8 @@ QString EmailInspectorPanel::formatBytes(qint64 bytes) {
     if (bytes < kBytesPerGB) {
         return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
     }
-    return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', 2);
+    return QStringLiteral("%1 GB").arg(
+        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kLargeByteDisplayPrecision);
 }
 
 }  // namespace sak

@@ -4,7 +4,7 @@
   "title": "Startup Performance Triage",
   "role": "PC Technician",
   "category": "Performance",
-  "description": "Investigate slow startup and login performance without disabling items until reviewed.",
+  "description": "Investigate slow startup and login performance using startup, service, boot, and process evidence before approved changes.",
   "starter_prompt": "Find why startup or login is slow. Collect evidence first and do not disable anything without approval.",
   "required_inputs": [
     {"id": "symptom", "label": "Startup symptom", "type": "string", "required": true}

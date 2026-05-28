@@ -202,8 +202,8 @@ private:
     /// @brief Parse tagged stage percentages from converter output
     /// @return true if a stage match was found
     bool parseConverterStagePercent(const QString& line, bool& hasPercent, QString& detail);
-    /// @brief Parse fallback patterns (image export, metadata, done) from converter output
-    void parseConverterFallbackPatterns(const QString& line, bool& hasPercent, QString& detail);
+    /// @brief Parse heuristic progress patterns from converter output
+    void parseConverterProgressPatterns(const QString& line, bool& hasPercent, QString& detail);
 
     // State
     Phase m_phase = Phase::Idle;

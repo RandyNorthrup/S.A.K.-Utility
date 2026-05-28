@@ -4,6 +4,7 @@
 #include "sak/app_scanner.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/per_user_customization_dialog.h"
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
@@ -29,8 +30,41 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <iterator>
 
 namespace sak {
+
+namespace {
+
+constexpr int kUserFolderColumnName = 0;
+constexpr int kUserFolderColumnFolders = 1;
+constexpr int kUserFolderColumnCount = 2;
+constexpr int kSizeDisplayPrecision = 2;
+constexpr int kAppDataSizeDisplayPrecision = 1;
+constexpr int kMaxFileSizeMinimumMb = 1;
+constexpr int kMaxFileSizeMaximumMb = 10'000;
+constexpr int kDefaultMaxSingleFileMb = 2048;
+constexpr int kMaxFolderSizeMinimumGb = 1;
+constexpr int kMaxFolderSizeMaximumGb = 1000;
+constexpr int kDefaultMaxFolderSizeGb = 50;
+constexpr int kBalancedCompressionIndex = 2;
+constexpr int kMinimumEncryptionPasswordLength = 8;
+constexpr int kInstalledAppColumnName = 0;
+constexpr int kInstalledAppColumnVersion = 1;
+constexpr int kInstalledAppColumnPublisher = 2;
+constexpr int kAppDataColumnName = 0;
+constexpr int kAppDataColumnPath = 1;
+constexpr int kAppDataColumnSize = 2;
+constexpr int kEthernetColumnSelect = 0;
+constexpr int kEthernetColumnAdapter = 1;
+constexpr int kEthernetColumnDhcp = 2;
+constexpr int kEthernetColumnIp = 3;
+constexpr int kEthernetColumnSubnet = 4;
+constexpr int kEthernetColumnGateway = 5;
+constexpr int kEthernetColumnDns = 6;
+constexpr int kEthernetColumnCount = 7;
+
+}  // namespace
 
 // ============================================================================
 // UserProfileBackupCustomizeDataPage
@@ -55,11 +89,13 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     layout->addWidget(m_instructionLabel);
 
     // User table (2 columns: username, folders selected)
-    m_userTable = new QTableWidget(0, 2, this);
+    m_userTable = new QTableWidget(0, kUserFolderColumnCount, this);
     m_userTable->setHorizontalHeaderLabels({tr("Username"), tr("Folders Selected")});
     m_userTable->horizontalHeader()->setStretchLastSection(true);
-    m_userTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_userTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_userTable->horizontalHeader()->setSectionResizeMode(kUserFolderColumnName,
+                                                          QHeaderView::ResizeToContents);
+    m_userTable->horizontalHeader()->setSectionResizeMode(kUserFolderColumnFolders,
+                                                          QHeaderView::Stretch);
     m_userTable->verticalHeader()->setVisible(false);
     m_userTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_userTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -83,9 +119,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 
     Q_ASSERT(m_instructionLabel);
@@ -122,7 +156,7 @@ void UserProfileBackupCustomizeDataPage::populateUserList() {
 
         // Username
         auto* nameItem = new QTableWidgetItem(user.username);
-        m_userTable->setItem(row, 0, nameItem);
+        m_userTable->setItem(row, kUserFolderColumnName, nameItem);
 
         // Folder count
         int selectedCount = 0;
@@ -132,7 +166,7 @@ void UserProfileBackupCustomizeDataPage::populateUserList() {
             }
         }
         auto* folderItem = new QTableWidgetItem(tr("%1 folders selected").arg(selectedCount));
-        m_userTable->setItem(row, 1, folderItem);
+        m_userTable->setItem(row, kUserFolderColumnFolders, folderItem);
 
         row++;
     }
@@ -202,7 +236,7 @@ void UserProfileBackupCustomizeDataPage::updateSummary() {
     m_summaryLabel->setText(tr("%1 user(s), %2 total folders | Estimated: %3 GB")
                                 .arg(totalUsers)
                                 .arg(totalFolders)
-                                .arg(totalGB, 0, 'f', 2));
+                                .arg(totalGB, 0, 'f', kSizeDisplayPrecision));
 }
 
 // ============================================================================
@@ -222,7 +256,6 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    // Instructions
     auto* instructionLabel =
         new QLabel(tr("Smart filters automatically exclude files that can corrupt user profiles or "
                       "waste space. "
@@ -236,9 +269,7 @@ void UserProfileBackupSmartFiltersPage::setupUi() {
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 }
 
@@ -256,9 +287,9 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
     gridLayout->addWidget(m_enableFileSizeLimitCheck, row, 0);
 
     m_maxFileSizeSpinBox = new QSpinBox(this);
-    m_maxFileSizeSpinBox->setRange(1, 10'000);
+    m_maxFileSizeSpinBox->setRange(kMaxFileSizeMinimumMb, kMaxFileSizeMaximumMb);
     m_maxFileSizeSpinBox->setSuffix(tr(" MB"));
-    m_maxFileSizeSpinBox->setValue(2048);  // Default 2 GB
+    m_maxFileSizeSpinBox->setValue(kDefaultMaxSingleFileMb);
     connect(m_maxFileSizeSpinBox,
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
@@ -275,9 +306,9 @@ void UserProfileBackupSmartFiltersPage::setupUi_filterSettings(QVBoxLayout* layo
     gridLayout->addWidget(m_enableFolderSizeLimitCheck, row, 0);
 
     m_maxFolderSizeSpinBox = new QSpinBox(this);
-    m_maxFolderSizeSpinBox->setRange(1, 1000);
+    m_maxFolderSizeSpinBox->setRange(kMaxFolderSizeMinimumGb, kMaxFolderSizeMaximumGb);
     m_maxFolderSizeSpinBox->setSuffix(tr(" GB"));
-    m_maxFolderSizeSpinBox->setValue(50);  // Default 50 GB
+    m_maxFolderSizeSpinBox->setValue(kDefaultMaxFolderSizeGb);
     connect(m_maxFolderSizeSpinBox,
             QOverload<int>::of(&QSpinBox::valueChanged),
             this,
@@ -293,7 +324,8 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
     // Automatic exclusions
     auto* exclusionsGroup = new QWidget(this);
     auto* exclusionsLayout = new QVBoxLayout(exclusionsGroup);
-    exclusionsLayout->setContentsMargins(0, 0, 0, 0);
+    exclusionsLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* exclusionsLabel = new QLabel(tr("<b>Automatic Exclusions:</b>"), this);
     exclusionsLayout->addWidget(exclusionsLabel);
@@ -423,28 +455,33 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     auto* headerLabel = new QLabel(
         tr("<b>[shield] Files and patterns that are always excluded from backups</b>"), dialog);
     headerLabel->setWordWrap(true);
-    headerLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                       "border-radius: 8px; font-size: 11pt; }")
-                                   .arg(sak::ui::kColorBgWarningPanel));
+    headerLabel->setStyleSheet(sak::ui::notePanelStyleWithFontSize(sak::ui::kColorBgWarningPanel,
+                                                                   sak::ui::kColorTextBody,
+                                                                   sak::ui::kFontSizeStatus,
+                                                                   sak::ui::kCssPaddingXLargePx,
+                                                                   sak::ui::kCssRadiusLargePx));
     layout->addWidget(headerLabel);
 
     // Build rich content
     QString content;
-    content += tr("<h3 style='color: %1;'>Always Excluded Files</h3>").arg(sak::ui::kColorError);
+    content += tr("<h3 style='color: %1;'>Always Excluded Files</h3>")
+                   .arg(sak::ui::htmlColor(sak::ui::kColorError));
     content += "<ul>";
     for (const auto& file : m_filter.dangerous_files) {
         content += QString("<li><code>%1</code></li>").arg(file.toHtmlEscaped());
     }
     content += "</ul>";
 
-    content += tr("<h3 style='color: %1;'>Excluded Patterns</h3>").arg(sak::ui::kColorWarning);
+    content += tr("<h3 style='color: %1;'>Excluded Patterns</h3>")
+                   .arg(sak::ui::htmlColor(sak::ui::kColorWarning));
     content += "<ul>";
     for (const auto& pattern : m_filter.exclude_patterns) {
         content += QString("<li><code>%1</code></li>").arg(pattern.toHtmlEscaped());
     }
     content += "</ul>";
 
-    content += tr("<h3 style='color: %1;'>Excluded Folders</h3>").arg(sak::ui::kColorTextSecondary);
+    content += tr("<h3 style='color: %1;'>Excluded Folders</h3>")
+                   .arg(sak::ui::htmlColor(sak::ui::kColorTextSecondary));
     content += "<ul>";
     for (const auto& folder : m_filter.exclude_folders) {
         content += QString("<li><code>%1</code></li>").arg(folder.toHtmlEscaped());
@@ -454,9 +491,8 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
     auto* textBrowser = new QTextEdit(dialog);
     textBrowser->setReadOnly(true);
     textBrowser->setHtml(content);
-    textBrowser->setStyleSheet(QString("QTextEdit { background-color: %1; border: 1px solid %2; "
-                                       "border-radius: 6px; padding: 8px; }")
-                                   .arg(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault));
+    textBrowser->setStyleSheet(
+        sak::ui::textBrowserSurfaceStyle(sak::ui::kColorBgSurface, sak::ui::kColorBorderDefault));
     layout->addWidget(textBrowser);
 
     auto* closeButton = new QPushButton(tr("Close"), dialog);
@@ -533,7 +569,7 @@ void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayou
     compressionLayout->addWidget(new QLabel(tr("Compression:"), this));
     m_compressionCombo = new QComboBox(this);
     m_compressionCombo->addItems({tr("None"), tr("Fast"), tr("Balanced"), tr("Maximum")});
-    m_compressionCombo->setCurrentIndex(2);  // Default to Balanced
+    m_compressionCombo->setCurrentIndex(kBalancedCompressionIndex);
     m_compressionCombo->setToolTip(
         tr("Choose compression level:\n"
            "* None: No compression, fastest\n"
@@ -607,7 +643,7 @@ void UserProfileBackupSettingsPage::setupUi_encryptionAndPermissions(QVBoxLayout
         this);
     permExplainLabel->setWordWrap(true);
     permExplainLabel->setStyleSheet(
-        QString("QLabel { padding: 6px; color: %1; }").arg(sak::ui::kColorTextMuted));
+        sak::ui::paddedTextStyle(sak::ui::kColorTextMuted, sak::ui::kSpacingSmall));
     layout->addWidget(permExplainLabel);
 }
 
@@ -621,9 +657,7 @@ void UserProfileBackupSettingsPage::setupUi_summaryAndRegistration(QVBoxLayout* 
 
     // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     layout->addWidget(m_summaryLabel);
 
     // Register wizard fields for validation
@@ -655,79 +689,87 @@ void UserProfileBackupSettingsPage::initializePage() {
     updateSummary();
 }
 
-bool UserProfileBackupSettingsPage::validatePage() {
-    Q_ASSERT(m_destinationEdit);
-    Q_ASSERT(m_encryptionCheck);
-    // Check destination path
+bool UserProfileBackupSettingsPage::validateDestination() {
     if (m_destinationEdit->text().isEmpty()) {
         sak::logWarning("User profile backup: no destination folder selected");
-        QMessageBox::warning(this,
-                             tr("No Destination"),
-                             tr("Please select a backup destination folder."));
+        sak::showWarningLogged(this,
+                               tr("No Destination"),
+                               tr("Please select a backup destination folder."));
         return false;
     }
 
     QDir destDir(m_destinationEdit->text());
     if (destDir.exists()) {
         auto reply =
-            QMessageBox::question(this,
-                                  tr("Folder Exists"),
-                                  tr("The destination folder already exists. Continue anyway?"),
-                                  QMessageBox::Yes | QMessageBox::No);
+            sak::showQuestionLogged(this,
+                                    tr("Folder Exists"),
+                                    tr("The destination folder already exists. Continue anyway?"),
+                                    QMessageBox::Yes | QMessageBox::No);
         if (reply != QMessageBox::Yes) {
             return false;
         }
     }
+    return true;
+}
 
-    // Validate encryption settings
-    if (m_encryptionCheck->isChecked()) {
-        QString password = m_passwordEdit->text();
-        QString confirm = m_passwordConfirmEdit->text();
-
-        if (password.isEmpty()) {
-            sak::logWarning("User profile backup: encryption password empty");
-            QMessageBox::warning(this,
-                                 tr("Missing Password"),
-                                 tr("Please enter an encryption password."));
-            m_passwordEdit->setFocus();
-            return false;
-        }
-
-        if (password != confirm) {
-            sak::logWarning("User profile backup: encryption passwords do not match");
-            QMessageBox::warning(this,
-                                 tr("Password Mismatch"),
-                                 tr("Passwords do not match. Please re-enter."));
-            m_passwordConfirmEdit->clear();
-            m_passwordConfirmEdit->setFocus();
-            return false;
-        }
-
-        if (password.length() < 8) {
-            sak::logWarning("User profile backup: encryption password too short");
-            QMessageBox::warning(this,
-                                 tr("Weak Password"),
-                                 tr("Password must be at least 8 characters long."));
-            m_passwordEdit->setFocus();
-            return false;
-        }
+bool UserProfileBackupSettingsPage::validateEncryptionSettings() {
+    if (!m_encryptionCheck->isChecked()) {
+        return true;
     }
 
-    // Save settings to manifest
-    m_destinationPath = m_destinationEdit->text();
-    m_manifest.version = "1.0";
-    m_manifest.created = QDateTime::currentDateTime();
-    m_manifest.source_machine = QSysInfo::machineHostName();
+    const QString password = m_passwordEdit->text();
+    const QString confirm = m_passwordConfirmEdit->text();
+    if (password.isEmpty()) {
+        sak::logWarning("User profile backup: encryption password empty");
+        sak::showWarningLogged(this,
+                               tr("Missing Password"),
+                               tr("Please enter an encryption password."));
+        m_passwordEdit->setFocus();
+        return false;
+    }
+    if (password != confirm) {
+        sak::logWarning("User profile backup: encryption passwords do not match");
+        sak::showWarningLogged(this,
+                               tr("Password Mismatch"),
+                               tr("Passwords do not match. Please re-enter."));
+        m_passwordConfirmEdit->clear();
+        m_passwordConfirmEdit->setFocus();
+        return false;
+    }
+    if (password.length() < kMinimumEncryptionPasswordLength) {
+        sak::logWarning("User profile backup: encryption password too short");
+        sak::showWarningLogged(this,
+                               tr("Weak Password"),
+                               tr("Password must be at least %1 characters long.")
+                                   .arg(kMinimumEncryptionPasswordLength));
+        m_passwordEdit->setFocus();
+        return false;
+    }
+    return true;
+}
 
-    // Create execute page now that we have destination path
+void UserProfileBackupSettingsPage::installExecutePage() {
     auto* wizard = qobject_cast<UserProfileBackupWizard*>(this->wizard());
     if (wizard) {
-        // Get users from wizard
         const auto& users = wizard->property("scannedUsers").value<QVector<UserProfile>>();
         wizard->setPage(
             UserProfileBackupWizard::Page_Execute,
             new UserProfileBackupExecutePage(m_manifest, users, m_destinationPath, wizard));
     }
+}
+
+bool UserProfileBackupSettingsPage::validatePage() {
+    Q_ASSERT(m_destinationEdit);
+    Q_ASSERT(m_encryptionCheck);
+    if (!validateDestination() || !validateEncryptionSettings()) {
+        return false;
+    }
+
+    m_destinationPath = m_destinationEdit->text();
+    m_manifest.version = "1.0";
+    m_manifest.created = QDateTime::currentDateTime();
+    m_manifest.source_machine = QSysInfo::machineHostName();
+    installExecutePage();
 
     return true;
 }
@@ -793,7 +835,6 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
-    // Scan button and status
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Applications"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
@@ -805,19 +846,19 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     scanLayout->addWidget(m_statusLabel, 1);
     layout->addLayout(scanLayout);
 
-    // Progress
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
     layout->addWidget(m_scanProgress);
 
-    // Tree widget with hierarchical checkboxes
     m_appTree = new QTreeWidget(this);
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Publisher")});
     m_appTree->setAlternatingRowColors(true);
     m_appTree->setRootIsDecorated(true);
-    m_appTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_appTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_appTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnName, QHeaderView::Stretch);
+    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnVersion,
+                                              QHeaderView::ResizeToContents);
+    m_appTree->header()->setSectionResizeMode(kInstalledAppColumnPublisher,
+                                              QHeaderView::ResizeToContents);
     m_appTree->setEnabled(false);
     connect(m_appTree,
             &QTreeWidget::itemChanged,
@@ -825,7 +866,6 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
             &UserProfileBackupInstalledAppsPage::onItemChanged);
     layout->addWidget(m_appTree);
 
-    // Selection buttons
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
@@ -845,11 +885,8 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
 
-    // Summary
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No applications scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
@@ -890,10 +927,10 @@ static void collectCategoryApps(QTreeWidgetItem* category,
         }
         selected++;
         InstalledAppInfo info;
-        info.name = appItem->text(0);
-        info.version = appItem->text(1);
-        info.publisher = appItem->text(2);
-        info.category = category->text(0);
+        info.name = appItem->text(kInstalledAppColumnName);
+        info.version = appItem->text(kInstalledAppColumnVersion);
+        info.publisher = appItem->text(kInstalledAppColumnPublisher);
+        info.category = category->text(kInstalledAppColumnName);
         info.selected = true;
         out.append(info);
     }
@@ -923,90 +960,84 @@ bool UserProfileBackupInstalledAppsPage::isComplete() const {
     return true;
 }
 
+struct AppCategoryRule {
+    const char* category;
+    std::initializer_list<const char*> keywords;
+};
+
+static const AppCategoryRule kAppCategoryRules[] = {
+    {"Browsers", {"chrome", "firefox", "edge", "opera", "brave", "vivaldi", "browser"}},
+    {"Development",
+     {"visual studio",
+      "vscode",
+      "jetbrains",
+      "intellij",
+      "pycharm",
+      "webstorm",
+      "rider",
+      "clion",
+      "android studio",
+      "eclipse",
+      "sublime",
+      "notepad++",
+      "atom",
+      "code"}},
+    {"Productivity",
+     {"office", "word", "excel", "powerpoint", "outlook", "onenote", "libreoffice", "openoffice"}},
+    {"Communication",
+     {"discord", "slack", "teams", "zoom", "skype", "telegram", "signal", "whatsapp"}},
+    {"Gaming", {"steam", "epic games", "origin", "battle.net", "gog", "ubisoft", "game"}},
+    {"Graphics & Design",
+     {"photoshop",
+      "illustrator",
+      "gimp",
+      "blender",
+      "inkscape",
+      "paint",
+      "krita",
+      "figma",
+      "canva"}},
+    {"Media",
+     {"vlc",
+      "spotify",
+      "itunes",
+      "audacity",
+      "obs",
+      "handbrake",
+      "media",
+      "player",
+      "foobar",
+      "winamp"}},
+    {"Utilities",
+     {"7-zip",
+      "winrar",
+      "peazip",
+      "ccleaner",
+      "everything",
+      "totalcommander",
+      "wiztree",
+      "treesize",
+      "windirstat",
+      "revo"}},
+    {"Security",
+     {"norton",
+      "kaspersky",
+      "malwarebytes",
+      "avast",
+      "avg",
+      "bitdefender",
+      "security",
+      "antivirus"}},
+    {"Drivers & Hardware",
+     {"nvidia", "amd", "realtek", "intel", "driver", "logitech", "corsair", "razer"}},
+};
+
 QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name,
                                                           const QString& publisher) {
     Q_UNUSED(publisher)
 
-    struct CategoryRule {
-        const char* category;
-        std::initializer_list<const char*> keywords;
-    };
-    static const CategoryRule kRules[] = {
-        {"Browsers", {"chrome", "firefox", "edge", "opera", "brave", "vivaldi", "browser"}},
-        {"Development",
-         {"visual studio",
-          "vscode",
-          "jetbrains",
-          "intellij",
-          "pycharm",
-          "webstorm",
-          "rider",
-          "clion",
-          "android studio",
-          "eclipse",
-          "sublime",
-          "notepad++",
-          "atom",
-          "code"}},
-        {"Productivity",
-         {"office",
-          "word",
-          "excel",
-          "powerpoint",
-          "outlook",
-          "onenote",
-          "libreoffice",
-          "openoffice"}},
-        {"Communication",
-         {"discord", "slack", "teams", "zoom", "skype", "telegram", "signal", "whatsapp"}},
-        {"Gaming", {"steam", "epic games", "origin", "battle.net", "gog", "ubisoft", "game"}},
-        {"Graphics & Design",
-         {"photoshop",
-          "illustrator",
-          "gimp",
-          "blender",
-          "inkscape",
-          "paint",
-          "krita",
-          "figma",
-          "canva"}},
-        {"Media",
-         {"vlc",
-          "spotify",
-          "itunes",
-          "audacity",
-          "obs",
-          "handbrake",
-          "media",
-          "player",
-          "foobar",
-          "winamp"}},
-        {"Utilities",
-         {"7-zip",
-          "winrar",
-          "peazip",
-          "ccleaner",
-          "everything",
-          "totalcommander",
-          "wiztree",
-          "treesize",
-          "windirstat",
-          "revo"}},
-        {"Security",
-         {"norton",
-          "kaspersky",
-          "malwarebytes",
-          "avast",
-          "avg",
-          "bitdefender",
-          "security",
-          "antivirus"}},
-        {"Drivers & Hardware",
-         {"nvidia", "amd", "realtek", "intel", "driver", "logitech", "corsair", "razer"}},
-    };
-
     const QString app_name_lower = name.toLower();
-    for (const auto& rule : kRules) {
+    for (const auto& rule : kAppCategoryRules) {
         for (const char* keyword : rule.keywords) {
             if (app_name_lower.contains(QLatin1String(keyword))) {
                 return QCoreApplication::translate("UserProfileBackupInstalledAppsPage",
@@ -1098,15 +1129,15 @@ void UserProfileBackupInstalledAppsPage::populateTree(const QVector<InstalledApp
     int totalSelected = 0;
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
         auto* categoryItem = new QTreeWidgetItem(m_appTree);
-        categoryItem->setText(0, it.key());
+        categoryItem->setText(kInstalledAppColumnName, it.key());
         categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
         categoryItem->setCheckState(0, Qt::Checked);
 
         for (const auto* app : it.value()) {
             auto* appItem = new QTreeWidgetItem(categoryItem);
-            appItem->setText(0, app->name);
-            appItem->setText(1, app->version);
-            appItem->setText(2, app->publisher);
+            appItem->setText(kInstalledAppColumnName, app->name);
+            appItem->setText(kInstalledAppColumnVersion, app->version);
+            appItem->setText(kInstalledAppColumnPublisher, app->publisher);
             appItem->setFlags(appItem->flags() | Qt::ItemIsUserCheckable);
             appItem->setCheckState(0, app->selected ? Qt::Checked : Qt::Unchecked);
 
@@ -1324,91 +1355,83 @@ static QVector<EthernetConfigInfo> parseNetshEthernetOutput(const QString& outpu
     return configs;
 }
 
+static const AppDataSourceInfo kCommonAppDataSources[] = {
+    // Browsers
+    {"Chrome Profiles", "Browsers", "AppData/Local/Google/Chrome/User Data", 0, false, true},
+    {"Firefox Profiles", "Browsers", "AppData/Roaming/Mozilla/Firefox/Profiles", 0, false, true},
+    {"Edge Profiles", "Browsers", "AppData/Local/Microsoft/Edge/User Data", 0, false, true},
+    {"Brave Profiles",
+     "Browsers",
+     "AppData/Local/BraveSoftware/Brave-Browser/User Data",
+     0,
+     false,
+     true},
+    {"Opera Profiles", "Browsers", "AppData/Roaming/Opera Software/Opera Stable", 0, false, true},
+    {"Vivaldi Profiles", "Browsers", "AppData/Local/Vivaldi/User Data", 0, false, true},
+
+    // Email Clients
+    {"Thunderbird Profiles", "Email", "AppData/Roaming/Thunderbird/Profiles", 0, false, true},
+    {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", 0, false, true},
+
+    // IDEs & Editors
+    {"VS Code Settings", "Development", "AppData/Roaming/Code/User", 0, false, true},
+    {"VS Code Extensions", "Development", ".vscode/extensions", 0, false, true},
+    {"JetBrains Settings", "Development", "AppData/Roaming/JetBrains", 0, false, true},
+    {"Sublime Text Settings", "Development", "AppData/Roaming/Sublime Text 3", 0, false, true},
+    {"Notepad++ Settings", "Development", "AppData/Roaming/Notepad++", 0, false, true},
+
+    // Communication
+    {"Discord Data", "Communication", "AppData/Roaming/discord", 0, false, true},
+    {"Telegram Data", "Communication", "AppData/Roaming/Telegram Desktop", 0, false, true},
+    {"Signal Data", "Communication", "AppData/Roaming/Signal", 0, false, true},
+    {"Slack Data", "Communication", "AppData/Roaming/Slack", 0, false, true},
+
+    // Gaming
+    {"Steam Config", "Gaming", "AppData/Local/Steam", 0, false, true},
+    {"Epic Games Settings", "Gaming", "AppData/Local/EpicGamesLauncher", 0, false, true},
+    {"Minecraft Data", "Gaming", "AppData/Roaming/.minecraft", 0, false, true},
+
+    // Productivity
+    {"OneNote Cache", "Productivity", "AppData/Local/Microsoft/OneNote", 0, false, true},
+    {"Sticky Notes",
+     "Productivity",
+     "AppData/Local/Packages/"
+     "Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/"
+     "LocalState",
+     0,
+     false,
+     true},
+
+    // Media
+    {"Spotify Data", "Media", "AppData/Roaming/Spotify", 0, false, true},
+    {"VLC Settings", "Media", "AppData/Roaming/vlc", 0, false, true},
+    {"OBS Studio", "Media", "AppData/Roaming/obs-studio", 0, false, true},
+
+    // Utilities
+    {"PuTTY Sessions", "Utilities", "AppData/Roaming/PuTTY", 0, false, true},
+    {"WinSCP Settings", "Utilities", "AppData/Roaming/WinSCP", 0, false, true},
+    {"FileZilla Settings", "Utilities", "AppData/Roaming/FileZilla", 0, false, true},
+    {"PowerShell Profile", "Utilities", "Documents/PowerShell", 0, false, true},
+    {"Windows Terminal Settings",
+     "Utilities",
+     "AppData/Local/Packages/"
+     "Microsoft.WindowsTerminal_8wekyb3d8bbwe/"
+     "LocalState",
+     0,
+     false,
+     true},
+
+    // System
+    {"SSH Keys", "System", ".ssh", 0, false, true},
+    {"Git Config", "System", ".gitconfig", 0, false, true},
+    {"npm Config", "System", "AppData/Roaming/npm", 0, false, true},
+    {"pip Config", "System", "AppData/Roaming/pip", 0, false, true},
+};
+
 /// @brief Common application data sources to detect
 static QVector<AppDataSourceInfo> getCommonAppDataSources() {
-    QVector<AppDataSourceInfo> sources = {
-        // Browsers
-        {"Chrome Profiles", "Browsers", "AppData/Local/Google/Chrome/User Data", 0, false, true},
-        {"Firefox Profiles",
-         "Browsers",
-         "AppData/Roaming/Mozilla/Firefox/Profiles",
-         0,
-         false,
-         true},
-        {"Edge Profiles", "Browsers", "AppData/Local/Microsoft/Edge/User Data", 0, false, true},
-        {"Brave Profiles",
-         "Browsers",
-         "AppData/Local/BraveSoftware/Brave-Browser/User Data",
-         0,
-         false,
-         true},
-        {"Opera Profiles",
-         "Browsers",
-         "AppData/Roaming/Opera Software/Opera Stable",
-         0,
-         false,
-         true},
-        {"Vivaldi Profiles", "Browsers", "AppData/Local/Vivaldi/User Data", 0, false, true},
-
-        // Email Clients
-        {"Thunderbird Profiles", "Email", "AppData/Roaming/Thunderbird/Profiles", 0, false, true},
-        {"Outlook Data", "Email", "AppData/Local/Microsoft/Outlook", 0, false, true},
-
-        // IDEs & Editors
-        {"VS Code Settings", "Development", "AppData/Roaming/Code/User", 0, false, true},
-        {"VS Code Extensions", "Development", ".vscode/extensions", 0, false, true},
-        {"JetBrains Settings", "Development", "AppData/Roaming/JetBrains", 0, false, true},
-        {"Sublime Text Settings", "Development", "AppData/Roaming/Sublime Text 3", 0, false, true},
-        {"Notepad++ Settings", "Development", "AppData/Roaming/Notepad++", 0, false, true},
-
-        // Communication
-        {"Discord Data", "Communication", "AppData/Roaming/discord", 0, false, true},
-        {"Telegram Data", "Communication", "AppData/Roaming/Telegram Desktop", 0, false, true},
-        {"Signal Data", "Communication", "AppData/Roaming/Signal", 0, false, true},
-        {"Slack Data", "Communication", "AppData/Roaming/Slack", 0, false, true},
-
-        // Gaming
-        {"Steam Config", "Gaming", "AppData/Local/Steam", 0, false, true},
-        {"Epic Games Settings", "Gaming", "AppData/Local/EpicGamesLauncher", 0, false, true},
-        {"Minecraft Data", "Gaming", "AppData/Roaming/.minecraft", 0, false, true},
-
-        // Productivity
-        {"OneNote Cache", "Productivity", "AppData/Local/Microsoft/OneNote", 0, false, true},
-        {"Sticky Notes",
-         "Productivity",
-         "AppData/Local/Packages/"
-         "Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/"
-         "LocalState",
-         0,
-         false,
-         true},
-
-        // Media
-        {"Spotify Data", "Media", "AppData/Roaming/Spotify", 0, false, true},
-        {"VLC Settings", "Media", "AppData/Roaming/vlc", 0, false, true},
-        {"OBS Studio", "Media", "AppData/Roaming/obs-studio", 0, false, true},
-
-        // Utilities
-        {"PuTTY Sessions", "Utilities", "AppData/Roaming/PuTTY", 0, false, true},
-        {"WinSCP Settings", "Utilities", "AppData/Roaming/WinSCP", 0, false, true},
-        {"FileZilla Settings", "Utilities", "AppData/Roaming/FileZilla", 0, false, true},
-        {"PowerShell Profile", "Utilities", "Documents/PowerShell", 0, false, true},
-        {"Windows Terminal Settings",
-         "Utilities",
-         "AppData/Local/Packages/"
-         "Microsoft.WindowsTerminal_8wekyb3d8bbwe/"
-         "LocalState",
-         0,
-         false,
-         true},
-
-        // System
-        {"SSH Keys", "System", ".ssh", 0, false, true},
-        {"Git Config", "System", ".gitconfig", 0, false, true},
-        {"npm Config", "System", "AppData/Roaming/npm", 0, false, true},
-        {"pip Config", "System", "AppData/Roaming/pip", 0, false, true},
-    };
-    return sources;
+    return QVector<AppDataSourceInfo>(std::begin(kCommonAppDataSources),
+                                      std::end(kCommonAppDataSources));
 }
 
 UserProfileBackupAppDataPage::UserProfileBackupAppDataPage(QVector<UserProfile>& users,
@@ -1449,9 +1472,10 @@ void UserProfileBackupAppDataPage::setupUi() {
     m_appDataTree->setHeaderLabels({tr("Application Data"), tr("Path"), tr("Size")});
     m_appDataTree->setAlternatingRowColors(true);
     m_appDataTree->setRootIsDecorated(true);
-    m_appDataTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_appDataTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnName, QHeaderView::Stretch);
+    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnPath, QHeaderView::Stretch);
+    m_appDataTree->header()->setSectionResizeMode(kAppDataColumnSize,
+                                                  QHeaderView::ResizeToContents);
     m_appDataTree->setEnabled(false);
     connect(m_appDataTree,
             &QTreeWidget::itemChanged,
@@ -1477,9 +1501,7 @@ void UserProfileBackupAppDataPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No application data scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
@@ -1558,16 +1580,17 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
 
     for (auto it = categories.constBegin(); it != categories.constEnd(); ++it) {
         auto* categoryItem = new QTreeWidgetItem(m_appDataTree);
-        categoryItem->setText(0, it.key());
+        categoryItem->setText(kAppDataColumnName, it.key());
         categoryItem->setFlags(categoryItem->flags() | Qt::ItemIsUserCheckable);
 
         int catSelected = 0;
         for (const auto* source : it.value()) {
             auto* item = new QTreeWidgetItem(categoryItem);
-            item->setText(0, source->name);
-            item->setText(1, source->relative_path);
+            item->setText(kAppDataColumnName, source->name);
+            item->setText(kAppDataColumnPath, source->relative_path);
             double sizeMB = source->size_bytes / sak::kBytesPerMBf;
-            item->setText(2, QString("%1 MB").arg(sizeMB, 0, 'f', 1));
+            item->setText(kAppDataColumnSize,
+                          QString("%1 MB").arg(sizeMB, 0, 'f', kAppDataSizeDisplayPrecision));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, source->selected ? Qt::Checked : Qt::Unchecked);
             if (source->selected) {
@@ -1788,9 +1811,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No WiFi networks scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
@@ -1971,7 +1992,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     m_scanProgress->setVisible(false);
     layout->addWidget(m_scanProgress);
 
-    m_ethernetTable = new QTableWidget(0, 7, this);
+    m_ethernetTable = new QTableWidget(0, kEthernetColumnCount, this);
     m_ethernetTable->setHorizontalHeaderLabels({tr("Select"),
                                                 tr("Adapter"),
                                                 tr("DHCP"),
@@ -2005,9 +2026,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     layout->addLayout(buttonLayout);
 
     m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(QString("QLabel { padding: 10px; background-color: %1; "
-                                          "border-radius: 10px; }")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     m_summaryLabel->setText(tr("No ethernet adapters scanned yet"));
     layout->addWidget(m_summaryLabel);
 }
@@ -2092,27 +2111,27 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
 
         auto* checkItem = new QTableWidgetItem();
         checkItem->setCheckState(Qt::Checked);
-        m_ethernetTable->setItem(row, 0, checkItem);
+        m_ethernetTable->setItem(row, kEthernetColumnSelect, checkItem);
 
         auto* nameItem = new QTableWidgetItem(config.adapter_name);
         nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 1, nameItem);
+        m_ethernetTable->setItem(row, kEthernetColumnAdapter, nameItem);
 
         auto* dhcpItem = new QTableWidgetItem(config.dhcp_enabled ? tr("Yes") : tr("No"));
         dhcpItem->setFlags(dhcpItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 2, dhcpItem);
+        m_ethernetTable->setItem(row, kEthernetColumnDhcp, dhcpItem);
 
         auto* ipItem = new QTableWidgetItem(config.ip_address);
         ipItem->setFlags(ipItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 3, ipItem);
+        m_ethernetTable->setItem(row, kEthernetColumnIp, ipItem);
 
         auto* subnetItem = new QTableWidgetItem(config.subnet_mask);
         subnetItem->setFlags(subnetItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 4, subnetItem);
+        m_ethernetTable->setItem(row, kEthernetColumnSubnet, subnetItem);
 
         auto* gwItem = new QTableWidgetItem(config.default_gateway);
         gwItem->setFlags(gwItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 5, gwItem);
+        m_ethernetTable->setItem(row, kEthernetColumnGateway, gwItem);
 
         QString dns = config.dns_primary;
         if (!config.dns_secondary.isEmpty()) {
@@ -2120,7 +2139,7 @@ void UserProfileBackupEthernetSettingsPage::populateTable(
         }
         auto* dnsItem = new QTableWidgetItem(dns);
         dnsItem->setFlags(dnsItem->flags() & ~Qt::ItemIsEditable);
-        m_ethernetTable->setItem(row, 6, dnsItem);
+        m_ethernetTable->setItem(row, kEthernetColumnDns, dnsItem);
     }
 
     int total = m_ethernetTable->rowCount();
@@ -2136,7 +2155,7 @@ void UserProfileBackupEthernetSettingsPage::updateNextButtonText() {
 
     bool hasSelection = false;
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
-        if (m_ethernetTable->item(i, 0)->checkState() == Qt::Checked) {
+        if (m_ethernetTable->item(i, kEthernetColumnSelect)->checkState() == Qt::Checked) {
             hasSelection = true;
             break;
         }
@@ -2149,18 +2168,18 @@ void UserProfileBackupEthernetSettingsPage::onSelectAll() {
     Q_ASSERT(m_ethernetTable);
     Q_ASSERT(m_summaryLabel);
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
-        m_ethernetTable->item(i, 0)->setCheckState(Qt::Checked);
+        m_ethernetTable->item(i, kEthernetColumnSelect)->setCheckState(Qt::Checked);
     }
 
     int total = m_ethernetTable->rowCount();
     QVector<EthernetConfigInfo> configs;
     for (int i = 0; i < total; ++i) {
         EthernetConfigInfo info;
-        info.adapter_name = m_ethernetTable->item(i, 1)->text();
-        info.dhcp_enabled = m_ethernetTable->item(i, 2)->text() == tr("Yes");
-        info.ip_address = m_ethernetTable->item(i, 3)->text();
-        info.subnet_mask = m_ethernetTable->item(i, 4)->text();
-        info.default_gateway = m_ethernetTable->item(i, 5)->text();
+        info.adapter_name = m_ethernetTable->item(i, kEthernetColumnAdapter)->text();
+        info.dhcp_enabled = m_ethernetTable->item(i, kEthernetColumnDhcp)->text() == tr("Yes");
+        info.ip_address = m_ethernetTable->item(i, kEthernetColumnIp)->text();
+        info.subnet_mask = m_ethernetTable->item(i, kEthernetColumnSubnet)->text();
+        info.default_gateway = m_ethernetTable->item(i, kEthernetColumnGateway)->text();
         info.selected = true;
         configs.append(info);
     }
@@ -2177,7 +2196,7 @@ void UserProfileBackupEthernetSettingsPage::onSelectNone() {
     Q_ASSERT(m_ethernetTable);
     Q_ASSERT(m_summaryLabel);
     for (int i = 0; i < m_ethernetTable->rowCount(); ++i) {
-        m_ethernetTable->item(i, 0)->setCheckState(Qt::Unchecked);
+        m_ethernetTable->item(i, kEthernetColumnSelect)->setCheckState(Qt::Unchecked);
     }
 
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());

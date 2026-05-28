@@ -4,7 +4,7 @@
   "title": "Security Advisory Check",
   "role": "Research Assistant",
   "category": "Research",
-  "description": "Research whether a product, driver, error, or version is tied to a security advisory.",
+  "description": "Research whether a product, driver, error, or version is tied to a security advisory, then summarize impact and remediation evidence.",
   "starter_prompt": "Check whether this product, driver, error, or version has a relevant security advisory.",
   "required_inputs": [
     {"id": "target", "label": "Product, driver, error, or version", "type": "string", "required": true}

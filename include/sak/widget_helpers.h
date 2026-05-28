@@ -7,14 +7,19 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include "style_constants.h"
 
 #include <QColor>
 #include <QFont>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QPixmap>
+#include <QPushButton>
+#include <QSizePolicy>
 #include <QString>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -25,6 +30,69 @@
 namespace sak {
 
 // -- Panel Header Factory ----------------------------------------------------
+
+/// @brief Pointers returned by createDynamicPanelHeader for runtime updates.
+struct PanelHeaderWidgets {
+    QLabel* iconLabel{nullptr};
+    QLabel* titleLabel{nullptr};
+    QLabel* subtitleLabel{nullptr};
+};
+
+namespace detail {
+
+constexpr int kPanelIconSize = 48;
+
+inline QLabel* createHeaderTitleLabel(QWidget* parent, const QString& title) {
+    auto* title_label = new QLabel(title, parent);
+    QFont title_font = title_label->font();
+    title_font.setPointSize(ui::kFontSizeSection);
+    title_font.setBold(true);
+    title_label->setFont(title_font);
+    title_label->setAccessibleName(title);
+    return title_label;
+}
+
+inline QLabel* createHeaderSubtitleLabel(QWidget* parent, const QString& subtitle) {
+    auto* subtitle_label = new QLabel(subtitle, parent);
+    subtitle_label->setWordWrap(true);
+    subtitle_label->setStyleSheet(ui::panelSubtitleStyle());
+    subtitle_label->setAccessibleName(subtitle);
+    return subtitle_label;
+}
+
+inline PanelHeaderWidgets createPanelHeaderImpl(QWidget* parent,
+                                                const QString& iconPath,
+                                                const QString& title,
+                                                const QString& subtitle,
+                                                QVBoxLayout* layout) {
+    QLabel* iconLabel = nullptr;
+    auto* titleLayout = new QVBoxLayout();
+
+    if (!iconPath.isEmpty()) {
+        auto* headerRow = new QHBoxLayout();
+        headerRow->setSpacing(ui::kSpacingLarge);
+
+        iconLabel = new QLabel(parent);
+        iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
+        iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+        iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
+        headerRow->addWidget(iconLabel);
+        headerRow->addLayout(titleLayout, 1);
+        layout->addLayout(headerRow);
+    } else {
+        layout->addLayout(titleLayout);
+    }
+
+    auto* title_label = createHeaderTitleLabel(parent, title);
+    titleLayout->addWidget(title_label);
+
+    auto* subtitle_label = createHeaderSubtitleLabel(parent, subtitle);
+    titleLayout->addWidget(subtitle_label);
+
+    return {iconLabel, title_label, subtitle_label};
+}
+
+}  // namespace detail
 
 /// @brief Create a consistent panel header with bold title and muted subtitle.
 ///
@@ -40,20 +108,7 @@ inline void createPanelHeader(QWidget* parent,
                               const QString& title,
                               const QString& subtitle,
                               QVBoxLayout* layout) {
-    auto* title_label = new QLabel(title, parent);
-    QFont title_font = title_label->font();
-    title_font.setPointSize(ui::kFontSizeSection);
-    title_font.setBold(true);
-    title_label->setFont(title_font);
-    title_label->setAccessibleName(title);
-    layout->addWidget(title_label);
-
-    auto* subtitle_label = new QLabel(subtitle, parent);
-    subtitle_label->setWordWrap(true);
-    subtitle_label->setStyleSheet(
-        QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
-    subtitle_label->setAccessibleName(subtitle);
-    layout->addWidget(subtitle_label);
+    (void)detail::createPanelHeaderImpl(parent, QString(), title, subtitle, layout);
 }
 
 /// @brief Create a panel header with an icon to the left of the title/subtitle.
@@ -71,45 +126,10 @@ inline void createPanelHeader(QWidget* parent,
                               const QString& title,
                               const QString& subtitle,
                               QVBoxLayout* layout) {
-    constexpr int kPanelIconSize = 48;
-
-    auto* headerRow = new QHBoxLayout();
-    headerRow->setSpacing(12);
-
-    auto* iconLabel = new QLabel(parent);
-    iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
-    iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
-    iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
-    headerRow->addWidget(iconLabel);
-
-    auto* titleLayout = new QVBoxLayout();
-    auto* title_label = new QLabel(title, parent);
-    QFont title_font = title_label->font();
-    title_font.setPointSize(ui::kFontSizeSection);
-    title_font.setBold(true);
-    title_label->setFont(title_font);
-    title_label->setAccessibleName(title);
-    titleLayout->addWidget(title_label);
-
-    auto* subtitle_label = new QLabel(subtitle, parent);
-    subtitle_label->setWordWrap(true);
-    subtitle_label->setStyleSheet(
-        QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
-    subtitle_label->setAccessibleName(subtitle);
-    titleLayout->addWidget(subtitle_label);
-
-    headerRow->addLayout(titleLayout, 1);
-    layout->addLayout(headerRow);
+    (void)detail::createPanelHeaderImpl(parent, iconPath, title, subtitle, layout);
 }
 
 // -- Dynamic Panel Header ----------------------------------------------------
-
-/// @brief Pointers returned by createDynamicPanelHeader for runtime updates.
-struct PanelHeaderWidgets {
-    QLabel* iconLabel{nullptr};
-    QLabel* titleLabel{nullptr};
-    QLabel* subtitleLabel{nullptr};
-};
 
 /// @brief Create a panel header whose icon, title, and subtitle can be updated
 ///        at runtime (e.g. when switching sub-tabs inside a composite panel).
@@ -118,37 +138,7 @@ struct PanelHeaderWidgets {
                                                                  const QString& title,
                                                                  const QString& subtitle,
                                                                  QVBoxLayout* layout) {
-    constexpr int kPanelIconSize = 48;
-
-    auto* headerRow = new QHBoxLayout();
-    headerRow->setSpacing(12);
-
-    auto* iconLabel = new QLabel(parent);
-    iconLabel->setFixedSize(kPanelIconSize, kPanelIconSize);
-    iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
-    iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
-    headerRow->addWidget(iconLabel);
-
-    auto* titleLayout = new QVBoxLayout();
-    auto* title_label = new QLabel(title, parent);
-    QFont title_font = title_label->font();
-    title_font.setPointSize(ui::kFontSizeSection);
-    title_font.setBold(true);
-    title_label->setFont(title_font);
-    title_label->setAccessibleName(title);
-    titleLayout->addWidget(title_label);
-
-    auto* subtitle_label = new QLabel(subtitle, parent);
-    subtitle_label->setWordWrap(true);
-    subtitle_label->setStyleSheet(
-        QString("color: %1; margin-bottom: 5px;").arg(ui::kColorTextMuted));
-    subtitle_label->setAccessibleName(subtitle);
-    titleLayout->addWidget(subtitle_label);
-
-    headerRow->addLayout(titleLayout, 1);
-    layout->addLayout(headerRow);
-
-    return {iconLabel, title_label, subtitle_label};
+    return detail::createPanelHeaderImpl(parent, iconPath, title, subtitle, layout);
 }
 
 /// @brief Update a dynamic panel header's icon, title, and subtitle in-place.
@@ -156,9 +146,9 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
                               const QString& iconPath,
                               const QString& title,
                               const QString& subtitle) {
-    constexpr int kPanelIconSize = 48;
     if (hw.iconLabel) {
-        hw.iconLabel->setPixmap(QIcon(iconPath).pixmap(kPanelIconSize, kPanelIconSize));
+        hw.iconLabel->setPixmap(
+            QIcon(iconPath).pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
         hw.iconLabel->setAccessibleName(title + QStringLiteral(" icon"));
     }
     if (hw.titleLabel) {
@@ -169,6 +159,91 @@ inline void updatePanelHeader(const PanelHeaderWidgets& hw,
         hw.subtitleLabel->setText(subtitle);
         hw.subtitleLabel->setAccessibleName(subtitle);
     }
+}
+
+// -- Action Card Factory -----------------------------------------------------
+
+struct ActionCardWidgets {
+    QFrame* card{nullptr};
+    QLabel* iconLabel{nullptr};
+    QLabel* titleLabel{nullptr};
+    QLabel* descriptionLabel{nullptr};
+    QPushButton* button{nullptr};
+};
+
+inline QString actionCardStyle() {
+    return QStringLiteral(
+               "QFrame {"
+               "  background-color: %1;"
+               "  border: 1px solid %2;"
+               "  border-radius: 8px;"
+               "  padding: %3px;"
+               "}"
+               "QFrame:hover {"
+               "  border-color: %4;"
+               "}")
+        .arg(ui::cssColor(ui::kColorBgWhite))
+        .arg(ui::cssColor(ui::kColorBorderDefault))
+        .arg(ui::kMarginMedium)
+        .arg(ui::kColorPrimary);
+}
+
+inline QString actionCardTitleStyle() {
+    return QStringLiteral("font-size: %1pt; font-weight: 700; color: %2; %3")
+        .arg(ui::kFontSizeSection)
+        .arg(ui::cssColor(ui::kColorTextHeading))
+        .arg(ui::kTransparentWidgetStyle);
+}
+
+inline QString actionCardDescriptionStyle() {
+    return QStringLiteral("font-size: %1pt; color: %2; %3")
+        .arg(ui::kFontSizeBody)
+        .arg(ui::cssColor(ui::kColorTextSecondary))
+        .arg(ui::kTransparentWidgetStyle);
+}
+
+[[nodiscard]] inline ActionCardWidgets createActionCard(QWidget* parent,
+                                                        const QString& iconPath,
+                                                        const QString& title,
+                                                        const QString& description,
+                                                        QPushButton* button) {
+    Q_ASSERT(parent);
+    Q_ASSERT(button);
+
+    auto* card = new QFrame(parent);
+    card->setProperty("sakCard", true);
+    card->setStyleSheet(actionCardStyle());
+    card->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
+
+    auto* layout = new QVBoxLayout(card);
+    layout->setSpacing(ui::kSpacingMedium);
+    layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+
+    auto* logo = new QLabel(card);
+    logo->setPixmap(QIcon(iconPath).pixmap(detail::kPanelIconSize, detail::kPanelIconSize));
+    logo->setAlignment(Qt::AlignCenter);
+    logo->setStyleSheet(ui::kTransparentWidgetStyle);
+    logo->setAccessibleName(title + QStringLiteral(" icon"));
+    layout->addWidget(logo);
+
+    auto* titleLabel = new QLabel(title, card);
+    titleLabel->setAlignment(Qt::AlignCenter);
+    titleLabel->setStyleSheet(actionCardTitleStyle());
+    titleLabel->setAccessibleName(title);
+    layout->addWidget(titleLabel);
+
+    auto* descLabel = new QLabel(description, card);
+    descLabel->setWordWrap(true);
+    descLabel->setAlignment(Qt::AlignCenter);
+    descLabel->setStyleSheet(actionCardDescriptionStyle());
+    descLabel->setAccessibleName(description);
+    layout->addWidget(descLabel);
+
+    layout->addStretch();
+    button->setParent(card);
+    layout->addWidget(button);
+    return {card, logo, titleLabel, descLabel, button};
 }
 
 // -- Accessibility Helpers ---------------------------------------------------
@@ -241,7 +316,7 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
 /// @param percent Progress value (0-100+)
 /// @return Green for 100%+, Orange for in-progress, Gray for 0%
 [[nodiscard]] inline QColor progressColor(int percent) {
-    if (percent >= 100) {
+    if (percent >= kPercentMax) {
         return QColor(ui::kStatusColorSuccess);
     }
     if (percent > 0) {

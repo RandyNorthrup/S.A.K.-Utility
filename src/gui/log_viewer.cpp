@@ -4,6 +4,7 @@
 #include "sak/log_viewer.h"
 
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QFile>
@@ -29,16 +30,19 @@ LogViewer::LogViewer(QWidget* parent)
 
 void LogViewer::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
+    constexpr int kLogFontPointSize = sak::ui::kFontSizeNote;
     auto* main_layout = new QVBoxLayout(this);
-    main_layout->setSpacing(8);
-    main_layout->setContentsMargins(0, 0, 0, 0);
+    main_layout->setSpacing(sak::ui::kSpacingMedium);
+    main_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     // Toolbar
     auto* toolbar_layout = new QHBoxLayout();
-    toolbar_layout->setSpacing(8);
+    toolbar_layout->setSpacing(sak::ui::kSpacingMedium);
 
     // Filter combo
     m_filter_combo = new QComboBox(this);
+    m_filter_combo->setAccessibleName("Log severity filter");
     m_filter_combo->addItem("All Logs");
     m_filter_combo->addItem("Info");
     m_filter_combo->addItem("Warning");
@@ -52,6 +56,7 @@ void LogViewer::setupUi() {
 
     // Search box
     m_search_edit = new QLineEdit(this);
+    m_search_edit->setAccessibleName("Log search");
     m_search_edit->setPlaceholderText("Search logs...");
     m_search_edit->setClearButtonEnabled(true);
     connect(m_search_edit, &QLineEdit::textChanged, this, &LogViewer::onSearchTextChanged);
@@ -59,17 +64,20 @@ void LogViewer::setupUi() {
 
     // Auto-scroll checkbox
     m_auto_scroll_checkbox = new QCheckBox("Auto-scroll", this);
+    m_auto_scroll_checkbox->setAccessibleName("Auto-scroll logs");
     m_auto_scroll_checkbox->setChecked(true);
     connect(m_auto_scroll_checkbox, &QCheckBox::toggled, this, &LogViewer::onAutoScrollToggled);
     toolbar_layout->addWidget(m_auto_scroll_checkbox);
 
     // Clear button
     m_clear_button = new QPushButton("Clear", this);
+    m_clear_button->setAccessibleName("Clear log viewer");
     connect(m_clear_button, &QPushButton::clicked, this, &LogViewer::onClearClicked);
     toolbar_layout->addWidget(m_clear_button);
 
     // Save button
     m_save_button = new QPushButton("Save Log", this);
+    m_save_button->setAccessibleName("Save log file");
     connect(m_save_button, &QPushButton::clicked, this, &LogViewer::onSaveClicked);
     toolbar_layout->addWidget(m_save_button);
 
@@ -77,9 +85,10 @@ void LogViewer::setupUi() {
 
     // Text browser
     m_text_browser = new QTextBrowser(this);
+    m_text_browser->setAccessibleName("Log messages");
     m_text_browser->setOpenExternalLinks(false);
     m_text_browser->setReadOnly(true);
-    m_text_browser->setFont(QFont("Consolas", 9));
+    m_text_browser->setFont(QFont("Consolas", kLogFontPointSize));
     main_layout->addWidget(m_text_browser);
 
     Q_ASSERT(m_search_edit);
@@ -112,9 +121,9 @@ bool LogViewer::loadLogFile(const QString& file_path) {
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logError("Failed to open log file: {}", file_path.toStdString());
-        QMessageBox::warning(this,
-                             "Load Error",
-                             QString("Failed to open log file: %1").arg(file_path));
+        sak::showWarningLogged(this,
+                               "Load Error",
+                               QString("Failed to open log file: %1").arg(file_path));
         return false;
     }
 
@@ -153,11 +162,11 @@ void LogViewer::setAutoScroll(bool enabled) {
 }
 
 void LogViewer::onClearClicked() {
-    auto reply = QMessageBox::question(this,
-                                       "Clear Logs",
-                                       "Are you sure you want to clear all logs?",
-                                       QMessageBox::Yes | QMessageBox::No,
-                                       QMessageBox::No);
+    auto reply = sak::showQuestionLogged(this,
+                                         "Clear Logs",
+                                         "Are you sure you want to clear all logs?",
+                                         QMessageBox::Yes | QMessageBox::No,
+                                         QMessageBox::No);
 
     if (reply == QMessageBox::Yes) {
         clear();
@@ -176,9 +185,9 @@ void LogViewer::onSaveClicked() {
     QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logError("Failed to save log file: {}", file_path.toStdString());
-        QMessageBox::warning(this,
-                             "Save Error",
-                             QString("Failed to save log file: %1").arg(file_path));
+        sak::showWarningLogged(this,
+                               "Save Error",
+                               QString("Failed to save log file: %1").arg(file_path));
         return;
     }
 
@@ -187,7 +196,7 @@ void LogViewer::onSaveClicked() {
     file.close();
 
     sak::logInfo("Saved log file: {}", file_path.toStdString());
-    QMessageBox::information(this, "Save Complete", QString("Log saved to: %1").arg(file_path));
+    sak::showInformationLogged(this, "Save Complete", QString("Log saved to: %1").arg(file_path));
 }
 
 void LogViewer::onFilterChanged(int index) {
@@ -234,9 +243,14 @@ QString LogViewer::formatLogMessage(const QString& message, LogLevel level) cons
     QString color = getLevelColor(level);
 
     return QString(
-               "<span style='color: gray;'>%1</span> "
-               "<span style='color: %2; font-weight: bold;'>[%3]</span> %4")
-        .arg(timestamp, color, level_text, message);
+               "<span style='color: %1;'>%2</span> "
+               "<span style='color: %3; font-weight: %4;'>[%5]</span> %6")
+        .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted),
+             timestamp,
+             color,
+             QString::number(sak::ui::kFontWeightBold),
+             level_text,
+             message);
 }
 
 QString LogViewer::getLevelColor(LogLevel level) const {
@@ -248,7 +262,7 @@ QString LogViewer::getLevelColor(LogLevel level) const {
     case LogLevel::Error:
         return sak::ui::kStatusColorError;
     default:
-        return sak::ui::kColorTextBody;
+        return sak::ui::htmlColor(sak::ui::kColorTextBody);
     }
 }
 

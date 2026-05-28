@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/layout_constants.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -32,9 +33,12 @@ struct AiAppActionPlan {
 class AiAppActionPlanner {
 public:
     struct Options {
-        int default_output_bytes{262'144};
-        int min_output_bytes{1024};
-        int max_output_bytes{4 * 1024 * 1024};
+        static constexpr int kDefaultOutputKilobytes = 256;
+        static constexpr int kMaximumOutputMegabytes = 4;
+
+        int default_output_bytes{kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB)};
+        int min_output_bytes{static_cast<int>(sak::kBytesPerKB)};
+        int max_output_bytes{kMaximumOutputMegabytes * static_cast<int>(sak::kBytesPerMB)};
     };
 
     [[nodiscard]] static AiAppActionPlan buildPlan(const QString& app_id,

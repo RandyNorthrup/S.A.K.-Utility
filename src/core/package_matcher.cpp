@@ -16,6 +16,20 @@
 
 namespace {
 
+constexpr int kSearchCacheMaxCost = 1000;
+constexpr size_t kCandidateReserveDivisor = 2;
+constexpr double kExactCandidateMinConfidence = 0.5;
+constexpr double kCaseInsensitiveExactConfidence = 0.95;
+constexpr int kChocoSearchResultLimit = 10;
+constexpr int kMinimumKeywordLength = 3;
+constexpr double kFuzzyMatchThreshold = 0.6;
+constexpr double kTitleMatchWeight = 0.9;
+constexpr double kSearchMatchThreshold = 0.5;
+constexpr int kBaseNameMaxWordCount = 3;
+constexpr double kContainedNameSimilarity = 0.85;
+constexpr double kSimilarityAverageDivisor = 2.0;
+constexpr int kJaroMatchWindowDivisor = 2;
+
 /// @brief Find a matching character in s2 within match_distance of position i in s1.
 /// @return Index in s2 if found, -1 otherwise.
 int findJaroMatch(const QString& s1,
@@ -42,7 +56,7 @@ namespace sak {
 PackageMatcher::PackageMatcher()
     : m_exact_match_count(0), m_fuzzy_match_count(0), m_search_match_count(0) {
     initializeCommonMappings();
-    m_search_cache.setMaxCost(1000);  // Cache up to 1000 search results
+    m_search_cache.setMaxCost(kSearchCacheMaxCost);
 }
 
 void PackageMatcher::initializeCommonMappings() {
@@ -253,13 +267,13 @@ void PackageMatcher::collectExactMatches(
     std::vector<std::pair<int, MatchResult>>& exact_results,
     std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates) {
     const size_t app_count = apps.size();
-    exact_results.reserve(app_count / 2);
-    fuzzy_candidates.reserve(app_count / 2);
+    exact_results.reserve(app_count / kCandidateReserveDivisor);
+    fuzzy_candidates.reserve(app_count / kCandidateReserveDivisor);
 
     for (size_t i = 0; i < app_count; ++i) {
         QString base_name = extractBaseAppName(apps[i].name);
         auto exact = exactMatch(base_name);
-        if (exact.has_value() && exact->confidence >= 0.5) {
+        if (exact.has_value() && exact->confidence >= kExactCandidateMinConfidence) {
             exact_results.push_back({static_cast<int>(i), *exact});
             QMutexLocker locker(&m_stats_mutex);
             m_exact_match_count++;
@@ -317,12 +331,8 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::exactMatch(const QStr
     // Check case-insensitive
     for (auto it = m_exact_mappings.begin(); it != m_exact_mappings.end(); ++it) {
         if (it.key().compare(normalized, Qt::CaseInsensitive) == 0) {
-            return MatchResult{it.value(),
-                               it.key(),
-                               0.95,  // High confidence for case-insensitive match
-                               "exact",
-                               true,
-                               ""};
+            return MatchResult{
+                it.value(), it.key(), kCaseInsensitiveExactConfidence, "exact", true, ""};
         }
     }
 
@@ -336,7 +346,7 @@ QString PackageMatcher::fetchSearchOutput(const QString& keyword, ChocolateyMana
     if (!cached.isEmpty()) {
         return cached;
     }
-    auto result = choco_mgr->searchPackage(keyword, 10);
+    auto result = choco_mgr->searchPackage(keyword, kChocoSearchResultLimit);
     if (!result.success) {
         return {};
     }
@@ -371,7 +381,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
     QString best_matched_name;
 
     for (const QString& keyword : keywords) {
-        if (keyword.length() < 3) {
+        if (keyword.length() < kMinimumKeywordLength) {
             continue;
         }
 
@@ -385,7 +395,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::fuzzyMatch(
             normalized, packages, best_similarity, best_package, best_matched_name);
     }
 
-    if (best_similarity >= 0.6) {
+    if (best_similarity >= kFuzzyMatchThreshold) {
         return MatchResult{best_package, best_matched_name, best_similarity, "fuzzy", true, ""};
     }
 
@@ -419,7 +429,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
         // Boost score if title matches better
         double title_score = calculateSimilarity(base_name, pkg.title);
         if (title_score > score) {
-            score = title_score * 0.9;  // Slightly lower weight for title match
+            score = title_score * kTitleMatchWeight;
         }
 
         if (score > best_score) {
@@ -428,7 +438,7 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::searchMatch(const QSt
         }
     }
 
-    if (best_score >= 0.5) {  // Minimum threshold for search match
+    if (best_score >= kSearchMatchThreshold) {
         return MatchResult{best_package.package_id,
                            best_package.title,
                            best_score,
@@ -478,7 +488,7 @@ QString PackageMatcher::extractBaseAppName(const QString& app_name) {
 
     if (!words.isEmpty()) {
         // Return first 1-3 words as base name
-        int word_count = std::min(3, static_cast<int>(words.size()));
+        int word_count = std::min(kBaseNameMaxWordCount, static_cast<int>(words.size()));
         QStringList base_words;
         for (int i = 0; i < word_count; ++i) {
             base_words.append(words[i]);
@@ -502,7 +512,7 @@ QStringList PackageMatcher::extractKeywords(const QString& app_name) {
     QStringList keywords;
     for (const QString& word : words) {
         QString lower = word.toLower();
-        if (!stopWords.contains(lower) && word.length() >= 3) {
+        if (!stopWords.contains(lower) && word.length() >= kMinimumKeywordLength) {
             keywords.append(word);
         }
     }
@@ -523,7 +533,7 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
 
     // Contains match
     if (s1.contains(s2) || s2.contains(s1)) {
-        return 0.85;
+        return kContainedNameSimilarity;
     }
 
     // Jaro-Winkler similarity
@@ -535,7 +545,7 @@ double PackageMatcher::calculateSimilarity(const QString& str1, const QString& s
     double lev_sim = max_len > 0 ? 1.0 - (double(lev_dist) / max_len) : 0.0;
 
     // Average of both methods
-    return (jw + lev_sim) / 2.0;
+    return (jw + lev_sim) / kSimilarityAverageDivisor;
 }
 
 int PackageMatcher::levenshteinDistance(const QString& s1, const QString& s2) const {
@@ -619,7 +629,7 @@ double PackageMatcher::jaroWinklerSimilarity(const QString& s1, const QString& s
         return 0.0;
     }
 
-    int match_distance = std::max(len1, len2) / 2 - 1;
+    int match_distance = std::max(len1, len2) / kJaroMatchWindowDivisor - 1;
     if (match_distance < 1) {
         match_distance = 1;
     }
@@ -782,7 +792,7 @@ std::vector<QString> PackageMatcher::batchSearchChocolatey(const QStringList& ke
 
     // Batch search uncached keywords (could be optimized further with single choco call)
     for (const QString& keyword : uncached_keywords) {
-        auto result = choco_mgr->searchPackage(keyword, 10);
+        auto result = choco_mgr->searchPackage(keyword, kChocoSearchResultLimit);
         if (result.success) {
             cacheSearch(keyword, result.output);
             results.push_back(result.output);

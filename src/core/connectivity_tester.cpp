@@ -33,6 +33,9 @@ constexpr int kFillByte = 0x41;     // 'A'
 constexpr int kReplyExtraSize = 8;  // Extra bytes for ICMP_ECHO_REPLY
 
 constexpr double kFullPercent = 100.0;
+constexpr WORD kWinsockMajorVersion = 2;
+constexpr WORD kWinsockMinorVersion = 2;
+constexpr int kUrlSchemeSeparatorLength = 3;
 
 void updateHopStats(sak::MtrHopStats& stats,
                     const sak::PingReply& reply,
@@ -65,7 +68,7 @@ namespace {
 void computePingStats(PingResult& result, const QVector<double>& rtts) {
     result.lost = result.sent - result.received;
     result.lossPercent =
-        (result.sent > 0) ? (static_cast<double>(result.lost) / result.sent) * 100.0 : 0.0;
+        (result.sent > 0) ? (static_cast<double>(result.lost) / result.sent) * kFullPercent : 0.0;
 
     if (rtts.isEmpty()) {
         return;
@@ -87,6 +90,32 @@ void computePingStats(PingResult& result, const QVector<double>& rtts) {
         sumSqDiff += diff * diff;
     }
     result.jitter = std::sqrt(sumSqDiff / static_cast<double>(rtts.size() - 1));
+}
+
+QString ipv4AddressToString(IPAddr address) {
+    IN_ADDR replyAddr;
+    replyAddr.S_un.S_addr = address;
+    char ipBuf[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, &replyAddr, ipBuf, sizeof(ipBuf));
+    return QString::fromLatin1(ipBuf);
+}
+
+bool isTtlExpiredStatus(ULONG status) {
+    return status == IP_TTL_EXPIRED_TRANSIT || status == IP_TTL_EXPIRED_REASSEM;
+}
+
+void applySuccessfulEcho(PingReply& reply, const ICMP_ECHO_REPLY& echoReply) {
+    reply.success = true;
+    reply.rttMs = static_cast<double>(echoReply.RoundTripTime);
+    reply.ttl = static_cast<int>(echoReply.Options.Ttl);
+    reply.replyFrom = ipv4AddressToString(echoReply.Address);
+}
+
+void applyTtlExpiredEcho(PingReply& reply, const ICMP_ECHO_REPLY& echoReply) {
+    reply.success = false;
+    reply.rttMs = static_cast<double>(echoReply.RoundTripTime);
+    reply.replyFrom = ipv4AddressToString(echoReply.Address);
+    reply.errorMessage = QStringLiteral("TTL expired");
 }
 
 [[nodiscard]] QVector<MtrHopStats> initHopStats(int maxHops) {
@@ -138,7 +167,7 @@ void populateMtrResult(MtrResult& result,
 
 ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {
     WSADATA wsa_data{};
-    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    WSAStartup(MAKEWORD(kWinsockMajorVersion, kWinsockMinorVersion), &wsa_data);
 }
 
 ConnectivityTester::~ConnectivityTester() {
@@ -186,7 +215,7 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
             host = url.host();
         } else {
             // Fallback: remove scheme manually
-            host = host.mid(host.indexOf(QStringLiteral("://")) + 3);
+            host = host.mid(host.indexOf(QStringLiteral("://")) + kUrlSchemeSeparatorLength);
         }
     }
 
@@ -304,27 +333,9 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
         auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer.get());
 
         if (echoReply->Status == IP_SUCCESS) {
-            reply.success = true;
-            reply.rttMs = static_cast<double>(echoReply->RoundTripTime);
-            reply.ttl = static_cast<int>(echoReply->Options.Ttl);
-
-            IN_ADDR replyAddr;
-            replyAddr.S_un.S_addr = echoReply->Address;
-            char ipBuf[INET_ADDRSTRLEN] = {};
-            inet_ntop(AF_INET, &replyAddr, ipBuf, sizeof(ipBuf));
-            reply.replyFrom = QString::fromLatin1(ipBuf);
-        } else if (echoReply->Status == IP_TTL_EXPIRED_TRANSIT ||
-                   echoReply->Status == IP_TTL_EXPIRED_REASSEM) {
-            // TTL expired -- used in traceroute
-            reply.success = false;
-            reply.rttMs = static_cast<double>(echoReply->RoundTripTime);
-
-            IN_ADDR replyAddr;
-            replyAddr.S_un.S_addr = echoReply->Address;
-            char ipBuf[INET_ADDRSTRLEN] = {};
-            inet_ntop(AF_INET, &replyAddr, ipBuf, sizeof(ipBuf));
-            reply.replyFrom = QString::fromLatin1(ipBuf);
-            reply.errorMessage = QStringLiteral("TTL expired");
+            applySuccessfulEcho(reply, *echoReply);
+        } else if (isTtlExpiredStatus(echoReply->Status)) {
+            applyTtlExpiredEcho(reply, *echoReply);
         } else {
             reply.success = false;
             reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);

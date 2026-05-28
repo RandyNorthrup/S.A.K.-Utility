@@ -27,6 +27,12 @@
 namespace sak {
 
 namespace {
+constexpr int kRegistryScanProgress = 50;
+constexpr int kUwpScanProgress = 75;
+constexpr int kProvisionedScanProgress = 85;
+constexpr int kMetadataScanProgress = 95;
+constexpr int kQuotedPathTrimChars = 2;
+
 [[nodiscard]] QString normalizeUninstallExePath(QString uninstallString) {
     QString exePath = std::move(uninstallString);
 
@@ -91,7 +97,7 @@ void ProgramEnumerator::enumerateAll() {
             return;
         }
         all_programs.append(registry_programs);
-        Q_EMIT enumerationProgress(50, 100);
+        Q_EMIT enumerationProgress(kRegistryScanProgress, kPercentMax);
 #endif
 
         // Phase 2: UWP packages
@@ -101,7 +107,7 @@ void ProgramEnumerator::enumerateAll() {
             return;
         }
         all_programs.append(uwp_programs);
-        Q_EMIT enumerationProgress(75, 100);
+        Q_EMIT enumerationProgress(kUwpScanProgress, kPercentMax);
 
         // Phase 3: Provisioned UWP packages
         auto provisioned = scanProvisionedPackages();
@@ -110,7 +116,7 @@ void ProgramEnumerator::enumerateAll() {
             return;
         }
         all_programs.append(provisioned);
-        Q_EMIT enumerationProgress(85, 100);
+        Q_EMIT enumerationProgress(kProvisionedScanProgress, kPercentMax);
 
         // Phase 4: Deduplicate
         deduplicatePrograms(all_programs);
@@ -120,14 +126,14 @@ void ProgramEnumerator::enumerateAll() {
 
         // Phase 6: Mark bloatware
         markBloatware(all_programs);
-        Q_EMIT enumerationProgress(95, 100);
+        Q_EMIT enumerationProgress(kMetadataScanProgress, kPercentMax);
 
         // Phase 7: Extract icons and calculate sizes
         if (!enrichWithIconsAndSizes(all_programs)) {
             return;
         }
 
-        Q_EMIT enumerationProgress(100, 100);
+        Q_EMIT enumerationProgress(kPercentMax, kPercentMax);
         m_cachedPrograms = all_programs;
         Q_EMIT enumerationFinished(all_programs);
 
@@ -163,7 +169,7 @@ bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) 
         if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
             prog.actualSizeBytes = calculateDirSize(prog.installLocation);
         } else if (prog.estimatedSizeKB > 0) {
-            prog.actualSizeBytes = prog.estimatedSizeKB * 1024;
+            prog.actualSizeBytes = prog.estimatedSizeKB * kBytesPerKB;
         }
     }
     return true;
@@ -568,7 +574,7 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
 
     // Strip quotes
     if (icon_path.startsWith('"') && icon_path.endsWith('"')) {
-        icon_path = icon_path.mid(1, icon_path.length() - 2);
+        icon_path = icon_path.mid(1, icon_path.length() - kQuotedPathTrimChars);
     }
 
     SHFILEINFOW sfi{};

@@ -6,6 +6,7 @@
 
 #include "sak/uninstall_worker.h"
 
+#include "sak/layout_constants.h"
 #include "sak/leftover_scanner.h"
 #include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
@@ -21,8 +22,18 @@
 namespace sak {
 
 namespace {
+constexpr int kProgressSnapshot = 10;
+constexpr int kProgressNativeUninstaller = 20;
+constexpr int kProgressLeftoverScan = 40;
+constexpr int kProgressRegistryRemoval = 50;
+constexpr int kRestorePointProgramNameMaxChars = 40;
+constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kUwpRemovalTimeoutMs = 60'000;
 constexpr int kMsiRebootRequiredCode = 3010;
+constexpr int kQuotedCaptureGroup = 1;
+constexpr int kUnquotedCaptureGroup = 2;
+constexpr int kExecutableExtensionLength = 4;
+constexpr auto kQuotedArgumentPattern = "\\\"([^\\\"]*)\\\"|(\\S+)";
 
 struct ParsedCommand {
     QString exe;
@@ -35,12 +46,14 @@ struct ParsedCommand {
         return {};
     }
 
-    static const QRegularExpression kArgRe(R"(\"([^\"]*)\"|(\S+))");
+    static const QRegularExpression kArgRe(QString::fromLatin1(kQuotedArgumentPattern));
     QStringList args;
     auto it = kArgRe.globalMatch(trimmed);
     while (it.hasNext()) {
         const auto match = it.next();
-        args.append(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
+        args.append(match.captured(kQuotedCaptureGroup).isEmpty()
+                        ? match.captured(kUnquotedCaptureGroup)
+                        : match.captured(kQuotedCaptureGroup));
     }
     return args;
 }
@@ -63,8 +76,8 @@ struct ParsedCommand {
 
     const int exeEnd = cmd.indexOf(".exe", 0, Qt::CaseInsensitive);
     if (exeEnd > 0) {
-        parsed.exe = cmd.left(exeEnd + 4);
-        parsed.args = splitArgsRespectingQuotes(cmd.mid(exeEnd + 4));
+        parsed.exe = cmd.left(exeEnd + kExecutableExtensionLength);
+        parsed.args = splitArgsRespectingQuotes(cmd.mid(exeEnd + kExecutableExtensionLength));
         return parsed;
     }
 
@@ -87,7 +100,7 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program,
 
 auto UninstallWorker::executeStandardMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
-    reportProgress(10, 100, "Capturing registry snapshot...");
+    reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
     [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
     Q_EMIT registrySnapshotCaptured();
 
@@ -95,7 +108,7 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    reportProgress(20, 100, "Running native uninstaller...");
+    reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Running native uninstaller...");
     Q_EMIT nativeUninstallerStarted(m_program.displayName);
 
     if (!runNativeUninstaller()) {
@@ -112,7 +125,7 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
 
 auto UninstallWorker::executeUwpMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
-    reportProgress(20, 100, "Removing UWP package...");
+    reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Removing UWP package...");
     if (!removeUwpPackage()) {
         report.uninstallResult = UninstallReport::UninstallResult::Failed;
         report.endTime = QDateTime::currentDateTime();
@@ -127,7 +140,9 @@ auto UninstallWorker::executeUwpMode(UninstallReport& report)
 
 auto UninstallWorker::executeRegistryMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
-    reportProgress(50, 100, "Removing orphaned registry entry...");
+    reportProgress(kProgressRegistryRemoval,
+                   sak::kPercentMax,
+                   "Removing orphaned registry entry...");
     if (!removeRegistryEntry()) {
         report.uninstallResult = UninstallReport::UninstallResult::Failed;
         report.endTime = QDateTime::currentDateTime();
@@ -151,7 +166,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
 
     // Phase 1: Create restore point (if requested)
     if (m_createRestorePoint) {
-        reportProgress(0, 100, "Creating system restore point...");
+        reportProgress(0, sak::kPercentMax, "Creating system restore point...");
         if (createRestorePoint()) {
             report.restorePointCreated = true;
             report.restorePointName =
@@ -175,7 +190,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     }
     case Mode::ForcedUninstall: {
         report.uninstallResult = UninstallReport::UninstallResult::Skipped;
-        reportProgress(10, 100, "Capturing registry snapshot...");
+        reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
         [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
         Q_EMIT registrySnapshotCaptured();
         break;
@@ -191,7 +206,7 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     }
 
     // Phase 3: Leftover scanning
-    reportProgress(40, 100, "Scanning for leftovers...");
+    reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
     Q_EMIT leftoverScanStarted(m_scanLevel);
 
     auto leftovers = scanLeftovers();
@@ -207,7 +222,8 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
 
 bool UninstallWorker::createRestorePoint() {
     RestorePointManager mgr;
-    QString desc = QString("SAK: Before uninstall %1").arg(m_program.displayName.left(40));
+    QString desc = QString("SAK: Before uninstall %1")
+                       .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
     return mgr.createRestorePoint(desc);
 }
 
@@ -289,10 +305,10 @@ bool UninstallWorker::removeRegistryEntry() {
 
     if (path.startsWith("HKLM\\")) {
         hive = HKEY_LOCAL_MACHINE;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else if (path.startsWith("HKCU\\")) {
         hive = HKEY_CURRENT_USER;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else {
         return false;
     }

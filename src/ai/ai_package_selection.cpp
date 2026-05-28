@@ -12,6 +12,8 @@
 namespace sak::ai {
 namespace {
 
+constexpr qsizetype kPackageDescriptionPreviewChars = 500;
+
 QString firstStringValue(const QJsonObject& object, std::initializer_list<const char*> keys) {
     for (const char* key : keys) {
         const QString value = object.value(QString::fromLatin1(key)).toString().trimmed();
@@ -166,7 +168,7 @@ QJsonObject AiPackageCandidate::toJson() const {
         object[QStringLiteral("title")] = title;
     }
     if (!description.isEmpty()) {
-        object[QStringLiteral("description")] = description.left(500);
+        object[QStringLiteral("description")] = description.left(kPackageDescriptionPreviewChars);
     }
     object[QStringLiteral("display_name")] = displayName();
     return object;

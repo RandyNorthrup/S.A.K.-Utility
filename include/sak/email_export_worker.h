@@ -99,6 +99,10 @@ private:
                          const QVector<uint64_t>& item_ids,
                          const sak::EmailExportConfig& config,
                          sak::EmailExportResult& result);
+    void exportSingleMboxMessage(MboxParser* parser,
+                                 int message_index,
+                                 const sak::EmailExportConfig& config,
+                                 sak::EmailExportResult& result);
 
     // CSV helpers
     [[nodiscard]] static QString csvFieldValue(const sak::PstItemDetail& item,

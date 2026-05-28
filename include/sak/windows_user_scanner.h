@@ -9,6 +9,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultQuickSizeEstimateDepth = 2;
+
 /**
  * @brief Scans Windows system for user profiles
  *
@@ -74,7 +76,7 @@ Q_SIGNALS:
 private:
     bool enumerateWindowsUsers(QVector<UserProfile>& profiles);
     static void populateFolderSelections(UserProfile& profile);
-    qint64 quickSizeEstimate(const QString& path, int maxDepth = 2);
+    qint64 quickSizeEstimate(const QString& path, int maxDepth = kDefaultQuickSizeEstimateDepth);
 };
 
 }  // namespace sak

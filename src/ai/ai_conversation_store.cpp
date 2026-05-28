@@ -38,6 +38,13 @@ constexpr qint64 kTrimmedMemoryBytes = 192LL * 1024LL;
 constexpr qint64 kMaxSearchIndexBytes = 10LL * 1024LL * 1024LL;
 constexpr qint64 kMaxSearchRawFileBytes = 2LL * 1024LL * 1024LL;
 constexpr int kMaxSearchSessionsScanned = 250;
+constexpr qsizetype kFallbackTitleMaxChars = 80;
+constexpr qsizetype kOneLineMaxChars = 160;
+constexpr int kUniquePathMaxAttempts = 10'000;
+constexpr qsizetype kDefaultSearchSnippetMaxChars = 220;
+constexpr qsizetype kSessionUuidSuffixChars = 8;
+constexpr qsizetype kMemoryAppendMaxChars = 4000;
+constexpr qsizetype kSafeFilenameMaxChars = 80;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -50,13 +57,13 @@ QDateTime parseDate(const QJsonObject& obj, const QString& key) {
 QString fallbackTitle(const QString& title) {
     const QString trimmed = title.trimmed();
     if (!trimmed.isEmpty()) {
-        return trimmed.left(80);
+        return trimmed.left(kFallbackTitleMaxChars);
     }
     return QStringLiteral("AI Session");
 }
 
 QString oneLine(const QString& value) {
-    return value.simplified().left(160);
+    return value.simplified().left(kOneLineMaxChars);
 }
 
 QString memoryHeader() {
@@ -156,7 +163,7 @@ QString uniqueDestinationPath(const QString& path) {
                                                            : info.completeBaseName();
     const QString suffix = info.suffix();
     const QString dir = info.absolutePath();
-    for (int i = 1; i < 10'000; ++i) {
+    for (int i = 1; i < kUniquePathMaxAttempts; ++i) {
         const QString name = suffix.isEmpty()
                                  ? QStringLiteral("%1_%2").arg(base).arg(i)
                                  : QStringLiteral("%1_%2.%3").arg(base).arg(i).arg(suffix);
@@ -447,7 +454,9 @@ QDateTime objectTimestamp(const QJsonObject& object) {
                                  Qt::ISODateWithMs);
 }
 
-QString snippetAround(const QString& text, const QString& query, qsizetype max_chars = 220) {
+QString snippetAround(const QString& text,
+                      const QString& query,
+                      qsizetype max_chars = kDefaultSearchSnippetMaxChars) {
     const QString simplified = text.simplified();
     const qsizetype pos = simplified.indexOf(query, 0, Qt::CaseInsensitive);
     if (pos < 0 || simplified.size() <= max_chars) {
@@ -722,7 +731,7 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
     const QString id =
         QStringLiteral("ai_%1_%2")
             .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMddHHmmss")),
-                 QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
+                 QUuid::createUuid().toString(QUuid::WithoutBraces).left(kSessionUuidSuffixChars));
     const QString path = sessionPath(id);
     if (!QDir().mkpath(path)) {
         if (error_message) {
@@ -985,7 +994,7 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
     const QString heading =
         QStringLiteral("## %1 - %2 - %3\n").arg(nowIso(), oneLine(kind), oneLine(title));
     file.write(heading.toUtf8());
-    file.write(body.left(4000).toUtf8());
+    file.write(body.left(kMemoryAppendMaxChars).toUtf8());
     file.write("\n\n");
     file.close();
     if (!trimMemoryFile(file.fileName(), error_message)) {
@@ -1148,7 +1157,7 @@ QString ConversationStore::safeArtifactDirectoryName(const QString& title,
     safe.replace(QRegularExpression(QStringLiteral(R"([<>:"/\\|?*\x00-\x1f])")),
                  QStringLiteral("_"));
     safe.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(" "));
-    safe = safe.trimmed().left(80);
+    safe = safe.trimmed().left(kSafeFilenameMaxChars);
     if (safe.isEmpty()) {
         safe = QStringLiteral("AI Session");
     }

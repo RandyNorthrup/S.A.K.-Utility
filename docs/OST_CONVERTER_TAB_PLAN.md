@@ -1120,13 +1120,13 @@ test_ost_converter_controller.cpp  # Queue management, multi-thread orchestratio
 | PST Write | PstWriter (in-tree) | In-tree | N/A | Create output PST files |
 | EML/MBOX | In-tree writers | In-tree | N/A | RFC 5322 generation |
 | MSG (OLE2) | In-tree writer | In-tree | N/A | Compound file creation |
-| PDF Output | QPdfWriter | Qt 6.5.3 | LGPL-3.0 | PDF rendering |
-| HTML Render | QTextDocument | Qt 6.5.3 | LGPL-3.0 | HTML-to-PDF pipeline |
-| IMAP Client | QSslSocket | Qt 6.5.3 (Network) | LGPL-3.0 | IMAP protocol |
+| PDF Output | QPdfWriter | Qt 6.5+ (release CI: 6.11.1) | LGPL-3.0 | PDF rendering |
+| HTML Render | QTextDocument | Qt 6.5+ (release CI: 6.11.1) | LGPL-3.0 | HTML-to-PDF pipeline |
+| IMAP Client | QSslSocket | Qt 6.5+ Network (release CI: 6.11.1) | LGPL-3.0 | IMAP protocol |
 | SSL/TLS | OpenSSL (via Qt) | Qt platform | Apache-2.0 | Secure IMAP connections |
-| Hashing | QCryptographicHash | Qt 6.5.3 | LGPL-3.0 | SHA-256 checksums |
-| Threading | QThread | Qt 6.5.3 | LGPL-3.0 | Worker threads |
-| Concurrent | QtConcurrent | Qt 6.5.3 | LGPL-3.0 | Thread pool management |
+| Hashing | QCryptographicHash | Qt 6.5+ (release CI: 6.11.1) | LGPL-3.0 | SHA-256 checksums |
+| Threading | QThread | Qt 6.5+ (release CI: 6.11.1) | LGPL-3.0 | Worker threads |
+| Concurrent | QtConcurrent | Qt 6.5+ (release CI: 6.11.1) | LGPL-3.0 | Thread pool management |
 
 > **No new external dependencies.** The entire converter is built on the existing
 > PstParser, Qt libraries (already linked), and new in-tree format writers. The

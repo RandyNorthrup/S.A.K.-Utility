@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.4
+    VERSION 0.9.1.5
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -458,7 +458,9 @@ set(CORE_SOURCES
     include/sak/ethernet_config_manager.h
     include/sak/action_constants.h
     include/sak/layout_constants.h
+    include/sak/message_box_helpers.h
     include/sak/network_constants.h
+    include/sak/report_style_constants.h
     include/sak/style_constants.h
     # Email & PST/OST Inspector core
     src/core/pst_parser.cpp

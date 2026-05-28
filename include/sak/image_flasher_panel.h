@@ -129,6 +129,9 @@ private:
     void createImageSelectionPage();
     /** @brief Create download cards and select-file button */
     void createDownloadCards(QVBoxLayout* pageLayout);
+    void addMicrosoftDownloadCard(QHBoxLayout* cardRow);
+    void addUupDownloadCard(QHBoxLayout* cardRow);
+    void addLinuxDownloadCard(QHBoxLayout* cardRow);
     void createSelectImageButton(QVBoxLayout* pageLayout);
     /// @brief Configuration for an ISO download card
     struct IsoCardConfig {

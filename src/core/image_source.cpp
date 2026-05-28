@@ -5,6 +5,7 @@
 
 #include "sak/decompressor_factory.h"
 #include "sak/file_hash.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/streaming_decompressor.h"
 
@@ -147,7 +148,7 @@ QString FileImageSource::calculateChecksum() {
         hash.addData(buffer.data(), bytesRead);
         totalRead += bytesRead;
 
-        int percentage = static_cast<int>((totalRead * 100) / size());
+        int percentage = static_cast<int>((totalRead * sak::kPercentMax) / size());
         Q_EMIT checksumProgress(percentage);
     }
 
@@ -276,7 +277,8 @@ bool CompressedImageSource::open() {
 
                 // Calculate percentage based on compressed file size
                 if (m_metadata.size > 0) {
-                    int percentage = static_cast<int>((compressedBytes * 100) / m_metadata.size);
+                    int percentage =
+                        static_cast<int>((compressedBytes * sak::kPercentMax) / m_metadata.size);
                     Q_EMIT decompressionProgress(percentage);
                 }
             });

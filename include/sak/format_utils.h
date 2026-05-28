@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QString>
 
 #include <cstdint>
@@ -24,18 +26,20 @@ namespace sak {
     constexpr qint64 kMB = 1024LL * 1024;
     constexpr qint64 kGB = 1024LL * 1024 * 1024;
     constexpr qint64 kTB = 1024LL * 1024 * 1024 * 1024;
+    constexpr int kLargeUnitPrecision = 2;
+    constexpr int kMediumUnitPrecision = 1;
 
     if (bytes >= kTB) {
-        return QString("%1 TB").arg(static_cast<double>(bytes) / kTB, 0, 'f', 2);
+        return QString("%1 TB").arg(static_cast<double>(bytes) / kTB, 0, 'f', kLargeUnitPrecision);
     }
     if (bytes >= kGB) {
-        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', 2);
+        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', kLargeUnitPrecision);
     }
     if (bytes >= kMB) {
-        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', 1);
+        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', kMediumUnitPrecision);
     }
     if (bytes >= kKB) {
-        return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', 1);
+        return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', kMediumUnitPrecision);
     }
     return QString("%1 bytes").arg(bytes);
 }

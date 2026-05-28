@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<asmv1:assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv1="urn:schemas-microsoft-com:asm.v1" xmlns:asmv2="urn:schemas-microsoft-com:asm.v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<asmv1:assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1" xmlns:asmv1="urn:schemas-microsoft-com:asm.v1" xmlns:asmv2="urn:schemas-microsoft-com:asm.v2" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <assemblyIdentity version="1.0.0.0" name="choco.app"/>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
@@ -9,16 +9,14 @@
              registry virtualization.
 
             Set level to "asInvoker" when you want choco to run under the context
-             of the user invoking. This is the same as Chocolatey behavior prior
-             to 0.10.4 and after 0.10.7.
+             of the user invoking.
 
             Set level to "requireAdministrator" to only allow administrators to
              run Chocolatey.
 
             Set level to "highestAvailable" to allow non-admins to run in
              non-administrative context, but require administrators to always run
-             with administrative privileges. This is the recommended and default
-             behavior of Chocolatey v0.10.4-0.10.6.1.
+             with administrative privileges.
 
             NOTE: Currently you will need to make this change every time
              Chocolatey is re-installed or upgraded (every new version). At least
@@ -50,8 +48,12 @@
       <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
       <!-- Windows 7 / Windows Server 2008 R2 -->
       <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
-      <!-- Windows Vista / Windows Server 2008 -->
-      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
     </application>
   </compatibility>
+
+  <asmv3:application>
+    <asmv3:windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+      <ws2:longPathAware>true</ws2:longPathAware>
+    </asmv3:windowsSettings>
+  </asmv3:application>
 </asmv1:assembly>

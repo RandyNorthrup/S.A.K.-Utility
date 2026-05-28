@@ -24,8 +24,8 @@ if (Test-Path $DestinationPath) {
     }
 }
 
-Write-Host "Creating destination directory..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+Write-Host "Preparing destination parent directory..." -ForegroundColor Yellow
+New-Item -ItemType Directory -Path (Split-Path -Parent $DestinationPath) -Force | Out-Null
 
 $TempDir = Join-Path $env:TEMP "choco_portable_download"
 $ChocoZip = Join-Path $TempDir "chocolatey.zip"
@@ -46,6 +46,9 @@ try {
     Write-Host "Downloaded installation script" -ForegroundColor Green
 
     $env:ChocolateyInstall = $DestinationPath
+    $OriginalPath = $env:Path
+    $env:Path = (($OriginalPath -split ';') |
+        Where-Object { $_ -and ($_ -notmatch '\\chocolatey\\bin\\?$') }) -join ';'
 
     Write-Host ""
     Write-Host "Installing Chocolatey portable to: $DestinationPath" -ForegroundColor Cyan
@@ -79,11 +82,26 @@ try {
     }
 
 } catch {
-    Write-Host ""
-    Write-Host "Error downloading or installing Chocolatey:" -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
-    exit 1
+    $ChocoExe = Join-Path $DestinationPath "bin\choco.exe"
+    if (-not (Test-Path $ChocoExe)) {
+        $ChocoExe = Join-Path $DestinationPath "choco.exe"
+    }
+
+    if (Test-Path $ChocoExe) {
+        Write-Host ""
+        Write-Host "Chocolatey installer reported a non-fatal post-install error:" -ForegroundColor DarkYellow
+        Write-Host $_.Exception.Message -ForegroundColor DarkYellow
+        Write-Host "Bundled choco.exe exists and will be verified." -ForegroundColor Yellow
+    } else {
+        Write-Host ""
+        Write-Host "Error downloading or installing Chocolatey:" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+        exit 1
+    }
 } finally {
+    if ($OriginalPath) {
+        $env:Path = $OriginalPath
+    }
     Write-Host ""
     Write-Host "Cleaning up temporary files..." -ForegroundColor Yellow
     if (Test-Path $TempDir) {

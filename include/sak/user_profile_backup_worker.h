@@ -14,6 +14,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultUserProfileCompressionLevel = 6;
+
 /**
  * @brief Background worker for backing up user profiles
  *
@@ -30,7 +32,7 @@ public:
     /// @brief Options controlling backup behavior
     struct BackupOptions {
         PermissionMode permission_mode{PermissionMode::StripAll};
-        int compression_level{6};
+        int compression_level{kDefaultUserProfileCompressionLevel};
         bool encrypt{false};
         QString password;
     };
@@ -150,7 +152,7 @@ private:
     QString m_destinationPath;
     SmartFilter m_smartFilter;
     PermissionMode m_permissionMode{PermissionMode::StripAll};
-    int m_compressionLevel{6};
+    int m_compressionLevel{kDefaultUserProfileCompressionLevel};
     bool m_encrypt{false};
     QString m_password;
 

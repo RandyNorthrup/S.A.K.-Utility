@@ -9,6 +9,8 @@
 #endif
 #include "sak/firewall_rule_auditor.h"
 
+#include "sak/layout_constants.h"
+
 #include <QSet>
 
 #include <optional>
@@ -27,6 +29,15 @@ namespace sak {
 
 namespace {
 constexpr int kMaxPortValue = 65'535;
+constexpr long kProtocolTcp = 6;
+constexpr long kProtocolUdp = 17;
+constexpr long kProtocolIcmpV6 = 58;
+constexpr int kPortRangePartCount = 2;
+constexpr int kHResultHexWidth = 8;
+constexpr uint16_t kRdpPort = 3389;
+constexpr uint16_t kSmbPort = 445;
+constexpr int kWildcardRuleWarningThreshold = 5;
+constexpr int kDisabledBlockRuleWarningThreshold = 10;
 
 /// @brief RAII wrapper for COM initialization
 struct ComInitializer {
@@ -108,13 +119,13 @@ void populateRuleIdentity(INetFwRule* pRule, FirewallRule& rule) {
 
 FirewallRule::Protocol protocolFromNumber(long proto) {
     switch (proto) {
-    case 6:
+    case kProtocolTcp:
         return FirewallRule::Protocol::TCP;
-    case 17:
+    case kProtocolUdp:
         return FirewallRule::Protocol::UDP;
     case 1:
         return FirewallRule::Protocol::ICMPv4;
-    case 58:
+    case kProtocolIcmpV6:
         return FirewallRule::Protocol::ICMPv6;
     default:
         return FirewallRule::Protocol::Any;
@@ -237,7 +248,7 @@ bool tryParsePortRange(const QString& s, int& start, int& end) {
     }
 
     const auto parts = s.split(QLatin1Char('-'));
-    if (parts.size() != 2) {
+    if (parts.size() != kPortRangePartCount) {
         return false;
     }
 
@@ -357,8 +368,9 @@ std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& c
                                   __uuidof(INetFwPolicy2),
                                   reinterpret_cast<void**>(pPolicy.put()));
     if (FAILED(hr) || !pPolicy) {
-        error_out = QStringLiteral("Failed to access firewall policy (HRESULT 0x%1)")
-                        .arg(static_cast<unsigned long>(hr), 8, 16, QLatin1Char('0'));
+        error_out =
+            QStringLiteral("Failed to access firewall policy (HRESULT 0x%1)")
+                .arg(static_cast<unsigned long>(hr), kHResultHexWidth, kHexBase, QLatin1Char('0'));
         return std::nullopt;
     }
 
@@ -510,7 +522,7 @@ void FirewallRuleAuditor::checkRdpGap(const QVector<FirewallRule>& rules,
             continue;
         }
         auto ports = parsePorts(rule.localPorts);
-        if (!ports.contains(3389) && rule.localPorts != QStringLiteral("*")) {
+        if (!ports.contains(kRdpPort) && rule.localPorts != QStringLiteral("*")) {
             continue;
         }
         if (rule.remoteAddresses != QStringLiteral("*") && !rule.remoteAddresses.isEmpty()) {
@@ -558,7 +570,7 @@ void FirewallRuleAuditor::checkWildcardGap(const QVector<FirewallRule>& rules,
             wildcardRules++;
         }
     }
-    if (wildcardRules <= 5) {
+    if (wildcardRules <= kWildcardRuleWarningThreshold) {
         return;
     }
     FirewallGap gap;
@@ -580,7 +592,7 @@ void FirewallRuleAuditor::checkSmbGap(const QVector<FirewallRule>& rules,
             continue;
         }
         auto ports = parsePorts(rule.localPorts);
-        if (!ports.contains(445)) {
+        if (!ports.contains(kSmbPort)) {
             continue;
         }
         if (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) {
@@ -606,7 +618,7 @@ void FirewallRuleAuditor::checkDisabledBlockGap(const QVector<FirewallRule>& rul
             disabledBlockRules++;
         }
     }
-    if (disabledBlockRules <= 10) {
+    if (disabledBlockRules <= kDisabledBlockRuleWarningThreshold) {
         return;
     }
     FirewallGap gap;

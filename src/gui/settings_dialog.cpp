@@ -7,6 +7,7 @@
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QFileDialog>
@@ -20,6 +21,11 @@
 #include <QVBoxLayout>
 
 namespace sak {
+
+namespace {
+constexpr int kBackupThreadCountMin = 1;
+constexpr int kBackupThreadCountMax = 16;
+}  // namespace
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
     setupUi();
@@ -47,6 +53,7 @@ void SettingsDialog::setupUi() {
 
     // Create tab widget
     m_tabWidget = new QTabWidget(this);
+    m_tabWidget->setAccessibleName(tr("Settings tabs"));
     createBackupTab();
 
     mainLayout->addWidget(m_tabWidget);
@@ -55,18 +62,22 @@ void SettingsDialog::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
 
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
+    m_resetButton->setAccessibleName(tr("Reset settings to defaults"));
     buttonLayout->addWidget(m_resetButton);
 
     buttonLayout->addStretch();
 
     m_okButton = new QPushButton(tr("OK"), this);
+    m_okButton->setAccessibleName(tr("Save settings"));
     m_okButton->setDefault(true);
     buttonLayout->addWidget(m_okButton);
 
     m_cancelButton = new QPushButton(tr("Cancel"), this);
+    m_cancelButton->setAccessibleName(tr("Cancel settings changes"));
     buttonLayout->addWidget(m_cancelButton);
 
     m_applyButton = new QPushButton(tr("Apply"), this);
+    m_applyButton->setAccessibleName(tr("Apply settings changes"));
     m_applyButton->setEnabled(false);
     buttonLayout->addWidget(m_applyButton);
 
@@ -112,7 +123,7 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     auto* backupLayout = new QFormLayout();
 
     m_backupThreadCount = new QSpinBox();
-    m_backupThreadCount->setRange(1, 16);
+    m_backupThreadCount->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
     backupLayout->addRow(InfoButton::createInfoLabel(
                              tr("Thread Count:"),
                              tr("Higher values speed up backup but use more CPU and disk I/O"),
@@ -281,7 +292,7 @@ bool SettingsDialog::validateSettings() {
     if (m_backupThreadCount->value() < 1) {
         sak::logWarning("Invalid setting: backup thread count less than 1 (value: {})",
                         m_backupThreadCount->value());
-        QMessageBox::warning(this, tr("Invalid Setting"), tr("Thread count must be at least 1."));
+        sak::showWarningLogged(this, tr("Invalid Setting"), tr("Thread count must be at least 1."));
         m_tabWidget->setCurrentIndex(0);  // Switch to Backup tab
         m_backupThreadCount->setFocus();
         return false;
@@ -303,7 +314,7 @@ void SettingsDialog::onOkClicked() {
 
 void SettingsDialog::onCancelClicked() {
     if (m_settingsModified) {
-        auto reply = QMessageBox::question(
+        auto reply = sak::showQuestionLogged(
             this,
             tr("Unsaved Changes"),
             tr("You have unsaved changes. Are you sure you want to discard them?"),
@@ -318,7 +329,7 @@ void SettingsDialog::onCancelClicked() {
 }
 
 void SettingsDialog::onResetToDefaultsClicked() {
-    auto reply = QMessageBox::question(
+    auto reply = sak::showQuestionLogged(
         this,
         tr("Reset to Defaults"),
         tr("Are you sure you want to reset all settings to their default values?"),
@@ -328,9 +339,9 @@ void SettingsDialog::onResetToDefaultsClicked() {
     if (reply == QMessageBox::Yes) {
         ConfigManager::instance().resetToDefaults();
         loadSettings();
-        QMessageBox::information(this,
-                                 tr("Reset Complete"),
-                                 tr("All settings have been reset to defaults."));
+        sak::showInformationLogged(this,
+                                   tr("Reset Complete"),
+                                   tr("All settings have been reset to defaults."));
     }
 }
 

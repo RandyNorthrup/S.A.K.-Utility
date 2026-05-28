@@ -6,6 +6,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
 
 #include <QDir>
@@ -23,6 +24,25 @@
 
 namespace sak {
 
+namespace {
+
+constexpr int kFolderNameColumnWidth = 500;
+constexpr int kFolderSizeColumnWidth = 100;
+constexpr int kFolderFilesColumnWidth = 80;
+constexpr int kFolderTreeIndentationPx = 20;
+constexpr int kInitialFolderScanMaxDepth = 2;
+constexpr int kSizeDisplayPrecisionLarge = 2;
+constexpr int kSizeDisplayPrecisionSmall = 1;
+
+enum FolderColumn {
+    FolderColName = 0,
+    FolderColSize,
+    FolderColFiles,
+    FolderColCount
+};
+
+}  // namespace
+
 PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWidget* parent)
     : QDialog(parent), m_profile(profile) {
     setupUi();
@@ -36,7 +56,7 @@ PerUserCustomizationDialog::PerUserCustomizationDialog(UserProfile& profile, QWi
 void PerUserCustomizationDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setSpacing(6);
+    mainLayout->setSpacing(sak::ui::kSpacingSmall);
     mainLayout->setContentsMargins(
         sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge, sak::ui::kMarginLarge);
 
@@ -45,7 +65,7 @@ void PerUserCustomizationDialog::setupUi() {
     mainLayout->addWidget(m_usernameLabel);
 
     m_profilePathLabel = new QLabel(QString("Profile Path: %1").arg(m_profile.profile_path));
-    m_profilePathLabel->setStyleSheet(QString("color: %1;").arg(sak::ui::kColorTextMuted));
+    m_profilePathLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     mainLayout->addWidget(m_profilePathLabel);
 
     setupUi_foldersSection(mainLayout);
@@ -59,7 +79,7 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     // Standard folders section
     auto* foldersGroup = new QGroupBox("Standard Folders");
     auto* foldersLayout = new QVBoxLayout(foldersGroup);
-    foldersLayout->setSpacing(4);
+    foldersLayout->setSpacing(sak::ui::kSpacingTight);
 
     // Selection buttons
     auto* selectionLayout = new QHBoxLayout();
@@ -77,17 +97,17 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
 
     // Folder tree
     m_folderTree = new QTreeWidget();
-    m_folderTree->setColumnCount(3);
+    m_folderTree->setColumnCount(FolderColCount);
     m_folderTree->setHeaderLabels({"Folder", "Size", "Files"});
-    m_folderTree->setColumnWidth(0, 500);
-    m_folderTree->setColumnWidth(1, 100);
-    m_folderTree->setColumnWidth(2, 80);
+    m_folderTree->setColumnWidth(FolderColName, kFolderNameColumnWidth);
+    m_folderTree->setColumnWidth(FolderColSize, kFolderSizeColumnWidth);
+    m_folderTree->setColumnWidth(FolderColFiles, kFolderFilesColumnWidth);
     m_folderTree->setAlternatingRowColors(true);
     m_folderTree->setSelectionMode(QAbstractItemView::NoSelection);
     m_folderTree->setRootIsDecorated(true);
-    m_folderTree->setIndentation(20);
+    m_folderTree->setIndentation(kFolderTreeIndentationPx);
     m_folderTree->header()->setStretchLastSection(false);
-    m_folderTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_folderTree->header()->setSectionResizeMode(FolderColName, QHeaderView::Stretch);
 
     foldersLayout->addWidget(m_folderTree, 1);
 
@@ -121,16 +141,12 @@ void PerUserCustomizationDialog::setupUi_appDataSection(QVBoxLayout* mainLayout)
         "It contains machine-specific files that can corrupt profiles. "
         "Application data is selected on the <b>Application Data</b> wizard step.");
     warningLabel->setWordWrap(true);
-    warningLabel->setStyleSheet(QString("color: %1; padding: 8px; background-color: %2; "
-                                        "border-radius: 10px;")
-                                    .arg(sak::ui::kColorErrorText, sak::ui::kColorBgErrorPanel));
+    warningLabel->setStyleSheet(sak::ui::warningPanelStyle());
     mainLayout->addWidget(warningLabel);
 
     // Summary
     m_summaryLabel = new QLabel();
-    m_summaryLabel->setStyleSheet(QString("padding: 10px; background-color: %1; border-radius: "
-                                          "10px;")
-                                      .arg(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
     mainLayout->addWidget(m_summaryLabel);
 }
 
@@ -216,7 +232,7 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
         folderItem->setCheckState(0, selection.selected ? Qt::Checked : Qt::Unchecked);
         folderItem->setText(0, selection.display_name);
         folderItem->setText(1, "Not Found");
-        folderItem->setText(2, "-");
+        folderItem->setText(FolderColFiles, "-");
         folderItem->setData(0, Qt::UserRole, selection.relative_path);
         folderItem->setData(0, Qt::UserRole + 1, true);  // Mark as folder
         return;
@@ -234,7 +250,7 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     // Recursively add subdirectories and files (with depth limit and lazy loading)
     qint64 totalSize = 0;
     int totalFiles = 0;
-    const int MAX_DEPTH = 2;  // Only scan 2 levels deep initially
+    const int MAX_DEPTH = kInitialFolderScanMaxDepth;
     addDirectoryContents(dir,
                          folderItem,
                          {totalSize, totalFiles, selection.selected, 0, MAX_DEPTH});
@@ -244,11 +260,13 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     if (totalSize > 0) {
         double sizeMB = totalSize / sak::kBytesPerMBf;
         if (sizeMB >= sak::kBytesPerKBf) {
-            sizeStr = QString("%1 GB").arg(sizeMB / sak::kBytesPerKBf, 0, 'f', 2);
+            sizeStr = QString("%1 GB").arg(
+                sizeMB / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionLarge);
         } else if (sizeMB >= 1) {
-            sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', 1);
+            sizeStr = QString("%1 MB").arg(sizeMB, 0, 'f', kSizeDisplayPrecisionSmall);
         } else {
-            sizeStr = QString("%1 KB").arg(totalSize / sak::kBytesPerKBf, 0, 'f', 1);
+            sizeStr = QString("%1 KB").arg(
+                totalSize / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionSmall);
         }
     } else {
         sizeStr = "0 KB";
@@ -256,7 +274,7 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     folderItem->setText(1, sizeStr);
 
     // Column 2: File count
-    folderItem->setText(2, QString::number(totalFiles));
+    folderItem->setText(FolderColFiles, QString::number(totalFiles));
 }
 
 void PerUserCustomizationDialog::onSelectAll() {
@@ -321,9 +339,9 @@ void PerUserCustomizationDialog::onAddCustomFolder() {
     if (duplicate) {
         sak::logWarning("Duplicate folder rejected in backup profile: {}",
                         relativePath.toStdString());
-        QMessageBox::warning(this,
-                             "Duplicate Folder",
-                             "This folder is already in the backup list.");
+        sak::showWarningLogged(this,
+                               "Duplicate Folder",
+                               "This folder is already in the backup list.");
         return;
     }
 
@@ -353,7 +371,7 @@ void PerUserCustomizationDialog::onRemoveFolder() {
     Q_ASSERT(m_folderTree);
     QTreeWidgetItem* currentItem = m_folderTree->currentItem();
     if (!currentItem) {
-        QMessageBox::information(this, "Remove Folder", "Please select a folder to remove.");
+        sak::showInformationLogged(this, "Remove Folder", "Please select a folder to remove.");
         return;
     }
 
@@ -363,10 +381,11 @@ void PerUserCustomizationDialog::onRemoveFolder() {
 
     // Only allow removal of top-level custom folders
     if (relativePath.isEmpty() || currentItem->parent() != nullptr) {
-        QMessageBox::information(this,
-                                 "Remove Folder",
-                                 "Only top-level custom folders can be removed.\n"
-                                 "Standard folders (Documents, Desktop, etc.) cannot be removed.");
+        sak::showInformationLogged(
+            this,
+            "Remove Folder",
+            "Only top-level custom folders can be removed.\n"
+            "Standard folders (Documents, Desktop, etc.) cannot be removed.");
         return;
     }
 
@@ -380,13 +399,13 @@ void PerUserCustomizationDialog::onRemoveFolder() {
     if (it == m_profile.folder_selections.end()) {
         sak::logWarning("Attempted to remove folder not found in profile: {}",
                         relativePath.toStdString());
-        QMessageBox::warning(this, "Remove Folder", "Folder not found in profile.");
+        sak::showWarningLogged(this, "Remove Folder", "Folder not found in profile.");
         return;
     }
 
     // Only allow removal of custom folders
     if (it->type != FolderType::Custom) {
-        QMessageBox::information(
+        sak::showInformationLogged(
             this,
             "Remove Folder",
             "Only custom folders can be removed.\n"
@@ -395,7 +414,7 @@ void PerUserCustomizationDialog::onRemoveFolder() {
     }
 
     // Confirm removal
-    auto reply = QMessageBox::question(
+    auto reply = sak::showQuestionLogged(
         this,
         "Confirm Removal",
         QString("Remove folder \"%1\" from backup?\n\nThis will not delete the actual folder from "
@@ -473,7 +492,7 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
             childItem->setText(0, QString("[LINK] %1").arg(entry.fileName()));
             childItem->setData(0, Qt::UserRole + 1, true);
             childItem->setText(1, "-");
-            childItem->setText(2, "-");
+            childItem->setText(FolderColFiles, "-");
             return;
         }
 
@@ -496,7 +515,7 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         state.total_files += subDirFiles;
 
         childItem->setText(1, formatFileSize(subDirSize));
-        childItem->setText(2, QString::number(subDirFiles));
+        childItem->setText(FolderColFiles, QString::number(subDirFiles));
 
     } else if (entry.isFile()) {
         childItem->setFlags(childItem->flags() | Qt::ItemIsUserCheckable);
@@ -508,8 +527,8 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         state.total_size += fileSize;
         state.total_files++;
 
-        childItem->setText(2, formatFileSize(fileSize));
-        childItem->setText(3, "-");
+        childItem->setText(FolderColSize, formatFileSize(fileSize));
+        childItem->setText(FolderColFiles, "-");
     }
 }
 
@@ -697,7 +716,8 @@ void PerUserCustomizationDialog::updateSummary() {
 
     if (totalSize > 0) {
         double sizeGB = totalSize / sak::kBytesPerGBf;
-        summary += QString(" | Estimated size: <b>%1 GB</b>").arg(sizeGB, 0, 'f', 2);
+        summary += QString(" | Estimated size: <b>%1 GB</b>")
+                       .arg(sizeGB, 0, 'f', kSizeDisplayPrecisionLarge);
     }
 
     m_summaryLabel->setText(summary);

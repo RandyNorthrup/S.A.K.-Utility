@@ -19,6 +19,63 @@
 
 namespace sak {
 
+#ifdef _WIN32
+namespace {
+bool createPipeSecurityAttributes(SECURITY_ATTRIBUTES& attributes,
+                                  PSECURITY_DESCRIPTOR& descriptor) {
+    attributes.nLength = sizeof(attributes);
+    attributes.bInheritHandle = FALSE;
+
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+            "D:(A;;GA;;;BA)(A;;GRGW;;;BU)", SDDL_REVISION_1, &descriptor, nullptr)) {
+        sak::logError("ElevatedPipeServer: failed to create security descriptor: {}",
+                      GetLastError());
+        return false;
+    }
+
+    attributes.lpSecurityDescriptor = descriptor;
+    return true;
+}
+
+HANDLE createServerPipe(const QString& pipe_name, SECURITY_ATTRIBUTES& attributes) {
+    const std::wstring wide_name = pipe_name.toStdWString();
+    return CreateNamedPipeW(wide_name.c_str(),
+                            PIPE_ACCESS_DUPLEX,
+                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                            1,
+                            static_cast<DWORD>(kPipeMaxPayload),
+                            static_cast<DWORD>(kPipeMaxPayload),
+                            0,
+                            &attributes);
+}
+
+bool waitForPipeClient(HANDLE pipe_handle) {
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) {
+        sak::logError("ElevatedPipeServer: CreateEventW failed");
+        return false;
+    }
+
+    const BOOL connected = ConnectNamedPipe(pipe_handle, &ov);
+    const DWORD last_error = GetLastError();
+    bool ok = connected || last_error == ERROR_PIPE_CONNECTED;
+
+    if (!ok && last_error == ERROR_IO_PENDING) {
+        ok = WaitForSingleObject(ov.hEvent, kPipeConnectTimeoutMs) == WAIT_OBJECT_0;
+        if (!ok) {
+            sak::logError("ElevatedPipeServer: connection timed out");
+        }
+    } else if (!ok) {
+        sak::logError("ElevatedPipeServer: ConnectNamedPipe failed: {}", last_error);
+    }
+
+    CloseHandle(ov.hEvent);
+    return ok;
+}
+}  // namespace
+#endif
+
 // ======================================================================
 // Construction / Destruction
 // ======================================================================
@@ -36,34 +93,13 @@ ElevatedPipeServer::~ElevatedPipeServer() {
 
 bool ElevatedPipeServer::start() {
 #ifdef _WIN32
-    // Create security descriptor that allows the pipe creator and SYSTEM access.
-    // The parent process (running as standard user) connects as the logged-on user,
-    // so we grant GENERIC_READ | GENERIC_WRITE to the BUILTIN\Users group.
     SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = FALSE;
-
-    // DACL: Owner (BA=Builtin Administrators) full, Users (BU) read+write
     PSECURITY_DESCRIPTOR sd = nullptr;
-    if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
-            "D:(A;;GA;;;BA)(A;;GRGW;;;BU)", SDDL_REVISION_1, &sd, nullptr)) {
-        sak::logError("ElevatedPipeServer: failed to create security descriptor: {}",
-                      GetLastError());
+    if (!createPipeSecurityAttributes(sa, sd)) {
         return false;
     }
-    sa.lpSecurityDescriptor = sd;
 
-    std::wstring wide_name = m_pipe_name.toStdWString();
-
-    m_pipe_handle = CreateNamedPipeW(wide_name.c_str(),
-                                     PIPE_ACCESS_DUPLEX,
-                                     PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                     1,  // Single connection only (security hardening)
-                                     static_cast<DWORD>(kPipeMaxPayload),
-                                     static_cast<DWORD>(kPipeMaxPayload),
-                                     0,
-                                     &sa);
-
+    m_pipe_handle = createServerPipe(m_pipe_name, sa);
     LocalFree(sd);
 
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
@@ -72,39 +108,10 @@ bool ElevatedPipeServer::start() {
     }
 
     sak::logInfo("ElevatedPipeServer: waiting for client on '{}'", m_pipe_name.toStdString());
-
-    // Wait for client connection with timeout
-    OVERLAPPED ov{};
-    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ov.hEvent) {
-        sak::logError("ElevatedPipeServer: CreateEventW failed");
+    if (!waitForPipeClient(m_pipe_handle)) {
         stop();
         return false;
     }
-
-    BOOL connected = ConnectNamedPipe(m_pipe_handle, &ov);
-    DWORD last_err = GetLastError();
-
-    if (!connected) {
-        if (last_err == ERROR_IO_PENDING) {
-            // Wait up to connection timeout
-            DWORD wait_result = WaitForSingleObject(ov.hEvent, kPipeConnectTimeoutMs);
-            if (wait_result != WAIT_OBJECT_0) {
-                sak::logError("ElevatedPipeServer: connection timed out");
-                CloseHandle(ov.hEvent);
-                stop();
-                return false;
-            }
-        } else if (last_err != ERROR_PIPE_CONNECTED) {
-            sak::logError("ElevatedPipeServer: ConnectNamedPipe failed: {}", last_err);
-            CloseHandle(ov.hEvent);
-            stop();
-            return false;
-        }
-        // ERROR_PIPE_CONNECTED means client connected before we called Connect
-    }
-
-    CloseHandle(ov.hEvent);
 
     if (!validateClient()) {
         sak::logError("ElevatedPipeServer: client validation failed");
@@ -150,11 +157,12 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
-    uint32_t payload_len = static_cast<uint8_t>(header[0]) |
-                           (static_cast<uint8_t>(header[1]) << 8) |
-                           (static_cast<uint8_t>(header[2]) << 16) |
-                           (static_cast<uint8_t>(header[3]) << 24);
-    auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[4]));
+    uint32_t payload_len =
+        static_cast<uint8_t>(header[kPipeFrameLengthByte0]) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte1]) << kPipeFrameByteShift1) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte2]) << kPipeFrameByteShift2) |
+        (static_cast<uint8_t>(header[kPipeFrameLengthByte3]) << kPipeFrameByteShift3);
+    auto type = static_cast<PipeMessageType>(static_cast<uint8_t>(header[kPipeFrameTypeByte]));
 
     if (payload_len > kPipeMaxPayload) {
         sak::logError("ElevatedPipeServer: message too large: {}", payload_len);

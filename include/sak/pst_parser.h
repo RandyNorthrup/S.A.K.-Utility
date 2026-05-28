@@ -196,6 +196,37 @@ private:
     /// Parse and validate the PST file header
     [[nodiscard]] std::expected<void, sak::error_code> parseHeader();
 
+    /// Open the source file for binary parsing
+    [[nodiscard]] bool openReadOnlyFile(const QString& file_path);
+
+    /// Load header, BTree caches, and folder hierarchy
+    [[nodiscard]] bool loadPstStructure();
+
+    /// Report an open-stage failure and optionally close parser state
+    [[nodiscard]] bool failOpen(const QString& message, bool close_parser);
+
+    /// Populate file-level metadata after structural parse succeeds
+    void populateFileInfo(const QString& file_path);
+
+    /// Load message-store display name when present
+    void loadMessageStoreDisplayName();
+
+    /// Read and size-check the fixed PST header prefix
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readHeaderBytes();
+
+    /// Parse header signature, type, version, and platform fields
+    [[nodiscard]] std::expected<void, sak::error_code> parseHeaderPreamble(const QByteArray& data);
+
+    /// Parse header encryption fields
+    [[nodiscard]] std::expected<void, sak::error_code> parseHeaderEncryption(
+        const QByteArray& data);
+
+    /// Parse format-specific ROOT pointers
+    void parseHeaderRootPointers(const QByteArray& data);
+
+    /// Log validated header metadata
+    void logParsedHeader() const;
+
     /// Compute format-dependent page sizes for BTree parsing
     [[nodiscard]] PageFormatSizes pageFormatSizes() const;
 

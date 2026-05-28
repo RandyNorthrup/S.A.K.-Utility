@@ -19,6 +19,7 @@
 #include <QWidget>
 
 class QLabel;
+class QFormLayout;
 class QStackedWidget;
 class QVBoxLayout;
 
@@ -80,6 +81,10 @@ private:
     // -------------------------------------------------------------------------
     void setupUi();
     void setupFormGroup();
+    void setupNetworkIdentityFields(QFormLayout* layout);
+    void setupNetworkPasswordField(QFormLayout* layout);
+    void setupNetworkOptionsFields(QFormLayout* layout);
+    void setupFormActionButtons(QFormLayout* layout);
     void setupTableGroup();
     void setupTableSearchRow(QVBoxLayout* layout);
     void setupNetworkTable(QVBoxLayout* layout);

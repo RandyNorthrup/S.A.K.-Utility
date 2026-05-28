@@ -10,6 +10,8 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultPackageCandidateLimit = 5;
+
 struct AiPackageCandidate {
     QString package_id;
     QString version;
@@ -35,8 +37,9 @@ struct AiPackageSelectionResult {
 
 [[nodiscard]] QString normalizePackageQueryKey(const QString& value);
 
-[[nodiscard]] AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
-                                                                const QJsonArray& packages,
-                                                                int candidate_limit = 5);
+[[nodiscard]] AiPackageSelectionResult selectPackageForWorkflow(
+    const QString& query,
+    const QJsonArray& packages,
+    int candidate_limit = kDefaultPackageCandidateLimit);
 
 }  // namespace sak::ai

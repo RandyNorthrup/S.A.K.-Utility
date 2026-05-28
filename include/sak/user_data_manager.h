@@ -14,6 +14,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultBackupCompressionLevel = 6;
+
 /**
  * @brief UserDataManager - Backup and restore application user data
  *
@@ -64,9 +66,9 @@ public:
                                         "*.tmp",
                                         "cache/*",
                                         "temp/*"};
-        int compression_level = 6;  // 0-9 (0=none, 9=max)
-        bool encrypt = false;       // Enable AES-256 encryption
-        QString password;           // Encryption password
+        int compression_level = kDefaultBackupCompressionLevel;  // 0-9 (0=none, 9=max)
+        bool encrypt = false;                                    // Enable AES-256 encryption
+        QString password;                                        // Encryption password
     };
 
     /**

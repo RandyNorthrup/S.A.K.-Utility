@@ -24,6 +24,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultNoteColorYellow = 3;
+
 // ============================================================================
 // PST File Header (MS-PST §2.2.2.6)
 // ============================================================================
@@ -228,7 +230,7 @@ struct PstItemDetail {
     double task_percent_complete = 0.0;
 
     // Note-specific
-    int note_color = 3;  ///< 0=Blue, 1=Green, 2=Pink, 3=Yellow, 4=White
+    int note_color = kDefaultNoteColorYellow;  ///< 0=Blue, 1=Green, 2=Pink, 3=Yellow, 4=White
 };
 
 // ============================================================================

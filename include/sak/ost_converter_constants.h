@@ -63,4 +63,9 @@ enum QueueColumn {
     ColCount
 };
 
+constexpr int kQueueFileColumnWidth = 300;
+constexpr int kQueueSizeColumnWidth = 80;
+constexpr int kQueueItemsColumnWidth = 60;
+constexpr int kQueueStatusColumnWidth = 100;
+
 }  // namespace sak::ost

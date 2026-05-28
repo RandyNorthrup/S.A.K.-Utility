@@ -126,13 +126,26 @@ private Q_SLOTS:
 private:
     // -- UI Setup --------------------------------------------------------
     void setupUi();
+    void setupRedrawTimer();
     void connectController();
+    void connectControllerFileSignals();
+    void connectControllerNavigationSignals();
+    void connectControllerSearchSignals();
+    void connectControllerExportSignals();
+    void connectControllerCommonSignals();
+    void connectControllerMboxSignals();
 
     // -- Sub-Builders ----------------------------------------------------
     QWidget* createRibbon();
+    void addRibbonFileGroup(QHBoxLayout* layout, QWidget* ribbon);
+    void addRibbonSearchGroup(QHBoxLayout* layout, QWidget* ribbon);
+    void addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon);
+    void addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* ribbon);
     QWidget* createFolderTreePanel();
     QWidget* createContentArea();
     QWidget* createItemListPanel();
+    QHBoxLayout* createItemPagingRow(QWidget* group);
+    void configureItemListTable(QWidget* group);
     QWidget* createDetailPanel();
     QWidget* createContentTab();
     QWidget* createHeadersTab();

@@ -3,11 +3,18 @@
 
 #include "sak/smart_file_filter.h"
 
+#include "sak/layout_constants.h"
+
 #include <QDir>
 
 #include <algorithm>
 
 namespace sak {
+
+namespace {
+constexpr int kFileSizeDisplayPrecision = 1;
+constexpr int kFileSizeLimitDisplayPrecision = 0;
+}  // namespace
 
 SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
     compileRegexPatterns();
@@ -172,11 +179,14 @@ QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
     }
 
     if (exceedsSizeLimit(fileInfo.size())) {
-        double sizeMB = fileInfo.size() / (1024.0 * 1024.0);
+        double sizeMB = fileInfo.size() / kBytesPerMBf;
         if (m_rules.enable_file_size_limit) {
             return QString("File too large: %1 MB (limit: %2 MB)")
-                .arg(sizeMB, 0, 'f', 1)
-                .arg(m_rules.max_single_file_size_bytes / (1024.0 * 1024.0), 0, 'f', 0);
+                .arg(sizeMB, 0, 'f', kFileSizeDisplayPrecision)
+                .arg(m_rules.max_single_file_size_bytes / kBytesPerMBf,
+                     0,
+                     'f',
+                     kFileSizeLimitDisplayPrecision);
         }
     }
 

@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QMetaType>
 #include <QSet>
 #include <QString>
@@ -19,6 +21,14 @@
 #include <type_traits>
 
 namespace sak {
+
+inline constexpr int kAdvancedSearchDefaultContextLines = 2;
+inline constexpr int kAdvancedSearchDefaultFileSizeMb = 50;
+inline constexpr qint64 kAdvancedSearchDefaultFileSizeBytes =
+    static_cast<qint64>(kAdvancedSearchDefaultFileSizeMb) * kBytesPerMB;
+inline constexpr int kAdvancedSearchNetworkTimeoutSec = 5;
+inline constexpr int kAdvancedSearchPreviewFileSizeMb = 10;
+inline constexpr int kAdvancedSearchCacheSize = 50;
 
 // -- SearchMatch -------------------------------------------------------------
 
@@ -63,10 +73,10 @@ struct SearchConfig {
         R"(\.bin$)"};
 
     // Limits
-    int context_lines = 2;                      ///< Lines of context before/after (0-10)
-    int max_results = 0;                        ///< 0 = unlimited
-    qint64 max_file_size = 50LL * 1024 * 1024;  ///< 50 MB default
-    int network_timeout_sec = 5;                ///< UNC path timeout
+    int context_lines = kAdvancedSearchDefaultContextLines;
+    int max_results = 0;
+    qint64 max_file_size = kAdvancedSearchDefaultFileSizeBytes;
+    int network_timeout_sec = kAdvancedSearchNetworkTimeoutSec;
 };
 
 // -- RegexPatternInfo --------------------------------------------------------
@@ -83,11 +93,11 @@ struct RegexPatternInfo {
 
 /// @brief Persistent search preferences
 struct SearchPreferences {
-    int max_results = 0;  ///< 0 = unlimited
-    int max_preview_file_size_mb = 10;
-    int max_search_file_size_mb = 50;
-    int max_cache_size = 50;  ///< LRU file cache entries
-    int context_lines = 2;    ///< Default context lines
+    int max_results = 0;
+    int max_preview_file_size_mb = kAdvancedSearchPreviewFileSizeMb;
+    int max_search_file_size_mb = kAdvancedSearchDefaultFileSizeMb;
+    int max_cache_size = kAdvancedSearchCacheSize;
+    int context_lines = kAdvancedSearchDefaultContextLines;
 };
 
 // -- File type classification sets -------------------------------------------

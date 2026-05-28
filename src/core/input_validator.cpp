@@ -35,6 +35,26 @@ namespace {
 
 constexpr unsigned char kContinuationMask = 0xC0;
 constexpr unsigned char kContinuationTag = 0x80;
+constexpr unsigned char kAsciiLimit = 0x80;
+constexpr unsigned char kUtf8TwoByteMask = 0xE0;
+constexpr unsigned char kUtf8TwoByteTag = 0xC0;
+constexpr unsigned char kUtf8TwoByteMinLead = 0xC2;
+constexpr unsigned char kUtf8ThreeByteMask = 0xF0;
+constexpr unsigned char kUtf8ThreeByteTag = 0xE0;
+constexpr unsigned char kUtf8FourByteMask = 0xF8;
+constexpr unsigned char kUtf8FourByteTag = 0xF0;
+constexpr int kUtf8OneContinuation = 1;
+constexpr int kUtf8TwoContinuations = 2;
+constexpr int kUtf8ThreeContinuations = 3;
+constexpr int kUtf8TwoByteSequenceLength = 2;
+constexpr int kUtf8ThreeByteSequenceLength = 3;
+constexpr int kUtf8FourByteSequenceLength = 4;
+constexpr std::uintmax_t kFileDescriptorWarnNumerator = 4;
+constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
+constexpr std::size_t kUnknownHardwareThreadLimit = 64;
+constexpr unsigned int kThreadWarningMultiplier = 2;
+constexpr unsigned int kThreadRejectMultiplier = 4;
+constexpr auto kWindowsDeviceNamePattern = "(^|[/\\\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\.|$)";
 
 bool isContinuationByte(unsigned char byte) noexcept {
     return (byte & kContinuationMask) == kContinuationTag;
@@ -57,16 +77,68 @@ int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
     Q_ASSERT(pos < str.size());
     const unsigned char lead = static_cast<unsigned char>(str[pos]);
 
-    if ((lead & 0xE0) == 0xC0) {
-        return (lead >= 0xC2 && hasContinuationBytes(str, pos, 1)) ? 2 : 0;
+    if ((lead & kUtf8TwoByteMask) == kUtf8TwoByteTag) {
+        return (lead >= kUtf8TwoByteMinLead && hasContinuationBytes(str, pos, kUtf8OneContinuation))
+                   ? kUtf8TwoByteSequenceLength
+                   : 0;
     }
-    if ((lead & 0xF0) == 0xE0) {
-        return hasContinuationBytes(str, pos, 2) ? 3 : 0;
+    if ((lead & kUtf8ThreeByteMask) == kUtf8ThreeByteTag) {
+        return hasContinuationBytes(str, pos, kUtf8TwoContinuations) ? kUtf8ThreeByteSequenceLength
+                                                                     : 0;
     }
-    if ((lead & 0xF8) == 0xF0) {
-        return hasContinuationBytes(str, pos, 3) ? 4 : 0;
+    if ((lead & kUtf8FourByteMask) == kUtf8FourByteTag) {
+        return hasContinuationBytes(str, pos, kUtf8ThreeContinuations) ? kUtf8FourByteSequenceLength
+                                                                       : 0;
     }
     return 0;
+}
+
+bool isPrintableString(std::string_view str) {
+    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return std::isprint(c); });
+}
+
+bool isAsciiString(std::string_view str) {
+    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return c < kAsciiLimit; });
+}
+
+validation_result validateStringLengthPolicy(std::string_view str,
+                                             const string_validation_config& config) {
+    if (str.length() < config.min_length) {
+        return input_validator::failure(error_code::validation_failed, "String is too short");
+    }
+    if (str.length() > config.max_length) {
+        return input_validator::failure(error_code::validation_failed, "String is too long");
+    }
+    return input_validator::success();
+}
+
+validation_result validateStringCharacterPolicy(std::string_view str,
+                                                const string_validation_config& config) {
+    if (!config.allow_null_bytes && input_validator::containsNullBytes(str)) {
+        return input_validator::failure(error_code::validation_failed,
+                                        "String contains null bytes");
+    }
+    if (!config.allow_control_chars && input_validator::containsControlChars(str)) {
+        return input_validator::failure(error_code::validation_failed,
+                                        "String contains control characters");
+    }
+    if (config.require_printable && !isPrintableString(str)) {
+        return input_validator::failure(error_code::validation_failed,
+                                        "String contains non-printable characters");
+    }
+    return input_validator::success();
+}
+
+validation_result validateStringEncodingPolicy(std::string_view str,
+                                               const string_validation_config& config) {
+    if (config.require_ascii && !isAsciiString(str)) {
+        return input_validator::failure(error_code::validation_failed,
+                                        "String contains non-ASCII characters");
+    }
+    if (config.require_utf8 && !input_validator::isValidUtf8(str)) {
+        return input_validator::failure(error_code::validation_failed, "String is not valid UTF-8");
+    }
+    return input_validator::success();
 }
 
 }  // anonymous namespace
@@ -271,8 +343,7 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
     const auto path_str = path.string();
 
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    static const std::regex device_pattern(R"((^|[/\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$))",
-                                           std::regex::icase);
+    static const std::regex device_pattern(kWindowsDeviceNamePattern, std::regex::icase);
 
     if (std::regex_search(path_str, device_pattern)) {
         return true;
@@ -300,46 +371,17 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
 
 validation_result input_validator::validateString(std::string_view str,
                                                   const string_validation_config& config) {
-    // Check length
-    if (str.length() < config.min_length) {
-        return failure(error_code::validation_failed, "String is too short");
+    validation_result result = validateStringLengthPolicy(str, config);
+    if (!result) {
+        return result;
     }
 
-    if (str.length() > config.max_length) {
-        return failure(error_code::validation_failed, "String is too long");
+    result = validateStringCharacterPolicy(str, config);
+    if (!result) {
+        return result;
     }
 
-    // Check for null bytes
-    if (!config.allow_null_bytes && containsNullBytes(str)) {
-        return failure(error_code::validation_failed, "String contains null bytes");
-    }
-
-    // Check for control characters
-    if (!config.allow_control_chars && containsControlChars(str)) {
-        return failure(error_code::validation_failed, "String contains control characters");
-    }
-
-    // Check printability
-    if (config.require_printable) {
-        if (!std::all_of(str.begin(), str.end(), [](unsigned char c) { return std::isprint(c); })) {
-            return failure(error_code::validation_failed,
-                           "String contains non-printable characters");
-        }
-    }
-
-    // Check ASCII
-    if (config.require_ascii) {
-        if (!std::all_of(str.begin(), str.end(), [](unsigned char c) { return c < 128; })) {
-            return failure(error_code::validation_failed, "String contains non-ASCII characters");
-        }
-    }
-
-    // Check UTF-8
-    if (config.require_utf8 && !isValidUtf8(str)) {
-        return failure(error_code::validation_failed, "String is not valid UTF-8");
-    }
-
-    return success();
+    return validateStringEncodingPolicy(str, config);
 }
 
 bool input_validator::containsNullBytes(std::string_view str) noexcept {
@@ -360,7 +402,7 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
     while (i < str.length()) {
         unsigned char c = static_cast<unsigned char>(str[i]);
 
-        if (c < 0x80) {
+        if (c < kAsciiLimit) {
             i++;
             continue;
         }
@@ -390,7 +432,7 @@ std::string input_validator::sanitizeString(std::string_view str, bool allow_uni
             continue;
         }
 
-        if (c >= 128 && !allow_unicode) {
+        if (c >= kAsciiLimit && !allow_unicode) {
             continue;
         }
 
@@ -479,7 +521,7 @@ validation_result input_validator::validate_file_descriptor_limit() {
     }
 
     // Warn if using more than 80% of limit
-    if (current_count > (limit * 4 / 5)) {
+    if (current_count > (limit * kFileDescriptorWarnNumerator / kFileDescriptorWarnDenominator)) {
         logWarning("Approaching file descriptor limit: {}/{}", current_count, limit);
         return failure(error_code::resource_limit_reached, "Approaching file descriptor limit");
     }
@@ -497,21 +539,21 @@ validation_result input_validator::validate_thread_count(std::size_t requested_t
 
     if (hardware_threads == 0) {
         // Cannot determine, allow up to reasonable limit
-        if (requested_threads > 64) {
+        if (requested_threads > kUnknownHardwareThreadLimit) {
             return failure(error_code::validation_failed, "Thread count exceeds reasonable limit");
         }
         return success();
     }
 
     // Warn if requesting more than 2x hardware threads
-    if (requested_threads > hardware_threads * 2) {
+    if (requested_threads > hardware_threads * kThreadWarningMultiplier) {
         logWarning("Requested threads ({}) exceeds 2x hardware threads ({})",
                    requested_threads,
                    hardware_threads);
     }
 
     // Reject if requesting more than 4x hardware threads
-    if (requested_threads > hardware_threads * 4) {
+    if (requested_threads > hardware_threads * kThreadRejectMultiplier) {
         return failure(error_code::validation_failed, "Thread count exceeds 4x hardware threads");
     }
 

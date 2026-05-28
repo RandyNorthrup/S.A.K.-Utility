@@ -6,7 +6,9 @@
 
 #include "sak/conversion_report_generator.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/report_style_constants.h"
 
 #include <QDir>
 #include <QFile>
@@ -15,11 +17,10 @@
 namespace sak {
 
 namespace {
-constexpr double kBytesPerMBf = 1024.0 * 1024.0;
-constexpr double kBytesPerGBf = 1024.0 * 1024.0 * 1024.0;
-constexpr int kMsPerSecond = 1000;
-constexpr int kSecondsPerMinute = 60;
 constexpr int kSecondsPerHour = 3600;
+constexpr int kSha256PreviewChars = 16;
+constexpr qsizetype kReportHtmlReserveChars = 8192;
+constexpr int kGigabyteDisplayPrecision = 2;
 }  // namespace
 
 // ======================================================================
@@ -193,26 +194,27 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
             status_class = QStringLiteral("success");
         }
 
-        html += QStringLiteral(
-                    "<tr><td>%1</td>"
-                    "<td class='%2'>%3</td>"
-                    "<td class='%4'>%5</td>"
-                    "<td>%6</td>"
-                    "<td>%7</td>"
-                    "<td>%8</td>"
-                    "<td style='font-family:monospace;font-size:10px;'>%9</td>"
-                    "</tr>")
-                    .arg(result.source_path.toHtmlEscaped())
-                    .arg(status_class)
-                    .arg(result.items_converted)
-                    .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
-                    .arg(result.items_failed)
-                    .arg(result.items_recovered)
-                    .arg(formatBytes(result.bytes_written))
-                    .arg(formatDuration(file_dur))
-                    .arg(result.source_sha256.isEmpty()
-                             ? QStringLiteral("—")
-                             : result.source_sha256.left(16) + QStringLiteral("…"));
+        html +=
+            QStringLiteral(
+                "<tr><td>%1</td>"
+                "<td class='%2'>%3</td>"
+                "<td class='%4'>%5</td>"
+                "<td>%6</td>"
+                "<td>%7</td>"
+                "<td>%8</td>"
+                "<td style='font-family:monospace;font-size:10px;'>%9</td>"
+                "</tr>")
+                .arg(result.source_path.toHtmlEscaped())
+                .arg(status_class)
+                .arg(result.items_converted)
+                .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
+                .arg(result.items_failed)
+                .arg(result.items_recovered)
+                .arg(formatBytes(result.bytes_written))
+                .arg(formatDuration(file_dur))
+                .arg(result.source_sha256.isEmpty()
+                         ? QStringLiteral("—")
+                         : result.source_sha256.left(kSha256PreviewChars) + QStringLiteral("…"));
     }
 
     html += QStringLiteral("</table>");
@@ -268,38 +270,15 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
     }
 
     QString html;
-    html.reserve(8192);
+    html.reserve(kReportHtmlReserveChars);
 
     html += QStringLiteral(
-        "<!DOCTYPE html><html><head>"
-        "<meta charset='utf-8'>"
-        "<title>S.A.K. Utility — Conversion Report</title>"
-        "<style>"
-        "body { font-family: 'Segoe UI', Arial, sans-serif; "
-        "       margin: 24px; background: #f5f5f5; }"
-        ".container { max-width: 900px; margin: 0 auto; "
-        "             background: white; padding: 24px; "
-        "             border-radius: 8px; box-shadow: 0 1px 4px #0002; }"
-        "h1 { color: #0078D4; margin-bottom: 4px; }"
-        "h2 { color: #333; border-bottom: 2px solid #0078D4; "
-        "     padding-bottom: 4px; }"
-        "table { border-collapse: collapse; width: 100%; "
-        "        margin: 12px 0; }"
-        "th { background: #0078D4; color: white; padding: 8px 12px; "
-        "     text-align: left; }"
-        "td { padding: 6px 12px; border-bottom: 1px solid #e0e0e0; }"
-        "tr:hover { background: #f0f8ff; }"
-        ".stat { display: inline-block; margin: 8px 16px 8px 0; }"
-        ".stat-value { font-size: 24px; font-weight: bold; "
-        "              color: #0078D4; }"
-        ".stat-label { font-size: 12px; color: #666; }"
-        ".success { color: #107C10; }"
-        ".error { color: #D13438; }"
-        ".warn { color: #CA5010; }"
-        ".footer { margin-top: 24px; padding-top: 12px; "
-        "          border-top: 1px solid #e0e0e0; color: #999; "
-        "          font-size: 12px; }"
-        "</style></head><body><div class='container'>");
+                "<!DOCTYPE html><html><head>"
+                "<meta charset='utf-8'>"
+                "<title>S.A.K. Utility — Conversion Report</title>"
+                "<style>%1"
+                "</style></head><body><div class='container'>")
+                .arg(report::enterpriseReportStyleSheet());
 
     html += QStringLiteral("<h1>Conversion Report</h1>");
     html += QStringLiteral("<p>Generated by S.A.K. Utility on %1</p>")
@@ -322,11 +301,11 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
 }
 
 QString ConversionReportGenerator::formatDuration(qint64 ms) {
-    if (ms < kMsPerSecond) {
+    if (ms < kMillisecondsPerSecond) {
         return QStringLiteral("%1 ms").arg(ms);
     }
 
-    qint64 total_sec = ms / kMsPerSecond;
+    qint64 total_sec = ms / kMillisecondsPerSecond;
 
     if (total_sec < kSecondsPerMinute) {
         return QStringLiteral("%1 s").arg(total_sec);
@@ -345,16 +324,17 @@ QString ConversionReportGenerator::formatDuration(qint64 ms) {
 }
 
 QString ConversionReportGenerator::formatBytes(qint64 bytes) {
-    if (bytes < 1024) {
+    if (bytes < kBytesPerKB) {
         return QStringLiteral("%1 B").arg(bytes);
     }
     if (static_cast<double>(bytes) < kBytesPerMBf) {
-        return QStringLiteral("%1 KB").arg(bytes / 1024);
+        return QStringLiteral("%1 KB").arg(bytes / kBytesPerKB);
     }
     if (static_cast<double>(bytes) < kBytesPerGBf) {
         return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
     }
-    return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', 2);
+    return QStringLiteral("%1 GB").arg(
+        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kGigabyteDisplayPrecision);
 }
 
 }  // namespace sak

@@ -18,6 +18,13 @@
 #include <iterator>
 #include <thread>
 
+namespace {
+constexpr std::size_t kExpectedDuplicateScanFiles = 1000;
+constexpr int kDuplicateSummarySizePrecision = 2;
+constexpr int kDuplicateSummaryGroupLimit = 10;
+constexpr int kDuplicateProgressInterval = 10;
+}  // namespace
+
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {
     Q_ASSERT_X(!config.scanDirectories.isEmpty(),
@@ -169,7 +176,7 @@ auto DuplicateFinderWorker::collectFilesFromDirectory(const std::filesystem::pat
 auto DuplicateFinderWorker::scanDirectories()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code> {
     std::vector<std::filesystem::path> files;
-    files.reserve(1000);  // Pre-allocate for better performance
+    files.reserve(kExpectedDuplicateScanFiles);
 
     for (const auto& dir_str : m_config.scanDirectories) {
         if (checkStop()) {
@@ -235,14 +242,14 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
     }
 
     summary += QString("Total duplicate files: %1\n").arg(total_duplicates);
-    summary +=
-        QString("Total wasted space: %1 MB\n\n").arg(total_wasted / sak::kBytesPerMBf, 0, 'f', 2);
+    summary += QString("Total wasted space: %1 MB\n\n")
+                   .arg(total_wasted / sak::kBytesPerMBf, 0, 'f', kDuplicateSummarySizePrecision);
 
     summary += "Top duplicate groups:\n";
     int count = 0;
     for (const auto& group : groups) {
-        if (++count > 10) {
-            break;  // Show only top 10
+        if (++count > kDuplicateSummaryGroupLimit) {
+            break;
         }
 
         summary += QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
@@ -343,7 +350,8 @@ std::function<void(int)> DuplicateFinderWorker::createHashTask(
         }
 
         int current = ++processed_count;
-        if (current % 10 == 0 || current == static_cast<int>(files.size())) {
+        if (current % kDuplicateProgressInterval == 0 ||
+            current == static_cast<int>(files.size())) {
             Q_EMIT scanProgress(current,
                                 static_cast<int>(files.size()),
                                 QString::fromStdString(file.string()));

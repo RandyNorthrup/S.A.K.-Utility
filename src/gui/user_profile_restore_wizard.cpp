@@ -6,6 +6,7 @@
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -13,6 +14,36 @@
 #include <QVBoxLayout>
 
 namespace sak {
+
+namespace {
+constexpr int kBackupSizeGbDisplayPrecision = 2;
+
+QString restoreWelcomeInfoHtml() {
+    return QStringLiteral(
+               "<h3>%1</h3><p>%2</p><ul><li>%3</li><li>%4</li><li>%5</li>"
+               "<li>%6</li><li>%7</li></ul>")
+        .arg(
+            QCoreApplication::translate("UserProfileRestoreWelcomePage",
+                                        "Welcome to User Profile Restore"),
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "This wizard will guide you through restoring user profile data from a backup."),
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "<b>User Mapping</b>: Map backup users to destination users"),
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "<b>Merge Options</b>: Choose how to handle existing files"),
+            QCoreApplication::translate("UserProfileRestoreWelcomePage",
+                                        "<b>Folder Selection</b>: Select which folders to restore"),
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "<b>App Data & Apps</b>: Restore application data and reinstall apps (optional)"),
+            QCoreApplication::translate("UserProfileRestoreWelcomePage",
+                                        "<b>Networks & Ethernet</b>: Restore WiFi profiles and "
+                                        "adapter settings (optional)"));
+}
+}  // namespace
 
 // ============================================================================
 // Page 1: Welcome and Select Backup
@@ -32,40 +63,17 @@ void UserProfileRestoreWelcomePage::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
     auto* layout = new QVBoxLayout(this);
 
-    // Info section
-    QString infoHtml =
-        QString(
-            "<h3>%1</h3>"
-            "<p>%2</p>"
-            "<ul>"
-            "<li>%3</li>"
-            "<li>%4</li>"
-            "<li>%5</li>"
-            "<li>%6</li>"
-            "<li>%7</li>"
-            "</ul>")
-            .arg(
-                tr("Welcome to User Profile Restore"),
-                tr("This wizard will guide you through restoring user profile data from a backup."),
-                tr("<b>User Mapping</b>: Map backup users to destination users"),
-                tr("<b>Merge Options</b>: Choose how to handle existing files"),
-                tr("<b>Folder Selection</b>: Select which folders to restore"),
-                tr("<b>App Data & Apps</b>: Restore application data and reinstall apps "
-                   "(optional)"),
-                tr("<b>Networks & Ethernet</b>: Restore WiFi profiles and adapter settings "
-                   "(optional)"));
-
-    m_infoLabel = new QLabel(infoHtml, this);
+    m_infoLabel = new QLabel(restoreWelcomeInfoHtml(), this);
     m_infoLabel->setWordWrap(true);
     m_infoLabel->setTextFormat(Qt::RichText);
     layout->addWidget(m_infoLabel);
 
-    layout->addSpacing(20);
+    layout->addSpacing(sak::ui::kMarginXLarge);
 
-    // Backup selection
     auto* selectGroup = new QWidget(this);
     auto* selectLayout = new QHBoxLayout(selectGroup);
-    selectLayout->setContentsMargins(0, 0, 0, 0);
+    selectLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     auto* backupLabel = new QLabel(tr("Backup Location:"), selectGroup);
     m_backupPathEdit = new QLineEdit(selectGroup);
@@ -79,18 +87,17 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
     layout->addWidget(selectGroup);
 
-    // Manifest info
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
-    m_manifestInfoLabel->setStyleSheet(QString("QLabel { background-color: %1; padding: 12px; "
-                                               "border-radius: 10px; }")
-                                           .arg(sak::ui::kColorBgSurface));
+    m_manifestInfoLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgSurface,
+                                                               sak::ui::kColorTextBody,
+                                                               sak::ui::kCssPaddingXXLargePx,
+                                                               sak::ui::kCssRadiusXLargePx));
     m_manifestInfoLabel->hide();
     layout->addWidget(m_manifestInfoLabel);
 
     layout->addStretch(1);
 
-    // Connections
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
@@ -157,19 +164,20 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     }
 
     // Display manifest info
-    QString info =
-        QString(
-            "<b>[OK] Valid Backup Found</b><br>"
-            "<b>Version:</b> %1<br>"
-            "<b>Created:</b> %2<br>"
-            "<b>Source Machine:</b> %3<br>"
-            "<b>Users:</b> %4<br>"
-            "<b>Total Size:</b> %5 GB")
-            .arg(manifest.version,
-                 manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
-                 manifest.source_machine,
-                 QString::number(manifest.users.size()),
-                 QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf, 'f', 2));
+    QString info = QString(
+                       "<b>[OK] Valid Backup Found</b><br>"
+                       "<b>Version:</b> %1<br>"
+                       "<b>Created:</b> %2<br>"
+                       "<b>Source Machine:</b> %3<br>"
+                       "<b>Users:</b> %4<br>"
+                       "<b>Total Size:</b> %5 GB")
+                       .arg(manifest.version,
+                            manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
+                            manifest.source_machine,
+                            QString::number(manifest.users.size()),
+                            QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
+                                            'f',
+                                            kBackupSizeGbDisplayPrecision));
 
     m_manifestInfoLabel->setText(info);
     m_manifestInfoLabel->show();

@@ -4,7 +4,7 @@
   "title": "Network Connectivity Repair",
   "role": "Windows Repair",
   "category": "Network",
-  "description": "Diagnose and repair common Windows network connectivity issues with read-only checks before any reset.",
+  "description": "Diagnose Windows network issues with read-only adapter, DNS, route, and connectivity evidence before approved repairs or resets.",
   "starter_prompt": "Diagnose this PC's network connectivity problem. Start read-only and ask before resets.",
   "required_inputs": [
     {"id": "symptom", "label": "Network symptom", "type": "string", "required": true}

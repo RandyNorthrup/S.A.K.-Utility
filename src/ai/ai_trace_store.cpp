@@ -28,6 +28,9 @@ constexpr qint64 kMaxActivityJsonlBytes = 32LL * 1024LL * 1024LL;
 constexpr qint64 kMaxReplayJsonlBytes = 20LL * 1024LL * 1024LL;
 constexpr qsizetype kMaxReplayMetadataStringChars = 4096;
 constexpr qint64 kMaxReplayMetadataBytes = 64LL * 1024LL;
+constexpr int kMaxRedactedArrayItems = 200;
+constexpr int kMaxJsonRedactionDepth = 8;
+constexpr qsizetype kTraceIdSuffixChars = 12;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -105,10 +108,10 @@ QJsonObject redactObject(const QJsonObject& object, int depth) {
 
 QJsonArray redactArray(const QJsonArray& array, const QString& key, int depth) {
     QJsonArray out;
-    for (int i = 0; i < array.size() && i < 200; ++i) {
+    for (int i = 0; i < array.size() && i < kMaxRedactedArrayItems; ++i) {
         out.append(redactAndCapJson(array.at(i), key, depth + 1));
     }
-    if (array.size() > 200) {
+    if (array.size() > kMaxRedactedArrayItems) {
         out.append(QStringLiteral("[truncated-array]"));
     }
     return out;
@@ -126,7 +129,7 @@ QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key, int dep
     if (sensitiveKey(key)) {
         return QStringLiteral("[redacted]");
     }
-    if (depth > 8) {
+    if (depth > kMaxJsonRedactionDepth) {
         return QStringLiteral("[truncated-depth]");
     }
     if (value.isObject()) {
@@ -335,7 +338,7 @@ bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
     }
     if (event.span_id.isEmpty()) {
         event.span_id = QStringLiteral("span_%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces).left(12));
+            QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
 
     return appendJsonLine(tracePath(), event.toJson(), QStringLiteral("trace"), error_message);
@@ -377,7 +380,7 @@ bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_messa
     }
     if (event.activity_id.isEmpty()) {
         event.activity_id = QStringLiteral("act_%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces).left(12));
+            QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
     return appendJsonLine(
         activityPath(), event.toJson(), QStringLiteral("activity"), error_message);

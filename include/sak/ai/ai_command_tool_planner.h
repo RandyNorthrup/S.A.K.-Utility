@@ -11,6 +11,8 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultCommandToolMaxOutputBytes = kAiCommandDefaultMaxOutputBytes;
+
 struct AiCommandToolPlan {
     AiCommandRequest request;
     AiToolCallRequest policy_request;
@@ -25,7 +27,7 @@ struct AiCommandToolPlan {
 class AiCommandToolPlanner {
 public:
     struct Options {
-        int max_output_bytes{262'144};
+        int max_output_bytes{kDefaultCommandToolMaxOutputBytes};
     };
 
     [[nodiscard]] static AiCommandToolPlan buildPlan(const QString& tool_name,

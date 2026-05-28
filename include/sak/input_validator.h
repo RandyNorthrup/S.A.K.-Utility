@@ -19,6 +19,9 @@
 
 namespace sak {
 
+constexpr std::size_t kWindowsDefaultMaxPathLength = 260;
+constexpr std::size_t kDefaultStringMaxLength = 1024;
+
 /// @brief Input validation result with detailed error information
 struct validation_result {
     bool is_valid;
@@ -37,14 +40,14 @@ struct path_validation_config {
     bool must_be_file = false;
     bool check_read_permission = false;
     bool check_write_permission = false;
-    std::size_t max_path_length = 260;     // Windows MAX_PATH default
-    std::filesystem::path base_directory;  // For path traversal checks
+    std::size_t max_path_length = kWindowsDefaultMaxPathLength;  // Windows MAX_PATH default
+    std::filesystem::path base_directory;                        // For path traversal checks
 };
 
 /// @brief String validation configuration
 struct string_validation_config {
     std::size_t min_length = 0;
-    std::size_t max_length = 1024;
+    std::size_t max_length = kDefaultStringMaxLength;
     bool allow_null_bytes = false;
     bool allow_control_chars = false;
     bool require_printable = false;

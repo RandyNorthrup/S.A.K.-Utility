@@ -6,6 +6,7 @@
 
 #include "sak/actions/verify_system_files_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -16,7 +17,7 @@ namespace sak {
 VerifySystemFilesAction::VerifySystemFilesAction(QObject* parent) : QuickAction(parent) {}
 
 void VerifySystemFilesAction::runSFC() {
-    Q_EMIT executionProgress("Running System File Checker (SFC)...", 10);
+    Q_EMIT executionProgress("Running System File Checker (SFC)...", progress::kStep10);
 
     // Enterprise approach: Run SFC with real-time progress monitoring and accumulated output
     QString ps_script =
@@ -28,7 +29,7 @@ void VerifySystemFilesAction::runSFC() {
         "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
         "Remove-Item $sfcOutput -ErrorAction SilentlyContinue";
 
-    Q_EMIT executionProgress("SFC scanning...", 25);
+    Q_EMIT executionProgress("SFC scanning...", progress::kStep25);
     ProcessResult proc = runPowerShell(
         ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
     if (!proc.std_err.trimmed().isEmpty()) {
@@ -65,7 +66,7 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
 }
 
 bool VerifySystemFilesAction::runDismScanHealth() {
-    Q_EMIT executionProgress("DISM: Scanning component store...", 50);
+    Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
     QString script = "DISM.exe /Online /Cleanup-Image /ScanHealth";
 
     ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs);
@@ -77,10 +78,10 @@ bool VerifySystemFilesAction::runDismScanHealth() {
 }
 
 void VerifySystemFilesAction::runDismRestoreHealth() {
-    Q_EMIT executionProgress("DISM: Repairing component store...", 65);
+    Q_EMIT executionProgress("DISM: Repairing component store...", progress::kStep65);
     QString script = "DISM.exe /Online /Cleanup-Image /RestoreHealth /LimitAccess";
 
-    Q_EMIT executionProgress("DISM restoring...", 75);
+    Q_EMIT executionProgress("DISM restoring...", progress::kStep75);
     ProcessResult proc = runPowerShell(script, sak::kTimeoutSystemRepairMs, true, true, [this]() {
         return isCancelled();
     });
@@ -98,7 +99,7 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
 }
 
 void VerifySystemFilesAction::runDISM() {
-    Q_EMIT executionProgress("DISM: Checking component store health...", 35);
+    Q_EMIT executionProgress("DISM: Checking component store health...", progress::kStep35);
 
     bool corruption_detected = runDismCheckHealth();
     if (isCancelled()) {
@@ -113,7 +114,7 @@ void VerifySystemFilesAction::runDISM() {
     if (corruption_detected || repair_needed) {
         runDismRestoreHealth();
     } else {
-        Q_EMIT executionProgress("DISM: No corruption detected", 85);
+        Q_EMIT executionProgress("DISM: No corruption detected", progress::kStep85);
         m_dism_successful = true;
         m_dism_repaired_issues = false;
     }

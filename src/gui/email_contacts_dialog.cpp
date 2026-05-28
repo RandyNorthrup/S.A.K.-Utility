@@ -6,6 +6,7 @@
 
 #include "sak/email_contacts_dialog.h"
 
+#include "sak/email_constants.h"
 #include "sak/email_inspector_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
@@ -68,21 +69,12 @@ EmailContactsDialog::~EmailContactsDialog() = default;
 // UI Setup
 // ============================================================================
 
-void EmailContactsDialog::setupUi() {
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(
-        ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
-    layout->setSpacing(ui::kSpacingDefault);
-
-    // Title
+void EmailContactsDialog::setupHeader(QVBoxLayout* layout) {
     auto* heading = new QLabel(tr("Address Book"), this);
-    heading->setStyleSheet(QStringLiteral("font-size: %1pt; font-weight: 600; "
-                                          "color: %2;")
-                               .arg(ui::kFontSizeTitle)
-                               .arg(ui::kColorTextHeading));
+    heading->setStyleSheet(ui::fontSizeWeightColorStyle(
+        ui::kFontSizeTitle, ui::kFontWeightSemibold, ui::kColorTextHeading));
     layout->addWidget(heading);
 
-    // Search bar
     auto* search_row = new QHBoxLayout();
     m_search_edit = new QLineEdit(this);
     m_search_edit->setPlaceholderText(tr("Search contacts by name, email, or company..."));
@@ -91,12 +83,12 @@ void EmailContactsDialog::setupUi() {
         m_search_edit, &QLineEdit::textChanged, this, &EmailContactsDialog::onSearchTextChanged);
     search_row->addWidget(m_search_edit);
     layout->addLayout(search_row);
+}
 
-    // Splitter: contact table | detail panel
+void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_splitter = new QSplitter(Qt::Horizontal, this);
     m_splitter->setChildrenCollapsible(false);
 
-    // Contact table
     m_contact_table = new QTableWidget(this);
     m_contact_table->setColumnCount(ColCount);
     m_contact_table->setHorizontalHeaderLabels(
@@ -106,9 +98,9 @@ void EmailContactsDialog::setupUi() {
     m_contact_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contact_table->setSortingEnabled(true);
     m_contact_table->horizontalHeader()->setStretchLastSection(true);
-    m_contact_table->setColumnWidth(ColName, 200);
-    m_contact_table->setColumnWidth(ColEmail, 250);
-    m_contact_table->setColumnWidth(ColCompany, 180);
+    m_contact_table->setColumnWidth(ColName, email::kContactsNameColumnWidth);
+    m_contact_table->setColumnWidth(ColEmail, email::kContactsEmailColumnWidth);
+    m_contact_table->setColumnWidth(ColCompany, email::kContactsCompanyColumnWidth);
     m_contact_table->verticalHeader()->setVisible(false);
     connect(
         m_contact_table, &QTableWidget::cellClicked, this, &EmailContactsDialog::onContactSelected);
@@ -117,13 +109,14 @@ void EmailContactsDialog::setupUi() {
     // Detail panel
     m_detail_browser = new QTextBrowser(this);
     m_detail_browser->setOpenExternalLinks(false);
-    m_detail_browser->setMinimumWidth(280);
+    m_detail_browser->setMinimumWidth(email::kContactsDetailMinWidth);
     m_detail_browser->setPlaceholderText(tr("Select a contact to view details"));
     m_splitter->addWidget(m_detail_browser);
-    m_splitter->setSizes({550, 350});
+    m_splitter->setSizes({email::kContactsListPaneWidth, email::kContactsDetailPaneWidth});
     layout->addWidget(m_splitter, 1);
+}
 
-    // Button row
+void EmailContactsDialog::setupButtonRow(QVBoxLayout* layout) {
     auto* button_row = new QHBoxLayout();
 
     m_export_vcf_button = new QPushButton(tr("Export VCF"), this);
@@ -143,7 +136,7 @@ void EmailContactsDialog::setupUi() {
     button_row->addStretch();
 
     m_status_label = new QLabel(this);
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     button_row->addWidget(m_status_label);
 
     button_row->addStretch();
@@ -154,6 +147,16 @@ void EmailContactsDialog::setupUi() {
     button_row->addWidget(m_close_button);
 
     layout->addLayout(button_row);
+}
+
+void EmailContactsDialog::setupUi() {
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(
+        ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge, ui::kMarginLarge);
+    layout->setSpacing(ui::kSpacingDefault);
+    setupHeader(layout);
+    setupContactSplitter(layout);
+    setupButtonRow(layout);
 }
 
 // ============================================================================
@@ -309,15 +312,18 @@ void EmailContactsDialog::filterContacts(const QString& text) {
 void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail) {
     QString html = QStringLiteral(
                        "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: 12px;'>"
-                       "<h2 style='color: %1; margin-bottom: 8px;'>%2 %3</h2>")
-                       .arg(ui::kColorTextHeading)
+                       "padding: %1px;'>"
+                       "<h2 style='color: %2; margin-bottom: %3px;'>%4 %5</h2>")
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(ui::htmlColor(ui::kColorTextHeading))
+                       .arg(ui::kSpacingMedium)
                        .arg(detail.given_name.toHtmlEscaped())
                        .arg(detail.surname.toHtmlEscaped());
 
     if (!detail.job_title.isEmpty() || !detail.company_name.isEmpty()) {
-        html += QStringLiteral("<p style='color: %1; margin: 2px 0;'>%2")
-                    .arg(ui::kColorTextSecondary)
+        html += QStringLiteral("<p style='color: %1; margin: %2px 0;'>%3")
+                    .arg(ui::htmlColor(ui::kColorTextSecondary))
+                    .arg(ui::kCssPaddingTinyPx)
                     .arg(detail.job_title.toHtmlEscaped());
         if (!detail.company_name.isEmpty()) {
             html += QStringLiteral(" at <b>%1</b>").arg(detail.company_name.toHtmlEscaped());
@@ -325,7 +331,9 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
         html += QStringLiteral("</p>");
     }
 
-    html += QStringLiteral("<hr style='border: 1px solid %1;'>").arg(ui::kColorBorderDefault);
+    html += QStringLiteral("<hr style='border: %1px solid %2;'>")
+                .arg(ui::kCssBorderWidthDefaultPx)
+                .arg(ui::htmlColor(ui::kColorBorderDefault));
 
     // Email
     if (!detail.email_address.isEmpty()) {
@@ -353,10 +361,11 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
     // Notes / body
     if (!detail.body_plain.isEmpty()) {
         html += QStringLiteral(
-                    "<hr style='border: 1px solid %1;'>"
-                    "<p style='color: %2; white-space: pre-wrap;'>%3</p>")
-                    .arg(ui::kColorBorderDefault)
-                    .arg(ui::kColorTextBody)
+                    "<hr style='border: %1px solid %2;'>"
+                    "<p style='color: %3; white-space: pre-wrap;'>%4</p>")
+                    .arg(ui::kCssBorderWidthDefaultPx)
+                    .arg(ui::htmlColor(ui::kColorBorderDefault))
+                    .arg(ui::htmlColor(ui::kColorTextBody))
                     .arg(detail.body_plain.toHtmlEscaped());
     }
 

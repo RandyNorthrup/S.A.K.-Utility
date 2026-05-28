@@ -262,7 +262,7 @@ bool ExecutionBroker::launchProcess(const ProcessLaunchRequest& request) {
     m_finished_emitted = false;
 
     const int clamped = std::clamp(request.timeout_seconds, kMinTimeoutSeconds, kMaxTimeoutSeconds);
-    m_timeout_ms = clamped * 1000;
+    m_timeout_ms = clamped * kMillisecondsPerSecond;
 
     m_process = std::make_unique<QProcess>(this);
     connect(m_process.get(),
@@ -458,9 +458,10 @@ void ExecutionBroker::appendCapped(QString& target, const QString& chunk) const 
 AiCommandRequest ExecutionBroker::requestFromJson(const QJsonObject& args) {
     AiCommandRequest request;
     request.command = args.value(QStringLiteral("command")).toString();
-    request.timeout_seconds = std::clamp(args.value(QStringLiteral("timeout_seconds")).toInt(120),
-                                         kMinTimeoutSeconds,
-                                         kMaxTimeoutSeconds);
+    request.timeout_seconds = std::clamp(
+        args.value(QStringLiteral("timeout_seconds")).toInt(kAiCommandDefaultTimeoutSeconds),
+        kMinTimeoutSeconds,
+        kMaxTimeoutSeconds);
     request.requires_admin = args.value(QStringLiteral("requires_admin")).toBool(false);
     return request;
 }
@@ -472,9 +473,10 @@ AiCommandRequest ExecutionBroker::processRequestFromJson(const QJsonObject& args
     for (const auto& value : arg_array) {
         request.arguments.append(value.toString());
     }
-    request.timeout_seconds = std::clamp(args.value(QStringLiteral("timeout_seconds")).toInt(120),
-                                         kMinTimeoutSeconds,
-                                         kMaxTimeoutSeconds);
+    request.timeout_seconds = std::clamp(
+        args.value(QStringLiteral("timeout_seconds")).toInt(kAiCommandDefaultTimeoutSeconds),
+        kMinTimeoutSeconds,
+        kMaxTimeoutSeconds);
     request.requires_admin = args.value(QStringLiteral("requires_admin")).toBool(false);
     return request;
 }

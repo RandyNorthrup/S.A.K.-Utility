@@ -21,6 +21,12 @@
 
 namespace sak {
 
+namespace detail {
+
+constexpr int kElevationBannerIconWidth = ui::kUiIconMedium;
+
+}  // namespace detail
+
 /// @brief Create an elevation info banner for panels with elevated operations
 ///
 /// Returns nullptr if the process is already running as admin (no banner
@@ -36,16 +42,7 @@ namespace sak {
     auto* banner = new QFrame(parent);
     banner->setObjectName(QStringLiteral("elevationBanner"));
 
-    banner->setStyleSheet(
-        QStringLiteral("QFrame#elevationBanner {"
-                       "  background-color: %1;"
-                       "  border: 1px solid %2;"
-                       "  border-radius: 6px;"
-                       "  padding: %3px %4px;"
-                       "}")
-            .arg(QLatin1String(ui::kColorBgInfoPanel), QLatin1String(ui::kColorPrimary))
-            .arg(ui::kSpacingTight)
-            .arg(ui::kSpacingMedium));
+    banner->setStyleSheet(ui::elevationBannerStyle());
 
     auto* layout = new QHBoxLayout(banner);
     layout->setContentsMargins(
@@ -53,18 +50,16 @@ namespace sak {
     layout->setSpacing(ui::kSpacingSmall);
 
     auto* icon_label = new QLabel(banner);
-    icon_label->setPixmap(
-        QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg")).pixmap(16, 16));
-    icon_label->setFixedWidth(20);
+    icon_label->setPixmap(QIcon(QStringLiteral(":/icons/icons/icons8-keyhole-shield.svg"))
+                              .pixmap(ui::kUiIconSmall, ui::kUiIconSmall));
+    icon_label->setFixedWidth(detail::kElevationBannerIconWidth);
     layout->addWidget(icon_label);
 
     auto* text_label = new QLabel(QObject::tr("Some operations on this tab require administrator "
                                               "privileges. You will be prompted when needed."),
                                   banner);
     text_label->setWordWrap(true);
-    text_label->setStyleSheet(QStringLiteral("color: %1; font-size: %2pt;")
-                                  .arg(QLatin1String(ui::kColorTextBody))
-                                  .arg(ui::kFontSizeBody));
+    text_label->setStyleSheet(ui::textColorAndFontSizeStyle(ui::kColorTextBody, ui::kFontSizeBody));
     layout->addWidget(text_label, 1);
 
     return banner;

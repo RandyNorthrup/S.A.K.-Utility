@@ -378,6 +378,9 @@ backup/
 # Chocolatey packages (embedded tools are kept)
 tools/chocolatey/lib/
 tools/chocolatey/.chocolatey/
+!tools/chocolatey/lib/
+!tools/chocolatey/lib/chocolatey/
+!tools/chocolatey/lib/chocolatey/chocolatey.nupkg
 
 # Local configuration
 local_config.json

@@ -23,13 +23,18 @@
 
 namespace sak {
 
+namespace {
+constexpr BYTE kAdministratorsSidSubAuthorityCount = 2;
+constexpr DWORD kWindowsVistaMajorVersion = 6;
+}  // namespace
+
 bool ElevationManager::isElevated() noexcept {
     BOOL is_admin = FALSE;
     PSID administrators_group = nullptr;
     SID_IDENTIFIER_AUTHORITY nt_authority = SECURITY_NT_AUTHORITY;
 
     if (AllocateAndInitializeSid(&nt_authority,
-                                 2,
+                                 kAdministratorsSidSubAuthorityCount,
                                  SECURITY_BUILTIN_DOMAIN_RID,
                                  DOMAIN_ALIAS_RID_ADMINS,
                                  0,
@@ -51,7 +56,7 @@ bool ElevationManager::canElevate() noexcept {
     OSVERSIONINFOEX osvi;
     ZeroMemory(&osvi, sizeof(OSVERSIONINFOEX));
     osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
-    osvi.dwMajorVersion = 6;  // Windows Vista+
+    osvi.dwMajorVersion = kWindowsVistaMajorVersion;
 
     DWORDLONG condition_mask = 0;
     VER_SET_CONDITION(condition_mask, VER_MAJORVERSION, VER_GREATER_EQUAL);

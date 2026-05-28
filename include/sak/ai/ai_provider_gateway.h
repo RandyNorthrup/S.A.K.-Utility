@@ -11,6 +11,8 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultProviderGatewayTimeoutMs = 20'000;
+
 class AiProviderGateway {
 public:
     struct Win32McpCallPlan {
@@ -18,7 +20,7 @@ public:
         QString tool_name;
         QJsonObject tool_arguments;
         QString security_profile;
-        int timeout_ms = 20'000;
+        int timeout_ms = kDefaultProviderGatewayTimeoutMs;
         bool read_only = false;
         bool high_risk = false;
         QString preview;

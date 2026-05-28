@@ -142,118 +142,120 @@ enum class error_code {
     email_restore_failed = 1017,
 };
 
+struct ErrorCodeMessage {
+    error_code code;
+    std::string_view text;
+};
+
+inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
+    {error_code::success, "Success"},
+    {error_code::file_not_found, "File not found"},
+    {error_code::permission_denied, "Permission denied"},
+    {error_code::path_too_long, "Path too long"},
+    {error_code::invalid_path, "Invalid path"},
+    {error_code::disk_full, "Disk full"},
+    {error_code::file_already_exists, "File already exists"},
+    {error_code::directory_not_empty, "Directory not empty"},
+    {error_code::is_directory, "Path is a directory"},
+    {error_code::not_a_directory, "Path is not a directory"},
+    {error_code::file_too_large, "File too large"},
+    {error_code::invalid_filename, "Invalid filename"},
+    {error_code::circular_reference, "Circular reference detected"},
+    {error_code::symlink_loop, "Symlink loop detected"},
+    {error_code::read_error, "Read error"},
+    {error_code::write_error, "Write error"},
+    {error_code::seek_error, "Seek error"},
+    {error_code::truncate_error, "Truncate error"},
+    {error_code::flush_error, "Flush error"},
+    {error_code::lock_error, "Lock error"},
+    {error_code::invalid_argument, "Invalid argument"},
+    {error_code::hash_calculation_failed, "Hash calculation failed"},
+    {error_code::hash_mismatch, "Hash mismatch"},
+    {error_code::verification_failed, "Verification failed"},
+    {error_code::corrupted_data, "Corrupted data"},
+    {error_code::invalid_configuration, "Invalid configuration"},
+    {error_code::missing_required_field, "Missing required field"},
+    {error_code::parse_error, "Parse error"},
+    {error_code::unsupported_version, "Unsupported version"},
+    {error_code::platform_not_supported, "Platform not supported"},
+    {error_code::permission_update_failed, "Permission update failed"},
+    {error_code::registry_access_denied, "Registry access denied"},
+    {error_code::plist_parse_error, "Plist parse error"},
+    {error_code::elevation_required, "Elevation required"},
+    {error_code::elevation_failed, "Elevation failed"},
+    {error_code::environment_error, "Environment error"},
+    {error_code::execution_failed, "Execution failed"},
+    {error_code::not_found, "Not found"},
+    {error_code::elevation_denied, "User cancelled elevation request"},
+    {error_code::elevation_timeout, "Elevated helper did not respond in time"},
+    {error_code::helper_connection_failed, "Could not connect to elevated helper"},
+    {error_code::helper_crashed, "Elevated helper exited unexpectedly"},
+    {error_code::task_not_allowed, "Task not in elevated helper allowlist"},
+    {error_code::privilege_failed, "Failed to enable required privilege"},
+    {error_code::thread_creation_failed, "Thread creation failed"},
+    {error_code::operation_cancelled, "Operation cancelled"},
+    {error_code::timeout, "Operation timed out"},
+    {error_code::deadlock_detected, "Deadlock detected"},
+    {error_code::out_of_memory, "Out of memory"},
+    {error_code::allocation_failed, "Allocation failed"},
+    {error_code::buffer_overflow, "Buffer overflow"},
+    {error_code::scan_failed, "Scan failed"},
+    {error_code::organization_failed, "Organization failed"},
+    {error_code::duplicate_resolution_failed, "Duplicate resolution failed"},
+    {error_code::license_scan_failed, "License scan failed"},
+    {error_code::backup_failed, "Backup failed"},
+    {error_code::network_unavailable, "Network unavailable"},
+    {error_code::connection_failed, "Connection failed"},
+    {error_code::transfer_failed, "Transfer failed"},
+    {error_code::network_timeout, "Network timeout"},
+    {error_code::protocol_error, "Protocol error"},
+    {error_code::authentication_failed, "Authentication failed"},
+    {error_code::validation_failed, "Validation failed"},
+    {error_code::path_traversal_attempt, "Path traversal attempt detected"},
+    {error_code::invalid_file, "Invalid file"},
+    {error_code::integer_overflow, "Integer overflow"},
+    {error_code::insufficient_disk_space, "Insufficient disk space"},
+    {error_code::insufficient_memory, "Insufficient memory"},
+    {error_code::resource_limit_reached, "Resource limit reached"},
+    {error_code::filesystem_error, "Filesystem error"},
+    {error_code::crypto_error, "Cryptographic error"},
+    {error_code::decrypt_failed, "Decryption failed"},
+    {error_code::invalid_format, "Invalid format"},
+    {error_code::unknown_error, "Unknown error"},
+    {error_code::not_implemented, "Not implemented"},
+    {error_code::internal_error, "Internal error"},
+    {error_code::assertion_failed, "Assertion failed"},
+    {error_code::invalid_operation, "Invalid operation"},
+    {error_code::partial_failure, "Partial failure"},
+    {error_code::pst_invalid_header, "Invalid file header"},
+    {error_code::pst_unsupported_encryption, "Unsupported encryption"},
+    {error_code::pst_corrupted_btree, "Corrupted BTree structure"},
+    {error_code::pst_node_not_found, "Node not found"},
+    {error_code::pst_block_not_found, "Block not found"},
+    {error_code::pst_invalid_heap, "Invalid heap structure"},
+    {error_code::pst_property_context_error, "Property context error"},
+    {error_code::pst_table_context_error, "Table context error"},
+    {error_code::pst_folder_traversal_error, "Folder traversal error"},
+    {error_code::pst_item_read_error, "Item read error"},
+    {error_code::pst_attachment_error, "Attachment read error"},
+    {error_code::pst_decompression_failed, "Block decompression failed"},
+    {error_code::mbox_invalid_format, "MBOX invalid format"},
+    {error_code::mbox_message_parse_error, "MBOX message parse error"},
+    {error_code::email_search_failed, "Email search failed"},
+    {error_code::email_export_failed, "Email export failed"},
+    {error_code::email_profile_discovery_failed, "Email profile discovery failed"},
+    {error_code::email_backup_failed, "Email backup failed"},
+    {error_code::email_restore_failed, "Email restore failed"},
+};
+
 /// @brief Convert error code to human-readable message
 /// @param ec Error code to convert
 /// @return String view describing the error
 [[nodiscard]] constexpr std::string_view to_string(error_code ec) noexcept {
-    struct Mapping {
-        error_code code;
-        std::string_view text;
-    };
-    static constexpr Mapping kTable[] = {
-        {error_code::success, "Success"},
-        {error_code::file_not_found, "File not found"},
-        {error_code::permission_denied, "Permission denied"},
-        {error_code::path_too_long, "Path too long"},
-        {error_code::invalid_path, "Invalid path"},
-        {error_code::disk_full, "Disk full"},
-        {error_code::file_already_exists, "File already exists"},
-        {error_code::directory_not_empty, "Directory not empty"},
-        {error_code::is_directory, "Path is a directory"},
-        {error_code::not_a_directory, "Path is not a directory"},
-        {error_code::file_too_large, "File too large"},
-        {error_code::invalid_filename, "Invalid filename"},
-        {error_code::circular_reference, "Circular reference detected"},
-        {error_code::symlink_loop, "Symlink loop detected"},
-        {error_code::read_error, "Read error"},
-        {error_code::write_error, "Write error"},
-        {error_code::seek_error, "Seek error"},
-        {error_code::truncate_error, "Truncate error"},
-        {error_code::flush_error, "Flush error"},
-        {error_code::lock_error, "Lock error"},
-        {error_code::invalid_argument, "Invalid argument"},
-        {error_code::hash_calculation_failed, "Hash calculation failed"},
-        {error_code::hash_mismatch, "Hash mismatch"},
-        {error_code::verification_failed, "Verification failed"},
-        {error_code::corrupted_data, "Corrupted data"},
-        {error_code::invalid_configuration, "Invalid configuration"},
-        {error_code::missing_required_field, "Missing required field"},
-        {error_code::parse_error, "Parse error"},
-        {error_code::unsupported_version, "Unsupported version"},
-        {error_code::platform_not_supported, "Platform not supported"},
-        {error_code::permission_update_failed, "Permission update failed"},
-        {error_code::registry_access_denied, "Registry access denied"},
-        {error_code::plist_parse_error, "Plist parse error"},
-        {error_code::elevation_required, "Elevation required"},
-        {error_code::elevation_failed, "Elevation failed"},
-        {error_code::environment_error, "Environment error"},
-        {error_code::execution_failed, "Execution failed"},
-        {error_code::not_found, "Not found"},
-        {error_code::elevation_denied, "User cancelled elevation request"},
-        {error_code::elevation_timeout, "Elevated helper did not respond in time"},
-        {error_code::helper_connection_failed, "Could not connect to elevated helper"},
-        {error_code::helper_crashed, "Elevated helper exited unexpectedly"},
-        {error_code::task_not_allowed, "Task not in elevated helper allowlist"},
-        {error_code::privilege_failed, "Failed to enable required privilege"},
-        {error_code::thread_creation_failed, "Thread creation failed"},
-        {error_code::operation_cancelled, "Operation cancelled"},
-        {error_code::timeout, "Operation timed out"},
-        {error_code::deadlock_detected, "Deadlock detected"},
-        {error_code::out_of_memory, "Out of memory"},
-        {error_code::allocation_failed, "Allocation failed"},
-        {error_code::buffer_overflow, "Buffer overflow"},
-        {error_code::scan_failed, "Scan failed"},
-        {error_code::organization_failed, "Organization failed"},
-        {error_code::duplicate_resolution_failed, "Duplicate resolution failed"},
-        {error_code::license_scan_failed, "License scan failed"},
-        {error_code::backup_failed, "Backup failed"},
-        {error_code::network_unavailable, "Network unavailable"},
-        {error_code::connection_failed, "Connection failed"},
-        {error_code::transfer_failed, "Transfer failed"},
-        {error_code::network_timeout, "Network timeout"},
-        {error_code::protocol_error, "Protocol error"},
-        {error_code::authentication_failed, "Authentication failed"},
-        {error_code::validation_failed, "Validation failed"},
-        {error_code::path_traversal_attempt, "Path traversal attempt detected"},
-        {error_code::invalid_file, "Invalid file"},
-        {error_code::integer_overflow, "Integer overflow"},
-        {error_code::insufficient_disk_space, "Insufficient disk space"},
-        {error_code::insufficient_memory, "Insufficient memory"},
-        {error_code::resource_limit_reached, "Resource limit reached"},
-        {error_code::filesystem_error, "Filesystem error"},
-        {error_code::crypto_error, "Cryptographic error"},
-        {error_code::decrypt_failed, "Decryption failed"},
-        {error_code::invalid_format, "Invalid format"},
-        {error_code::unknown_error, "Unknown error"},
-        {error_code::not_implemented, "Not implemented"},
-        {error_code::internal_error, "Internal error"},
-        {error_code::assertion_failed, "Assertion failed"},
-        {error_code::invalid_operation, "Invalid operation"},
-        {error_code::partial_failure, "Partial failure"},
-        {error_code::pst_invalid_header, "Invalid file header"},
-        {error_code::pst_unsupported_encryption, "Unsupported encryption"},
-        {error_code::pst_corrupted_btree, "Corrupted BTree structure"},
-        {error_code::pst_node_not_found, "Node not found"},
-        {error_code::pst_block_not_found, "Block not found"},
-        {error_code::pst_invalid_heap, "Invalid heap structure"},
-        {error_code::pst_property_context_error, "Property context error"},
-        {error_code::pst_table_context_error, "Table context error"},
-        {error_code::pst_folder_traversal_error, "Folder traversal error"},
-        {error_code::pst_item_read_error, "Item read error"},
-        {error_code::pst_attachment_error, "Attachment read error"},
-        {error_code::pst_decompression_failed, "Block decompression failed"},
-        {error_code::mbox_invalid_format, "MBOX invalid format"},
-        {error_code::mbox_message_parse_error, "MBOX message parse error"},
-        {error_code::email_search_failed, "Email search failed"},
-        {error_code::email_export_failed, "Email export failed"},
-        {error_code::email_profile_discovery_failed, "Email profile discovery failed"},
-        {error_code::email_backup_failed, "Email backup failed"},
-        {error_code::email_restore_failed, "Email restore failed"},
-    };
-    const auto it = std::find_if(std::begin(kTable), std::end(kTable), [ec](const auto& entry) {
-        return entry.code == ec;
-    });
-    if (it != std::end(kTable)) {
+    const auto it = std::find_if(std::begin(kErrorCodeMessages),
+                                 std::end(kErrorCodeMessages),
+                                 [ec](const auto& entry) { return entry.code == ec; });
+    if (it != std::end(kErrorCodeMessages)) {
         return it->text;
     }
     return "Undefined error";
@@ -261,19 +263,23 @@ enum class error_code {
 
 // -- Compile-Time Invariants (TigerStyle) ------------------------------------
 
+inline constexpr int kFileSystemErrorRangeMax = 100;
+inline constexpr int kIoErrorRangeMax = 200;
+inline constexpr int kHashErrorRangeMax = 300;
+
 /// Verify error_code has int-sized underlying type for ABI stability.
 static_assert(sizeof(error_code) == sizeof(int), "error_code must be int-sized for ABI stability.");
 
 /// Verify sentinel values are in expected ranges.
 static_assert(static_cast<int>(error_code::success) == 0, "success must be zero.");
 static_assert(static_cast<int>(error_code::file_not_found) >= 1 &&
-                  static_cast<int>(error_code::file_not_found) < 100,
+                  static_cast<int>(error_code::file_not_found) < kFileSystemErrorRangeMax,
               "File system errors must be in range [1, 100).");
-static_assert(static_cast<int>(error_code::read_error) >= 100 &&
-                  static_cast<int>(error_code::read_error) < 200,
+static_assert(static_cast<int>(error_code::read_error) >= kFileSystemErrorRangeMax &&
+                  static_cast<int>(error_code::read_error) < kIoErrorRangeMax,
               "I/O errors must be in range [100, 200).");
-static_assert(static_cast<int>(error_code::hash_calculation_failed) >= 200 &&
-                  static_cast<int>(error_code::hash_calculation_failed) < 300,
+static_assert(static_cast<int>(error_code::hash_calculation_failed) >= kIoErrorRangeMax &&
+                  static_cast<int>(error_code::hash_calculation_failed) < kHashErrorRangeMax,
               "Hash errors must be in range [200, 300).");
 static_assert(static_cast<int>(error_code::unknown_error) >= 900,
               "Generic errors must be in range [900, 1000).");

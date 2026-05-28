@@ -6,12 +6,17 @@
 
 #include "sak/pst_splitter.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/pst_writer.h"
 
 #include <QFileInfo>
 
 namespace sak {
+
+namespace {
+constexpr int kPstPartNumberFieldWidth = 2;
+}
 
 // ============================================================================
 // Construction / Destruction
@@ -140,7 +145,8 @@ std::expected<void, error_code> PstSplitter::rotateVolume() {
 QString PstSplitter::volumePath(int index) const {
     QFileInfo fi(m_base_path);
     return fi.absolutePath() + QStringLiteral("/") + fi.completeBaseName() +
-           QStringLiteral("_part%1.pst").arg(index, 2, 10, QChar('0'));
+           QStringLiteral("_part%1.pst")
+               .arg(index, kPstPartNumberFieldWidth, kDecimalBase, QChar('0'));
 }
 
 }  // namespace sak

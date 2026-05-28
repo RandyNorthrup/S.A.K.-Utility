@@ -17,6 +17,7 @@ namespace sak::ai {
 namespace {
 
 constexpr auto kHumanGatesFile = "human_gates.jsonl";
+constexpr qsizetype kGeneratedGateIdChars = 12;
 
 bool appendJsonLine(const QString& path, const QJsonObject& object, QString* error_message) {
     const QFileInfo info(path);
@@ -67,7 +68,7 @@ bool AiHumanGateStore::appendGate(AiHumanGate gate, QString* error_message) cons
     }
     if (gate.gate_id.isEmpty()) {
         gate.gate_id = QStringLiteral("gate_%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces).left(12));
+            QUuid::createUuid().toString(QUuid::WithoutBraces).left(kGeneratedGateIdChars));
     }
     if (!gate.created_utc.isValid()) {
         gate.created_utc = QDateTime::currentDateTimeUtc();

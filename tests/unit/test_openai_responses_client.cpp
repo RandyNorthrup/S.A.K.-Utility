@@ -23,6 +23,7 @@ private Q_SLOTS:
     void redactSecrets_redactsAssignmentStyleSecrets();
     void buildPayload_chatModeOmitsLocalTools();
     void buildPayload_assistedOrUnattendedAdvertisesLocalTools();
+    void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
     void realModelSmokeTest_optIn();
 };
@@ -114,6 +115,74 @@ namespace {
         }
     }
     return {};
+}
+
+[[nodiscard]] QStringList listModelsForSmoke(sak::ai::OpenAIResponsesClient& client,
+                                             const QString& api_key,
+                                             QString* failure) {
+    QStringList models;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::modelsReady,
+                     &loop,
+                     [&](const QStringList& model_ids) {
+                         models = model_ids;
+                         loop.quit();
+                     });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::requestFailed,
+                     &loop,
+                     [&](const QString& error_message) {
+                         *failure = sak::ai::CredentialStore::redactSecrets(error_message);
+                         loop.quit();
+                     });
+    timeout.start(120'000);
+    client.listModels(api_key);
+    loop.exec();
+    return models;
+}
+
+[[nodiscard]] sak::ai::OpenAIResponseResult runSmokeResponse(sak::ai::OpenAIResponsesClient& client,
+                                                             const QString& api_key,
+                                                             const QString& model,
+                                                             QString* failure) {
+    sak::ai::OpenAIResponseResult result;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() {
+        *failure = QStringLiteral("Timed out waiting for OpenAI smoke response");
+        loop.quit();
+    });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::responseReady,
+                     &loop,
+                     [&](const sak::ai::OpenAIResponseResult& response) {
+                         result = response;
+                         loop.quit();
+                     });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::requestFailed,
+                     &loop,
+                     [&](const QString& error_message) {
+                         *failure = sak::ai::CredentialStore::redactSecrets(error_message);
+                         loop.quit();
+                     });
+
+    sak::ai::OpenAIResponseRequest request;
+    request.api_key = api_key;
+    request.model = model;
+    request.instructions = QStringLiteral(
+        "You are a minimal integration smoke test. Reply with exactly "
+        "SAK_REAL_MODEL_SMOKE_OK and no extra text.");
+    request.input = QStringLiteral("Return exactly: SAK_REAL_MODEL_SMOKE_OK");
+    timeout.start(120'000);
+    client.createResponse(request);
+    loop.exec();
+    return result;
 }
 
 }  // namespace
@@ -363,6 +432,26 @@ void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLoca
     QCOMPARE(root.value(QStringLiteral("parallel_tool_calls")).toBool(true), false);
 }
 
+void OpenAIResponsesClientTests::buildPayload_providerGatewayArgumentsAreStrictSchemaSafe() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("check provider status");
+    request.enable_local_tools = true;
+
+    const QJsonObject root = payloadObject(request);
+    const QJsonObject gateway = functionToolByName(root.value(QStringLiteral("tools")).toArray(),
+                                                   QStringLiteral("sak_provider_gateway"));
+    const QJsonObject arguments = gateway.value(QStringLiteral("parameters"))
+                                      .toObject()
+                                      .value(QStringLiteral("properties"))
+                                      .toObject()
+                                      .value(QStringLiteral("arguments"))
+                                      .toObject();
+
+    QCOMPARE(arguments.value(QStringLiteral("type")).toString(), QStringLiteral("string"));
+    QVERIFY(!arguments.contains(QStringLiteral("additionalProperties")));
+}
+
 void OpenAIResponsesClientTests::buildPayload_packageToolWarnsAgainstScanInstalls() {
     sak::ai::OpenAIResponseRequest request;
     request.model = QStringLiteral("gpt-5.5");
@@ -398,73 +487,16 @@ void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {
              "OpenAI API key is present but not usable.");
 
     sak::ai::OpenAIResponsesClient client;
-    QStringList models;
     QString failure;
-    {
-        QEventLoop loop;
-        QTimer timeout;
-        timeout.setSingleShot(true);
-        connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-        connect(&client,
-                &sak::ai::OpenAIResponsesClient::modelsReady,
-                &loop,
-                [&](const QStringList& model_ids) {
-                    models = model_ids;
-                    loop.quit();
-                });
-        connect(&client,
-                &sak::ai::OpenAIResponsesClient::requestFailed,
-                &loop,
-                [&](const QString& error_message) {
-                    failure = sak::ai::CredentialStore::redactSecrets(error_message);
-                    loop.quit();
-                });
-        timeout.start(120'000);
-        client.listModels(api_key);
-        loop.exec();
-    }
+    const QStringList models = listModelsForSmoke(client, api_key, &failure);
 
     QVERIFY2(failure.isEmpty(), qPrintable(failure));
     QVERIFY2(!models.isEmpty(), "OpenAI model list was empty.");
     const QString model = pickSmokeTestModel(models);
     QVERIFY2(!model.isEmpty(), "No chat-capable GPT model found for smoke test.");
 
-    sak::ai::OpenAIResponseResult result;
     failure.clear();
-    {
-        QEventLoop loop;
-        QTimer timeout;
-        timeout.setSingleShot(true);
-        connect(&timeout, &QTimer::timeout, &loop, [&]() {
-            failure = QStringLiteral("Timed out waiting for OpenAI smoke response");
-            loop.quit();
-        });
-        connect(&client,
-                &sak::ai::OpenAIResponsesClient::responseReady,
-                &loop,
-                [&](const sak::ai::OpenAIResponseResult& response) {
-                    result = response;
-                    loop.quit();
-                });
-        connect(&client,
-                &sak::ai::OpenAIResponsesClient::requestFailed,
-                &loop,
-                [&](const QString& error_message) {
-                    failure = sak::ai::CredentialStore::redactSecrets(error_message);
-                    loop.quit();
-                });
-
-        sak::ai::OpenAIResponseRequest request;
-        request.api_key = api_key;
-        request.model = model;
-        request.instructions = QStringLiteral(
-            "You are a minimal integration smoke test. Reply with exactly "
-            "SAK_REAL_MODEL_SMOKE_OK and no extra text.");
-        request.input = QStringLiteral("Return exactly: SAK_REAL_MODEL_SMOKE_OK");
-        timeout.start(120'000);
-        client.createResponse(request);
-        loop.exec();
-    }
+    const sak::ai::OpenAIResponseResult result = runSmokeResponse(client, api_key, model, &failure);
 
     QVERIFY2(failure.isEmpty(), qPrintable(failure));
     QVERIFY2(result.output_text.contains(QStringLiteral("SAK_REAL_MODEL_SMOKE_OK")),

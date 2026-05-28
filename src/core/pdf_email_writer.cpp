@@ -21,6 +21,10 @@
 namespace sak {
 
 namespace {
+constexpr qsizetype kPdfHtmlInitialReserveChars = 4096;
+}
+
+namespace {
 constexpr int kPdfDpi = 300;
 constexpr int kPdfMarginMm = 15;
 constexpr int kMaxSubjectLength = 80;
@@ -103,7 +107,7 @@ std::expected<QString, error_code> PdfEmailWriter::writeMessage(
 QString PdfEmailWriter::buildHtmlForPdf(
     const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {
     QString html;
-    html.reserve(4096);
+    html.reserve(kPdfHtmlInitialReserveChars);
 
     html += QStringLiteral(
         "<html><head><style>"

@@ -21,9 +21,7 @@
 #include "sak/logger.h"
 #include "sak/network_constants.h"
 
-#include <QCoreApplication>
 #include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -36,6 +34,16 @@
 #include <algorithm>
 
 namespace {
+constexpr qsizetype kAria2cBinaryUnitSuffixLength = 3;
+constexpr int kAria2cDownloadedCaptureGroup = 1;
+constexpr int kAria2cTotalCaptureGroup = 2;
+constexpr int kAria2cPercentCaptureGroup = 3;
+constexpr int kAria2cSpeedCaptureGroup = 4;
+constexpr int kChecksumRecordMinimumParts = 2;
+constexpr int kChecksumComputingProgress = 97;
+constexpr int kChecksumVerifyingProgress = 95;
+constexpr qint64 kChecksumReadBufferSize = 8 * sak::kBytesPerMB;
+
 QString formatSize(qint64 bytes) {
     return sak::formatBytes(bytes);
 }
@@ -43,16 +51,16 @@ QString formatSize(qint64 bytes) {
 /// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
 double parseAria2cSpeedMBps(const QString& dlSpeedStr) {
     if (dlSpeedStr.endsWith("MiB")) {
-        return dlSpeedStr.chopped(3).toDouble();
+        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble();
     }
     if (dlSpeedStr.endsWith("KiB")) {
-        return dlSpeedStr.chopped(3).toDouble() / 1024.0;
+        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() / sak::kBytesPerKBf;
     }
     if (dlSpeedStr.endsWith("GiB")) {
-        return dlSpeedStr.chopped(3).toDouble() * 1024.0;
+        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() * sak::kBytesPerKBf;
     }
-    // Fallback: raw bytes/sec
-    return dlSpeedStr.toDouble() / (1024.0 * 1024.0);
+    // Numeric aria2c value is raw bytes/sec.
+    return dlSpeedStr.toDouble() / sak::kBytesPerMBf;
 }
 }  // anonymous namespace
 
@@ -172,28 +180,11 @@ void LinuxISODownloader::onVersionCheckFailed(const QString& distroId, const QSt
         return;
     }
 
-    // Fall back to hardcoded version
     auto distro = m_catalog->distroById(distroId);
     sak::logWarning("Version check failed for " + distroId.toStdString() + ": " +
-                    error.toStdString() + " -- using hardcoded version");
-
-    Q_EMIT statusMessage("Version check failed -- using known version " + distro.version);
-
-    // Try to construct URL from known version
-    m_downloadUrl = m_catalog->resolveDownloadUrl(distro);
-    m_checksumUrl = m_catalog->resolveChecksumUrl(distro);
-    m_checksumType = distro.checksumType;
-    m_expectedFileName = m_catalog->resolveFileName(distro);
-    m_totalSize = distro.approximateSize;
-    m_sourceType = distro.sourceType;
-
-    if (m_downloadUrl.isEmpty()) {
-        setPhase(Phase::Failed, "Download URL not available");
-        Q_EMIT downloadError("Could not resolve download URL for " + distro.name);
-        return;
-    }
-
-    startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+                    error.toStdString());
+    setPhase(Phase::Failed, "Version check failed");
+    Q_EMIT downloadError(QString("Could not verify latest %1 release: %2").arg(distro.name, error));
 }
 
 // ============================================================================
@@ -460,10 +451,10 @@ void LinuxISODownloader::onProgressPollTimer() {
 
         auto match = progressRegex.match(line);
         if (match.hasMatch()) {
-            qint64 downloaded = match.captured(1).toLongLong();
-            qint64 total = match.captured(2).toLongLong();
-            int percent = match.captured(3).toInt();
-            double speedMBps = parseAria2cSpeedMBps(match.captured(4));
+            qint64 downloaded = match.captured(kAria2cDownloadedCaptureGroup).toLongLong();
+            qint64 total = match.captured(kAria2cTotalCaptureGroup).toLongLong();
+            int percent = match.captured(kAria2cPercentCaptureGroup).toInt();
+            double speedMBps = parseAria2cSpeedMBps(match.captured(kAria2cSpeedCaptureGroup));
 
             QString detail = QString("%1 / %2").arg(formatSize(downloaded), formatSize(total));
 
@@ -496,21 +487,21 @@ QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
 
         // Split on whitespace (hash  filename OR hash *filename)
         QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-        // Single hash in file -- assume it's for our file
         if (parts.size() == 1) {
             return parts.first().toLower();
         }
-        if (parts.size() < 2) {
+        if (parts.size() < kChecksumRecordMinimumParts) {
             continue;
         }
 
-        QString filename = parts.last();
-        // Remove leading * (binary mode indicator)
-        if (filename.startsWith('*')) {
-            filename = filename.mid(1);
-        }
-        if (filename == expectedFileName) {
-            return parts.first().toLower();
+        for (qsizetype i = 0; i + 1 < parts.size(); i += kChecksumRecordMinimumParts) {
+            QString filename = parts.at(i + 1);
+            if (filename.startsWith('*')) {
+                filename = filename.mid(1);
+            }
+            if (filename == expectedFileName) {
+                return parts.at(i).toLower();
+            }
         }
     }
 
@@ -524,12 +515,10 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     nam->deleteLater();
 
     if (reply->error() != QNetworkReply::NoError) {
-        sak::logWarning("Checksum fetch failed: " + reply->errorString().toStdString());
-        Q_EMIT statusMessage("Checksum verification skipped (could not fetch checksum file)");
-
-        QFileInfo fileInfo(m_savePath);
-        setPhase(Phase::Completed, "Download complete (checksum fetch failed)");
-        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        const QString error = "Checksum fetch failed: " + reply->errorString();
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Checksum fetch failed");
+        Q_EMIT downloadError(error);
         return;
     }
 
@@ -538,19 +527,17 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
     QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
 
     if (expectedHash.isEmpty()) {
-        sak::logWarning("Could not find matching hash in checksum file for: " +
-                        expectedFileName.toStdString());
-        Q_EMIT statusMessage("Checksum verification skipped (no matching entry found)");
-
-        QFileInfo fileInfo(m_savePath);
-        setPhase(Phase::Completed, "Download complete");
-        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        const QString error = "Could not find matching hash in checksum file for: " +
+                              expectedFileName;
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Checksum entry missing");
+        Q_EMIT downloadError(error);
         return;
     }
 
     // Compute hash in background thread
     Q_EMIT statusMessage("Computing " + m_checksumType.toUpper() + " checksum...");
-    Q_EMIT progressUpdated(97, "Computing checksum...");
+    Q_EMIT progressUpdated(kChecksumComputingProgress, "Computing checksum...");
 
     auto algorithm = (m_checksumType == "sha1") ? QCryptographicHash::Sha1
                                                 : QCryptographicHash::Sha256;
@@ -569,7 +556,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         }
 
         QCryptographicHash hash(algorithm);
-        const qint64 bufferSize = 8 * 1024 * 1024;  // 8 MB chunks
+        const qint64 bufferSize = kChecksumReadBufferSize;
         while (!file.atEnd()) {
             hash.addData(file.read(bufferSize));
         }
@@ -582,7 +569,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
 void LinuxISODownloader::verifyChecksum() {
     setPhase(Phase::VerifyingChecksum, "Verifying checksum...");
     Q_EMIT statusMessage("Downloading checksum file...");
-    Q_EMIT progressUpdated(95, "Verifying integrity...");
+    Q_EMIT progressUpdated(kChecksumVerifyingProgress, "Verifying integrity...");
 
     // Fetch checksum file
     auto* nam = new QNetworkAccessManager(this);
@@ -663,48 +650,13 @@ void LinuxISODownloader::setPhase(Phase phase, const QString& description) {
 QString LinuxISODownloader::findAria2c() const {
     auto& tools = sak::BundledToolsManager::instance();
 
-    // Primary location: tools/uup/aria2c.exe
-    QString path = tools.toolPath("uup", "aria2c.exe");
+    const QString path = tools.toolPath("uup", "aria2c.exe");
     if (QFileInfo::exists(path)) {
         return path;
     }
 
-    // Fallback: recursive search in tools/uup/
-    QDir uupDir(tools.toolsPath() + "/uup");
-    if (uupDir.exists()) {
-        QDirIterator it(
-            uupDir.absolutePath(), {"aria2c.exe"}, QDir::Files, QDirIterator::Subdirectories);
-        if (it.hasNext()) {
-            return it.next();
-        }
-    }
-
-    // Secondary fallback: check alongside the executable
-    QString appDir = QCoreApplication::applicationDirPath();
-    QStringList searchPaths = {
-        appDir + "/tools/uup/aria2c.exe",
-        appDir + "/aria2c.exe",
-    };
-    auto it = std::find_if(searchPaths.begin(), searchPaths.end(), [](const QString& p) {
-        return QFileInfo::exists(p);
-    });
-    if (it != searchPaths.end()) {
-        return *it;
-    }
-
-    // Check PATH environment variable
-    QString pathEnv = qEnvironmentVariable("PATH");
-    QStringList pathDirs = pathEnv.split(';', Qt::SkipEmptyParts);
-    for (const auto& dir : pathDirs) {
-        QString candidate = QDir(dir).absoluteFilePath("aria2c.exe");
-        if (QFileInfo::exists(candidate)) {
-            sak::logInfo("Found aria2c on PATH: " + candidate.toStdString());
-            return candidate;
-        }
-    }
-
     sak::logError(
-        "aria2c.exe not found in any known location. "
+        "aria2c.exe not found at required bundled path. "
         "Run scripts/bundle_uup_tools.ps1 to install it.");
     return {};
 }

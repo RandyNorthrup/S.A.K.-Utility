@@ -22,13 +22,16 @@
 
 namespace sak {
 
+constexpr size_t kDefaultDirectIoAlignmentBytes = 4096;
+
 /// @brief Sector-aligned buffer for direct I/O
 ///
 /// Uses _aligned_malloc on Windows, std::aligned_alloc elsewhere.
 /// Required for FILE_FLAG_NO_BUFFERING disk operations.
 class AlignedBuffer {
 public:
-    explicit AlignedBuffer(size_t size, size_t alignment = 4096) : m_size(size) {
+    explicit AlignedBuffer(size_t size, size_t alignment = kDefaultDirectIoAlignmentBytes)
+        : m_size(size) {
 #ifdef SAK_PLATFORM_WINDOWS
         m_data = static_cast<uint8_t*>(_aligned_malloc(size, alignment));
 #else

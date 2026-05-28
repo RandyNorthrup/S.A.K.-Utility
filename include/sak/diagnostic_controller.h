@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/diagnostic_types.h"
+#include "sak/layout_constants.h"
 
 #include <QFuture>
 #include <QObject>
@@ -16,6 +17,8 @@
 #include <memory>
 
 namespace sak {
+
+inline constexpr int kDefaultThermalMonitoringIntervalMs = kTimerBroadcastMs;
 
 // Forward declarations
 class HardwareInventoryScanner;
@@ -116,7 +119,7 @@ public:
 
     /// @brief Start thermal monitoring
     /// @param interval_ms Poll interval in milliseconds
-    void startThermalMonitoring(int interval_ms = 2000);
+    void startThermalMonitoring(int interval_ms = kDefaultThermalMonitoringIntervalMs);
 
     /// @brief Stop thermal monitoring
     void stopThermalMonitoring();
@@ -217,6 +220,15 @@ private Q_SLOTS:
     void onStressTestComplete(const sak::StressTestResult& result);
 
 private:
+    void connectHardwareScanner();
+    void connectSmartAnalyzer();
+    void connectCpuBenchmark();
+    void connectDiskBenchmark();
+    void connectMemoryBenchmark();
+    void connectStressTest();
+    void connectThermalMonitor();
+    void connectReportGenerator();
+
     /// @brief Advance to the next step in the full suite
     void advanceSuiteStep();
 

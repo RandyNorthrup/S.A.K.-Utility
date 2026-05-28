@@ -11,6 +11,20 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+
+function Invoke-IsolatedPowerShellScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath
+    )
+
+    $hostPath = (Get-Process -Id $PID).Path
+    & $hostPath -NoProfile -ExecutionPolicy Bypass -File $ScriptPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release readiness check failed: $ScriptPath"
+    }
+}
+
 Push-Location $ProjectRoot
 try {
     $version = (Get-Content -LiteralPath "VERSION" -Raw).Trim()
@@ -22,6 +36,13 @@ try {
     foreach ($requiredScript in @(
             "scripts/scan_secrets.ps1",
             "scripts/check_blocking_patterns.ps1",
+            "scripts/check_gui_style_tokens.ps1",
+            "scripts/check_gui_stylesheet_literals.ps1",
+            "scripts/check_gui_magic_numbers.ps1",
+            "scripts/check_magic_numbers.py",
+            "scripts/check_accessibility_patterns.ps1",
+            "scripts/check_logged_message_boxes.ps1",
+            "scripts/run_lizard.py",
             "scripts/check_third_party_licenses.ps1",
             "scripts/verify_portable_release_smoke.ps1",
             "scripts/run_portable_e2e_smoke.ps1",
@@ -36,6 +57,19 @@ try {
 
     & scripts/scan_secrets.ps1 -SkipExternalTools
     & scripts/check_blocking_patterns.ps1
+    Invoke-IsolatedPowerShellScript -ScriptPath (Join-Path $ProjectRoot "scripts/check_accessibility_patterns.ps1")
+    & scripts/check_gui_style_tokens.ps1
+    & scripts/check_gui_stylesheet_literals.ps1
+    & scripts/check_gui_magic_numbers.ps1
+    python scripts/check_magic_numbers.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release readiness check failed: scripts/check_magic_numbers.py"
+    }
+    & scripts/check_logged_message_boxes.ps1
+    python scripts/run_lizard.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release readiness check failed: scripts/run_lizard.py"
+    }
     & scripts/check_third_party_licenses.ps1
     & scripts/check_qrc_resources.ps1
 

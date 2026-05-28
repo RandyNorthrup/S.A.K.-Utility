@@ -12,6 +12,7 @@
 #include "sak/eml_writer.h"
 #include "sak/error_codes.h"
 #include "sak/html_email_writer.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/mbox_writer.h"
 #include "sak/msg_writer.h"
@@ -55,19 +56,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     logInfo("OST Converter: starting conversion of {}", source_path.toStdString());
 
-    // Compute source checksum if requested
-    if (config.include_source_checksums) {
-        QFile source_file(source_path);
-        if (source_file.open(QIODevice::ReadOnly)) {
-            QCryptographicHash hasher(QCryptographicHash::Sha256);
-            constexpr qint64 kChunkSize = 64 * 1024;
-            while (!source_file.atEnd() && !m_cancelled.load()) {
-                hasher.addData(source_file.read(kChunkSize));
-            }
-            result.source_sha256 = hasher.result().toHex();
-            source_file.close();
-        }
-    }
+    computeSourceChecksumIfRequested(source_path, config, result);
 
     if (m_cancelled.load()) {
         result.finished = QDateTime::currentDateTime();
@@ -75,25 +64,9 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         return;
     }
 
-    // Open the source file with PstParser
-    auto parser = std::make_unique<PstParser>();
-    parser->open(source_path);
-
-    // Brief synchronous wait: the parser emits fileOpened on success
-    // or errorOccurred on failure. We use the sync API for workers.
-    if (!parser->isOpen()) {
-        // Attempt a brief busy-wait for async open to complete
-        // The parser may have opened synchronously or we need to
-        // fallback to checking state directly.
-        if (!parser->isOpen()) {
-            QString err_msg = "Failed to open file: " + source_path;
-            logError("OST Converter: {}", err_msg.toStdString());
-            result.errors.append(err_msg);
-            result.finished = QDateTime::currentDateTime();
-            Q_EMIT errorOccurred(err_msg);
-            Q_EMIT conversionFinished(result);
-            return;
-        }
+    auto parser = openSourceParser(source_path, result);
+    if (!parser) {
+        return;
     }
 
     PstFileInfo file_info = parser->fileInfo();
@@ -125,7 +98,46 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
     Q_EMIT conversionFinished(result);
 }
 
+void OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
+                                                           const OstConversionConfig& config,
+                                                           OstConversionResult& result) {
+    if (!config.include_source_checksums) {
+        return;
+    }
+
+    QFile source_file(source_path);
+    if (!source_file.open(QIODevice::ReadOnly)) {
+        return;
+    }
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    constexpr qint64 kChunkSize = 64 * 1024;
+    while (!source_file.atEnd() && !m_cancelled.load()) {
+        hasher.addData(source_file.read(kChunkSize));
+    }
+    result.source_sha256 = hasher.result().toHex();
+    source_file.close();
+}
+
+std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& source_path,
+                                                                 OstConversionResult& result) {
+    auto parser = std::make_unique<PstParser>();
+    parser->open(source_path);
+    if (parser->isOpen()) {
+        return parser;
+    }
+
+    QString err_msg = "Failed to open file: " + source_path;
+    logError("OST Converter: {}", err_msg.toStdString());
+    result.errors.append(err_msg);
+    result.finished = QDateTime::currentDateTime();
+    Q_EMIT errorOccurred(err_msg);
+    Q_EMIT conversionFinished(result);
+    return nullptr;
+}
+
 namespace {
+constexpr uint64_t kPstRootFolderNid = 0x122;
 
 qint64 splitSizeToBytes(PstSplitSize split_size, qint64 custom_mb) {
     switch (split_size) {
@@ -134,7 +146,7 @@ qint64 splitSizeToBytes(PstSplitSize split_size, qint64 custom_mb) {
     case PstSplitSize::Split10Gb:
         return ost::kSplit10GbBytes;
     case PstSplitSize::Custom:
-        return custom_mb * 1024 * 1024;
+        return custom_mb * kBytesPerMB;
     default:
         return ost::kSplit5GbBytes;
     }
@@ -434,7 +446,7 @@ std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QStr
 
     QStringList parts = folder_path.split(QStringLiteral("/"), Qt::SkipEmptyParts);
     QString accumulated;
-    uint64_t parent_nid = 0x122;  // Root folder NID
+    uint64_t parent_nid = kPstRootFolderNid;
 
     for (const auto& part : parts) {
         accumulated = accumulated.isEmpty() ? part : accumulated + QStringLiteral("/") + part;
@@ -458,7 +470,7 @@ std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QStr
         }
     }
 
-    return m_pst_folder_nids.value(folder_path, 0x122);
+    return m_pst_folder_nids.value(folder_path, kPstRootFolderNid);
 }
 
 void OstConversionWorker::writeItemPst(const PstItemDetail& item,

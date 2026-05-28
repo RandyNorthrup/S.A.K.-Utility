@@ -27,6 +27,15 @@
 
 namespace sak {
 
+namespace {
+#ifdef Q_OS_WIN
+constexpr DWORD kNetUserInfoDetailedLevel = 3;
+constexpr int kWindowsAccountBufferChars = 256;
+constexpr int kProfileSizeEstimateFileLimit = 1000;
+constexpr int kFolderSelectionFileLimit = 10'000;
+#endif
+}  // namespace
+
 WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
 
 QVector<UserProfile> WindowsUserScanner::scanUsers() {
@@ -41,14 +50,14 @@ QVector<UserProfile> WindowsUserScanner::scanUsers() {
 
 #ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
-    Q_ASSERT(!profiles.isEmpty());
+    Q_ASSERT(profiles.isEmpty());
     LPUSER_INFO_3 userInfo = nullptr;
     DWORD entriesRead = 0;
     DWORD totalEntries = 0;
     DWORD resumeHandle = 0;
 
     NET_API_STATUS status = NetUserEnum(nullptr,                // local computer
-                                        3,                      // level 3 (detailed info)
+                                        kNetUserInfoDetailedLevel,
                                         FILTER_NORMAL_ACCOUNT,  // normal user accounts only
                                         reinterpret_cast<LPBYTE*>(&userInfo),
                                         MAX_PREFERRED_LENGTH,
@@ -101,8 +110,8 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
 
 QString WindowsUserScanner::getCurrentUsername() {
 #ifdef Q_OS_WIN
-    wchar_t username[256];
-    DWORD size = 256;
+    wchar_t username[kWindowsAccountBufferChars];
+    DWORD size = kWindowsAccountBufferChars;
     if (GetUserNameW(username, &size)) {
         return QString::fromWCharArray(username);
     }
@@ -117,8 +126,8 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     const auto* usernameW = reinterpret_cast<const wchar_t*>(username.utf16());
     PSID sid = nullptr;
     DWORD sidSize = 0;
-    wchar_t domain[256];
-    DWORD domainSize = 256;
+    wchar_t domain[kWindowsAccountBufferChars];
+    DWORD domainSize = kWindowsAccountBufferChars;
     SID_NAME_USE sidType;
 
     // First call to get required buffer size
@@ -132,7 +141,7 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     if (!sid) {
         return QString();
     }
-    domainSize = 256;
+    domainSize = kWindowsAccountBufferChars;
 
     if (!LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
         LocalFree(sid);
@@ -302,7 +311,7 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
 
         QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
         int fileCount = 0;
-        while (it.hasNext() && fileCount < 1000) {  // Limit for speed
+        while (it.hasNext() && fileCount < kProfileSizeEstimateFileLimit) {
             it.next();
             totalSize += it.fileInfo().size();
             fileCount++;
@@ -340,7 +349,7 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
             sel.size_bytes = WindowsUserScanner::estimateProfileSize(fullPath);
             // Quick file count
             QDirIterator it(fullPath, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext() && sel.file_count < 10'000) {
+            while (it.hasNext() && sel.file_count < kFolderSelectionFileLimit) {
                 it.next();
                 sel.file_count++;
             }

@@ -20,6 +20,8 @@
 
 namespace sak {
 
+inline constexpr int kDefaultNuGetSearchResults = 30;
+
 /// @brief Metadata for a single Chocolatey package from the NuGet v2 feed
 struct ChocoPackageMetadata {
     QString package_id;
@@ -58,7 +60,7 @@ public:
     NuGetApiClient& operator=(const NuGetApiClient&) = delete;
 
     /// @brief Search packages by keyword
-    void searchPackages(const QString& query, int max_results = 30);
+    void searchPackages(const QString& query, int max_results = kDefaultNuGetSearchResults);
 
     /// @brief Get metadata for a specific package (latest or pinned version)
     void getPackageMetadata(const QString& package_id, const QString& version = QString());

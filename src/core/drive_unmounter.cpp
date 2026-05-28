@@ -20,6 +20,9 @@
 #pragma comment(lib, "Rstrtmgr.lib")
 
 namespace {
+constexpr int kBackoffInitialDelayMs = 100;
+constexpr int kBackoffMultiplier = 2;
+constexpr int kRestartManagerProcessCapacity = 10;
 
 /// @brief Query the physical drive number for a volume path
 /// @param volumePath Volume GUID path (with or without trailing backslash)
@@ -308,7 +311,7 @@ bool DriveUnmounter::preventAutoMount(int driveNumber) {
 }
 
 bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAttempts) {
-    int delay_ms = 100;  // Start with 100ms
+    int delay_ms = kBackoffInitialDelayMs;
 
     for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
         if (operation()) {
@@ -322,7 +325,7 @@ bool DriveUnmounter::retryWithBackoff(std::function<bool()> operation, int maxAt
                              .arg(delay_ms)
                              .toStdString());
             QThread::msleep(delay_ms);
-            delay_ms *= 2;  // Exponential backoff
+            delay_ms *= kBackoffMultiplier;
         }
     }
 
@@ -443,7 +446,7 @@ void DriveUnmounter::shutdownHandlesViaRestartManager(DWORD dwSession,
     DWORD dwReason;
     UINT nProcInfoNeeded = 0;
     UINT nProcInfo = 0;
-    RM_PROCESS_INFO rgpi[10];
+    RM_PROCESS_INFO rgpi[kRestartManagerProcessCapacity];
 
     dwError = RmGetList(dwSession, &nProcInfoNeeded, &nProcInfo, rgpi, &dwReason);
 

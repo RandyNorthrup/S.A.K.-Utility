@@ -26,6 +26,11 @@ namespace {
 
 constexpr char kOpenAiBaseUrl[] = "https://api.openai.com";
 constexpr int kOpenAiTimeoutMs = 120'000;
+constexpr int kLocalToolTimeoutMinSeconds = 5;
+constexpr int kLocalToolTimeoutMaxSeconds = 3600;
+constexpr int kPackageToolTimeoutMaxSeconds = 7200;
+constexpr int kSessionSearchMaxResults = kPercentMax;
+constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
 
 [[nodiscard]] QString firstNonEmptyError(const QString& first, const QString& fallback) {
     return first.trimmed().isEmpty() ? fallback : first;
@@ -272,7 +277,9 @@ QJsonObject shellTool(const QString& name,
     QJsonObject properties;
     properties[QStringLiteral("command")] = stringParameter(command_help);
     properties[QStringLiteral("timeout_seconds")] =
-        integerParameter(QStringLiteral("Timeout in seconds, from 5 to 3600."), 5, 3600);
+        integerParameter(QStringLiteral("Timeout in seconds, from 5 to 3600."),
+                         kLocalToolTimeoutMinSeconds,
+                         kLocalToolTimeoutMaxSeconds);
     properties[QStringLiteral("requires_admin")] =
         booleanParameter(QStringLiteral("Whether this command requires administrator rights."));
     return functionTool(name,
@@ -294,7 +301,9 @@ QJsonObject processTool() {
     arguments_param[QStringLiteral("items")] = stringParameter(QString());
     properties[QStringLiteral("arguments")] = arguments_param;
     properties[QStringLiteral("timeout_seconds")] =
-        integerParameter(QStringLiteral("Timeout in seconds, from 5 to 3600."), 5, 3600);
+        integerParameter(QStringLiteral("Timeout in seconds, from 5 to 3600."),
+                         kLocalToolTimeoutMinSeconds,
+                         kLocalToolTimeoutMaxSeconds);
     properties[QStringLiteral("requires_admin")] = booleanParameter(QStringLiteral(
         "Whether the program requires admin rights. Must be false because run_process does not "
         "support elevation."));
@@ -363,8 +372,8 @@ QJsonObject packageTool() {
         QStringLiteral("Optional pinned package version. Empty means latest stable."));
     properties[QStringLiteral("timeout_seconds")] = integerParameter(
         QStringLiteral("Timeout in seconds, from 5 to 7200. Use 1800 or more for installs."),
-        5,
-        7200);
+        kLocalToolTimeoutMinSeconds,
+        kPackageToolTimeoutMaxSeconds);
     return functionTool(QStringLiteral("sak_package_manager"),
                         QStringLiteral("Use S.A.K. Utility's built-in bundled Chocolatey package "
                                        "manager. Use this before web search, raw choco/winget "
@@ -453,13 +462,11 @@ QJsonObject providerGatewayTool() {
                                                    QStringLiteral("app_run_action_plan"),
                                                    QStringLiteral("app_run_action")};
 
-    QJsonObject arguments;
-    arguments[QStringLiteral("type")] = QStringLiteral("object");
-    arguments[QStringLiteral("description")] = QStringLiteral(
-        "Structured provider arguments. For win32_mcp_call use "
-        "{tool_name, tool_arguments, timeout_ms}. For Context7 docs_query use "
-        "{libraryId} after resolving a library id.");
-    arguments[QStringLiteral("additionalProperties")] = true;
+    QJsonObject arguments = stringParameter(
+        QStringLiteral("JSON object string for provider-specific arguments. Use {} when unused. "
+                       "For win32_mcp_call use {\"tool_name\":\"...\",\"tool_arguments\":{...},"
+                       "\"timeout_ms\":20000}. For Context7 docs_query use {\"libraryId\":\"...\"} "
+                       "after resolving a library id."));
 
     QJsonObject properties;
     properties[QStringLiteral("operation")] = operation;
@@ -497,8 +504,8 @@ QJsonObject sessionSearchTool() {
     QJsonObject properties;
     properties[QStringLiteral("query")] = stringParameter(QStringLiteral(
         "Text to search across saved AI session titles, transcript, and command records."));
-    properties[QStringLiteral("max_results")] =
-        integerParameter(QStringLiteral("Maximum hits to return, from 1 to 100."), 1, 100);
+    properties[QStringLiteral("max_results")] = integerParameter(
+        QStringLiteral("Maximum hits to return, from 1 to 100."), 1, kSessionSearchMaxResults);
 
     return functionTool(QStringLiteral("sak_session_search"),
                         QStringLiteral("Search saved S.A.K. AI session transcript and command "
@@ -701,7 +708,7 @@ QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
 }
 
 bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
-    return api_key.trimmed().size() >= 20;
+    return api_key.trimmed().size() >= kMinimumOpenAiApiKeyLength;
 }
 
 QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,

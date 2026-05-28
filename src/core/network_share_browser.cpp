@@ -27,9 +27,11 @@ namespace sak {
 
 namespace {
 constexpr int kShareInfoLevel = 1;  // SHARE_INFO_1 level
+constexpr DWORD kShareTypeMask = 0x00'00'FF'FF;
+constexpr qsizetype kTemporaryFileUuidChars = 8;
 
 [[nodiscard]] NetworkShareInfo::ShareType mapShareType(DWORD type) {
-    switch (type & 0x00'00'FF'FF) {
+    switch (type & kShareTypeMask) {
     case STYPE_DISKTREE:
         return NetworkShareInfo::ShareType::Disk;
     case STYPE_PRINTQ:
@@ -162,9 +164,10 @@ QPair<bool, bool> NetworkShareBrowser::testReadWriteAccess(const QString& uncPat
 
     // Test write access by creating a temporary file
     if (canRead) {
-        const QString testFile = uncPath + QStringLiteral("\\._sak_write_test_") +
-                                 QUuid::createUuid().toString(QUuid::Id128).left(8) +
-                                 QStringLiteral(".tmp");
+        const QString testFile =
+            uncPath + QStringLiteral("\\._sak_write_test_") +
+            QUuid::createUuid().toString(QUuid::Id128).left(kTemporaryFileUuidChars) +
+            QStringLiteral(".tmp");
 
         QFile file(testFile);
         if (file.open(QIODevice::WriteOnly)) {

@@ -4,7 +4,7 @@
   "title": "Download Offline Installer",
   "role": "Software Installer",
   "category": "Software",
-  "description": "Download offline installer files using SAK offline tooling first.",
+  "description": "Download offline installers through SAK tooling first, capture source paths and checksums, and verify usable artifacts.",
   "starter_prompt": "Download an offline installer for the requested application. Use SAK offline downloader first.",
   "required_inputs": [
     {"id": "app_name", "label": "Application name", "type": "string", "required": true}

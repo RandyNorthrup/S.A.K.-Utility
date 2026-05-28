@@ -230,6 +230,10 @@ private:
     /// @brief Clean up all workers
     void cleanupWorkers();
 
+    void connectUninstallWorkerSignals(bool includeNativeSignals);
+    void connectBatchUninstallWorkerSignals();
+    void finishBatchUninstall();
+
     /// @brief Process next item in batch queue
     void processNextQueueItem();
 

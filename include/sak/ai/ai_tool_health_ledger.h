@@ -10,6 +10,11 @@
 
 namespace sak::ai {
 
+inline constexpr int kAiToolHealthDefaultSuppressAfterFailures = 3;
+inline constexpr int kAiToolHealthDefaultBaseBackoffMs = 5000;
+inline constexpr int kAiToolHealthDefaultMaxBackoffMs = 300'000;
+inline constexpr int kAiToolHealthDefaultTtlHours = 24;
+
 struct AiToolHealthRecord {
     QString key;
     QDateTime last_success_utc;
@@ -38,9 +43,10 @@ struct AiToolAvailability {
 
 class AiToolHealthLedger {
 public:
-    explicit AiToolHealthLedger(int suppress_after_failures = 3,
-                                int base_backoff_ms = 5000,
-                                int max_backoff_ms = 300'000);
+    explicit AiToolHealthLedger(
+        int suppress_after_failures = kAiToolHealthDefaultSuppressAfterFailures,
+        int base_backoff_ms = kAiToolHealthDefaultBaseBackoffMs,
+        int max_backoff_ms = kAiToolHealthDefaultMaxBackoffMs);
 
     [[nodiscard]] AiToolAvailability check(const QString& key, QDateTime now_utc = {}) const;
     void recordSuccess(const QString& key, qint64 latency_ms, QDateTime now_utc = {});
@@ -49,7 +55,7 @@ public:
                        const QString& error_message,
                        qint64 latency_ms,
                        QDateTime now_utc = {});
-    void setPersistencePath(const QString& path, int ttl_hours = 24);
+    void setPersistencePath(const QString& path, int ttl_hours = kAiToolHealthDefaultTtlHours);
     [[nodiscard]] QString persistencePath() const;
     [[nodiscard]] bool load(QString* error_message = nullptr);
     [[nodiscard]] bool save(QString* error_message = nullptr) const;
@@ -68,11 +74,11 @@ private:
     void persistIfConfigured() const;
 
     QHash<QString, AiToolHealthRecord> m_records;
-    int m_suppress_after_failures{3};
-    int m_base_backoff_ms{5000};
-    int m_max_backoff_ms{300'000};
+    int m_suppress_after_failures{kAiToolHealthDefaultSuppressAfterFailures};
+    int m_base_backoff_ms{kAiToolHealthDefaultBaseBackoffMs};
+    int m_max_backoff_ms{kAiToolHealthDefaultMaxBackoffMs};
     QString m_persistence_path;
-    int m_ttl_hours{24};
+    int m_ttl_hours{kAiToolHealthDefaultTtlHours};
 };
 
 }  // namespace sak::ai

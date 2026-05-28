@@ -16,6 +16,24 @@
 #include <QTemporaryFile>
 #include <QThread>
 
+namespace {
+constexpr qsizetype kSevenZipCommentPrefixLength = 10;
+constexpr qsizetype kSevenZipPathPrefixLength = 7;
+constexpr qsizetype kSevenZipSizePrefixLength = 7;
+constexpr qsizetype kSevenZipFolderPrefixLength = 9;
+constexpr int kExtractionWorkspaceMultiplier = 2;
+constexpr int kCapacityDisplayPrecision = 2;
+constexpr int kProgressDisplayPrecision = 1;
+constexpr int kExtractProgressStart = 15;
+constexpr int kExtractProgressSpan = 35;
+constexpr int kSevenZipTotalBytesCaptureGroup = 2;
+constexpr int kExtractionSummaryLineCount = 5;
+constexpr int kMinimumVerifiedCriticalFiles = 3;
+constexpr int kCriticalFilesVerifiedProgress = 92;
+constexpr int kBootableFlagVerifiedProgress = 95;
+constexpr int kFileCountVerifiedProgress = 98;
+}  // namespace
+
 bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString& destPath) {
     Q_ASSERT(!sourcePath.isEmpty());
     Q_ASSERT(!destPath.isEmpty());
@@ -81,7 +99,7 @@ QString WindowsUSBCreator::parseVolumeLabelFromOutput(const QString& output) {
         if (!line.startsWith("Comment = ")) {
             continue;
         }
-        QString label = line.mid(10).trimmed();
+        QString label = line.mid(kSevenZipCommentPrefixLength).trimmed();
         sak::logInfo(QString("ISO volume label: %1").arg(label).toStdString());
         return label;
     }
@@ -152,19 +170,20 @@ bool WindowsUSBCreator::copyISO_checkDiskSpace(const QString& cleanDest,
     qint64 isoSize = isoInfo.size();
 
     // Require at least 2x ISO size for extraction (compressed files expand)
-    qint64 requiredSpace = isoSize * 2;
+    qint64 requiredSpace = isoSize * kExtractionWorkspaceMultiplier;
 
     if (availableSpace < requiredSpace) {
-        m_lastError = QString("Insufficient disk space: need %1 GB, have %2 GB")
-                          .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2)
-                          .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2);
+        m_lastError =
+            QString("Insufficient disk space: need %1 GB, have %2 GB")
+                .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
+                .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision);
         sak::logError(m_lastError.toStdString());
         return false;
     }
 
     sak::logInfo(QString("Disk space check: %1 GB available, %2 GB required")
-                     .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', 2)
-                     .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', 2)
+                     .arg(availableSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
+                     .arg(requiredSpace / sak::kBytesPerGBf, 0, 'f', kCapacityDisplayPrecision)
                      .toStdString());
     return true;
 }
@@ -187,7 +206,7 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
 
     sak::logInfo(QString("7z command: %1 %2").arg(sevenZipPath, args.join(" ")).toStdString());
     sak::logInfo(QString("Extracting to absolute path: %1").arg(cleanDest).toStdString());
-    int lastProgressPercent = 15;
+    int lastProgressPercent = kExtractProgressStart;
     qint64 totalBytes = 0;
     qint64 processedBytes = 0;
     bool started = false;
@@ -253,7 +272,8 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
         }
 
         int extractPercent = percentMatch.captured(1).toInt();
-        int totalProgress = 15 + (extractPercent * 35 / 100);
+        int totalProgress = kExtractProgressStart +
+                            (extractPercent * kExtractProgressSpan / sak::kPercentMax);
         if (totalProgress <= lastProgressPercent) {
             return;
         }
@@ -267,7 +287,7 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
 
     // Bytes format matched
     processedBytes = bytesMatch.captured(1).toLongLong();
-    qint64 newTotal = bytesMatch.captured(2).toLongLong();
+    qint64 newTotal = bytesMatch.captured(kSevenZipTotalBytesCaptureGroup).toLongLong();
     if (newTotal > totalBytes) {
         totalBytes = newTotal;
     }
@@ -275,8 +295,9 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
         return;
     }
 
-    int extractPercent = static_cast<int>((processedBytes * 100) / totalBytes);
-    int totalProgress = 15 + (extractPercent * 35 / 100);
+    int extractPercent = static_cast<int>((processedBytes * sak::kPercentMax) / totalBytes);
+    int totalProgress = kExtractProgressStart +
+                        (extractPercent * kExtractProgressSpan / sak::kPercentMax);
     if (totalProgress <= lastProgressPercent) {
         return;
     }
@@ -288,13 +309,13 @@ void WindowsUSBCreator::copyISO_parseExtractionProgress(const QString& output,
     double totalMB = totalBytes / sak::kBytesPerMBf;
 
     Q_EMIT statusChanged(QString("Extracting Windows files... %1 MB / %2 MB (%3%)")
-                             .arg(processedMB, 0, 'f', 1)
-                             .arg(totalMB, 0, 'f', 1)
+                             .arg(processedMB, 0, 'f', kProgressDisplayPrecision)
+                             .arg(totalMB, 0, 'f', kProgressDisplayPrecision)
                              .arg(extractPercent));
 
     sak::logInfo(QString("Extraction progress: %1 MB / %2 MB (%3%)")
-                     .arg(processedMB, 0, 'f', 1)
-                     .arg(totalMB, 0, 'f', 1)
+                     .arg(processedMB, 0, 'f', kProgressDisplayPrecision)
+                     .arg(totalMB, 0, 'f', kProgressDisplayPrecision)
                      .arg(extractPercent)
                      .toStdString());
 }
@@ -310,7 +331,7 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(const sak::ProcessResult& re
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
         sak::logInfo(QString("7z processed %1 lines of output").arg(lines.count()).toStdString());
         // Log last few lines which contain summary
-        for (int i = qMax(0, lines.count() - 5); i < lines.count(); ++i) {
+        for (int i = qMax(0, lines.count() - kExtractionSummaryLineCount); i < lines.count(); ++i) {
             sak::logInfo(QString("  %1").arg(lines[i].trimmed()).toStdString());
         }
     }
@@ -718,19 +739,19 @@ QList<QPair<QString, qint64>> WindowsUSBCreator::parseIsoCriticalFiles(const QSt
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
         if (trimmed.startsWith("Path = ")) {
-            currentPath = trimmed.mid(7).trimmed();
+            currentPath = trimmed.mid(kSevenZipPathPrefixLength).trimmed();
             continue;
         }
         if (trimmed.startsWith("Size = ")) {
             bool ok = false;
-            currentSize = trimmed.mid(7).toLongLong(&ok);
+            currentSize = trimmed.mid(kSevenZipSizePrefixLength).toLongLong(&ok);
             if (!ok) {
                 currentSize = 0;
             }
             continue;
         }
         if (trimmed.startsWith("Folder = ")) {
-            isFolder = (trimmed.mid(9).trimmed() == "+");
+            isFolder = (trimmed.mid(kSevenZipFolderPrefixLength).trimmed() == "+");
             continue;
         }
         if (!trimmed.isEmpty() || currentPath.isEmpty()) {
@@ -793,11 +814,12 @@ bool WindowsUSBCreator::verifyCriticalFilesOnDisk(
                      .arg(failedCount)
                      .toStdString());
 
-    if (verifiedCount < 3) {
+    if (verifiedCount < kMinimumVerifiedCriticalFiles) {
         m_lastError = QString(
-                          "Verification failed: Only %1 critical files verified (minimum 3 "
+                          "Verification failed: Only %1 critical files verified (minimum %2 "
                           "required)")
-                          .arg(verifiedCount);
+                          .arg(verifiedCount)
+                          .arg(kMinimumVerifiedCriticalFiles);
         sak::logError(m_lastError.toStdString());
         return false;
     }
@@ -863,7 +885,7 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
     sak::logInfo(QString("- File count: VERIFIED (%1 items)").arg(fileCount).toStdString());
     sak::logInfo("========================================");
 
-    Q_EMIT progressUpdated(100);
+    Q_EMIT progressUpdated(sak::kPercentMax);
     Q_EMIT statusChanged("[x] USB VERIFIED BOOTABLE - All checks passed");
 
     // THIS IS THE ONLY PLACE completed() IS EMITTED
@@ -904,7 +926,7 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
         return false;
     }
 
-    Q_EMIT progressUpdated(92);
+    Q_EMIT progressUpdated(kCriticalFilesVerifiedProgress);
 
     // Verification 3: MANDATORY bootable flag check
     Q_EMIT statusChanged("Verifying bootable flag...");
@@ -914,7 +936,7 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
         return false;
     }
 
-    Q_EMIT progressUpdated(95);
+    Q_EMIT progressUpdated(kBootableFlagVerifiedProgress);
 
     // Verification 4: Count total files to ensure extraction wasn't empty
     constexpr int kMinExpectedFileCount = 10;
@@ -934,7 +956,7 @@ bool WindowsUSBCreator::finalVerification(const QString& driveLetter) {
 
     sak::logInfo(QString("  \xe2\x9c\x93 Total files: %1").arg(fileCount).toStdString());
 
-    Q_EMIT progressUpdated(98);
+    Q_EMIT progressUpdated(kFileCountVerifiedProgress);
 
     logFinalVerificationSuccess(fileCount);
 

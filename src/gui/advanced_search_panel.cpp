@@ -31,9 +31,11 @@
 #include <QImageReader>
 #include <QProcess>
 #include <QScrollArea>
+#include <QSet>
 #include <QSpinBox>
 #include <QStorageInfo>
 #include <QTextBlock>
+#include <QTextStream>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -50,6 +52,79 @@
 namespace sak {
 
 namespace {
+
+constexpr int kContextLinesComboWidth = 60;
+constexpr int kExtensionFilterMaxWidth = 200;
+constexpr int kPreferencesDialogMinWidth = sak::kDialogWidthSmall;
+constexpr int kFileExplorerPaneDefaultWidth = 250;
+constexpr int kResultsPaneDefaultWidth = 350;
+constexpr int kPreviewPaneDefaultWidth = 600;
+constexpr int kMatchNavButtonSize = sak::ui::kUiButtonSizeInline;
+constexpr int kMatchCounterMinWidth = 60;
+constexpr int kMetadataNameColumnIndex = 0;
+constexpr int kMetadataDialogWidth = 560;
+constexpr int kMetadataDialogHeight = 480;
+constexpr int kMetadataNameColumnWidth = 200;
+constexpr int kPreviewSeparatorLength = 50;
+constexpr ushort kPreviewSeparatorChar = 0x2550;
+constexpr int kPreviewLineNumberWidth = 5;
+constexpr int kContextLinesMax = 10;
+constexpr int kMaxSearchResultsLimit = 1'000'000;
+constexpr int kPreviewSizeMaxMb = 500;
+constexpr int kSearchSizeMaxMb = 1000;
+constexpr int kSearchCacheMaxEntries = 1000;
+constexpr int kSortMatchCountHigh = 2;
+constexpr int kSortMatchCountLow = 3;
+constexpr int kSortFileSizeLarge = 4;
+constexpr int kSortFileSizeSmall = 5;
+constexpr int kSortModifiedNewest = 6;
+constexpr int kSortModifiedOldest = 7;
+constexpr int kSizeDecimalPlaces = 2;
+constexpr int kMetadataSeparatorLength = 2;
+constexpr int kDriveRootPrefixLength = 2;
+constexpr qint64 kBytesPerKiB = 1024;
+constexpr qint64 kBytesPerMiB = kBytesPerKiB * kBytesPerKiB;
+
+bool matchesAreMetadataOnly(const QVector<SearchMatch>& matches) {
+    return !matches.isEmpty() &&
+           std::all_of(matches.begin(), matches.end(), [](const SearchMatch& match) {
+               return match.line_content.startsWith(QLatin1String("[Metadata]"));
+           });
+}
+
+QString previewSizeLimitMessage(qint64 fileSize, int limitMegabytes) {
+    return QObject::tr("File too large for preview (%1 MB, limit: %2 MB)")
+        .arg(static_cast<double>(fileSize) / static_cast<double>(kBytesPerMiB), 0, 'f', 1)
+        .arg(limitMegabytes);
+}
+
+QString buildTextPreview(QTextStream& stream,
+                         const QString& filePath,
+                         const QVector<SearchMatch>& matches) {
+    QSet<int> matchLines;
+    for (const auto& match : matches) {
+        matchLines.insert(match.line_number);
+    }
+
+    QString previewText;
+    previewText += QObject::tr("File: %1\n").arg(filePath);
+    previewText += QObject::tr("Total matches: %1\n").arg(matches.size());
+    previewText += QString(kPreviewSeparatorLength, QChar(kPreviewSeparatorChar)) +
+                   QStringLiteral("\n\n");
+
+    int lineNum = 0;
+    while (!stream.atEnd()) {
+        ++lineNum;
+        const QString line = stream.readLine();
+        const QString prefix = matchLines.contains(lineNum) ? QStringLiteral(">>> ")
+                                                            : QStringLiteral("    ");
+        previewText += QStringLiteral("%1%2 | %3\n")
+                           .arg(prefix)
+                           .arg(lineNum, kPreviewLineNumberWidth)
+                           .arg(line);
+    }
+    return previewText;
+}
 
 struct SearchBarRow1Ui {
     QComboBox* search_combo = nullptr;
@@ -109,12 +184,12 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
     row->addWidget(contextLabel);
 
     ui.context_lines_combo = new QComboBox(panel);
-    for (int i = 0; i <= 10; ++i) {
+    for (int i = 0; i <= kContextLinesMax; ++i) {
         ui.context_lines_combo->addItem(QString::number(i), i);
     }
     ui.context_lines_combo->setCurrentIndex(defaultContextLines);
     ui.context_lines_combo->setToolTip(QObject::tr("Lines of context before/after matches"));
-    ui.context_lines_combo->setFixedWidth(60);
+    ui.context_lines_combo->setFixedWidth(kContextLinesComboWidth);
     setAccessible(ui.context_lines_combo, QObject::tr("Context lines"));
     row->addWidget(ui.context_lines_combo);
 
@@ -166,7 +241,7 @@ SearchBarRow3Ui buildSearchBarRow3(AdvancedSearchPanel* panel, QHBoxLayout* row)
     ui.extensions_edit->setPlaceholderText(QObject::tr(".py,.txt,.js,.cpp"));
     ui.extensions_edit->setToolTip(
         QObject::tr("Comma-separated file extensions to include (empty = all files)"));
-    ui.extensions_edit->setMaximumWidth(200);
+    ui.extensions_edit->setMaximumWidth(kExtensionFilterMaxWidth);
     setAccessible(ui.extensions_edit, QObject::tr("File extension filter"));
     row->addWidget(ui.extensions_edit);
 
@@ -205,7 +280,7 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
 
     ui.dialog = new QDialog(parent);
     ui.dialog->setWindowTitle(QObject::tr("Search Preferences"));
-    ui.dialog->setMinimumWidth(380);
+    ui.dialog->setMinimumWidth(kPreferencesDialogMinWidth);
 
     auto* layout = new QVBoxLayout(ui.dialog);
 
@@ -213,34 +288,34 @@ PreferencesDialogUi buildPreferencesDialog(QWidget* parent, const SearchPreferen
     form->setSpacing(ui::kSpacingSmall);
 
     ui.maxResultsSpin = new QSpinBox(ui.dialog);
-    ui.maxResultsSpin->setRange(0, 1'000'000);
+    ui.maxResultsSpin->setRange(0, kMaxSearchResultsLimit);
     ui.maxResultsSpin->setSpecialValueText(QObject::tr("Unlimited"));
     ui.maxResultsSpin->setValue(prefs.max_results);
     ui.maxResultsSpin->setToolTip(QObject::tr("Maximum total matches (0 = unlimited)"));
     form->addRow(QObject::tr("Max results:"), ui.maxResultsSpin);
 
     ui.previewSizeSpin = new QSpinBox(ui.dialog);
-    ui.previewSizeSpin->setRange(1, 500);
+    ui.previewSizeSpin->setRange(1, kPreviewSizeMaxMb);
     ui.previewSizeSpin->setSuffix(QObject::tr(" MB"));
     ui.previewSizeSpin->setValue(prefs.max_preview_file_size_mb);
     ui.previewSizeSpin->setToolTip(QObject::tr("Maximum file size for preview pane"));
     form->addRow(QObject::tr("Max preview file size:"), ui.previewSizeSpin);
 
     ui.searchSizeSpin = new QSpinBox(ui.dialog);
-    ui.searchSizeSpin->setRange(1, 1000);
+    ui.searchSizeSpin->setRange(1, kSearchSizeMaxMb);
     ui.searchSizeSpin->setSuffix(QObject::tr(" MB"));
     ui.searchSizeSpin->setValue(prefs.max_search_file_size_mb);
     ui.searchSizeSpin->setToolTip(QObject::tr("Maximum file size to search"));
     form->addRow(QObject::tr("Max search file size:"), ui.searchSizeSpin);
 
     ui.contextLinesSpin = new QSpinBox(ui.dialog);
-    ui.contextLinesSpin->setRange(0, 10);
+    ui.contextLinesSpin->setRange(0, kContextLinesMax);
     ui.contextLinesSpin->setValue(prefs.context_lines);
     ui.contextLinesSpin->setToolTip(QObject::tr("Default context lines before/after matches"));
     form->addRow(QObject::tr("Default context lines:"), ui.contextLinesSpin);
 
     ui.cacheSizeSpin = new QSpinBox(ui.dialog);
-    ui.cacheSizeSpin->setRange(1, 1000);
+    ui.cacheSizeSpin->setRange(1, kSearchCacheMaxEntries);
     ui.cacheSizeSpin->setValue(prefs.max_cache_size);
     ui.cacheSizeSpin->setToolTip(QObject::tr("Maximum LRU file cache entries"));
     form->addRow(QObject::tr("Cache size:"), ui.cacheSizeSpin);
@@ -280,17 +355,17 @@ bool compareFileEntries(const FileSortEntry& a, const FileSortEntry& b, int sort
         return a.path.compare(b.path, Qt::CaseInsensitive) < 0;
     case 1:  // Path Z-A
         return a.path.compare(b.path, Qt::CaseInsensitive) > 0;
-    case 2:  // Match Count High
+    case kSortMatchCountHigh:
         return a.matches.size() > b.matches.size();
-    case 3:  // Match Count Low
+    case kSortMatchCountLow:
         return a.matches.size() < b.matches.size();
-    case 4:  // File Size Large
+    case kSortFileSizeLarge:
         return a.fileSize > b.fileSize;
-    case 5:  // File Size Small
+    case kSortFileSizeSmall:
         return a.fileSize < b.fileSize;
-    case 6:  // Date Modified Newest
+    case kSortModifiedNewest:
         return a.lastModified > b.lastModified;
-    case 7:  // Date Modified Oldest
+    case kSortModifiedOldest:
         return a.lastModified < b.lastModified;
     default:
         return a.path < b.path;
@@ -302,7 +377,7 @@ QVector<FileSortEntry> buildSortedFileEntries(const QMap<QString, QVector<Search
     QVector<FileSortEntry> sortedFiles;
     sortedFiles.reserve(allResults.size());
 
-    const bool needsFileInfo = (sortMode >= 4);  // Size or Date sorts
+    const bool needsFileInfo = (sortMode >= kSortFileSizeLarge);
 
     for (auto it = allResults.constBegin(); it != allResults.constEnd(); ++it) {
         FileSortEntry entry;
@@ -358,10 +433,10 @@ QString formatMetadataSize(qint64 bytes) {
     constexpr qint64 kMB = 1024 * 1024;
     constexpr qint64 kGB = 1024 * 1024 * 1024;
     if (bytes >= kGB) {
-        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', 2);
+        return QString("%1 GB").arg(static_cast<double>(bytes) / kGB, 0, 'f', kSizeDecimalPlaces);
     }
     if (bytes >= kMB) {
-        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', 2);
+        return QString("%1 MB").arg(static_cast<double>(bytes) / kMB, 0, 'f', kSizeDecimalPlaces);
     }
     if (bytes >= kKB) {
         return QString("%1 KB").arg(static_cast<double>(bytes) / kKB, 0, 'f', 1);
@@ -379,7 +454,8 @@ QMap<QString, QString> parseMetadataFromMatches(const QVector<SearchMatch>& matc
         }
         const int colon = line.indexOf(QLatin1String(": "));
         if (colon > 0) {
-            metadata.insert(line.left(colon).trimmed(), line.mid(colon + 2).trimmed());
+            metadata.insert(line.left(colon).trimmed(),
+                            line.mid(colon + kMetadataSeparatorLength).trimmed());
         }
     }
     return metadata;
@@ -550,8 +626,9 @@ AdvancedSearchPanel::~AdvancedSearchPanel() {
 
 void AdvancedSearchPanel::setupUi() {
     auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(0, 0, 0, 0);
-    rootLayout->setSpacing(0);
+    rootLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    rootLayout->setSpacing(sak::ui::kSpacingNone);
 
     auto* contentWidget = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(contentWidget);
@@ -646,7 +723,8 @@ void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout) {
     m_splitter->addWidget(m_preview_edit->parentWidget());
 
     // Default proportions: 250 : 350 : 600
-    m_splitter->setSizes({250, 350, 600});
+    m_splitter->setSizes(
+        {kFileExplorerPaneDefaultWidth, kResultsPaneDefaultWidth, kPreviewPaneDefaultWidth});
 
     layout->addWidget(m_splitter, 1);  // stretch = 1 to fill space
 }
@@ -654,7 +732,8 @@ void AdvancedSearchPanel::createThreePanelSplitter(QVBoxLayout* layout) {
 void AdvancedSearchPanel::createFileExplorer() {
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
-    containerLayout->setContentsMargins(0, 0, 0, 0);
+    containerLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     containerLayout->setSpacing(ui::kSpacingTight);
 
     auto* headerLabel = new QLabel(tr("File Explorer:"), container);
@@ -692,7 +771,8 @@ void AdvancedSearchPanel::createFileExplorer() {
 void AdvancedSearchPanel::createResultsTree() {
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
-    containerLayout->setContentsMargins(0, 0, 0, 0);
+    containerLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     containerLayout->setSpacing(ui::kSpacingTight);
 
     // Header with sort combo
@@ -704,7 +784,7 @@ void AdvancedSearchPanel::createResultsTree() {
     headerRow->addWidget(headerLabel);
 
     m_results_count_label = new QLabel(container);
-    m_results_count_label->setStyleSheet(QString("color: %1;").arg(ui::kColorTextMuted));
+    m_results_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     headerRow->addWidget(m_results_count_label);
 
     headerRow->addStretch();
@@ -757,7 +837,8 @@ void AdvancedSearchPanel::createResultsTree() {
 void AdvancedSearchPanel::createPreviewPane() {
     auto* container = new QWidget(this);
     auto* containerLayout = new QVBoxLayout(container);
-    containerLayout->setContentsMargins(0, 0, 0, 0);
+    containerLayout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     containerLayout->setSpacing(ui::kSpacingTight);
 
     // Header with match navigation
@@ -772,19 +853,19 @@ void AdvancedSearchPanel::createPreviewPane() {
     headerRow->addStretch();
 
     m_prev_match_button = new QPushButton(QStringLiteral("\u25C4"), container);
-    m_prev_match_button->setFixedSize(28, 28);
+    m_prev_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_prev_match_button->setToolTip(tr("Previous match"));
     m_prev_match_button->setEnabled(false);
     setAccessible(m_prev_match_button, tr("Previous match"));
     headerRow->addWidget(m_prev_match_button);
 
     m_match_counter_label = new QLabel(container);
-    m_match_counter_label->setMinimumWidth(60);
+    m_match_counter_label->setMinimumWidth(kMatchCounterMinWidth);
     m_match_counter_label->setAlignment(Qt::AlignCenter);
     headerRow->addWidget(m_match_counter_label);
 
     m_next_match_button = new QPushButton(QStringLiteral("\u25BA"), container);  // >
-    m_next_match_button->setFixedSize(28, 28);
+    m_next_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_next_match_button->setToolTip(tr("Next match"));
     m_next_match_button->setEnabled(false);
     setAccessible(m_next_match_button, tr("Next match"));
@@ -797,10 +878,7 @@ void AdvancedSearchPanel::createPreviewPane() {
     m_preview_edit->setFont(QFont("Consolas", ui::kFontSizeBody));
     m_preview_edit->setToolTip(tr("File preview with highlighted matches"));
     m_preview_edit->setStyleSheet(
-        QString("QTextEdit { background: %1; color: %2; border: 1px solid %3; }")
-            .arg(ui::kColorBgWhite)
-            .arg(ui::kColorTextBody)
-            .arg(ui::kColorBorderDefault));
+        ui::textEditPreviewStyle(ui::kColorBgWhite, ui::kColorTextBody, ui::kColorBorderDefault));
     setAccessible(m_preview_edit,
                   tr("File preview pane"),
                   tr("Shows file content with highlighted search matches"));
@@ -815,7 +893,8 @@ void AdvancedSearchPanel::createPreviewPane() {
 void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
     Q_ASSERT(layout);
     auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(0, 4, 0, 0);
+    statusRow->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
     // Log toggle on the left -- matches all other panels
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
@@ -918,7 +997,7 @@ void AdvancedSearchPanel::populateFileExplorerRoot() {
         }
 
         auto* driveItem = new QTreeWidgetItem(m_file_explorer);
-        driveItem->setText(0, QString("%1 (%2)").arg(label, rootPath.left(2)));
+        driveItem->setText(0, QString("%1 (%2)").arg(label, rootPath.left(kDriveRootPrefixLength)));
         driveItem->setData(0, Qt::UserRole, rootPath);
         driveItem->setIcon(0, style()->standardIcon(QStyle::SP_DriveHDIcon));
         addPlaceholderChild(driveItem);
@@ -976,19 +1055,20 @@ void AdvancedSearchPanel::onSearchClicked() {
 
     if (config.pattern.isEmpty() && config.root_path.isEmpty()) {
         sak::logWarning("Search: no directory selected and no pattern entered");
-        Q_EMIT statusMessage(tr("Please select a directory and enter a search pattern"), 3000);
+        Q_EMIT statusMessage(tr("Please select a directory and enter a search pattern"),
+                             sak::kTimerStatusMessageMs);
         return;
     }
 
     if (config.pattern.isEmpty()) {
         sak::logWarning("Search: empty search pattern");
-        Q_EMIT statusMessage(tr("Please enter a search pattern"), 3000);
+        Q_EMIT statusMessage(tr("Please enter a search pattern"), sak::kTimerStatusMessageMs);
         return;
     }
 
     if (config.root_path.isEmpty()) {
         sak::logWarning("Search: no directory selected");
-        Q_EMIT statusMessage(tr("Please select a directory to search"), 3000);
+        Q_EMIT statusMessage(tr("Please select a directory to search"), sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -1335,66 +1415,32 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
 
     m_preview_header_label->setText(tr("Preview:"));
 
-    // Detect metadata-only results (e.g., image EXIF data)
-    const bool all_metadata = !matches.isEmpty() &&
-                              std::all_of(matches.begin(), matches.end(), [](const SearchMatch& m) {
-                                  return m.line_content.startsWith(QLatin1String("[Metadata]"));
-                              });
-
-    if (all_metadata) {
+    if (matchesAreMetadataOnly(matches)) {
         showMetadataPreview(filePath, matches);
         return;
     }
 
-    // Load the file content for text preview
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         m_preview_edit->setPlainText(tr("Unable to open file: %1").arg(filePath));
         return;
     }
 
-    // Check file size limit
     const auto prefs = m_controller->preferences();
-    const qint64 maxSize = static_cast<qint64>(prefs.max_preview_file_size_mb) * 1024 * 1024;
+    const qint64 maxSize = static_cast<qint64>(prefs.max_preview_file_size_mb) * kBytesPerMiB;
     if (file.size() > maxSize) {
-        m_preview_edit->setPlainText(tr("File too large for preview (%1 MB, limit: %2 MB)")
-                                         .arg(file.size() / (1024.0 * 1024.0), 0, 'f', 1)
-                                         .arg(prefs.max_preview_file_size_mb));
+        m_preview_edit->setPlainText(
+            previewSizeLimitMessage(file.size(), prefs.max_preview_file_size_mb));
         return;
     }
 
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
+    m_preview_edit->setPlainText(buildTextPreview(stream, filePath, matches));
 
-    // Build line numbers with matching line indicators
-    QSet<int> matchLines;
-    for (const auto& match : matches) {
-        matchLines.insert(match.line_number);
-    }
-
-    QString previewText;
-    previewText += tr("File: %1\n").arg(filePath);
-    previewText += tr("Total matches: %1\n").arg(matches.size());
-    previewText += QString(50, QChar(0x2550)) + "\n\n";  // = separator
-
-    int lineNum = 0;
-    while (!stream.atEnd()) {
-        ++lineNum;
-        const QString line = stream.readLine();
-
-        const QString prefix = matchLines.contains(lineNum) ? ">>> " : "    ";
-        previewText += QString("%1%2 | %3\n").arg(prefix).arg(lineNum, 5).arg(line);
-    }
-
-    file.close();
-
-    m_preview_edit->setPlainText(previewText);
-
-    // Apply highlighting
     highlightMatches();
     updateMatchCounter();
 
-    // Enable navigation buttons
     const bool hasMatches = !matches.isEmpty();
     m_prev_match_button->setEnabled(hasMatches);
     m_next_match_button->setEnabled(hasMatches);
@@ -1450,13 +1496,13 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
     // Build dialog with categorized tree
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Metadata \u2014 %1").arg(fi.fileName()));
-    dialog.resize(560, 480);
+    dialog.resize(kMetadataDialogWidth, kMetadataDialogHeight);
 
     auto* layout = new QVBoxLayout(&dialog);
 
     auto* tree = new QTreeWidget(&dialog);
     tree->setHeaderLabels({tr("Property"), tr("Value")});
-    tree->setColumnWidth(0, 200);
+    tree->setColumnWidth(kMetadataNameColumnIndex, kMetadataNameColumnWidth);
     tree->setAlternatingRowColors(true);
     tree->setRootIsDecorated(true);
     populateMetadataTree(tree, metadata);
@@ -1484,7 +1530,7 @@ void AdvancedSearchPanel::showMetadataPreview(const QString& filePath,
     QString previewText;
     previewText += tr("File: %1\n").arg(filePath);
     previewText += tr("Metadata matches: %1\n").arg(matches.size());
-    previewText += QString(50, QChar(0x2550)) + "\n\n";
+    previewText += QString(kPreviewSeparatorLength, QChar(kPreviewSeparatorChar)) + "\n\n";
 
     for (const auto& match : matches) {
         previewText += match.line_content + "\n";
@@ -1547,10 +1593,10 @@ void AdvancedSearchPanel::highlightMatches() {
         QTextCharFormat fmt;
         if (i == m_current_match_index) {
             // Current match: orange highlight
-            fmt.setBackground(QColor(255, 165, 0));  // Orange
+            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchCurrentMatchHighlight)));
         } else {
             // Other matches: yellow highlight
-            fmt.setBackground(QColor(255, 255, 0));  // Yellow
+            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchOtherMatchHighlight)));
         }
         cursor.setCharFormat(fmt);
     }
@@ -1594,9 +1640,9 @@ void AdvancedSearchPanel::highlightMetadataMatches() {
 
         QTextCharFormat fmt;
         if (i == m_current_match_index) {
-            fmt.setBackground(QColor(255, 165, 0));
+            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchCurrentMatchHighlight)));
         } else {
-            fmt.setBackground(QColor(255, 255, 0));
+            fmt.setBackground(QColor(QString::fromLatin1(ui::kColorSearchOtherMatchHighlight)));
         }
         cursor.setCharFormat(fmt);
     }

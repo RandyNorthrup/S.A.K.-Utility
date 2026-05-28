@@ -12,12 +12,17 @@
 #include "sak/advanced_search_types.h"
 #include "sak/worker_base.h"
 
+#include <QByteArray>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
+#include <cstdint>
 #include <expected>
+#include <optional>
 #include <type_traits>
 
 namespace sak {
@@ -116,6 +121,39 @@ private:
                                                 const QStringList& lines,
                                                 int line_index,
                                                 const QRegularExpressionMatch& regex_match) const;
+
+    struct ArchiveEntry {
+        QString name;
+        QString path;
+        int data_start = 0;
+        int entry_size = 0;
+        int next_offset = 0;
+        std::uint16_t compression_method = 0;
+        std::uint32_t uncompressed_size = 0;
+    };
+
+    [[nodiscard]] std::optional<ArchiveEntry> readArchiveEntry(const QByteArray& archive_data,
+                                                               const QString& file_path,
+                                                               int offset) const;
+
+    [[nodiscard]] bool appendArchiveNameMatches(const ArchiveEntry& entry,
+                                                const QRegularExpression& regex,
+                                                QVector<SearchMatch>& matches) const;
+
+    [[nodiscard]] bool appendArchiveContentMatches(const QByteArray& archive_data,
+                                                   const ArchiveEntry& entry,
+                                                   const QRegularExpression& regex,
+                                                   QVector<SearchMatch>& matches) const;
+
+    [[nodiscard]] bool appendArchiveLineMatches(const QString& archive_path,
+                                                const QStringList& lines,
+                                                const QRegularExpression& regex,
+                                                QVector<SearchMatch>& matches) const;
+
+    [[nodiscard]] QVector<SearchMatch> collectMetadataMatches(
+        const QString& file_path,
+        const QRegularExpression& regex,
+        const QMap<QString, QString>& metadata) const;
 
     SearchConfig m_config;
 

@@ -58,6 +58,18 @@ private Q_SLOTS:
     void testBuildOfficePcBundle();
 
 private:
+    struct WorkerDiagnosticsContext {
+        QEventLoop* loop;
+        sak::BatchStats* final_stats;
+        bool* operation_finished;
+        QString* operation_error;
+        QHash<QString, QString>* package_errors;
+    };
+
+    void connectWorkerDiagnostics(sak::OfflineDeploymentWorker* worker,
+                                  const WorkerDiagnosticsContext& context);
+    void verifyManifest(const sak::BatchStats& final_stats) const;
+    void verifyPackageFiles(const sak::BatchStats& final_stats) const;
     QTemporaryDir m_output_dir;
 };
 
@@ -75,6 +87,70 @@ void TestOfflinePackageBuilder::cleanupTestCase() {
     qInfo() << "=== Offline package builder test completed ===";
 }
 
+void TestOfflinePackageBuilder::connectWorkerDiagnostics(sak::OfflineDeploymentWorker* worker,
+                                                         const WorkerDiagnosticsContext& context) {
+    connect(worker, &sak::OfflineDeploymentWorker::logMessage, this, [](const QString& message) {
+        qInfo().noquote() << message;
+    });
+    connect(worker,
+            &sak::OfflineDeploymentWorker::packageProgress,
+            this,
+            [context](const QString& package_id, bool success, const QString& message) {
+                if (!success) {
+                    (*context.package_errors)[package_id] = message;
+                }
+                qInfo().noquote()
+                    << QString("[%1] %2: %3").arg(success ? "OK" : "FAIL", package_id, message);
+            });
+    connect(worker,
+            &sak::OfflineDeploymentWorker::operationCompleted,
+            context.loop,
+            [context](const sak::BatchStats& stats) {
+                *context.final_stats = stats;
+                *context.operation_finished = true;
+                context.loop->quit();
+            });
+    connect(worker,
+            &sak::OfflineDeploymentWorker::operationError,
+            context.loop,
+            [context](const QString& error) {
+                *context.operation_error = error;
+                *context.operation_finished = true;
+                context.loop->quit();
+            });
+}
+
+void TestOfflinePackageBuilder::verifyManifest(const sak::BatchStats& final_stats) const {
+    const QString manifest_path = m_output_dir.path() + "/manifest.json";
+    QVERIFY2(QFileInfo::exists(manifest_path),
+             qPrintable("Manifest not found at: " + manifest_path));
+
+    QFile manifest_file(manifest_path);
+    QVERIFY(manifest_file.open(QIODevice::ReadOnly));
+    QJsonDocument manifest_doc = QJsonDocument::fromJson(manifest_file.readAll());
+    QVERIFY2(!manifest_doc.isNull(), "Manifest is not valid JSON");
+
+    QJsonObject manifest_obj = manifest_doc.object();
+    QVERIFY(manifest_obj.contains("packages"));
+    QVERIFY(manifest_obj.contains("manifest_version"));
+    QVERIFY(manifest_obj["packages"].isArray());
+    QCOMPARE(manifest_obj["packages"].toArray().size(), final_stats.completed);
+}
+
+void TestOfflinePackageBuilder::verifyPackageFiles(const sak::BatchStats& final_stats) const {
+    QDir pkg_dir(m_output_dir.path() + "/packages");
+    QStringList nupkg_files = pkg_dir.entryList({"*.nupkg"}, QDir::Files);
+    QVERIFY2(nupkg_files.size() >= final_stats.completed,
+             qPrintable(QString("Expected >= %1 nupkg files, found %2")
+                            .arg(final_stats.completed)
+                            .arg(nupkg_files.size())));
+
+    for (const QString& nupkg : nupkg_files) {
+        QFileInfo info(pkg_dir.filePath(nupkg));
+        QVERIFY2(info.size() > 0, qPrintable(QString("Empty nupkg: %1").arg(nupkg)));
+    }
+}
+
 // ============================================================================
 // Test: Build the Office PC bundle end-to-end
 // ============================================================================
@@ -87,46 +163,9 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
     bool operation_finished = false;
     QString operation_error;
 
-    // Collect log messages for diagnostics
-    QStringList log_messages;
-    connect(&worker,
-            &sak::OfflineDeploymentWorker::logMessage,
-            this,
-            [&log_messages](const QString& message) {
-                log_messages.append(message);
-                qInfo().noquote() << message;
-            });
-
-    // Track per-package results
-    QHash<QString, bool> package_results;
     QHash<QString, QString> package_errors;
-    connect(&worker,
-            &sak::OfflineDeploymentWorker::packageProgress,
-            this,
-            [&](const QString& package_id, bool success, const QString& message) {
-                package_results[package_id] = success;
-                if (!success) {
-                    package_errors[package_id] = message;
-                }
-                qInfo().noquote()
-                    << QString("[%1] %2: %3").arg(success ? "OK" : "FAIL", package_id, message);
-            });
-
-    connect(&worker,
-            &sak::OfflineDeploymentWorker::operationCompleted,
-            &loop,
-            [&](const sak::BatchStats& stats) {
-                final_stats = stats;
-                operation_finished = true;
-                loop.quit();
-            });
-
-    connect(
-        &worker, &sak::OfflineDeploymentWorker::operationError, &loop, [&](const QString& error) {
-            operation_error = error;
-            operation_finished = true;
-            loop.quit();
-        });
+    connectWorkerDiagnostics(
+        &worker, {&loop, &final_stats, &operation_finished, &operation_error, &package_errors});
 
     // Start the build
     QElapsedTimer timer;
@@ -161,39 +200,8 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
     QCOMPARE(final_stats.total, kOfficePcPackages.size());
     QVERIFY2(final_stats.completed > 0, "No packages completed successfully");
 
-    // Verify manifest was written
-    QString manifest_path = m_output_dir.path() + "/manifest.json";
-    QVERIFY2(QFileInfo::exists(manifest_path),
-             qPrintable("Manifest not found at: " + manifest_path));
-
-    // Read and validate the manifest
-    QFile manifest_file(manifest_path);
-    QVERIFY(manifest_file.open(QIODevice::ReadOnly));
-    QJsonDocument manifest_doc = QJsonDocument::fromJson(manifest_file.readAll());
-    QVERIFY2(!manifest_doc.isNull(), "Manifest is not valid JSON");
-
-    QJsonObject manifest_obj = manifest_doc.object();
-    QVERIFY(manifest_obj.contains("packages"));
-    QVERIFY(manifest_obj.contains("manifest_version"));
-    QVERIFY(manifest_obj["packages"].isArray());
-
-    int manifest_package_count = manifest_obj["packages"].toArray().size();
-    QCOMPARE(manifest_package_count, final_stats.completed);
-
-    // Verify .nupkg files exist in the packages subdirectory
-    QString packages_dir = m_output_dir.path() + "/packages";
-    QDir pkg_dir(packages_dir);
-    QStringList nupkg_files = pkg_dir.entryList({"*.nupkg"}, QDir::Files);
-    QVERIFY2(nupkg_files.size() >= final_stats.completed,
-             qPrintable(QString("Expected >= %1 nupkg files, found %2")
-                            .arg(final_stats.completed)
-                            .arg(nupkg_files.size())));
-
-    // Every completed package should have a non-zero .nupkg
-    for (const QString& nupkg : nupkg_files) {
-        QFileInfo info(pkg_dir.filePath(nupkg));
-        QVERIFY2(info.size() > 0, qPrintable(QString("Empty nupkg: %1").arg(nupkg)));
-    }
+    verifyManifest(final_stats);
+    verifyPackageFiles(final_stats);
 
     // Log final summary
     qInfo().noquote() << QString("Result: %1/%2 succeeded, %3 failed")

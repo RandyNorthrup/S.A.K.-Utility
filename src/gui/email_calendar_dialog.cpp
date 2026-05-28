@@ -63,6 +63,35 @@ static const QString kDayHeaders[] = {QStringLiteral("Sun"),
 
 constexpr int kDaysPerWeek = 7;
 constexpr int kMonthGridRows = 6;
+constexpr int kGeometryHalfDivisor = 2;
+constexpr int kTodayCircleInsetPx = 2;
+constexpr int kTodayCircleCenterAdjustPx = 2;
+constexpr int kDayLabelWidthExtraPx = 4;
+constexpr int kHalfHourLineLightness = 130;
+constexpr int kNoonHour = 12;
+constexpr int kMinutesPerHour = 60;
+constexpr int kTimeLabelRightPaddingPx = 4;
+constexpr int kEventBarHorizontalInsetPx = 2;
+constexpr int kEventBarHorizontalInsetTotalPx = 4;
+constexpr int kCurrentTimeLineWidthPx = 2;
+constexpr int kSelectedDayBorderWidthPx = 2;
+constexpr int kEventDetailAccentBorderWidthPx = 4;
+constexpr int kCellPaddingBothSidesFactor = 2;
+constexpr int kBarTextLeftExtraPaddingPx = 3;
+constexpr int kBarTextRightInsetPx = 2;
+constexpr int kWeekViewPreferredWidth = 600;
+constexpr int kWeekViewMinimumWidth = 400;
+constexpr int kAllDayBarVerticalInsetPx = 2;
+constexpr int kAllDayBarVerticalInsetTotalPx = 4;
+constexpr int kDefaultEventDurationSec = 3600;
+constexpr int kIcsSubjectFilenameMaxChars = 50;
+constexpr int kIcsDescriptionMaxChars = 500;
+constexpr int kHighImportanceValue = 2;
+constexpr int kMonthButtonId = static_cast<int>(EmailCalendarDialog::ViewMode::Month);
+constexpr int kWeekButtonId = static_cast<int>(EmailCalendarDialog::ViewMode::Week);
+constexpr int kDayButtonId = static_cast<int>(EmailCalendarDialog::ViewMode::Day);
+constexpr int kFirstCalendarMonth = 1;
+constexpr int kLastCalendarMonth = 12;
 
 // ============================================================================
 // Event table columns for sidebar event list
@@ -184,7 +213,7 @@ private:
         painter.fillRect(rect, bg_color);
 
         if (is_selected) {
-            painter.setPen(QPen(QColor(ui::kColorPrimary), 2));
+            painter.setPen(QPen(QColor(ui::kColorPrimary), kSelectedDayBorderWidthPx));
         } else {
             painter.setPen(QColor(ui::kColorBorderDefault));
         }
@@ -206,18 +235,21 @@ private:
             text_color = QColor(ui::kColorTextDisabled);
         }
         if (is_today) {
-            int circle_diam = email::kCalendarDayLabelHeight - 2;
-            int cx = rect.left() + email::kCalendarCellPadding + circle_diam / 2 + 2;
-            int cy = rect.top() + email::kCalendarCellPadding + circle_diam / 2;
+            int circle_diam = email::kCalendarDayLabelHeight - kTodayCircleInsetPx;
+            int cx = rect.left() + email::kCalendarCellPadding +
+                     circle_diam / kGeometryHalfDivisor + kTodayCircleCenterAdjustPx;
+            int cy = rect.top() + email::kCalendarCellPadding + circle_diam / kGeometryHalfDivisor;
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(ui::kColorPrimary));
-            painter.drawEllipse(QPoint(cx, cy), circle_diam / 2, circle_diam / 2);
+            painter.drawEllipse(QPoint(cx, cy),
+                                circle_diam / kGeometryHalfDivisor,
+                                circle_diam / kGeometryHalfDivisor);
             text_color = QColor(ui::kColorBgWhite);
         }
         painter.setPen(text_color);
         QRect label_rect(rect.left() + email::kCalendarCellPadding,
                          rect.top() + email::kCalendarCellPadding,
-                         email::kCalendarDayLabelHeight + 4,
+                         email::kCalendarDayLabelHeight + kDayLabelWidthExtraPx,
                          email::kCalendarDayLabelHeight);
         painter.drawText(label_rect, Qt::AlignCenter, QString::number(day.day()));
     }
@@ -230,7 +262,7 @@ private:
         const auto& events = *iter;
         int bar_top = rect.top() + email::kCalendarDayLabelHeight + email::kCalendarCellPadding;
         int bar_left = rect.left() + email::kCalendarCellPadding;
-        int bar_width = rect.width() - 2 * email::kCalendarCellPadding;
+        int bar_width = rect.width() - kCellPaddingBothSidesFactor * email::kCalendarCellPadding;
         int max_bars = std::min(static_cast<int>(events.size()), email::kCalendarMaxVisibleBars);
         int space_per_bar = email::kCalendarEventBarHeight + email::kCalendarBarGap;
 
@@ -277,7 +309,11 @@ private:
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);
 
-        QRect text_rect = bar_rect.adjusted(email::kCalendarBarBorderWidth + 3, 0, -2, 0);
+        QRect text_rect =
+            bar_rect.adjusted(email::kCalendarBarBorderWidth + kBarTextLeftExtraPaddingPx,
+                              0,
+                              -kBarTextRightInsetPx,
+                              0);
         QString label = buildBarLabel(evt);
         QString elided = painter.fontMetrics().elidedText(label, Qt::ElideRight, text_rect.width());
         painter.drawText(text_rect, Qt::AlignVCenter, elided);
@@ -424,9 +460,9 @@ protected:
         }
     }
 
-    QSize sizeHint() const override { return {600, totalHeight()}; }
+    QSize sizeHint() const override { return {kWeekViewPreferredWidth, totalHeight()}; }
 
-    QSize minimumSizeHint() const override { return {400, totalHeight()}; }
+    QSize minimumSizeHint() const override { return {kWeekViewMinimumWidth, totalHeight()}; }
 
 private:
     [[nodiscard]] int columnCount() const { return m_week_mode ? kDaysPerWeek : 1; }
@@ -450,8 +486,9 @@ private:
 
     [[nodiscard]] int timeToY(const QTime& time) const {
         int top_offset = email::kCalendarDayHeaderHeight + email::kCalendarAllDayRowHeight;
-        int minutes = time.hour() * 60 + time.minute() - email::kCalendarDayStartHour * 60;
-        return top_offset + (minutes * email::kCalendarHourHeight) / 60;
+        int minutes = time.hour() * kMinutesPerHour + time.minute() -
+                      email::kCalendarDayStartHour * kMinutesPerHour;
+        return top_offset + (minutes * email::kCalendarHourHeight) / kMinutesPerHour;
     }
 
     [[nodiscard]] QDate dayAtColumn(int px) const {
@@ -519,8 +556,8 @@ private:
 
         // Half-hour dashed line
         if (hour < email::kCalendarDayEndHour) {
-            int half_y = row_y + email::kCalendarHourHeight / 2;
-            QColor half_color = QColor(ui::kColorBorderDefault).lighter(130);
+            int half_y = row_y + email::kCalendarHourHeight / kGeometryHalfDivisor;
+            QColor half_color = QColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
             painter.setPen(QPen(half_color, 1, Qt::DotLine));
             painter.drawLine(email::kCalendarTimeColumnWidth, half_y, width(), half_y);
         }
@@ -530,15 +567,17 @@ private:
             QString time_str;
             if (hour == 0) {
                 time_str = QStringLiteral("12 AM");
-            } else if (hour < 12) {
+            } else if (hour < kNoonHour) {
                 time_str = QStringLiteral("%1 AM").arg(hour);
-            } else if (hour == 12) {
+            } else if (hour == kNoonHour) {
                 time_str = QStringLiteral("12 PM");
             } else {
-                time_str = QStringLiteral("%1 PM").arg(hour - 12);
+                time_str = QStringLiteral("%1 PM").arg(hour - kNoonHour);
             }
-            QRect time_rect(
-                0, row_y, email::kCalendarTimeColumnWidth - 4, email::kCalendarHourHeight);
+            QRect time_rect(0,
+                            row_y,
+                            email::kCalendarTimeColumnWidth - kTimeLabelRightPaddingPx,
+                            email::kCalendarHourHeight);
             painter.drawText(time_rect, Qt::AlignRight | Qt::AlignTop, time_str);
         }
     }
@@ -581,8 +620,8 @@ private:
                              const QVector<const CalendarEvent*>& events,
                              int col,
                              int header_y) {
-        int left = columnLeft(col) + 2;
-        int bar_width = columnWidth() - 4;
+        int left = columnLeft(col) + kEventBarHorizontalInsetPx;
+        int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
 
         for (const auto* evt : events) {
             if (!evt->is_all_day) {
@@ -592,7 +631,10 @@ private:
             QColor border = EmailCalendarDialog::borderColorForStatus(evt->busy_status,
                                                                       evt->item_type);
 
-            QRect bar(left, header_y + 2, bar_width, email::kCalendarAllDayRowHeight - 4);
+            QRect bar(left,
+                      header_y + kAllDayBarVerticalInsetPx,
+                      bar_width,
+                      email::kCalendarAllDayRowHeight - kAllDayBarVerticalInsetTotalPx);
             QPainterPath path;
             path.addRoundedRect(QRectF(bar),
                                 email::kCalendarBarCornerRadius,
@@ -621,8 +663,8 @@ private:
     void drawTimedEventsForColumn(QPainter& painter,
                                   const QVector<const CalendarEvent*>& events,
                                   int col) {
-        int left = columnLeft(col) + 2;
-        int bar_width = columnWidth() - 4;
+        int left = columnLeft(col) + kEventBarHorizontalInsetPx;
+        int bar_width = columnWidth() - kEventBarHorizontalInsetTotalPx;
 
         for (const auto* evt : events) {
             if (evt->is_all_day || !evt->start_time.isValid()) {
@@ -634,7 +676,8 @@ private:
 
     void drawTimedEventBar(QPainter& painter, const CalendarEvent* evt, int left, int bar_width) {
         QTime start = evt->start_time.time();
-        QTime end = evt->end_time.isValid() ? evt->end_time.time() : start.addSecs(3600);
+        QTime end = evt->end_time.isValid() ? evt->end_time.time()
+                                            : start.addSecs(kDefaultEventDurationSec);
 
         int top = timeToY(start);
         int bottom = timeToY(end);
@@ -664,7 +707,10 @@ private:
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);
 
-        QRect text_rect = bar.adjusted(email::kCalendarBarBorderWidth + 3, 1, -2, -1);
+        QRect text_rect = bar.adjusted(email::kCalendarBarBorderWidth + kBarTextLeftExtraPaddingPx,
+                                       1,
+                                       -kBarTextRightInsetPx,
+                                       -1);
         QString label;
         if (!evt->is_all_day && evt->start_time.isValid()) {
             label = evt->start_time.time().toString(QStringLiteral("h:mm AP")) +
@@ -693,7 +739,7 @@ private:
         int left = columnLeft(col);
         constexpr int kTimeDotRadius = 4;
 
-        painter.setPen(QPen(QColor(ui::kColorError), 2));
+        painter.setPen(QPen(QColor(ui::kColorError), kCurrentTimeLineWidthPx));
         painter.setBrush(QColor(ui::kColorError));
         painter.drawEllipse(QPoint(left, line_y), kTimeDotRadius, kTimeDotRadius);
         painter.drawLine(left + kTimeDotRadius, line_y, left + columnWidth(), line_y);
@@ -724,7 +770,8 @@ EmailCalendarDialog::EmailCalendarDialog(::EmailInspectorController* controller,
     , m_current_date(QDate::currentDate()) {
     setWindowTitle(tr("Calendar"));
     setModal(true);
-    resize(kWizardLargeWidth + 200, kWizardLargeHeight + 100);
+    resize(kWizardLargeWidth + email::kCalendarDialogExtraWidth,
+           kWizardLargeHeight + email::kCalendarDialogExtraHeight);
     setupUi();
     loadCalendarItems();
 }
@@ -751,8 +798,9 @@ bool EmailCalendarDialog::eventFilter(QObject* watched, QEvent* event) {
 
 void EmailCalendarDialog::setupUi() {
     auto* root_layout = new QVBoxLayout(this);
-    root_layout->setContentsMargins(0, 0, 0, 0);
-    root_layout->setSpacing(0);
+    root_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    root_layout->setSpacing(sak::ui::kSpacingNone);
 
     setupToolbar(root_layout);
     setupMainContent(root_layout);
@@ -765,8 +813,7 @@ void EmailCalendarDialog::setupUi() {
 
 void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent) {
     auto* toolbar = new QWidget(this);
-    toolbar->setStyleSheet(QStringLiteral("background: %1; border-bottom: 1px solid %2;")
-                               .arg(ui::kColorBgSurface, ui::kColorBorderDefault));
+    toolbar->setStyleSheet(ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault));
     auto* layout = new QHBoxLayout(toolbar);
     layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginSmall, ui::kMarginMedium, ui::kMarginSmall);
@@ -782,50 +829,20 @@ void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent) {
     updateNavigationLabel();
 }
 
-static constexpr auto kNavButtonStyle =
-    "QToolButton {"
-    "  background: transparent; border: 1px solid %1;"
-    "  border-radius: 4px; padding: 4px 8px;"
-    "  color: %2; font-size: 11pt;"
-    "}"
-    "QToolButton:hover { background: %3; }"
-    "QToolButton:pressed { background: %4; }";
-
-static constexpr auto kViewToggleStyle =
-    "QPushButton {"
-    "  background: transparent; border: 1px solid %1;"
-    "  border-radius: 4px; padding: 4px 12px;"
-    "  color: %2; font-weight: 500;"
-    "}"
-    "QPushButton:hover { background: %3; }"
-    "QPushButton:checked {"
-    "  background: %4; color: white;"
-    "  border: 1px solid %5;"
-    "}";
-
-static constexpr auto kSearchBarStyle =
-    "QLineEdit {"
-    "  border: 1px solid %1; border-radius: 4px;"
-    "  padding: 4px 8px; background: %2; color: %3;"
-    "}"
-    "QLineEdit:focus { border: 1px solid %4; }";
-
 void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
-    QString nav_style = QString(kNavButtonStyle)
-                            .arg(ui::kColorBorderDefault,
-                                 ui::kColorTextSecondary,
-                                 ui::kColorBgPageHover,
-                                 ui::kColorBgSurface);
+    const QString nav_style = ui::calendarNavButtonStyle();
 
     m_prev_button = new QToolButton(this);
     m_prev_button->setText(QStringLiteral("\u25C0"));
     m_prev_button->setToolTip(tr("Previous"));
+    m_prev_button->setAccessibleName(tr("Previous calendar period"));
     m_prev_button->setStyleSheet(nav_style);
     connect(m_prev_button, &QToolButton::clicked, this, &EmailCalendarDialog::onNavigatePrevious);
     layout->addWidget(m_prev_button);
 
     m_today_button = new QPushButton(tr("Today"), this);
     m_today_button->setToolTip(tr("Go to today"));
+    m_today_button->setAccessibleName(tr("Go to today"));
     m_today_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(m_today_button, &QPushButton::clicked, this, &EmailCalendarDialog::onNavigateToday);
     layout->addWidget(m_today_button);
@@ -833,22 +850,12 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     m_next_button = new QToolButton(this);
     m_next_button->setText(QStringLiteral("\u25B6"));
     m_next_button->setToolTip(tr("Next"));
+    m_next_button->setAccessibleName(tr("Next calendar period"));
     m_next_button->setStyleSheet(nav_style);
     connect(m_next_button, &QToolButton::clicked, this, &EmailCalendarDialog::onNavigateNext);
     layout->addWidget(m_next_button);
 
-    static constexpr auto kClickableLabelStyle =
-        "QLabel {"
-        "  font-size: %1pt; font-weight: 600; color: %2;"
-        "  padding: 2px 6px; border-radius: 4px;"
-        "}"
-        "QLabel:hover {"
-        "  background: %3; cursor: pointer;"
-        "}";
-
-    QString label_style = QString(kClickableLabelStyle)
-                              .arg(ui::kFontSizeSection)
-                              .arg(ui::kColorTextHeading, ui::kColorBgPageHover);
+    const QString label_style = ui::calendarClickableLabelStyle();
 
     m_month_label = new QLabel(this);
     m_month_label->setStyleSheet(label_style);
@@ -869,30 +876,28 @@ void EmailCalendarDialog::setupViewButtons(QHBoxLayout* layout) {
     m_view_group = new QButtonGroup(this);
     m_view_group->setExclusive(true);
 
-    QString toggle_style = QString(kViewToggleStyle)
-                               .arg(ui::kColorBorderDefault,
-                                    ui::kColorTextBody,
-                                    ui::kColorBgPageHover,
-                                    ui::kColorPrimary,
-                                    ui::kColorPrimaryDark);
+    const QString toggle_style = ui::calendarViewToggleStyle();
 
     m_month_button = new QPushButton(tr("Month"), this);
     m_month_button->setCheckable(true);
     m_month_button->setChecked(true);
+    m_month_button->setAccessibleName(tr("Month calendar view"));
     m_month_button->setStyleSheet(toggle_style);
-    m_view_group->addButton(m_month_button, 0);
+    m_view_group->addButton(m_month_button, kMonthButtonId);
     layout->addWidget(m_month_button);
 
     m_week_button = new QPushButton(tr("Week"), this);
     m_week_button->setCheckable(true);
+    m_week_button->setAccessibleName(tr("Week calendar view"));
     m_week_button->setStyleSheet(toggle_style);
-    m_view_group->addButton(m_week_button, 1);
+    m_view_group->addButton(m_week_button, kWeekButtonId);
     layout->addWidget(m_week_button);
 
     m_day_button = new QPushButton(tr("Day"), this);
     m_day_button->setCheckable(true);
+    m_day_button->setAccessibleName(tr("Day calendar view"));
     m_day_button->setStyleSheet(toggle_style);
-    m_view_group->addButton(m_day_button, 2);
+    m_view_group->addButton(m_day_button, kDayButtonId);
     layout->addWidget(m_day_button);
 
     connect(m_view_group, &QButtonGroup::idClicked, this, &EmailCalendarDialog::onViewModeChanged);
@@ -901,13 +906,10 @@ void EmailCalendarDialog::setupViewButtons(QHBoxLayout* layout) {
 void EmailCalendarDialog::setupSearchBar(QHBoxLayout* layout) {
     m_search_edit = new QLineEdit(this);
     m_search_edit->setPlaceholderText(tr("\xF0\x9F\x94\x8D Search events..."));
-    m_search_edit->setMaximumWidth(250);
+    m_search_edit->setMaximumWidth(email::kCalendarSearchMaxWidth);
     m_search_edit->setClearButtonEnabled(true);
-    m_search_edit->setStyleSheet(QString(kSearchBarStyle)
-                                     .arg(ui::kColorBorderDefault,
-                                          ui::kColorBgWhite,
-                                          ui::kColorTextBody,
-                                          ui::kColorPrimary));
+    m_search_edit->setAccessibleName(tr("Search calendar events"));
+    m_search_edit->setStyleSheet(ui::calendarSearchStyle());
     connect(
         m_search_edit, &QLineEdit::textChanged, this, &EmailCalendarDialog::onSearchTextChanged);
     layout->addWidget(m_search_edit);
@@ -934,9 +936,11 @@ void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
     setupCalendarViews(right_splitter);
     setupDetailPanel(right_splitter);
 
-    right_splitter->setSizes({600, 300});
+    right_splitter->setSizes(
+        {email::kCalendarViewDefaultWidth, email::kCalendarDetailDefaultWidth});
     outer_splitter->addWidget(right_splitter);
-    outer_splitter->setSizes({220, 880});
+    outer_splitter->setSizes(
+        {email::kCalendarSidebarDefaultWidth, email::kCalendarContentDefaultWidth});
     parent->addWidget(outer_splitter, 1);
 }
 
@@ -946,8 +950,8 @@ void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
 
 void EmailCalendarDialog::setupSidebar(QSplitter* splitter) {
     auto* sidebar = new QWidget(this);
-    sidebar->setMaximumWidth(260);
-    sidebar->setMinimumWidth(200);
+    sidebar->setMaximumWidth(email::kCalendarSidebarMaxWidth);
+    sidebar->setMinimumWidth(email::kCalendarSidebarMinWidth);
     auto* layout = new QVBoxLayout(sidebar);
     layout->setContentsMargins(
         ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
@@ -961,26 +965,25 @@ void EmailCalendarDialog::setupSidebar(QSplitter* splitter) {
 
 void EmailCalendarDialog::setupFilterSection(QVBoxLayout* layout) {
     auto* filter_label = new QLabel(tr("Filter by Status"), this);
-    filter_label->setStyleSheet(
-        QStringLiteral("font-weight: 600; color: %1;").arg(ui::kColorTextHeading));
+    filter_label->setStyleSheet(ui::sectionLabelStyle());
     layout->addWidget(filter_label);
 
     m_filter_free = new QCheckBox(tr("\u2B24 Free"), this);
     m_filter_free->setChecked(true);
-    m_filter_free->setStyleSheet(
-        QStringLiteral("QCheckBox { color: %1; }").arg(email::kCalColorFreeBorder));
+    m_filter_free->setAccessibleName(tr("Show free calendar events"));
+    m_filter_free->setStyleSheet(ui::checkboxColorStyle(email::kCalColorFreeBorder));
     m_filter_tentative = new QCheckBox(tr("\u2B24 Tentative"), this);
     m_filter_tentative->setChecked(true);
-    m_filter_tentative->setStyleSheet(
-        QStringLiteral("QCheckBox { color: %1; }").arg(email::kCalColorTentativeBorder));
+    m_filter_tentative->setAccessibleName(tr("Show tentative calendar events"));
+    m_filter_tentative->setStyleSheet(ui::checkboxColorStyle(email::kCalColorTentativeBorder));
     m_filter_busy = new QCheckBox(tr("\u2B24 Busy"), this);
     m_filter_busy->setChecked(true);
-    m_filter_busy->setStyleSheet(
-        QStringLiteral("QCheckBox { color: %1; }").arg(email::kCalColorBusyBorder));
+    m_filter_busy->setAccessibleName(tr("Show busy calendar events"));
+    m_filter_busy->setStyleSheet(ui::checkboxColorStyle(email::kCalColorBusyBorder));
     m_filter_oof = new QCheckBox(tr("\u2B24 Out of Office"), this);
     m_filter_oof->setChecked(true);
-    m_filter_oof->setStyleSheet(
-        QStringLiteral("QCheckBox { color: %1; }").arg(email::kCalColorOofBorder));
+    m_filter_oof->setAccessibleName(tr("Show out of office calendar events"));
+    m_filter_oof->setStyleSheet(ui::checkboxColorStyle(email::kCalColorOofBorder));
 
     for (auto* cb : {m_filter_free, m_filter_tentative, m_filter_busy, m_filter_oof}) {
         layout->addWidget(cb);
@@ -988,11 +991,11 @@ void EmailCalendarDialog::setupFilterSection(QVBoxLayout* layout) {
     }
 
     auto* org_label = new QLabel(tr("Organizer"), this);
-    org_label->setStyleSheet(
-        QStringLiteral("font-weight: 600; color: %1; margin-top: 6px;").arg(ui::kColorTextHeading));
+    org_label->setStyleSheet(ui::sectionLabelStyle(ui::kColorTextHeading, ui::kSpacingSmall));
     layout->addWidget(org_label);
 
     m_organizer_filter = new QComboBox(this);
+    m_organizer_filter->setAccessibleName(tr("Calendar organizer filter"));
     m_organizer_filter->addItem(tr("All Organizers"));
     connect(m_organizer_filter,
             &QComboBox::currentIndexChanged,
@@ -1003,27 +1006,22 @@ void EmailCalendarDialog::setupFilterSection(QVBoxLayout* layout) {
 
 void EmailCalendarDialog::setupDayEventList(QVBoxLayout* layout) {
     auto* events_label = new QLabel(tr("Events for Selected Date"), this);
-    events_label->setStyleSheet(
-        QStringLiteral("font-weight: 600; color: %1; margin-top: 8px;").arg(ui::kColorTextHeading));
+    events_label->setStyleSheet(ui::sectionLabelStyle(ui::kColorTextHeading, ui::kSpacingMedium));
     layout->addWidget(events_label);
 
     m_day_event_list = new QTableWidget(this);
+    m_day_event_list->setAccessibleName(tr("Events for selected date"));
     m_day_event_list->setColumnCount(DayColCount);
     m_day_event_list->setHorizontalHeaderLabels({tr("Time"), tr("Subject")});
     m_day_event_list->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_day_event_list->setSelectionMode(QAbstractItemView::SingleSelection);
     m_day_event_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_day_event_list->horizontalHeader()->setStretchLastSection(true);
-    m_day_event_list->setColumnWidth(DayColTime, 70);
+    m_day_event_list->setColumnWidth(DayColTime, email::kCalendarDayTimeColumnWidth);
     m_day_event_list->verticalHeader()->setVisible(false);
-    m_day_event_list->setMaximumHeight(250);
+    m_day_event_list->setMaximumHeight(email::kCalendarDayListMaxHeight);
     m_day_event_list->setAlternatingRowColors(true);
-    m_day_event_list->setStyleSheet(
-        QStringLiteral("QTableWidget { border: 1px solid %1; font-size: %2pt; }"
-                       "QTableWidget::item:selected { background: %3; color: white; }")
-            .arg(ui::kColorBorderDefault)
-            .arg(ui::kFontSizeSmall)
-            .arg(ui::kColorPrimary));
+    m_day_event_list->setStyleSheet(ui::calendarEventTableStyle());
     connect(m_day_event_list, &QTableWidget::cellClicked, this, [this](int row, int /*col*/) {
         auto* item = m_day_event_list->item(row, DayColSubject);
         if (item == nullptr) {
@@ -1103,10 +1101,10 @@ void EmailCalendarDialog::setupCalendarViews(QSplitter* splitter) {
 void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
     m_detail_browser = new QTextBrowser(this);
     m_detail_browser->setOpenExternalLinks(false);
-    m_detail_browser->setMinimumWidth(250);
+    m_detail_browser->setAccessibleName(tr("Calendar event details"));
+    m_detail_browser->setMinimumWidth(email::kCalendarDetailMinWidth);
     m_detail_browser->setPlaceholderText(tr("Select an event to view details"));
-    m_detail_browser->setStyleSheet(
-        QStringLiteral("QTextBrowser { border-left: 1px solid %1; }").arg(ui::kColorBorderDefault));
+    m_detail_browser->setStyleSheet(ui::leftBorderStyle(ui::kColorBorderDefault));
     splitter->addWidget(m_detail_browser);
 }
 
@@ -1116,21 +1114,22 @@ void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
 
 void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
     auto* footer = new QWidget(this);
-    footer->setStyleSheet(QStringLiteral("background: %1; border-top: 1px solid %2;")
-                              .arg(ui::kColorBgSurface, ui::kColorBorderDefault));
+    footer->setStyleSheet(
+        ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault, "top"));
     auto* layout = new QHBoxLayout(footer);
     layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginSmall, ui::kMarginMedium, ui::kMarginSmall);
     layout->setSpacing(ui::kSpacingMedium);
 
     m_status_label = new QLabel(this);
-    m_status_label->setStyleSheet(QStringLiteral("color: %1;").arg(ui::kColorTextMuted));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     layout->addWidget(m_status_label);
 
     layout->addStretch();
 
     m_export_ics_button = new QPushButton(tr("Export ICS"), this);
     m_export_ics_button->setToolTip(tr("Export all events as iCalendar (.ics) files"));
+    m_export_ics_button->setAccessibleName(tr("Export calendar as ICS"));
     m_export_ics_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(
         m_export_ics_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportIcsClicked);
@@ -1138,12 +1137,14 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
 
     m_export_csv_button = new QPushButton(tr("Export CSV"), this);
     m_export_csv_button->setToolTip(tr("Export all events as a CSV spreadsheet"));
+    m_export_csv_button->setAccessibleName(tr("Export calendar as CSV"));
     m_export_csv_button->setStyleSheet(ui::kSecondaryButtonStyle);
     connect(
         m_export_csv_button, &QPushButton::clicked, this, &EmailCalendarDialog::onExportCsvClicked);
     layout->addWidget(m_export_csv_button);
 
     m_close_button = new QPushButton(tr("Close"), this);
+    m_close_button->setAccessibleName(tr("Close calendar viewer"));
     m_close_button->setStyleSheet(ui::kSecondaryButtonStyle);
     connect(m_close_button, &QPushButton::clicked, this, &QDialog::accept);
     layout->addWidget(m_close_button);
@@ -1281,7 +1282,7 @@ void EmailCalendarDialog::onViewModeChanged(int mode_index) {
 
 void EmailCalendarDialog::onMonthLabelClicked() {
     QMenu menu(this);
-    for (int month = 1; month <= 12; ++month) {
+    for (int month = kFirstCalendarMonth; month <= kLastCalendarMonth; ++month) {
         QDate sample(m_current_date.year(), month, 1);
         auto* action = menu.addAction(sample.toString(QStringLiteral("MMMM")));
         action->setCheckable(true);
@@ -1449,11 +1450,11 @@ void EmailCalendarDialog::onDayEventListContextMenu(const QPoint& pos) {
 }
 
 void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
-    QString file_path =
-        QFileDialog::getSaveFileName(this,
-                                     tr("Export Event as ICS"),
-                                     evt.subject.simplified().left(50) + QStringLiteral(".ics"),
-                                     tr("iCalendar Files (*.ics)"));
+    QString file_path = QFileDialog::getSaveFileName(
+        this,
+        tr("Export Event as ICS"),
+        evt.subject.simplified().left(kIcsSubjectFilenameMaxChars) + QStringLiteral(".ics"),
+        tr("iCalendar Files (*.ics)"));
     if (file_path.isEmpty()) {
         return;
     }
@@ -1478,7 +1479,7 @@ void EmailCalendarDialog::exportSingleEventIcs(const CalendarEvent& evt) {
         out << "LOCATION:" << evt.location << "\r\n";
     }
     if (!evt.body_plain.isEmpty()) {
-        out << "DESCRIPTION:" << evt.body_plain.left(500) << "\r\n";
+        out << "DESCRIPTION:" << evt.body_plain.left(kIcsDescriptionMaxChars) << "\r\n";
     }
     out << "END:VEVENT\r\n"
         << "END:VCALENDAR\r\n";
@@ -1648,16 +1649,25 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     QColor fill = fillColorForStatus(evt.busy_status, evt.item_type);
     QColor border = borderColorForStatus(evt.busy_status, evt.item_type);
 
-    QString html =
-        QStringLiteral(
-            "<div style='font-family: Segoe UI, sans-serif; "
-            "padding: 12px;'>"
-            "<div style='border-left: 4px solid %1; "
-            "background: %2; padding: 8px 12px; "
-            "border-radius: 4px; margin-bottom: 12px;'>"
-            "<h3 style='color: %3; margin: 0 0 4px 0;'>"
-            "%4</h3>")
-            .arg(border.name(), fill.name(), ui::kColorTextHeading, evt.subject.toHtmlEscaped());
+    QString html = QStringLiteral(
+                       "<div style='font-family: Segoe UI, sans-serif; "
+                       "padding: %1px;'>"
+                       "<div style='border-left: %2px solid %3; "
+                       "background: %4; padding: %5px %6px; "
+                       "border-radius: %7px; margin-bottom: %8px;'>"
+                       "<h3 style='color: %9; margin: 0 0 %10px 0;'>"
+                       "%11</h3>")
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(kEventDetailAccentBorderWidthPx)
+                       .arg(border.name())
+                       .arg(fill.name())
+                       .arg(ui::kSpacingMedium)
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(ui::kCssRadiusSmallPx)
+                       .arg(ui::kHtmlDetailPaddingPx)
+                       .arg(ui::htmlColor(ui::kColorTextHeading))
+                       .arg(ui::kCssPaddingSmallPx)
+                       .arg(evt.subject.toHtmlEscaped());
 
     html += buildDateHtml(evt);
     html += QStringLiteral("</div>");
@@ -1671,9 +1681,11 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     if (evt.busy_status >= 0 && evt.busy_status < email::kCalBusyStatusCount) {
         html += QStringLiteral(
                     "<p><b>Status:</b> "
-                    "<span style='color: %1; font-weight: 600;'>"
-                    "%2</span></p>")
-                    .arg(border.name(), QLatin1String(kBusyLabels[evt.busy_status]));
+                    "<span style='color: %1; font-weight: %2;'>"
+                    "%3</span></p>")
+                    .arg(border.name())
+                    .arg(ui::kFontWeightSemibold)
+                    .arg(QLatin1String(kBusyLabels[evt.busy_status]));
     }
 
     appendHtmlField(html, QStringLiteral("Organizer"), evt.sender_name);
@@ -1683,7 +1695,7 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     html += buildAttendeesHtml(evt);
     appendHtmlField(html, QStringLiteral("Recurrence"), evt.recurrence_description);
     if (evt.importance != 1) {
-        QString importance_str = (evt.importance == 2) ? tr("High") : tr("Low");
+        QString importance_str = (evt.importance == kHighImportanceValue) ? tr("High") : tr("Low");
         appendHtmlField(html, QStringLiteral("Importance"), importance_str);
     }
     if (evt.attachment_count > 0) {
@@ -1708,8 +1720,10 @@ QString EmailCalendarDialog::buildDateHtml(const CalendarEvent& evt) {
         date_str += QStringLiteral(" \u2013 ") +
                     evt.end_time.time().toString(QStringLiteral("h:mm AP"));
     }
-    return QStringLiteral("<p style='color: %1; margin: 2px 0;'>%2</p>")
-        .arg(ui::kColorTextSecondary, date_str);
+    return QStringLiteral("<p style='color: %1; margin: %2px 0;'>%3</p>")
+        .arg(ui::htmlColor(ui::kColorTextSecondary))
+        .arg(ui::kCssPaddingTinyPx)
+        .arg(date_str);
 }
 
 QString EmailCalendarDialog::buildAttendeesHtml(const CalendarEvent& evt) {
@@ -1726,14 +1740,18 @@ QString EmailCalendarDialog::buildAttendeesHtml(const CalendarEvent& evt) {
 
 QString EmailCalendarDialog::buildBodyHtml(const CalendarEvent& evt) {
     if (!evt.body_html.isEmpty()) {
-        return QStringLiteral("<hr style='border: 1px solid %1;'>").arg(ui::kColorBorderDefault) +
+        return QStringLiteral("<hr style='border: %1px solid %2;'>")
+                   .arg(ui::kCssBorderWidthDefaultPx)
+                   .arg(ui::htmlColor(ui::kColorBorderDefault)) +
                evt.body_html;
     }
     if (!evt.body_plain.isEmpty()) {
         return QStringLiteral(
-                   "<hr style='border: 1px solid %1;'>"
-                   "<p style='white-space: pre-wrap;'>%2</p>")
-            .arg(ui::kColorBorderDefault, evt.body_plain.toHtmlEscaped());
+                   "<hr style='border: %1px solid %2;'>"
+                   "<p style='white-space: pre-wrap;'>%3</p>")
+            .arg(ui::kCssBorderWidthDefaultPx)
+            .arg(ui::htmlColor(ui::kColorBorderDefault))
+            .arg(evt.body_plain.toHtmlEscaped());
     }
     return {};
 }
@@ -1847,17 +1865,17 @@ bool EmailCalendarDialog::matchesFilter(const CalendarEvent& evt) const {
 
     // Busy-status filter
     int status = evt.busy_status;
-    if (status < 0) {
+    if (status == email::kCalBusyStatusUnknown) {
         return true;  // Unknown status always shown
     }
     switch (status) {
-    case 0:
+    case email::kCalBusyStatusFree:
         return m_filter_free->isChecked();
-    case 1:
+    case email::kCalBusyStatusTentative:
         return m_filter_tentative->isChecked();
-    case 2:
+    case email::kCalBusyStatusBusy:
         return m_filter_busy->isChecked();
-    case 3:
+    case email::kCalBusyStatusOof:
         return m_filter_oof->isChecked();
     default:
         return true;
@@ -1873,13 +1891,13 @@ QColor EmailCalendarDialog::fillColorForStatus(int busy_status, EmailItemType ty
         return QColor(email::kCalColorMeetingFill);
     }
     switch (busy_status) {
-    case 0:
+    case email::kCalBusyStatusFree:
         return QColor(email::kCalColorFreeFill);
-    case 1:
+    case email::kCalBusyStatusTentative:
         return QColor(email::kCalColorTentativeFill);
-    case 2:
+    case email::kCalBusyStatusBusy:
         return QColor(email::kCalColorBusyFill);
-    case 3:
+    case email::kCalBusyStatusOof:
         return QColor(email::kCalColorOofFill);
     default:
         return QColor(email::kCalColorDefaultFill);
@@ -1891,13 +1909,13 @@ QColor EmailCalendarDialog::borderColorForStatus(int busy_status, EmailItemType 
         return QColor(email::kCalColorMeetingBorder);
     }
     switch (busy_status) {
-    case 0:
+    case email::kCalBusyStatusFree:
         return QColor(email::kCalColorFreeBorder);
-    case 1:
+    case email::kCalBusyStatusTentative:
         return QColor(email::kCalColorTentativeBorder);
-    case 2:
+    case email::kCalBusyStatusBusy:
         return QColor(email::kCalColorBusyBorder);
-    case 3:
+    case email::kCalBusyStatusOof:
         return QColor(email::kCalColorOofBorder);
     default:
         return QColor(email::kCalColorDefaultBorder);

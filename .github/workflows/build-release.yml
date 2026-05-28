@@ -1,4 +1,4 @@
-name: Build Release
+name: Build, Test, Sign, and Release S.A.K. Utility
 
 on:
   push:
@@ -12,15 +12,14 @@ on:
   workflow_dispatch:
 
 env:
-  QT_VERSION: '6.5.3'
-  CMAKE_VERSION: '3.28.0'
+  QT_VERSION: '6.11.1'
   BUILD_TYPE: Release
   Qt6_DIR: ''  # Populated by install-qt-action at runtime
   VCPKG_ROOT: C:/vcpkg
 
 jobs:
   build-windows:
-    name: Build Windows Release
+    name: Build, verify, package, and publish Windows release
     runs-on: windows-latest
     permissions:
       contents: write
@@ -47,7 +46,7 @@ jobs:
         version: ${{ env.QT_VERSION }}
         host: 'windows'
         target: 'desktop'
-        arch: 'win64_msvc2019_64'
+        arch: 'win64_msvc2022_64'
         cache: true
 
     - name: Setup MSVC
@@ -426,7 +425,7 @@ jobs:
         body: |
           # S.A.K. Utility v${{ steps.version.outputs.version }}
 
-          **Swiss Army Knife Utility** - a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Single EXE, no installer, no runtime dependencies. Drop it on a USB stick and go.
+          **Swiss Army Knife Utility** - a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Release artifacts are installer-free ZIP packages that include the app, Qt runtime files, plugins, and bundled technician tools.
 
           ### AI Assistant
           Codex-style technician chat workspace with prompt/result transcript, custom chat sessions, prompt history, context chips, Markdown instruction attachments, token usage status, and generated reports. Uses a user-supplied OpenAI API key stored encrypted under the portable app data directory.
@@ -468,7 +467,7 @@ jobs:
 
           ---
 
-          100% portable. Open source. No telemetry.
+          Portable ZIP. Open source. No telemetry.
 
           **Requirements:** Windows 10/11 x64 - Runs as standard user; elevates per-task via UAC when needed
 
@@ -491,13 +490,14 @@ jobs:
     - name: Display Build Info
       run: |
         VERSION=$(cat VERSION | tr -d '[:space:]')
+        CMAKE_VERSION=$(cmake --version | head -n 1 | sed 's/^cmake version //')
         echo "### Build Information" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Qt Version**: ${{ env.QT_VERSION }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **CMake Version**: ${{ env.CMAKE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **CMake Version**: $CMAKE_VERSION" >> $GITHUB_STEP_SUMMARY
         echo "- **Build Type**: ${{ env.BUILD_TYPE }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Recent Changes" >> $GITHUB_STEP_SUMMARY

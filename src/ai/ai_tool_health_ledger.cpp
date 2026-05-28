@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_tool_health_ledger.h"
 
+#include "sak/layout_constants.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -17,6 +19,10 @@
 namespace sak::ai {
 
 namespace {
+constexpr qsizetype kHealthErrorPreviewChars = 1000;
+constexpr int kBackoffFactorMax = 1024;
+constexpr int kBackoffFactorMultiplier = 2;
+constexpr int kSecondsPerHour = kSecondsPerMinute * kSecondsPerMinute;
 
 QString iso(const QDateTime& value) {
     return value.isValid() ? value.toUTC().toString(Qt::ISODateWithMs) : QString();
@@ -173,7 +179,7 @@ void AiToolHealthLedger::recordFailure(const QString& key,
     record.last_latency_ms = std::max<qint64>(0, latency_ms);
     record.last_failure_class = failure_class.trimmed().isEmpty() ? QStringLiteral("tool_failed")
                                                                   : failure_class.trimmed();
-    record.last_error_message = error_message.trimmed().left(1000);
+    record.last_error_message = error_message.trimmed().left(kHealthErrorPreviewChars);
     ++record.failure_count;
     ++record.consecutive_failures;
     if (record.consecutive_failures >= m_suppress_after_failures) {
@@ -329,15 +335,15 @@ QDateTime AiToolHealthLedger::normalizedNow(QDateTime now_utc) const {
 int AiToolHealthLedger::backoffMs(int consecutive_failures) const {
     int factor = 1;
     const int exponent = std::max(0, consecutive_failures - m_suppress_after_failures);
-    for (int i = 0; i < exponent && factor < 1024; ++i) {
-        factor *= 2;
+    for (int i = 0; i < exponent && factor < kBackoffFactorMax; ++i) {
+        factor *= kBackoffFactorMultiplier;
     }
     return std::min(m_max_backoff_ms, m_base_backoff_ms * factor);
 }
 
 bool AiToolHealthLedger::recordIsFresh(const AiToolHealthRecord& record, QDateTime now_utc) const {
     const QDateTime now = normalizedNow(now_utc);
-    const QDateTime cutoff = now.addSecs(-m_ttl_hours * 3600);
+    const QDateTime cutoff = now.addSecs(-m_ttl_hours * kSecondsPerHour);
     if (record.disabled_until_utc.isValid() && record.disabled_until_utc > now) {
         return true;
     }

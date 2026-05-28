@@ -101,6 +101,10 @@ private Q_SLOTS:
     void progress_emitsProgressSignal();
 
 private:
+    void createTextFixtures();
+    void createBinaryAndMetadataFixtures();
+    void createArchiveFixtures();
+
     /// @brief Create a text file with given content in the temp dir
     void createTestFile(const QString& name, const QString& content);
 
@@ -128,8 +132,12 @@ private:
 
 void AdvancedSearchWorkerTests::initTestCase() {
     QVERIFY(m_temp_dir.isValid());
+    createTextFixtures();
+    createBinaryAndMetadataFixtures();
+    createArchiveFixtures();
+}
 
-    // Create test file structure
+void AdvancedSearchWorkerTests::createTextFixtures() {
     createTestFile("hello.txt",
                    "Hello World\n"
                    "This is line 2\n"
@@ -153,26 +161,22 @@ void AdvancedSearchWorkerTests::initTestCase() {
 
     createTestFile("large_match.txt", QString("prefix target suffix\n").repeated(100));
 
-    // Create a subdirectory with files
     createSubDir("subdir");
     createTestFile("subdir/nested.txt", "Nested file content\nWith target text\n");
 
-    // Create a file that should be excluded
     createSubDir(".git");
     createTestFile(".git/config", "git config file\nHello inside git\n");
 
-    // Create a non-text file (fake binary with some text)
-    createTestFile("fake.bin",
-                   QString(QByteArray(100, '\0')) + "hidden_text_marker" +
-                       QString(QByteArray(100, '\0')));
-
-    // Create a file with special regex characters in content
     createTestFile("special.txt",
                    "File has dots: config.ini\n"
                    "And parens: func(arg)\n"
                    "Plus stars: rating***\n");
+}
 
-    // Create a valid PNG with embedded text metadata
+void AdvancedSearchWorkerTests::createBinaryAndMetadataFixtures() {
+    createTestFile("fake.bin",
+                   QString(QByteArray(100, '\0')) + "hidden_text_marker" +
+                       QString(QByteArray(100, '\0')));
     {
         QImage image(32, 24, QImage::Format_ARGB32);
         image.fill(Qt::darkGreen);
@@ -189,8 +193,9 @@ void AdvancedSearchWorkerTests::initTestCase() {
         file.write(exif_jpeg);
         file.close();
     }
+}
 
-    // Create a minimal valid ZIP file
+void AdvancedSearchWorkerTests::createArchiveFixtures() {
     QByteArray zipEntry = "Hello from inside ZIP!";
     QByteArray zipData = createMinimalZip("readme.txt", zipEntry);
     {
@@ -240,76 +245,46 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
     const QByteArray nameBytes = entryName.toUtf8();
 
     // ── Local File Header ──
-    // Signature: PK\x03\x04
     zip.append("\x50\x4B\x03\x04", 4);
-    // Version needed: 20 (2.0)
     zip.append("\x14\x00", 2);
-    // General purpose bit flag
     zip.append("\x00\x00", 2);
-    // Compression method: 0 (stored)
     zip.append("\x00\x00", 2);
-    // Last mod time
     zip.append("\x00\x00", 2);
-    // Last mod date
     zip.append("\x00\x00", 2);
-    // CRC-32 (placeholder)
     zip.append("\x00\x00\x00\x00", 4);
-    // Compressed size
     quint32 size = static_cast<quint32>(entryData.size());
     zip.append(reinterpret_cast<const char*>(&size), 4);
-    // Uncompressed size
     zip.append(reinterpret_cast<const char*>(&size), 4);
-    // Filename length
     quint16 nameLen = static_cast<quint16>(nameBytes.size());
     zip.append(reinterpret_cast<const char*>(&nameLen), 2);
-    // Extra field length
     zip.append("\x00\x00", 2);
-    // Filename
     zip.append(nameBytes);
-    // File data
     zip.append(entryData);
 
     // ── Central Directory Header ──
     zip.append("\x50\x4B\x01\x02", 4);
-    // Version made by
     zip.append("\x14\x00", 2);
-    // Version needed
     zip.append("\x14\x00", 2);
-    // Flags
     zip.append("\x00\x00", 2);
-    // Compression: stored
     zip.append("\x00\x00", 2);
-    // Time, Date
     zip.append("\x00\x00\x00\x00", 4);
-    // CRC-32
     zip.append("\x00\x00\x00\x00", 4);
-    // Compressed size
     zip.append(reinterpret_cast<const char*>(&size), 4);
-    // Uncompressed size
     zip.append(reinterpret_cast<const char*>(&size), 4);
-    // Filename length
     zip.append(reinterpret_cast<const char*>(&nameLen), 2);
-    // Extra, Comment, Disk, Int/Ext attrs
     zip.append(QByteArray(12, '\0'));
-    // Relative offset of local header
     quint32 zero = 0;
     zip.append(reinterpret_cast<const char*>(&zero), 4);
-    // Filename
     zip.append(nameBytes);
 
     // ── End of Central Directory ──
     quint32 cdOffset = static_cast<quint32>(30 + nameBytes.size() + entryData.size());
     quint32 cdSize = static_cast<quint32>(46 + nameBytes.size());
     zip.append("\x50\x4B\x05\x06", 4);
-    // Disk numbers
     zip.append("\x00\x00\x00\x00", 4);
-    // Total entries
     zip.append("\x01\x00\x01\x00", 4);
-    // Central directory size
     zip.append(reinterpret_cast<const char*>(&cdSize), 4);
-    // Central directory offset
     zip.append(reinterpret_cast<const char*>(&cdOffset), 4);
-    // Comment length
     zip.append("\x00\x00", 2);
 
     return zip;
@@ -317,7 +292,6 @@ QByteArray AdvancedSearchWorkerTests::createMinimalZip(const QString& entryName,
 
 QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
                                                        const QByteArray& entryData) {
-    // Compress the entry data with raw deflate (no zlib header)
     QByteArray compressed;
     compressed.resize(compressBound(static_cast<uLong>(entryData.size())));
 
@@ -333,7 +307,6 @@ QByteArray AdvancedSearchWorkerTests::createDeflateZip(const QString& entryName,
     deflateEnd(&strm);
     compressed.resize(static_cast<qsizetype>(strm.total_out));
 
-    // Compute CRC-32
     quint32 crc = static_cast<quint32>(crc32(crc32(0, Z_NULL, 0),
                                              reinterpret_cast<const Bytef*>(entryData.constData()),
                                              static_cast<uInt>(entryData.size())));

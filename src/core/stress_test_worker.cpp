@@ -37,13 +37,31 @@ namespace sak {
 
 namespace {
 
+constexpr uint64_t kMemoryPatternMultiplier = 0x9E'37'79'B9'7F'4A'7C'15ULL;
+constexpr uint64_t kFirstCompositeCandidate = 4;
+constexpr uint64_t kSmallestPrimeCandidate = 2;
+constexpr uint64_t kFirstOddDivisor = 3;
+constexpr uint64_t kOddDivisorStep = 2;
+constexpr uint64_t kPrimeCancelCheckMask = 0xFFFF;
+constexpr uint64_t kPrimeCancelCheckRemainder = 1;
+constexpr int kMonitorSleepMs = 500;
+constexpr int kCacheLineAlignment = 64;
+constexpr int kMatrixDimension = 4;
+constexpr int kMatrixElementCount = kMatrixDimension * kMatrixDimension;
+constexpr int kMatrixSelfMultiplyIterations = 100;
+constexpr size_t kMinimumMemoryStressBytes = 64ULL * sak::kBytesPerMB;
+constexpr uint64_t kInitialMemoryPatternSeed = 0xCA'FE'BA'BEULL;
+constexpr size_t kDiskBufferAlignment = 4096;
+constexpr uint32_t kDiskStressRandomSeed = 0xD15CU;
+constexpr uint64_t kGpuHealthCheckMask = 0xFFULL;
+
 /// @brief Pattern-fill a memory region with a known repeating pattern
 /// @param data Pointer to memory
 /// @param size Size in bytes
 /// @param seed Seed for pattern generation
 void patternFill(volatile uint64_t* data, size_t count, uint64_t seed) {
     for (size_t i = 0; i < count; ++i) {
-        data[i] = seed ^ (i * 0x9E'37'79'B9'7F'4A'7C'15ULL);
+        data[i] = seed ^ (i * kMemoryPatternMultiplier);
     }
 }
 
@@ -52,7 +70,7 @@ void patternFill(volatile uint64_t* data, size_t count, uint64_t seed) {
 int patternVerify(const volatile uint64_t* data, size_t count, uint64_t seed) {
     int errors = 0;
     for (size_t i = 0; i < count; ++i) {
-        const uint64_t expected = seed ^ (i * 0x9E'37'79'B9'7F'4A'7C'15ULL);
+        const uint64_t expected = seed ^ (i * kMemoryPatternMultiplier);
         if (data[i] != expected) {
             ++errors;
         }
@@ -63,21 +81,25 @@ int patternVerify(const volatile uint64_t* data, size_t count, uint64_t seed) {
 constexpr int kStatusIntervalSec = 5;  // Report status every 5 seconds
 
 /// @brief Multiply a single row of a 4x4 matrix by the full matrix
-void matrixRowMultiply4x4(const double mat[16], const double other[16], double out[16], int row) {
-    for (int k = 0; k < 4; ++k) {
-        for (int j = 0; j < 4; ++j) {
-            out[row * 4 + j] += mat[row * 4 + k] * other[k * 4 + j];
+void matrixRowMultiply4x4(const double mat[kMatrixElementCount],
+                          const double other[kMatrixElementCount],
+                          double out[kMatrixElementCount],
+                          int row) {
+    for (int k = 0; k < kMatrixDimension; ++k) {
+        for (int j = 0; j < kMatrixDimension; ++j) {
+            out[row * kMatrixDimension + j] += mat[row * kMatrixDimension + k] *
+                                               other[k * kMatrixDimension + j];
         }
     }
 }
 
 /// @brief Self-multiply a 4x4 matrix in-place
-void matrixSelfMultiply4x4(double mat[16]) {
-    double result[16] = {};
-    for (int i = 0; i < 4; ++i) {
+void matrixSelfMultiply4x4(double mat[kMatrixElementCount]) {
+    double result[kMatrixElementCount] = {};
+    for (int i = 0; i < kMatrixDimension; ++i) {
         matrixRowMultiply4x4(mat, mat, result, i);
     }
-    std::memcpy(mat, result, sizeof(double) * 16);
+    std::memcpy(mat, result, sizeof(double) * kMatrixElementCount);
 }
 
 }  // anonymous namespace
@@ -113,7 +135,7 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
     launchStressThreads(futures);
 
     // Monitor loop -- runs in the WorkerBase thread
-    const int total_seconds = m_config.duration_minutes * 60;
+    const int total_seconds = m_config.duration_minutes * sak::kSecondsPerMinute;
     monitorStressLoop(total_seconds);
 
     // Signal child stress threads to stop (without marking WorkerBase cancelled)
@@ -124,7 +146,8 @@ auto StressTestWorker::execute() -> std::expected<void, sak::error_code> {
 
     // Finalize results
     m_result.end_time = QDateTime::currentDateTime();
-    m_result.duration_seconds = static_cast<int>(m_elapsed_timer.elapsed() / 1000);
+    m_result.duration_seconds =
+        static_cast<int>(m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond);
     m_result.errors_detected = m_error_count.load(std::memory_order_relaxed);
     m_result.max_cpu_temp = m_max_temp.load(std::memory_order_relaxed);
     m_result.passed = m_result.abort_reason.isEmpty() && m_result.errors_detected == 0;
@@ -175,13 +198,15 @@ void StressTestWorker::monitorStressLoop(int total_seconds) {
     int last_status_sec = 0;
     bool should_stop = false;
 
-    while (!should_stop && m_elapsed_timer.elapsed() / 1000 < total_seconds) {
+    while (!should_stop &&
+           m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond < total_seconds) {
         if (checkStop()) {
             m_result.abort_reason = "Cancelled by user";
             break;
         }
 
-        const int elapsed_sec = static_cast<int>(m_elapsed_timer.elapsed() / 1000);
+        const int elapsed_sec =
+            static_cast<int>(m_elapsed_timer.elapsed() / sak::kMillisecondsPerSecond);
 
         if (elapsed_sec - last_status_sec >= kStatusIntervalSec) {
             last_status_sec = elapsed_sec;
@@ -189,7 +214,7 @@ void StressTestWorker::monitorStressLoop(int total_seconds) {
         }
 
         // Sleep to avoid busy-waiting in monitor loop
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kMonitorSleepMs));
     }
 }
 
@@ -261,13 +286,13 @@ void StressTestWorker::runCpuStress() {
         }
 
         // Floating-point workload: matrix operations
-        alignas(64) double mat[16];
-        for (int i = 0; i < 16; ++i) {
+        alignas(kCacheLineAlignment) double mat[kMatrixElementCount];
+        for (int i = 0; i < kMatrixElementCount; ++i) {
             mat[i] = static_cast<double>(rng()) / static_cast<double>(UINT64_MAX);
         }
 
         // 4x4 matrix self-multiply, repeated
-        for (int iter = 0; iter < 100; ++iter) {
+        for (int iter = 0; iter < kMatrixSelfMultiplyIterations; ++iter) {
             matrixSelfMultiply4x4(mat);
         }
 
@@ -278,17 +303,16 @@ void StressTestWorker::runCpuStress() {
 }
 
 bool StressTestWorker::isPrimeStress(uint64_t candidate) const {
-    if (candidate < 4) {
-        return candidate >= 2;
+    if (candidate < kFirstCompositeCandidate) {
+        return candidate >= kSmallestPrimeCandidate;
     }
 
     const uint64_t limit = static_cast<uint64_t>(std::sqrt(static_cast<double>(candidate)));
-    for (uint64_t d = 3; d <= limit; d += 2) {
+    for (uint64_t d = kFirstOddDivisor; d <= limit; d += kOddDivisorStep) {
         if (candidate % d == 0) {
             return false;
         }
-        // Periodic cancellation check every 65536 iterations
-        if ((d & 0xFFFF) == 1 && childrenShouldStop()) {
+        if ((d & kPrimeCancelCheckMask) == kPrimeCancelCheckRemainder && childrenShouldStop()) {
             return false;
         }
     }
@@ -305,8 +329,7 @@ int StressTestWorker::runMemoryStress() {
 
     // Cap at available memory, minimum 64 MB, maximum 16 GB
     constexpr size_t kMaxAlloc = 16ULL * 1024 * 1024 * 1024;
-    const size_t alloc_size =
-        std::clamp(target_bytes, static_cast<size_t>(64 * sak::kBytesPerMB), kMaxAlloc);
+    const size_t alloc_size = std::clamp(target_bytes, kMinimumMemoryStressBytes, kMaxAlloc);
 
     logInfo("Memory stress: allocating {} MB", alloc_size / sak::kBytesPerMB);
 
@@ -319,7 +342,7 @@ int StressTestWorker::runMemoryStress() {
     const size_t count = alloc_size / sizeof(uint64_t);
     int total_errors = 0;
     uint64_t total_bytes_written = 0;
-    uint64_t pattern_seed = 0xCA'FE'BA'BE;
+    uint64_t pattern_seed = kInitialMemoryPatternSeed;
 
     while (!childrenShouldStop()) {
         patternFill(data, count, pattern_seed);
@@ -351,7 +374,7 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
     mem_status.dwLength = sizeof(mem_status);
     if (GlobalMemoryStatusEx(&mem_status)) {
         return static_cast<size_t>(static_cast<double>(mem_status.ullAvailPhys) *
-                                   (m_config.memory_usage_percent / 100.0));
+                                   (m_config.memory_usage_percent / sak::kPercentMaxF));
     }
     logWarning(
         "GlobalMemoryStatusEx failed (error {}), "
@@ -366,7 +389,7 @@ size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const
         const long page_size = sysconf(_SC_PAGESIZE);
         if (pages > 0 && page_size > 0) {
             return static_cast<size_t>(static_cast<double>(pages) * static_cast<double>(page_size) *
-                                       (m_config.memory_usage_percent / 100.0));
+                                       (m_config.memory_usage_percent / sak::kPercentMaxF));
         }
         logWarning("sysconf memory query failed, using {} MB fallback",
                    fallback_bytes / sak::kBytesPerMB);
@@ -409,14 +432,14 @@ void StressTestWorker::runDiskStress() {
     constexpr size_t kFileSize = 256ULL * 1024 * 1024;  // 256 MB file
 
     // Allocate aligned buffer
-    auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, 4096));
+    auto* buf = static_cast<uint8_t*>(_aligned_malloc(kBlockSize, kDiskBufferAlignment));
     if (!buf) {
         logError("Disk stress: buffer allocation failed");
         return;
     }
 
     // Fill buffer
-    std::mt19937 rng(0xD15C);
+    std::mt19937 rng(kDiskStressRandomSeed);
     auto* data32 = reinterpret_cast<uint32_t*>(buf);
     for (size_t i = 0; i < kBlockSize / sizeof(uint32_t); ++i) {
         data32[i] = rng();
@@ -719,7 +742,7 @@ void StressTestWorker::runGpuDispatchLoop(GpuStressContext& ctx) {
         ++operations;
 
         // Periodically check for device removal (GPU crash/reset)
-        if ((operations & 0xFF) == 0) {
+        if ((operations & kGpuHealthCheckMask) == 0) {
             HRESULT hr = ctx.device->GetDeviceRemovedReason();
             if (FAILED(hr)) {
                 logError(

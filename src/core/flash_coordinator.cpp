@@ -6,6 +6,7 @@
 #include "sak/drive_unmounter.h"
 #include "sak/flash_worker.h"
 #include "sak/input_validator.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QMutexLocker>
@@ -15,12 +16,19 @@
 
 #include <winioctl.h>
 
+namespace {
+constexpr qint64 kDefaultFlashBufferSizeMb = 256;
+constexpr int kDefaultFlashBufferCount = 16;
+constexpr int kMaxPhysicalDriveNumber = 99;
+constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
+}  // namespace
+
 FlashCoordinator::FlashCoordinator(QObject* parent)
     : QObject(parent)
     , m_state(sak::FlashState::Idle)
     , m_verificationEnabled(true)
-    , m_bufferSize(256 * 1024 * 1024)  // 256MB for better performance
-    , m_bufferCount(16)
+    , m_bufferSize(kDefaultFlashBufferSizeMb * sak::kBytesPerMB)
+    , m_bufferCount(kDefaultFlashBufferCount)
     , m_isCancelled(false) {
     m_progress.state = sak::FlashState::Idle;
     m_progress.percentage = 0.0;
@@ -381,11 +389,13 @@ bool FlashCoordinator::unmountVolumes(const QStringList& targetDrives) {
 
         // Extract drive number from path (e.g., "\\.\PhysicalDrive1" -> 1)
         QString driveNumStr = devicePath;
-        driveNumStr.remove(0, driveNumStr.lastIndexOf("PhysicalDrive") + 13);
+        const QString physicalDrivePrefix = QStringLiteral("PhysicalDrive");
+        driveNumStr.remove(
+            0, driveNumStr.lastIndexOf(physicalDrivePrefix) + physicalDrivePrefix.size());
         bool ok = false;
         int driveNumber = driveNumStr.toInt(&ok);
 
-        if (!ok || driveNumber < 0 || driveNumber > 99) {
+        if (!ok || driveNumber < 0 || driveNumber > kMaxPhysicalDriveNumber) {
             sak::logError(QString("Invalid device path format or drive number out of range: %1")
                               .arg(devicePath)
                               .toStdString());
@@ -435,7 +445,7 @@ void FlashCoordinator::cleanupWorkers() {
         sak::logInfo("Requesting worker thread to stop...");
         worker->requestStop();
 
-        if (!worker->wait(15'000)) {
+        if (!worker->wait(kWorkerShutdownTimeoutMs)) {
             sak::logError("Worker thread did not stop within 15s -- potential resource leak");
         } else {
             sak::logInfo("Worker thread stopped gracefully");

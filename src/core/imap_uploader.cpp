@@ -6,6 +6,7 @@
 
 #include "sak/imap_uploader.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QSemaphore>
@@ -22,7 +23,12 @@ namespace sak {
 namespace {
 constexpr int kImapDefaultTimeoutMs = 30'000;
 constexpr int kImapReadBufferSize = 8192;
-constexpr int kImapMaxMessageSize = 25 * 1024 * 1024;  // 25 MB
+constexpr int kImapMaxMessageSize = 25 * static_cast<int>(kBytesPerMB);
+constexpr int kImapDateTimeFieldWidth = kTimeFieldWidth;
+constexpr int kImapDateTimeBase = kDecimalBase;
+constexpr int kImapTagWidth = 4;
+constexpr int kServerGreetingPreviewChars = 200;
+constexpr int kPstHighImportanceValue = 2;
 
 struct ImapSessionResult {
     bool success{false};
@@ -38,12 +44,12 @@ QString formatImapDateForAppend(const QDateTime& date) {
 
     const QDateTime utc = date.toUTC();
     return QStringLiteral("%1-%2-%3 %4:%5:%6 +0000")
-        .arg(utc.date().day(), 2, 10, QChar('0'))
+        .arg(utc.date().day(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
         .arg(QLatin1String(kMonths[utc.date().month() - 1]))
         .arg(utc.date().year())
-        .arg(utc.time().hour(), 2, 10, QChar('0'))
-        .arg(utc.time().minute(), 2, 10, QChar('0'))
-        .arg(utc.time().second(), 2, 10, QChar('0'));
+        .arg(utc.time().hour(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
+        .arg(utc.time().minute(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
+        .arg(utc.time().second(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'));
 }
 
 struct ImapSessionRequest {
@@ -75,7 +81,7 @@ public:
         m_timeoutTimer = new QTimer(this);
         m_timeoutTimer->setSingleShot(true);
         m_cancelTimer = new QTimer(this);
-        m_cancelTimer->setInterval(100);
+        m_cancelTimer->setInterval(kTimerPollingFastMs);
         connectSignals();
         m_cancelTimer->start();
         resetTimeout();
@@ -89,7 +95,7 @@ private:
     const QVector<QDateTime>& dates() const { return *m_request.dates; }
 
     int timeoutMs() const {
-        return config().timeout_seconds > 0 ? config().timeout_seconds * 1000
+        return config().timeout_seconds > 0 ? config().timeout_seconds * kMillisecondsPerSecond
                                             : kImapDefaultTimeoutMs;
     }
 
@@ -118,7 +124,8 @@ private:
 
     void sendCommand(const QString& command, std::function<void(const QString&)> callback) {
         ++m_tagCounter;
-        m_currentTag = QStringLiteral("A%1").arg(m_tagCounter, 4, 10, QChar('0'));
+        m_currentTag =
+            QStringLiteral("A%1").arg(m_tagCounter, kImapTagWidth, kDecimalBase, QChar('0'));
         m_taggedCallback = std::move(callback);
         m_waitingContinuation = false;
         m_buffer.clear();
@@ -159,7 +166,8 @@ private:
 
     void sendAppendCommand() {
         ++m_tagCounter;
-        m_currentTag = QStringLiteral("A%1").arg(m_tagCounter, 4, 10, QChar('0'));
+        m_currentTag =
+            QStringLiteral("A%1").arg(m_tagCounter, kImapTagWidth, kDecimalBase, QChar('0'));
         const QString command = m_currentTag + QStringLiteral(" APPEND \"%1\" %2%3{%4}\r\n")
                                                    .arg(m_request.target_folder,
                                                         flagsForCurrentMessage(),
@@ -310,7 +318,8 @@ private:
             return false;
         }
         if (!m_buffer.contains(QStringLiteral("OK"))) {
-            failConnection(QStringLiteral("Bad server greeting: ") + m_buffer.left(200));
+            failConnection(QStringLiteral("Bad server greeting: ") +
+                           m_buffer.left(kServerGreetingPreviewChars));
             return true;
         }
         m_waitingGreeting = false;
@@ -520,7 +529,7 @@ std::expected<void, error_code> ImapUploader::validateAuthResponse(
 }
 
 std::expected<void, error_code> ImapUploader::authenticate(const ImapServerConfig& config) {
-    int timeout = config.timeout_seconds * 1000;
+    int timeout = config.timeout_seconds * kMillisecondsPerSecond;
     if (timeout <= 0) {
         timeout = kImapDefaultTimeoutMs;
     }
@@ -633,7 +642,7 @@ QStringList ImapUploader::mapFlags(const PstItemDetail& item) {
     // Check if PstItemDetail has read status
     // PR_MESSAGE_FLAGS & MSGFLAG_READ -> \Seen
     // Importance high -> \Flagged
-    if (item.importance == 2) {
+    if (item.importance == kPstHighImportanceValue) {
         flags.append(QStringLiteral("\\Flagged"));
     }
 
@@ -650,12 +659,12 @@ QString ImapUploader::formatImapDate(const QDateTime& date) {
 
     QDateTime utc = date.toUTC();
     return QStringLiteral("%1-%2-%3 %4:%5:%6 +0000")
-        .arg(utc.date().day(), 2, 10, QChar('0'))
+        .arg(utc.date().day(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
         .arg(QLatin1String(kMonths[utc.date().month() - 1]))
         .arg(utc.date().year())
-        .arg(utc.time().hour(), 2, 10, QChar('0'))
-        .arg(utc.time().minute(), 2, 10, QChar('0'))
-        .arg(utc.time().second(), 2, 10, QChar('0'));
+        .arg(utc.time().hour(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
+        .arg(utc.time().minute(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'))
+        .arg(utc.time().second(), kImapDateTimeFieldWidth, kImapDateTimeBase, QChar('0'));
 }
 
 }  // namespace sak

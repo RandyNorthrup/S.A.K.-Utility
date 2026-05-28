@@ -127,6 +127,28 @@ public:
     [[nodiscard]] QString findInstallScript(const QString& extract_dir) const;
 
 private:
+    struct InternalizationPaths {
+        QString extract_dir;
+        QString nupkg_path;
+    };
+
+    [[nodiscard]] bool beginInternalization(const QString& package_id,
+                                            const QString& version,
+                                            QString& resolved_version,
+                                            InternalizationResult& result);
+
+    [[nodiscard]] InternalizationPaths prepareInternalizationPaths(const QString& package_id,
+                                                                   const QString& version,
+                                                                   const QString& output_dir,
+                                                                   const QString& work_dir) const;
+
+    [[nodiscard]] bool downloadAndExtractNupkg(const InternalizationPaths& paths,
+                                               InternalizationResult& result);
+
+    [[nodiscard]] bool downloadAndRewriteInstallScript(const ParsedInstallScript& parsed,
+                                                       const QString& script_path,
+                                                       InternalizationResult& result);
+
     /// @brief Download the .nupkg file from the NuGet feed
     [[nodiscard]] bool downloadNupkg(const QString& package_id,
                                      const QString& version,

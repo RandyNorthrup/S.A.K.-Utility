@@ -5,7 +5,9 @@
 #include "sak/app_installation_worker.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/elevation_gate.h"
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/migration_report.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
@@ -33,6 +35,8 @@ enum ResultColumn {
     RColCount
 };
 
+constexpr int kPackageSearchResultLimit = 50;
+
 // ============================================================================
 // Search
 // ============================================================================
@@ -45,15 +49,15 @@ void AppInstallationPanel::onSearch() {
 
     if (!m_choco_manager->isInitialized()) {
         sak::logWarning("Search attempted but Chocolatey is not initialized");
-        QMessageBox::warning(this,
-                             tr("Chocolatey Not Available"),
-                             tr("Chocolatey is not initialized. Search is unavailable."));
+        sak::showWarningLogged(this,
+                               tr("Chocolatey Not Available"),
+                               tr("Chocolatey is not initialized. Search is unavailable."));
         return;
     }
 
     QString query = m_searchEdit->text().trimmed();
     if (query.isEmpty()) {
-        QMessageBox::information(this, tr("Search"), tr("Please enter a search term."));
+        sak::showInformationLogged(this, tr("Search"), tr("Please enter a search term."));
         return;
     }
 
@@ -73,7 +77,7 @@ void AppInstallationPanel::onSearch() {
 
     // Run search in background
     m_searchFuture = QtConcurrent::run([this, query]() {
-        auto result = m_choco_manager->searchPackage(query, 50);
+        auto result = m_choco_manager->searchPackage(query, kPackageSearchResultLimit);
 
         QMetaObject::invokeMethod(
             this,
@@ -106,7 +110,7 @@ void AppInstallationPanel::onSearchCompleted(bool success,
 
     sak::logWarning("[AppInstallationPanel] Search failed: {}", errorMessage.toStdString());
     Q_EMIT logOutput(QString("Search failed: %1").arg(errorMessage));
-    Q_EMIT statusMessage(tr("Search failed"), 3000);
+    Q_EMIT statusMessage(tr("Search failed"), kTimerStatusMessageMs);
 }
 
 void AppInstallationPanel::onOnlinePresetSelected(int index) {
@@ -182,7 +186,7 @@ void AppInstallationPanel::onAddToQueue() {
 
     updateQueueDisplay();
     Q_EMIT logOutput(QString("Added '%1' to install queue").arg(packageId));
-    Q_EMIT statusMessage(tr("Added %1 to queue").arg(packageId), 3000);
+    Q_EMIT statusMessage(tr("Added %1 to queue").arg(packageId), kTimerStatusMessageMs);
 }
 
 void AppInstallationPanel::onRemoveFromQueue() {
@@ -222,9 +226,34 @@ void AppInstallationPanel::onClearQueue() {
 // Installation
 // ============================================================================
 
+std::shared_ptr<MigrationReport> AppInstallationPanel::buildInstallMigrationReport() const {
+    auto report = std::make_shared<MigrationReport>();
+    for (const auto& entry : m_installQueue) {
+        MigrationReport::MigrationEntry reportEntry;
+        reportEntry.app_name = entry.package_id;
+        reportEntry.choco_package = entry.package_id;
+        reportEntry.available = true;
+        reportEntry.selected = true;
+        reportEntry.available_version = entry.version;
+        reportEntry.confidence = 1.0;
+        reportEntry.match_type = "exact";
+        reportEntry.status = "pending";
+        report->addEntry(reportEntry);
+    }
+    return report;
+}
+
+void AppInstallationPanel::setInstallInProgressUi(bool running) {
+    m_install_in_progress = running;
+    enableControls(!running);
+    m_installButton->setVisible(!running);
+    m_cancelButton->setVisible(running);
+    m_cancelButton->setEnabled(running);
+}
+
 void AppInstallationPanel::onInstallAll() {
     if (m_installQueue.isEmpty()) {
-        QMessageBox::information(
+        sak::showInformationLogged(
             this,
             tr("Empty Queue"),
             tr("No packages in the install queue. Search for packages and add them first."));
@@ -242,26 +271,26 @@ void AppInstallationPanel::onInstallAll() {
 
     if (!m_choco_manager->isInitialized()) {
         sak::logWarning("Installation attempted but Chocolatey is not initialized");
-        QMessageBox::warning(this,
-                             tr("Chocolatey Not Available"),
-                             tr("Chocolatey is not initialized. Installation is unavailable."));
+        sak::showWarningLogged(this,
+                               tr("Chocolatey Not Available"),
+                               tr("Chocolatey is not initialized. Installation is unavailable."));
         return;
     }
 
     if (m_worker->isRunning()) {
-        QMessageBox::information(this,
-                                 tr("Installation In Progress"),
-                                 tr("An installation is already running."));
+        sak::showInformationLogged(this,
+                                   tr("Installation In Progress"),
+                                   tr("An installation is already running."));
         return;
     }
 
     auto reply =
-        QMessageBox::question(this,
-                              tr("Confirm Installation"),
-                              tr("Install %1 package(s) via Chocolatey?\n\n"
-                                 "This may take several minutes depending on package sizes.")
-                                  .arg(m_installQueue.size()),
-                              QMessageBox::Yes | QMessageBox::No);
+        sak::showQuestionLogged(this,
+                                tr("Confirm Installation"),
+                                tr("Install %1 package(s) via Chocolatey?\n\n"
+                                   "This may take several minutes depending on package sizes.")
+                                    .arg(m_installQueue.size()),
+                                QMessageBox::Yes | QMessageBox::No);
 
     if (reply != QMessageBox::Yes) {
         return;
@@ -269,35 +298,14 @@ void AppInstallationPanel::onInstallAll() {
 
     Q_EMIT logOutput(QString("=== Installing %1 Package(s) ===").arg(m_installQueue.size()));
 
-    m_install_in_progress = true;
-    enableControls(false);
-    m_installButton->setVisible(false);
-    m_cancelButton->setVisible(true);
-    m_cancelButton->setEnabled(true);
+    setInstallInProgressUi(true);
 
-    // Create a MigrationReport from the queue for the worker
-    auto report = std::make_shared<MigrationReport>();
-    for (const auto& entry : m_installQueue) {
-        MigrationReport::MigrationEntry reportEntry;
-        reportEntry.app_name = entry.package_id;
-        reportEntry.choco_package = entry.package_id;
-        reportEntry.available = true;
-        reportEntry.selected = true;
-        reportEntry.available_version = entry.version;
-        reportEntry.confidence = 1.0;
-        reportEntry.match_type = "exact";
-        reportEntry.status = "pending";
-        report->addEntry(reportEntry);
-    }
-
+    auto report = buildInstallMigrationReport();
     int queued = m_worker->startMigration(report, 1);  // Sequential installation
     sak::logInfo("[AppInstallationPanel] startMigration returned {} queued jobs", queued);
     if (queued == 0) {
         Q_EMIT logOutput("No packages queued for installation.");
-        m_install_in_progress = false;
-        m_cancelButton->setVisible(false);
-        m_installButton->setVisible(true);
-        enableControls(true);
+        setInstallInProgressUi(false);
     }
 }
 
@@ -353,9 +361,9 @@ void AppInstallationPanel::onOfflineSearch() {
 
     if (!m_choco_manager->isInitialized()) {
         sak::logWarning("Offline search attempted but Chocolatey is not initialized");
-        QMessageBox::warning(this,
-                             tr("Chocolatey Not Available"),
-                             tr("Chocolatey is not initialized. Search is unavailable."));
+        sak::showWarningLogged(this,
+                               tr("Chocolatey Not Available"),
+                               tr("Chocolatey is not initialized. Search is unavailable."));
         return;
     }
 
@@ -518,16 +526,16 @@ void AppInstallationPanel::onClearOfflineList() {
 
 void AppInstallationPanel::onBuildBundle() {
     if (m_offlineListWidget->count() == 0) {
-        QMessageBox::information(this,
-                                 tr("Empty List"),
-                                 tr("Add packages to the list before building a bundle."));
+        sak::showInformationLogged(this,
+                                   tr("Empty List"),
+                                   tr("Add packages to the list before building a bundle."));
         return;
     }
 
     if (m_offline_worker->isRunning()) {
-        QMessageBox::information(this,
-                                 tr("Operation In Progress"),
-                                 tr("An offline deployment operation is already running."));
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("An offline deployment operation is already running."));
         return;
     }
 
@@ -560,9 +568,9 @@ void AppInstallationPanel::onBuildBundle() {
 
 void AppInstallationPanel::onInstallFromBundle() {
     if (m_offline_worker->isRunning()) {
-        QMessageBox::information(this,
-                                 tr("Operation In Progress"),
-                                 tr("An offline deployment operation is already running."));
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("An offline deployment operation is already running."));
         return;
     }
 
@@ -578,9 +586,10 @@ void AppInstallationPanel::onInstallFromBundle() {
     QString packages_dir = manifest_info.dir().absolutePath() + "/packages";
 
     if (!QDir(packages_dir).exists()) {
-        QMessageBox::warning(this,
-                             tr("Missing Packages"),
-                             tr("The 'packages' directory was not found alongside the manifest."));
+        sak::showWarningLogged(
+            this,
+            tr("Missing Packages"),
+            tr("The 'packages' directory was not found alongside the manifest."));
         return;
     }
 
@@ -594,14 +603,14 @@ void AppInstallationPanel::onInstallFromBundle() {
 
 void AppInstallationPanel::onDirectDownload() {
     if (m_offlineListWidget->count() == 0) {
-        QMessageBox::information(this, tr("Empty List"), tr("Add packages before downloading."));
+        sak::showInformationLogged(this, tr("Empty List"), tr("Add packages before downloading."));
         return;
     }
 
     if (m_offline_worker->isRunning()) {
-        QMessageBox::information(this,
-                                 tr("Operation In Progress"),
-                                 tr("An offline deployment operation is already running."));
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("An offline deployment operation is already running."));
         return;
     }
 
@@ -658,7 +667,7 @@ void AppInstallationPanel::onSaveOfflineList() {
         Q_EMIT logOutput(QString("Package list saved: %1").arg(file_path));
     } else {
         sak::logError("[AppInstallationPanel] Failed to save package list");
-        QMessageBox::warning(this, tr("Save Failed"), tr("Could not save the package list."));
+        sak::showWarningLogged(this, tr("Save Failed"), tr("Could not save the package list."));
     }
 }
 
@@ -672,9 +681,9 @@ void AppInstallationPanel::onLoadOfflineList() {
 
     auto list = PackageListManager::loadFromFile(file_path);
     if (list.entries.isEmpty()) {
-        QMessageBox::warning(this,
-                             tr("Load Failed"),
-                             tr("The selected file contains no packages or is invalid."));
+        sak::showWarningLogged(this,
+                               tr("Load Failed"),
+                               tr("The selected file contains no packages or is invalid."));
         return;
     }
 

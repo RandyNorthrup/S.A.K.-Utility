@@ -13,6 +13,8 @@
 
 namespace sak::ai {
 
+inline constexpr int kDefaultMemoryTextMaxChars = 16'000;
+
 struct AiSessionInfo {
     QString id;
     QString title;
@@ -79,7 +81,7 @@ public:
     [[nodiscard]] QString artifactPath(const QString& subdir,
                                        const QString& filename,
                                        QString* error_message = nullptr) const;
-    [[nodiscard]] QString memoryText(int max_chars = 16'000,
+    [[nodiscard]] QString memoryText(int max_chars = kDefaultMemoryTextMaxChars,
                                      QString* error_message = nullptr) const;
     [[nodiscard]] bool appendMemoryEntry(const QString& kind,
                                          const QString& title,

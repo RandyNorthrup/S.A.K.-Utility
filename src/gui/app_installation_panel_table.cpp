@@ -5,6 +5,7 @@
 #include "sak/chocolatey_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -18,6 +19,10 @@
 
 using sak::AppInstallationPanel;
 using sak::ChocolateyManager;
+
+namespace {
+constexpr int kQueueSaveStatusMessageMs = sak::kTimerStatusMessageMs;
+}
 
 // Results table columns (shared by online and offline)
 enum ResultColumn {
@@ -221,9 +226,9 @@ void AppInstallationPanel::enableControls(bool enabled) {
 
 void AppInstallationPanel::saveQueueToFile() {
     if (m_installQueue.isEmpty()) {
-        QMessageBox::information(this,
-                                 tr("Save App List"),
-                                 tr("The install queue is empty. Add packages before saving."));
+        sak::showInformationLogged(this,
+                                   tr("Save App List"),
+                                   tr("The install queue is empty. Add packages before saving."));
         return;
     }
 
@@ -246,9 +251,9 @@ void AppInstallationPanel::saveQueueToFile() {
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
-        QMessageBox::warning(this,
-                             tr("Save Failed"),
-                             tr("Could not write to file:\n%1").arg(filePath));
+        sak::showWarningLogged(this,
+                               tr("Save Failed"),
+                               tr("Could not write to file:\n%1").arg(filePath));
         return;
     }
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
@@ -258,7 +263,8 @@ void AppInstallationPanel::saveQueueToFile() {
     file.close();
 
     Q_EMIT logOutput(QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(filePath));
-    Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()), 3000);
+    Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()),
+                         kQueueSaveStatusMessageMs);
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
@@ -291,7 +297,9 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
-        QMessageBox::warning(this, tr("Load Failed"), tr("Could not read file:\n%1").arg(filePath));
+        sak::showWarningLogged(this,
+                               tr("Load Failed"),
+                               tr("Could not read file:\n%1").arg(filePath));
         return false;
     }
 
@@ -301,15 +309,15 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
 
     if (parseError.error != QJsonParseError::NoError) {
         sak::logWarning(("Load Failed: Invalid JSON: " + parseError.errorString()).toStdString());
-        QMessageBox::warning(this,
-                             tr("Load Failed"),
-                             tr("Invalid JSON:\n%1").arg(parseError.errorString()));
+        sak::showWarningLogged(this,
+                               tr("Load Failed"),
+                               tr("Invalid JSON:\n%1").arg(parseError.errorString()));
         return false;
     }
 
     if (!doc.isArray()) {
         sak::logWarning("Load Failed: Expected a JSON array of packages.");
-        QMessageBox::warning(this, tr("Load Failed"), tr("Expected a JSON array of packages."));
+        sak::showWarningLogged(this, tr("Load Failed"), tr("Expected a JSON array of packages."));
         return false;
     }
 

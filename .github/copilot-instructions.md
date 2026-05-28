@@ -3,11 +3,11 @@
 ## Project Identity
 
 **S.A.K. Utility** (Swiss Army Knife Utility) is a portable Windows toolkit for PC
-technicians, IT pros, and sysadmins. Single-EXE deployment — no installer, no
-runtime dependencies on the target machine.
+technicians, IT pros, and sysadmins. Release artifacts are portable ZIP packages
+with the app, Qt runtime files, plugins, and bundled technician tools.
 
 - **Language**: C++23 (MSVC 19.44+, `/std:c++latest`)
-- **Framework**: Qt 6.5.3 (Core, Widgets, Concurrent, Network, Xml)
+- **Framework**: Qt 6.5+ minimum; release CI uses Qt 6.11.1 (Core, Widgets, Concurrent, Network, Xml)
 - **Build**: CMake 3.28+, Visual Studio 2022 generator
 - **Target**: Windows 10/11 x64
 - **Package Manager**: vcpkg (for non-Qt dependencies)

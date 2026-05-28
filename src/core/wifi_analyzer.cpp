@@ -9,6 +9,7 @@
 #endif
 #include "sak/wifi_analyzer.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QCoreApplication>
@@ -43,6 +44,12 @@ constexpr int kChannel14 = 14;
 constexpr int kSignalQualityToDbmBase = -100;
 constexpr double kSignalQualityFactor = 0.5;
 constexpr int kMaxOuiPrefixLen = 8;
+constexpr int kStrongSignalRssiDbm = -50;
+constexpr int kMinimumSignalRssiDbm = -100;
+constexpr int kRssiToQualityScale = 2;
+constexpr int kMacAddressHexWidth = 2;
+constexpr int kOuiDatabaseMinimumFields = 2;
+constexpr int kForcedScanDelayMs = kTimerRetryBaseMs;
 
 void wlanFreeMemory(void* p) {
     if (p != nullptr) {
@@ -59,13 +66,13 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
 }
 
 [[nodiscard]] int signalQualityFromRssi(int rssiDbm) {
-    if (rssiDbm >= -50) {
-        return 100;
+    if (rssiDbm >= kStrongSignalRssiDbm) {
+        return kPercentMax;
     }
-    if (rssiDbm <= -100) {
+    if (rssiDbm <= kMinimumSignalRssiDbm) {
         return 0;
     }
-    return 2 * (rssiDbm + 100);
+    return kRssiToQualityScale * (rssiDbm - kMinimumSignalRssiDbm);
 }
 
 [[nodiscard]] QString bssTypeString(DOT11_BSS_TYPE type) {
@@ -89,7 +96,9 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
         if (i > 0) {
             mac += QLatin1Char(':');
         }
-        mac += QStringLiteral("%1").arg(addr[i], 2, 16, QLatin1Char('0')).toUpper();
+        mac += QStringLiteral("%1")
+                   .arg(addr[i], kMacAddressHexWidth, kHexBase, QLatin1Char('0'))
+                   .toUpper();
     }
     return mac;
 }
@@ -208,7 +217,7 @@ void scanInterface(HANDLE handle,
                    QVector<WiFiNetworkInfo>& networks) {
     if (triggerScan) {
         WlanScan(handle, &ifInfo.InterfaceGuid, nullptr, nullptr, nullptr);
-        QThread::msleep(500);
+        QThread::msleep(kForcedScanDelayMs);
     }
 
     PWLAN_BSS_LIST rawBssList = nullptr;
@@ -254,7 +263,7 @@ void scanInterface(HANDLE handle,
                     }
                     // Expected format: "AA:BB:CC<tab>Vendor Name"
                     const auto parts = line.split(QLatin1Char('\t'));
-                    if (parts.size() >= 2) {
+                    if (parts.size() >= kOuiDatabaseMinimumFields) {
                         db.insert(parts[0].toUpper(), parts[1]);
                     }
                 }

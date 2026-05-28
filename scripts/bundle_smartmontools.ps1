@@ -21,7 +21,7 @@ Write-Host "=== smartmontools Bundle Script ===" -ForegroundColor Cyan
 Write-Host ""
 
 $ToolName = "smartmontools"
-$Version = "7.4"
+$Version = "7.5"
 
 if ([string]::IsNullOrEmpty($DestinationPath)) {
     $DestinationPath = Join-Path $PSScriptRoot "..\tools\smartmontools"
@@ -31,7 +31,7 @@ $DestinationPath = [System.IO.Path]::GetFullPath($DestinationPath)
 $TempDir = Join-Path $env:TEMP "sak_bundle_smartmontools"
 
 # Official SourceForge direct download (Windows installer, includes 64-bit binaries)
-$DownloadUrl = "https://downloads.sourceforge.net/project/smartmontools/smartmontools/$Version/smartmontools-$Version-1.win32-setup.exe"
+$DownloadUrl = "https://downloads.sourceforge.net/project/smartmontools/smartmontools/$Version/smartmontools-$Version.win32-setup.exe"
 
 Write-Host "Tool:        $ToolName v$Version" -ForegroundColor Yellow
 Write-Host "Destination: $DestinationPath" -ForegroundColor Yellow
@@ -168,7 +168,7 @@ smartmontools v$Version
 =======================
 Bundled for S.A.K. Utility diagnostic panel.
 
-License: GNU General Public License v2.0 (GPLv2) - see COPYING
+License: GNU General Public License v2.0 (GPLv2) - see THIRD_PARTY_LICENSES.md
 Source:  https://www.smartmontools.org/
 GitHub:  https://github.com/smartmontools/smartmontools
 

@@ -50,6 +50,11 @@ protected:
     auto execute() -> std::expected<void, sak::error_code> override;
 
 private:
+    auto runBandwidthBenchmarks() -> std::expected<void, sak::error_code>;
+    auto runLatencyAndAllocationBenchmarks() -> std::expected<void, sak::error_code>;
+    void calculateScore();
+    void emitCompletion();
+
     /// @brief Run streaming read bandwidth test
     /// @return Bandwidth in GB/s
     [[nodiscard]] double runReadBandwidth();

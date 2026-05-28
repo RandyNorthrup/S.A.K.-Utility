@@ -37,6 +37,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupResultsTable(QVBoxLayout* layout);
+    void setupStatusRow(QVBoxLayout* layout);
+    void setupButtonRow(QVBoxLayout* layout);
     void showEvent(QShowEvent* event) override;
     [[nodiscard]] static QStringList commonScanPaths();
 

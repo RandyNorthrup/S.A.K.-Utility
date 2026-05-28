@@ -9,10 +9,10 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.4-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-128%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.1.5-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-129%20passing-brightgreen.svg)](tests/)
 
-Migration · Maintenance · Recovery · Imaging · Deployment — one portable EXE.
+Migration · Maintenance · Recovery · Imaging · Deployment — one portable toolkit.
 
 </div>
 
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable E
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.4** - AI assistant production hardening, portable MCP/provider bundling, manifest-gated app-control workflows, release readiness gates, clean-extract startup smoke checks, async/tooling cleanup, and portable runtime-state protections.
+**Latest: v0.9.1.5** - Dark-theme completion for local CSS and in-app HTML, verified README/About/release descriptions, refreshed workflow descriptions, and release metadata updates.
 
 ---
 
@@ -30,16 +30,16 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 | | |
 |---|---|
-| **100 % Portable** | No installer. Drop on a USB stick and go. |
+| **Portable ZIP** | No installer. Extract the release package and run the app; bundled Qt/plugins/tools travel with it. |
 | **AI Assistant** | Codex-style AI workspace for technician chat, PC actions, multi-agent workflows, context attachments, reports, and artifacts. |
 | **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, NTFS permission handling, plus integrated screenshot settings and BitLocker key backup. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
-| **Image Flasher** | Flash ISOs/IMGs to USB. Download Windows and Linux ISOs directly. |
+| **Image Flasher** | Flash ISOs/IMGs to USB. Build Windows ISOs from Microsoft UUP payloads and download Linux ISOs from the curated catalog. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
 | **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
-| **Modern UI** | Windows 11-style rounded corners, custom splash screen, and responsive layouts. |
+| **Modern UI** | Windows 11-style rounded corners, light/dark themes, custom splash screen, and responsive layouts. |
 
 ---
 
@@ -88,7 +88,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ```
 
 > **Code Signing:** Official release artifacts should be signed by the release workflow when Azure Trusted Signing credentials are available. Local and manual builds may be unsigned.
-> Windows SmartScreen and Defender should recognize the signature automatically.
+> Authenticode signature validity and SmartScreen reputation are separate; a valid signature can still show a reputation warning on new releases.
 > Right-click `sak_utility.exe` → Properties → Digital Signatures to verify.
 
 ---
@@ -144,7 +144,7 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 | Workflow | Purpose |
 |---|---|
 | Full PC Health Check | Collects system, storage, security, performance, and event-log evidence and summarizes device health |
-| Drive Health Deep Check | Performs read-only drive/volume/SMART-style diagnostics with fallback Windows storage evidence when counters are unavailable |
+| Drive Health Deep Check | Performs read-only drive/volume/SMART-style diagnostics with secondary Windows storage evidence when counters are unavailable |
 | Windows Update Repair | Diagnoses update failures, checks services/logs/component store state, applies approved repairs, and verifies update health |
 | Network Connectivity Repair | Collects adapter/DNS/route/connectivity evidence, applies safe network repairs, and verifies connectivity |
 | BSOD Investigation | Collects crash, driver, event-log, and system evidence for stop-code analysis |
@@ -280,7 +280,7 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 - OS: name, build number
 
 **SMART Disk Health**
-- Queries all physical drives via bundled `smartctl.exe` (smartmontools 7.4)
+- Queries all physical drives via bundled `smartctl.exe` (smartmontools 7.5)
 - Health status (Healthy / Warning / Critical / Failed)
 - Temperature, power-on hours, raw attributes
 - Attribute-level detail with threshold monitoring
@@ -326,9 +326,9 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 Create bootable USB drives from disk images.
 
 - **Formats:** ISO, IMG, WIC, ZIP, GZ, BZ2, XZ, DMG, DSK
-- **Windows ISO download** directly from Microsoft via UUP Dump API (multiple editions, languages, x64/ARM64)
+- **Windows ISO download** from Microsoft UUP payloads via the UUP Dump API and bundled UUP-to-ISO tooling (multiple editions, languages, x64/ARM64)
 - **Linux ISO download** with built-in distro catalog:
-  - Ubuntu Desktop, Ubuntu Server, Linux Mint Cinnamon
+  - Ubuntu Desktop, Ubuntu Server, Fedora Workstation, Debian Live GNOME, Arch Linux, Linux Mint Cinnamon
   - Kali Linux
   - SystemRescue, Clonezilla, GParted Live, ShredOS
   - Ventoy (multi-boot USB creator)
@@ -542,7 +542,7 @@ Settings are configured per-panel — each panel that needs configuration provid
 | **AI credential storage** | OpenAI API key encrypted with Windows DPAPI and stored in the portable app `data/credentials/` directory with owner-only file permissions |
 | **AI evidence safety** | AI session data, transcripts, logs, downloads, screenshots, reports, and artifacts stay under portable app `data/ai_sessions/`; model-bound command output is capped and secrets are redacted |
 
-All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
+Cryptographic operations use Windows DPAPI and BCrypt APIs where implemented. Windows FIPS validation depends on the active Windows cryptographic modules and system policy, so this project does not claim independent FIPS certification.
 
 ---
 
@@ -554,8 +554,12 @@ All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
 |---|---|
 | Visual Studio 2022 | v17+ with _Desktop development with C++_ |
 | CMake | 3.28+ |
-| Qt | 6.5+ MSVC 2019 64-bit |
-| vcpkg | Latest (for zlib, bzip2, liblzma) |
+| Qt | 6.5+ for MSVC x64 |
+| vcpkg | Current supported bootstrap (for zlib, bzip2, liblzma) |
+
+Release CI currently builds with Qt 6.11.1 on the MSVC 2022 x64 Qt package while the source minimum remains Qt 6.5+.
+Set `Qt6_DIR` or replace `$env:Qt6_DIR` below with your installed Qt path, for example
+`C:/Qt/<version>/<msvc-x64-kit>`.
 
 ### Build
 
@@ -563,9 +567,16 @@ All crypto uses the **Windows BCrypt API** (FIPS 140-2 validated provider).
 git clone https://github.com/RandyNorthrup/S.A.K.-Utility.git
 cd S.A.K.-Utility
 
+# Optional: refresh bundled tools after clone or upstream tool updates.
+# Run these before configure if a required tools/ subtree is missing.
+powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
+powershell -ExecutionPolicy Bypass -File scripts/bundle_iperf3.ps1
+powershell -ExecutionPolicy Bypass -File scripts/bundle_chocolatey.ps1
+powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
+
 # Configure
 cmake -B build -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64"
+  -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
 
 # Optional: explicitly toggle the AI Assistant panel
 # -DSAK_ENABLE_AI_ASSISTANT=ON  # default
@@ -573,11 +584,8 @@ cmake -B build -G "Visual Studio 17 2022" -A x64 `
 # Build
 cmake --build build --config Release --parallel
 
-# Bundle smartmontools (required for SMART diagnostics)
-powershell -ExecutionPolicy Bypass -File scripts/bundle_smartmontools.ps1
-
 # Run
-.\build\Release\Release\sak_utility.exe
+.\build\Release\sak_utility.exe
 ```
 
 ### Code Signing (Optional)
@@ -593,7 +601,7 @@ powershell -ExecutionPolicy Bypass -File scripts/sign-exe.ps1
 
 # Or enable automatic signing on every build:
 cmake -B build -G "Visual Studio 17 2022" -A x64 `
-  -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64" `
+  -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
   -DSAK_CODE_SIGN=ON
 cmake --build build --config Release
 ```
@@ -642,9 +650,13 @@ smoke, and Authenticode signatures. See
 | [win32-mcp-server](https://github.com/RandyNorthrup/win32-mcp-server) | MIT | Bundled portable MCP server for manifest-gated Windows desktop observation/automation |
 | [Context7 MCP](https://github.com/upstash/context7) | MIT | Remote documentation MCP provider; no bundled code; no app API key |
 | [Microsoft Learn MCP](https://learn.microsoft.com/en-us/training/support/mcp) | Microsoft Learn Terms | Remote Microsoft documentation MCP provider; no bundled code; no app API key |
-| [smartmontools](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
-| [iPerf3](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
-| [Chocolatey](https://chocolatey.org/) | Apache 2.0 | Embedded package manager |
+| [aria2](https://aria2.github.io/) | GPLv2 | Multi-connection downloader bundled for ISO/UUP payload downloads |
+| [UUPMediaCreator](https://github.com/OSTooling/UUPMediaCreator) | MIT | Bundled UUP-to-ISO conversion tooling |
+| [wimlib / libwim](https://wimlib.net/) | LGPL v3 | WIM image library bundled with the UUP conversion tooling |
+| [smartmontools 7.5](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
+| [iPerf3 3.21](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
+| [Chocolatey 2.7.2](https://chocolatey.org/) | Apache 2.0 | Embedded portable package manager |
+| [Icons8](https://icons8.com/) | Icons8 Free License | UI icons with attribution |
 | Windows BCrypt | OS component | AES-256, PBKDF2, SHA-256 |
 
 Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
@@ -661,7 +673,8 @@ Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry,
 
 ## Configuration
 
-Settings are stored at `%APPDATA%\SAK\Utility\` in INI format.
+Portable ZIP builds store settings at `<app>/data/config/Utility.ini` in INI format.
+Packaged builds use the OS app-local data directory when Windows package identity is present.
 
 AI Assistant sessions and credentials are intentionally portable-app local:
 

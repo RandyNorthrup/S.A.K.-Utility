@@ -7,6 +7,12 @@
 
 namespace sak::ai {
 
+namespace {
+constexpr int kPackageToolDefaultTimeoutSeconds = 1800;
+constexpr int kPackageToolMinTimeoutSeconds = 5;
+constexpr int kPackageToolMaxTimeoutSeconds = 7200;
+}  // namespace
+
 QString AiPackageToolPlanner::safePackageToken(const QString& value) {
     QString result;
     for (const QChar ch : value.trimmed()) {
@@ -39,8 +45,10 @@ AiPackageToolPlan AiPackageToolPlanner::buildPlan(const QJsonObject& args) {
     plan.query = args.value(QStringLiteral("query")).toString().trimmed();
     plan.package_id = safePackageToken(args.value(QStringLiteral("package_id")).toString());
     plan.version = args.value(QStringLiteral("version")).toString().trimmed();
-    plan.timeout_seconds =
-        std::clamp(args.value(QStringLiteral("timeout_seconds")).toInt(1800), 5, 7200);
+    plan.timeout_seconds = std::clamp(
+        args.value(QStringLiteral("timeout_seconds")).toInt(kPackageToolDefaultTimeoutSeconds),
+        kPackageToolMinTimeoutSeconds,
+        kPackageToolMaxTimeoutSeconds);
 
     if (plan.operation.isEmpty()) {
         plan.error_message = QStringLiteral("Package manager requires operation");

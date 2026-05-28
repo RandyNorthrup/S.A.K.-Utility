@@ -27,6 +27,11 @@ namespace {
 constexpr qint64 kFlashBufferSize = 64LL * 1024 * 1024;   // 64 MB
 constexpr qint64 kVerifySampleMax = 100LL * 1024 * 1024;  // 100 MB
 constexpr qint64 kVerifyBlockSize = 1024LL * 1024;        // 1 MB
+constexpr qint64 kDeviceSectorSizeBytes = 512;
+constexpr qint64 kPaddingCapacityGrowthLimit = 2;
+constexpr qint64 kSampleSizeFractionDivisor = 10;
+constexpr qint64 kProgressThrottleMs = sak::kTimerPollingFastMs;
+constexpr qint64 kSpeedUpdateIntervalMs = sak::kMillisecondsPerSecond;
 }  // namespace
 
 FlashWorker::FlashWorker(std::unique_ptr<ImageSource> imageSource,
@@ -127,7 +132,9 @@ auto FlashWorker::execute() -> std::expected<void, sak::error_code> {
     cleanupFlashResources();
 
     qint64 elapsed_ms = timer.elapsed();
-    sak::logInfo(QString("Flash completed in %1 seconds").arg(elapsed_ms / 1000.0).toStdString());
+    sak::logInfo(QString("Flash completed in %1 seconds")
+                     .arg(elapsed_ms / sak::kMillisecondsPerSecondF)
+                     .toStdString());
 
     return {};
 }
@@ -221,14 +228,14 @@ bool FlashWorker::prepareSourceChecksum() {
 
 bool FlashWorker::padBufferToSectorSize(QByteArray& buffer, qint64& bytesRead) {
     Q_ASSERT(!buffer.isEmpty());
-    if (bytesRead % 512 == 0) {
+    if (bytesRead % kDeviceSectorSizeBytes == 0) {
         return true;
     }
 
-    qint64 paddedSize = ((bytesRead / 512) + 1) * 512;
+    qint64 paddedSize = ((bytesRead / kDeviceSectorSizeBytes) + 1) * kDeviceSectorSizeBytes;
 
     // Validate padded size is reasonable
-    if (paddedSize > buffer.capacity() * 2 || paddedSize < 0) {
+    if (paddedSize > buffer.capacity() * kPaddingCapacityGrowthLimit || paddedSize < 0) {
         sak::logError(QString("Invalid padded size calculated: %1").arg(paddedSize).toStdString());
         return false;
     }
@@ -381,7 +388,8 @@ sak::ValidationResult FlashWorker::verifyFull() {
     // Calculate speed
     qint64 elapsed_ms = timer.elapsed();
     if (elapsed_ms > 0) {
-        result.verificationSpeed = (m_totalBytes / sak::kBytesPerMBf) / (elapsed_ms / 1000.0);
+        result.verificationSpeed = (m_totalBytes / sak::kBytesPerMBf) /
+                                   (elapsed_ms / sak::kMillisecondsPerSecondF);
     }
 
     return result;
@@ -395,7 +403,7 @@ sak::ValidationResult FlashWorker::verifySample() {
     result.sourceChecksum = m_sourceChecksum;
 
     // Sample size: 100MB or 10% of image, whichever is smaller
-    qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / 10);
+    qint64 sampleSize = qMin(kVerifySampleMax, m_totalBytes / kSampleSizeFractionDivisor);
     qint64 blockSize = kVerifyBlockSize;
     int numSamples = static_cast<int>(sampleSize / blockSize);
 
@@ -437,7 +445,8 @@ sak::ValidationResult FlashWorker::verifySample() {
     // Calculate speed
     qint64 elapsed_ms = timer.elapsed();
     if (elapsed_ms > 0) {
-        result.verificationSpeed = (sampleSize / sak::kBytesPerMBf) / (elapsed_ms / 1000.0);
+        result.verificationSpeed = (sampleSize / sak::kBytesPerMBf) /
+                                   (elapsed_ms / sak::kMillisecondsPerSecondF);
     }
 
     sak::logInfo(QString("Sample verification complete - %1/%2 blocks verified, %3 mismatches")
@@ -564,7 +573,7 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
-    if (now - m_lastVerifyUpdate < 100) {
+    if (now - m_lastVerifyUpdate < kProgressThrottleMs) {
         return;
     }
 
@@ -572,7 +581,7 @@ void FlashWorker::updateVerificationProgress(qint64 bytesVerified, qint64 totalB
 
     double percentage = 0.0;
     if (totalBytes > 0) {
-        percentage = (static_cast<double>(bytesVerified) / totalBytes) * 100.0;
+        percentage = (static_cast<double>(bytesVerified) / totalBytes) * sak::kPercentMaxF;
     }
 
     Q_EMIT verificationProgress(percentage, bytesVerified);
@@ -583,7 +592,7 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Throttle updates to once per 100ms
-    if (now - m_lastProgressUpdate < 100) {
+    if (now - m_lastProgressUpdate < kProgressThrottleMs) {
         return;
     }
 
@@ -591,7 +600,7 @@ void FlashWorker::updateProgress(qint64 bytesWritten) {
 
     double percentage = 0.0;
     if (m_totalBytes > 0) {
-        percentage = (static_cast<double>(bytesWritten) / m_totalBytes) * 100.0;
+        percentage = (static_cast<double>(bytesWritten) / m_totalBytes) * sak::kPercentMaxF;
     }
 
     Q_EMIT progressUpdated(percentage, bytesWritten);
@@ -602,7 +611,7 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
     qint64 now = QDateTime::currentMSecsSinceEpoch();
 
     // Calculate speed every second
-    if (now - m_lastSpeedUpdate < 1000) {
+    if (now - m_lastSpeedUpdate < kSpeedUpdateIntervalMs) {
         return;
     }
 
@@ -611,7 +620,7 @@ void FlashWorker::updateSpeed(qint64 bytesWritten) {
 
     if (timeDelta > 0) {
         double bytesPerMs = static_cast<double>(bytesDelta) / timeDelta;
-        m_speedMBps = (bytesPerMs * 1000.0) / sak::kBytesPerMBf;
+        m_speedMBps = (bytesPerMs * sak::kMillisecondsPerSecondF) / sak::kBytesPerMBf;
     }
 
     m_lastSpeedUpdate = now;

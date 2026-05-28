@@ -9,6 +9,8 @@
 /// Messages are framed as: [4-byte little-endian length][1-byte type][payload]
 /// Payload is UTF-8 JSON for structured data.
 
+#include "sak/layout_constants.h"
+
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QJsonDocument>
@@ -59,6 +61,16 @@ inline constexpr int kPipeConnectTimeoutMs = 10'000;
 
 /// @brief Pipe read/write timeout
 inline constexpr int kPipeIoTimeoutMs = 30'000;
+inline constexpr uint32_t kPipeFrameByteMask = 0xFF;
+inline constexpr int kPipeFrameByteShift1 = 8;
+inline constexpr int kPipeFrameByteShift2 = 16;
+inline constexpr int kPipeFrameByteShift3 = 24;
+inline constexpr int kPipeFrameLengthByte0 = 0;
+inline constexpr int kPipeFrameLengthByte1 = 1;
+inline constexpr int kPipeFrameLengthByte2 = 2;
+inline constexpr int kPipeFrameLengthByte3 = 3;
+inline constexpr int kPipeFrameTypeByte = 4;
+inline constexpr int kPipeNonceHexWidth = 16;
 
 // ======================================================================
 // Message Framing
@@ -71,10 +83,10 @@ inline constexpr int kPipeIoTimeoutMs = 30'000;
     frame.reserve(kPipeHeaderSize + static_cast<int>(payload_len));
 
     // Little-endian length (of payload only, not header)
-    frame.append(static_cast<char>(payload_len & 0xFF));
-    frame.append(static_cast<char>((payload_len >> 8) & 0xFF));
-    frame.append(static_cast<char>((payload_len >> 16) & 0xFF));
-    frame.append(static_cast<char>((payload_len >> 24) & 0xFF));
+    frame.append(static_cast<char>(payload_len & kPipeFrameByteMask));
+    frame.append(static_cast<char>((payload_len >> kPipeFrameByteShift1) & kPipeFrameByteMask));
+    frame.append(static_cast<char>((payload_len >> kPipeFrameByteShift2) & kPipeFrameByteMask));
+    frame.append(static_cast<char>((payload_len >> kPipeFrameByteShift3) & kPipeFrameByteMask));
 
     // Message type
     frame.append(static_cast<char>(type));
@@ -185,7 +197,10 @@ struct PipeMessage {
     auto* gen = QRandomGenerator::global();
     nonce = gen->generate64();
 
-    return QString("%1%2_%3").arg(kPipeBasePath).arg(pid).arg(nonce, 16, 16, QChar('0'));
+    return QString("%1%2_%3")
+        .arg(kPipeBasePath)
+        .arg(pid)
+        .arg(nonce, kPipeNonceHexWidth, kHexBase, QChar('0'));
 }
 
 }  // namespace sak

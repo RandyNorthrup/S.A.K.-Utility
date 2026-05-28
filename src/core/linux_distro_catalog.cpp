@@ -16,11 +16,255 @@
 
 #include "sak/linux_distro_catalog.h"
 
+#include "sak/layout_constants.h"
 #include "sak/logger.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+
+namespace {
+
+using DistroInfo = LinuxDistroCatalog::DistroInfo;
+using DistroCategory = LinuxDistroCatalog::Category;
+using DistroSourceType = LinuxDistroCatalog::SourceType;
+
+constexpr double kUbuntuDesktopSizeGiB = 6.1;
+constexpr double kUbuntuServerSizeGiB = 2.7;
+constexpr double kLinuxMintSizeGiB = 2.9;
+constexpr double kFedoraWorkstationSizeGiB = 2.7;
+constexpr double kDebianLiveSizeGiB = 3.6;
+constexpr double kArchLinuxSizeGiB = 1.4;
+constexpr qint64 kClonezillaSizeMiB = 530;
+constexpr qint64 kGpartedSizeMiB = 649;
+constexpr qint64 kShredOsSizeMiB = 900;
+constexpr double kKaliSizeGiB = 4.4;
+constexpr double kSystemRescueSizeGiB = 1.3;
+constexpr qint64 kVentoySizeMiB = 196;
+
+qint64 sizeFromGiB(double gib) {
+    return static_cast<qint64>(gib * sak::kBytesPerGBf);
+}
+
+qint64 sizeFromMiB(qint64 mib) {
+    return mib * sak::kBytesPerMB;
+}
+
+DistroInfo ubuntuDesktopDistro() {
+    return {/*.id =*/"ubuntu-desktop",
+            /*.name =*/"Ubuntu Desktop",
+            /*.version =*/"26.04",
+            /*.versionLabel =*/"Resolute Raccoon (LTS)",
+            /*.description =*/
+            "The most popular Linux desktop. Full graphical environment "
+            "with office suite, web browser, and media tools. Ideal for "
+            "setting up client workstations.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/
+            "https://releases.ubuntu.com/resolute/"
+            "ubuntu-{version}-desktop-amd64.iso",
+            /*.checksumUrl =*/"https://releases.ubuntu.com/resolute/SHA256SUMS",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"ubuntu-{version}-desktop-amd64.iso",
+            /*.approximateSize =*/sizeFromGiB(kUbuntuDesktopSizeGiB),
+            /*.homepage =*/"https://ubuntu.com/desktop",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo ubuntuServerDistro() {
+    return {/*.id =*/"ubuntu-server",
+            /*.name =*/"Ubuntu Server",
+            /*.version =*/"26.04",
+            /*.versionLabel =*/"Resolute Raccoon (LTS)",
+            /*.description =*/
+            "Minimal server installation with no GUI. Ideal for deploying "
+            "headless servers, VMs, and containers. Includes OpenSSH, LVM, "
+            "and cloud-init.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/
+            "https://releases.ubuntu.com/resolute/"
+            "ubuntu-{version}-live-server-amd64.iso",
+            /*.checksumUrl =*/"https://releases.ubuntu.com/resolute/SHA256SUMS",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"ubuntu-{version}-live-server-amd64.iso",
+            /*.approximateSize =*/sizeFromGiB(kUbuntuServerSizeGiB),
+            /*.homepage =*/"https://ubuntu.com/server",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo linuxMintDistro() {
+    return {/*.id =*/"linuxmint-cinnamon",
+            /*.name =*/"Linux Mint Cinnamon",
+            /*.version =*/"22.3",
+            /*.versionLabel =*/"Zena",
+            /*.description =*/
+            "Sleek, modern desktop based on Ubuntu LTS. Familiar Windows-like "
+            "interface -- excellent for migrating users from Windows. Includes "
+            "full multimedia codecs.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/
+            "https://mirrors.kernel.org/linuxmint/stable/{version}/"
+            "linuxmint-{version}-cinnamon-64bit.iso",
+            /*.checksumUrl =*/"https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"linuxmint-{version}-cinnamon-64bit.iso",
+            /*.approximateSize =*/sizeFromGiB(kLinuxMintSizeGiB),
+            /*.homepage =*/"https://linuxmint.com",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo fedoraWorkstationDistro() {
+    return {/*.id =*/"fedora-workstation",
+            /*.name =*/"Fedora Workstation",
+            /*.version =*/"44",
+            /*.versionLabel =*/"Workstation Live 1.7",
+            /*.description =*/
+            "Modern GNOME desktop from the Fedora Project. Good for testing "
+            "current Linux desktop workflows and hardware support.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
+            "Workstation/x86_64/iso/Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
+            /*.checksumUrl =*/
+            "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
+            "Workstation/x86_64/iso/Fedora-Workstation-{version}-1.7-x86_64-CHECKSUM",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
+            /*.approximateSize =*/sizeFromGiB(kFedoraWorkstationSizeGiB),
+            /*.homepage =*/"https://fedoraproject.org/workstation/",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo debianLiveDistro() {
+    return {/*.id =*/"debian-live-gnome",
+            /*.name =*/"Debian Live GNOME",
+            /*.version =*/"13.5.0",
+            /*.versionLabel =*/"Trixie live",
+            /*.description =*/
+            "Official Debian live desktop image with GNOME and Calamares "
+            "installer. Useful for Linux troubleshooting and installs from USB.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/
+            "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/"
+            "debian-live-{version}-amd64-gnome.iso",
+            /*.checksumUrl =*/
+            "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"debian-live-{version}-amd64-gnome.iso",
+            /*.approximateSize =*/sizeFromGiB(kDebianLiveSizeGiB),
+            /*.homepage =*/"https://www.debian.org/distrib/",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo archLinuxDistro() {
+    return {/*.id =*/"arch-linux",
+            /*.name =*/"Arch Linux",
+            /*.version =*/"2026.05.01",
+            /*.versionLabel =*/"Rolling release install ISO",
+            /*.description =*/
+            "Rolling-release Linux install image for advanced users and "
+            "technicians who need a minimal, current base system.",
+            /*.category =*/DistroCategory::GeneralPurpose,
+            /*.sourceType =*/DistroSourceType::DirectURL,
+            /*.downloadUrl =*/"https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso",
+            /*.checksumUrl =*/"https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
+            /*.checksumType =*/"sha256",
+            /*.fileName =*/"archlinux-x86_64.iso",
+            /*.approximateSize =*/sizeFromGiB(kArchLinuxSizeGiB),
+            /*.homepage =*/"https://archlinux.org/download/",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo clonezillaDistro() {
+    return {/*.id =*/"clonezilla",
+            /*.name =*/"Clonezilla Live",
+            /*.version =*/"3.3.1-35",
+            /*.versionLabel =*/"Stable (Debian-based)",
+            /*.description =*/
+            "Disk imaging and cloning tool. Clone entire drives or partitions "
+            "for backup, migration, or mass deployment. Supports multicasting "
+            "for deploying to many machines simultaneously.",
+            /*.category =*/DistroCategory::DiskTools,
+            /*.sourceType =*/DistroSourceType::SourceForge,
+            /*.downloadUrl =*/
+            "https://sourceforge.net/projects/clonezilla/files/"
+            "clonezilla_live_stable/{version}/"
+            "clonezilla-live-{version}-amd64.iso/download",
+            /*.checksumUrl =*/{},
+            /*.checksumType =*/{},
+            /*.fileName =*/"clonezilla-live-{version}-amd64.iso",
+            /*.approximateSize =*/sizeFromMiB(kClonezillaSizeMiB),
+            /*.homepage =*/"https://clonezilla.org",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo gpartedDistro() {
+    return {/*.id =*/"gparted-live",
+            /*.name =*/"GParted Live",
+            /*.version =*/"1.8.1-3",
+            /*.versionLabel =*/{},
+            /*.description =*/
+            "Bootable partition editor for creating, resizing, moving, and "
+            "copying disk partitions. Supports ext2/3/4, NTFS, FAT16/32, "
+            "HFS+, XFS, and many more filesystems.",
+            /*.category =*/DistroCategory::DiskTools,
+            /*.sourceType =*/DistroSourceType::SourceForge,
+            /*.downloadUrl =*/
+            "https://sourceforge.net/projects/gparted/files/"
+            "gparted-live-stable/{version}/"
+            "gparted-live-{version}-amd64.iso/download",
+            /*.checksumUrl =*/{},
+            /*.checksumType =*/{},
+            /*.fileName =*/"gparted-live-{version}-amd64.iso",
+            /*.approximateSize =*/sizeFromMiB(kGpartedSizeMiB),
+            /*.homepage =*/"https://gparted.org",
+            /*.githubOwner =*/{},
+            /*.githubRepo =*/{},
+            /*.githubAssetPattern =*/{}};
+}
+
+DistroInfo shredOsDistro() {
+    return {/*.id =*/"shredos",
+            /*.name =*/"ShredOS",
+            /*.version =*/"v2025.11_30_x86-64_0.41",
+            /*.versionLabel =*/"nwipe 0.41",
+            /*.description =*/
+            "Bootable secure disk erasure tool powered by nwipe. Wipes drives "
+            "using DoD 5220.22-M, Gutmann, and other standards. Generates "
+            "PDF audit reports for compliance. Essential for ITAD.",
+            /*.category =*/DistroCategory::DiskTools,
+            /*.sourceType =*/DistroSourceType::GitHubRelease,
+            /*.downloadUrl =*/{},
+            /*.checksumUrl =*/{},
+            /*.checksumType =*/"sha1",
+            /*.fileName =*/{},
+            /*.approximateSize =*/sizeFromMiB(kShredOsSizeMiB),
+            /*.homepage =*/"https://github.com/PartialVolume/shredos.x86_64",
+            /*.githubOwner =*/"PartialVolume",
+            /*.githubRepo =*/"shredos.x86_64",
+            /*.githubAssetPattern =*/R"(shredos.*x86-64.*\.iso$)"};
+}
+
+}  // namespace
 
 // ============================================================================
 // Construction / Destruction
@@ -50,81 +294,18 @@ void LinuxDistroCatalog::populateCatalog() {
 }
 
 void LinuxDistroCatalog::addGeneralPurposeDistros() {
-    addDistro({/*.id =*/"ubuntu-desktop",
-               /*.name =*/"Ubuntu Desktop",
-               /*.version =*/"24.04.4",
-               /*.versionLabel =*/"Noble Numbat (LTS)",
-               /*.description =*/
-               "The most popular Linux desktop. Full graphical environment "
-               "with office suite, web browser, and media tools. Ideal for "
-               "setting up client workstations.",
-               /*.category =*/Category::GeneralPurpose,
-               /*.sourceType =*/SourceType::DirectURL,
-               /*.downloadUrl =
-                */
-               "https://releases.ubuntu.com/noble/ubuntu-{version}-desktop-amd64.iso",
-               /*.checksumUrl =*/"https://releases.ubuntu.com/noble/SHA256SUMS",
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"ubuntu-{version}-desktop-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(6.2 * 1024 * 1024 * 1024),  // ~6.2 GB
-               /*.homepage =*/"https://ubuntu.com/desktop",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
-
-    addDistro({/*.id =*/"ubuntu-server",
-               /*.name =*/"Ubuntu Server",
-               /*.version =*/"24.04.4",
-               /*.versionLabel =*/"Noble Numbat (LTS)",
-               /*.description =*/
-               "Minimal server installation with no GUI. Ideal for deploying "
-               "headless servers, VMs, and containers. Includes OpenSSH, LVM, "
-               "and cloud-init.",
-               /*.category =*/Category::GeneralPurpose,
-               /*.sourceType =*/SourceType::DirectURL,
-               /*.downloadUrl =
-                */
-               "https://releases.ubuntu.com/noble/ubuntu-{version}-live-server-amd64.iso",
-               /*.checksumUrl =*/"https://releases.ubuntu.com/noble/SHA256SUMS",
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"ubuntu-{version}-live-server-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(3.2 * 1024 * 1024 * 1024),  // ~3.2 GB
-               /*.homepage =*/"https://ubuntu.com/server",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
-
-    addDistro({/*.id =*/"linuxmint-cinnamon",
-               /*.name =*/"Linux Mint Cinnamon",
-               /*.version =*/"22.3",
-               /*.versionLabel =*/"Zena",
-               /*.description =*/
-               "Sleek, modern desktop based on Ubuntu LTS. Familiar Windows-like "
-               "interface -- excellent for migrating users from Windows. Includes "
-               "full multimedia codecs.",
-               /*.category =*/Category::GeneralPurpose,
-               /*.sourceType =*/SourceType::DirectURL,
-               /*.downloadUrl =
-                */
-               "https://mirrors.kernel.org/linuxmint/"
-               "stable/{version}/"
-               "linuxmint-{version}-cinnamon-64bit.iso",
-               /*.checksumUrl =
-                */
-               "https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"linuxmint-{version}-cinnamon-64bit.iso",
-               /*.approximateSize =*/static_cast<qint64>(2.9 * 1024 * 1024 * 1024),  // ~2.9 GB
-               /*.homepage =*/"https://linuxmint.com",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
+    addDistro(ubuntuDesktopDistro());
+    addDistro(ubuntuServerDistro());
+    addDistro(linuxMintDistro());
+    addDistro(fedoraWorkstationDistro());
+    addDistro(debianLiveDistro());
+    addDistro(archLinuxDistro());
 }
 
 void LinuxDistroCatalog::addSecurityDistros() {
     addDistro({/*.id =*/"kali-linux",
                /*.name =*/"Kali Linux",
-               /*.version =*/"2025.4",
+               /*.version =*/"2026.1",
                /*.versionLabel =*/"Installer",
                /*.description =*/
                "The most advanced penetration testing distribution. Includes "
@@ -134,12 +315,12 @@ void LinuxDistroCatalog::addSecurityDistros() {
                /*.sourceType =*/SourceType::DirectURL,
                /*.downloadUrl =
                 */
-               "https://cdimage.kali.org/kali-{version}/"
+               "https://cdimage.kali.org/current/"
                "kali-linux-{version}-installer-amd64.iso",
-               /*.checksumUrl =*/"https://cdimage.kali.org/kali-{version}/SHA256SUMS",
+               /*.checksumUrl =*/"https://cdimage.kali.org/current/SHA256SUMS",
                /*.checksumType =*/"sha256",
                /*.fileName =*/"kali-linux-{version}-installer-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(4.4 * 1024 * 1024 * 1024),  // ~4.4 GB
+               /*.approximateSize =*/sizeFromGiB(kKaliSizeGiB),  // ~4.4 GB
                /*.homepage =*/"https://www.kali.org",
                /*.githubOwner =*/{},
                /*.githubRepo =*/{},
@@ -149,7 +330,7 @@ void LinuxDistroCatalog::addSecurityDistros() {
 void LinuxDistroCatalog::addSystemRecoveryDistros() {
     addDistro({/*.id =*/"systemrescue",
                /*.name =*/"SystemRescue",
-               /*.version =*/"12.03",
+               /*.version =*/"13.00",
                /*.versionLabel =*/{},
                /*.description =*/
                "Bootable Linux rescue environment for repairing unbootable "
@@ -167,7 +348,7 @@ void LinuxDistroCatalog::addSystemRecoveryDistros() {
                /*.checksumUrl =*/{},  // SourceForge provides checksums on download page
                /*.checksumType =*/{},
                /*.fileName =*/"systemrescue-{version}-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(1166LL * 1024 * 1024),  // ~1166 MiB
+               /*.approximateSize =*/sizeFromGiB(kSystemRescueSizeGiB),
                /*.homepage =*/"https://www.system-rescue.org",
                /*.githubOwner =*/{},
                /*.githubRepo =*/{},
@@ -175,81 +356,15 @@ void LinuxDistroCatalog::addSystemRecoveryDistros() {
 }
 
 void LinuxDistroCatalog::addDiskToolDistros() {
-    addDistro({/*.id =*/"clonezilla",
-               /*.name =*/"Clonezilla Live",
-               /*.version =*/"3.3.1-35",
-               /*.versionLabel =*/"Stable (Debian-based)",
-               /*.description =*/
-               "Disk imaging and cloning tool. Clone entire drives or partitions "
-               "for backup, migration, or mass deployment. Supports multicasting "
-               "for deploying to many machines simultaneously.",
-               /*.category =*/Category::DiskTools,
-               /*.sourceType =*/SourceType::SourceForge,
-               /*.downloadUrl =
-                */
-               "https://sourceforge.net/projects/"
-               "clonezilla/files/clonezilla_live_stable/"
-               "{version}/clonezilla-live-{version}-"
-               "amd64.iso/download",
-               /*.checksumUrl =*/{},  // SourceForge provides checksums on download page
-               /*.checksumType =*/{},
-               /*.fileName =*/"clonezilla-live-{version}-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(530LL * 1024 * 1024),  // ~530 MB
-               /*.homepage =*/"https://clonezilla.org",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
-
-    addDistro({/*.id =*/"gparted-live",
-               /*.name =*/"GParted Live",
-               /*.version =*/"1.8.0-2",
-               /*.versionLabel =*/{},
-               /*.description =*/
-               "Bootable partition editor for creating, resizing, moving, and "
-               "copying disk partitions. Supports ext2/3/4, NTFS, FAT16/32, "
-               "HFS+, XFS, and many more filesystems.",
-               /*.category =*/Category::DiskTools,
-               /*.sourceType =*/SourceType::SourceForge,
-               /*.downloadUrl =
-                */
-               "https://sourceforge.net/projects/gparted/"
-               "files/gparted-live-stable/{version}/"
-               "gparted-live-{version}-amd64.iso/"
-               "download",
-               /*.checksumUrl =*/{},  // SourceForge provides checksums on download page
-               /*.checksumType =*/{},
-               /*.fileName =*/"gparted-live-{version}-amd64.iso",
-               /*.approximateSize =*/static_cast<qint64>(635LL * 1024 * 1024),  // ~635 MB
-               /*.homepage =*/"https://gparted.org",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
-
-    addDistro({/*.id =*/"shredos",
-               /*.name =*/"ShredOS",
-               /*.version =*/"v2025.11_28_x86-64_0.40",
-               /*.versionLabel =*/"nwipe 0.40",
-               /*.description =*/
-               "Bootable secure disk erasure tool powered by nwipe. Wipes drives "
-               "using DoD 5220.22-M, Gutmann, and other standards. Generates "
-               "PDF audit reports for compliance. Essential for ITAD.",
-               /*.category =*/Category::DiskTools,
-               /*.sourceType =*/SourceType::GitHubRelease,
-               /*.downloadUrl =*/{},  // Resolved via GitHub Releases API
-               /*.checksumUrl =*/{},  // SHA1 sidecar in release assets
-               /*.checksumType =*/"sha1",
-               /*.fileName =*/{},     // Resolved from GitHub asset name
-               /*.approximateSize =*/static_cast<qint64>(900LL * 1024 * 1024),  // ~900 MB
-               /*.homepage =*/"https://github.com/PartialVolume/shredos.x86_64",
-               /*.githubOwner =*/"PartialVolume",
-               /*.githubRepo =*/"shredos.x86_64",
-               /*.githubAssetPattern =*/R"(shredos.*x86-64.*\.iso$)"});
+    addDistro(clonezillaDistro());
+    addDistro(gpartedDistro());
+    addDistro(shredOsDistro());
 }
 
 void LinuxDistroCatalog::addUtilityDistros() {
     addDistro({/*.id =*/"ventoy",
                /*.name =*/"Ventoy LiveCD",
-               /*.version =*/"1.1.10",
+               /*.version =*/"1.1.12",
                /*.versionLabel =*/{},
                /*.description =*/
                "Multi-boot USB solution. Install Ventoy to a USB drive, then "
@@ -262,32 +377,11 @@ void LinuxDistroCatalog::addUtilityDistros() {
                /*.checksumUrl =*/{},  // SHA256 in release body
                /*.checksumType =*/"sha256",
                /*.fileName =*/"ventoy-{version}-livecd.iso",
-               /*.approximateSize =*/static_cast<qint64>(196LL * 1024 * 1024),  // ~196 MB
+               /*.approximateSize =*/sizeFromMiB(kVentoySizeMiB),  // ~196 MB
                /*.homepage =*/"https://www.ventoy.net",
                /*.githubOwner =*/"ventoy",
                /*.githubRepo =*/"Ventoy",
                /*.githubAssetPattern =*/R"(ventoy-.*-livecd\.iso$)"});
-
-    addDistro({/*.id =*/"memtest86plus",
-               /*.name =*/"Memtest86+",
-               /*.version =*/"7.20",
-               /*.versionLabel =*/{},
-               /*.description =*/
-               "Comprehensive memory diagnostic tool. Tests RAM for errors using "
-               "multiple test patterns. Boots directly -- no OS required. "
-               "Essential "
-               "for diagnosing random crashes and blue screens.",
-               /*.category =*/Category::Utilities,
-               /*.sourceType =*/SourceType::GitHubRelease,
-               /*.downloadUrl =*/{},  // Resolved via GitHub Releases API
-               /*.checksumUrl =*/{},  // SHA256 in release assets
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"memtest86plus-{version}.iso.gz",
-               /*.approximateSize =*/static_cast<qint64>(25LL * 1024 * 1024),  // ~25 MB
-               /*.homepage =*/"https://memtest.org",
-               /*.githubOwner =*/"memtest86plus",
-               /*.githubRepo =*/"memtest86plus",
-               /*.githubAssetPattern =*/R"(memtest86plus-.*\.(iso|img)\.(gz|zip)$)"});
 }
 
 void LinuxDistroCatalog::addDistro(const DistroInfo& distro) {
@@ -336,22 +430,9 @@ LinuxDistroCatalog::DistroInfo LinuxDistroCatalog::distroById(const QString& id)
 
 QString LinuxDistroCatalog::resolveDownloadUrl(const DistroInfo& distro) const {
     if (distro.sourceType == SourceType::GitHubRelease) {
-        // Use cached GitHub asset URL if available
         auto it = m_githubAssetUrls.find(distro.id);
         if (it != m_githubAssetUrls.end()) {
             return *it;
-        }
-        // Fall back to constructing URL from known version for Ventoy
-        if (!distro.fileName.isEmpty()) {
-            QString base;
-            if (!distro.githubOwner.isEmpty() && !distro.githubRepo.isEmpty()) {
-                base = QString("https://github.com/%1/%2/releases/download/v%3/%4")
-                           .arg(distro.githubOwner,
-                                distro.githubRepo,
-                                distro.version,
-                                substituteVersion(distro.fileName, distro.version));
-            }
-            return base;
         }
         return {};
     }
@@ -367,18 +448,15 @@ QString LinuxDistroCatalog::resolveChecksumUrl(const DistroInfo& distro) const {
 }
 
 QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
-    // For GitHub releases, check cached filename first
     if (distro.sourceType == SourceType::GitHubRelease) {
         auto url = m_githubAssetUrls.find(distro.id);
         if (url != m_githubAssetUrls.end()) {
-            // Extract filename from URL
             QString path = QUrl(*url).path();
             int lastSlash = path.lastIndexOf('/');
             if (lastSlash >= 0) {
                 return path.mid(lastSlash + 1);
             }
         }
-        // Fall back to pattern-based filename
         if (!distro.fileName.isEmpty()) {
             return substituteVersion(distro.fileName, distro.version);
         }
@@ -520,24 +598,6 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
             matchedSize = asset["size"].toInteger();
             matchedName = name;
             break;
-        }
-    }
-
-    // Fallback: if primary pattern fails, try matching any bootable image asset
-    if (matchedUrl.isEmpty()) {
-        QRegularExpression fallbackRegex(QStringLiteral(R"(\.(iso|img)(\.gz|\.zip|\.xz)?$)"),
-                                         QRegularExpression::CaseInsensitiveOption);
-        for (const auto& assetVal : assets) {
-            QJsonObject asset = assetVal.toObject();
-            QString name = asset["name"].toString();
-            if (fallbackRegex.match(name).hasMatch()) {
-                matchedUrl = asset["browser_download_url"].toString();
-                matchedSize = asset["size"].toInteger();
-                matchedName = name;
-                sak::logInfo("Using fallback asset match for " + distroId.toStdString() + ": " +
-                             name.toStdString());
-                break;
-            }
         }
     }
 

@@ -21,6 +21,10 @@
 namespace sak {
 
 namespace {
+constexpr size_t kSelectedJobReserveDivisor = 2;
+}
+
+namespace {
 
 bool isVersionNewer(const QString& version, const QVersionNumber& requested) {
     if (version.isEmpty()) {
@@ -28,6 +32,17 @@ bool isVersionNewer(const QString& version, const QVersionNumber& requested) {
     }
     QVersionNumber system_ver = QVersionNumber::fromString(version);
     return !system_ver.isNull() && system_ver >= requested;
+}
+
+ChocolateyManager::InstallConfig makeInstallConfig(const MigrationJob& job) {
+    ChocolateyManager::InstallConfig config;
+    config.package_name = job.packageId;
+    config.version = job.version;
+    config.version_locked = !job.version.isEmpty();
+    config.auto_confirm = true;
+    config.force = true;
+    config.allow_unofficial = false;
+    return config;
 }
 
 }  // namespace
@@ -96,7 +111,7 @@ int AppInstallationWorker::startMigration(std::shared_ptr<MigrationReport> repor
 
         const auto& entries = m_report->getEntries();
         const size_t entry_count = entries.size();
-        m_jobs.reserve(entry_count / 2);
+        m_jobs.reserve(entry_count / kSelectedJobReserveDivisor);
 
         for (size_t i = 0; i < entry_count; ++i) {
             const auto& entry = entries[i];
@@ -334,16 +349,7 @@ bool AppInstallationWorker::installPackage(int jobIndex, MigrationJob& job) {
     Q_EMIT jobStatusChanged(job.entryIndex, job);
     Q_EMIT jobProgress(job.entryIndex, "Installing " + job.packageId + "...");
 
-    // Install via Chocolatey
-    ChocolateyManager::InstallConfig config;
-    config.package_name = job.packageId;
-    config.version = job.version;
-    config.version_locked = !job.version.isEmpty();
-    config.auto_confirm = true;
-    config.force = true;
-    config.allow_unofficial = false;
-
-    auto result = m_chocoManager->installPackage(config);
+    auto result = m_chocoManager->installPackage(makeInstallConfig(job));
     bool success = result.success;
     bool verification_failed = false;
 

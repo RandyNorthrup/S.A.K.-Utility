@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "sak/layout_constants.h"
+
 #include <QDateTime>
 #include <QString>
 #include <QStringList>
@@ -16,6 +18,16 @@
 #include <optional>
 
 namespace sak {
+
+inline constexpr uint64_t kDiskBenchmarkDefaultTestFileSizeMb = 1024;
+inline constexpr int kDiskBenchmarkSequentialBlockSizeKb = 1024;
+inline constexpr int kDiskBenchmarkRandomBlockSizeKb = 4;
+inline constexpr int kDiskBenchmarkSequentialPasses = 3;
+inline constexpr int kDiskBenchmarkRandomDurationSec = 30;
+inline constexpr int kDiskBenchmarkHighQueueDepth = 32;
+inline constexpr int kStressTestDefaultDurationMinutes = 10;
+inline constexpr double kStressTestDefaultMemoryUsagePercent = 80.0;
+inline constexpr double kStressTestDefaultThermalLimitCelsius = 95.0;
 
 // ============================================================================
 // Hardware Inventory Types
@@ -237,14 +249,14 @@ struct CpuBenchmarkResult {
 
 /// @brief Disk benchmark configuration
 struct DiskBenchmarkConfig {
-    QString drive_path;                  ///< "C:\\" or "D:\\"
-    uint64_t test_file_size_mb{1024};    ///< 1 GB test file
-    int sequential_block_size_kb{1024};  ///< 1 MB blocks
-    int random_block_size_kb{4};         ///< 4 KB blocks
-    int sequential_passes{3};            ///< Average over 3 passes
-    int random_duration_sec{30};         ///< 30 seconds per random test
+    QString drive_path;  ///< "C:\\" or "D:\\"
+    uint64_t test_file_size_mb{kDiskBenchmarkDefaultTestFileSizeMb};
+    int sequential_block_size_kb{kDiskBenchmarkSequentialBlockSizeKb};
+    int random_block_size_kb{kDiskBenchmarkRandomBlockSizeKb};
+    int sequential_passes{kDiskBenchmarkSequentialPasses};
+    int random_duration_sec{kDiskBenchmarkRandomDurationSec};
     int queue_depth_low{1};
-    int queue_depth_high{32};
+    int queue_depth_high{kDiskBenchmarkHighQueueDepth};
 };
 
 /// @brief Disk benchmark result with throughput and latency data
@@ -313,12 +325,12 @@ struct StressTestConfig {
     bool stress_disk{false};
     bool stress_gpu{false};
 
-    int duration_minutes{10};
-    int cpu_threads{0};                 ///< 0 = all logical processors
-    double memory_usage_percent{80.0};  ///< Use 80% of available RAM
+    int duration_minutes{kStressTestDefaultDurationMinutes};
+    int cpu_threads{0};  ///< 0 = all logical processors
+    double memory_usage_percent{kStressTestDefaultMemoryUsagePercent};
     QString disk_test_drive{"C:\\"};
 
-    double thermal_limit_celsius{95.0};  ///< Auto-abort temperature
+    double thermal_limit_celsius{kStressTestDefaultThermalLimitCelsius};
     bool abort_on_error{true};
 };
 

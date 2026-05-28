@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_mcp_stdio_client.h"
 
+#include "sak/layout_constants.h"
+
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -26,6 +28,8 @@ namespace {
 
 constexpr int kInitializeId = 1;
 constexpr int kToolCallId = 2;
+constexpr int kMcpStdioErrorPreviewChars = 2000;
+constexpr int kMinimumRequestTimeoutMs = sak::kMillisecondsPerSecond;
 
 [[nodiscard]] QJsonObject initializePayload() {
     return QJsonObject{
@@ -101,16 +105,16 @@ QString processStderr(QProcess* process) {
 
 QString timeoutMessage(QProcess* process) {
     const QString stderr_text = processStderr(process);
-    return stderr_text.isEmpty()
-               ? QStringLiteral("MCP stdio request timed out")
-               : QStringLiteral("MCP stdio request timed out: %1").arg(stderr_text.left(2000));
+    return stderr_text.isEmpty() ? QStringLiteral("MCP stdio request timed out")
+                                 : QStringLiteral("MCP stdio request timed out: %1")
+                                       .arg(stderr_text.left(kMcpStdioErrorPreviewChars));
 }
 
 QString exitedMessage(QProcess* process) {
     const QString stderr_text = processStderr(process);
     return stderr_text.isEmpty() ? QStringLiteral("MCP stdio server exited before response")
                                  : QStringLiteral("MCP stdio server exited before response: %1")
-                                       .arg(stderr_text.left(2000));
+                                       .arg(stderr_text.left(kMcpStdioErrorPreviewChars));
 }
 
 #ifdef Q_OS_WIN
@@ -161,7 +165,7 @@ public:
         m_process->setProcessChannelMode(QProcess::SeparateChannels);
 
         connectProcessSignals();
-        m_timeoutTimer->start(qMax(m_request.timeout_ms, 1000));
+        m_timeoutTimer->start(qMax(m_request.timeout_ms, kMinimumRequestTimeoutMs));
         m_process->start();
     }
 

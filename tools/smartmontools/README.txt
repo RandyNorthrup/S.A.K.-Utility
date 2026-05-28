@@ -1,8 +1,8 @@
-﻿smartmontools v7.4
+﻿smartmontools v7.5
 =======================
 Bundled for S.A.K. Utility diagnostic panel.
 
-License: GNU General Public License v2.0 (GPLv2) - see COPYING
+License: GNU General Public License v2.0 (GPLv2) - see THIRD_PARTY_LICENSES.md
 Source:  https://www.smartmontools.org/
 GitHub:  https://github.com/smartmontools/smartmontools
 

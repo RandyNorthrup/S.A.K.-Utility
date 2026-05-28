@@ -6,6 +6,7 @@
 
 #include "sak/actions/reset_network_action.h"
 
+#include "sak/action_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
@@ -15,10 +16,14 @@
 
 namespace sak {
 
+namespace {
+constexpr qsizetype kAdapterCountPrefixLength = 9;
+}
+
 ResetNetworkAction::ResetNetworkAction(QObject* parent) : QuickAction(parent) {}
 
 void ResetNetworkAction::flushDNS() {
-    Q_EMIT executionProgress("Flushing DNS cache...", 20);
+    Q_EMIT executionProgress("Flushing DNS cache...", progress::kStep20);
     ProcessResult proc =
         runProcess("ipconfig", QStringList() << "/flushdns", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
@@ -27,7 +32,7 @@ void ResetNetworkAction::flushDNS() {
 }
 
 void ResetNetworkAction::resetWinsock() {
-    Q_EMIT executionProgress("Resetting Winsock catalog...", 40);
+    Q_EMIT executionProgress("Resetting Winsock catalog...", progress::kStep40);
     ProcessResult proc =
         runProcess("netsh", QStringList() << "winsock" << "reset", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
@@ -37,7 +42,7 @@ void ResetNetworkAction::resetWinsock() {
 }
 
 void ResetNetworkAction::resetTCPIP() {
-    Q_EMIT executionProgress("Resetting TCP/IP stack...", 60);
+    Q_EMIT executionProgress("Resetting TCP/IP stack...", progress::kStep60);
     ProcessResult proc =
         runProcess("netsh", QStringList() << "int" << "ip" << "reset", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
@@ -47,7 +52,7 @@ void ResetNetworkAction::resetTCPIP() {
 }
 
 void ResetNetworkAction::releaseRenewIP() {
-    Q_EMIT executionProgress("Releasing and renewing IP address...", 80);
+    Q_EMIT executionProgress("Releasing and renewing IP address...", progress::kStep80);
     ProcessResult release_proc =
         runProcess("ipconfig", QStringList() << "/release", sak::kTimeoutNetworkReadMs);
     if (!release_proc.succeeded()) {
@@ -62,7 +67,7 @@ void ResetNetworkAction::releaseRenewIP() {
 }
 
 void ResetNetworkAction::resetFirewall() {
-    Q_EMIT executionProgress("Resetting firewall to defaults...", 90);
+    Q_EMIT executionProgress("Resetting firewall to defaults...", progress::kStep90);
     ProcessResult proc =
         runProcess("netsh", QStringList() << "advfirewall" << "reset", sak::kTimeoutNetworkReadMs);
     if (!proc.succeeded()) {
@@ -85,7 +90,8 @@ void ResetNetworkAction::scan() {
     QString output = proc.std_out.trimmed();
     int adapters = 0;
     if (output.contains("ADAPTERS:")) {
-        adapters = output.mid(output.indexOf("ADAPTERS:") + 9).trimmed().toInt();
+        adapters =
+            output.mid(output.indexOf("ADAPTERS:") + kAdapterCountPrefixLength).trimmed().toInt();
     }
 
     ScanResult result;
@@ -130,7 +136,7 @@ void ResetNetworkAction::execute() {
 
 bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     // Step 1: Backup current Winsock configuration
-    Q_EMIT executionProgress("Backing up Winsock catalog...", 5);
+    Q_EMIT executionProgress("Backing up Winsock catalog...", progress::kStep5);
 
     QTemporaryFile backupFile(QDir::temp().filePath(QStringLiteral("sak_winsock_XXXXXX.txt")));
     backupFile.setAutoRemove(true);
@@ -154,7 +160,7 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
     }
 
     // Step 2: Flush DNS cache
-    Q_EMIT executionProgress("Flushing DNS cache...", 15);
+    Q_EMIT executionProgress("Flushing DNS cache...", progress::kStep15);
     {
         ProcessResult proc =
             runProcess("ipconfig", QStringList() << "/flushdns", sak::kTimeoutNetworkReadMs);
@@ -170,7 +176,7 @@ bool ResetNetworkAction::executeFlushDns(QStringList& errors) {
 
 bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
     // Step 3: Reset Winsock catalog
-    Q_EMIT executionProgress("Resetting Winsock catalog...", 30);
+    Q_EMIT executionProgress("Resetting Winsock catalog...", progress::kStep30);
     {
         ProcessResult proc =
             runProcess("netsh", QStringList() << "winsock" << "reset", sak::kTimeoutNetworkReadMs);
@@ -187,7 +193,7 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
     }
 
     // Step 4: Reset TCP/IP stack
-    Q_EMIT executionProgress("Resetting TCP/IP stack...", 45);
+    Q_EMIT executionProgress("Resetting TCP/IP stack...", progress::kStep45);
     {
         ProcessResult proc = runProcess("netsh",
                                         QStringList() << "int" << "ip" << "reset",
@@ -214,7 +220,7 @@ bool ResetNetworkAction::executeResetWinsock(QStringList& errors) {
 
 bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
     // Step 5: Release and renew IP addresses
-    Q_EMIT executionProgress("Releasing IP addresses...", 60);
+    Q_EMIT executionProgress("Releasing IP addresses...", progress::kStep60);
     {
         ProcessResult proc =
             runProcess("ipconfig", QStringList() << "/release", sak::kTimeoutNetworkReadMs);
@@ -227,7 +233,7 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
 
     QThread::msleep(sak::kTimerServiceDelayMs);
 
-    Q_EMIT executionProgress("Renewing IP addresses...", 70);
+    Q_EMIT executionProgress("Renewing IP addresses...", progress::kStep70);
     {
         ProcessResult proc =
             runProcess("ipconfig", QStringList() << "/renew", sak::kTimeoutNetworkReadMs);
@@ -243,7 +249,7 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
     }
 
     // Step 6: Reset Windows Firewall to defaults
-    Q_EMIT executionProgress("Resetting Windows Firewall...", 80);
+    Q_EMIT executionProgress("Resetting Windows Firewall...", progress::kStep80);
     {
         ProcessResult proc = runProcess("netsh",
                                         QStringList() << "advfirewall" << "reset",
@@ -264,7 +270,7 @@ bool ResetNetworkAction::executeResetIpStack(QStringList& errors) {
 
 bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     // Step 7: Reset network adapter settings
-    Q_EMIT executionProgress("Resetting network adapters...", 85);
+    Q_EMIT executionProgress("Resetting network adapters...", progress::kStep85);
     QString resetAdapterScript =
         "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object { "
         "  Restart-NetAdapter -Name $_.Name -Confirm:$false "
@@ -286,7 +292,7 @@ bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
     }
 
     // Step 8: Clear NetBIOS cache
-    Q_EMIT executionProgress("Clearing NetBIOS cache...", 90);
+    Q_EMIT executionProgress("Clearing NetBIOS cache...", progress::kStep90);
     {
         ProcessResult proc =
             runProcess("nbtstat", QStringList() << "-R", sak::kTimeoutNetworkReadMs);
@@ -312,7 +318,7 @@ bool ResetNetworkAction::executeResetAdaptersAndCache(QStringList& errors) {
 void ResetNetworkAction::executeBuildReport(const QStringList& errors,
                                             const QDateTime& start_time) {
     // Step 9: Verify network configuration
-    Q_EMIT executionProgress("Verifying network configuration...", 95);
+    Q_EMIT executionProgress("Verifying network configuration...", progress::kStep95);
 
     QString verifyScript =
         "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}; "

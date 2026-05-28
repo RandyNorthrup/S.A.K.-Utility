@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QMainWindow>
 #include <QMoveEvent>
@@ -17,10 +18,36 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QShowEvent>
+#include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace sak {
+
+namespace {
+constexpr int kToggleTrackHeight = 22;
+constexpr int kToggleTrackWidth = 44;
+constexpr int kToggleKnobSize = 18;
+constexpr int kToggleTrackRadiusDivisor = 2;
+constexpr int kToggleKnobInsetPx = 2;
+constexpr int kToggleLabelGap = 6;
+constexpr int kToggleLabelTrailingPadding = 14;
+
+QFont toggleLabelFont(QFont font) {
+    font.setPointSize(ui::kFontSizeNote);
+    font.setBold(true);
+    return font;
+}
+
+int toggleSwitchWidth(const QString& label, const QFont& font) {
+    const QFontMetrics metrics(toggleLabelFont(font));
+    return (std::max)(sak::kSnapButtonW,
+                      kToggleTrackWidth + kToggleLabelGap + metrics.horizontalAdvance(label) +
+                          kToggleLabelTrailingPadding);
+}
+}  // namespace
 
 // ============================================================================
 // DetachableLogWindow
@@ -35,22 +62,25 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(
         sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight, sak::ui::kMarginTight);
-    layout->setSpacing(4);
+    layout->setSpacing(sak::ui::kSpacingTight);
 
     // Log text area (uses app theme -- no custom dark style)
     m_logEdit = new QTextEdit(this);
     m_logEdit->setReadOnly(true);
+    m_logEdit->setAccessibleName(tr("Detached operation log"));
     m_logEdit->setPlaceholderText(tr("Operation log will appear here..."));
     layout->addWidget(m_logEdit);
     m_logScrollController = new FollowScrollController(m_logEdit, this);
 
     auto* bottomRow = new QHBoxLayout();
     auto* clearBtn = new QPushButton(tr("Clear"), this);
+    clearBtn->setAccessibleName(tr("Clear detached log"));
     connect(clearBtn, &QPushButton::clicked, this, &DetachableLogWindow::clearLog);
     bottomRow->addWidget(clearBtn);
     bottomRow->addStretch();
     m_jumpToNewestButton = new QPushButton(tr("Jump to newest"), this);
     m_jumpToNewestButton->setToolTip(tr("Scroll to the latest log line and resume auto-scroll"));
+    m_jumpToNewestButton->setAccessibleName(tr("Jump to newest log entry"));
     m_jumpToNewestButton->hide();
     m_logScrollController->setJumpToNewestButton(m_jumpToNewestButton);
     connect(m_jumpToNewestButton,
@@ -193,9 +223,19 @@ QWidget* DetachableLogWindow::findMainWindow() const {
 
 LogToggleSwitch::LogToggleSwitch(const QString& label, QWidget* parent)
     : QWidget(parent), m_label(label) {
-    setFixedSize(sak::kSnapButtonW, sak::kSnapButtonH);
+    setMinimumSize(minimumSizeHint());
+    setMaximumHeight(sak::kSnapButtonH);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setCursor(Qt::PointingHandCursor);
     setToolTip(tr("Toggle log window"));
+}
+
+QSize LogToggleSwitch::sizeHint() const {
+    return minimumSizeHint();
+}
+
+QSize LogToggleSwitch::minimumSizeHint() const {
+    return {toggleSwitchWidth(m_label, font()), sak::kSnapButtonH};
 }
 
 void LogToggleSwitch::setChecked(bool checked) {
@@ -210,30 +250,31 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    const int trackHeight = 22;
-    const int trackWidth = 44;
-    const int knobSize = 18;
-    const int labelX = trackWidth + 6;
+    const int trackHeight = kToggleTrackHeight;
+    const int trackWidth = kToggleTrackWidth;
+    const int knobSize = kToggleKnobSize;
+    const int labelX = trackWidth + kToggleLabelGap;
 
     // Track
-    QRect trackRect(0, (height() - trackHeight) / 2, trackWidth, trackHeight);
-    const QColor trackColor = m_checked ? QColor(59, 130, 246) : QColor(148, 163, 184);
+    QRect trackRect(
+        0, (height() - trackHeight) / kToggleTrackRadiusDivisor, trackWidth, trackHeight);
+    const QColor trackColor = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
+                                        : QColor(QString::fromLatin1(ui::kColorBorderMuted));
     p.setBrush(trackColor);
     p.setPen(Qt::NoPen);
-    p.drawRoundedRect(trackRect, trackHeight / 2, trackHeight / 2);
+    p.drawRoundedRect(trackRect,
+                      trackHeight / kToggleTrackRadiusDivisor,
+                      trackHeight / kToggleTrackRadiusDivisor);
 
     // Knob
-    const int knobX = m_checked ? (trackWidth - knobSize - 2) : 2;
-    const int knobY = (height() - knobSize) / 2;
-    p.setBrush(Qt::white);
+    const int knobX = m_checked ? (trackWidth - knobSize - kToggleKnobInsetPx) : kToggleKnobInsetPx;
+    const int knobY = (height() - knobSize) / kToggleTrackRadiusDivisor;
+    p.setBrush(QColor(QString::fromLatin1(ui::kColorBgWhite)));
     p.drawEllipse(knobX, knobY, knobSize, knobSize);
 
     // Label
     p.setPen(palette().color(QPalette::WindowText));
-    QFont f = font();
-    f.setPointSize(9);
-    f.setBold(true);
-    p.setFont(f);
+    p.setFont(toggleLabelFont(font()));
     QRect labelRect(labelX, 0, width() - labelX, height());
     p.drawText(labelRect, Qt::AlignVCenter | Qt::AlignLeft, m_label);
 }

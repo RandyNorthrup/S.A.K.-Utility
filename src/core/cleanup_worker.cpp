@@ -22,6 +22,12 @@
 
 namespace sak {
 
+namespace {
+constexpr int kRegistryHivePrefixLength = 5;
+constexpr int kCleanupCommandTimeoutMs = 10'000;
+constexpr int kCleanupServiceStopSettleMs = kTimerProgressPollMs;
+}  // namespace
+
 CleanupWorker::CleanupWorker(const QVector<LeftoverItem>& selectedItems,
                              bool useRecycleBin,
                              QObject* parent)
@@ -231,13 +237,13 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
 
     if (path.startsWith("HKLM\\")) {
         hive = HKEY_LOCAL_MACHINE;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else if (path.startsWith("HKCU\\")) {
         hive = HKEY_CURRENT_USER;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else if (path.startsWith("HKCR\\")) {
         hive = HKEY_CLASSES_ROOT;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else {
         return false;
     }
@@ -261,13 +267,13 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
 
     if (path.startsWith("HKLM\\")) {
         hive = HKEY_LOCAL_MACHINE;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else if (path.startsWith("HKCU\\")) {
         hive = HKEY_CURRENT_USER;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else if (path.startsWith("HKCR\\")) {
         hive = HKEY_CLASSES_ROOT;
-        path = path.mid(5);
+        path = path.mid(kRegistryHivePrefixLength);
     } else {
         return false;
     }
@@ -292,18 +298,20 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
 bool CleanupWorker::removeService(const QString& serviceName) {
     Q_ASSERT(!serviceName.isEmpty());
     // Stop the service first
-    const auto stop_result =
-        sak::runProcess(QStringLiteral("sc.exe"), {QStringLiteral("stop"), serviceName}, 10'000);
+    const auto stop_result = sak::runProcess(QStringLiteral("sc.exe"),
+                                             {QStringLiteral("stop"), serviceName},
+                                             kCleanupCommandTimeoutMs);
     if (stop_result.timed_out) {
         sak::logWarning("Service stop timed out for: {}", serviceName.toStdString());
     }
 
     // Wait a moment for it to stop
-    QThread::msleep(1000);
+    QThread::msleep(kCleanupServiceStopSettleMs);
 
     // Delete the service
-    const auto del_result =
-        sak::runProcess(QStringLiteral("sc.exe"), {QStringLiteral("delete"), serviceName}, 10'000);
+    const auto del_result = sak::runProcess(QStringLiteral("sc.exe"),
+                                            {QStringLiteral("delete"), serviceName},
+                                            kCleanupCommandTimeoutMs);
     return del_result.succeeded();
 }
 
@@ -311,7 +319,7 @@ bool CleanupWorker::removeScheduledTask(const QString& taskName) {
     const auto result = sak::runProcess(
         QStringLiteral("schtasks.exe"),
         {QStringLiteral("/delete"), QStringLiteral("/tn"), taskName, QStringLiteral("/f")},
-        10'000);
+        kCleanupCommandTimeoutMs);
     return result.succeeded();
 }
 
@@ -322,7 +330,7 @@ bool CleanupWorker::removeFirewallRule(const QString& ruleName) {
                                          QStringLiteral("delete"),
                                          QStringLiteral("rule"),
                                          QStringLiteral("name=%1").arg(ruleName)},
-                                        10'000);
+                                        kCleanupCommandTimeoutMs);
     return result.succeeded();
 }
 

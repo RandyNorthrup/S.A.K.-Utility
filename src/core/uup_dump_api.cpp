@@ -25,6 +25,8 @@
 #include <QSslConfiguration>
 #include <QUrlQuery>
 
+constexpr int kGbDisplayPrecision = 2;
+
 // --- Construction / Destruction ----------------------------------------------
 
 UupDumpApi::UupDumpApi(QObject* parent)
@@ -391,7 +393,7 @@ void UupDumpApi::onFilesReply() {
     double totalSizeGB = totalSize / sak::kBytesPerGBf;
     sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
                      .arg(files.size())
-                     .arg(totalSizeGB, 0, 'f', 2)
+                     .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
                      .toStdString());
 
     Q_EMIT filesFetched(updateName, files);
