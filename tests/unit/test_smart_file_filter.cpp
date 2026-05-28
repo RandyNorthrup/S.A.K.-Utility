@@ -294,7 +294,7 @@ void SmartFileFilterTests::shouldExcludeFile_inCacheDir() {
         m_tempDir.filePath("AppData/Local/Google/Chrome/User Data/Default/Cache/cached_file.bin");
     QDir().mkpath(QFileInfo(cachePath).absolutePath());
     QFile f(cachePath);
-    f.open(QIODevice::WriteOnly);
+    QVERIFY(f.open(QIODevice::WriteOnly));
     f.write("cached");
     f.close();
 

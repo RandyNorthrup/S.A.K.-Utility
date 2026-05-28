@@ -15,6 +15,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QThread>
+#include <QTimer>
 
 #include <atomic>
 #include <functional>
