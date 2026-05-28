@@ -968,11 +968,13 @@ endif()
 
 # Copy embedded tools directory to output
 add_custom_command(TARGET sak_utility POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/tools
-        $<TARGET_FILE_DIR:sak_utility>/tools
     COMMAND ${CMAKE_COMMAND} -E rm -rf
-        $<TARGET_FILE_DIR:sak_utility>/tools/mcp/_build
+        "$<TARGET_FILE_DIR:sak_utility>/tools"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools"
+        "$<TARGET_FILE_DIR:sak_utility>/tools"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "$<TARGET_FILE_DIR:sak_utility>/tools/mcp/_build"
     COMMENT "Copying bundled tools to output directory"
 )
 

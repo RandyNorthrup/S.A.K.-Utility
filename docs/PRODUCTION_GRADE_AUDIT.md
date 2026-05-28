@@ -88,6 +88,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Fixed Qt 6.10/MSVC strict-build compatibility issues: deprecated Qt overloads, explicit parse-result handling, QByteArrayView hashing, and nodiscard test assertions.
 - Replaced deprecated checkbox `stateChanged` connections with `toggled` signal wiring so strict Qt 6.10 builds do not depend on deprecated API or version fallbacks.
 - Disabled vcpkg's implicit MSBuild app-local post-build copy in release CI; runtime DLL copying now stays in the explicit bundle step and CMake's named runtime copy commands.
+- Made the CMake bundled-tools output copy deterministic by clearing the stale build output tools directory before copying the verified source `tools/` tree.
 
 ### Named Constants And Magic Numbers
 
