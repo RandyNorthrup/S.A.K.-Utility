@@ -260,24 +260,24 @@ The `FileConverterWidget` is self-contained: it owns its worker thread and all U
 
 | Category | Engine | Source | Bundled Via | License |
 |----------|--------|--------|------------|---------|
-| Images | Qt QImage / QImageReader / QImageWriter | Qt 6.5+ (release CI: 6.11.1) | Compiled in | LGPL-3.0 |
+| Images | Qt QImage / QImageReader / QImageWriter | Qt 6.5+ (release CI: 6.10.3) | Compiled in | LGPL-3.0 |
 | Images (WebP) | libwebp | vcpkg | Compiled in | BSD-3-Clause |
-| Images (SVG read) | Qt SVG module | Qt 6.5+ (release CI: 6.11.1) | Compiled in | LGPL-3.0 |
+| Images (SVG read) | Qt SVG module | Qt 6.5+ (release CI: 6.10.3) | Compiled in | LGPL-3.0 |
 | Audio/Video | FFmpeg | Build script download | `tools/ffmpeg.exe` | LGPL-2.1+ |
-| Documents (RTF) | Qt QTextDocument | Qt 6.5+ (release CI: 6.11.1) | Compiled in | LGPL-3.0 |
+| Documents (RTF) | Qt QTextDocument | Qt 6.5+ (release CI: 6.10.3) | Compiled in | LGPL-3.0 |
 | Documents (high-fidelity) | Pandoc (universal document converter) | Build script download | `tools/pandoc.exe` | GPL-2.0+ |
 | Documents (DOCX read) | In-tree DocxReader (OOXML→HTML→QTextDocument) | In-tree | Compiled in | N/A |
 | Documents (ODT read) | In-tree OdtReader (ODF→HTML→QTextDocument) | In-tree | Compiled in | N/A |
 | Documents (DOCX write) | In-tree DocxWriter (QTextDocument→OOXML ZIP) | In-tree | Compiled in | N/A |
 | ZIP I/O (for DOCX/ODT) | QuaZip (Qt wrapper around zlib) | vcpkg (`quazip`) | Compiled in | LGPL-2.1 |
-| PDF read | QPdfDocument | Qt 6.5+ (Qt PDF module; release CI: 6.11.1) | Compiled in | LGPL-3.0 |
-| PDF write | QPdfWriter / QPainter | Qt 6.5+ (release CI: 6.11.1) | Compiled in | LGPL-3.0 |
+| PDF read | QPdfDocument | Qt 6.5+ (Qt PDF module; release CI: 6.10.3) | Compiled in | LGPL-3.0 |
+| PDF write | QPdfWriter / QPainter | Qt 6.5+ (release CI: 6.10.3) | Compiled in | LGPL-3.0 |
 | PDF merge/split | qpdf | Build script download | `tools/qpdf.exe` | Apache-2.0 |
 | Spreadsheets (XLSX) | QXlsx | vcpkg (`qxlsx`) | Compiled in | MIT |
 | Spreadsheets (CSV/TSV) | Native C++ parser | In-tree | Compiled in | N/A |
 | YAML | yaml-cpp | vcpkg | Compiled in | MIT |
 | Markdown → HTML | cmark | vcpkg | Compiled in | BSD-2-Clause |
-| XML | Qt XML (QDomDocument) | Qt 6.5+ (release CI: 6.11.1) | Compiled in | LGPL-3.0 |
+| XML | Qt XML (QDomDocument) | Qt 6.5+ (release CI: 6.10.3) | Compiled in | LGPL-3.0 |
 | EML read | In-tree EmlReader (RFC 5322 MIME parser) | In-tree | Compiled in | N/A |
 | EML → PDF | PdfEmailWriter (QTextDocument → QPdfWriter) | In-tree (reused from Email Inspector) | Compiled in | N/A |
 

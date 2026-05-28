@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  QT_VERSION: '6.11.1'
+  QT_VERSION: '6.10.3'
   BUILD_TYPE: Release
   Qt6_DIR: ''  # Populated by install-qt-action at runtime
   VCPKG_ROOT: C:/vcpkg

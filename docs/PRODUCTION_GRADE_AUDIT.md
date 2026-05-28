@@ -33,7 +33,7 @@ This document only makes claims backed by code inspection or passing automated c
 | Targeted UI/AI regression pass | Pass | Fixed UUP ampersand text, email preview toggle sizing, Vulnerability Scanner bottom spacing, AI status-bar token details, and provider-gateway tool schema. Focused CTest and style/magic/Lizard gates passed. |
 | Local CSS/HTML constants scan | Pass | In-app rich text and generated report CSS now resolve colors, font weights, spacing, borders, and radii through shared design/report tokens instead of inline literals. |
 | Linux ISO catalog verification | Pass | Removed MemTest86+; refreshed Ubuntu, Fedora, Debian, Arch, Mint, Kali, SystemRescue, Clonezilla, GParted, ShredOS, and Ventoy entries. Direct ISO URLs returned HTTP 200; GitHub release APIs resolved ShredOS and Ventoy ISO assets. |
-| Bundled/build stack version check | Pass | `smartctl --version` = 7.5, `iperf3 --version` = 3.21, bundled Chocolatey = 2.7.2, aria2 = 1.37.0, win32-mcp-server = 2.6.1; release CI Qt updated to 6.11.1 and CMake summary now reports the actual runner version. |
+| Bundled/build stack version check | Pass | `smartctl --version` = 7.5, `iperf3 --version` = 3.21, bundled Chocolatey = 2.7.2, aria2 = 1.37.0, win32-mcp-server = 2.6.1; release CI Qt updated to 6.10.3 and CMake summary now reports the actual runner version. |
 
 ## Completed Fixes
 
@@ -82,7 +82,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Updated bundled smartmontools to 7.5 and iPerf3 to 3.21.
 - Updated bundled portable Chocolatey to 2.7.2 and adjusted `.gitignore` so the required Chocolatey package payload is not silently ignored.
 - Verified existing aria2 1.37.0 and win32-mcp-server 2.6.1 binaries remain current for this repo's configured bundle sources.
-- Updated release CI from Qt 6.5.3/MSVC 2019 Qt package to Qt 6.11.1/MSVC 2022 Qt package after checking the official Qt release repository.
+- Updated release CI from Qt 6.5.3/MSVC 2019 Qt package to Qt 6.10.3/MSVC 2022 Qt package after checking aqt-installable Windows desktop packages; Qt 6.11.x exists in the release index but the current CI installer metadata did not expose an installable Windows package during verification.
 - Removed the stale fixed CMake version from workflow summaries; the workflow now prints the runner's actual `cmake --version` output.
 
 ### Named Constants And Magic Numbers

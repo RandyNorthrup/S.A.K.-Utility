@@ -557,7 +557,7 @@ Cryptographic operations use Windows DPAPI and BCrypt APIs where implemented. Wi
 | Qt | 6.5+ for MSVC x64 |
 | vcpkg | Current supported bootstrap (for zlib, bzip2, liblzma) |
 
-Release CI currently builds with Qt 6.11.1 on the MSVC 2022 x64 Qt package while the source minimum remains Qt 6.5+.
+Release CI currently builds with Qt 6.10.3 on the latest aqt-installable MSVC 2022 x64 Qt package while the source minimum remains Qt 6.5+.
 Set `Qt6_DIR` or replace `$env:Qt6_DIR` below with your installed Qt path, for example
 `C:/Qt/<version>/<msvc-x64-kit>`.
 
