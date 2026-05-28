@@ -84,6 +84,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Verified existing aria2 1.37.0 and win32-mcp-server 2.6.1 binaries remain current for this repo's configured bundle sources.
 - Updated release CI from Qt 6.5.3/MSVC 2019 Qt package to Qt 6.10.3/MSVC 2022 Qt package after checking aqt-installable Windows desktop packages; Qt 6.11.x exists in the release index but the current CI installer metadata did not expose an installable Windows package during verification.
 - Removed the stale fixed CMake version from workflow summaries; the workflow now prints the runner's actual `cmake --version` output.
+- Added explicit CI installation for ripgrep so strict release gates run with their required scanner instead of relying on runner image contents.
 
 ### Named Constants And Magic Numbers
 

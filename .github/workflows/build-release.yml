@@ -122,6 +122,12 @@ jobs:
         # packaged ZIP get the same bundled tools layout as local releases.
         & scripts/bundle_mcp_servers.ps1 -BuildWin32 -Python python
 
+    - name: Install release gate tools
+      shell: pwsh
+      run: |
+        choco install ripgrep -y --no-progress
+        rg --version
+
     - name: Verify Qt resource manifests
       shell: pwsh
       run: |
