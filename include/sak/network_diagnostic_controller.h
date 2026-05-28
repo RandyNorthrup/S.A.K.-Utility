@@ -9,6 +9,7 @@
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QPair>
