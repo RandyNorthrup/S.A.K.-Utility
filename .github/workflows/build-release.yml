@@ -75,18 +75,6 @@ jobs:
         vcpkg install zlib:x64-windows bzip2:x64-windows liblzma:x64-windows
         vcpkg integrate install
 
-    - name: Cache CMake build
-      uses: actions/cache@v4
-      with:
-        path: |
-          build
-          !build/Release/SAK-Utility-*
-          !build/Release/*.zip
-          !build/Release/SHA256SUMS.txt
-        key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt', 'src/**', 'include/**') }}
-        restore-keys: |
-          ${{ runner.os }}-cmake-
-
     - name: Bundle smartmontools
       shell: pwsh
       run: |
