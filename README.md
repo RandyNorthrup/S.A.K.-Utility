@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.5-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.1.6-orange.svg)](VERSION)
 [![Tests](https://img.shields.io/badge/Tests-129%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable toolkit.
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable t
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.5** - Dark-theme completion for local CSS and in-app HTML, verified README/About/release descriptions, refreshed workflow descriptions, and release metadata updates.
+**Latest: v0.9.1.6** - Dark-mode card surface polish for Backup/Restore and Image Flasher, Node 24-ready GitHub Actions updates, strict Gitleaks CLI scanning, and release metadata updates.
 
 ---
 

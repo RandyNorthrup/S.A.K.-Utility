@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.6
+
+- **Dark-mode card polish** - Moved Backup/Restore and Image Flasher card surfaces to shared palette-backed `sakCard` helpers so dark mode no longer keeps local light-only card backgrounds.
+- **GitHub Actions Node 24 readiness** - Updated release and secret-scan workflow action majors ahead of GitHub's Node 24 runtime transition.
+- **Secret scanning** - Replaced the Node-based Gitleaks action with a pinned, SHA-256-verified Gitleaks CLI install and documented exact historical false-positive fingerprints in `.gitleaksignore`.
+- **Release metadata** - Bumped project/version metadata to 0.9.1.6.
+
+---
+
 ## v0.9.1.5
 
 - **Dark theme completion** - Fixed local Qt CSS and in-app HTML surfaces so About/Credits content, action cards, AI panes, calendar/search surfaces, transcript bubbles, and email ribbon styling resolve through shared theme constants and palette-aware helpers instead of fixed light colors.

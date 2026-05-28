@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.5
+    VERSION 0.9.1.6
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required

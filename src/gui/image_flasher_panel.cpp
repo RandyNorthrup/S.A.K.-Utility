@@ -291,35 +291,6 @@ void ImageFlasherPanel::createImageSelectionPage() {
 
 namespace {
 
-const QString kCardStyle = QString(
-                               "QFrame {"
-                               "  background-color: %1;"
-                               "  border: 1px solid %2;"
-                               "  border-radius: 10px;"
-                               "  padding: %3px;"
-                               "}"
-                               "QFrame:hover {"
-                               "  border-color: %4;"
-                               "}")
-                               .arg(sak::ui::kColorBgWhite)
-                               .arg(sak::ui::kColorBorderDefault)
-                               .arg(sak::ui::kMarginMedium)
-                               .arg(sak::ui::kColorPrimary);
-
-const QString kCardTitleStyle = QString(
-                                    "font-size: %1pt; font-weight: 700; color: %2;"
-                                    " border: none; background: transparent;")
-                                    .arg(sak::ui::kFontSizeSection)
-                                    .arg(sak::ui::kColorTextHeading);
-
-const QString kCardDescStyle = QString(
-                                   "font-size: %1pt; color: %2;"
-                                   " border: none; background: transparent;")
-                                   .arg(sak::ui::kFontSizeBody)
-                                   .arg(sak::ui::kColorTextSecondary);
-
-const QString kLogoStyle = QStringLiteral("border: none; background: transparent;");
-
 constexpr int kCardLogoSize = 48;
 constexpr int kSelectImageButtonWidth = 260;
 
@@ -329,7 +300,8 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
                                                 const IsoCardConfig& config,
                                                 QPushButton*& buttonOut) {
     auto* card = new QFrame(parent);
-    card->setStyleSheet(kCardStyle);
+    card->setProperty("sakCard", true);
+    card->setStyleSheet(sak::ui::cardFrameStyle(sak::ui::kCssRadiusXLargePx));
     card->setCursor(Qt::PointingHandCursor);
     auto* layout = new QVBoxLayout(card);
     layout->setSpacing(sak::ui::kSpacingMedium);
@@ -339,18 +311,18 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
     auto* logo = new QLabel(card);
     logo->setPixmap(QIcon(config.icon_path).pixmap(kCardLogoSize, kCardLogoSize));
     logo->setAlignment(Qt::AlignCenter);
-    logo->setStyleSheet(kLogoStyle);
+    logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
     layout->addWidget(logo);
 
     auto* titleLabel = new QLabel(config.title, card);
     titleLabel->setAlignment(Qt::AlignCenter);
-    titleLabel->setStyleSheet(kCardTitleStyle);
+    titleLabel->setStyleSheet(sak::ui::cardTitleTextStyle());
     layout->addWidget(titleLabel);
 
     auto* descLabel = new QLabel(config.description, card);
     descLabel->setWordWrap(true);
     descLabel->setAlignment(Qt::AlignCenter);
-    descLabel->setStyleSheet(kCardDescStyle);
+    descLabel->setStyleSheet(sak::ui::cardDescriptionTextStyle());
     layout->addWidget(descLabel);
 
     layout->addStretch();
@@ -383,7 +355,7 @@ void ImageFlasherPanel::addMicrosoftDownloadCard(QHBoxLayout* cardRow) {
                              msCard);
     msTip->setWordWrap(true);
     msTip->setAlignment(Qt::AlignCenter);
-    msTip->setStyleSheet(kCardDescStyle);
+    msTip->setStyleSheet(sak::ui::cardDescriptionTextStyle());
     auto* msLayout = msCard->layout();
     msLayout->removeWidget(m_microsoftWindowsDownloadButton);
     msLayout->addWidget(msTip);

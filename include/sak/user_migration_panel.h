@@ -83,7 +83,6 @@ private Q_SLOTS:
 private:
     /// @brief Configuration for a migration card widget
     struct MigrationCardConfig {
-        QString card_style;
         QString icon;
         QString title;
         QString desc;

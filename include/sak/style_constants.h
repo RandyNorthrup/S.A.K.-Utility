@@ -577,6 +577,35 @@ inline QString surfaceStyle(const char* selector,
         .arg(padding_px);
 }
 
+inline constexpr auto kCardFrameSelector = "QFrame[sakCard=\"true\"]";
+
+inline QString cardFrameStyle(int radius_px = kCssRadiusLargePx,
+                              int padding_px = kMarginMedium,
+                              const char* selector = kCardFrameSelector) {
+    const QString selector_string = QString::fromLatin1(selector);
+    return QStringLiteral(
+               "%1 { background-color: %2; border: %3px solid %4; "
+               "border-radius: %5px; padding: %6px; }"
+               "%1:hover { border-color: %7; }")
+        .arg(selector_string)
+        .arg(cssColor(kColorBgWhite))
+        .arg(kCssBorderWidthDefaultPx)
+        .arg(cssColor(kColorBorderDefault))
+        .arg(radius_px)
+        .arg(padding_px)
+        .arg(cssColor(kColorPrimary));
+}
+
+inline QString cardTitleTextStyle() {
+    return transparentTextStyle(kFontSizeSection, kFontWeightBold, kColorTextHeading);
+}
+
+inline QString cardDescriptionTextStyle() {
+    return QStringLiteral("background: transparent; border: 0; font-size: %1pt; color: %2;")
+        .arg(kFontSizeBody)
+        .arg(cssColor(kColorTextSecondary));
+}
+
 inline QString panelBorderStyle(const char* selector, const char* background, const char* border) {
     return QStringLiteral(
                "%1 { background: %2; border: %3px solid %4; "

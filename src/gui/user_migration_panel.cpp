@@ -113,21 +113,11 @@ void UserMigrationPanel::setupUi() {
 
 void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layout) {
     Q_ASSERT(layout);
-    const QString card_style = QString(
-                                   "QFrame { background-color: %1; border: 1px solid %2;"
-                                   " border-radius: 10px; padding: %3px; }"
-                                   "QFrame:hover { border-color: %4; }")
-                                   .arg(sak::ui::kColorBgWhite)
-                                   .arg(sak::ui::kColorBorderDefault)
-                                   .arg(sak::ui::kMarginMedium)
-                                   .arg(sak::ui::kColorPrimary);
-
     auto* row = new QHBoxLayout();
     row->setSpacing(sak::ui::kSpacingLarge);
 
     row->addWidget(createMigrationCard(parent,
-                                       {card_style,
-                                        QStringLiteral(":/icons/icons/backup.svg"),
+                                       {QStringLiteral(":/icons/icons/backup.svg"),
                                         tr("Backup User Profiles"),
                                         tr("Scan and select users, choose folders, configure"
                                            " filters, and create backup packages."),
@@ -139,8 +129,7 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
                                        m_backupButton));
 
     row->addWidget(createMigrationCard(parent,
-                                       {card_style,
-                                        QStringLiteral(":/icons/icons/restore.svg"),
+                                       {QStringLiteral(":/icons/icons/restore.svg"),
                                         tr("Restore User Profiles"),
                                         tr("Select backup, map users, configure merge"
                                            " options, and restore data with permissions."),
@@ -157,21 +146,10 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
 QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
                                                 const MigrationCardConfig& config,
                                                 QPushButton*& btn) {
-    const QString title_style = QString(
-                                    "font-size: %1pt; font-weight: 700; color: %2;"
-                                    " border: none; background: transparent;")
-                                    .arg(sak::ui::kFontSizeSection)
-                                    .arg(sak::ui::kColorTextHeading);
-
-    const QString desc_style = QString(
-                                   "font-size: %1pt; color: %2;"
-                                   " border: none; background: transparent;")
-                                   .arg(sak::ui::kFontSizeBody)
-                                   .arg(sak::ui::kColorTextSecondary);
-
     constexpr int kLogoSize = 96;
     auto* card = new QFrame(parent);
-    card->setStyleSheet(config.card_style);
+    card->setProperty("sakCard", true);
+    card->setStyleSheet(sak::ui::cardFrameStyle(sak::ui::kCssRadiusXLargePx));
     auto* lay = new QVBoxLayout(card);
     lay->setSpacing(sak::ui::kSpacingMedium);
     lay->setContentsMargins(
@@ -184,12 +162,12 @@ QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
     lay->addWidget(logo);
 
     auto* title_label = new QLabel(config.title, card);
-    title_label->setStyleSheet(title_style);
+    title_label->setStyleSheet(sak::ui::cardTitleTextStyle());
     lay->addWidget(title_label);
 
     auto* desc_label = new QLabel(config.desc, card);
     desc_label->setWordWrap(true);
-    desc_label->setStyleSheet(desc_style);
+    desc_label->setStyleSheet(sak::ui::cardDescriptionTextStyle());
     lay->addWidget(desc_label);
 
     lay->addStretch();

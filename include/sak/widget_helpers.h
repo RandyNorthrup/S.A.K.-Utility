@@ -172,34 +172,15 @@ struct ActionCardWidgets {
 };
 
 inline QString actionCardStyle() {
-    return QStringLiteral(
-               "QFrame {"
-               "  background-color: %1;"
-               "  border: 1px solid %2;"
-               "  border-radius: 8px;"
-               "  padding: %3px;"
-               "}"
-               "QFrame:hover {"
-               "  border-color: %4;"
-               "}")
-        .arg(ui::cssColor(ui::kColorBgWhite))
-        .arg(ui::cssColor(ui::kColorBorderDefault))
-        .arg(ui::kMarginMedium)
-        .arg(ui::kColorPrimary);
+    return ui::cardFrameStyle(ui::kCssRadiusLargePx, ui::kMarginMedium);
 }
 
 inline QString actionCardTitleStyle() {
-    return QStringLiteral("font-size: %1pt; font-weight: 700; color: %2; %3")
-        .arg(ui::kFontSizeSection)
-        .arg(ui::cssColor(ui::kColorTextHeading))
-        .arg(ui::kTransparentWidgetStyle);
+    return ui::cardTitleTextStyle();
 }
 
 inline QString actionCardDescriptionStyle() {
-    return QStringLiteral("font-size: %1pt; color: %2; %3")
-        .arg(ui::kFontSizeBody)
-        .arg(ui::cssColor(ui::kColorTextSecondary))
-        .arg(ui::kTransparentWidgetStyle);
+    return ui::cardDescriptionTextStyle();
 }
 
 [[nodiscard]] inline ActionCardWidgets createActionCard(QWidget* parent,

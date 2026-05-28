@@ -32,8 +32,10 @@ This document only makes claims backed by code inspection or passing automated c
 | Release readiness aggregate | Pass | `scripts/check_release_readiness.ps1`: all included release-readiness gates passed. |
 | Targeted UI/AI regression pass | Pass | Fixed UUP ampersand text, email preview toggle sizing, Vulnerability Scanner bottom spacing, AI status-bar token details, and provider-gateway tool schema. Focused CTest and style/magic/Lizard gates passed. |
 | Local CSS/HTML constants scan | Pass | In-app rich text and generated report CSS now resolve colors, font weights, spacing, borders, and radii through shared design/report tokens instead of inline literals. |
+| Dark-mode card surface scan | Pass | Backup/Restore and Image Flasher cards now use shared `sakCard` palette-backed style helpers instead of local light-only card styles. |
 | Linux ISO catalog verification | Pass | Removed MemTest86+; refreshed Ubuntu, Fedora, Debian, Arch, Mint, Kali, SystemRescue, Clonezilla, GParted, ShredOS, and Ventoy entries. Direct ISO URLs returned HTTP 200; GitHub release APIs resolved ShredOS and Ventoy ISO assets. |
 | Bundled/build stack version check | Pass | `smartctl --version` = 7.5, `iperf3 --version` = 3.21, bundled Chocolatey = 2.7.2, aria2 = 1.37.0, win32-mcp-server = 2.6.1; release CI Qt updated to 6.10.3 and CMake summary now reports the actual runner version. |
+| GitHub Actions Node 24 readiness | Pass | Release and secret-scan workflows now use Node 24 action majors where available; Gitleaks now runs as a verified CLI download so no Node 20 Gitleaks action remains. Local Gitleaks 8.30.1 full-history scan reports no leaks after exact false-positive fingerprints were documented in `.gitleaksignore`. |
 
 ## Completed Fixes
 
@@ -67,6 +69,7 @@ This document only makes claims backed by code inspection or passing automated c
 - Styled Qt spinbox/date/time steppers with shared themed metrics so up/down controls fit the input box instead of rendering cramped native rollers.
 - Added `include/sak/design_token_constants.h` for core-safe shared font-weight, border, radius, and padding tokens used by both GUI style builders and generated HTML report CSS.
 - Refactored generated report CSS in `include/sak/report_style_constants.h` so HTML reports use named metrics and color tokens without pulling GUI-only Qt headers into core/test targets.
+- Consolidated action-card styling behind shared palette-backed card helpers and updated Backup/Restore plus Image Flasher cards so dark mode cannot retain light-only local card backgrounds.
 
 ### Linux ISO Catalog
 
@@ -91,6 +94,9 @@ This document only makes claims backed by code inspection or passing automated c
 - Made the CMake bundled-tools output copy deterministic by clearing the stale build output tools directory before copying the verified source `tools/` tree.
 - Removed the release workflow CMake build-output cache so release packages are built from current checked-out sources and freshly bundled tools instead of stale `build/Release` state.
 - Installed pinned `lizard` 1.21.2 in release CI so package-root readiness runs the same complexity gate used by local and pre-commit checks.
+- Updated GitHub-hosted workflow actions to Node 24-ready major versions: checkout v6, setup-python v6, cache v5, setup-msbuild v3, upload-artifact v7, action-gh-release v3, and Azure artifact signing v2.
+- Replaced the Node 20 `gitleaks/gitleaks-action@v2` workflow step with pinned Gitleaks CLI 8.30.1 installed from the upstream release archive and verified by SHA-256 before execution.
+- Added `.gitleaksignore` entries for two verified historical false positives so the full-history Gitleaks CLI gate stays strict without failing on non-secret enum/test strings.
 
 ### Named Constants And Magic Numbers
 
