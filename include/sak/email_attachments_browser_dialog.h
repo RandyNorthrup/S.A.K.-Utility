@@ -12,6 +12,7 @@
 
 #include <QDialog>
 #include <QHash>
+#include <QSet>
 #include <QVector>
 
 class QComboBox;
@@ -102,6 +103,7 @@ private:
 
     // Data
     QVector<AttachmentEntry> m_all_attachments;
+    QSet<QString> m_checked_attachment_keys;
 
     // UI widgets
     QLineEdit* m_search_edit{nullptr};

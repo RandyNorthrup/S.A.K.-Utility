@@ -106,6 +106,7 @@ void UserProfileBackupCustomizeDataPage::setupUi() {
     m_customizeButton = new QPushButton(tr("Customize Selected User"), this);
     m_customizeButton->setIcon(QIcon::fromTheme("configure"));
     m_customizeButton->setEnabled(false);
+    m_customizeButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_customizeButton,
             &QPushButton::clicked,
             this,
@@ -364,6 +365,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
     dangerousLayout->addWidget(dangerousLabel, 1);
 
     m_viewDangerousButton = new QPushButton(tr("View Full List..."), this);
+    m_viewDangerousButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_viewDangerousButton,
             &QPushButton::clicked,
             this,
@@ -377,6 +379,7 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
     auto* resetLayout = new QHBoxLayout();
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
     m_resetButton->setIcon(QIcon::fromTheme("edit-undo"));
+    m_resetButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_resetButton,
             &QPushButton::clicked,
             this,
@@ -464,24 +467,24 @@ void UserProfileBackupSmartFiltersPage::onViewDangerousList() {
 
     // Build rich content
     QString content;
-    content += tr("<h3 style='color: %1;'>Always Excluded Files</h3>")
-                   .arg(sak::ui::htmlColor(sak::ui::kColorError));
+    content += QString::fromLatin1(sak::ui::kHtmlHeading3Color)
+                   .arg(sak::ui::htmlColor(sak::ui::kColorError), tr("Always Excluded Files"));
     content += "<ul>";
     for (const auto& file : m_filter.dangerous_files) {
         content += QString("<li><code>%1</code></li>").arg(file.toHtmlEscaped());
     }
     content += "</ul>";
 
-    content += tr("<h3 style='color: %1;'>Excluded Patterns</h3>")
-                   .arg(sak::ui::htmlColor(sak::ui::kColorWarning));
+    content += QString::fromLatin1(sak::ui::kHtmlHeading3Color)
+                   .arg(sak::ui::htmlColor(sak::ui::kColorWarning), tr("Excluded Patterns"));
     content += "<ul>";
     for (const auto& pattern : m_filter.exclude_patterns) {
         content += QString("<li><code>%1</code></li>").arg(pattern.toHtmlEscaped());
     }
     content += "</ul>";
 
-    content += tr("<h3 style='color: %1;'>Excluded Folders</h3>")
-                   .arg(sak::ui::htmlColor(sak::ui::kColorTextSecondary));
+    content += QString::fromLatin1(sak::ui::kHtmlHeading3Color)
+                   .arg(sak::ui::htmlColor(sak::ui::kColorTextSecondary), tr("Excluded Folders"));
     content += "<ul>";
     for (const auto& folder : m_filter.exclude_folders) {
         content += QString("<li><code>%1</code></li>").arg(folder.toHtmlEscaped());
@@ -557,6 +560,7 @@ void UserProfileBackupSettingsPage::setupUi_destinationAndCompression(QVBoxLayou
             &UserProfileBackupSettingsPage::updateSummary);
     destLayout->addWidget(m_destinationEdit, 1);
     m_browseButton = new QPushButton(tr("Browse..."), this);
+    m_browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
@@ -835,9 +839,21 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
+    setupScanControls(layout);
+    setupAppsTree(layout);
+    setupSelectionControls(layout);
+
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
+    m_summaryLabel->setText(tr("No applications scanned yet"));
+    layout->addWidget(m_summaryLabel);
+}
+
+void UserProfileBackupInstalledAppsPage::setupScanControls(QVBoxLayout* layout) {
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Applications"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
+    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupInstalledAppsPage::onScanApps);
     scanLayout->addWidget(m_scanButton);
@@ -849,7 +865,9 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
     layout->addWidget(m_scanProgress);
+}
 
+void UserProfileBackupInstalledAppsPage::setupAppsTree(QVBoxLayout* layout) {
     m_appTree = new QTreeWidget(this);
     m_appTree->setHeaderLabels({tr("Application"), tr("Version"), tr("Publisher")});
     m_appTree->setAlternatingRowColors(true);
@@ -865,10 +883,13 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
             this,
             &UserProfileBackupInstalledAppsPage::onItemChanged);
     layout->addWidget(m_appTree);
+}
 
+void UserProfileBackupInstalledAppsPage::setupSelectionControls(QVBoxLayout* layout) {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -877,6 +898,7 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -884,11 +906,6 @@ void UserProfileBackupInstalledAppsPage::setupUi() {
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
-
-    m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    m_summaryLabel->setText(tr("No applications scanned yet"));
-    layout->addWidget(m_summaryLabel);
 }
 
 void UserProfileBackupInstalledAppsPage::initializePage() {
@@ -1457,6 +1474,7 @@ void UserProfileBackupAppDataPage::setupUi() {
 
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan App Data"), this);
+    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onScanAppData);
     scanLayout->addWidget(m_scanButton);
@@ -1486,12 +1504,14 @@ void UserProfileBackupAppDataPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_selectAllButton, &QPushButton::clicked, this, &UserProfileBackupAppDataPage::onSelectAll);
     buttonLayout->addWidget(m_selectAllButton);
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -1766,6 +1786,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
 
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Networks"), this);
+    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
@@ -1794,6 +1815,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1802,6 +1824,7 @@ void UserProfileBackupKnownNetworksPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -1979,6 +2002,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
 
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Ethernet"), this);
+    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_scanButton,
             &QPushButton::clicked,
             this,
@@ -2009,6 +2033,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -2017,6 +2042,7 @@ void UserProfileBackupEthernetSettingsPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,

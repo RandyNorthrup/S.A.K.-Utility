@@ -184,6 +184,7 @@ private:
     enum class FileType {
         None,
         Pst,
+        Ost,
         Mbox
     };
     FileType m_file_type = FileType::None;

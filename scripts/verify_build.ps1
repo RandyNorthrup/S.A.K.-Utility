@@ -20,9 +20,11 @@ Write-Host "[1/7] Verifying required configuration files..." -ForegroundColor Ye
 
 $RequiredFiles = @(
     "CMakeLists.txt",
-    "vcpkg.json",
-    "cmake/SAK_BuildConfig.cmake",
-    "cmake/version.h.in"
+    "VERSION",
+    "cmake/version.h.in",
+    "scripts/check_release_readiness.ps1",
+    "scripts/stage_portable_release.ps1",
+    "scripts/create_release_archive.ps1"
 )
 
 $AllFilesExist = $true
@@ -95,7 +97,14 @@ Write-Host "[5/7] Verifying Qt installation..." -ForegroundColor Yellow
 
 $QtRoot = $env:Qt6_DIR
 if ([string]::IsNullOrWhiteSpace($QtRoot)) {
-    $QtRoot = 'C:\Qt\6.5.3\msvc2019_64'
+    $QtCandidates = @(
+        'C:\Qt\6.10.3\msvc2022_64',
+        'C:\Qt\6.5.3\msvc2019_64'
+    )
+    $QtRoot = $QtCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($QtRoot)) {
+        $QtRoot = $QtCandidates[0]
+    }
 }
 
 if (Test-Path -LiteralPath $QtRoot -PathType Container) {
@@ -113,7 +122,19 @@ if ($FullClean) {
         Write-Host "  [OK] Build directory removed" -ForegroundColor Green
     }
 
-    & cmake -B build -G "Visual Studio 17 2022" -A x64
+    $CMakeArgs = @(
+        "-B", "build",
+        "-G", "Visual Studio 17 2022",
+        "-A", "x64",
+        "-DCMAKE_PREFIX_PATH=$QtRoot"
+    )
+    $ToolchainFile = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
+    if (Test-Path -LiteralPath $ToolchainFile -PathType Leaf) {
+        $CMakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$ToolchainFile"
+        $CMakeArgs += "-DVCPKG_APPLOCAL_DEPS=OFF"
+    }
+
+    & cmake @CMakeArgs
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] CMake configuration successful" -ForegroundColor Green

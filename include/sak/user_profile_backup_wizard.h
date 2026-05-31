@@ -150,6 +150,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupScanControls(QVBoxLayout* layout);
+    void setupUserTable(QVBoxLayout* layout);
+    void setupSelectionControls(QVBoxLayout* layout);
     void populateTable();
 
     QVector<UserProfile>& m_users;
@@ -462,6 +465,9 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupScanControls(QVBoxLayout* layout);
+    void setupAppsTree(QVBoxLayout* layout);
+    void setupSelectionControls(QVBoxLayout* layout);
     void populateTree(const QVector<InstalledAppInfo>& apps);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();

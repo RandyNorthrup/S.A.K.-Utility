@@ -73,11 +73,51 @@ constexpr int kUiMediumColumnWidth = 80;
 constexpr int kUiWideColumnWidth = 100;
 constexpr int kUiSearchMinWidth = 180;
 constexpr int kUiSearchMaxWidth = 280;
+constexpr int kUiSelectorButtonWidth = 24;
+constexpr int kUiSelectorButtonMargin = 2;
 constexpr int kUiSpinBoxMinHeight = 32;
-constexpr int kUiSpinBoxStepperWidth = 24;
-constexpr int kUiSpinBoxStepperMargin = 2;
-constexpr int kUiSpinBoxArrowWidth = 4;
-constexpr int kUiSpinBoxArrowHeight = 5;
+constexpr int kUiSpinBoxStepperWidth = kUiSelectorButtonWidth;
+constexpr int kUiSpinBoxStepperMargin = kUiSelectorButtonMargin;
+inline const QString kIconSelectorChevronDown =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-down.svg");
+inline const QString kIconSelectorChevronDownDark =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-down-dark.svg");
+inline const QString kIconSelectorChevronUp =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-up.svg");
+inline const QString kIconSelectorChevronUpDark =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-up-dark.svg");
+inline const QString kIconSelectorChevronLeftOnTone =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-left-on-tone.svg");
+inline const QString kIconSelectorChevronRightOnTone =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-right-on-tone.svg");
+inline const QString kIconSelectorCalendar =
+    QStringLiteral(":/icons/icons/icons8-selector-calendar.svg");
+inline const QString kIconSelectorCalendarDark =
+    QStringLiteral(":/icons/icons/icons8-selector-calendar-dark.svg");
+inline const QString kIconSelectorCheck = QStringLiteral(":/icons/icons/icons8-selector-check.svg");
+
+constexpr auto kSelectorComboDropDown = "QComboBox::drop-down";
+constexpr auto kSelectorComboDownArrow = "QComboBox::down-arrow";
+constexpr auto kSelectorSpinEditor =
+    "QSpinBox, QDoubleSpinBox, QDateEdit, QDateTimeEdit, QTimeEdit";
+constexpr auto kSelectorSpinUpButton =
+    "QSpinBox::up-button, QDoubleSpinBox::up-button, QDateEdit::up-button, "
+    "QDateTimeEdit::up-button, QTimeEdit::up-button";
+constexpr auto kSelectorSpinDownButton =
+    "QSpinBox::down-button, QDoubleSpinBox::down-button, QDateEdit::down-button, "
+    "QDateTimeEdit::down-button, QTimeEdit::down-button";
+constexpr auto kSelectorSpinUpArrow =
+    "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow, QDateEdit::up-arrow, "
+    "QDateTimeEdit::up-arrow, QTimeEdit::up-arrow";
+constexpr auto kSelectorSpinDownArrow =
+    "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QDateEdit::down-arrow, "
+    "QDateTimeEdit::down-arrow, QTimeEdit::down-arrow";
+constexpr auto kSelectorDatePickerDropDown = "QDateEdit::drop-down, QDateTimeEdit::drop-down";
+constexpr auto kSelectorDatePickerDownArrow = "QDateEdit::down-arrow, QDateTimeEdit::down-arrow";
+constexpr auto kSelectorCalendarWidget = "QCalendarWidget";
+constexpr auto kSelectorCalendarNavBar = "QCalendarWidget QWidget#qt_calendar_navigationbar";
+constexpr auto kSelectorCalendarNavButton = "QCalendarWidget QToolButton";
+constexpr auto kSelectorCalendarView = "QCalendarWidget QAbstractItemView";
 
 constexpr double kOverlayAlphaStrong = 0.97;
 constexpr double kHoverAlphaSubtle = 0.08;
@@ -100,6 +140,524 @@ constexpr int kHtmlTimelineBadgeRadiusPx = 4;
 constexpr int kHtmlTimelineBadgePaddingVerticalPx = 1;
 constexpr int kHtmlTimelineBadgePaddingHorizontalPx = 5;
 constexpr int kHtmlTimelineMetaMarginTopPx = 2;
+
+// -- HTML/Rich-Text Style Templates -----------------------------------------
+
+inline constexpr auto kHtmlStyledDocumentOpen =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>%1</title><style>%2</style>"
+    "</head><body>";
+inline constexpr auto kHtmlEnterpriseDocumentOpen =
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>%1</title><style>%2</style>"
+    "</head><body><div class='container'>";
+inline constexpr auto kHtmlStyleTagOpen = "<style>\n";
+inline constexpr auto kHtmlStyleTagClose = "</style>\n";
+inline constexpr auto kHtmlStyleHeadBodyCloseOpen = "</style>\n</head>\n<body>\n";
+inline constexpr auto kHtmlStyleHeadMainCloseOpen = "</style></head><body><main>";
+inline constexpr auto kHtmlContainerClose = "</div>";
+inline constexpr auto kHtmlDocumentClose = "</body></html>";
+inline constexpr auto kHtmlDetailShellOpen =
+    "<div style='font-family: Segoe UI, sans-serif; padding: %1px;'>";
+inline constexpr auto kHtmlDetailHeading2Open =
+    "<div style='font-family: Segoe UI, sans-serif; padding: %1px;'>"
+    "<h2 style='color: %2;'>%3</h2>";
+inline constexpr auto kHtmlContactDetailHeadingOpen =
+    "<div style='font-family: Segoe UI, sans-serif; padding: %1px;'>"
+    "<h2 style='color: %2; margin-bottom: %3px;'>%4 %5</h2>";
+inline constexpr auto kHtmlNoteDetailTemplate =
+    "<div style='font-family: Segoe UI, sans-serif; padding: %1px; background: %2; "
+    "border-radius: %3px; min-height: %4px;'>"
+    "<h3 style='color: %5;'>%6</h3>"
+    "<p style='white-space: pre-wrap; color: %7;'>%8</p></div>";
+inline constexpr auto kHtmlCalendarEventDetailOpen =
+    "<div style='font-family: Segoe UI, sans-serif; padding: %1px;'>"
+    "<div style='border-left: %2px solid %3; background: %4; padding: %5px %6px; "
+    "border-radius: %7px; margin-bottom: %8px;'>"
+    "<h3 style='color: %9; margin: 0 0 %10px 0;'>%11</h3>";
+inline constexpr auto kHtmlEmailPreviewDocument =
+    "<html><head><meta charset=\"utf-8\">"
+    "<style>body { font-family: 'Segoe UI', sans-serif; font-size: %1px; margin: 0; "
+    "padding: %2px; word-wrap: break-word; }"
+    " img { max-width: 100%%; height: auto; }</style></head><body>%3</body></html>";
+inline constexpr auto kHtmlHeading3Color = "<h3 style='color: %1;'>%2</h3>";
+inline constexpr auto kHtmlBoldColor = "<b style='color: %1;'>%2</b>";
+inline constexpr auto kHtmlSpanColor = "<span style='color: %1;'>%2</span>";
+inline constexpr auto kHtmlSpanColorWeight = "<span style='color:%1; font-weight:%2;'>%3</span>";
+inline constexpr auto kHtmlParagraphColorMargin = "<p style='color: %1; margin: %2px 0;'>%3</p>";
+inline constexpr auto kHtmlParagraphColorMarginOpen = "<p style='color: %1; margin: %2px 0;'>%3";
+inline constexpr auto kHtmlPreWrap = "<pre style='white-space: pre-wrap;'>%1</pre>";
+inline constexpr auto kHtmlHorizontalRule = "<hr style='border: %1px solid %2;'>";
+inline constexpr auto kHtmlHorizontalRulePreWrapParagraph =
+    "<hr style='border: %1px solid %2;'><p style='white-space: pre-wrap;'>%3</p>";
+inline constexpr auto kHtmlHorizontalRuleColorPreWrapParagraph =
+    "<hr style='border: %1px solid %2;'><p style='color: %3; white-space: pre-wrap;'>%4</p>";
+inline constexpr auto kHtmlLogMessage =
+    "<span style='color: %1;'>%2</span> "
+    "<span style='color: %3; font-weight: %4;'>[%5]</span> %6";
+inline constexpr auto kHtmlTimelineBadge =
+    "<span style=\"display:inline-block;border:%1px solid %2;"
+    "color:%2;background:%3;border-radius:%4px;padding:%5px %6px;"
+    "font-size:%7pt;font-weight:%8;white-space:nowrap;\">%9</span>";
+inline constexpr auto kHtmlTimelineMeta =
+    "<div style=\"color:%1;font-size:%2pt;margin-top:%3px;\">%4</div>";
+
+// -- Windows 11 Theme Style Templates ---------------------------------------
+
+inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
+        * {
+            font-family: "Segoe UI";
+            font-size: 10pt;
+        }
+
+        QWidget {
+            color: %1;
+            background-color: %2;
+        }
+
+        /* Leaf widgets & generic frames inherit parent bg
+           -- prevents gray-on-white and white-on-gray patches */
+        QLabel, QFrame, QCheckBox, QRadioButton {
+            background: transparent;
+        }
+
+        QMainWindow {
+            background-color: %3;
+        }
+
+        QDialog, QGroupBox {
+            background-color: %4;
+        }
+
+        QToolTip {
+            color: %1;
+            background-color: %5;
+            border: 1px solid %6;
+            border-radius: 8px;
+            padding: 6px 10px;
+        }
+
+        QMenuBar {
+            background-color: %7;
+            border-bottom: 1px solid %8;
+        }
+
+        QToolBar {
+            background-color: %9;
+            border-bottom: 1px solid %10;
+            spacing: 8px;
+            padding: 6px;
+        }
+
+        QMenuBar::item {
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: transparent;
+        }
+
+        QMenuBar::item:selected {
+            background-color: %11;
+        }
+
+        QMenu {
+            background-color: %12;
+            border: 1px solid %6;
+            border-radius: 8px;
+            padding: 6px;
+        }
+
+        QMenu::item {
+            padding: 6px 16px;
+            border-radius: 6px;
+        }
+
+        QMenu::item:selected {
+            background-color: %13;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeTabAndButtonStyles = R"SAK(
+        QTabWidget::pane {
+            border: 1px solid %1;
+            border-radius: 12px;
+            padding: 0px;
+            background-color: %2;
+        }
+
+        QTabBar::tab {
+            background: %3;
+            border-radius: 10px;
+            padding: 6px 12px;
+            margin: 2px;
+            color: %4;
+        }
+
+        QTabBar::tab:selected {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 %5,
+                stop:1 %6);
+            color: %7;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeInputStyles = R"SAK(
+        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit,
+            QDateTimeEdit, QTimeEdit {
+            background-color: %1;
+            border: 1px solid %2;
+            border-radius: 10px;
+            padding: 6px 10px;
+            selection-background-color: %3;
+        }
+
+        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
+            QDoubleSpinBox:focus, QDateEdit:focus, QDateTimeEdit:focus, QTimeEdit:focus {
+            border: 1px solid %4;
+            background-color: %5;
+        }
+
+        QCheckBox, QRadioButton {
+            spacing: 8px;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeIndicatorStyles = R"SAK(
+        QCheckBox::indicator, QRadioButton::indicator {
+            width: %1px;
+            height: %1px;
+        }
+
+        QCheckBox::indicator {
+            border: 1px solid %2;
+            border-radius: %3px;
+            background: %4;
+        }
+
+        QCheckBox::indicator:checked {
+            background: %5;
+            border: 1px solid %6;
+            image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z' fill='white'/></svg>");
+        }
+
+        QRadioButton::indicator {
+            border: 1px solid %2;
+            border-radius: %7px;
+            background: %4;
+        }
+
+        QRadioButton::indicator:checked {
+            background: %5;
+            border: 1px solid %6;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeProgressStyles = R"SAK(
+        QProgressBar {
+            border: 1px solid %1;
+            border-radius: %2px;
+            background: %3;
+            text-align: center;
+            min-height: %4px;
+            max-height: %4px;
+        }
+
+        QProgressBar::chunk {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 %5,
+                stop:1 %6);
+            border-radius: %7px;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
+        QGroupBox {
+            border: 1px solid %1;
+            border-radius: 12px;
+            margin-top: 18px;
+            padding: 26px 10px 10px 10px;
+        }
+
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 0px 8px;
+            color: %2;
+        }
+
+        QHeaderView::section {
+            background-color: %3;
+            border: none;
+            padding: 6px 8px;
+        }
+
+        QTableView, QListView, QTreeView {
+            background: %4;
+            border: 1px solid %5;
+            border-radius: 10px;
+            gridline-color: %6;
+            selection-background-color: %7;
+            selection-color: %8;
+            padding: 4px;
+        }
+
+        QAbstractItemView::item {
+            padding: 6px;
+            border-radius: 6px;
+        }
+
+        QAbstractItemView::item:selected {
+            background: %9;
+        }
+
+        QScrollArea {
+            border: none;
+            background: transparent;
+        }
+
+        QSplitter::handle {
+            background: %10;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeSliderStyles = R"SAK(
+        QSlider::groove:horizontal {
+            height: 6px;
+            background: %1;
+            border-radius: 3px;
+        }
+
+        QSlider::handle:horizontal {
+            background: %2;
+            border: 1px solid %3;
+            width: 16px;
+            margin: -6px 0;
+            border-radius: 8px;
+        }
+
+        QSlider::groove:vertical {
+            width: 6px;
+            background: %1;
+            border-radius: 3px;
+        }
+
+        QSlider::handle:vertical {
+            background: %2;
+            border: 1px solid %3;
+            height: 16px;
+            margin: 0 -6px;
+            border-radius: 8px;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11ThemeScrollBarStyles = R"SAK(
+        QScrollBar:vertical, QScrollBar:horizontal {
+            background: transparent;
+            border: none;
+            margin: 2px;
+        }
+
+        QScrollBar::groove:vertical, QScrollBar::groove:horizontal {
+            background: transparent;
+            border: none;
+        }
+
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+            background: %1;
+            border-radius: 6px;
+            min-height: 32px;
+            min-width: 32px;
+        }
+
+        QScrollBar::add-line, QScrollBar::sub-line {
+            background: transparent;
+            border: none;
+            width: 0px;
+            height: 0px;
+        }
+
+        QScrollBar::add-page, QScrollBar::sub-page {
+            background: transparent;
+        }
+
+        QScrollBar::handle:hover {
+            background: %2;
+        }
+
+        QAbstractScrollArea::corner {
+            background: transparent;
+        }
+
+        QStatusBar {
+            background: %3;
+            border-top: 1px solid %4;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
+        QWidget {
+            color: %1;
+            background-color: %2;
+        }
+
+        QLabel, QFrame, QCheckBox, QRadioButton {
+            background: transparent;
+        }
+
+        QMainWindow {
+            background-color: %3;
+        }
+
+        QDialog, QGroupBox {
+            background-color: %4;
+        }
+
+        QToolTip {
+            color: %1;
+            background-color: %4;
+            border: 1px solid %5;
+            border-radius: 8px;
+            padding: 6px 10px;
+        }
+
+        QMenuBar, QToolBar, QStatusBar {
+            background-color: %3;
+            border-color: %5;
+        }
+
+        QMenu {
+            background-color: %4;
+            color: %1;
+            border: 1px solid %5;
+        }
+
+        QMenu::item:selected, QMenuBar::item:selected {
+            background-color: %6;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
+        QTabWidget::pane {
+            background-color: %1;
+            border: 1px solid %2;
+        }
+
+        QTabBar::tab {
+            background: %3;
+            color: %4;
+        }
+
+        QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit,
+            QDateTimeEdit, QTimeEdit {
+            background-color: %5;
+            color: %6;
+            border: 1px solid %2;
+            selection-background-color: %7;
+        }
+
+        QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
+            QDoubleSpinBox:focus, QDateEdit:focus, QDateTimeEdit:focus, QTimeEdit:focus {
+            background-color: %8;
+            border: 1px solid %7;
+        }
+
+        QCheckBox::indicator {
+            border: 1px solid %9;
+            background: %5;
+        }
+
+        QRadioButton::indicator {
+            border: 1px solid %9;
+            background: %5;
+        }
+    )SAK";
+
+inline constexpr auto kWindows11DarkContainerAndViewStyles = R"SAK(
+        QGroupBox {
+            border: 1px solid %1;
+        }
+
+        QGroupBox::title {
+            color: %2;
+        }
+
+        QHeaderView::section {
+            background-color: %3;
+            color: %2;
+        }
+
+        QTableView, QListView, QTreeView {
+            background: %4;
+            color: %5;
+            border: 1px solid %1;
+            gridline-color: %1;
+            selection-background-color: %6;
+            selection-color: %5;
+        }
+
+        QAbstractItemView::item:selected {
+            background: %6;
+        }
+
+        QSplitter::handle {
+            background: %1;
+        }
+
+        QSlider::groove:horizontal, QSlider::groove:vertical {
+            background: %1;
+        }
+
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+            background: %7;
+        }
+
+        QScrollBar::handle:hover {
+            background: %8;
+        }
+    )SAK";
+inline constexpr auto kEmailRibbonStyle =
+    "QWidget#ribbonBar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+    " stop:0 %1, stop:1 %2); border: %3px solid %4; border-radius: %5px; }";
+inline constexpr auto kEmailRibbonButtonStyle =
+    "QToolButton { background: transparent; border: %1px solid transparent; "
+    "border-radius: %2px; padding: %3px %4px; font-size: %5px; font-weight: %6; "
+    "color: %7; }"
+    "QToolButton:hover { background: %8; border: %1px solid %9; }"
+    "QToolButton:pressed { background: %10; border: %1px solid %11; }"
+    "QToolButton:disabled { color: %12; }";
+inline constexpr auto kEmailRibbonSeparatorStyle = "background: %1; margin: %2px 0px;";
+inline constexpr auto kAiWorkflowMarkdownStyle =
+    "body{font-family:'Segoe UI',Arial,sans-serif;font-size:%1pt;color:%2;background:%3;}"
+    "h1{font-size:%4pt;margin:0 0 %5px;color:%6;}h2{font-size:%7pt;margin:%8px 0 "
+    "%9px;color:%6;}li{margin:%10px 0;}";
+inline constexpr auto kAiWorkbenchListStyle =
+    "QListWidget { background: %1; border: %2px solid %3; border-radius: %4px; "
+    "padding: %5px; color: %6; }"
+    "QListWidget::item { padding: %7px %8px; border-radius: %9px; }"
+    "QListWidget::item:selected { background: %10; color: %6; }"
+    "QListWidget::item:hover { background: %11; }";
+inline constexpr auto kAiComposerEditStyle =
+    "QPlainTextEdit { background: transparent; border: 0; color: %1; padding: %2px; "
+    "font-size: %3pt; }";
+inline constexpr auto kAiRunDetailsMarkdownStyle =
+    "body{font-family:'Segoe UI',Arial,sans-serif;color:%1;background:%2;font-size:%3pt;}"
+    "h1{font-size:%4pt;color:%5;margin:0 0 %6px;}"
+    "pre{background:%7;border:%8px solid %9;border-radius:%10px;padding:%11px;white-space:"
+    "pre-wrap;}";
+inline constexpr auto kHtmlBrowserDocumentStyle =
+    "body { font-family: 'Segoe UI', sans-serif; margin: %1px; color: %2; "
+    "background: transparent; }"
+    "h2, h3 { color: %3; margin-bottom: %4px; }"
+    "p { color: %2; }"
+    ".subtitle { color: %5; font-size: %6pt; margin-bottom: %7px; }"
+    ".section, .dep { margin-bottom: %8px; }"
+    ".section-title { font-weight: %9; font-size: %6pt; color: %10; "
+    "border-bottom: %11px solid %12; padding-bottom: %13px; margin-bottom: %14px; }"
+    "ul { margin: %13px 0 0 %15px; padding: 0; }"
+    "li { margin-bottom: %13px; color: %2; }"
+    "b { color: %3; }"
+    ".dep .desc { color: %5; font-size: %16pt; }"
+    "a { color: %10; text-decoration: none; }"
+    "a:hover { text-decoration: underline; }"
+    ".footer { color: %17; font-size: %16pt; margin-top: %8px; "
+    "border-top: %11px solid %12; padding-top: %14px; }";
 
 // -- Button Stylesheets ------------------------------------------------------
 
@@ -126,6 +684,15 @@ struct SolidButtonTone {
 struct SolidButtonMetrics {
     const char* padding;
     int radiusPx;
+};
+
+struct CalendarPopupSelectorTone {
+    QString panel;
+    QString border;
+    QString hoverBackground;
+    QString text;
+    QString selection;
+    QString selectionText;
 };
 
 inline constexpr SolidButtonMetrics kSolidButtonMetrics{kButtonPaddingWideCss, kCssRadiusSmallPx};
@@ -404,6 +971,117 @@ inline QString cssColor(const char* color) {
     return cssColor(QString::fromLatin1(color));
 }
 
+inline QString selectorDropDownStyle(const char* selector,
+                                     const QString& border,
+                                     const QString& background,
+                                     const QString& hover_background) {
+    return QStringLiteral(
+               "%1 { subcontrol-origin: border; subcontrol-position: top right; width: %2px; "
+               "margin: %3px %3px %3px 0; border-left: %4px solid %5; "
+               "border-top-right-radius: %6px; border-bottom-right-radius: %6px; "
+               "background: %7; }"
+               "%1:hover { background: %8; }")
+        .arg(QString::fromLatin1(selector))
+        .arg(kUiSelectorButtonWidth)
+        .arg(kUiSelectorButtonMargin)
+        .arg(kCssBorderWidthDefaultPx)
+        .arg(border)
+        .arg(kCssRadiusMediumPx)
+        .arg(background)
+        .arg(hover_background);
+}
+
+inline QString selectorIconStyle(const char* selector, const QString& icon_path) {
+    return QStringLiteral("%1 { image: url(\"%2\"); width: %3px; height: %3px; }")
+        .arg(QString::fromLatin1(selector))
+        .arg(icon_path)
+        .arg(kUiIconCompact);
+}
+
+inline QString comboBoxSelectorStyle(const QString& border,
+                                     const QString& background,
+                                     const QString& hover_background,
+                                     const QString& down_icon_path) {
+    return selectorDropDownStyle(kSelectorComboDropDown, border, background, hover_background) +
+           selectorIconStyle(kSelectorComboDownArrow, down_icon_path);
+}
+
+inline QString spinBoxSelectorStyle(const QString& border,
+                                    const QString& background,
+                                    const QString& hover_background,
+                                    const QString& up_icon_path,
+                                    const QString& down_icon_path) {
+    const QString width = QString::number(kUiSpinBoxStepperWidth);
+    const QString margin = QString::number(kUiSpinBoxStepperMargin);
+    const QString border_width = QString::number(kCssBorderWidthDefaultPx);
+    const QString radius = QString::number(kCssRadiusMediumPx);
+    const QString up_button = QString::fromLatin1(kSelectorSpinUpButton);
+    const QString down_button = QString::fromLatin1(kSelectorSpinDownButton);
+    return QStringLiteral("%1 { min-height: %2px; padding-right: %3px; }")
+               .arg(QString::fromLatin1(kSelectorSpinEditor))
+               .arg(kUiSpinBoxMinHeight)
+               .arg(width) +
+           QStringLiteral(
+               "%1 { subcontrol-origin: border; subcontrol-position: top right; width: %2px; "
+               "margin: %3px %3px 0 0; border-left: %4px solid %5; "
+               "border-bottom: %4px solid %5; border-top-right-radius: %6px; "
+               "background: %7; }")
+               .arg(up_button, width, margin, border_width, border, radius, background) +
+           QStringLiteral(
+               "%1 { subcontrol-origin: border; subcontrol-position: bottom right; width: %2px; "
+               "margin: 0 %3px %3px 0; border-left: %4px solid %5; "
+               "border-top: %4px solid %5; border-bottom-right-radius: %6px; "
+               "background: %7; }")
+               .arg(down_button, width, margin, border_width, border, radius, background) +
+           QStringLiteral("%1:hover, %2:hover { background: %3; }")
+               .arg(up_button, down_button, hover_background) +
+           selectorIconStyle(kSelectorSpinUpArrow, up_icon_path) +
+           selectorIconStyle(kSelectorSpinDownArrow, down_icon_path);
+}
+
+inline QString datePickerSelectorStyle(const QString& border,
+                                       const QString& background,
+                                       const QString& hover_background,
+                                       const QString& calendar_icon_path) {
+    return selectorDropDownStyle(
+               kSelectorDatePickerDropDown, border, background, hover_background) +
+           selectorIconStyle(kSelectorDatePickerDownArrow, calendar_icon_path);
+}
+
+inline QString calendarPopupSelectorStyle(const CalendarPopupSelectorTone& tone) {
+    const QString border_width = QString::number(kCssBorderWidthDefaultPx);
+    return QStringLiteral(
+               "%1 { background: %2; border: %3px solid %4; }"
+               "%5 { background: %2; border-bottom: %3px solid %4; }")
+               .arg(QString::fromLatin1(kSelectorCalendarWidget),
+                    tone.panel,
+                    border_width,
+                    tone.border,
+                    QString::fromLatin1(kSelectorCalendarNavBar)) +
+           QStringLiteral(
+               "%1 { background: transparent; border: %2px solid transparent; "
+               "border-radius: %3px; padding: %4px %5px; color: %6; }"
+               "%1:hover { background: %7; border-color: %8; }")
+               .arg(QString::fromLatin1(kSelectorCalendarNavButton),
+                    border_width,
+                    QString::number(kCssRadiusSmallPx),
+                    QString::number(kCssPaddingSmallPx),
+                    QString::number(kCssPaddingLargePx),
+                    tone.text,
+                    tone.hoverBackground,
+                    tone.border) +
+           QStringLiteral(
+               "%1 { background: %2; color: %3; border: %4px solid %5; "
+               "selection-background-color: %6; selection-color: %7; }")
+               .arg(QString::fromLatin1(kSelectorCalendarView),
+                    tone.panel,
+                    tone.text,
+                    border_width,
+                    tone.border,
+                    tone.selection,
+                    tone.selectionText);
+}
+
 inline QString htmlPaletteColor(QPalette::ColorRole role) {
     Q_ASSERT_X(QApplication::instance() != nullptr,
                "sak::ui::htmlPaletteColor",
@@ -434,6 +1112,37 @@ inline QString htmlColor(const QString& color) {
 
 inline QString htmlColor(const char* color) {
     return htmlColor(QString::fromLatin1(color));
+}
+
+inline QString htmlBrowserDocumentStyleSheet() {
+    const bool dark = qApp && qApp->property("sakThemeMode").toString() == QStringLiteral("dark");
+    const auto color = [](const char* token) {
+        return QString::fromLatin1(token);
+    };
+    const QString heading = color(dark ? kColorDarkTextHeading : kColorTextHeading);
+    const QString body = color(dark ? kColorDarkTextBody : kColorTextBody);
+    const QString secondary = color(dark ? kColorDarkTextSecondary : kColorTextSecondary);
+    const QString muted = color(kColorTextMuted);
+    const QString border = color(dark ? kColorDarkBorderDefault : kColorBorderDefault);
+    const QString link = color(kColorPrimary);
+
+    return QString::fromLatin1(kHtmlBrowserDocumentStyle)
+        .arg(kMarginSmall)
+        .arg(body, heading)
+        .arg(kSpacingTight)
+        .arg(secondary)
+        .arg(kFontSizeBody)
+        .arg(kSpacingLarge)
+        .arg(kSpacingLarge)
+        .arg(kFontWeightBold)
+        .arg(link)
+        .arg(kCssBorderWidthDefaultPx)
+        .arg(border)
+        .arg(kCssPaddingTinyPx)
+        .arg(kCssPaddingMediumPx)
+        .arg(kMarginLarge)
+        .arg(kFontSizeNote)
+        .arg(muted);
 }
 
 /// Primary action button -- blue gradient with hover/pressed/disabled states.
@@ -588,7 +1297,7 @@ inline QString cardFrameStyle(int radius_px = kCssRadiusLargePx,
                "border-radius: %5px; padding: %6px; }"
                "%1:hover { border-color: %7; }")
         .arg(selector_string)
-        .arg(cssColor(kColorBgWhite))
+        .arg(cssColor(kColorBgSurface))
         .arg(kCssBorderWidthDefaultPx)
         .arg(cssColor(kColorBorderDefault))
         .arg(radius_px)
@@ -1116,6 +1825,56 @@ inline QString calendarEventTableStyle() {
         .arg(kFontSizeSmall)
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorButtonTextOnTone));
+}
+
+inline QString aiWorkflowMarkdownStyle() {
+    return QString::fromLatin1(kAiWorkflowMarkdownStyle)
+        .arg(kFontSizeNote)
+        .arg(cssColor(kColorTextBody),
+             cssColor(kColorBgSurface),
+             QString::number(kFontSizeSection),
+             QString::number(kSpacingSmall),
+             cssColor(kColorTextHeading),
+             QString::number(kFontSizeBody),
+             QString::number(kSpacingMedium),
+             QString::number(kCssPaddingTinyPx))
+        .arg(kSpacingTight);
+}
+
+inline QString aiWorkbenchListStyle() {
+    return QString::fromLatin1(kAiWorkbenchListStyle)
+        .arg(cssColor(kColorBgWhite),
+             QString::number(kCssBorderWidthDefaultPx),
+             cssColor(kColorBorderDefault),
+             QString::number(kCssRadiusSmallPx),
+             QString::number(kCssPaddingTinyPx),
+             cssColor(kColorTextBody),
+             QString::number(kCssPaddingSmallPx),
+             QString::number(kCssPaddingMediumPx),
+             QString::number(kCssRadiusTinyPx))
+        .arg(cssColor(kColorBgInfoPanel), cssColor(kColorBgPageHover));
+}
+
+inline QString aiComposerEditStyle() {
+    return QString::fromLatin1(kAiComposerEditStyle)
+        .arg(cssColor(kColorTextBody),
+             QString::number(kCssPaddingSmallPx),
+             QString::number(kFontSizeBody));
+}
+
+inline QString aiRunDetailsMarkdownStyle() {
+    return QString::fromLatin1(kAiRunDetailsMarkdownStyle)
+        .arg(cssColor(kColorTextBody),
+             cssColor(kColorBgSurface),
+             QString::number(kFontSizeNote),
+             QString::number(kFontSizeSection + 1),
+             cssColor(kColorTextHeading),
+             QString::number(kSpacingMedium),
+             cssColor(kColorBgWhite),
+             QString::number(kCssBorderWidthDefaultPx))
+        .arg(cssColor(kColorBorderDefault),
+             QString::number(kCssRadiusSmallPx),
+             QString::number(kCssPaddingMediumPx));
 }
 
 inline QString leftBorderStyle(const char* border) {

@@ -243,12 +243,14 @@ QGroupBox* DiagnosticBenchmarkPanel::createHardwareSection() {
     m_hw_rescan_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_rescan_button->setAccessibleName(QStringLiteral("Scan Hardware"));
     m_hw_rescan_button->setToolTip(QStringLiteral("Scan and display hardware information"));
+    m_hw_rescan_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_hw_rescan_button);
 
     m_hw_copy_button = new QPushButton("Copy to Clipboard", this);
     m_hw_copy_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_hw_copy_button->setAccessibleName(QStringLiteral("Copy Hardware Info"));
     m_hw_copy_button->setToolTip(QStringLiteral("Copy hardware inventory to the clipboard"));
+    m_hw_copy_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_hw_copy_button);
 
     layout->addLayout(button_layout);
@@ -303,6 +305,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSmartSection() {
     m_smart_rescan_button->setToolTip(
         QStringLiteral("Scan storage drives for S.M.A.R.T. health "
                        "data"));
+    m_smart_rescan_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_smart_rescan_button);
     layout->addLayout(button_layout);
 
@@ -386,6 +389,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createCpuBenchmarkGroup() {
     m_cpu_benchmark_button->setToolTip(
         QStringLiteral("Run a single and multi-threaded CPU "
                        "performance test"));
+    m_cpu_benchmark_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     cpu_btn_layout->addWidget(m_cpu_benchmark_button);
     cpu_layout->addLayout(cpu_btn_layout);
 
@@ -439,6 +443,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createDiskBenchmarkGroup() {
     m_disk_benchmark_button->setToolTip(
         QStringLiteral("Measure sequential and random I/O "
                        "performance"));
+    m_disk_benchmark_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     disk_btn_layout->addWidget(m_disk_benchmark_button);
     disk_layout->addLayout(disk_btn_layout);
 
@@ -477,6 +482,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createMemoryBenchmarkGroup() {
     m_mem_benchmark_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_mem_benchmark_button->setAccessibleName(QStringLiteral("Run Memory Benchmark"));
     m_mem_benchmark_button->setToolTip(QStringLiteral("Measure memory bandwidth and latency"));
+    m_mem_benchmark_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     mem_btn_layout->addWidget(m_mem_benchmark_button);
     mem_layout->addLayout(mem_btn_layout);
 
@@ -580,6 +586,7 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow() {
     m_stress_start_button->setMinimumWidth(sak::kButtonWidthLarge);
     m_stress_start_button->setAccessibleName(QStringLiteral("Start Stress Test"));
     m_stress_start_button->setToolTip(QStringLiteral("Begin the hardware stress test"));
+    m_stress_start_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     button_layout->addWidget(m_stress_start_button);
 
     m_stress_stop_button = new QPushButton("Stop Stress Test", this);
@@ -587,6 +594,7 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressButtonRow() {
     m_stress_stop_button->setEnabled(false);
     m_stress_stop_button->setAccessibleName(QStringLiteral("Stop Stress Test"));
     m_stress_stop_button->setToolTip(QStringLiteral("Stop the running stress test"));
+    m_stress_stop_button->setStyleSheet(sak::ui::kDangerButtonStyle);
     button_layout->addWidget(m_stress_stop_button);
 
     connect(m_stress_start_button,
@@ -647,10 +655,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
 // Section: Full Suite
 // ============================================================================
 
-QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
-    auto* group = new QGroupBox("Full Diagnostic Suite", this);
-    auto* layout = new QVBoxLayout(group);
-
+void DiagnosticBenchmarkPanel::createSuiteStepLabels(QVBoxLayout* layout) {
     static constexpr std::array<const char*, kSuiteStepCount> kSuiteStepNames = {
         "Hardware Inventory",
         "SMART Disk Health",
@@ -667,13 +672,9 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
         m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
         layout->addWidget(m_suite_step_labels[i]);
     }
+}
 
-    m_suite_status_label = new QLabel("Suite not started", this);
-    m_suite_status_label->setStyleSheet(
-        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorTextHeading));
-    layout->addWidget(m_suite_status_label);
-
-    // Buttons
+QHBoxLayout* DiagnosticBenchmarkPanel::createSuiteButtonRow() {
     auto* button_layout = new QHBoxLayout();
     button_layout->addStretch();
 
@@ -690,6 +691,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
     m_suite_cancel_button->setEnabled(false);
     m_suite_cancel_button->setAccessibleName(QStringLiteral("Cancel Suite"));
     m_suite_cancel_button->setToolTip(QStringLiteral("Cancel the running diagnostic suite"));
+    m_suite_cancel_button->setStyleSheet(sak::ui::kDangerButtonStyle);
     button_layout->addWidget(m_suite_cancel_button);
 
     m_suite_skip_button = new QPushButton("Skip Step", this);
@@ -697,10 +699,13 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
     m_suite_skip_button->setEnabled(false);
     m_suite_skip_button->setAccessibleName(QStringLiteral("Skip Suite Step"));
     m_suite_skip_button->setToolTip(QStringLiteral("Skip the current step in the suite"));
+    m_suite_skip_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     button_layout->addWidget(m_suite_skip_button);
 
-    layout->addLayout(button_layout);
+    return button_layout;
+}
 
+void DiagnosticBenchmarkPanel::connectSuiteButtons() {
     connect(m_suite_run_button,
             &QPushButton::clicked,
             this,
@@ -713,6 +718,21 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
             &QPushButton::clicked,
             this,
             &DiagnosticBenchmarkPanel::onSkipStepClicked);
+}
+
+QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
+    auto* group = new QGroupBox("Full Diagnostic Suite", this);
+    auto* layout = new QVBoxLayout(group);
+
+    createSuiteStepLabels(layout);
+
+    m_suite_status_label = new QLabel("Suite not started", this);
+    m_suite_status_label->setStyleSheet(
+        sak::ui::fontWeightAndColorStyle(kFontWeightSemibold, sak::ui::kColorTextHeading));
+    layout->addWidget(m_suite_status_label);
+
+    layout->addLayout(createSuiteButtonRow());
+    connectSuiteButtons();
 
     return group;
 }
@@ -772,18 +792,21 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
     m_report_html_button->setMinimumWidth(sak::kButtonWidthXLarge);
     m_report_html_button->setAccessibleName(QStringLiteral("Generate HTML Report"));
     m_report_html_button->setToolTip(QStringLiteral("Generate a formatted HTML diagnostic report"));
+    m_report_html_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     export_layout->addWidget(m_report_html_button);
 
     m_report_json_button = new QPushButton("Export JSON", this);
     m_report_json_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_report_json_button->setAccessibleName(QStringLiteral("Export JSON Report"));
     m_report_json_button->setToolTip(QStringLiteral("Export diagnostic data as a JSON file"));
+    m_report_json_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_json_button);
 
     m_report_csv_button = new QPushButton("Export CSV", this);
     m_report_csv_button->setMinimumWidth(sak::kButtonWidthMedium);
     m_report_csv_button->setAccessibleName(QStringLiteral("Export CSV Report"));
     m_report_csv_button->setToolTip(QStringLiteral("Export diagnostic data as a CSV file"));
+    m_report_csv_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_csv_button);
 
     layout->addLayout(export_layout);
@@ -974,6 +997,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
         btn->setMinimumHeight(sak::kButtonHeightTall);
         btn->setToolTip(tooltip);
         btn->setAccessibleName(text);
+        btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
         m_qa_buttons.insert(key, btn);
         btn_layout->addWidget(btn);
     };

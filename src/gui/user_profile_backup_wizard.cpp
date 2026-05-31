@@ -188,9 +188,22 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     instructionLabel->setWordWrap(true);
     layout->addWidget(instructionLabel);
 
+    setupScanControls(layout);
+    setupUserTable(layout);
+    setupSelectionControls(layout);
+
+    // Summary
+    m_summaryLabel = new QLabel(this);
+    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
+    layout->addWidget(m_summaryLabel);
+    updateSummary();
+}
+
+void UserProfileBackupSelectUsersPage::setupScanControls(QVBoxLayout* layout) {
     auto* scanLayout = new QHBoxLayout();
     m_scanButton = new QPushButton(tr("Scan Users"), this);
     m_scanButton->setIcon(QIcon::fromTheme("view-refresh"));
+    m_scanButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(
         m_scanButton, &QPushButton::clicked, this, &UserProfileBackupSelectUsersPage::onScanUsers);
     scanLayout->addWidget(m_scanButton);
@@ -202,7 +215,9 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     m_scanProgress = new QProgressBar(this);
     m_scanProgress->setVisible(false);
     layout->addWidget(m_scanProgress);
+}
 
+void UserProfileBackupSelectUsersPage::setupUserTable(QVBoxLayout* layout) {
     m_userTable = new QTableWidget(0, UserProfileColCount, this);
     m_userTable->setHorizontalHeaderLabels(
         {tr("?"), tr("Username"), tr("Profile Path"), tr("Est. Size")});
@@ -221,10 +236,13 @@ void UserProfileBackupSelectUsersPage::setupUi() {
             this,
             &UserProfileBackupSelectUsersPage::updateSummary);
     layout->addWidget(m_userTable);
+}
 
+void UserProfileBackupSelectUsersPage::setupSelectionControls(QVBoxLayout* layout) {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -233,6 +251,7 @@ void UserProfileBackupSelectUsersPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -240,12 +259,6 @@ void UserProfileBackupSelectUsersPage::setupUi() {
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch();
     layout->addLayout(buttonLayout);
-
-    // Summary
-    m_summaryLabel = new QLabel(this);
-    m_summaryLabel->setStyleSheet(sak::ui::notePanelStyle(sak::ui::kColorBgInfoPanel));
-    layout->addWidget(m_summaryLabel);
-    updateSummary();
 }
 
 void UserProfileBackupSelectUsersPage::initializePage() {

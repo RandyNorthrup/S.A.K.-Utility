@@ -84,8 +84,11 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     // Selection buttons
     auto* selectionLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton("Select All");
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_selectNoneButton = new QPushButton("Select None");
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_selectRecommendedButton = new QPushButton("Select Recommended");
+    m_selectRecommendedButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_selectRecommendedButton->setToolTip("Selects Documents, Desktop, Pictures, and Downloads");
 
     selectionLayout->addWidget(m_selectAllButton);
@@ -114,14 +117,18 @@ void PerUserCustomizationDialog::setupUi_foldersSection(QVBoxLayout* mainLayout)
     // All action buttons in one row: left pair + stretch + right pair
     auto* actionButtonsLayout = new QHBoxLayout();
     auto* expandAllBtn = new QPushButton("Expand All");
+    expandAllBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     auto* collapseAllBtn = new QPushButton("Collapse All");
+    collapseAllBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(expandAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onExpandAll);
     connect(
         collapseAllBtn, &QPushButton::clicked, this, &PerUserCustomizationDialog::onCollapseAll);
 
     m_addCustomButton = new QPushButton("Add Custom Folder...");
+    m_addCustomButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_removeButton = new QPushButton("Remove Selected");
     m_removeButton->setEnabled(false);
+    m_removeButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
 
     actionButtonsLayout->addWidget(expandAllBtn);
     actionButtonsLayout->addWidget(collapseAllBtn);
@@ -164,9 +171,11 @@ void PerUserCustomizationDialog::setupUi_dialogButtons(QVBoxLayout* mainLayout) 
     m_okButton = new QPushButton("OK");
     m_okButton->setDefault(true);
     m_okButton->setMinimumWidth(sak::kButtonWidthSmall);
+    m_okButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
 
     m_cancelButton = new QPushButton("Cancel");
     m_cancelButton->setMinimumWidth(sak::kButtonWidthSmall);
+    m_cancelButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
 
     buttonLayout->addWidget(m_okButton);
     buttonLayout->addWidget(m_cancelButton);

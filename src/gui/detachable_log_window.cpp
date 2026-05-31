@@ -75,12 +75,14 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     auto* bottomRow = new QHBoxLayout();
     auto* clearBtn = new QPushButton(tr("Clear"), this);
     clearBtn->setAccessibleName(tr("Clear detached log"));
+    clearBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(clearBtn, &QPushButton::clicked, this, &DetachableLogWindow::clearLog);
     bottomRow->addWidget(clearBtn);
     bottomRow->addStretch();
     m_jumpToNewestButton = new QPushButton(tr("Jump to newest"), this);
     m_jumpToNewestButton->setToolTip(tr("Scroll to the latest log line and resume auto-scroll"));
     m_jumpToNewestButton->setAccessibleName(tr("Jump to newest log entry"));
+    m_jumpToNewestButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_jumpToNewestButton->hide();
     m_logScrollController->setJumpToNewestButton(m_jumpToNewestButton);
     connect(m_jumpToNewestButton,

@@ -6,6 +6,8 @@
 
 #include "sak/pdf_email_writer.h"
 
+#include "sak/report_style_constants.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -109,15 +111,7 @@ QString PdfEmailWriter::buildHtmlForPdf(
     QString html;
     html.reserve(kPdfHtmlInitialReserveChars);
 
-    html += QStringLiteral(
-        "<html><head><style>"
-        "body { font-family: Segoe UI, Arial, sans-serif; font-size: 10pt; }"
-        "table.hdr { border-collapse: collapse; margin-bottom: 12px; }"
-        "table.hdr td { padding: 2px 8px; vertical-align: top; }"
-        "td.lbl { font-weight: bold; color: #555; white-space: nowrap; }"
-        "hr { border: none; border-top: 1px solid #ccc; margin: 8px 0; }"
-        ".att { color: #666; font-size: 9pt; margin-top: 12px; }"
-        "</style></head><body>");
+    html += QString::fromLatin1(report::kPdfEmailDocumentOpen).arg(report::pdfEmailStyleSheet());
 
     // Header table
     html += QStringLiteral("<table class='hdr'>");

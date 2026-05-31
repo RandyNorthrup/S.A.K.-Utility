@@ -7,8 +7,11 @@
 #include "sak/email_export_worker.h"
 
 #include "sak/email_constants.h"
+#include "sak/eml_writer.h"
+#include "sak/html_email_writer.h"
 #include "sak/layout_constants.h"
 #include "sak/mbox_parser.h"
+#include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
 
 #include <QDir>
@@ -19,6 +22,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <memory>
 
 namespace {
 
@@ -100,6 +104,57 @@ bool isCsvFormat(sak::ExportFormat format) {
            format == sak::ExportFormat::CsvCalendar || format == sak::ExportFormat::CsvTasks;
 }
 
+/// Check if a format exports one file per message body.
+bool isMessageFileFormat(sak::ExportFormat format) {
+    return format == sak::ExportFormat::Eml || format == sak::ExportFormat::Html ||
+           format == sak::ExportFormat::Text || format == sak::ExportFormat::Pdf;
+}
+
+struct ExportFormatName {
+    sak::ExportFormat format;
+    const char* display_name;
+};
+
+constexpr ExportFormatName kExportFormatNames[] = {
+    {sak::ExportFormat::Eml, "EML"},
+    {sak::ExportFormat::Html, "HTML"},
+    {sak::ExportFormat::Text, "TXT"},
+    {sak::ExportFormat::Pdf, "PDF"},
+    {sak::ExportFormat::CsvEmails, "CSV (Emails)"},
+    {sak::ExportFormat::Vcf, "VCF"},
+    {sak::ExportFormat::CsvContacts, "CSV (Contacts)"},
+    {sak::ExportFormat::Ics, "ICS"},
+    {sak::ExportFormat::CsvCalendar, "CSV (Calendar)"},
+    {sak::ExportFormat::CsvTasks, "CSV (Tasks)"},
+    {sak::ExportFormat::PlainTextNotes, "TXT"},
+    {sak::ExportFormat::Attachments, "Attachments"},
+};
+
+sak::ExportFormat messageFormatOrEml(sak::ExportFormat format) {
+    return isMessageFileFormat(format) ? format : sak::ExportFormat::Eml;
+}
+
+void prepareMessageWriters(sak::ExportFormat format,
+                           const sak::EmailExportConfig& config,
+                           std::unique_ptr<sak::EmlWriter>& eml_writer,
+                           std::unique_ptr<sak::HtmlEmailWriter>& html_writer,
+                           std::unique_ptr<sak::PdfEmailWriter>& pdf_writer) {
+    if (format == sak::ExportFormat::Eml) {
+        eml_writer =
+            std::make_unique<sak::EmlWriter>(config.output_path, config.prefix_with_date, false);
+    }
+    if (format == sak::ExportFormat::Html) {
+        html_writer = std::make_unique<sak::HtmlEmailWriter>(config.output_path,
+                                                             config.prefix_with_date,
+                                                             false);
+    }
+    if (format == sak::ExportFormat::Pdf) {
+        pdf_writer = std::make_unique<sak::PdfEmailWriter>(config.output_path,
+                                                           config.prefix_with_date,
+                                                           false);
+    }
+}
+
 /// Collect MBOX message indices to export
 QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& item_ids) {
     QVector<int> indices;
@@ -116,6 +171,53 @@ QVector<int> collectMboxIndices(MboxParser* parser, const QVector<uint64_t>& ite
         }
     }
     return indices;
+}
+
+sak::PstItemDetail mboxDetailAsPstItem(const sak::MboxMessageDetail& msg) {
+    sak::PstItemDetail item;
+    item.node_id = static_cast<uint64_t>(msg.message_index);
+    item.item_type = sak::EmailItemType::Email;
+    item.subject = msg.subject;
+    item.sender_name = msg.from;
+    item.sender_email = msg.from;
+    item.display_to = msg.to;
+    item.display_cc = msg.cc;
+    item.display_bcc = msg.bcc;
+    item.date = msg.date;
+    item.message_id = msg.message_id;
+    item.body_plain = msg.body_plain;
+    item.body_html = msg.body_html;
+    item.transport_headers = msg.raw_headers;
+    item.attachments = msg.attachments;
+    return item;
+}
+
+void appendTextHeader(QTextStream& stream, const QString& label, const QString& value) {
+    if (!value.isEmpty()) {
+        stream << label << QStringLiteral(": ") << value << "\r\n";
+    }
+}
+
+QString senderDisplayText(const sak::PstItemDetail& item) {
+    if (item.sender_email.isEmpty()) {
+        return item.sender_name;
+    }
+    return item.sender_name + QStringLiteral(" <") + item.sender_email + QStringLiteral(">");
+}
+
+void appendPlainTextHeaders(QTextStream& stream,
+                            const sak::PstItemDetail& item,
+                            int attachment_count) {
+    appendTextHeader(stream, QStringLiteral("Subject"), item.subject);
+    appendTextHeader(stream, QStringLiteral("From"), senderDisplayText(item));
+    appendTextHeader(stream, QStringLiteral("To"), item.display_to);
+    appendTextHeader(stream, QStringLiteral("Cc"), item.display_cc);
+    if (item.date.isValid()) {
+        appendTextHeader(stream, QStringLiteral("Date"), item.date.toString(Qt::RFC2822Date));
+    }
+    if (attachment_count > 0) {
+        appendTextHeader(stream, QStringLiteral("Attachments"), QString::number(attachment_count));
+    }
 }
 
 /// CSV field extractor type alias
@@ -244,7 +346,7 @@ void EmailExportWorker::emitEarlyFailure(const QString& error_message) {
 
 void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportConfig& config) {
     if (!parser) {
-        emitEarlyFailure(QStringLiteral("No PST file open for export"));
+        emitEarlyFailure(QStringLiteral("No PST/OST file open for export"));
         return;
     }
     if (config.output_path.isEmpty()) {
@@ -310,37 +412,19 @@ void EmailExportWorker::exportPerItemFormats(PstParser* parser,
                                              const QVector<uint64_t>& item_ids,
                                              const sak::EmailExportConfig& config,
                                              sak::EmailExportResult& result) {
+    std::unique_ptr<sak::EmlWriter> eml_writer;
+    std::unique_ptr<sak::HtmlEmailWriter> html_writer;
+    std::unique_ptr<sak::PdfEmailWriter> pdf_writer;
+    prepareMessageWriters(config.format, config, eml_writer, html_writer, pdf_writer);
+    const PerItemWriterSet writers{eml_writer.get(), html_writer.get(), pdf_writer.get()};
+    const PstItemExportContext context{parser, config, result, writers};
+
     for (int index = 0; index < item_ids.size(); ++index) {
         if (m_cancelled.load()) {
             break;
         }
 
-        auto detail = parser->readItemDetail(item_ids[index]);
-        if (!detail.has_value()) {
-            result.items_failed++;
-            result.errors.append(QStringLiteral("Failed to read item NID %1").arg(item_ids[index]));
-            continue;
-        }
-
-        bool success = false;
-        switch (config.format) {
-        case sak::ExportFormat::Eml:
-            success = writeEml(detail.value(), config.output_path, index);
-            break;
-        case sak::ExportFormat::Vcf:
-            success = writeVcf(detail.value(), config.output_path, index);
-            break;
-        case sak::ExportFormat::PlainTextNotes:
-            success = writePlainText(detail.value(), config.output_path, index);
-            break;
-        case sak::ExportFormat::Attachments:
-            success = exportAttachments(parser, detail.value(), config.output_path, config);
-            break;
-        default:
-            break;
-        }
-
-        if (success) {
+        if (exportOnePstItem(context, item_ids[index], index)) {
             result.items_exported++;
         } else {
             result.items_failed++;
@@ -355,30 +439,59 @@ void EmailExportWorker::exportPerItemFormats(PstParser* parser,
     Q_EMIT exportComplete(result);
 }
 
+bool EmailExportWorker::exportOnePstItem(const PstItemExportContext& context,
+                                         uint64_t item_id,
+                                         int index) {
+    auto detail = context.parser->readItemDetail(item_id);
+    if (!detail.has_value()) {
+        context.result.errors.append(QStringLiteral("Failed to read item NID %1").arg(item_id));
+        return false;
+    }
+
+    auto attachment_data =
+        isMessageFileFormat(context.config.format)
+            ? collectAttachmentData(context.parser, detail.value(), context.config)
+            : QVector<QPair<QString, QByteArray>>{};
+    switch (context.config.format) {
+    case sak::ExportFormat::Eml:
+        return writeEml(
+            *context.writers.eml, detail.value(), attachment_data, context.result.total_bytes);
+    case sak::ExportFormat::Html:
+        return writeHtml(
+            *context.writers.html, detail.value(), attachment_data, context.result.total_bytes);
+    case sak::ExportFormat::Text:
+        return writePlainText({detail.value(),
+                               context.config.output_path,
+                               index,
+                               attachment_data,
+                               context.config.save_attachments_with_messages},
+                              context.result.total_bytes);
+    case sak::ExportFormat::Pdf:
+        return writePdf(
+            *context.writers.pdf, detail.value(), attachment_data, context.result.total_bytes);
+    case sak::ExportFormat::Vcf:
+        return writeVcf(detail.value(), context.config.output_path, index);
+    case sak::ExportFormat::PlainTextNotes:
+        return writePlainText(
+            {detail.value(), context.config.output_path, index, attachment_data, false},
+            context.result.total_bytes);
+    case sak::ExportFormat::Attachments:
+        return exportAttachments(
+            context.parser, detail.value(), context.config.output_path, context.config);
+    default:
+        return false;
+    }
+}
+
 // ============================================================================
 // Export Format Helpers
 // ============================================================================
 
 QString EmailExportWorker::formatDisplayName(sak::ExportFormat format) {
-    switch (format) {
-    case sak::ExportFormat::Eml:
-        return QStringLiteral("EML");
-    case sak::ExportFormat::CsvEmails:
-        return QStringLiteral("CSV (Emails)");
-    case sak::ExportFormat::Vcf:
-        return QStringLiteral("VCF");
-    case sak::ExportFormat::CsvContacts:
-        return QStringLiteral("CSV (Contacts)");
-    case sak::ExportFormat::Ics:
-        return QStringLiteral("ICS");
-    case sak::ExportFormat::CsvCalendar:
-        return QStringLiteral("CSV (Calendar)");
-    case sak::ExportFormat::CsvTasks:
-        return QStringLiteral("CSV (Tasks)");
-    case sak::ExportFormat::PlainTextNotes:
-        return QStringLiteral("TXT");
-    case sak::ExportFormat::Attachments:
-        return QStringLiteral("Attachments");
+    for (const auto& entry : kExportFormatNames) {
+        if (entry.format == format) {
+            return QString::fromLatin1(entry.display_name);
+        }
     }
     return {};
 }
@@ -464,8 +577,9 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     sak::EmailExportResult result;
     result.export_path = config.output_path;
-    result.export_format = QStringLiteral("EML (from MBOX)");
     result.started = QDateTime::currentDateTime();
+    const auto effective_format = messageFormatOrEml(config.format);
+    result.export_format = formatDisplayName(effective_format) + QStringLiteral(" (from MBOX)");
 
     QDir output_dir(config.output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
@@ -477,12 +591,23 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     Q_EMIT exportStarted(indices.size());
 
+    std::unique_ptr<sak::EmlWriter> eml_writer;
+    std::unique_ptr<sak::HtmlEmailWriter> html_writer;
+    std::unique_ptr<sak::PdfEmailWriter> pdf_writer;
+    prepareMessageWriters(effective_format, config, eml_writer, html_writer, pdf_writer);
+    const PerItemWriterSet writers{eml_writer.get(), html_writer.get(), pdf_writer.get()};
+    const MboxItemExportContext context{parser, config, result, writers, effective_format};
+
     for (int idx = 0; idx < indices.size(); ++idx) {
         if (m_cancelled.load()) {
             break;
         }
 
-        exportSingleMboxMessage(parser, indices[idx], config, result);
+        if (exportOneMboxItem(context, indices[idx], idx)) {
+            result.items_exported++;
+        } else {
+            result.items_failed++;
+        }
 
         if ((idx + 1) % kProgressInterval == 0) {
             Q_EMIT exportProgress(idx + 1, indices.size(), result.total_bytes);
@@ -491,6 +616,31 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
 
     result.finished = QDateTime::currentDateTime();
     Q_EMIT exportComplete(result);
+}
+
+bool EmailExportWorker::exportOneMboxItem(const MboxItemExportContext& context,
+                                          int message_index,
+                                          int loop_index) {
+    auto detail = context.parser->readMessageDetail(message_index);
+    if (!detail.has_value()) {
+        return false;
+    }
+
+    const auto item = mboxDetailAsPstItem(detail.value());
+    const QVector<QPair<QString, QByteArray>> attachment_data;
+    switch (context.effective_format) {
+    case sak::ExportFormat::Html:
+        return writeHtml(*context.writers.html, item, attachment_data, context.result.total_bytes);
+    case sak::ExportFormat::Text:
+        return writePlainText(
+            {item, context.config.output_path, loop_index, attachment_data, false},
+            context.result.total_bytes);
+    case sak::ExportFormat::Pdf:
+        return writePdf(*context.writers.pdf, item, attachment_data, context.result.total_bytes);
+    case sak::ExportFormat::Eml:
+    default:
+        return writeEml(*context.writers.eml, item, attachment_data, context.result.total_bytes);
+    }
 }
 
 void EmailExportWorker::exportSingleMboxMessage(MboxParser* parser,
@@ -556,30 +706,45 @@ void EmailExportWorker::cancel() {
 // EML Writer
 // ============================================================================
 
-bool EmailExportWorker::writeEml(const sak::PstItemDetail& item,
-                                 const QString& output_dir,
-                                 int index) {
-    QByteArray content = buildEmlContent(item);
-    if (content.isEmpty()) {
+bool EmailExportWorker::writeEml(sak::EmlWriter& writer,
+                                 const sak::PstItemDetail& item,
+                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
+                                 qint64& bytes_written) {
+    const qint64 before = writer.totalBytesWritten();
+    auto write_result = writer.writeMessage(item, attachment_data, {});
+    if (!write_result.has_value()) {
         return false;
     }
+    bytes_written += writer.totalBytesWritten() - before;
+    return true;
+}
 
-    QString safe_sub = sanitizeFilename(item.subject, kMaxFilenameLength);
-    if (safe_sub.isEmpty()) {
-        safe_sub = QStringLiteral("message_%1").arg(index);
-    }
-    if (item.date.isValid()) {
-        safe_sub = item.date.toString(QStringLiteral("yyyy-MM-dd")) + QLatin1Char('_') + safe_sub;
-    }
-    QString filename = safe_sub + QStringLiteral(".eml");
-    filename = resolveFilenameConflict(output_dir, filename);
-
-    QFile file(output_dir + QLatin1Char('/') + filename);
-    if (!file.open(QIODevice::WriteOnly)) {
+bool EmailExportWorker::writeHtml(sak::HtmlEmailWriter& writer,
+                                  const sak::PstItemDetail& item,
+                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
+                                  qint64& bytes_written) {
+    const qint64 before = writer.totalBytesWritten();
+    auto write_result = writer.writeMessage(item, attachment_data, {});
+    if (!write_result.has_value()) {
         return false;
     }
-    file.write(content);
-    file.close();
+    bytes_written += writer.totalBytesWritten() - before;
+    return true;
+}
+
+bool EmailExportWorker::writePdf(sak::PdfEmailWriter& writer,
+                                 const sak::PstItemDetail& item,
+                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
+                                 qint64& bytes_written) {
+    const qint64 before = writer.totalBytesWritten();
+    auto write_result = writer.writeMessage(item, attachment_data, {});
+    if (!write_result.has_value()) {
+        return false;
+    }
+    bytes_written += writer.totalBytesWritten() - before;
+    if (!saveSidecarAttachments(attachment_data, write_result.value(), bytes_written)) {
+        return attachment_data.isEmpty();
+    }
     return true;
 }
 
@@ -899,34 +1064,110 @@ QString EmailExportWorker::resolveFilenameConflict(const QString& dir, const QSt
 // Helper: Plain text export (sticky notes)
 // ============================================================================
 
-bool EmailExportWorker::writePlainText(const sak::PstItemDetail& item,
-                                       const QString& output_dir,
-                                       int index) {
+bool EmailExportWorker::writePlainText(const PlainTextWriteRequest& request,
+                                       qint64& bytes_written) {
+    const auto& item = request.item;
     QString safe_sub = sanitizeFilename(item.subject, kMaxFilenameLength);
     if (safe_sub.isEmpty()) {
-        safe_sub = QStringLiteral("note_%1").arg(index);
+        safe_sub = QStringLiteral("message_%1").arg(request.index);
+    }
+    if (item.date.isValid()) {
+        safe_sub = item.date.toString(QStringLiteral("yyyy-MM-dd")) + QLatin1Char('_') + safe_sub;
     }
     QString filename = safe_sub + QStringLiteral(".txt");
-    filename = resolveFilenameConflict(output_dir, filename);
+    filename = resolveFilenameConflict(request.output_dir, filename);
+    const QString full_path = request.output_dir + QLatin1Char('/') + filename;
 
-    QFile file(output_dir + QLatin1Char('/') + filename);
+    QFile file(full_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
-    if (!item.subject.isEmpty()) {
-        stream << item.subject << "\r\n";
-        stream << QStringLiteral("---") << "\r\n";
-    }
+    appendPlainTextHeaders(stream, item, request.attachment_data.size());
+    stream << QStringLiteral("\r\n---\r\n\r\n");
     stream << item.body_plain;
+    if (item.body_plain.isEmpty() && !item.body_html.isEmpty()) {
+        stream << item.body_html;
+    }
     file.close();
+    QFileInfo info(full_path);
+    bytes_written += info.size();
+    if (request.save_attachments &&
+        !saveSidecarAttachments(request.attachment_data, full_path, bytes_written)) {
+        return false;
+    }
     return true;
 }
 
 // ============================================================================
 // Helper: Export all attachments for a message
 // ============================================================================
+
+QVector<QPair<QString, QByteArray>> EmailExportWorker::collectAttachmentData(
+    PstParser* parser, const sak::PstItemDetail& item, const sak::EmailExportConfig& config) {
+    QVector<QPair<QString, QByteArray>> attachment_data;
+    if (parser == nullptr || item.attachments.isEmpty()) {
+        return attachment_data;
+    }
+    attachment_data.reserve(item.attachments.size());
+
+    for (int att_idx = 0; att_idx < item.attachments.size(); ++att_idx) {
+        const auto& att = item.attachments.at(att_idx);
+        if (config.skip_inline_images && !att.content_id.isEmpty()) {
+            continue;
+        }
+        auto data = parser->readAttachmentData(item.node_id, att.index);
+        if (!data.has_value()) {
+            continue;
+        }
+        QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        if (name.isEmpty()) {
+            name = QStringLiteral("attachment_%1").arg(att_idx);
+        }
+        attachment_data.append({sanitizeFilename(name, kMaxFilenameLength), data.value()});
+    }
+
+    return attachment_data;
+}
+
+bool EmailExportWorker::saveSidecarAttachments(
+    const QVector<QPair<QString, QByteArray>>& attachment_data,
+    const QString& exported_file_path,
+    qint64& bytes_written) {
+    if (attachment_data.isEmpty()) {
+        return true;
+    }
+
+    const QFileInfo exported_info(exported_file_path);
+    const QString attach_dir = exported_info.absolutePath() + QLatin1Char('/') +
+                               exported_info.completeBaseName() + QStringLiteral("_attachments");
+    QDir dir;
+    if (!dir.mkpath(attach_dir)) {
+        return false;
+    }
+
+    bool all_saved = true;
+    for (const auto& [name, data] : attachment_data) {
+        QString safe_name = sanitizeFilename(name, kMaxFilenameLength);
+        if (safe_name.isEmpty()) {
+            safe_name = QStringLiteral("attachment");
+        }
+        safe_name = resolveFilenameConflict(attach_dir, safe_name);
+        QFile file(attach_dir + QLatin1Char('/') + safe_name);
+        if (!file.open(QIODevice::WriteOnly)) {
+            all_saved = false;
+            continue;
+        }
+        const qint64 written = file.write(data);
+        if (written == data.size()) {
+            bytes_written += written;
+        } else {
+            all_saved = false;
+        }
+    }
+    return all_saved;
+}
 
 bool EmailExportWorker::exportAttachments(PstParser* parser,
                                           const sak::PstItemDetail& item,

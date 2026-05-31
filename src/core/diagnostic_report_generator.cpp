@@ -497,18 +497,20 @@ QString DiagnosticReportGenerator::renderHtml() const {
 }
 
 QString DiagnosticReportGenerator::buildHtmlHeader() {
-    return QStringLiteral(R"(<!DOCTYPE html>
+    QString html = QStringLiteral(R"(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>S.A.K. Diagnostic Report</title>
-<style>
-%1
-</style>
 </head>
 )")
-        .arg(report::enterpriseReportStyleSheet());
+                       .replace(QStringLiteral("</head>"),
+                                QString::fromLatin1(report::kHtmlStyleTagOpen) +
+                                    report::enterpriseReportStyleSheet() +
+                                    QString::fromLatin1(report::kHtmlStyleTagClose) +
+                                    QStringLiteral("</head>"));
+    return html;
 }
 
 QString DiagnosticReportGenerator::buildHardwareSection() const {

@@ -159,6 +159,9 @@ private:
     QGroupBox* createStressTestSection();
     QGroupBox* createThermalSection();
     QGroupBox* createSuiteSection();
+    void createSuiteStepLabels(QVBoxLayout* layout);
+    QHBoxLayout* createSuiteButtonRow();
+    void connectSuiteButtons();
     QGroupBox* createReportSection();
 
     QGroupBox* createSystemMaintenanceSection();

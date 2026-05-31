@@ -63,6 +63,7 @@ void SettingsDialog::setupUi() {
 
     m_resetButton = new QPushButton(tr("Reset to Defaults"), this);
     m_resetButton->setAccessibleName(tr("Reset settings to defaults"));
+    m_resetButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_resetButton);
 
     buttonLayout->addStretch();
@@ -70,15 +71,18 @@ void SettingsDialog::setupUi() {
     m_okButton = new QPushButton(tr("OK"), this);
     m_okButton->setAccessibleName(tr("Save settings"));
     m_okButton->setDefault(true);
+    m_okButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_okButton);
 
     m_cancelButton = new QPushButton(tr("Cancel"), this);
     m_cancelButton->setAccessibleName(tr("Cancel settings changes"));
+    m_cancelButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_cancelButton);
 
     m_applyButton = new QPushButton(tr("Apply"), this);
     m_applyButton->setAccessibleName(tr("Apply settings changes"));
     m_applyButton->setEnabled(false);
+    m_applyButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_applyButton);
 
     mainLayout->addLayout(buttonLayout);
@@ -141,6 +145,7 @@ QGroupBox* SettingsDialog::createBackupSettingsGroup(QWidget* parent) {
     m_lastBackupLocation = new QLineEdit();
     m_lastBackupLocation->setReadOnly(true);
     auto* browseButton = new QPushButton(tr("Browse..."));
+    browseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(browseButton, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(this,
                                                         tr("Select Backup Location"),
@@ -169,6 +174,7 @@ QGroupBox* SettingsDialog::createQuickActionsGroup(QWidget* parent) {
     m_quickActionsBackupLocation = new QLineEdit();
     m_quickActionsBackupLocation->setPlaceholderText(tr("C:\\SAK_Backups"));
     auto* qaBrowseButton = new QPushButton(tr("Browse..."));
+    qaBrowseButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(qaBrowseButton, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(this,
                                                         tr("Select Quick Actions Backup Location"),

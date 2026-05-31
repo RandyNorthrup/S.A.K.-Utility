@@ -274,7 +274,7 @@ constexpr int kSubagentSummarySectionLimit = 8;
 constexpr int kProgressCompletedStepWeight = 2;
 
 QString statusLabelStyle(const char* color) {
-    return QStringLiteral("color: %1; font-weight: 600;").arg(QString::fromLatin1(color));
+    return sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold, color);
 }
 
 bool containsAny(const QString& value, std::initializer_list<const char*> needles) {
@@ -434,10 +434,7 @@ QString runTimelineBadge(const QString& text, const QString& color) {
     if (text.trimmed().isEmpty()) {
         return {};
     }
-    return QStringLiteral(
-               "<span style=\"display:inline-block;border:%1px solid %2;"
-               "color:%2;background:%3;border-radius:%4px;padding:%5px %6px;"
-               "font-size:%7pt;font-weight:%8;white-space:nowrap;\">%9</span>")
+    return QString::fromLatin1(sak::ui::kHtmlTimelineBadge)
         .arg(sak::ui::kHtmlTimelineBadgeBorderPx)
         .arg(color)
         .arg(sak::ui::htmlColor(sak::ui::kColorBgSurface))
@@ -460,7 +457,7 @@ QString runTimelineMeta(const QStringList& tags) {
     if (clean.isEmpty()) {
         return {};
     }
-    return QStringLiteral("<div style=\"color:%1;font-size:%2pt;margin-top:%3px;\">%4</div>")
+    return QString::fromLatin1(sak::ui::kHtmlTimelineMeta)
         .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
         .arg(sak::ui::kFontSizeSmall)
         .arg(sak::ui::kHtmlTimelineMetaMarginTopPx)
@@ -2362,8 +2359,10 @@ void appendReportHtmlDocumentStart(QStringList* html, const PanelReportData& dat
     *html << QStringLiteral(
                  "<!doctype html><html><head><meta charset=\"utf-8\">"
                  "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-                 "<title>PC Health Report</title><style>%1</style></head><body><main>")
-                 .arg(report::aiHealthReportStyleSheet());
+                 "<title>PC Health Report</title>") +
+                 QString::fromLatin1(sak::ui::kHtmlStyleTagOpen) +
+                 report::aiHealthReportStyleSheet() +
+                 QString::fromLatin1(sak::ui::kHtmlStyleHeadMainCloseOpen);
     *html << QStringLiteral(
                  "<div class=\"hero\"><span class=\"badge\">%1</span><h1>PC Health Report</h1>"
                  "<p>Generated %2 UTC from S.A.K. Utility AI workflow evidence.</p></div>")
@@ -2704,13 +2703,7 @@ QString workflowDetailsMarkdown(const ai::WorkflowTemplate& workflow) {
 
 QString workflowDetailsHtml(const ai::WorkflowTemplate& workflow) {
     QTextDocument document;
-    document.setDefaultStyleSheet(
-        QStringLiteral(
-            "body{font-family:'Segoe UI',Arial,sans-serif;font-size:9pt;color:%1;background:%2;}"
-            "h1{font-size:13pt;margin:0 0 6px;color:%3;}h2{font-size:10pt;margin:8px 0 "
-            "3px;color:%3;}"
-            "li{margin:2px 0;}")
-            .arg(sak::ui::kColorTextBody, sak::ui::kColorBgSurface, sak::ui::kColorTextHeading));
+    document.setDefaultStyleSheet(sak::ui::aiWorkflowMarkdownStyle());
     document.setMarkdown(workflowDetailsMarkdown(workflow));
     return document.toHtml();
 }
@@ -2790,24 +2783,11 @@ void configureReadableCombo(QComboBox* combo,
 }
 
 QString workbenchListStyle() {
-    return QStringLiteral(
-               "QListWidget { background: %1; border: 1px solid %2; border-radius: 4px; "
-               "padding: 2px; color: %3; }"
-               "QListWidget::item { padding: 5px 6px; border-radius: 3px; }"
-               "QListWidget::item:selected { background: %4; color: %3; }"
-               "QListWidget::item:hover { background: %5; }")
-        .arg(sak::ui::kColorBgWhite,
-             sak::ui::kColorBorderDefault,
-             sak::ui::kColorTextBody,
-             sak::ui::kColorBgInfoPanel,
-             sak::ui::kColorBgPageHover);
+    return sak::ui::aiWorkbenchListStyle();
 }
 
 QString composerEditStyle() {
-    return QStringLiteral(
-               "QPlainTextEdit { background: transparent; border: 0; color: %1; padding: 6px; "
-               "font-size: 10pt; }")
-        .arg(sak::ui::kColorTextBody);
+    return sak::ui::aiComposerEditStyle();
 }
 
 void configureCompactButton(QPushButton* button, const QString& icon_path = {}) {
@@ -8777,17 +8757,7 @@ QString AiAssistantPanel::runDetailsHtml() const {
                            .arg(runDetailsText().toHtmlEscaped());
     markdown.replace(QStringLiteral("````"), QStringLiteral("```"));
     QTextDocument document;
-    document.setDefaultStyleSheet(
-        QStringLiteral(
-            "body{font-family:'Segoe UI',Arial,sans-serif;color:%1;background:%2;font-size:9pt;}"
-            "h1{font-size:14pt;color:%3;margin:0 0 8px;}"
-            "pre{background:%4;border:1px solid %5;border-radius:4px;padding:8px;white-space:"
-            "pre-wrap;}")
-            .arg(sak::ui::kColorTextBody,
-                 sak::ui::kColorBgSurface,
-                 sak::ui::kColorTextHeading,
-                 sak::ui::kColorBgWhite,
-                 sak::ui::kColorBorderDefault));
+    document.setDefaultStyleSheet(sak::ui::aiRunDetailsMarkdownStyle());
     document.setMarkdown(markdown);
     return document.toHtml();
 }

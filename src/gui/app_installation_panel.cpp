@@ -184,6 +184,7 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
     m_searchButton = new QPushButton(tr("Search"), this);
     m_searchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_searchButton->setToolTip(QStringLiteral("Search the Chocolatey repository"));
+    m_searchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     searchRow->addWidget(m_searchButton);
     searchLayout->addLayout(searchRow);
 
@@ -211,6 +212,7 @@ void AppInstallationPanel::setupUi_packageTable(QHBoxLayout* sideBySide) {
     m_addToQueueButton->setEnabled(false);
     m_addToQueueButton->setAccessibleName(QStringLiteral("Add to Queue"));
     m_addToQueueButton->setToolTip(QStringLiteral("Add the selected package to the install queue"));
+    m_addToQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     searchLayout->addWidget(m_addToQueueButton);
 
     sideBySide->addWidget(searchGroup, 1);
@@ -232,12 +234,14 @@ void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* sideBySide) {
     m_removeFromQueueButton->setEnabled(false);
     m_removeFromQueueButton->setAccessibleName(QStringLiteral("Remove from Queue"));
     m_removeFromQueueButton->setToolTip(QStringLiteral("Remove selected packages from the queue"));
+    m_removeFromQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     queueBtnRow->addWidget(m_removeFromQueueButton);
 
     m_clearQueueButton = new QPushButton(tr("Clear All"), this);
     m_clearQueueButton->setEnabled(false);
     m_clearQueueButton->setAccessibleName(QStringLiteral("Clear Queue"));
     m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
+    m_clearQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     queueBtnRow->addWidget(m_clearQueueButton);
 
     queueBtnRow->addStretch();
@@ -247,12 +251,14 @@ void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* sideBySide) {
     m_saveQueueButton->setToolTip(
         tr("Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
+    m_saveQueueButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
     queueBtnRow->addWidget(m_saveQueueButton);
 
     auto* loadQueueBtn = new QPushButton(tr("Load List"), this);
     loadQueueBtn->setAccessibleName(QStringLiteral("Load Install List"));
     loadQueueBtn->setToolTip(tr("Load a previously saved app list into the install queue"));
+    loadQueueBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(loadQueueBtn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
     queueBtnRow->addWidget(loadQueueBtn);
 
@@ -478,6 +484,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
     m_offlineSearchButton = new QPushButton(tr("Search"), this);
     m_offlineSearchButton->setAccessibleName(QStringLiteral("Search Packages"));
     m_offlineSearchButton->setToolTip(tr("Search the Chocolatey repository for matching packages"));
+    m_offlineSearchButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     searchRow->addWidget(m_offlineSearchButton);
     searchLayout->addLayout(searchRow);
 
@@ -506,6 +513,7 @@ void AppInstallationPanel::setupOfflineSearchGroup(QHBoxLayout* sideBySide) {
     m_offlineAddButton->setToolTip(
         tr("Add the selected search result to the offline deployment list"));
     m_offlineAddButton->setEnabled(false);
+    m_offlineAddButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     searchLayout->addWidget(m_offlineAddButton);
 
     sideBySide->addWidget(searchGroup, 1);
@@ -526,11 +534,13 @@ void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* sideBySide) 
     m_offlineRemoveButton = new QPushButton(tr("Remove"), this);
     m_offlineRemoveButton->setEnabled(false);
     m_offlineRemoveButton->setAccessibleName(QStringLiteral("Remove from List"));
+    m_offlineRemoveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     listBtnRow->addWidget(m_offlineRemoveButton);
 
     m_offlineClearButton = new QPushButton(tr("Clear All"), this);
     m_offlineClearButton->setEnabled(false);
     m_offlineClearButton->setAccessibleName(QStringLiteral("Clear Offline List"));
+    m_offlineClearButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     listBtnRow->addWidget(m_offlineClearButton);
     listBtnRow->addStretch();
 
@@ -538,11 +548,13 @@ void AppInstallationPanel::setupOfflineDeployListGroup(QHBoxLayout* sideBySide) 
     m_saveOfflineListButton->setAccessibleName(QStringLiteral("Save Offline List"));
     m_saveOfflineListButton->setToolTip(tr("Save the offline package list to a JSON file"));
     m_saveOfflineListButton->setEnabled(false);
+    m_saveOfflineListButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     listBtnRow->addWidget(m_saveOfflineListButton);
 
     m_loadOfflineListButton = new QPushButton(tr("Load List"), this);
     m_loadOfflineListButton->setAccessibleName(QStringLiteral("Load Offline List"));
     m_loadOfflineListButton->setToolTip(tr("Load a package list from a JSON file"));
+    m_loadOfflineListButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     listBtnRow->addWidget(m_loadOfflineListButton);
 
     listLayout->addLayout(listBtnRow);

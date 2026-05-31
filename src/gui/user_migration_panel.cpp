@@ -102,6 +102,7 @@ void UserMigrationPanel::setupUi() {
 
     auto* settingsBtn = new QPushButton(tr("Settings"), this);
     settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
+    settingsBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
     bottomLayout->addWidget(settingsBtn);
 
@@ -122,7 +123,7 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
                                         tr("Scan and select users, choose folders, configure"
                                            " filters, and create backup packages."),
                                         tr("Start Backup Wizard..."),
-                                        sak::ui::kPrimaryButtonStyle,
+                                        sak::ui::kSecondaryButtonStyle,
                                         tr("Step-by-step wizard to select apps, configure"
                                            " options, and create backups"),
                                         QStringLiteral("Start Backup Wizard")},
@@ -264,6 +265,7 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
         btn->setMinimumHeight(sak::kButtonHeightTall);
         btn->setToolTip(tooltip);
         btn->setAccessibleName(text);
+        btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
         m_action_buttons.insert(key, btn);
         btn_layout->addWidget(btn);
         return btn;
@@ -415,6 +417,7 @@ void UserMigrationPanel::onSettingsClicked() {
     auto* locEdit = new QLineEdit(config.getLastBackupLocation(), &dialog);
     locEdit->setReadOnly(true);
     auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
+    browseBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
         QString dir = QFileDialog::getExistingDirectory(&dialog,
                                                         tr("Select Backup Location"),

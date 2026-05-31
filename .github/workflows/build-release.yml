@@ -435,8 +435,9 @@ jobs:
           Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.
 
           ### Application Management
-          **App Installation** - Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON.
+          **App Installation** - Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON. Offline deployment supports Chocolatey bundle and direct installer modes.
           **Advanced Uninstall** - Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
+          **Vulnerability Scanner** - Installed-app and package checks against CISA KEV, NVD, GitHub Security Advisories, and OSV with CSV/JSON export.
 
           ### Benchmark and Diagnostics
           **Diagnostics** - SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
@@ -456,8 +457,11 @@ jobs:
           **WiFi Manager** - WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
 
           ### Email Tools
-          **Email Inspector** - Browse, search, and export data from Outlook PST/OST and MBOX archives - no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector. Contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
+          **Email Inspector** - Browse, search, checkbox-select, and export data from Outlook PST/OST and MBOX archives - no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector, selected-message export to HTML/TXT/EML/PDF with attachment preservation, contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and checkbox-backed attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
           **OST Converter** - Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
+
+          ### Modern UI and Release Quality
+          Windows 11-style responsive Qt UI with light/dark themes, themed selector icons, explicit action-button hover states, and raw style literals centralized behind release-gated constants. Release gates cover tests, accessibility, style constants, magic numbers, complexity, secrets, license audits, package smoke, and signed artifact verification.
 
           ### Settings
           Per-panel settings - each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).

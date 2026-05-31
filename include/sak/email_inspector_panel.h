@@ -89,6 +89,7 @@ private Q_SLOTS:
     // -- Export ----------------------------------------------------------
     void onExportClicked();
     void onExportAttachmentsClicked();
+    void exportCurrentFolderAs(sak::ExportFormat format);
 
     // -- Modals ----------------------------------------------------------
     void onScanForFilesClicked();
@@ -165,6 +166,8 @@ private:
     [[nodiscard]] static bool isHiddenFolder(const QString& name, const QString& container_class);
     void collectSpecialFolderIds(const sak::PstFolder& folder);
     void populateItemList(const QVector<sak::PstItemSummary>& items);
+    [[nodiscard]] QVector<uint64_t> checkedItemIds() const;
+    [[nodiscard]] uint64_t itemIdForRow(int row) const;
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
@@ -191,6 +194,7 @@ private:
     void applyPageSize();
     void reloadCurrentPage();
     void updatePageControls();
+    void addPreviewControlRow(QVBoxLayout* root_layout);
     [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
 
@@ -204,7 +208,7 @@ private:
     QToolButton* m_scan_files_button{nullptr};
     QToolButton* m_open_button{nullptr};
     QToolButton* m_close_button{nullptr};
-    QToolButton* m_export_emails_button{nullptr};
+    QPushButton* m_export_emails_button{nullptr};
     QToolButton* m_contacts_button{nullptr};
     QToolButton* m_calendar_button{nullptr};
     QToolButton* m_attachments_button{nullptr};
@@ -289,7 +293,7 @@ private:
 
     // -- Item List Columns -----------------------------------------------
     enum ItemColumn {
-        ColAttachment = 0,
+        ColSelect = 0,
         ColSubject,
         ColFrom,
         ColDate,

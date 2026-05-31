@@ -57,5 +57,14 @@
         <file>icons/icons8-keyhole-shield.svg</file>
         <file>icons/icons8-warning-shield.svg</file>
         <file>icons/icons8-lock.svg</file>
+        <file>icons/icons8-selector-chevron-down.svg</file>
+        <file>icons/icons8-selector-chevron-down-dark.svg</file>
+        <file>icons/icons8-selector-chevron-up.svg</file>
+        <file>icons/icons8-selector-chevron-up-dark.svg</file>
+        <file>icons/icons8-selector-chevron-left-on-tone.svg</file>
+        <file>icons/icons8-selector-chevron-right-on-tone.svg</file>
+        <file>icons/icons8-selector-calendar.svg</file>
+        <file>icons/icons8-selector-calendar-dark.svg</file>
+        <file>icons/icons8-selector-check.svg</file>
     </qresource>
 </RCC>

@@ -101,6 +101,7 @@ void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* mainLayout) {
     configLayout->addWidget(m_channelCombo, 1, 1);
 
     m_fetchBuildsButton = new QPushButton("Fetch Builds", configGroup);
+    m_fetchBuildsButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     configLayout->addWidget(m_fetchBuildsButton,
                             0,
                             kFetchBuildsGridColumn,
@@ -153,6 +154,7 @@ void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* mainLayout) {
     saveLayout->addWidget(m_saveLocationEdit);
 
     m_browseSaveButton = new QPushButton("Browse...", saveGroup);
+    m_browseSaveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     saveLayout->addWidget(m_browseSaveButton);
 
     mainLayout->addWidget(saveGroup);
@@ -209,9 +211,11 @@ void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayou
 
     m_cancelButton = new QPushButton("Cancel", this);
     m_cancelButton->setEnabled(false);
+    m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     buttonLayout->addWidget(m_cancelButton);
 
     m_closeButton = new QPushButton("Close", this);
+    m_closeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_closeButton);
 
     mainLayout->addLayout(buttonLayout);

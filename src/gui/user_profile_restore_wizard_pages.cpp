@@ -99,6 +99,7 @@ void UserProfileRestoreUserMappingPage::setupUi() {
     m_autoMapButton->setToolTip(
         tr("Pairs each backup user to a local account with the same "
            "username"));
+    m_autoMapButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_autoMapButton);
     buttonLayout->addStretch(1);
     layout->addLayout(buttonLayout);
@@ -514,6 +515,8 @@ void UserProfileRestoreFolderSelectionPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_selectAllButton);
     buttonLayout->addWidget(m_selectNoneButton);
     buttonLayout->addStretch(1);
@@ -725,6 +728,7 @@ void UserProfileRestoreAppDataPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -733,6 +737,7 @@ void UserProfileRestoreAppDataPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -984,6 +989,7 @@ void UserProfileRestoreNetworksPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -992,6 +998,7 @@ void UserProfileRestoreNetworksPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -1175,6 +1182,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1183,6 +1191,7 @@ void UserProfileRestoreEthernetPage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,
@@ -1538,6 +1547,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
     auto* buttonLayout = new QHBoxLayout();
     m_selectAllButton = new QPushButton(tr("Select All"), this);
     m_selectAllButton->setEnabled(false);
+    m_selectAllButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_selectAllButton,
             &QPushButton::clicked,
             this,
@@ -1546,6 +1556,7 @@ void UserProfileRestoreAppRestorePage::setupUi() {
 
     m_selectNoneButton = new QPushButton(tr("Select None"), this);
     m_selectNoneButton->setEnabled(false);
+    m_selectNoneButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_selectNoneButton,
             &QPushButton::clicked,
             this,

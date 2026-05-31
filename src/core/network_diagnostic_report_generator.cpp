@@ -131,15 +131,10 @@ QString NetworkDiagnosticReportGenerator::toHtml() const {
 
 QString NetworkDiagnosticReportGenerator::buildHtmlHeader() const {
     QString html;
-    html += QStringLiteral(
-                "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
-                "<meta charset=\"UTF-8\">\n"
-                "<title>%1</title>\n"
-                "<style>\n"
-                "%2\n"
-                "</style>\n</head>\n<body>\n"
-                "<h1>%1</h1>\n")
-                .arg(QLatin1String(kReportTitle), report::enterpriseReportStyleSheet());
+    html += QString::fromLatin1(report::kHtmlReportDocumentOpen).arg(QLatin1String(kReportTitle));
+    html += report::enterpriseReportStyleSheet();
+    html += QString::fromLatin1(report::kHtmlReportBodyOpen);
+    html += QStringLiteral("<h1>%1</h1>\n").arg(QLatin1String(kReportTitle));
 
     // Meta information
     html += QStringLiteral("<div class=\"meta\">\n");

@@ -1649,14 +1649,7 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     QColor fill = fillColorForStatus(evt.busy_status, evt.item_type);
     QColor border = borderColorForStatus(evt.busy_status, evt.item_type);
 
-    QString html = QStringLiteral(
-                       "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: %1px;'>"
-                       "<div style='border-left: %2px solid %3; "
-                       "background: %4; padding: %5px %6px; "
-                       "border-radius: %7px; margin-bottom: %8px;'>"
-                       "<h3 style='color: %9; margin: 0 0 %10px 0;'>"
-                       "%11</h3>")
+    QString html = QString::fromLatin1(ui::kHtmlCalendarEventDetailOpen)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(kEventDetailAccentBorderWidthPx)
                        .arg(border.name())
@@ -1679,13 +1672,11 @@ void EmailCalendarDialog::displayEventSummary(const CalendarEvent& evt) {
     appendHtmlField(html, QStringLiteral("Location"), evt.location);
 
     if (evt.busy_status >= 0 && evt.busy_status < email::kCalBusyStatusCount) {
-        html += QStringLiteral(
-                    "<p><b>Status:</b> "
-                    "<span style='color: %1; font-weight: %2;'>"
-                    "%3</span></p>")
-                    .arg(border.name())
-                    .arg(ui::kFontWeightSemibold)
-                    .arg(QLatin1String(kBusyLabels[evt.busy_status]));
+        html += QStringLiteral("<p><b>Status:</b> %1</p>")
+                    .arg(QString::fromLatin1(ui::kHtmlSpanColorWeight)
+                             .arg(border.name())
+                             .arg(ui::kFontWeightSemibold)
+                             .arg(QLatin1String(kBusyLabels[evt.busy_status])));
     }
 
     appendHtmlField(html, QStringLiteral("Organizer"), evt.sender_name);
@@ -1720,7 +1711,7 @@ QString EmailCalendarDialog::buildDateHtml(const CalendarEvent& evt) {
         date_str += QStringLiteral(" \u2013 ") +
                     evt.end_time.time().toString(QStringLiteral("h:mm AP"));
     }
-    return QStringLiteral("<p style='color: %1; margin: %2px 0;'>%3</p>")
+    return QString::fromLatin1(ui::kHtmlParagraphColorMargin)
         .arg(ui::htmlColor(ui::kColorTextSecondary))
         .arg(ui::kCssPaddingTinyPx)
         .arg(date_str);
@@ -1740,15 +1731,13 @@ QString EmailCalendarDialog::buildAttendeesHtml(const CalendarEvent& evt) {
 
 QString EmailCalendarDialog::buildBodyHtml(const CalendarEvent& evt) {
     if (!evt.body_html.isEmpty()) {
-        return QStringLiteral("<hr style='border: %1px solid %2;'>")
+        return QString::fromLatin1(ui::kHtmlHorizontalRule)
                    .arg(ui::kCssBorderWidthDefaultPx)
                    .arg(ui::htmlColor(ui::kColorBorderDefault)) +
                evt.body_html;
     }
     if (!evt.body_plain.isEmpty()) {
-        return QStringLiteral(
-                   "<hr style='border: %1px solid %2;'>"
-                   "<p style='white-space: pre-wrap;'>%3</p>")
+        return QString::fromLatin1(ui::kHtmlHorizontalRulePreWrapParagraph)
             .arg(ui::kCssBorderWidthDefaultPx)
             .arg(ui::htmlColor(ui::kColorBorderDefault))
             .arg(evt.body_plain.toHtmlEscaped());

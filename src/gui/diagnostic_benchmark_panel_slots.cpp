@@ -609,12 +609,10 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
             color = sak::ui::kColorWarning;
         }
 
-        const QString temp_text = QString(
-                                      "<span style='color:%1; font-weight:%2;'>"
-                                      "%3 \u00B0C</span>")
+        const QString temp_text = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
                                       .arg(color)
                                       .arg(sak::ui::kFontWeightSemibold)
-                                      .arg(temp);
+                                      .arg(QStringLiteral("%1 \u00B0C").arg(temp));
 
         if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
             m_thermal_cpu_label->setText(temp_text);
@@ -632,10 +630,10 @@ void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalRea
     }
 
     // Show "N/A" for sensors that returned no data
-    const QString not_available =
-        QStringLiteral("<span style='color:%1; font-weight:%2;'>N/A</span>")
-            .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
-            .arg(sak::ui::kFontWeightSemibold);
+    const QString not_available = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
+                                      .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
+                                      .arg(sak::ui::kFontWeightSemibold)
+                                      .arg(QStringLiteral("N/A"));
     if (!cpu_found) {
         m_thermal_cpu_label->setText(not_available);
         m_thermal_cpu_bar->setValue(0);

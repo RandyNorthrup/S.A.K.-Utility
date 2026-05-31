@@ -41,7 +41,8 @@ constexpr int kAttachMethodOleObject = 6;
 // ============================================================================
 
 enum AttachmentColumn {
-    ColFilename = 0,
+    ColSelect = 0,
+    ColFilename,
     ColSize,
     ColType,
     ColSourceSubject,
@@ -60,6 +61,21 @@ static const QString kFilterDocuments = QStringLiteral("Documents");
 static const QString kFilterArchives = QStringLiteral("Archives");
 static const QString kFilterAudio = QStringLiteral("Audio/Video");
 static const QString kFilterOther = QStringLiteral("Other");
+
+QString attachmentKey(const AttachmentEntry& entry) {
+    return QStringLiteral("%1:%2").arg(entry.message_node_id).arg(entry.attachment_index);
+}
+
+QTableWidgetItem* makeAttachmentSelectItem(const AttachmentEntry& entry, bool checked) {
+    auto* item = new QTableWidgetItem();
+    item->setFlags((item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled) &
+                   ~Qt::ItemIsEditable);
+    item->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    item->setTextAlignment(Qt::AlignCenter);
+    item->setToolTip(QObject::tr("Select attachment for saving"));
+    item->setData(Qt::UserRole, attachmentKey(entry));
+    return item;
+}
 
 // ============================================================================
 // Constructor / Destructor
@@ -136,8 +152,13 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
 QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table = new QTableWidget(this);
     m_table->setColumnCount(ColCount);
-    m_table->setHorizontalHeaderLabels(
-        {tr("Filename"), tr("Size"), tr("Type"), tr("Source Email"), tr("Sender"), tr("Date")});
+    m_table->setHorizontalHeaderLabels({tr("Select"),
+                                        tr("Filename"),
+                                        tr("Size"),
+                                        tr("Type"),
+                                        tr("Source Email"),
+                                        tr("Sender"),
+                                        tr("Date")});
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -146,6 +167,8 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->verticalHeader()->setVisible(false);
 
+    m_table->horizontalHeader()->setSectionResizeMode(ColSelect, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColSelect, email::kAttachmentIndicatorColumnWidth);
     m_table->setColumnWidth(ColFilename, email::kAttachmentFilenameColumnWidth);
     m_table->setColumnWidth(ColSize, email::kSizeColumnWidth);
     m_table->setColumnWidth(ColType, email::kTypeColumnWidth);
@@ -156,6 +179,21 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
             &QTableWidget::itemSelectionChanged,
             this,
             &EmailAttachmentsBrowserDialog::onSelectionChanged);
+    connect(m_table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (item == nullptr || item->column() != ColSelect) {
+            return;
+        }
+        const QString key = item->data(Qt::UserRole).toString();
+        if (key.isEmpty()) {
+            return;
+        }
+        if (item->checkState() == Qt::Checked) {
+            m_checked_attachment_keys.insert(key);
+        } else {
+            m_checked_attachment_keys.remove(key);
+        }
+        onSelectionChanged();
+    });
 
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table,
@@ -380,6 +418,9 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
         const int idx = matching.at(row);
         const auto& entry = m_all_attachments[idx];
 
+        const bool checked = m_checked_attachment_keys.contains(attachmentKey(entry));
+        m_table->setItem(row, ColSelect, makeAttachmentSelectItem(entry, checked));
+
         auto* name_item = new QTableWidgetItem(entry.filename);
         name_item->setData(Qt::UserRole, idx);
         m_table->setItem(row, ColFilename, name_item);
@@ -405,6 +446,7 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
     m_table->setSortingEnabled(true);
     m_table->setUpdatesEnabled(true);
     m_save_all_button->setEnabled(m_table->rowCount() > 0);
+    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
 }
 
 bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry) const {
@@ -430,11 +472,15 @@ bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry)
 void EmailAttachmentsBrowserDialog::updateStatusLabel() {
     int visible = m_table->rowCount();
     int total = m_all_attachments.size();
+    const int checked = m_checked_attachment_keys.size();
     if (m_scan_complete) {
         if (visible == total) {
-            m_status_label->setText(tr("%1 attachments").arg(total));
+            m_status_label->setText(tr("%1 attachments, %2 selected").arg(total).arg(checked));
         } else {
-            m_status_label->setText(tr("%1 of %2 attachments (filtered)").arg(visible).arg(total));
+            m_status_label->setText(tr("%1 of %2 attachments (filtered), %3 selected")
+                                        .arg(visible)
+                                        .arg(total)
+                                        .arg(checked));
         }
     } else {
         m_status_label->setText(tr("Scanning... %1 attachments found so far").arg(total));
@@ -461,8 +507,10 @@ void EmailAttachmentsBrowserDialog::onTypeFilterChanged(int /*index*/) {
 }
 
 void EmailAttachmentsBrowserDialog::onSelectionChanged() {
-    bool has_selection = !m_table->selectedItems().isEmpty();
-    m_save_selected_button->setEnabled(has_selection);
+    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
+    if (m_scan_complete) {
+        updateStatusLabel();
+    }
 }
 
 void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
@@ -512,8 +560,7 @@ void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& ent
 }
 
 void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
-    auto selected_rows = m_table->selectionModel()->selectedRows();
-    if (selected_rows.isEmpty()) {
+    if (m_checked_attachment_keys.isEmpty()) {
         return;
     }
 
@@ -524,16 +571,10 @@ void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
 
     int count = 0;
     QVector<std::pair<uint64_t, int>> to_save;
-    for (const auto& index : selected_rows) {
-        auto* item = m_table->item(index.row(), ColFilename);
-        if (item == nullptr) {
+    for (const auto& entry : m_all_attachments) {
+        if (!m_checked_attachment_keys.contains(attachmentKey(entry))) {
             continue;
         }
-        int att_idx = item->data(Qt::UserRole).toInt();
-        if (att_idx < 0 || att_idx >= m_all_attachments.size()) {
-            continue;
-        }
-        const auto& entry = m_all_attachments[att_idx];
         to_save.append({entry.message_node_id, entry.attachment_index});
         ++count;
     }

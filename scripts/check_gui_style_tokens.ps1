@@ -14,8 +14,7 @@ $allowedFiles = @(
     "include/sak/color_constants.h",
     "include/sak/style_constants.h",
     "include/sak/report_style_constants.h",
-    "include/sak/email_constants.h",
-    "src/gui/windows11_theme.cpp"
+    "include/sak/email_constants.h"
 )
 
 function Convert-ToRepoPath([string]$Path) {

@@ -310,10 +310,7 @@ void EmailContactsDialog::filterContacts(const QString& text) {
 }
 
 void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail) {
-    QString html = QStringLiteral(
-                       "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: %1px;'>"
-                       "<h2 style='color: %2; margin-bottom: %3px;'>%4 %5</h2>")
+    QString html = QString::fromLatin1(ui::kHtmlContactDetailHeadingOpen)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(ui::kSpacingMedium)
@@ -321,7 +318,7 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                        .arg(detail.surname.toHtmlEscaped());
 
     if (!detail.job_title.isEmpty() || !detail.company_name.isEmpty()) {
-        html += QStringLiteral("<p style='color: %1; margin: %2px 0;'>%3")
+        html += QString::fromLatin1(ui::kHtmlParagraphColorMarginOpen)
                     .arg(ui::htmlColor(ui::kColorTextSecondary))
                     .arg(ui::kCssPaddingTinyPx)
                     .arg(detail.job_title.toHtmlEscaped());
@@ -331,7 +328,7 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
         html += QStringLiteral("</p>");
     }
 
-    html += QStringLiteral("<hr style='border: %1px solid %2;'>")
+    html += QString::fromLatin1(ui::kHtmlHorizontalRule)
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
 
@@ -360,9 +357,7 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
 
     // Notes / body
     if (!detail.body_plain.isEmpty()) {
-        html += QStringLiteral(
-                    "<hr style='border: %1px solid %2;'>"
-                    "<p style='color: %3; white-space: pre-wrap;'>%4</p>")
+        html += QString::fromLatin1(ui::kHtmlHorizontalRuleColorPreWrapParagraph)
                     .arg(ui::kCssBorderWidthDefaultPx)
                     .arg(ui::htmlColor(ui::kColorBorderDefault))
                     .arg(ui::htmlColor(ui::kColorTextBody))

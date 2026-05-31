@@ -3103,12 +3103,22 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
     message(STATUS "Added unit test: test_pst_parser")
 endif()
 
-# test_ost_integration — opens a real OST file and exercises full parse pipeline
+# test_ost_integration — opens real OST/PST files and exercises full parse pipeline
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
     add_executable(test_ost_integration
         integration/test_ost_integration.cpp
+        ../src/core/email_export_worker.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/html_email_writer.cpp
+        ../src/core/pdf_email_writer.cpp
+        ../src/core/mbox_parser.cpp
         ../src/core/pst_parser.cpp
         ../src/core/logger.cpp
+        ../include/sak/email_export_worker.h
+        ../include/sak/eml_writer.h
+        ../include/sak/html_email_writer.h
+        ../include/sak/pdf_email_writer.h
+        ../include/sak/mbox_parser.h
         ../include/sak/pst_parser.h
     )
     set_target_properties(test_ost_integration PROPERTIES
@@ -3181,10 +3191,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
     add_executable(test_email_export_worker
         unit/test_email_export_worker.cpp
         ../src/core/email_export_worker.cpp
+        ../src/core/eml_writer.cpp
+        ../src/core/html_email_writer.cpp
+        ../src/core/pdf_email_writer.cpp
         ../src/core/pst_parser.cpp
         ../src/core/mbox_parser.cpp
         ../src/core/logger.cpp
         ../include/sak/email_export_worker.h
+        ../include/sak/eml_writer.h
+        ../include/sak/html_email_writer.h
+        ../include/sak/pdf_email_writer.h
         ../include/sak/pst_parser.h
         ../include/sak/mbox_parser.h
     )

@@ -326,9 +326,11 @@ void WifiManagerPanel::setupFormActionButtons(QFormLayout* layout) {
         "Show a QR code of the current network for phone/tablet "
         "scanning");
     m_connect_phone_btn->setAccessibleName(QStringLiteral("Connect with Phone"));
+    m_connect_phone_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_add_table_btn = new QPushButton("Add to Table", m_form_group);
     m_add_table_btn->setToolTip("Add current form entry to the saved networks table");
     m_add_table_btn->setAccessibleName(QStringLiteral("Add to Table"));
+    m_add_table_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     auto* formBtnRow = new QHBoxLayout();
     formBtnRow->setContentsMargins(sak::ui::kMarginNone,
                                    sak::ui::kSpacingDefault,
@@ -421,12 +423,16 @@ void WifiManagerPanel::setupTableActionButtons(QVBoxLayout* layout) {
     auto* tableActions = new QHBoxLayout();
     m_delete_selected_btn = new QPushButton("Delete Selected", m_table_group);
     m_delete_selected_btn->setAccessibleName(QStringLiteral("Delete Selected Networks"));
+    m_delete_selected_btn->setStyleSheet(sak::ui::kDangerButtonStyle);
     m_add_to_windows_btn = new QPushButton("Add Selected to Windows", m_table_group);
     m_add_to_windows_btn->setAccessibleName(QStringLiteral("Add Selected to Windows"));
+    m_add_to_windows_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_save_table_btn = new QPushButton("Save\u2026", m_table_group);
     m_save_table_btn->setAccessibleName(QStringLiteral("Save Networks to File"));
+    m_save_table_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_load_table_btn = new QPushButton("Load\u2026", m_table_group);
     m_load_table_btn->setAccessibleName(QStringLiteral("Load Networks from File"));
+    m_load_table_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_delete_selected_btn->setToolTip("Remove the selected row(s) from the table");
     m_add_to_windows_btn->setToolTip(
         "Add checked networks to Windows known WiFi profiles via netsh");
@@ -447,12 +453,16 @@ void WifiManagerPanel::setupActionButtons() {
 
     m_generate_qr_btn = new QPushButton("Generate QR Code", this);
     m_generate_qr_btn->setAccessibleName(QStringLiteral("Generate QR Code"));
+    m_generate_qr_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     m_export_script_btn = new QPushButton("Generate Windows Script", this);
     m_export_script_btn->setAccessibleName(QStringLiteral("Generate Windows Script"));
+    m_export_script_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_export_macos_btn = new QPushButton("Generate macOS Profile", this);
     m_export_macos_btn->setAccessibleName(QStringLiteral("Generate macOS Profile"));
+    m_export_macos_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     m_scan_networks_btn = new QPushButton("Scan Known Networks", this);
     m_scan_networks_btn->setAccessibleName(QStringLiteral("Scan Known Networks"));
+    m_scan_networks_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
 
     m_generate_qr_btn->setToolTip(
         "Export the current network as a QR code image (PNG, PDF, JPG, "
@@ -731,8 +741,10 @@ QWidget* WifiManagerPanel::buildQrFormatPage(const QString& payload,
     auto* outerLayout = new QVBoxLayout(page);
     auto* btnRow = new QHBoxLayout;
     ctl.btnCancel0 = new QPushButton("Cancel");
+    ctl.btnCancel0->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ctl.btnNext = new QPushButton("Next >");
     ctl.btnNext->setDefault(true);
+    ctl.btnNext->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     btnRow->addStretch();
     btnRow->addWidget(ctl.btnCancel0);
     btnRow->addWidget(ctl.btnNext);
@@ -751,6 +763,7 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     ctl.dirEdit->setPlaceholderText("Click Browse to select a folder...");
     ctl.btnBrowse = new QPushButton("Browse...");
     ctl.btnBrowse->setFixedWidth(kQrBrowseButtonWidth);
+    ctl.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     dirRow->addWidget(ctl.dirEdit, 1);
     dirRow->addWidget(ctl.btnBrowse);
     layout->addLayout(dirRow);
@@ -762,10 +775,13 @@ QWidget* WifiManagerPanel::buildQrOutputPage(QrWizardControls& ctl) {
     layout->addStretch();
     auto* btnRow = new QHBoxLayout;
     ctl.btnBack = new QPushButton("< Back");
+    ctl.btnBack->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ctl.btnCancel1 = new QPushButton("Cancel");
+    ctl.btnCancel1->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ctl.btnGenerate = new QPushButton("Generate");
     ctl.btnGenerate->setDefault(true);
     ctl.btnGenerate->setEnabled(false);
+    ctl.btnGenerate->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     btnRow->addWidget(ctl.btnBack);
     btnRow->addStretch();
     btnRow->addWidget(ctl.btnCancel1);
@@ -1014,6 +1030,7 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int networkCount) {
     ui.dirEdit->setPlaceholderText("Click Browse...");
     ui.btnBrowse = new QPushButton("Browse...", dlg);
     ui.btnBrowse->setFixedWidth(kQrBrowseButtonWidth);
+    ui.btnBrowse->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     dirRow->addWidget(ui.dirEdit, 1);
     dirRow->addWidget(ui.btnBrowse);
     layout->addLayout(dirRow);
@@ -1027,9 +1044,11 @@ BatchQrDialogUi buildBatchQrDialogUi(QDialog* dlg, int networkCount) {
     layout->addStretch();
     auto* btnRow = new QHBoxLayout;
     ui.btnCancel = new QPushButton("Cancel", dlg);
+    ui.btnCancel->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ui.btnGen = new QPushButton("Batch Generate", dlg);
     ui.btnGen->setDefault(true);
     ui.btnGen->setEnabled(false);
+    ui.btnGen->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     btnRow->addStretch();
     btnRow->addWidget(ui.btnCancel);
     btnRow->addWidget(ui.btnGen);
@@ -1095,6 +1114,9 @@ MultiNetworkQrDialogUi buildMultiNetworkQrDialogUi(QDialog* dlg, int networkCoun
     ui.prevBtn = new QPushButton("< Prev", dlg);
     ui.nextBtn = new QPushButton("Next >", dlg);
     ui.closeBtn = new QPushButton("Close", dlg);
+    ui.prevBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.nextBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    ui.closeBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     ui.prevBtn->setFixedWidth(kQrNavButtonWidth);
     ui.nextBtn->setFixedWidth(kQrNavButtonWidth);
     navBar->addWidget(ui.prevBtn);
@@ -1424,6 +1446,7 @@ void WifiManagerPanel::showSingleNetworkQrDialog(const WifiConfig& cfg) {
     layout->addWidget(hintLbl);
 
     auto* closeBtn = new QPushButton("Close", &dlg);
+    closeBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
     layout->addWidget(closeBtn);
 

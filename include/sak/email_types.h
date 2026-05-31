@@ -95,6 +95,9 @@ enum class EmailItemType {
 /// @brief Export format for the export worker
 enum class ExportFormat {
     Eml,             ///< RFC 5322 MIME .eml files
+    Html,            ///< Styled .html email files
+    Text,            ///< Plain .txt email files
+    Pdf,             ///< Rendered .pdf email files
     CsvEmails,       ///< CSV with email metadata + body preview
     Vcf,             ///< vCard 3.0 .vcf files
     CsvContacts,     ///< CSV with contact fields
@@ -345,6 +348,7 @@ struct EmailExportConfig {
 
     // EML options
     bool eml_include_headers = true;
+    bool save_attachments_with_messages = true;
 
     // Naming
     bool prefix_with_date = true;  ///< "2024-01-15_Subject.eml"

@@ -354,7 +354,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     toolbar->addWidget(m_copyConfigBtn);
 
     m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
-    m_backupEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_backupEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_backupEthernetBtn->setToolTip(
         tr("Backup selected Ethernet adapter IP/DNS settings to a JSON file "
            "for restoration on this or another PC"));
@@ -365,7 +365,7 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     toolbar->addWidget(m_backupEthernetBtn);
 
     m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), parent);
-    m_restoreEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_restoreEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
         tr("Restore Ethernet adapter settings from a previously saved "
            "JSON backup file -- works across PCs"));

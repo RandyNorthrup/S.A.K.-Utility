@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.1.7
+
+- **PST/OST inspector correctness** - Fixed legacy Unicode PST (`wVer=23`) parsing to use 512-byte NDB pages instead of the Unicode4K 4096-byte layout, restored the MS-PST permutative decode table for compressible-encrypted PST data blocks, and removed the BBT/NBT cache cap that hid blocks in large PST archives. Added fixture coverage for both the local PST and OST samples.
+- **Email export selection** - Replaced the email-list icon column with checkbox multi-select, moved the save action to `Save Selected Email` beside the preview Images toggle, added export choices for HTML, text, EML, and PDF, and saved per-message attachments alongside HTML/TXT/PDF exports while embedding them in EML.
+- **Attachment browser selection** - Added checkbox selection to the all-attachments browser so batch saves no longer depend on Ctrl/Shift row selection.
+- **GUI contrast polish** - Kept the existing dark secondary button tone for Backup/Restore wizard card actions, gave missed Settings, Organizer category, Duplicate Finder, Benchmark panel, Application Management, WiFi, migration wizard, ISO/download, settings, log, and dialog buttons explicit shared action styling with hover states, centralized combo/spin/date selector controls behind Icons8 SVG chevrons and calendar icons, lightened shared card surfaces in dark mode, and restored the original Linux ISO Tux icon.
+- **Style constants enforcement** - Moved Windows theme QSS, in-app rich text styles, and generated report CSS through shared style/report constants and tightened the raw-style gate so style literals fail outside approved constants.
+- **Workflow accuracy** - Pinned TruffleHog secret scanning to the current stable `v3.95.3` tag and refreshed release notes/build-script documentation for the current package contents and readiness gates.
+- **Release metadata** - Bumped project/version metadata to 0.9.1.7.
+
+---
+
 ## v0.9.1.6
 
 - **Dark-mode card polish** - Moved Backup/Restore and Image Flasher card surfaces to shared palette-backed `sakCard` helpers so dark mode no longer keeps local light-only card backgrounds.

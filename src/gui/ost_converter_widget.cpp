@@ -161,12 +161,15 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_add_files_button = new QPushButton(tr("+ Add Files"), group);
     m_add_files_button->setAccessibleName(tr("Add email files"));
     m_add_files_button->setToolTip(tr("Add OST or PST files to the conversion queue"));
+    m_add_files_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_remove_button = new QPushButton(tr("Remove"), group);
     m_remove_button->setAccessibleName(tr("Remove selected email file"));
     m_remove_button->setToolTip(tr("Remove selected file from the queue"));
+    m_remove_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_clear_button = new QPushButton(tr("Clear All"), group);
     m_clear_button->setAccessibleName(tr("Clear conversion queue"));
     m_clear_button->setToolTip(tr("Remove all files from the queue"));
+    m_clear_button->setStyleSheet(ui::kPrimaryButtonStyle);
 
     btn_layout->addWidget(m_add_files_button);
     btn_layout->addWidget(m_remove_button);
@@ -232,6 +235,7 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
 
     m_browse_button = new QPushButton(tr("Browse"), group);
     m_browse_button->setAccessibleName(tr("Browse output directory"));
+    m_browse_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(m_browse_button, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(this,
                                                         tr("Select Output Directory"),
@@ -476,6 +480,7 @@ QWidget* OstConverterWidget::createButtonBar() {
     m_view_report_button->setAccessibleName(tr("View conversion report"));
     m_view_report_button->setEnabled(false);
     m_view_report_button->setToolTip(tr("Open the batch conversion report in your browser"));
+    m_view_report_button->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(m_view_report_button,
             &QPushButton::clicked,
             this,

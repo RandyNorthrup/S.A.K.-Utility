@@ -142,6 +142,7 @@ void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
     saveLayout->addWidget(m_saveLocationEdit);
 
     m_browseSaveButton = new QPushButton("Browse...", saveGroup);
+    m_browseSaveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     saveLayout->addWidget(m_browseSaveButton);
 
     mainLayout->addWidget(saveGroup);
@@ -183,9 +184,11 @@ void LinuxISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout)
 
     m_cancelButton = new QPushButton("Cancel", this);
     m_cancelButton->setEnabled(false);
+    m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     buttonLayout->addWidget(m_cancelButton);
 
     m_closeButton = new QPushButton("Close", this);
+    m_closeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_closeButton);
 
     mainLayout->addLayout(buttonLayout);

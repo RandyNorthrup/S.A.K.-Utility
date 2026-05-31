@@ -72,12 +72,14 @@ void LogViewer::setupUi() {
     // Clear button
     m_clear_button = new QPushButton("Clear", this);
     m_clear_button->setAccessibleName("Clear log viewer");
+    m_clear_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(m_clear_button, &QPushButton::clicked, this, &LogViewer::onClearClicked);
     toolbar_layout->addWidget(m_clear_button);
 
     // Save button
     m_save_button = new QPushButton("Save Log", this);
     m_save_button->setAccessibleName("Save log file");
+    m_save_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     connect(m_save_button, &QPushButton::clicked, this, &LogViewer::onSaveClicked);
     toolbar_layout->addWidget(m_save_button);
 
@@ -242,9 +244,7 @@ QString LogViewer::formatLogMessage(const QString& message, LogLevel level) cons
     QString level_text = getLevelText(level);
     QString color = getLevelColor(level);
 
-    return QString(
-               "<span style='color: %1;'>%2</span> "
-               "<span style='color: %3; font-weight: %4;'>[%5]</span> %6")
+    return QString::fromLatin1(sak::ui::kHtmlLogMessage)
         .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted),
              timestamp,
              color,

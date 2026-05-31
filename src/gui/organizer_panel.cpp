@@ -16,6 +16,7 @@
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -47,6 +48,95 @@ constexpr int kDedupMinSizeMaxKb = 1'000'000;
 constexpr int kDedupThreadCountMax = 64;
 constexpr int kSizeGbPrecision = 2;
 constexpr int kFallbackCpuCoreCount = 4;
+
+struct DedupSettingsDefaults {
+    int minSizeKb;
+    bool recursive;
+    bool parallelHashing;
+    int threadCount;
+};
+
+struct DedupSettingsWidgets {
+    QSpinBox* minSizeSpin{nullptr};
+    QCheckBox* recursiveCheck{nullptr};
+    QCheckBox* parallelCheck{nullptr};
+    QSpinBox* threadSpin{nullptr};
+};
+
+QString dedupTr(const char* text) {
+    return QCoreApplication::translate("OrganizerPanel", text);
+}
+
+void addDialogButtonRow(QFormLayout* layout,
+                        QDialog* dialog,
+                        const QString& okText,
+                        const QString& cancelText) {
+    auto* btnLayout = new QHBoxLayout();
+    btnLayout->addStretch();
+
+    auto* okBtn = new QPushButton(okText, dialog);
+    okBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    QObject::connect(okBtn, &QPushButton::clicked, dialog, &QDialog::accept);
+    btnLayout->addWidget(okBtn);
+
+    auto* cancelBtn = new QPushButton(cancelText, dialog);
+    cancelBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    QObject::connect(cancelBtn, &QPushButton::clicked, dialog, &QDialog::reject);
+    btnLayout->addWidget(cancelBtn);
+
+    layout->addRow(btnLayout);
+}
+
+DedupSettingsWidgets addDedupSettingsRows(QFormLayout* layout,
+                                          QDialog* dialog,
+                                          const DedupSettingsDefaults& defaults) {
+    DedupSettingsWidgets widgets;
+    widgets.minSizeSpin = new QSpinBox(dialog);
+    widgets.minSizeSpin->setMinimum(0);
+    widgets.minSizeSpin->setMaximum(kDedupMinSizeMaxKb);
+    widgets.minSizeSpin->setValue(defaults.minSizeKb);
+    widgets.minSizeSpin->setSuffix(dedupTr(" KB"));
+    layout->addRow(InfoButton::createInfoLabel(
+                       dedupTr("Minimum File Size:"),
+                       dedupTr("Skip tiny files to speed up scanning (0 = check all files)"),
+                       dialog),
+                   widgets.minSizeSpin);
+
+    widgets.recursiveCheck = new QCheckBox(dedupTr("Include all nested subfolders"), dialog);
+    widgets.recursiveCheck->setChecked(defaults.recursive);
+    layout->addRow(
+        InfoButton::createInfoLabel(
+            dedupTr("Recursive Scan:"),
+            dedupTr("Scan all subdirectories recursively, not just the top-level folder"),
+            dialog),
+        widgets.recursiveCheck);
+
+    widgets.parallelCheck = new QCheckBox(dedupTr("Use parallel hashing"), dialog);
+    widgets.parallelCheck->setChecked(defaults.parallelHashing);
+    layout->addRow(
+        InfoButton::createInfoLabel(dedupTr("Parallel Hashing:"),
+                                    dedupTr("Use multiple CPU cores for faster hash calculation. "
+                                            "Disable for debugging or low-resource systems."),
+                                    dialog),
+        widgets.parallelCheck);
+
+    const int cpuCores = QThread::idealThreadCount();
+    widgets.threadSpin = new QSpinBox(dialog);
+    widgets.threadSpin->setMinimum(0);
+    widgets.threadSpin->setMaximum(kDedupThreadCountMax);
+    widgets.threadSpin->setValue(defaults.threadCount);
+    widgets.threadSpin->setSpecialValueText(
+        dedupTr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : kFallbackCpuCoreCount));
+    widgets.threadSpin->setEnabled(widgets.parallelCheck->isChecked());
+    QObject::connect(
+        widgets.parallelCheck, &QCheckBox::toggled, widgets.threadSpin, &QSpinBox::setEnabled);
+    layout->addRow(InfoButton::createInfoLabel(dedupTr("Thread Count:"),
+                                               dedupTr("Number of threads for parallel hashing. "
+                                                       "0 = auto-detect from CPU cores."),
+                                               dialog),
+                   widgets.threadSpin);
+    return widgets;
+}
 
 }  // namespace
 
@@ -158,6 +248,7 @@ QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
     m_browse_button = new QPushButton(tr("Browse..."), this);
     m_browse_button->setAccessibleName(QStringLiteral("Browse Directory"));
     m_browse_button->setToolTip(QStringLiteral("Browse for a directory to organize"));
+    m_browse_button->setStyleSheet(ui::kPrimaryButtonStyle);
     path_row->addWidget(m_browse_button);
     group_layout->addLayout(path_row);
 
@@ -190,14 +281,17 @@ QGroupBox* OrganizerPanel::createCategoryMappingGroup() {
     m_add_category_button = new QPushButton(tr("Add Category"), this);
     m_add_category_button->setAccessibleName(QStringLiteral("Add Category"));
     m_add_category_button->setToolTip(QStringLiteral("Add a new file category row"));
+    m_add_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_remove_category_button = new QPushButton(tr("Remove Selected"), this);
     m_remove_category_button->setAccessibleName(QStringLiteral("Remove Category"));
     m_remove_category_button->setToolTip(
         QStringLiteral("Remove the selected category from the list"));
+    m_remove_category_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_reset_categories_button = new QPushButton(tr("Reset to Defaults"), this);
     m_reset_categories_button->setAccessibleName(QStringLiteral("Reset Categories"));
     m_reset_categories_button->setToolTip(
         QStringLiteral("Restore the default category-to-extension mappings"));
+    m_reset_categories_button->setStyleSheet(ui::kPrimaryButtonStyle);
     btn_row->addWidget(m_add_category_button);
     btn_row->addWidget(m_remove_category_button);
     btn_row->addWidget(m_reset_categories_button);
@@ -282,6 +376,7 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
     settingsBtn = new QPushButton(tr("Settings"), this);
     settingsBtn->setAccessibleName(QStringLiteral("Organizer Settings"));
     settingsBtn->setToolTip(QStringLiteral("Configure collision strategy and preview mode"));
+    settingsBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     row->addWidget(settingsBtn);
     row->addStretch();
 
@@ -305,6 +400,7 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
     m_cancel_button->setEnabled(false);
     m_cancel_button->setAccessibleName(QStringLiteral("Cancel Organization"));
     m_cancel_button->setToolTip(QStringLiteral("Cancel the current organization operation"));
+    m_cancel_button->setStyleSheet(ui::kDangerButtonStyle);
     row->addWidget(m_cancel_button);
 
     layout->addLayout(row);
@@ -328,12 +424,15 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     m_dedup_add_button = new QPushButton(tr("Add Directory"), this);
     m_dedup_add_button->setAccessibleName(QStringLiteral("Add Scan Directory"));
     m_dedup_add_button->setToolTip(QStringLiteral("Add a directory to the scan list"));
+    m_dedup_add_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_dedup_remove_button = new QPushButton(tr("Remove Selected"), this);
     m_dedup_remove_button->setAccessibleName(QStringLiteral("Remove Selected Directory"));
     m_dedup_remove_button->setToolTip(QStringLiteral("Remove highlighted directory from the list"));
+    m_dedup_remove_button->setStyleSheet(ui::kPrimaryButtonStyle);
     m_dedup_clear_button = new QPushButton(tr("Clear All"), this);
     m_dedup_clear_button->setAccessibleName(QStringLiteral("Clear All Directories"));
     m_dedup_clear_button->setToolTip(QStringLiteral("Remove all directories from the scan list"));
+    m_dedup_clear_button->setStyleSheet(ui::kPrimaryButtonStyle);
     btn_row->addWidget(m_dedup_add_button);
     btn_row->addWidget(m_dedup_remove_button);
     btn_row->addWidget(m_dedup_clear_button);
@@ -358,6 +457,7 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
     settingsBtn->setToolTip(
         QStringLiteral("Configure minimum file size, recursion,"
                        " and hashing options"));
+    settingsBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     row->addWidget(settingsBtn);
     row->addStretch();
 
@@ -375,6 +475,7 @@ void OrganizerPanel::createDedupControls(QVBoxLayout* layout, QPushButton*& sett
     m_dedup_cancel_button->setEnabled(false);
     m_dedup_cancel_button->setAccessibleName(QStringLiteral("Cancel Duplicate Scan"));
     m_dedup_cancel_button->setToolTip(QStringLiteral("Cancel the duplicate scan in progress"));
+    m_dedup_cancel_button->setStyleSheet(ui::kDangerButtonStyle);
     row->addWidget(m_dedup_cancel_button);
 
     layout->addLayout(row);
@@ -895,15 +996,7 @@ void OrganizerPanel::onSettingsClicked() {
     subdirRow->addStretch();
     layout->addRow(subdirRow);
 
-    auto* btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
-    auto* okBtn = new QPushButton(tr("OK"), &dialog);
-    auto* cancelBtn = new QPushButton(tr("Cancel"), &dialog);
-    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
-    btnLayout->addWidget(okBtn);
-    btnLayout->addWidget(cancelBtn);
-    layout->addRow(btnLayout);
+    addDialogButtonRow(layout, &dialog, tr("OK"), tr("Cancel"));
 
     if (dialog.exec() == QDialog::Accepted) {
         m_collision_strategy->setCurrentIndex(collisionCombo->currentIndex());
@@ -1087,70 +1180,25 @@ void OrganizerPanel::onDedupCancelClicked() {
 void OrganizerPanel::onDedupSettingsClicked() {
     Q_ASSERT(m_dedup_min_size);
     Q_ASSERT(m_dedup_recursive);
+    Q_ASSERT(m_dedup_parallel_hashing);
+    Q_ASSERT(m_dedup_thread_count);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Duplicate Finder Settings"));
     dialog.setMinimumWidth(sak::kDialogWidthSmall);
 
     auto* layout = new QFormLayout(&dialog);
-
-    auto* minSizeSpin = new QSpinBox(&dialog);
-    minSizeSpin->setMinimum(0);
-    minSizeSpin->setMaximum(kDedupMinSizeMaxKb);
-    minSizeSpin->setValue(m_dedup_min_size->value());
-    minSizeSpin->setSuffix(tr(" KB"));
-    layout->addRow(InfoButton::createInfoLabel(
-                       tr("Minimum File Size:"),
-                       tr("Skip tiny files to speed up scanning (0 = check all files)"),
-                       &dialog),
-                   minSizeSpin);
-
-    auto* recursiveCheck = new QCheckBox(tr("Include all nested subfolders"), &dialog);
-    recursiveCheck->setChecked(m_dedup_recursive->isChecked());
-    layout->addRow(InfoButton::createInfoLabel(
-                       tr("Recursive Scan:"),
-                       tr("Scan all subdirectories recursively, not just the top-level folder"),
-                       &dialog),
-                   recursiveCheck);
-
-    auto* parallelCheck = new QCheckBox(tr("Use parallel hashing"), &dialog);
-    parallelCheck->setChecked(m_dedup_parallel_hashing->isChecked());
-    layout->addRow(
-        InfoButton::createInfoLabel(tr("Parallel Hashing:"),
-                                    tr("Use multiple CPU cores for faster hash calculation. "
-                                       "Disable for debugging or low-resource systems."),
-                                    &dialog),
-        parallelCheck);
-
-    int cpuCores = QThread::idealThreadCount();
-    auto* threadSpin = new QSpinBox(&dialog);
-    threadSpin->setMinimum(0);
-    threadSpin->setMaximum(kDedupThreadCountMax);
-    threadSpin->setValue(m_dedup_thread_count->value());
-    threadSpin->setSpecialValueText(
-        tr("Auto (%1 cores)").arg(cpuCores > 0 ? cpuCores : kFallbackCpuCoreCount));
-    threadSpin->setEnabled(parallelCheck->isChecked());
-    connect(parallelCheck, &QCheckBox::toggled, threadSpin, &QSpinBox::setEnabled);
-    layout->addRow(InfoButton::createInfoLabel(tr("Thread Count:"),
-                                               tr("Number of threads for parallel hashing. "
-                                                  "0 = auto-detect from CPU cores."),
-                                               &dialog),
-                   threadSpin);
-
-    auto* btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
-    auto* okBtn = new QPushButton(tr("OK"), &dialog);
-    auto* cancelBtn = new QPushButton(tr("Cancel"), &dialog);
-    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
-    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
-    btnLayout->addWidget(okBtn);
-    btnLayout->addWidget(cancelBtn);
-    layout->addRow(btnLayout);
+    const DedupSettingsDefaults defaults{m_dedup_min_size->value(),
+                                         m_dedup_recursive->isChecked(),
+                                         m_dedup_parallel_hashing->isChecked(),
+                                         m_dedup_thread_count->value()};
+    const auto widgets = addDedupSettingsRows(layout, &dialog, defaults);
+    addDialogButtonRow(layout, &dialog, tr("OK"), tr("Cancel"));
 
     if (dialog.exec() == QDialog::Accepted) {
-        m_dedup_min_size->setValue(minSizeSpin->value());
-        m_dedup_recursive->setChecked(recursiveCheck->isChecked());
-        m_dedup_parallel_hashing->setChecked(parallelCheck->isChecked());
-        m_dedup_thread_count->setValue(threadSpin->value());
+        m_dedup_min_size->setValue(widgets.minSizeSpin->value());
+        m_dedup_recursive->setChecked(widgets.recursiveCheck->isChecked());
+        m_dedup_parallel_hashing->setChecked(widgets.parallelCheck->isChecked());
+        m_dedup_thread_count->setValue(widgets.threadSpin->value());
         updateDedupDirectorySummary();
     }
 }

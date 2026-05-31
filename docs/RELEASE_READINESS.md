@@ -8,6 +8,7 @@ Required before a release candidate is published:
 - Full CTest suite passes with zero failures.
 - Secret scan passes.
 - Blocking-pattern guard passes.
+- Accessibility, raw style-token, raw style-literal, GUI magic-number, global magic-number, logged dialog, and Lizard gates pass.
 - Third-party license audit passes.
 - QRC resource verification passes.
 - Portable package smoke passes from a clean extracted folder.
@@ -42,6 +43,10 @@ powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
 `check_release_readiness.ps1` expects a clean package folder. Startup smoke
 creates normal runtime folders such as `data\logs` and `data\temp`, so run the
 aggregate readiness gate against a fresh extract when validating the ZIP.
+
+For unsigned local preflight, run the same command without
+`-RequireSignedPackage`; signed package validation remains required before
+publication.
 
 ## Clean VM Manual QA
 

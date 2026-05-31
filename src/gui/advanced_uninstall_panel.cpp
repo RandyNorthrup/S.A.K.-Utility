@@ -73,73 +73,84 @@ struct ToolbarUi {
     QPushButton* settings_button = nullptr;
 };
 
-ToolbarUi buildToolbarUi(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar) {
-    ToolbarUi ui;
-
-    ui.search_edit = new QLineEdit(panel);
-    ui.search_edit->setPlaceholderText(QObject::tr("Search programs..."));
-    ui.search_edit->setClearButtonEnabled(true);
-    ui.search_edit->setToolTip(QObject::tr("Filter programs by name, publisher, or version"));
-    setAccessible(ui.search_edit,
+void addToolbarFilters(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, ToolbarUi* controls) {
+    controls->search_edit = new QLineEdit(panel);
+    controls->search_edit->setPlaceholderText(QObject::tr("Search programs..."));
+    controls->search_edit->setClearButtonEnabled(true);
+    controls->search_edit->setToolTip(
+        QObject::tr("Filter programs by name, publisher, or version"));
+    setAccessible(controls->search_edit,
                   QObject::tr("Search programs"),
                   QObject::tr("Filter the program list by name, publisher, or version"));
-    toolbar->addWidget(ui.search_edit, 1);
+    toolbar->addWidget(controls->search_edit, 1);
 
-    ui.view_filter_combo = new QComboBox(panel);
-    ui.view_filter_combo->addItem(QObject::tr("All Programs"), static_cast<int>(ViewFilter::All));
-    ui.view_filter_combo->addItem(QObject::tr("Win32 Only"),
-                                  static_cast<int>(ViewFilter::Win32Only));
-    ui.view_filter_combo->addItem(QObject::tr("UWP Only"), static_cast<int>(ViewFilter::UwpOnly));
-    ui.view_filter_combo->addItem(QObject::tr("Bloatware"),
-                                  static_cast<int>(ViewFilter::BloatwareOnly));
-    ui.view_filter_combo->addItem(QObject::tr("Orphaned"),
-                                  static_cast<int>(ViewFilter::OrphanedOnly));
-    ui.view_filter_combo->setToolTip(QObject::tr("Filter programs by category"));
-    setAccessible(ui.view_filter_combo,
+    controls->view_filter_combo = new QComboBox(panel);
+    controls->view_filter_combo->addItem(QObject::tr("All Programs"),
+                                         static_cast<int>(ViewFilter::All));
+    controls->view_filter_combo->addItem(QObject::tr("Win32 Only"),
+                                         static_cast<int>(ViewFilter::Win32Only));
+    controls->view_filter_combo->addItem(QObject::tr("UWP Only"),
+                                         static_cast<int>(ViewFilter::UwpOnly));
+    controls->view_filter_combo->addItem(QObject::tr("Bloatware"),
+                                         static_cast<int>(ViewFilter::BloatwareOnly));
+    controls->view_filter_combo->addItem(QObject::tr("Orphaned"),
+                                         static_cast<int>(ViewFilter::OrphanedOnly));
+    controls->view_filter_combo->setToolTip(QObject::tr("Filter programs by category"));
+    setAccessible(controls->view_filter_combo,
                   QObject::tr("View filter"),
                   QObject::tr("Show all programs, Win32 only, UWP only, bloatware, or orphaned"));
-    toolbar->addWidget(ui.view_filter_combo);
+    toolbar->addWidget(controls->view_filter_combo);
+}
 
+void addToolbarActions(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, ToolbarUi* controls) {
     toolbar->addSpacing(ui::kSpacingMedium);
 
-    ui.refresh_button = new QPushButton(QObject::tr("Refresh"), panel);
-    ui.refresh_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    ui.refresh_button->setToolTip(QObject::tr("Refresh the list of installed programs"));
-    setAccessible(ui.refresh_button,
+    controls->refresh_button = new QPushButton(QObject::tr("Refresh"), panel);
+    controls->refresh_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    controls->refresh_button->setToolTip(QObject::tr("Refresh the list of installed programs"));
+    setAccessible(controls->refresh_button,
                   QObject::tr("Refresh programs"),
                   QObject::tr("Re-scan for installed programs"));
-    toolbar->addWidget(ui.refresh_button);
+    toolbar->addWidget(controls->refresh_button);
 
-    ui.uninstall_button = new QPushButton(QObject::tr("Uninstall"), panel);
-    ui.uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
-    ui.uninstall_button->setToolTip(
+    controls->uninstall_button = new QPushButton(QObject::tr("Uninstall"), panel);
+    controls->uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
+    controls->uninstall_button->setToolTip(
         QObject::tr("Uninstall selected program and scan for leftovers"));
-    ui.uninstall_button->setEnabled(false);
+    controls->uninstall_button->setEnabled(false);
     setAccessible(
-        ui.uninstall_button,
+        controls->uninstall_button,
         QObject::tr("Uninstall program"),
         QObject::tr(
             "Run the native uninstaller then scan for leftover files and registry entries"));
-    toolbar->addWidget(ui.uninstall_button);
+    toolbar->addWidget(controls->uninstall_button);
 
-    ui.forced_uninstall_button = new QPushButton(QObject::tr("Forced"), panel);
-    ui.forced_uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
-    ui.forced_uninstall_button->setToolTip(
+    controls->forced_uninstall_button = new QPushButton(QObject::tr("Forced"), panel);
+    controls->forced_uninstall_button->setStyleSheet(ui::kDangerButtonStyle);
+    controls->forced_uninstall_button->setToolTip(
         QObject::tr("Force uninstall -- skip native uninstaller, scan and remove all traces"));
-    ui.forced_uninstall_button->setEnabled(false);
-    setAccessible(ui.forced_uninstall_button,
+    controls->forced_uninstall_button->setEnabled(false);
+    setAccessible(controls->forced_uninstall_button,
                   QObject::tr("Forced uninstall"),
                   QObject::tr("Skip native uninstaller and remove all program traces directly"));
-    toolbar->addWidget(ui.forced_uninstall_button);
+    toolbar->addWidget(controls->forced_uninstall_button);
 
-    ui.batch_button = new QPushButton(QObject::tr("Batch"), panel);
-    ui.batch_button->setToolTip(QObject::tr("Queue multiple programs for sequential uninstall"));
-    ui.batch_button->setEnabled(false);
-    setAccessible(ui.batch_button,
+    controls->batch_button = new QPushButton(QObject::tr("Batch"), panel);
+    controls->batch_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    controls->batch_button->setToolTip(
+        QObject::tr("Queue multiple programs for sequential uninstall"));
+    controls->batch_button->setEnabled(false);
+    setAccessible(controls->batch_button,
                   QObject::tr("Batch uninstall"),
                   QObject::tr(
                       "Add checked programs to the uninstall queue and process them sequentially"));
-    toolbar->addWidget(ui.batch_button);
+    toolbar->addWidget(controls->batch_button);
+}
+
+ToolbarUi buildToolbarUi(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar) {
+    ToolbarUi ui;
+    addToolbarFilters(panel, toolbar, &ui);
+    addToolbarActions(panel, toolbar, &ui);
 
     return ui;
 }
@@ -300,6 +311,7 @@ void addLeftoverButtons(AdvancedUninstallPanel* panel,
                         LeftoverSectionUi* ui) {
     auto* buttonRow = new QHBoxLayout();
     ui->select_all_button = new QPushButton(QObject::tr("Select All"), panel);
+    ui->select_all_button->setStyleSheet(ui::kPrimaryButtonStyle);
     ui->select_all_button->setToolTip(
         QObject::tr("Select all leftover items regardless of risk level"));
     setAccessible(ui->select_all_button, QObject::tr("Select all items"));
@@ -313,6 +325,7 @@ void addLeftoverButtons(AdvancedUninstallPanel* panel,
     buttonRow->addWidget(ui->select_safe_button);
 
     ui->deselect_all_button = new QPushButton(QObject::tr("Deselect All"), panel);
+    ui->deselect_all_button->setStyleSheet(ui::kPrimaryButtonStyle);
     ui->deselect_all_button->setToolTip(QObject::tr("Deselect all leftover items"));
     setAccessible(ui->deselect_all_button, QObject::tr("Deselect all"));
     buttonRow->addWidget(ui->deselect_all_button);
@@ -615,6 +628,7 @@ void AdvancedUninstallPanel::createStatusBar(QVBoxLayout* layout) {
         tr("Configure uninstall preferences -- recycle bin, restore points, "
            "default scan level, and more"));
     m_settings_button->setAccessibleName(tr("Uninstall settings"));
+    m_settings_button->setStyleSheet(ui::kPrimaryButtonStyle);
     statusRow->addWidget(m_settings_button);
     connect(m_settings_button,
             &QPushButton::clicked,

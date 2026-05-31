@@ -83,6 +83,51 @@ inline constexpr int kMarkdownHeading1MarginBottomPx = 18;
 inline constexpr int kMarkdownHeading2FontPx = 18;
 inline constexpr int kMarkdownHeading2MarginTopPx = 24;
 inline constexpr int kMarkdownHeading2PaddingBottomPx = 6;
+inline constexpr int kSavedEmailMaxWidthPx = 800;
+inline constexpr int kMigrationReportMetadataLabelWidthPx = 200;
+inline constexpr int kSavedEmailBodyFontPt = 10;
+inline constexpr int kSavedEmailPageMarginPx = 24;
+inline constexpr int kSavedEmailHorizontalPaddingPx = 16;
+inline constexpr int kSavedEmailHeaderBorderPx = 2;
+inline constexpr int kSavedEmailFieldMarginPx = 4;
+inline constexpr int kSavedEmailAttachmentMarginTopPx = 24;
+inline constexpr int kSavedEmailAttachmentPaddingTopPx = 12;
+inline constexpr int kPdfEmailBodyFontPt = 10;
+inline constexpr int kPdfEmailHeaderMarginBottomPx = 12;
+inline constexpr int kPdfEmailHeaderCellPaddingVerticalPx = 2;
+inline constexpr int kPdfEmailHeaderCellPaddingHorizontalPx = 8;
+inline constexpr int kPdfEmailRuleMarginPx = 8;
+inline constexpr int kPdfEmailAttachmentFontPt = 9;
+inline constexpr int kPdfEmailAttachmentMarginTopPx = 12;
+
+inline constexpr auto kHtmlStyleTagOpen = "<style>\n";
+inline constexpr auto kHtmlStyleTagClose = "</style>\n";
+inline constexpr auto kHtmlStyleHeadBodyCloseOpen = "</style>\n</head>\n<body>\n";
+inline constexpr auto kHtmlStyleHeadContainerCloseOpen =
+    "</style></head><body><div class='container'>";
+inline constexpr auto kEnterpriseReportDocumentOpen =
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>%1</title><style>%2"
+    "</style></head><body><div class='container'>";
+inline constexpr auto kHtmlReportDocumentOpen =
+    "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>%1</title>\n"
+    "<style>\n";
+inline constexpr auto kHtmlReportBodyOpen = "</style>\n</head>\n<body>\n";
+inline constexpr auto kHtmlReportDocumentClose = "</body>\n</html>\n";
+inline constexpr auto kEmailReportMetadataRow =
+    "<tr><td class=\"metadata-label\">%1</td><td class=\"metadata-value\">%2</td></tr>\n";
+inline constexpr auto kConversionHashCell = "<td class='hash-preview'>%1</td>";
+inline constexpr auto kSavedEmailStyleBody =
+    "body { font-family: 'Segoe UI', sans-serif; max-width: %1; margin: %2 auto; "
+    "padding: 0 %3; color: %4; }";
+inline constexpr auto kSavedEmailStyleHeader =
+    ".header { border-bottom: %1 solid %2; padding-bottom: %3; margin-bottom: %4; }";
+inline constexpr auto kSavedEmailStyleFields =
+    ".field { margin: %1 0; }.label { font-weight: bold; color: %2; }"
+    ".body { margin-top: %3; }";
+inline constexpr auto kSavedEmailStyleAttachments =
+    ".attachments { margin-top: %1; border-top: %2 solid %3; padding-top: %4; }"
+    ".att-item { margin: %5 0; }img.embedded { max-width: 100%%; height: auto; }";
+inline constexpr auto kPdfEmailDocumentOpen = "<html><head><style>%1</style></head><body>";
 
 namespace detail {
 
@@ -173,6 +218,15 @@ inline void appendReportTableStyles(QString& css) {
                     cssPx(kReportTableCellPaddingHorizontalPx),
                     cssPx(ui::kCssBorderWidthDefaultPx),
                     cssColor(ui::kColorBorderDefault));
+    css += QStringLiteral(
+               ".metadata-label { padding: %1 %2 %1 0; font-weight: %3; }"
+               ".metadata-value { padding: %1 0; }"
+               ".hash-preview { font-family: Consolas, 'Cascadia Mono', monospace; "
+               "font-size: %4; }")
+               .arg(cssPx(kReportBadgePaddingVerticalPx),
+                    cssPx(kReportTableCellPaddingHorizontalPx),
+                    QString::number(ui::kFontWeightBold),
+                    cssPx(kReportFooterFontPx));
     css += QStringLiteral("tr:nth-child(even) td, tr:hover { background: %1; }")
                .arg(cssColor(ui::kColorBgSurface));
 }
@@ -368,6 +422,65 @@ inline QString markdownReportStyleSheet() {
     css += QStringLiteral("li { margin: %1 0; } a { color: %2; }")
                .arg(detail::cssPx(kReportListItemMarginVerticalPx),
                     detail::cssColor(ui::kStatusColorRunning));
+    return css;
+}
+
+inline QString savedEmailStyleSheet() {
+    QString css;
+    css += QString::fromLatin1(kSavedEmailStyleBody)
+               .arg(detail::cssPx(kSavedEmailMaxWidthPx),
+                    detail::cssPx(kSavedEmailPageMarginPx),
+                    detail::cssPx(kSavedEmailHorizontalPaddingPx),
+                    detail::cssColor(ui::kColorTextBody));
+    css += QString::fromLatin1(kSavedEmailStyleHeader)
+               .arg(detail::cssPx(kSavedEmailHeaderBorderPx),
+                    detail::cssColor(ui::kColorPrimary),
+                    detail::cssPx(kSavedEmailAttachmentPaddingTopPx),
+                    detail::cssPx(kReportContainerPaddingPx));
+    css += QString::fromLatin1(kSavedEmailStyleFields)
+               .arg(detail::cssPx(kSavedEmailFieldMarginPx),
+                    detail::cssColor(ui::kColorTextMuted),
+                    detail::cssPx(kReportContainerPaddingPx));
+    css += QString::fromLatin1(kSavedEmailStyleAttachments)
+               .arg(detail::cssPx(kSavedEmailAttachmentMarginTopPx),
+                    detail::cssPx(ui::kCssBorderWidthDefaultPx),
+                    detail::cssColor(ui::kColorBorderDefault),
+                    detail::cssPx(kSavedEmailAttachmentPaddingTopPx),
+                    detail::cssPx(kSavedEmailFieldMarginPx));
+    return css;
+}
+
+inline QString pdfEmailStyleSheet() {
+    QString css;
+    css += QStringLiteral("body { font-family: Segoe UI, Arial, sans-serif; font-size: %1; }")
+               .arg(detail::cssPx(kPdfEmailBodyFontPt));
+    css += QStringLiteral("table.hdr { border-collapse: collapse; margin-bottom: %1; }")
+               .arg(detail::cssPx(kPdfEmailHeaderMarginBottomPx));
+    css += QStringLiteral("table.hdr td { padding: %1 %2; vertical-align: top; }")
+               .arg(detail::cssPx(kPdfEmailHeaderCellPaddingVerticalPx),
+                    detail::cssPx(kPdfEmailHeaderCellPaddingHorizontalPx));
+    css += QStringLiteral("td.lbl { font-weight: %1; color: %2; white-space: nowrap; }")
+               .arg(QString::number(ui::kFontWeightBold), detail::cssColor(ui::kColorTextMuted));
+    css += QStringLiteral("hr { border: none; border-top: %1 solid %2; margin: %3 0; }")
+               .arg(detail::cssPx(ui::kCssBorderWidthDefaultPx),
+                    detail::cssColor(ui::kColorBorderDefault),
+                    detail::cssPx(kPdfEmailRuleMarginPx));
+    css += QStringLiteral(".att { color: %1; font-size: %2; margin-top: %3; }")
+               .arg(detail::cssColor(ui::kColorTextMuted),
+                    detail::cssPx(kPdfEmailAttachmentFontPt),
+                    detail::cssPx(kPdfEmailAttachmentMarginTopPx));
+    return css;
+}
+
+inline QString migrationReportExtraStyleSheet() {
+    QString css;
+    css += QStringLiteral(".metadata table { width: %1; border-collapse: collapse; }")
+               .arg(detail::cssPercent(kReportCssPercentFull));
+    css += QStringLiteral(".metadata td:first-child { font-weight: %1; width: %2; }")
+               .arg(QString::number(ui::kFontWeightBold),
+                    detail::cssPx(kMigrationReportMetadataLabelWidthPx));
+    css += QStringLiteral(".confidence { font-weight: %1; }")
+               .arg(QString::number(ui::kFontWeightBold));
     return css;
 }
 

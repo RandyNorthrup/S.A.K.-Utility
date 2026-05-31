@@ -140,6 +140,7 @@ void TestEmailTypes::emailExportConfigDefaults() {
     QCOMPARE(config.csv_include_header, true);
     QCOMPARE(config.flatten_attachments, true);
     QCOMPARE(config.skip_inline_images, true);
+    QCOMPARE(config.save_attachments_with_messages, true);
     QCOMPARE(config.prefix_with_date, true);
 }
 
@@ -180,6 +181,9 @@ void TestEmailTypes::exportFormatValues() {
     // Verify all export format values are distinct
     QSet<int> values;
     values.insert(static_cast<int>(sak::ExportFormat::Eml));
+    values.insert(static_cast<int>(sak::ExportFormat::Html));
+    values.insert(static_cast<int>(sak::ExportFormat::Text));
+    values.insert(static_cast<int>(sak::ExportFormat::Pdf));
     values.insert(static_cast<int>(sak::ExportFormat::CsvEmails));
     values.insert(static_cast<int>(sak::ExportFormat::Vcf));
     values.insert(static_cast<int>(sak::ExportFormat::CsvContacts));
@@ -188,7 +192,7 @@ void TestEmailTypes::exportFormatValues() {
     values.insert(static_cast<int>(sak::ExportFormat::CsvTasks));
     values.insert(static_cast<int>(sak::ExportFormat::PlainTextNotes));
     values.insert(static_cast<int>(sak::ExportFormat::Attachments));
-    QCOMPARE(values.size(), 9);
+    QCOMPARE(values.size(), 12);
 }
 
 void TestEmailTypes::clientTypeValues() {

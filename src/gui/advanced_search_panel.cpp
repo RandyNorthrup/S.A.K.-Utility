@@ -194,6 +194,7 @@ SearchBarRow2Ui buildSearchBarRow2(AdvancedSearchPanel* panel,
     row->addWidget(ui.context_lines_combo);
 
     ui.regex_patterns_button = new QPushButton(QObject::tr("Regex Patterns \u25BE"), panel);
+    ui.regex_patterns_button->setStyleSheet(ui::kPrimaryButtonStyle);
     ui.regex_patterns_button->setToolTip(QObject::tr("Select built-in or custom regex patterns"));
     setAccessible(ui.regex_patterns_button, QObject::tr("Regex pattern library"));
     row->addWidget(ui.regex_patterns_button);
@@ -856,6 +857,7 @@ void AdvancedSearchPanel::createPreviewPane() {
     m_prev_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_prev_match_button->setToolTip(tr("Previous match"));
     m_prev_match_button->setEnabled(false);
+    m_prev_match_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     setAccessible(m_prev_match_button, tr("Previous match"));
     headerRow->addWidget(m_prev_match_button);
 
@@ -868,6 +870,7 @@ void AdvancedSearchPanel::createPreviewPane() {
     m_next_match_button->setFixedSize(kMatchNavButtonSize, kMatchNavButtonSize);
     m_next_match_button->setToolTip(tr("Next match"));
     m_next_match_button->setEnabled(false);
+    m_next_match_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     setAccessible(m_next_match_button, tr("Next match"));
     headerRow->addWidget(m_next_match_button);
 
@@ -896,14 +899,10 @@ void AdvancedSearchPanel::createStatusBar(QVBoxLayout* layout) {
     statusRow->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kSpacingTight, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    // Log toggle on the left -- matches all other panels
-    m_log_toggle = new LogToggleSwitch(tr("Log"), this);
-    statusRow->addWidget(m_log_toggle);
-
-    // Settings button next to log toggle
     m_preferences_button = new QPushButton(tr("Settings"), this);
     m_preferences_button->setToolTip(tr("Search settings (max results, file sizes, etc.)"));
     m_preferences_button->setAccessibleName(tr("Search settings"));
+    m_preferences_button->setStyleSheet(ui::kPrimaryButtonStyle);
     statusRow->addWidget(m_preferences_button);
     connect(m_preferences_button,
             &QPushButton::clicked,
@@ -1509,6 +1508,7 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
     layout->addWidget(tree);
 
     auto* close_btn = new QPushButton(tr("Close"), &dialog);
+    close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
     auto* btn_layout = new QHBoxLayout();
     btn_layout->addStretch();

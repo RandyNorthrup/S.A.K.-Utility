@@ -56,7 +56,7 @@ void flattenFolderTree(const sak::PstFolderTree& tree,
 
 void EmailSearchWorker::search(PstParser* parser, const sak::EmailSearchCriteria& criteria) {
     if (!parser || !parser->isOpen()) {
-        Q_EMIT errorOccurred(QStringLiteral("No PST file open for search"));
+        Q_EMIT errorOccurred(QStringLiteral("No PST/OST file open for search"));
         Q_EMIT searchComplete(0, 0);
         return;
     }

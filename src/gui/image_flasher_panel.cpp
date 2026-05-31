@@ -172,6 +172,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     m_settingsButton = new QPushButton("Settings", this);
     m_settingsButton->setAccessibleName(QStringLiteral("Flasher Settings"));
     m_settingsButton->setToolTip(QStringLiteral("Configure image flasher settings"));
+    m_settingsButton->setStyleSheet(ui::kPrimaryButtonStyle);
     connect(m_settingsButton, &QPushButton::clicked, this, [this]() {
         ImageFlasherSettingsDialog dialog(this);
         dialog.exec();
@@ -184,6 +185,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     m_backButton->setEnabled(false);
     m_backButton->setAccessibleName(QStringLiteral("Previous Step"));
     m_backButton->setToolTip(QStringLiteral("Go back to the previous step"));
+    m_backButton->setStyleSheet(ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_backButton);
     connect(m_backButton, &QPushButton::clicked, this, [this]() {
         int currentIndex = m_stackedWidget->currentIndex();
@@ -204,6 +206,7 @@ void ImageFlasherPanel::setupNavigationButtons(QVBoxLayout* mainLayout) {
     m_nextButton->setEnabled(false);
     m_nextButton->setAccessibleName(QStringLiteral("Next Step"));
     m_nextButton->setToolTip(QStringLiteral("Proceed to the next step"));
+    m_nextButton->setStyleSheet(ui::kPrimaryButtonStyle);
     buttonLayout->addWidget(m_nextButton);
     connect(m_nextButton, &QPushButton::clicked, this, [this]() {
         int currentIndex = m_stackedWidget->currentIndex();
@@ -312,7 +315,7 @@ QFrame* ImageFlasherPanel::buildIsoDownloadCard(QWidget* parent,
     logo->setPixmap(QIcon(config.icon_path).pixmap(kCardLogoSize, kCardLogoSize));
     logo->setAlignment(Qt::AlignCenter);
     logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
-    layout->addWidget(logo);
+    layout->addWidget(logo, 0, Qt::AlignHCenter);
 
     auto* titleLabel = new QLabel(config.title, card);
     titleLabel->setAlignment(Qt::AlignCenter);
@@ -493,6 +496,7 @@ void ImageFlasherPanel::createFlashProgressPage() {
     m_cancelButton = new QPushButton("Cancel", groupBox);
     m_cancelButton->setAccessibleName(QStringLiteral("Cancel Flash"));
     m_cancelButton->setToolTip(QStringLiteral("Cancel the current flash operation"));
+    m_cancelButton->setStyleSheet(ui::kDangerButtonStyle);
     groupLayout->addWidget(m_cancelButton);
     connect(m_cancelButton, &QPushButton::clicked, this, &ImageFlasherPanel::onCancelClicked);
 
@@ -523,6 +527,7 @@ void ImageFlasherPanel::createCompletionPage() {
     m_flashAnotherButton = new QPushButton("Flash Another", groupBox);
     m_flashAnotherButton->setAccessibleName(QStringLiteral("Flash Another Drive"));
     m_flashAnotherButton->setToolTip(QStringLiteral("Start over and flash another drive"));
+    m_flashAnotherButton->setStyleSheet(ui::kPrimaryButtonStyle);
     groupLayout->addWidget(m_flashAnotherButton);
     connect(m_flashAnotherButton, &QPushButton::clicked, [this]() {
         m_stackedWidget->setCurrentIndex(kImageSelectionPageIndex);

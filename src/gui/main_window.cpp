@@ -52,6 +52,7 @@
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QSize>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QTextBrowser>
@@ -174,7 +175,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <div class="section-title">Email &amp; Data Forensics</div>
     <ul>
         <li><b>PST/OST/MBOX Email Tools</b> &mdash; Offline forensic inspection of Outlook and Thunderbird email archives without client installation</li>
-        <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with export to EML, ICS, VCF, and CSV formats</li>
+        <li><b>Email Search &amp; Export</b> &mdash; Full-text search across thousands of items with checkbox export to HTML, TXT, EML, PDF, ICS, VCF, and CSV formats</li>
         <li><b>Contacts Browser</b> &mdash; Searchable address book with sortable columns and export to VCF or CSV</li>
         <li><b>Calendar Viewer</b> &mdash; Month, week, and day views with event details and export to ICS or CSV</li>
         <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
@@ -325,60 +326,12 @@ void AddTabWithTooltip(QTabWidget* tabWidget,
     tabWidget->setTabWhatsThis(idx, QString::fromUtf8(tooltip));
 }
 
-QString HtmlBrowserStyleSheet() {
-    const bool dark = qApp && ui::currentThemeMode(*qApp) == ui::AppThemeMode::Dark;
-    const auto color = [](const char* token) {
-        return QString::fromLatin1(token);
-    };
-    const QString heading = color(dark ? ui::kColorDarkTextHeading : ui::kColorTextHeading);
-    const QString body = color(dark ? ui::kColorDarkTextBody : ui::kColorTextBody);
-    const QString secondary = color(dark ? ui::kColorDarkTextSecondary : ui::kColorTextSecondary);
-    const QString muted = color(dark ? ui::kColorDarkTextMuted : ui::kColorTextMuted);
-    const QString border = color(dark ? ui::kColorDarkBorderDefault : ui::kColorBorderDefault);
-    const QString link = color(ui::kColorPrimary);
-
-    return QStringLiteral(
-               "body { font-family: 'Segoe UI', sans-serif; margin: %1px; "
-               "color: %2; background: transparent; }"
-               "h2, h3 { color: %3; margin-bottom: %4px; }"
-               "p { color: %2; }"
-               ".subtitle { color: %5; font-size: %6pt; margin-bottom: %7px; }"
-               ".section, .dep { margin-bottom: %8px; }"
-               ".section-title { font-weight: %9; font-size: %6pt; color: %10; "
-               "border-bottom: %11px solid %12; padding-bottom: %13px; "
-               "margin-bottom: %14px; }"
-               "ul { margin: %13px 0 0 %15px; padding: 0; }"
-               "li { margin-bottom: %13px; color: %2; }"
-               "b { color: %3; }"
-               ".dep .desc { color: %5; font-size: %16pt; }"
-               "a { color: %10; text-decoration: none; }"
-               "a:hover { text-decoration: underline; }"
-               ".footer { color: %17; font-size: %16pt; margin-top: %8px; "
-               "border-top: %11px solid %12; padding-top: %14px; }")
-        .arg(ui::kMarginSmall)
-        .arg(body, heading)
-        .arg(ui::kSpacingTight)
-        .arg(secondary)
-        .arg(ui::kFontSizeBody)
-        .arg(ui::kSpacingLarge)
-        .arg(ui::kSpacingLarge)
-        .arg(ui::kFontWeightBold)
-        .arg(link)
-        .arg(ui::kCssBorderWidthDefaultPx)
-        .arg(border)
-        .arg(ui::kCssPaddingTinyPx)
-        .arg(ui::kCssPaddingMediumPx)
-        .arg(ui::kMarginLarge)
-        .arg(ui::kFontSizeNote)
-        .arg(muted);
-}
-
 void ApplyHtmlBrowserTheme(QTextBrowser* browser) {
     if (!browser) {
         return;
     }
     browser->setStyleSheet(ui::textBrowserSurfaceStyle(ui::kColorBgWhite, ui::kColorBorderDefault));
-    browser->document()->setDefaultStyleSheet(HtmlBrowserStyleSheet());
+    browser->document()->setDefaultStyleSheet(ui::htmlBrowserDocumentStyleSheet());
     const QString html = browser->property("sakHtmlContent").toString();
     if (!html.isEmpty()) {
         browser->setHtml(html);
@@ -1596,14 +1549,14 @@ void MainWindow::applyTabBarChevrons() {
     const auto buttons = m_tab_widget->tabBar()->findChildren<QToolButton*>();
     for (auto* btn : buttons) {
         btn->setArrowType(Qt::NoArrow);
-        btn->setIcon(QIcon());
-        // Use unicode chevron text -- inherits the theme's white-on-blue styling
+        btn->setText(QString());
+        btn->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
         if (btn == buttons.value(0)) {
-            btn->setText(QStringLiteral("\u276E"));  // <
+            btn->setIcon(QIcon(ui::kIconSelectorChevronLeftOnTone));
         } else {
-            btn->setText(QStringLiteral("\u276F"));  // >
+            btn->setIcon(QIcon(ui::kIconSelectorChevronRightOnTone));
         }
-        btn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     }
 }
 

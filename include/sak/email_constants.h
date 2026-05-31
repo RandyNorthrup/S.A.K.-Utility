@@ -29,16 +29,13 @@ constexpr int64_t kMaxAttachmentSize = 500LL * 1024 * 1024;
 /// Maximum PST file size (50 GB — format limit)
 constexpr int64_t kMaxFileSize = 50LL * 1024 * 1024 * 1024;
 
-/// Max cached NDB node entries
-constexpr int kNodeBTreeCacheSize = 50'000;
-
-/// Max cached Block BTree entries
-constexpr int kBlockBTreeCacheSize = 50'000;
-
-/// NDB page size in bytes (ANSI PST)
+/// NDB page size in bytes (ANSI PST and legacy Unicode PST)
 constexpr int kAnsiPageSize = 512;
 
-/// NDB page size in bytes (Unicode 4K variant)
+/// NDB page size in bytes (legacy Unicode PST, wVer=23)
+constexpr int kLegacyUnicodePageSize = 512;
+
+/// NDB page size in bytes (Unicode 4K variant, wVer=36)
 constexpr int kUnicodePageSize = 4096;
 
 /// Max MAPI properties per item

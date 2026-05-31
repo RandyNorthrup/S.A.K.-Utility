@@ -96,8 +96,9 @@ void EmailInspectorController::openFile(const QString& file_path) {
     QString suffix = fi.suffix().toLower();
 
     if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
-        m_file_type = FileType::Pst;
-        sak::logInfo("Opening PST/OST file: {}", file_path.toStdString());
+        const bool is_ost = (suffix == QStringLiteral("ost"));
+        m_file_type = is_ost ? FileType::Ost : FileType::Pst;
+        sak::logInfo("Opening {} file: {}", is_ost ? "OST" : "PST", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_pst_parser->open(file_path);
     } else if (suffix == QStringLiteral("mbox")) {
@@ -113,7 +114,7 @@ void EmailInspectorController::openFile(const QString& file_path) {
 }
 
 void EmailInspectorController::closeFile() {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->close();
     } else if (m_file_type == FileType::Mbox) {
         m_mbox_parser->close();
@@ -127,7 +128,7 @@ void EmailInspectorController::closeFile() {
 }
 
 bool EmailInspectorController::isFileOpen() const {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         return m_pst_parser->isOpen();
     }
     if (m_file_type == FileType::Mbox) {
@@ -145,7 +146,7 @@ sak::PstFileInfo EmailInspectorController::fileInfo() const {
 // ============================================================================
 
 void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingFolderItems);
         m_pst_parser->loadFolderItems(folder_node_id, offset, limit);
     } else if (m_file_type == FileType::Mbox) {
@@ -155,7 +156,7 @@ void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offs
 }
 
 void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingItemDetail);
         m_pst_parser->loadItemDetail(item_node_id);
     } else if (m_file_type == FileType::Mbox) {
@@ -166,7 +167,7 @@ void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
 }
 
 void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingProperties);
         m_pst_parser->loadItemProperties(item_node_id);
     } else if (m_file_type == FileType::Mbox) {
@@ -177,7 +178,7 @@ void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
 
 void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                                                      int attachment_index) {
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->loadAttachmentContent(message_node_id, attachment_index);
     } else if (m_file_type == FileType::Mbox) {
         int msg_idx = static_cast<int>(message_node_id);
@@ -213,7 +214,7 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
 
     Q_EMIT logOutput(QStringLiteral("Searching for \"%1\"...").arg(criteria.query_text));
 
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         (void)QtConcurrent::run(
             [this, criteria]() { m_search_worker->search(m_pst_parser.get(), criteria); });
     } else if (m_file_type == FileType::Mbox) {
@@ -235,7 +236,7 @@ void EmailInspectorController::exportItems(const sak::EmailExportConfig& config)
     setState(State::Exporting);
     Q_EMIT logOutput(QStringLiteral("Starting export to %1...").arg(config.output_path));
 
-    if (m_file_type == FileType::Pst) {
+    if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         (void)QtConcurrent::run(
             [this, config]() { m_export_worker->exportItems(m_pst_parser.get(), config); });
     } else if (m_file_type == FileType::Mbox) {

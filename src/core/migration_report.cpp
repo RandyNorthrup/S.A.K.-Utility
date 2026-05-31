@@ -512,12 +512,10 @@ QString MigrationReport::formatHtmlReport() const {
 QString MigrationReport::buildHtmlStyles() {
     QString css;
     QTextStream out(&css);
-    out << "<style>\n";
+    out << QString::fromLatin1(report::kHtmlStyleTagOpen);
     out << report::enterpriseReportStyleSheet();
-    out << ".metadata table { width: 100%; border-collapse: collapse; }\n";
-    out << ".metadata td:first-child { font-weight: bold; width: 200px; }\n";
-    out << ".confidence { font-weight: bold; }\n";
-    out << "</style>\n";
+    out << report::migrationReportExtraStyleSheet();
+    out << QString::fromLatin1(report::kHtmlStyleTagClose);
     return css;
 }
 

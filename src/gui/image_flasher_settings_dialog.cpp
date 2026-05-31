@@ -204,6 +204,7 @@ void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
     storageLayout->addWidget(m_cacheInfoLabel);
 
     m_clearCacheButton = new QPushButton("Clear Download Caches", storageGroup);
+    m_clearCacheButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     auto* cacheInfoRow = new QHBoxLayout();
     cacheInfoRow->addWidget(m_clearCacheButton);
     cacheInfoRow->addWidget(new sak::InfoButton(

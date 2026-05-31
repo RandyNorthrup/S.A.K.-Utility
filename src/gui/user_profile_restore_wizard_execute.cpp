@@ -72,8 +72,10 @@ void UserProfileRestoreExecutePage::setupUi() {
     // Buttons
     auto* buttonLayout = new QHBoxLayout();
     m_cancelButton = new QPushButton(tr("Cancel Restore"), this);
+    m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
     m_viewLogButton = new QPushButton(tr("View Full Log"), this);
     m_viewLogButton->setEnabled(false);
+    m_viewLogButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     buttonLayout->addWidget(m_cancelButton);
     buttonLayout->addStretch(1);
     buttonLayout->addWidget(m_viewLogButton);

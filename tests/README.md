@@ -277,7 +277,7 @@ cmake --build build --target run_integration_tests
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_email_types | `email_types` | Email data structures, item types, MAPI properties |
-| test_pst_parser | `pst_parser` | PST file parsing, folder tree, item detail, attachments |
+| test_pst_parser | `pst_parser` | PST/OST header parsing, legacy Unicode page sizing, compressible PST decode, folder tree, item detail, attachments |
 | test_mbox_parser | `mbox_parser` | MBOX parsing, message extraction, header parsing |
 | test_email_search_worker | `email_search_worker` | Full-text search, field filtering |
 | test_email_export_worker | `email_export_worker` | EML/CSV/VCF/ICS export, attachment extraction |
@@ -296,7 +296,7 @@ cmake --build build --target run_integration_tests
 ### Integration Tests
 | Test | Workflow | Coverage |
 |---|---|---|
-| test_ost_integration | Email Inspector | OST file opening, folder tree, item loading |
+| test_ost_integration | Email Inspector | Real OST/PST file opening, folder tree, item loading, item detail |
 | test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
 
 ## Writing New Tests

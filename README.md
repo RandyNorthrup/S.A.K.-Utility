@@ -9,7 +9,7 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.6-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/Version-0.9.1.7-orange.svg)](VERSION)
 [![Tests](https://img.shields.io/badge/Tests-129%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable toolkit.
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable t
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.6** - Dark-mode card surface polish for Backup/Restore and Image Flasher, Node 24-ready GitHub Actions updates, strict Gitleaks CLI scanning, and release metadata updates.
+**Latest: v0.9.1.7** - PST/OST parser fixes, checkbox email and attachment selection, selected email export with attachment preservation, global selector/button polish, raw-style constant enforcement, and pinned secret-scan workflows.
 
 ---
 
@@ -38,7 +38,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
-| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, export (EML/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
+| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
 | **Modern UI** | Windows 11-style rounded corners, light/dark themes, custom splash screen, and responsive layouts. |
 
 ---
@@ -458,7 +458,7 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 
 **Folder Tree** — Navigable hierarchy with typed icons (Inbox, Sent Items, Drafts, Deleted Items, Junk Email, Calendar, Contacts, etc.)
 
-**Item List** — Sortable table with Subject, From, Date, Size, Type, and attachment indicator.
+**Item List** — Sortable table with checkbox multi-select, Subject, From, Date, Size, and Type. Use `Save Selected Email` beside the preview `Images` toggle to export checked messages.
 
 **Preview Pane** — Four tabs:
 
@@ -475,17 +475,19 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 
 **Calendar Dialog** — Three view modes (month, week, day) with event highlighting, half-hour grid lines, and column separators. Navigate by date, click events to view details, and export to ICS or CSV.
 
-**Attachments Browser** — Scans all emails in the mail file and presents every attachment in a searchable, filterable list. Type filter (images, documents, archives, etc.), filename search, and right-click context menu with Save Attachment, View Containing Email (navigates to the source message), and Copy Filename.
+**Attachments Browser** — Scans all emails in the mail file and presents every attachment in a searchable, filterable list with checkbox selection. Type filter (images, documents, archives, etc.), filename search, and right-click context menu with Save Attachment, View Containing Email (navigates to the source message), and Copy Filename.
 
 **Export Formats**
 
 | Format | Use Case |
 |---|---|
 | **EML** | RFC 5322 email files (Outlook, Thunderbird compatible) |
+| **HTML** | Styled standalone email pages with attachments saved beside each message |
+| **PDF** | Rendered email archives with attachments saved beside each message |
 | **CSV** | Emails, contacts, calendar, or tasks as spreadsheet data |
 | **VCF** | vCard 3.0 contact files |
 | **ICS** | iCalendar appointments/events |
-| **TXT** | Plain-text sticky notes |
+| **TXT** | Plain-text emails or sticky notes with attachments saved beside each email |
 | **Attachments** | Batch extract with optional filtering and inline-image skip |
 
 ---
@@ -632,9 +634,10 @@ powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
 
 For unsigned local preflight builds, omit `-RequireSignedPackage`; signed package validation remains required before publication.
 
-This verifies secret scanning, blocking-pattern rules, third-party license
-documentation, Qt resource manifests, portable package contents, startup E2E
-smoke, and Authenticode signatures. See
+This verifies secret scanning, blocking-pattern rules, accessibility coverage,
+style-token/style-literal/layout constants, global magic numbers, logged dialog
+usage, Lizard limits, third-party license documentation, Qt resource manifests,
+portable package contents, startup E2E smoke, and Authenticode signatures. See
 [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) and
 [docs/SECURITY_THREAT_MODEL.md](docs/SECURITY_THREAT_MODEL.md).
 

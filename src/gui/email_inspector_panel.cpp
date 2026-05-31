@@ -29,7 +29,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QImageReader>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -96,6 +98,17 @@ QByteArray detectImageMime(const QByteArray& data) {
         return QByteArrayLiteral("image/jpeg");
     }
     return QByteArrayLiteral("image/") + fmt;
+}
+
+QTableWidgetItem* makeEmailSelectItem(uint64_t item_id, const QString& tooltip) {
+    auto* select_cell = new QTableWidgetItem();
+    select_cell->setFlags((select_cell->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled) &
+                          ~Qt::ItemIsEditable);
+    select_cell->setCheckState(Qt::Unchecked);
+    select_cell->setTextAlignment(Qt::AlignCenter);
+    select_cell->setToolTip(tooltip);
+    select_cell->setData(Qt::UserRole, QVariant::fromValue(item_id));
+    return select_cell;
 }
 
 /// Neutralise remote image/resource references in an HTML body so that
@@ -189,7 +202,12 @@ void EmailInspectorPanel::setupUi() {
     status_row->addWidget(m_progress_bar);
     root_layout->addLayout(status_row);
 
-    // Log Toggle (left) + Images + HTML/Plain Text Toggle (right)
+    addPreviewControlRow(root_layout);
+}
+
+void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
+    Q_ASSERT(root_layout);
+
     m_log_toggle = new LogToggleSwitch(tr("Log"), this);
     m_images_toggle_switch = new LogToggleSwitch(tr("Images"), this);
     m_images_toggle_switch->setToolTip(
@@ -211,6 +229,15 @@ void EmailInspectorPanel::setupUi() {
     auto* log_toggle_layout = new QHBoxLayout();
     log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
+    m_export_emails_button = new QPushButton(tr("Save Selected Email"), this);
+    m_export_emails_button->setEnabled(false);
+    m_export_emails_button->setAccessibleName(QStringLiteral("Save Selected Email"));
+    m_export_emails_button->setToolTip(tr("Save checked emails as HTML, text, EML, or PDF"));
+    m_export_emails_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    connect(
+        m_export_emails_button, &QPushButton::clicked, this, &EmailInspectorPanel::onExportClicked);
+    log_toggle_layout->addWidget(m_export_emails_button);
+    log_toggle_layout->addSpacing(sak::ui::kSpacingLarge);
     log_toggle_layout->addWidget(m_images_toggle_switch);
     log_toggle_layout->addSpacing(sak::ui::kSpacingLarge);
     log_toggle_layout->addWidget(m_html_toggle_switch);
@@ -229,13 +256,7 @@ constexpr int kRibbonButtonWidth = 64;
 constexpr int kRibbonButtonHeight = 56;
 
 QString ribbonStyle() {
-    return QStringLiteral(
-               "QWidget#ribbonBar {"
-               "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-               "    stop:0 %1, stop:1 %2);"
-               "  border: %3px solid %4;"
-               "  border-radius: %5px;"
-               "}")
+    return QString::fromLatin1(ui::kEmailRibbonStyle)
         .arg(ui::cssColor(ui::kColorBgSurface),
              ui::cssColor(ui::kColorBgPageHover),
              QString::number(ui::kCssBorderWidthDefaultPx),
@@ -244,26 +265,7 @@ QString ribbonStyle() {
 }
 
 QString ribbonButtonStyle() {
-    return QStringLiteral(
-               "QToolButton {"
-               "  background: transparent;"
-               "  border: %1px solid transparent;"
-               "  border-radius: %2px;"
-               "  padding: %3px %4px;"
-               "  font-size: %5px; font-weight: %6;"
-               "  color: %7;"
-               "}"
-               "QToolButton:hover {"
-               "  background: %8;"
-               "  border: %1px solid %9;"
-               "}"
-               "QToolButton:pressed {"
-               "  background: %10;"
-               "  border: %1px solid %11;"
-               "}"
-               "QToolButton:disabled {"
-               "  color: %12;"
-               "}")
+    return QString::fromLatin1(ui::kEmailRibbonButtonStyle)
         .arg(ui::kCssBorderWidthDefaultPx)
         .arg(ui::kCssRadiusMediumPx)
         .arg(ui::kCssPaddingSmallPx)
@@ -279,7 +281,7 @@ QString ribbonButtonStyle() {
 }
 
 QString ribbonSeparatorStyle() {
-    return QStringLiteral("background: %1; margin: %2px 0px;")
+    return QString::fromLatin1(ui::kEmailRibbonSeparatorStyle)
         .arg(ui::cssColor(ui::kColorBorderDefault))
         .arg(ui::kSpacingSmall);
 }
@@ -366,15 +368,6 @@ void EmailInspectorPanel::addRibbonSearchGroup(QHBoxLayout* layout, QWidget* rib
 }
 
 void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon) {
-    m_export_emails_button = makeRibbonButton(tr("Export"),
-                                              QStringLiteral(":/icons/icons/icons8-export.svg"),
-                                              tr("Export emails as EML or CSV"),
-                                              ribbon);
-    m_export_emails_button->setEnabled(false);
-    connect(
-        m_export_emails_button, &QToolButton::clicked, this, &EmailInspectorPanel::onExportClicked);
-    layout->addWidget(m_export_emails_button);
-
     m_attachments_button = makeRibbonButton(tr("Attachments"),
                                             QStringLiteral(":/icons/icons/icons8-attachment.svg"),
                                             tr("Browse all attachments in this mailbox"),
@@ -522,15 +515,17 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list->setColumnCount(ColCount);
     m_item_list->setAccessibleName(QStringLiteral("Email Items List"));
     m_item_list->setHorizontalHeaderLabels(
-        {tr(""), tr("Subject"), tr("From / Name"), tr("Date"), tr("Size"), tr("Type")});
+        {QString(), tr("Subject"), tr("From / Name"), tr("Date"), tr("Size"), tr("Type")});
+    m_item_list->horizontalHeaderItem(ColSelect)->setIcon(QIcon(ui::kIconSelectorCheck));
+    m_item_list->horizontalHeaderItem(ColSelect)->setToolTip(tr("Select emails for export"));
     m_item_list->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_item_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_item_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_item_list->setSortingEnabled(true);
     m_item_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_item_list->horizontalHeader()->setStretchLastSection(true);
-    m_item_list->horizontalHeader()->setSectionResizeMode(ColAttachment, QHeaderView::Fixed);
-    m_item_list->setColumnWidth(ColAttachment, email::kAttachmentIndicatorColumnWidth);
+    m_item_list->horizontalHeader()->setSectionResizeMode(ColSelect, QHeaderView::Fixed);
+    m_item_list->setColumnWidth(ColSelect, email::kAttachmentIndicatorColumnWidth);
     m_item_list->setColumnWidth(ColSubject, email::kSubjectColumnWidth);
     m_item_list->setColumnWidth(ColFrom, email::kSenderColumnWidth);
     m_item_list->setColumnWidth(ColDate, email::kDateColumnWidth);
@@ -877,7 +872,10 @@ void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*c
     reloadCurrentPage();
 }
 
-void EmailInspectorPanel::onItemListCellClicked(int row, int /*column*/) {
+void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
+    if (column == ColSelect) {
+        return;
+    }
     if (row < 0 || row >= m_item_list->rowCount()) {
         return;
     }
@@ -909,7 +907,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
         }
     });
     menu.addSeparator();
-    menu.addAction(tr("Export as EML..."), this, [this] { onExportClicked(); });
+    menu.addAction(tr("Export Checked Emails..."), this, [this] { onExportClicked(); });
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Copy Subject"), this, [this] {
@@ -941,8 +939,12 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
         return;
     }
     QMenu menu(this);
-    menu.addAction(tr("Export Folder as EML..."), this, [this] { onExportClicked(); });
-    menu.addAction(tr("Export Folder as CSV..."), this, [this] { onExportClicked(); });
+    menu.addAction(tr("Export Folder as EML..."), this, [this] {
+        exportCurrentFolderAs(sak::ExportFormat::Eml);
+    });
+    menu.addAction(tr("Export Folder as CSV..."), this, [this] {
+        exportCurrentFolderAs(sak::ExportFormat::CsvEmails);
+    });
     menu.addSeparator();
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
@@ -979,6 +981,38 @@ void EmailInspectorPanel::onSearchTextChanged() {
     // Placeholder for debounced incremental search
 }
 
+uint64_t EmailInspectorPanel::itemIdForRow(int row) const {
+    if (m_item_list == nullptr || row < 0 || row >= m_item_list->rowCount()) {
+        return 0;
+    }
+    auto* subject_item = m_item_list->item(row, ColSubject);
+    if (subject_item == nullptr) {
+        return 0;
+    }
+    bool ok = false;
+    const uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
+    return ok ? item_id : 0;
+}
+
+QVector<uint64_t> EmailInspectorPanel::checkedItemIds() const {
+    QVector<uint64_t> ids;
+    if (m_item_list == nullptr) {
+        return ids;
+    }
+    ids.reserve(m_item_list->rowCount());
+    for (int row = 0; row < m_item_list->rowCount(); ++row) {
+        auto* select_item = m_item_list->item(row, ColSelect);
+        if (select_item == nullptr || select_item->checkState() != Qt::Checked) {
+            continue;
+        }
+        const uint64_t item_id = itemIdForRow(row);
+        if (item_id != 0) {
+            ids.append(item_id);
+        }
+    }
+    return ids;
+}
+
 // ============================================================================
 // Export Slots
 // ============================================================================
@@ -987,15 +1021,66 @@ void EmailInspectorPanel::onExportClicked() {
     if (!m_controller->isFileOpen()) {
         return;
     }
+    const QVector<uint64_t> checked_ids = checkedItemIds();
+    if (checked_ids.isEmpty()) {
+        sak::showWarningLogged(this,
+                               tr("No Emails Checked"),
+                               tr("Check one or more emails before saving selected email."));
+        return;
+    }
+    const QStringList formats = {
+        tr("HTML"),
+        tr("Text"),
+        tr("EML"),
+        tr("PDF"),
+    };
+    bool accepted = false;
+    const QString selected_format = QInputDialog::getItem(this,
+                                                          tr("Export Email Format"),
+                                                          tr("Save selected emails as:"),
+                                                          formats,
+                                                          0,
+                                                          false,
+                                                          &accepted);
+    if (!accepted || selected_format.isEmpty()) {
+        return;
+    }
+
     QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
     if (dir_path.isEmpty()) {
         return;
     }
 
     sak::EmailExportConfig config;
-    config.format = sak::ExportFormat::Eml;
+    if (selected_format == tr("HTML")) {
+        config.format = sak::ExportFormat::Html;
+    } else if (selected_format == tr("Text")) {
+        config.format = sak::ExportFormat::Text;
+    } else if (selected_format == tr("PDF")) {
+        config.format = sak::ExportFormat::Pdf;
+    } else {
+        config.format = sak::ExportFormat::Eml;
+    }
+    config.output_path = dir_path;
+    config.item_ids = checked_ids;
+    config.save_attachments_with_messages = true;
+    m_controller->exportItems(config);
+}
+
+void EmailInspectorPanel::exportCurrentFolderAs(sak::ExportFormat format) {
+    if (!m_controller->isFileOpen()) {
+        return;
+    }
+    const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
+    if (dir_path.isEmpty()) {
+        return;
+    }
+
+    sak::EmailExportConfig config;
+    config.format = format;
     config.output_path = dir_path;
     config.folder_id = m_current_folder_id;
+    config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }
 
@@ -1286,8 +1371,10 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     m_item_list->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& msg = messages.at(visible_indices.at(row));
-        QString att_icon = msg.has_attachments ? QStringLiteral("\xF0\x9F\x93\x8E") : QString();
-        m_item_list->setItem(row, ColAttachment, new QTableWidgetItem(att_icon));
+        m_item_list->setItem(row,
+                             ColSelect,
+                             makeEmailSelectItem(static_cast<uint64_t>(visible_indices.at(row)),
+                                                 tr("Select email for export")));
 
         auto* subject_cell = new QTableWidgetItem(msg.subject);
         subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(visible_indices.at(row)));
@@ -1299,6 +1386,9 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
 
         auto* type_cell = new QTableWidgetItem(tr("Email"));
         type_cell->setIcon(itemTypeQIcon(sak::EmailItemType::Email));
+        if (msg.has_attachments) {
+            type_cell->setToolTip(tr("Has attachments"));
+        }
         m_item_list->setItem(row, ColType, type_cell);
     }
     m_item_list->setUpdatesEnabled(true);
@@ -1319,14 +1409,7 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
         if (detail.body_html.isEmpty()) {
             m_content_browser->clear();
         } else {
-            QString wrapped = QStringLiteral(
-                                  "<html><head>"
-                                  "<meta charset=\"utf-8\">"
-                                  "<style>body { font-family: 'Segoe UI', sans-serif;"
-                                  " font-size: %1px; margin: 0; padding: %2px;"
-                                  " word-wrap: break-word; }"
-                                  " img { max-width: 100%%; height: auto; }</style>"
-                                  "</head><body>%3</body></html>")
+            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
                                   .arg(ui::kHtmlPreviewBodyFontPx)
                                   .arg(ui::kHtmlPreviewBodyPaddingPx)
                                   .arg(buildPreviewHtml(detail.body_html));
@@ -1614,13 +1697,9 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
     for (int row = 0; row < count; ++row) {
         const auto& item = items.at(row);
 
-        // Column 0 — type icon + attachment indicator
-        auto* icon_cell = new QTableWidgetItem();
-        icon_cell->setIcon(itemTypeQIcon(item.item_type));
-        if (item.has_attachments) {
-            icon_cell->setText(QStringLiteral("\xF0\x9F\x93\x8E"));
-        }
-        m_item_list->setItem(row, ColAttachment, icon_cell);
+        m_item_list->setItem(row,
+                             ColSelect,
+                             makeEmailSelectItem(item.node_id, tr("Select email for export")));
 
         auto* subject_cell = new QTableWidgetItem(item.subject);
         subject_cell->setData(Qt::UserRole, QVariant::fromValue(item.node_id));
@@ -1631,6 +1710,10 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
         m_item_list->setItem(row, ColSize, new QTableWidgetItem(formatBytes(item.size_bytes)));
 
         auto* type_cell = new QTableWidgetItem(itemTypeLabel(item.item_type));
+        type_cell->setIcon(itemTypeQIcon(item.item_type));
+        if (item.has_attachments) {
+            type_cell->setToolTip(tr("Has attachments"));
+        }
         m_item_list->setItem(row, ColType, type_cell);
     }
     m_item_list->setUpdatesEnabled(true);
@@ -1638,10 +1721,7 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
 }
 
 void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
-    QString html = QStringLiteral(
-                       "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: %1px;'>"
-                       "<h2 style='color: %2;'>%3</h2>")
+    QString html = QString::fromLatin1(ui::kHtmlDetailHeading2Open)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(detail.subject.toHtmlEscaped());
@@ -1660,16 +1740,13 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
         html += QStringLiteral("<p><b>Start:</b> %1</p>")
                     .arg(detail.task_start_date.toString(Qt::RFC2822Date));
     }
-    html += QStringLiteral("<hr style='border: %1px solid %2;'>")
+    html += QString::fromLatin1(ui::kHtmlHorizontalRule)
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
     if (!detail.body_html.isEmpty()) {
         html += detail.body_html;
     } else if (!detail.body_plain.isEmpty()) {
-        html += QStringLiteral(
-                    "<pre style='white-space: pre-wrap;'>"
-                    "%1</pre>")
-                    .arg(detail.body_plain.toHtmlEscaped());
+        html += QString::fromLatin1(ui::kHtmlPreWrap).arg(detail.body_plain.toHtmlEscaped());
     }
     html += QStringLiteral("</div>");
     m_content_browser->setHtml(html);
@@ -1690,13 +1767,7 @@ void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
     int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
                         ? detail.note_color
                         : kDefaultNoteColorIndex;
-    QString html = QStringLiteral(
-                       "<div style='font-family: Segoe UI, sans-serif; "
-                       "padding: %1px; background: %2; "
-                       "border-radius: %3px; min-height: %4px;'>"
-                       "<h3 style='color: %5;'>%6</h3>"
-                       "<p style='white-space: pre-wrap; "
-                       "color: %7;'>%8</p></div>")
+    QString html = QString::fromLatin1(ui::kHtmlNoteDetailTemplate)
                        .arg(ui::kHtmlDetailLargePaddingPx)
                        .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
                        .arg(ui::kCssRadiusLargePx)
@@ -1862,14 +1933,7 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
         if (detail.body_html.isEmpty()) {
             m_content_browser->clear();
         } else {
-            QString wrapped = QStringLiteral(
-                                  "<html><head>"
-                                  "<meta charset=\"utf-8\">"
-                                  "<style>body { font-family: 'Segoe UI', sans-serif;"
-                                  " font-size: %1px; margin: 0; padding: %2px;"
-                                  " word-wrap: break-word; }"
-                                  " img { max-width: 100%%; height: auto; }</style>"
-                                  "</head><body>%3</body></html>")
+            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
                                   .arg(ui::kHtmlPreviewBodyFontPx)
                                   .arg(ui::kHtmlPreviewBodyPaddingPx)
                                   .arg(buildPreviewHtml(detail.body_html));

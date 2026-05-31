@@ -72,6 +72,7 @@ void TestEmailExportWorker::configDefaults() {
     QVERIFY(config.attachment_filter.isEmpty());
     QVERIFY(config.skip_inline_images);
     QVERIFY(config.eml_include_headers);
+    QVERIFY(config.save_attachments_with_messages);
     QVERIFY(config.prefix_with_date);
 }
 
@@ -216,6 +217,9 @@ void TestEmailExportWorker::allExportFormatsHaveNames() {
     // Verify all ExportFormat enum values are distinct
     QVector<int> format_values;
     format_values.append(static_cast<int>(sak::ExportFormat::Eml));
+    format_values.append(static_cast<int>(sak::ExportFormat::Html));
+    format_values.append(static_cast<int>(sak::ExportFormat::Text));
+    format_values.append(static_cast<int>(sak::ExportFormat::Pdf));
     format_values.append(static_cast<int>(sak::ExportFormat::CsvEmails));
     format_values.append(static_cast<int>(sak::ExportFormat::Vcf));
     format_values.append(static_cast<int>(sak::ExportFormat::CsvContacts));
@@ -228,7 +232,7 @@ void TestEmailExportWorker::allExportFormatsHaveNames() {
     // All must be unique
     QSet<int> unique_values(format_values.begin(), format_values.end());
     QCOMPARE(unique_values.size(), format_values.size());
-    QCOMPARE(unique_values.size(), 9);
+    QCOMPARE(unique_values.size(), 12);
 }
 
 QTEST_MAIN(TestEmailExportWorker)

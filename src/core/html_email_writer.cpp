@@ -8,6 +8,7 @@
 
 #include "sak/logger.h"
 #include "sak/ost_converter_constants.h"
+#include "sak/report_style_constants.h"
 
 #include <QDir>
 #include <QFile>
@@ -50,14 +51,6 @@ QString detectImageMime(const QByteArray& data) {
         return QStringLiteral("image/webp");
     }
     return QString();
-}
-
-/// Detect image from filename extension
-bool isImageFilename(const QString& name) {
-    QString lower = name.toLower();
-    return lower.endsWith(QStringLiteral(".png")) || lower.endsWith(QStringLiteral(".jpg")) ||
-           lower.endsWith(QStringLiteral(".jpeg")) || lower.endsWith(QStringLiteral(".gif")) ||
-           lower.endsWith(QStringLiteral(".bmp")) || lower.endsWith(QStringLiteral(".webp"));
 }
 
 }  // namespace
@@ -124,16 +117,8 @@ QString HtmlEmailWriter::saveFileAttachments(
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& dir_path,
     const QString& filename) {
-    bool has_file_attachments = false;
-    for (const auto& [name, data] : attachment_data) {
-        if (!isImageFilename(name)) {
-            has_file_attachments = true;
-            break;
-        }
-    }
-
     QString attachments_dir;
-    if (has_file_attachments) {
+    if (!attachment_data.isEmpty()) {
         QFileInfo fi(filename);
         attachments_dir = dir_path + QStringLiteral("/") + fi.completeBaseName() +
                           QStringLiteral("_files");
@@ -141,7 +126,7 @@ QString HtmlEmailWriter::saveFileAttachments(
     }
 
     for (const auto& [name, data] : attachment_data) {
-        if (!isImageFilename(name) && !attachments_dir.isEmpty()) {
+        if (!attachments_dir.isEmpty()) {
             QFile att_file(attachments_dir + QStringLiteral("/") + name);
             if (att_file.open(QIODevice::WriteOnly)) {
                 att_file.write(data);
@@ -203,24 +188,9 @@ QString HtmlEmailWriter::buildHtmlPage(
         "content=\"width=device-width, initial-scale=1\">\n");
     ts << QStringLiteral("<title>") << escapeHtml(item.subject) << QStringLiteral("</title>\n");
 
-    // Inline CSS
-    ts << QStringLiteral("<style>\n");
-    ts << QStringLiteral(
-        "body { font-family: 'Segoe UI', sans-serif; "
-        "max-width: 800px; margin: 24px auto; "
-        "padding: 0 16px; color: #333; }\n");
-    ts << QStringLiteral(
-        ".header { border-bottom: 2px solid #0078D4; "
-        "padding-bottom: 12px; margin-bottom: 16px; }\n");
-    ts << QStringLiteral(".field { margin: 4px 0; }\n");
-    ts << QStringLiteral(".label { font-weight: bold; color: #555; }\n");
-    ts << QStringLiteral(".body { margin-top: 16px; }\n");
-    ts << QStringLiteral(
-        ".attachments { margin-top: 24px; "
-        "border-top: 1px solid #ddd; padding-top: 12px; }\n");
-    ts << QStringLiteral(".att-item { margin: 4px 0; }\n");
-    ts << QStringLiteral("img.embedded { max-width: 100%%; height: auto; }\n");
-    ts << QStringLiteral("</style>\n");
+    ts << QString::fromLatin1(report::kHtmlStyleTagOpen);
+    ts << report::savedEmailStyleSheet();
+    ts << QString::fromLatin1(report::kHtmlStyleTagClose);
 
     ts << QStringLiteral("</head>\n<body>\n");
 

@@ -169,8 +169,9 @@ QDialogButtonBox* addUninstallConfirmationButtons(QDialog* dialog, QVBoxLayout* 
 }
 
 QLabel* addForcedUninstallWarning(QDialog* dialog, QVBoxLayout* layout) {
-    auto* warningLabel = new QLabel(QObject::tr("<b style='color: %1;'>(!) Forced Uninstall</b>")
-                                        .arg(sak::ui::htmlColor(sak::ui::kColorWarning)),
+    auto* warningLabel = new QLabel(QString::fromLatin1(sak::ui::kHtmlBoldColor)
+                                        .arg(sak::ui::htmlColor(sak::ui::kColorWarning),
+                                             QObject::tr("(!) Forced Uninstall")),
                                     dialog);
     layout->addWidget(warningLabel);
     return warningLabel;

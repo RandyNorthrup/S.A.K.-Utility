@@ -41,10 +41,7 @@ QString formatBytes(qint64 bytes) {
 
 /// Build an HTML table row
 QString tableRow(const QString& label, const QString& value) {
-    return QStringLiteral(
-               "<tr><td style=\"padding:4px 12px 4px 0;"
-               "font-weight:bold;\">%1</td>"
-               "<td style=\"padding:4px 0;\">%2</td></tr>\n")
+    return QString::fromLatin1(sak::report::kEmailReportMetadataRow)
         .arg(label.toHtmlEscaped(), value.toHtmlEscaped());
 }
 
@@ -174,13 +171,10 @@ QString EmailReportGenerator::generateHtml(const ReportData& data) {
     QString html;
     QTextStream stream(&html);
 
-    stream << QStringLiteral(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n"
-        "<meta charset=\"UTF-8\">\n"
-        "<title>Email Inspection Report</title>\n"
-        "<style>\n");
+    stream << QString::fromLatin1(sak::report::kHtmlReportDocumentOpen)
+                  .arg(QStringLiteral("Email Inspection Report"));
     stream << sak::report::enterpriseReportStyleSheet();
-    stream << QStringLiteral("</style>\n</head>\n<body>\n");
+    stream << QString::fromLatin1(sak::report::kHtmlReportBodyOpen);
 
     stream << QStringLiteral("<h1>Email Inspection Report</h1>\n");
 
