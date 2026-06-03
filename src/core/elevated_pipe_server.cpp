@@ -188,6 +188,21 @@ bool ElevatedPipeServer::isConnected() const {
 #endif
 }
 
+bool ElevatedPipeServer::hasPendingMessage() const {
+#ifdef _WIN32
+    if (m_pipe_handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    DWORD available = 0;
+    if (!PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr)) {
+        return false;
+    }
+    return available > 0;
+#else
+    return false;
+#endif
+}
+
 void ElevatedPipeServer::stop() {
 #ifdef _WIN32
     if (m_pipe_handle != INVALID_HANDLE_VALUE) {

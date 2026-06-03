@@ -15,7 +15,9 @@
 
 #include <QApplication>
 #include <QColor>
+#include <QIcon>
 #include <QPalette>
+#include <QSize>
 #include <QString>
 
 namespace sak::ui {
@@ -52,6 +54,7 @@ constexpr int kButtonStyleReserveChars = 900;
 constexpr int kToolButtonMenuIndicatorOffsetPx = -4;
 constexpr auto kButtonPaddingDefaultCss = "8px 20px";
 constexpr auto kButtonPaddingCompactCss = "8px 14px";
+constexpr auto kButtonPaddingSlimCss = "5px 14px";
 constexpr auto kButtonPaddingWideCss = "8px 24px";
 
 // -- Common UI Dimensions ----------------------------------------------------
@@ -75,6 +78,16 @@ constexpr int kUiSearchMinWidth = 180;
 constexpr int kUiSearchMaxWidth = 280;
 constexpr int kUiSelectorButtonWidth = 24;
 constexpr int kUiSelectorButtonMargin = 2;
+constexpr int kUiTabScrollButtonWidth = 26;
+constexpr int kUiTabScrollButtonHeight = kUiButtonHeightMini;
+constexpr int kUiTabScrollIconSize = kUiIconCompact;
+constexpr int kUiTabScrollAreaWidth = (kUiTabScrollButtonWidth * 2) + (kUiSelectorButtonMargin * 4);
+constexpr int kUiGroupBoxBorderRadius = kCssRadiusXLargePx;
+constexpr int kUiGroupBoxTitleMarginTop = kMarginMedium;
+constexpr int kUiGroupBoxContentPaddingTop = kMarginMedium;
+constexpr int kUiGroupBoxContentPaddingHorizontal = kSpacingDefault;
+constexpr int kUiGroupBoxContentPaddingBottom = kSpacingDefault;
+constexpr int kUiGroupBoxTitlePaddingHorizontal = kMarginSmall;
 constexpr int kUiSpinBoxMinHeight = 32;
 constexpr int kUiSpinBoxStepperWidth = kUiSelectorButtonWidth;
 constexpr int kUiSpinBoxStepperMargin = kUiSelectorButtonMargin;
@@ -86,6 +99,18 @@ inline const QString kIconSelectorChevronUp =
     QStringLiteral(":/icons/icons/icons8-selector-chevron-up.svg");
 inline const QString kIconSelectorChevronUpDark =
     QStringLiteral(":/icons/icons/icons8-selector-chevron-up-dark.svg");
+inline const QString kIconSelectorChevronUpOnTone =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-up-on-tone.svg");
+inline const QString kIconSelectorChevronDownOnTone =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-down-on-tone.svg");
+inline const QString kIconSelectorChevronLeft =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-left.svg");
+inline const QString kIconSelectorChevronLeftDark =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-left-dark.svg");
+inline const QString kIconSelectorChevronRight =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-right.svg");
+inline const QString kIconSelectorChevronRightDark =
+    QStringLiteral(":/icons/icons/icons8-selector-chevron-right-dark.svg");
 inline const QString kIconSelectorChevronLeftOnTone =
     QStringLiteral(":/icons/icons/icons8-selector-chevron-left-on-tone.svg");
 inline const QString kIconSelectorChevronRightOnTone =
@@ -95,6 +120,70 @@ inline const QString kIconSelectorCalendar =
 inline const QString kIconSelectorCalendarDark =
     QStringLiteral(":/icons/icons/icons8-selector-calendar-dark.svg");
 inline const QString kIconSelectorCheck = QStringLiteral(":/icons/icons/icons8-selector-check.svg");
+inline const QString kIconPasswordEyeOpen = QStringLiteral(":/icons/icons/eye_open.svg");
+inline const QString kIconPasswordEyeClosed = QStringLiteral(":/icons/icons/eye_closed.svg");
+inline const QString kIconPasswordEyeOpenOnTone =
+    QStringLiteral(":/icons/icons/eye_open_on_tone.svg");
+inline const QString kIconPasswordEyeClosedOnTone =
+    QStringLiteral(":/icons/icons/eye_closed_on_tone.svg");
+
+inline bool usingDarkUiTheme() {
+    return qApp && qApp->property("sakThemeMode").toString() == QStringLiteral("dark");
+}
+
+inline QString themedSelectorChevronLeftIcon() {
+    return usingDarkUiTheme() ? kIconSelectorChevronLeftDark : kIconSelectorChevronLeft;
+}
+
+inline QString themedSelectorChevronRightIcon() {
+    return usingDarkUiTheme() ? kIconSelectorChevronRightDark : kIconSelectorChevronRight;
+}
+
+inline QIcon selectorChevronUpToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconSelectorChevronUpOnTone, QSize(), QIcon::Normal);
+    icon.addFile(usingDarkUiTheme() ? kIconSelectorChevronUpDark : kIconSelectorChevronUp,
+                 QSize(),
+                 QIcon::Disabled);
+    return icon;
+}
+
+inline QIcon selectorChevronDownToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconSelectorChevronDownOnTone, QSize(), QIcon::Normal);
+    icon.addFile(usingDarkUiTheme() ? kIconSelectorChevronDownDark : kIconSelectorChevronDown,
+                 QSize(),
+                 QIcon::Disabled);
+    return icon;
+}
+
+inline QIcon selectorChevronLeftToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconSelectorChevronLeftOnTone, QSize(), QIcon::Normal);
+    icon.addFile(themedSelectorChevronLeftIcon(), QSize(), QIcon::Disabled);
+    return icon;
+}
+
+inline QIcon selectorChevronRightToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconSelectorChevronRightOnTone, QSize(), QIcon::Normal);
+    icon.addFile(themedSelectorChevronRightIcon(), QSize(), QIcon::Disabled);
+    return icon;
+}
+
+inline QIcon passwordEyeOpenToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconPasswordEyeOpenOnTone, QSize(), QIcon::Normal);
+    icon.addFile(kIconPasswordEyeOpen, QSize(), QIcon::Disabled);
+    return icon;
+}
+
+inline QIcon passwordEyeClosedToolButtonIcon() {
+    QIcon icon;
+    icon.addFile(kIconPasswordEyeClosedOnTone, QSize(), QIcon::Normal);
+    icon.addFile(kIconPasswordEyeClosed, QSize(), QIcon::Disabled);
+    return icon;
+}
 
 constexpr auto kSelectorComboDropDown = "QComboBox::drop-down";
 constexpr auto kSelectorComboDownArrow = "QComboBox::down-arrow";
@@ -370,15 +459,15 @@ inline constexpr auto kWindows11ThemeProgressStyles = R"SAK(
 inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
         QGroupBox {
             border: 1px solid %1;
-            border-radius: 12px;
-            margin-top: 18px;
-            padding: 26px 10px 10px 10px;
+            border-radius: %11px;
+            margin-top: %12px;
+            padding: %13px %14px %15px %14px;
         }
 
         QGroupBox::title {
             subcontrol-origin: margin;
             subcontrol-position: top left;
-            padding: 0px 8px;
+            padding: 0px %16px;
             color: %2;
         }
 
@@ -1148,18 +1237,45 @@ inline QString htmlBrowserDocumentStyleSheet() {
 /// Primary action button -- blue gradient with hover/pressed/disabled states.
 inline const QString kPrimaryButtonStyle = actionButtonStyle("QPushButton", kPrimaryButtonTone);
 
+/// Compact primary action button for dense tool rows.
+inline const QString kCompactPrimaryButtonStyle =
+    actionButtonStyle("QPushButton", kPrimaryButtonTone, false, kButtonPaddingSlimCss);
+
 /// Primary QToolButton variant with dropdown indicator styling.
 inline const QString kPrimaryToolButtonStyle =
     actionButtonStyle("QToolButton", kPrimaryButtonTone, true);
 
+inline QString tabScrollButtonStyle() {
+    return actionButtonStyle("QToolButton#sakTabScrollButton", kPrimaryButtonTone, false, "0px") +
+           QStringLiteral(
+               "QToolButton#sakTabScrollButton { min-width: %1px; max-width: %1px; "
+               "min-height: %2px; max-height: %2px; margin: 0px %3px; padding: 0px; }")
+               .arg(kUiTabScrollButtonWidth)
+               .arg(kUiTabScrollButtonHeight)
+               .arg(kUiSelectorButtonMargin);
+}
+
+inline QString tabBarScrollControlsStyle() {
+    return QStringLiteral("QTabBar::scroller { width: %1px; }").arg(kUiTabScrollAreaWidth) +
+           tabScrollButtonStyle();
+}
+
 /// Secondary action button -- subtle slate gradient for non-primary actions.
 inline const QString kSecondaryButtonStyle = actionButtonStyle("QPushButton", kSecondaryButtonTone);
+
+/// Compact secondary action button for dense tool rows.
+inline const QString kCompactSecondaryButtonStyle =
+    actionButtonStyle("QPushButton", kSecondaryButtonTone, false, kButtonPaddingSlimCss);
 
 /// Success action button -- green gradient, uniform with theme QPushButton.
 inline const QString kSuccessButtonStyle = actionButtonStyle("QPushButton", kSuccessButtonTone);
 
 /// Danger action button -- red gradient, uniform with theme QPushButton.
 inline const QString kDangerButtonStyle = actionButtonStyle("QPushButton", kDangerButtonTone);
+
+/// Compact danger action button for dense tool rows.
+inline const QString kCompactDangerButtonStyle =
+    actionButtonStyle("QPushButton", kDangerButtonTone, false, kButtonPaddingSlimCss);
 
 /// Pause action button -- amber gradient, uniform with theme QPushButton.
 inline const QString kPauseButtonStyle = actionButtonStyle("QPushButton", kPauseButtonTone);
@@ -1453,8 +1569,8 @@ inline QString groupBoxPanelStyle(const char* text_color, const char* border) {
         .arg(kCssBorderWidthDefaultPx)
         .arg(cssColor(border))
         .arg(kCssRadiusLargePx)
-        .arg(kMarginMedium)
-        .arg(kFontSizeTitle)
+        .arg(kUiGroupBoxTitleMarginTop)
+        .arg(kUiGroupBoxContentPaddingTop)
         .arg(kSpacingDefault)
         .arg(kSpacingSmall);
 }
@@ -1530,6 +1646,26 @@ inline QString compactLinkButtonStyle() {
         .arg(kCssPaddingMediumPx)
         .arg(cssColor(kColorTextPrimary))
         .arg(kFontSizeBody);
+}
+
+constexpr double kPartitionActionTextLinkHoverAlpha = 0.12;
+constexpr double kPartitionActionTextLinkPressedAlpha = 0.18;
+
+inline QString partitionActionTextLinkStyle() {
+    return QStringLiteral(
+               "QToolButton#partitionActionTextLink { background: transparent; border: none; "
+               "border-radius: 0px; padding: %1px %2px; text-align: left; color: %3; }"
+               "QToolButton#partitionActionTextLink:hover { background: %4; color: %5; }"
+               "QToolButton#partitionActionTextLink:pressed { background: %6; }"
+               "QToolButton#partitionActionTextLink:disabled { background: transparent; "
+               "color: %7; }")
+        .arg(kCssPaddingTinyPx)
+        .arg(kCssPaddingSmallPx)
+        .arg(cssColor(kColorTextBody))
+        .arg(colorWithAlpha(kColorPrimary, kPartitionActionTextLinkHoverAlpha))
+        .arg(cssColor(kColorPrimaryDark))
+        .arg(colorWithAlpha(kColorPrimary, kPartitionActionTextLinkPressedAlpha))
+        .arg(cssColor(kColorTextMuted));
 }
 
 inline QString wifiIndicatorStyle() {

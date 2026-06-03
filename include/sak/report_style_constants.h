@@ -116,6 +116,14 @@ inline constexpr auto kHtmlReportDocumentClose = "</body>\n</html>\n";
 inline constexpr auto kEmailReportMetadataRow =
     "<tr><td class=\"metadata-label\">%1</td><td class=\"metadata-value\">%2</td></tr>\n";
 inline constexpr auto kConversionHashCell = "<td class='hash-preview'>%1</td>";
+inline constexpr auto kPartitionManagerReportStyle =
+    "body{font-family:'Segoe UI',sans-serif;margin:24px;}"
+    "table{border-collapse:collapse;width:100%;margin:12px 0;}"
+    "td,th{border:1px solid #ccd6e2;padding:6px 8px;text-align:left;}"
+    "th{background:#eef3f8;}pre{white-space:pre-wrap;}";
+inline constexpr auto kPartitionManagerReportDocumentOpen =
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Partition Manager Report</title>"
+    "<style>%1</style></head><body>";
 inline constexpr auto kSavedEmailStyleBody =
     "body { font-family: 'Segoe UI', sans-serif; max-width: %1; margin: %2 auto; "
     "padding: 0 %3; color: %4; }";

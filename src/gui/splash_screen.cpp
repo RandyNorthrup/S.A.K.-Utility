@@ -12,13 +12,12 @@ namespace sak::ui {
 
 namespace {
 
-constexpr int kSplashDefaultSize = 600;
-constexpr int kSplashMaxSize = 640;
 constexpr int kSplashPaddingSides = 2;
 constexpr int kSplashShadowRed = 0;
 constexpr int kSplashShadowGreen = 0;
 constexpr int kSplashShadowBlue = 0;
 constexpr int kSplashShadowAlpha = 90;
+constexpr int kCenterCropDivisor = 2;
 
 QPixmap createRoundedPixmap(const QPixmap& source, int radius) {
     Q_ASSERT(radius >= 0);
@@ -41,18 +40,33 @@ QPixmap createRoundedPixmap(const QPixmap& source, int radius) {
     return rounded;
 }
 
+QPixmap scaledSplashPixmap(const QPixmap& source) {
+    Q_ASSERT(!source.isNull());
+    if (source.isNull()) {
+        return {};
+    }
+
+    const QSize target_size(kSplashSizePx, kSplashSizePx);
+    if (source.size() == target_size) {
+        return source;
+    }
+
+    const QPixmap scaled =
+        source.scaled(target_size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    if (scaled.size() == target_size) {
+        return scaled;
+    }
+
+    const QPoint crop_top_left((scaled.width() - target_size.width()) / kCenterCropDivisor,
+                               (scaled.height() - target_size.height()) / kCenterCropDivisor);
+    return scaled.copy(QRect(crop_top_left, target_size));
+}
+
 }  // namespace
 
 SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(parent) {
     Q_ASSERT(!pixmap.isNull());
-    Q_ASSERT(parent != nullptr);
-    const QSize max_size(kSplashMaxSize, kSplashMaxSize);
-    if (!pixmap.isNull() &&
-        (pixmap.width() > max_size.width() || pixmap.height() > max_size.height())) {
-        m_pixmap = pixmap.scaled(max_size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    } else {
-        m_pixmap = pixmap;
-    }
+    m_pixmap = scaledSplashPixmap(pixmap);
 
     m_rounded_pixmap = createRoundedPixmap(m_pixmap, m_corner_radius);
 
@@ -60,11 +74,12 @@ SplashScreen::SplashScreen(const QPixmap& pixmap, QWidget* parent) : QWidget(par
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
 
-    const QSize content_size = m_pixmap.isNull() ? QSize(kSplashDefaultSize, kSplashDefaultSize)
-                                                 : m_pixmap.size();
     const int padding = m_shadow_radius + m_shadow_offset;
+    const QSize content_size(kSplashSizePx - padding * kSplashPaddingSides,
+                             kSplashSizePx - padding * kSplashPaddingSides);
     resize(content_size.width() + padding * kSplashPaddingSides,
            content_size.height() + padding * kSplashPaddingSides);
+    setFixedSize(kSplashSizePx, kSplashSizePx);
 }
 
 void SplashScreen::showCentered() {

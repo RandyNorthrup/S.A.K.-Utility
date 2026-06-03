@@ -61,6 +61,14 @@ enum class FeatureId : uint16_t {
     FlashUsbDrive = 400,
     UupIsoConversion = 401,
 
+    // Partition Manager (450-499)
+    PartitionInventory = 450,
+    PartitionMutate = 451,
+    PartitionCloneImage = 452,
+    PartitionBootRepair = 453,
+    PartitionSsdOptimize = 454,
+    PartitionSecureWipe = 455,
+
     // Backup & Restore (500-599)
     BackupCurrentUser = 500,
     BackupCrossUser = 501,
@@ -152,6 +160,32 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
      ElevationTier::Elevated,
      "UUP ISO Conversion",
      "DISM AppX provisioning requires administrator privileges"},
+
+    // Partition Manager — Mixed/Elevated
+    {FeatureId::PartitionInventory,
+     ElevationTier::Mixed,
+     "Partition Manager Inventory",
+     "Some storage inventory fields require administrator access"},
+    {FeatureId::PartitionMutate,
+     ElevationTier::Elevated,
+     "Partition Operations",
+     "Changing partition tables and volumes requires administrator privileges"},
+    {FeatureId::PartitionCloneImage,
+     ElevationTier::Elevated,
+     "Disk Clone and Image",
+     "Raw disk read/write requires administrator privileges"},
+    {FeatureId::PartitionBootRepair,
+     ElevationTier::Elevated,
+     "Boot Repair",
+     "BCD, EFI, and WinRE repair requires administrator privileges"},
+    {FeatureId::PartitionSsdOptimize,
+     ElevationTier::Elevated,
+     "SSD Optimization",
+     "Volume optimization requires administrator privileges"},
+    {FeatureId::PartitionSecureWipe,
+     ElevationTier::Elevated,
+     "Secure Wipe",
+     "Disk and volume wipe operations require administrator privileges"},
 
     // Backup & Restore — Mixed
     {FeatureId::BackupCurrentUser, ElevationTier::Standard, "Backup Current User", ""},

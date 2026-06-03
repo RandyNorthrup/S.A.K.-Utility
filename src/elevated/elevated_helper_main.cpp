@@ -33,9 +33,12 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 
 #ifdef _WIN32
@@ -224,6 +227,7 @@ constexpr int kPowerShellStartProgress = 0;
 constexpr int kPowerShellRunningProgress = 5;
 constexpr int kPowerShellOutputProgress = 50;
 constexpr int kPowerShellFinishedProgress = 100;
+constexpr int kActiveTaskCancelPollMs = 50;
 
 struct ElevatedPowerShellConfig {
     QString command;
@@ -581,9 +585,55 @@ void registerAllTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 // Main Event Loop
 // ======================================================================
 
-int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& dispatcher) {
-    bool cancel_requested = false;
+void sendTaskDispatchResult(sak::ElevatedPipeServer& server,
+                            const std::expected<sak::TaskHandlerResult, sak::error_code>& result) {
+    if (result) {
+        server.sendResult(result->success, result->data);
+    } else {
+        server.sendError(static_cast<int>(result.error()),
+                         QString::fromStdString(std::string(sak::to_string(result.error()))));
+    }
+}
 
+bool finishActiveTaskWithCancelPolling(
+    sak::ElevatedPipeServer& server,
+    std::future<std::expected<sak::TaskHandlerResult, sak::error_code>>* future,
+    const std::shared_ptr<std::atomic_bool>& cancel_requested) {
+    bool shutdown_after_task = false;
+    while (future->wait_for(std::chrono::milliseconds(kActiveTaskCancelPollMs)) !=
+           std::future_status::ready) {
+        if (!server.hasPendingMessage()) {
+            continue;
+        }
+
+        auto msg = server.readMessage();
+        if (!msg) {
+            cancel_requested->store(true, std::memory_order_relaxed);
+            return true;
+        }
+
+        switch (msg->type) {
+        case sak::PipeMessageType::CancelRequest:
+            cancel_requested->store(true, std::memory_order_relaxed);
+            sak::logInfo("ElevatedHelper: active task cancel requested");
+            break;
+        case sak::PipeMessageType::Shutdown:
+            cancel_requested->store(true, std::memory_order_relaxed);
+            shutdown_after_task = true;
+            sak::logInfo("ElevatedHelper: shutdown requested during active task");
+            break;
+        default:
+            sak::logWarning("ElevatedHelper: ignored message type {} during active task",
+                            static_cast<int>(msg->type));
+            break;
+        }
+    }
+
+    sendTaskDispatchResult(server, future->get());
+    return shutdown_after_task;
+}
+
+int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& dispatcher) {
     server.sendReady();
     sak::logInfo("ElevatedHelper: sent Ready, entering task loop");
 
@@ -600,32 +650,34 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
             return 0;
         }
         case sak::PipeMessageType::CancelRequest: {
-            cancel_requested = true;
-            sak::logInfo("ElevatedHelper: cancel requested");
+            sak::logInfo("ElevatedHelper: cancel requested with no active task");
             break;
         }
         case sak::PipeMessageType::TaskRequest: {
             QString task_id = msg->json["task"].toString();
             QJsonObject payload = msg->json["payload"].toObject();
-            cancel_requested = false;
+            auto cancel_requested = std::make_shared<std::atomic_bool>(false);
 
             sak::logInfo("ElevatedHelper: executing task '{}'", task_id.toStdString());
 
             auto progress_cb = [&server](int pct, const QString& status) {
                 server.sendProgress(pct, status);
             };
-            auto cancel_cb = [&cancel_requested]() {
-                return cancel_requested;
+            auto cancel_cb = [cancel_requested]() {
+                return cancel_requested->load(std::memory_order_relaxed);
             };
 
-            auto result = dispatcher.dispatch(task_id, payload, progress_cb, cancel_cb);
-
-            if (result) {
-                server.sendResult(result->success, result->data);
-            } else {
-                server.sendError(static_cast<int>(result.error()),
-                                 QString::fromStdString(
-                                     std::string(sak::to_string(result.error()))));
+            auto future =
+                std::async(std::launch::async,
+                           [&dispatcher,
+                            task_id,
+                            payload,
+                            progress_cb = std::move(progress_cb),
+                            cancel_cb = std::move(cancel_cb)]() mutable {
+                               return dispatcher.dispatch(task_id, payload, progress_cb, cancel_cb);
+                           });
+            if (finishActiveTaskWithCancelPolling(server, &future, cancel_requested)) {
+                return 0;
             }
             break;
         }

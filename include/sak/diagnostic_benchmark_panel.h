@@ -274,7 +274,6 @@ private:
     // -- Quick Action Widgets ------------------------------------
     QuickActionController* m_qa_controller{nullptr};
     QHash<QString, QPushButton*> m_qa_buttons;
-    QLabel* m_qa_status_label{nullptr};
     QProgressBar* m_qa_progress_bar{nullptr};
 
     // -- State ---------------------------------------------------

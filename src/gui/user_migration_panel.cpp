@@ -262,10 +262,11 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 
     auto make_action_button = [&](const QString& text, const QString& tooltip, const QString& key) {
         auto* btn = new QPushButton(text, group);
-        btn->setMinimumHeight(sak::kButtonHeightTall);
+        btn->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
+        btn->setMaximumHeight(sak::ui::kUiButtonHeightDialog);
         btn->setToolTip(tooltip);
         btn->setAccessibleName(text);
-        btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+        btn->setStyleSheet(sak::ui::kCompactPrimaryButtonStyle);
         m_action_buttons.insert(key, btn);
         btn_layout->addWidget(btn);
         return btn;
@@ -281,11 +282,6 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 
     btn_layout->addStretch();
     layout->addLayout(btn_layout);
-
-    // Status + progress
-    m_action_status_label = new QLabel(tr("Ready"), group);
-    m_action_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
-    layout->addWidget(m_action_status_label);
 
     m_action_progress_bar = new QProgressBar(group);
     m_action_progress_bar->setRange(kProgressBarMinimum, kPercentMax);
@@ -345,7 +341,7 @@ void UserMigrationPanel::createQuickActions() {
 void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
     appendLog(QString("Executing: %1").arg(action->name()));
-    m_action_status_label->setText(QString("Running: %1...").arg(action->name()));
+    Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
     m_action_progress_bar->setValue(0);
     m_action_progress_bar->setVisible(true);
     m_action_controller->executeAction(action->name(), false);
@@ -355,7 +351,7 @@ void UserMigrationPanel::onQuickActionProgress(QuickAction* action,
                                                const QString& message,
                                                int progress) {
     Q_ASSERT(action);
-    m_action_status_label->setText(message);
+    Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
     m_action_progress_bar->setValue(progress);
 }
 
@@ -365,7 +361,6 @@ void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
     const QString status = result.success
                                ? QString("Completed: %1").arg(action->name())
                                : QString("Failed: %1 - %2").arg(action->name(), result.message);
-    m_action_status_label->setText(status);
     m_action_progress_bar->setVisible(false);
     appendLog(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
@@ -374,9 +369,9 @@ void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
 void UserMigrationPanel::onQuickActionError(QuickAction* action, const QString& error_message) {
     Q_ASSERT(action);
     const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
-    m_action_status_label->setText(status);
     m_action_progress_bar->setVisible(false);
     appendLog(status);
+    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
     sak::logError("Quick action error: {} - {}",
                   action->name().toStdString(),
                   error_message.toStdString());

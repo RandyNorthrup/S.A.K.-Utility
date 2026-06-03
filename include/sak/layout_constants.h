@@ -43,26 +43,26 @@ constexpr int kHexBase = 16;
 // Timer intervals (milliseconds)
 // ============================================================================
 
-constexpr int kTimerImmediateMs = 0;          ///< Next event-loop tick
-constexpr int kTimerSnapMs = 50;              ///< Snap/animation tick
-constexpr int kTimerPollingFastMs = 100;      ///< Fast polling (USB creation, install)
-constexpr int kTimerDelayShortMs = 200;       ///< Short UI delay
-constexpr int kTimerRetryBaseMs = 500;        ///< Retry backoff base
-constexpr int kTimerProgressPollMs = 1000;    ///< Progress poll (downloads, conversions)
-constexpr int kTimerSplashMs = 1500;          ///< Splash screen display
-constexpr int kTimerStatusBriefMs = 2000;     ///< Brief status-bar display
-constexpr int kTimerBroadcastMs = 2000;       ///< Peer discovery broadcast
-constexpr int kTimerServiceDelayMs = 2000;    ///< Service restart delay
-constexpr int kTimerStatusMessageMs = 3000;   ///< Status bar message display
-constexpr int kTimerStatusWarnMs = 4000;      ///< Status bar warning display
-constexpr int kTimerHeartbeatMs = 5000;       ///< Connection heartbeat
-constexpr int kTimerRefreshMs = 5000;         ///< Drive/device refresh
-constexpr int kTimerStatusDefaultMs = 5000;   ///< Default status bar timeout
-constexpr int kTimerStatusLongMs = 6000;      ///< Long status bar display
-constexpr int kTimerStatusExtendedMs = 7000;  ///< Extended status bar display
-constexpr int kTimerNetshWaitMs = 8000;       ///< netsh command timeout
-constexpr int kTimerStoreRepairMs = 8000;     ///< Windows Store repair wait
-constexpr int kTimerHealthPollMs = 10'000;    ///< Migration health check
+constexpr int kTimerImmediateMs = 0;                ///< Next event-loop tick
+constexpr int kTimerSnapMs = 50;                    ///< Snap/animation tick
+constexpr int kTimerPollingFastMs = 100;            ///< Fast polling (USB creation, install)
+constexpr int kTimerDelayShortMs = 200;             ///< Short UI delay
+constexpr int kTimerRetryBaseMs = 500;              ///< Retry backoff base
+constexpr int kTimerProgressPollMs = 1000;          ///< Progress poll (downloads, conversions)
+constexpr int kTimerProgressCompleteHoldMs = 1500;  ///< Hold completed progress before hiding
+constexpr int kTimerStatusBriefMs = 2000;           ///< Brief status-bar display
+constexpr int kTimerBroadcastMs = 2000;             ///< Peer discovery broadcast
+constexpr int kTimerServiceDelayMs = 2000;          ///< Service restart delay
+constexpr int kTimerStatusMessageMs = 3000;         ///< Status bar message display
+constexpr int kTimerStatusWarnMs = 4000;            ///< Status bar warning display
+constexpr int kTimerHeartbeatMs = 5000;             ///< Connection heartbeat
+constexpr int kTimerRefreshMs = 5000;               ///< Drive/device refresh
+constexpr int kTimerStatusDefaultMs = 5000;         ///< Default status bar timeout
+constexpr int kTimerStatusLongMs = 6000;            ///< Long status bar display
+constexpr int kTimerStatusExtendedMs = 7000;        ///< Extended status bar display
+constexpr int kTimerNetshWaitMs = 8000;             ///< netsh command timeout
+constexpr int kTimerStoreRepairMs = 8000;           ///< Windows Store repair wait
+constexpr int kTimerHealthPollMs = 10'000;          ///< Migration health check
 
 // ============================================================================
 // Process timeouts (milliseconds)

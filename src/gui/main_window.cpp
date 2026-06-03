@@ -24,6 +24,7 @@
 #include "sak/network_diagnostic_panel.h"
 #include "sak/organizer_panel.h"
 #include "sak/ost_converter_widget.h"
+#include "sak/partition_manager_panel.h"
 #include "sak/style_constants.h"
 #include "sak/user_migration_panel.h"
 #include "sak/version.h"
@@ -53,6 +54,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSize>
+#include <QSizePolicy>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QTextBrowser>
@@ -73,6 +75,10 @@ constexpr int kDirectTabShortcutCount = 9;
 constexpr int kTenthTabIndex = 9;
 constexpr int kTabShortcutBaseOffset = 10;
 constexpr int kShiftTabShortcutCount = 5;
+constexpr auto kTabScrollButtonObjectName = "sakTabScrollButton";
+constexpr auto kTabScrollDirectionProperty = "sakTabScrollDirection";
+constexpr auto kTabScrollDirectionLeft = "left";
+constexpr auto kTabScrollDirectionRight = "right";
 
 QBoxLayout* findBoxLayoutContainingWidget(QLayout* layout, QWidget* target, int& item_index) {
     if (!layout || !target) {
@@ -132,6 +138,17 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Stress Testing</b> &mdash; CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
         <li><b>System Maintenance</b> &mdash; Optimize Power Settings, Verify System Files, Check Disk Errors, and Generate System Report</li>
         <li><b>Report Export</b> &mdash; HTML, JSON, and CSV reports</li>
+    </ul>
+</div>
+
+<div class="section">
+    <div class="section-title">Partition Manager</div>
+    <ul>
+        <li><b>Disk Workspace</b> &mdash; Lazy storage inventory, proportional disk map, partition table, right-click actions, pending queue, dry run, and before/after Apply review</li>
+        <li><b>Queued Operations</b> &mdash; Create, delete, format, resize, move start, merge, split, clone, image, restore, label, drive-letter, type ID, active flag, hide/unhide, wipe, initialize, delete-all, and boot repair flows</li>
+        <li><b>Commercial-Parity Utilities</b> &mdash; Quick Partition, Extend Partition Wizard, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD Secure Erase, Data Recovery, OS migration, and Make Bootable Media</li>
+        <li><b>Destructive Safety</b> &mdash; Off-volume backup, typed confirmations, system/boot/removable/media guards, script preview, elevated execution, restore verification, SHA-256 manifest comparison, and repair scans where mutation requires rebuild</li>
+        <li><b>Certification Evidence</b> &mdash; Disposable-VHD proof and imported external VM/hardware/lab evidence are checked by release-readiness harnesses before hardware-certified release claims are accepted</li>
     </ul>
 </div>
 
@@ -400,7 +417,6 @@ void MainWindow::setupUi() {
     setCentralWidget(m_tab_widget);
 
     // Create UI elements
-    createMenuBar();
     createStatusBar();
 
     // Create shared log window BEFORE panels so connectLog() can reference it
@@ -428,12 +444,6 @@ void MainWindow::setupUi() {
 
     updateStatus("Ready", 0);
 }
-
-void MainWindow::createMenuBar() {
-    // Menu bar removed  --  all items moved to panels/tabs
-    menuBar()->hide();
-}
-
 
 void MainWindow::createStatusBar() {
     // Persistent status label
@@ -560,6 +570,7 @@ void MainWindow::createSimplePanels() {
     Q_ASSERT(m_tab_widget);
     createBackupRestorePanel();
     createFileManagementPanel();
+    createPartitionManagerPanel();
     createImageFlasherPanel();
     createDiagnosticPanel();
     createEmailToolsPanel();
@@ -587,6 +598,18 @@ void MainWindow::createFileManagementPanel() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
     logInfo("MainWindow: File Management panels initialized");
+}
+
+void MainWindow::createPartitionManagerPanel() {
+    logInfo("MainWindow: creating Partition Manager panel");
+    m_partition_manager_panel = std::make_unique<PartitionManagerPanel>(this);
+    AddTabWithTooltip(m_tab_widget,
+                      m_partition_manager_panel.get(),
+                      "Partition Manager",
+                      "Manage disks, partitions, SMART status, cloning, migration, boot repair, "
+                      "SSD optimization, and wipe operations",
+                      ":/icons/icons/icons8-pm-disk.svg");
+    logInfo("MainWindow: Partition Manager panel initialized");
 }
 
 void MainWindow::createImageFlasherPanel() {
@@ -1078,6 +1101,18 @@ void MainWindow::connectPanelSignals() {
             this,
             &MainWindow::updateProgress);
 
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::statusMessage,
+            this,
+            [this](const QString& msg, int timeout_ms) {
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
+            });
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::progressUpdate,
+            this,
+            &MainWindow::updateProgress);
+    connectPartitionManagerNavigation();
+
     connect(m_image_flasher_panel.get(),
             &ImageFlasherPanel::statusMessage,
             this,
@@ -1088,6 +1123,31 @@ void MainWindow::connectPanelSignals() {
             &MainWindow::updateProgress);
 
     connectRemainingPanelSignals();
+}
+
+void MainWindow::connectPartitionManagerNavigation() {
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::openBenchmarkRequested,
+            this,
+            [this]() {
+                const int tabIdx = findPanelTabIndex(m_diagnostic_benchmark_panel.get());
+                if (tabIdx >= 0) {
+                    m_tab_widget->setCurrentIndex(tabIdx);
+                    updateStatus(tr("Opened Benchmark and Diagnostics for disk benchmark"),
+                                 kDefaultPanelStatusTimeoutMs);
+                }
+            });
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::openImageFlasherRequested,
+            this,
+            [this]() {
+                const int tabIdx = findPanelTabIndex(m_image_flasher_panel.get());
+                if (tabIdx >= 0) {
+                    m_tab_widget->setCurrentIndex(tabIdx);
+                    updateStatus(tr("Opened Image Flasher for bootable media"),
+                                 kDefaultPanelStatusTimeoutMs);
+                }
+            });
 }
 
 void MainWindow::connectRemainingPanelSignals() {
@@ -1288,6 +1348,7 @@ void MainWindow::connectPanelLogs() {
     connectLog(m_organizer_panel.get());
     connectLog(m_app_installation_panel.get());
     connectLog(m_vulnerability_panel.get());
+    connectLog(m_partition_manager_panel.get());
     connectLog(m_image_flasher_panel.get());
     connectLog(m_diagnostic_benchmark_panel.get());
     connectLog(m_advanced_search_panel.get());
@@ -1386,7 +1447,9 @@ void MainWindow::updateProgress(int current, int maximum) {
         m_progress_bar->setVisible(true);
     } else if (current >= maximum && maximum > 0) {
         // Hide after a brief delay so the user sees 100%
-        QTimer::singleShot(sak::kTimerSplashMs, this, &MainWindow::hideProgressBarIfComplete);
+        QTimer::singleShot(sak::kTimerProgressCompleteHoldMs,
+                           this,
+                           &MainWindow::hideProgressBarIfComplete);
     } else if (maximum > 0) {
         m_progress_bar->setVisible(true);
     }
@@ -1548,13 +1611,33 @@ void MainWindow::applyTabBarChevrons() {
 
     const auto buttons = m_tab_widget->tabBar()->findChildren<QToolButton*>();
     for (auto* btn : buttons) {
+        const Qt::ArrowType arrow_type = btn->arrowType();
+        QString direction = btn->property(kTabScrollDirectionProperty).toString();
+        if (arrow_type == Qt::LeftArrow) {
+            direction = QString::fromLatin1(kTabScrollDirectionLeft);
+        } else if (arrow_type == Qt::RightArrow) {
+            direction = QString::fromLatin1(kTabScrollDirectionRight);
+        } else if (direction.isEmpty()) {
+            direction = btn == buttons.value(0) ? QString::fromLatin1(kTabScrollDirectionLeft)
+                                                : QString::fromLatin1(kTabScrollDirectionRight);
+        }
+        btn->setProperty(kTabScrollDirectionProperty, direction);
+        btn->setObjectName(QString::fromLatin1(kTabScrollButtonObjectName));
         btn->setArrowType(Qt::NoArrow);
         btn->setText(QString());
-        btn->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
-        if (btn == buttons.value(0)) {
-            btn->setIcon(QIcon(ui::kIconSelectorChevronLeftOnTone));
+        btn->setAutoRaise(false);
+        btn->setFixedSize(ui::kUiTabScrollButtonWidth, ui::kUiTabScrollButtonHeight);
+        btn->setIconSize(QSize(ui::kUiTabScrollIconSize, ui::kUiTabScrollIconSize));
+        btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        btn->setStyleSheet(ui::tabScrollButtonStyle());
+        if (direction == QLatin1String(kTabScrollDirectionLeft)) {
+            btn->setIcon(ui::selectorChevronLeftToolButtonIcon());
+            btn->setToolTip(tr("Scroll tabs left"));
+            btn->setAccessibleName(tr("Scroll tabs left"));
         } else {
-            btn->setIcon(QIcon(ui::kIconSelectorChevronRightOnTone));
+            btn->setIcon(ui::selectorChevronRightToolButtonIcon());
+            btn->setToolTip(tr("Scroll tabs right"));
+            btn->setAccessibleName(tr("Scroll tabs right"));
         }
         btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     }

@@ -110,7 +110,6 @@ private:
     // Quick action components
     QuickActionController* m_action_controller{nullptr};
     QHash<QString, QPushButton*> m_action_buttons;
-    QLabel* m_action_status_label{nullptr};
     QProgressBar* m_action_progress_bar{nullptr};
 
     // Data

@@ -89,11 +89,14 @@ private:
     void addOutputOptionsRow(QVBoxLayout* layout, QWidget* group);
     void addPstSplitRow(QVBoxLayout* layout, QWidget* group);
     QWidget* createFilterSection();
+    void addFilterDateRow(QVBoxLayout* layout);
+    void addFilterTextRows(QVBoxLayout* layout);
     QWidget* createRecoverySection();
     QWidget* createImapSection();
     QWidget* createButtonBar();
 
     // Helpers
+    void updateFilterControlsEnabled();
     [[nodiscard]] OstConversionConfig buildConfig() const;
     void updateQueueRow(int row, const OstConversionJob& job);
     [[nodiscard]] static QString formatBytes(qint64 bytes);
@@ -122,6 +125,7 @@ private:
 
     // -- Filter Section ---------------------------------------------------
     QGroupBox* m_filter_group{nullptr};
+    QCheckBox* m_filters_enabled_check{nullptr};
     QDateEdit* m_date_from_edit{nullptr};
     QDateEdit* m_date_to_edit{nullptr};
     QCheckBox* m_date_filter_check{nullptr};

@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QStandardPaths>
 
 #ifdef Q_OS_WIN
@@ -14,6 +15,32 @@
 #endif
 
 namespace sak::app_paths {
+
+namespace {
+
+QString writableAppLocalDataLocation() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+}
+
+bool isWritableDirectory(const QString& path) {
+    if (path.trimmed().isEmpty()) {
+        return false;
+    }
+    if (!QDir().mkpath(path)) {
+        return false;
+    }
+
+    const QString probe_path = QDir(path).filePath(QStringLiteral(".sak_write_probe"));
+    QFile probe(probe_path);
+    if (!probe.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return false;
+    }
+    probe.close();
+    QFile::remove(probe_path);
+    return true;
+}
+
+}  // namespace
 
 QString applicationDirectory() {
     QString app_dir = QCoreApplication::applicationDirPath();
@@ -35,13 +62,22 @@ bool isPackaged() {
 
 QString dataRoot() {
     if (isPackaged()) {
-        const QString local_data =
-            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        const QString local_data = writableAppLocalDataLocation();
         if (!local_data.trimmed().isEmpty()) {
             return local_data;
         }
     }
-    return QDir(applicationDirectory()).filePath(QStringLiteral("data"));
+
+    const QString portable_data = QDir(applicationDirectory()).filePath(QStringLiteral("data"));
+    if (isWritableDirectory(portable_data)) {
+        return portable_data;
+    }
+
+    const QString local_data = writableAppLocalDataLocation();
+    if (!local_data.trimmed().isEmpty()) {
+        return local_data;
+    }
+    return portable_data;
 }
 
 QString configDirectory() {

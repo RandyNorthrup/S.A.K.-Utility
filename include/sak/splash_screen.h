@@ -8,11 +8,12 @@
 
 namespace sak::ui {
 
+inline constexpr int kSplashSizePx = 300;
 inline constexpr int kSplashCornerRadiusPx = 24;
-inline constexpr int kSplashShadowRadiusPx = 24;
-inline constexpr int kSplashShadowOffsetPx = 8;
+inline constexpr int kSplashShadowRadiusPx = 0;
+inline constexpr int kSplashShadowOffsetPx = 0;
 
-/// @brief Animated splash screen displayed during application startup
+/// @brief Fixed-size splash screen displayed during application startup
 class SplashScreen final : public QWidget {
     Q_OBJECT
 

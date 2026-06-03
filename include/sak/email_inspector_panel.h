@@ -166,6 +166,8 @@ private:
     [[nodiscard]] static bool isHiddenFolder(const QString& name, const QString& container_class);
     void collectSpecialFolderIds(const sak::PstFolder& folder);
     void populateItemList(const QVector<sak::PstItemSummary>& items);
+    void setAllItemListChecks(bool checked);
+    void updateItemListHeaderCheckState();
     [[nodiscard]] QVector<uint64_t> checkedItemIds() const;
     [[nodiscard]] uint64_t itemIdForRow(int row) const;
     void displayItemDetail(const sak::PstItemDetail& detail);

@@ -429,6 +429,7 @@ secrets/
 # Cache directories
 .cache/
 cache/
+artifacts/
 
 # ============================================================================
 # Miscellaneous

@@ -219,6 +219,114 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     message(STATUS "Added unit test: test_diagnostic_types")
 endif()
 
+# test_partition_manager_core - inventory parsing, safety, scripts, queue
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
+    add_executable(test_partition_manager_core
+        unit/test_partition_manager_core.cpp
+        ../src/core/file_recovery_engine.cpp
+        ../src/core/partition_manager_types.cpp
+        ../src/core/storage_inventory_worker.cpp
+        ../src/core/partition_safety_validator.cpp
+        ../src/core/partition_script_builder.cpp
+        ../src/core/partition_operation_planner.cpp
+        ../src/core/partition_operation_queue.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../include/sak/partition_manager_types.h
+        ../include/sak/file_recovery_engine.h
+        ../include/sak/storage_inventory_worker.h
+        ../include/sak/partition_safety_validator.h
+        ../include/sak/partition_script_builder.h
+        ../include/sak/partition_operation_planner.h
+        ../include/sak/partition_operation_queue.h
+    )
+    set_target_properties(test_partition_manager_core PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_partition_manager_core PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_partition_manager_core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_partition_manager_core")
+endif()
+
+# partition_file_recovery_certifier - external lab helper for live-volume Data Recovery proof
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_file_recovery_certifier.cpp")
+    add_executable(partition_file_recovery_certifier
+        certification/partition_file_recovery_certifier.cpp
+        ../src/core/file_recovery_engine.cpp
+        ../include/sak/file_recovery_engine.h
+    )
+    set_target_properties(partition_file_recovery_certifier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(partition_file_recovery_certifier PRIVATE
+        Qt6::Core
+    )
+    target_include_directories(partition_file_recovery_certifier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    message(STATUS "Added certification helper: partition_file_recovery_certifier")
+endif()
+
+# test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
+    add_executable(test_partition_manager_panel
+        unit/test_partition_manager_panel.cpp
+        ../src/gui/partition_manager_panel.cpp
+        ../src/gui/detachable_log_window.cpp
+        ../src/gui/follow_scroll_controller.cpp
+        ../src/core/file_recovery_engine.cpp
+        ../src/core/partition_manager_controller.cpp
+        ../src/core/partition_manager_types.cpp
+        ../src/core/storage_inventory_worker.cpp
+        ../src/core/partition_safety_validator.cpp
+        ../src/core/partition_script_builder.cpp
+        ../src/core/partition_operation_planner.cpp
+        ../src/core/partition_operation_queue.cpp
+        ../src/core/partition_executor.cpp
+        ../src/core/partition_report_generator.cpp
+        ../src/core/config_manager.cpp
+        ../src/core/app_paths.cpp
+        ../src/core/elevation_broker.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../resources/icons.qrc
+        ../include/sak/partition_manager_panel.h
+        ../include/sak/file_recovery_engine.h
+        ../include/sak/partition_manager_controller.h
+        ../include/sak/partition_executor.h
+        ../include/sak/storage_inventory_worker.h
+        ../include/sak/elevation_broker.h
+        ../include/sak/detachable_log_window.h
+        ../include/sak/config_manager.h
+    )
+    set_target_properties(test_partition_manager_panel PROPERTIES
+        AUTOMOC ON
+        AUTORCC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_partition_manager_panel PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_compile_definitions(test_partition_manager_panel PRIVATE
+        SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+    )
+    target_include_directories(test_partition_manager_panel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_partition_manager_panel COMMAND test_partition_manager_panel
+             -o test_partition_manager_panel.txt,txt
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_partition_manager_panel")
+endif()
+
 # test_diagnostic_controller — suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller
@@ -796,6 +904,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_follow_scroll_controller.cpp")
     add_test(NAME test_follow_scroll_controller COMMAND test_follow_scroll_controller
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_follow_scroll_controller")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_splash_screen.cpp")
+    add_executable(test_splash_screen
+        unit/test_splash_screen.cpp
+        ../src/gui/splash_screen.cpp
+        ../include/sak/splash_screen.h
+    )
+    set_target_properties(test_splash_screen PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_splash_screen PRIVATE
+        Qt6::Core Qt6::Widgets Qt6::Test
+    )
+    target_include_directories(test_splash_screen PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_splash_screen COMMAND test_splash_screen
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_splash_screen")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_transcript_view.cpp")
@@ -1782,9 +1911,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
         ../include/sak/elevation_manager.h
         ../include/sak/shield_icon.h
         ../include/sak/elevation_banner.h
+        ../resources/icons.qrc
     )
     set_target_properties(test_elevation_ux PROPERTIES
         AUTOMOC ON
+        AUTORCC ON
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_elevation_ux PRIVATE

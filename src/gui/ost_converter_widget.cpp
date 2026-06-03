@@ -41,6 +41,20 @@ constexpr int kQueueTableMinHeight = 120;
 constexpr int kMaxTcpPort = 65'535;
 constexpr int kLargeByteDisplayPrecision = 2;
 
+void applyOstGroupLayout(QVBoxLayout* layout) {
+    Q_ASSERT(layout != nullptr);
+    layout->setContentsMargins(
+        ui::kMarginSmall, ui::kSpacingSmall, ui::kMarginSmall, ui::kMarginSmall);
+    layout->setSpacing(ui::kSpacingSmall);
+}
+
+void applyCompactOstButton(QPushButton* button, const QString& style) {
+    Q_ASSERT(button != nullptr);
+    button->setMinimumHeight(ui::kUiButtonHeightDialog);
+    button->setMaximumHeight(ui::kUiButtonHeightDialog);
+    button->setStyleSheet(style);
+}
+
 bool IsAccessibilityAuditMode() {
     const auto* app = QCoreApplication::instance();
     return app && app->property("sakAccessibilityAudit").toBool();
@@ -150,9 +164,7 @@ void OstConverterWidget::connectController() {
 QWidget* OstConverterWidget::createFileQueueSection() {
     auto* group = new QGroupBox(tr("Source Files"), this);
     auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
+    applyOstGroupLayout(layout);
 
     // Button bar
     auto* btn_layout = new QHBoxLayout();
@@ -161,15 +173,15 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_add_files_button = new QPushButton(tr("+ Add Files"), group);
     m_add_files_button->setAccessibleName(tr("Add email files"));
     m_add_files_button->setToolTip(tr("Add OST or PST files to the conversion queue"));
-    m_add_files_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    applyCompactOstButton(m_add_files_button, ui::kCompactPrimaryButtonStyle);
     m_remove_button = new QPushButton(tr("Remove"), group);
     m_remove_button->setAccessibleName(tr("Remove selected email file"));
     m_remove_button->setToolTip(tr("Remove selected file from the queue"));
-    m_remove_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    applyCompactOstButton(m_remove_button, ui::kCompactSecondaryButtonStyle);
     m_clear_button = new QPushButton(tr("Clear All"), group);
     m_clear_button->setAccessibleName(tr("Clear conversion queue"));
     m_clear_button->setToolTip(tr("Remove all files from the queue"));
-    m_clear_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    applyCompactOstButton(m_clear_button, ui::kCompactSecondaryButtonStyle);
 
     btn_layout->addWidget(m_add_files_button);
     btn_layout->addWidget(m_remove_button);
@@ -190,6 +202,7 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_queue_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_queue_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_queue_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_queue_table->setAlternatingRowColors(true);
     m_queue_table->horizontalHeader()->setStretchLastSection(true);
     m_queue_table->verticalHeader()->setVisible(false);
     m_queue_table->setMinimumHeight(kQueueTableMinHeight);
@@ -224,18 +237,22 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
     m_format_combo->setToolTip(tr("Output format for converted emails"));
     format_row->addWidget(m_format_combo);
     format_row->addStretch(1);
+    layout->addLayout(format_row);
 
     // Destination row
-    format_row->addWidget(new QLabel(tr("Destination:"), group));
+    auto* destination_row = new QHBoxLayout();
+    destination_row->setSpacing(ui::kSpacingSmall);
+    destination_row->addWidget(new QLabel(tr("Destination:"), group));
     m_output_dir_edit = new QLineEdit(group);
     m_output_dir_edit->setAccessibleName(tr("Output directory"));
     m_output_dir_edit->setPlaceholderText(tr("Select output directory..."));
     m_output_dir_edit->setReadOnly(true);
-    format_row->addWidget(m_output_dir_edit, 1);
+    destination_row->addWidget(m_output_dir_edit, 1);
 
     m_browse_button = new QPushButton(tr("Browse"), group);
     m_browse_button->setAccessibleName(tr("Browse output directory"));
-    m_browse_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_browse_button->setToolTip(tr("Select the folder that will receive converted email files"));
+    applyCompactOstButton(m_browse_button, ui::kCompactPrimaryButtonStyle);
     connect(m_browse_button, &QPushButton::clicked, this, [this]() {
         QString dir = QFileDialog::getExistingDirectory(this,
                                                         tr("Select Output Directory"),
@@ -244,9 +261,9 @@ void OstConverterWidget::addOutputFormatRow(QVBoxLayout* layout, QWidget* group)
             m_output_dir_edit->setText(dir);
         }
     });
-    format_row->addWidget(m_browse_button);
+    destination_row->addWidget(m_browse_button);
 
-    layout->addLayout(format_row);
+    layout->addLayout(destination_row);
 
     connect(m_format_combo,
             &QComboBox::currentIndexChanged,
@@ -304,9 +321,7 @@ void OstConverterWidget::addPstSplitRow(QVBoxLayout* layout, QWidget* group) {
 QWidget* OstConverterWidget::createOutputSettingsSection() {
     auto* group = new QGroupBox(tr("Output Settings"), this);
     auto* layout = new QVBoxLayout(group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
+    applyOstGroupLayout(layout);
 
     addOutputFormatRow(layout, group);
     addOutputOptionsRow(layout, group);
@@ -316,14 +331,33 @@ QWidget* OstConverterWidget::createOutputSettingsSection() {
 
 QWidget* OstConverterWidget::createFilterSection() {
     m_filter_group = new QGroupBox(tr("Filters (optional)"), this);
-    m_filter_group->setCheckable(true);
-    m_filter_group->setChecked(false);
 
     auto* layout = new QVBoxLayout(m_filter_group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
+    applyOstGroupLayout(layout);
 
+    m_filters_enabled_check = new QCheckBox(tr("Enable filters"), m_filter_group);
+    m_filters_enabled_check->setAccessibleName(tr("Enable email conversion filters"));
+    m_filters_enabled_check->setToolTip(
+        tr("Filter converted messages by date, sender, or recipient"));
+    layout->addWidget(m_filters_enabled_check);
+
+    addFilterDateRow(layout);
+    addFilterTextRows(layout);
+
+    connect(m_filters_enabled_check,
+            &QCheckBox::toggled,
+            this,
+            &OstConverterWidget::updateFilterControlsEnabled);
+    connect(m_date_filter_check,
+            &QCheckBox::toggled,
+            this,
+            &OstConverterWidget::updateFilterControlsEnabled);
+    updateFilterControlsEnabled();
+
+    return m_filter_group;
+}
+
+void OstConverterWidget::addFilterDateRow(QVBoxLayout* layout) {
     // Date range row
     auto* date_row = new QHBoxLayout();
     date_row->setSpacing(ui::kSpacingSmall);
@@ -350,12 +384,9 @@ QWidget* OstConverterWidget::createFilterSection() {
 
     date_row->addStretch(1);
     layout->addLayout(date_row);
+}
 
-    connect(m_date_filter_check, &QCheckBox::toggled, this, [this](bool checked) {
-        m_date_from_edit->setEnabled(checked);
-        m_date_to_edit->setEnabled(checked);
-    });
-
+void OstConverterWidget::addFilterTextRows(QVBoxLayout* layout) {
     // Sender filter row
     auto* sender_row = new QHBoxLayout();
     sender_row->setSpacing(ui::kSpacingSmall);
@@ -375,17 +406,13 @@ QWidget* OstConverterWidget::createFilterSection() {
     m_recipient_filter_edit->setPlaceholderText(tr("Filter by recipient email (contains)"));
     recip_row->addWidget(m_recipient_filter_edit, 1);
     layout->addLayout(recip_row);
-
-    return m_filter_group;
 }
 
 QWidget* OstConverterWidget::createRecoverySection() {
     m_recovery_group = new QGroupBox(tr("Recovery Options"), this);
 
     auto* layout = new QVBoxLayout(m_recovery_group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
+    applyOstGroupLayout(layout);
 
     m_recover_deleted_check = new QCheckBox(
         tr("Recover deleted items (scan Recoverable Items folder)"), m_recovery_group);
@@ -412,9 +439,7 @@ QWidget* OstConverterWidget::createImapSection() {
     m_imap_group->setVisible(false);
 
     auto* layout = new QVBoxLayout(m_imap_group);
-    layout->setContentsMargins(
-        ui::kMarginTight, ui::kMarginMedium, ui::kMarginTight, ui::kMarginTight);
-    layout->setSpacing(ui::kSpacingSmall);
+    applyOstGroupLayout(layout);
 
     // Host / Port / SSL row
     auto* server_row = new QHBoxLayout();
@@ -480,7 +505,7 @@ QWidget* OstConverterWidget::createButtonBar() {
     m_view_report_button->setAccessibleName(tr("View conversion report"));
     m_view_report_button->setEnabled(false);
     m_view_report_button->setToolTip(tr("Open the batch conversion report in your browser"));
-    m_view_report_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    applyCompactOstButton(m_view_report_button, ui::kCompactSecondaryButtonStyle);
     connect(m_view_report_button,
             &QPushButton::clicked,
             this,
@@ -492,14 +517,14 @@ QWidget* OstConverterWidget::createButtonBar() {
     m_convert_button = new QPushButton(tr("Convert All"), bar);
     m_convert_button->setAccessibleName(tr("Convert all queued email files"));
     m_convert_button->setToolTip(tr("Start converting all queued files"));
-    m_convert_button->setStyleSheet(ui::kSolidPrimaryButtonStyle);
+    applyCompactOstButton(m_convert_button, ui::kCompactPrimaryButtonStyle);
     layout->addWidget(m_convert_button);
 
     m_cancel_button = new QPushButton(tr("Cancel"), bar);
     m_cancel_button->setAccessibleName(tr("Cancel email conversion"));
     m_cancel_button->setEnabled(false);
     m_cancel_button->setToolTip(tr("Cancel all in-progress conversions"));
-    m_cancel_button->setStyleSheet(ui::kSolidDangerButtonStyle);
+    applyCompactOstButton(m_cancel_button, ui::kCompactDangerButtonStyle);
     layout->addWidget(m_cancel_button);
 
     connect(m_convert_button, &QPushButton::clicked, this, &OstConverterWidget::onConvertClicked);
@@ -706,6 +731,31 @@ void OstConverterWidget::setConvertingState(bool converting) {
     m_recovery_group->setEnabled(!converting);
     m_imap_group->setEnabled(!converting);
     m_view_report_button->setEnabled(false);
+    if (!converting) {
+        updateFilterControlsEnabled();
+    }
+}
+
+void OstConverterWidget::updateFilterControlsEnabled() {
+    const bool filters_enabled = m_filters_enabled_check != nullptr &&
+                                 m_filters_enabled_check->isChecked();
+    if (m_date_filter_check != nullptr) {
+        m_date_filter_check->setEnabled(filters_enabled);
+    }
+    const bool date_filter_enabled = filters_enabled && m_date_filter_check != nullptr &&
+                                     m_date_filter_check->isChecked();
+    if (m_date_from_edit != nullptr) {
+        m_date_from_edit->setEnabled(date_filter_enabled);
+    }
+    if (m_date_to_edit != nullptr) {
+        m_date_to_edit->setEnabled(date_filter_enabled);
+    }
+    if (m_sender_filter_edit != nullptr) {
+        m_sender_filter_edit->setEnabled(filters_enabled);
+    }
+    if (m_recipient_filter_edit != nullptr) {
+        m_recipient_filter_edit->setEnabled(filters_enabled);
+    }
 }
 
 OstConversionConfig OstConverterWidget::buildConfig() const {
@@ -730,14 +780,17 @@ OstConversionConfig OstConverterWidget::buildConfig() const {
         config.split_size = static_cast<PstSplitSize>(m_split_size_combo->currentData().toInt());
     }
 
+    const bool filters_enabled = m_filters_enabled_check != nullptr &&
+                                 m_filters_enabled_check->isChecked();
+
     // Date filter
-    if (m_filter_group->isChecked() && m_date_filter_check->isChecked()) {
+    if (filters_enabled && m_date_filter_check->isChecked()) {
         config.date_from = m_date_from_edit->dateTime();
         config.date_to = m_date_to_edit->dateTime();
     }
 
     // Sender / recipient filters
-    if (m_filter_group->isChecked()) {
+    if (filters_enabled) {
         config.sender_filter = m_sender_filter_edit->text().trimmed();
         config.recipient_filter = m_recipient_filter_edit->text().trimmed();
     }
@@ -815,6 +868,8 @@ void OstConverterWidget::loadSettings() {
     m_preserve_folders_check->setChecked(
         settings.value(QStringLiteral("preserveFolders"), true).toBool());
     m_prefix_date_check->setChecked(settings.value(QStringLiteral("prefixDate"), true).toBool());
+    m_filters_enabled_check->setChecked(
+        settings.value(QStringLiteral("filtersEnabled"), false).toBool());
     m_recover_deleted_check->setChecked(
         settings.value(QStringLiteral("recoverDeleted"), false).toBool());
     m_deep_recovery_check->setChecked(
@@ -833,6 +888,7 @@ void OstConverterWidget::loadSettings() {
 
     // Trigger visibility updates
     onFormatChanged(m_format_combo->currentIndex());
+    updateFilterControlsEnabled();
 }
 
 void OstConverterWidget::saveSettings() {
@@ -844,6 +900,7 @@ void OstConverterWidget::saveSettings() {
     settings.setValue(QStringLiteral("threads"), m_threads_spin->value());
     settings.setValue(QStringLiteral("preserveFolders"), m_preserve_folders_check->isChecked());
     settings.setValue(QStringLiteral("prefixDate"), m_prefix_date_check->isChecked());
+    settings.setValue(QStringLiteral("filtersEnabled"), m_filters_enabled_check->isChecked());
     settings.setValue(QStringLiteral("recoverDeleted"), m_recover_deleted_check->isChecked());
     settings.setValue(QStringLiteral("deepRecovery"), m_deep_recovery_check->isChecked());
     settings.setValue(QStringLiteral("skipCorrupt"), m_skip_corrupt_check->isChecked());

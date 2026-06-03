@@ -9,8 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.7-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-129%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.1.8-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-132%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable toolkit.
 
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable t
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.7** - PST/OST parser fixes, checkbox email and attachment selection, selected email export with attachment preservation, global selector/button polish, raw-style constant enforcement, and pinned secret-scan workflows.
+**Latest: v0.9.1.8** - Hardware-certified Partition Manager release with direct queued execution for shipped destructive workflows, full VM/VHD evidence alignment, PST/OST parser fixes, checkbox email and attachment selection, selected email export with attachment preservation, fixed splash sizing, shared control icon polish, raw-style constant enforcement, and pinned secret-scan workflows.
 
 ---
 
@@ -34,12 +34,13 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **AI Assistant** | Codex-style AI workspace for technician chat, PC actions, multi-agent workflows, context attachments, reports, and artifacts. |
 | **Backup and Restore** | Step-by-step wizards with smart filtering, AES-256 encryption, NTFS permission handling, plus integrated screenshot settings and BitLocker key backup. |
 | **Diagnostics & Benchmarking** | SMART disk health, CPU/disk/memory benchmarks, stress testing, thermal monitoring, system maintenance tools, HTML/JSON/CSV reports. |
+| **Partition Manager** | AOMEI/MiniTool-style disk layout workspace with ribbon actions, fixed-width left operation pane, Pending Operations queue, final Apply before/after layout review, compact proportional disk map, right-click action menu with safety reasons, queued partition operations, safety preflights, lazy async inventory, BitLocker/dirty-bit and storage reliability data, dry-run scripts, MBR/GPT conversion, clone/image, partition recovery scan, image/raw-path Data Recovery, OS migration, boot repair, SSD optimization, wipe tools, Quick Partition, Extend Partition Wizard, adjacent-donor Allocate Free Space, unallocated Allocate Free Space To, Move partition start, primary/logical conversion, volume serial-number reformat/restore, one-volume dynamic-to-basic conversion, Explore, Space Analyzer, Disk Benchmark, in-app BitLocker status with Windows management launch, in-app defrag/ReTrim guidance with HDD-only queued defrag through cancellable Apply, SSD Secure Erase ReTrim plus clear-level wipe queueing, and bootable-media launchers. |
 | **Image Flasher** | Flash ISOs/IMGs to USB. Build Windows ISOs from Microsoft UUP payloads and download Linux ISOs from the curated catalog. |
 | **File Management** | Organize files by extension, find duplicates with parallel hashing, and grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
 | **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser — no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
-| **Modern UI** | Windows 11-style rounded corners, light/dark themes, custom splash screen, and responsive layouts. |
+| **Modern UI** | Windows 11-style rounded corners, light/dark themes, fixed 300x300 px custom splash screen, shared Icons8 control icons, and responsive layouts. |
 
 ---
 
@@ -52,6 +53,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
   - [Backup and Restore](#backup-and-restore)
   - [Application Management](#application-management)
   - [Benchmark and Diagnostics](#benchmark-and-diagnostics)
+  - [Partition Manager](#partition-manager)
   - [Image Flasher](#image-flasher)
   - [File Management](#file-management)
   - [Network Management](#network-management)
@@ -318,6 +320,55 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 - **HTML** — Styled report with hardware summary, SMART health, benchmark scores, and stress test results
 - **JSON** — Machine-readable structured data for automation
 - **CSV** — RFC 4180 compliant, importable into Excel or data pipelines
+
+---
+
+### Partition Manager
+
+Modern disk and partition workspace for technician-safe Windows storage work. The panel appears before Image Flasher with a familiar AOMEI/MiniTool-style ribbon, fixed-width left Actions and Wizards pane with compact icon text links, scrollable Partition Operations group, Pending Operations queue, partition table, unframed compact proportional disk map, and bottom legend. It uses a queued-apply model: select a disk, partition, or free-space region, add operations to the pending queue, dry-run scripts, then apply only after the final review with before/after layout diff.
+
+**Inventory and Layout**
+- Lazy async read-only disk/partition/volume inventory from Windows Storage cmdlets so application startup is not blocked by storage scans
+- Resizable rounded disk map with neutral partition shells, type-colored inner usage bars for GPT/Primary, Logical, Simple, Spanned, Striped, Mirrored, RAID5, and Unallocated roles, selection-only highlight outlines, a 1 px outer gutter, compact row gaps, rounded disk row/tile containers, plus AOMEI-style borderless partition table with no row-number gutter, disk separator rules, final Apply before/after layout diff, and health, operational, temperature, wear, and error counters where Windows exposes storage reliability data
+- Flags for system, boot, EFI, MSR, recovery, BitLocker, read-only, removable, dynamic disk, and Storage Spaces states
+- Layout hash guard so queued operations cannot apply after the disk layout changes
+
+**Operations**
+- Create, delete, format, assign/change drive letter, set partition label, resize, split, and limited adjacent partition merge
+- Create, format, resize, and Move partition start use target-identity Add-to-Queue dialogs with warning text, direct draggable preview-bar handles, synchronized slider/numeric controls, graphical create/resize/move size previews, free-space-before placement, adjacent-free-space extend bounds, partition-type/label/file-system/cluster-size/drive-letter/full-format controls, and no immediate execution; Extend Partition Wizard routes adjacent-free-space extension through that same queued resize path, MovePartition queues offline backup/delete/recreate-at-offset/restore/hash-verify scripts, and donor-space resize still uses the adjacent-donor Allocate Free Space engine instead of unsafe hidden reshuffles
+- MBR/GPT conversion with `mbr2gpt.exe` for system MBR-to-GPT and empty-data-disk conversion safety rules
+- FAT/FAT32 to NTFS conversion
+- Disk/partition clone, image create/restore, partition recovery scan, recovered-partition write-back candidates, OS migration copy plan, and boot repair commands
+- Copy Disk, Copy Partition, Partition Recovery, and Migrate OS use source/target/options/review wizard flows; disk and OS copy plans include graphical source/target layout preview, keep/fit copy behavior, source/target sizing, known undersized-target blocking, explicit target overwrite confirmation before Apply, sample/full byte verification scripts, and OS migration boot-validation output for the operation report. Copy Partition can target an image/custom path or a visual unallocated region, carries target disk/offset/size into the clone script, blocks undersized regions, requires overwrite confirmation for raw-device/region writes, and validates the payload destination disk before Apply. Partition Recovery can queue a candidate restore from byte offset, size, and partition type ID; Apply requires acknowledgement, non-overlap checks, disk-bound checks, and target disk safety validation.
+- Change Cluster Size queues a destructive backup, reformat with explicit allocation unit, restore, and SHA-256 file-manifest verification path; the UI requires an off-volume backup directory and explicit reformat confirmation before the operation can apply.
+- SSD ReTrim/optimization and clear-level wipe paths for free space, partitions, and non-system disks, with warnings when SSD purge/secure-erase semantics require vendor tooling
+- Selection-aware right-click menu exposes supported disk, partition, and unallocated actions backed by queued operation generation, Explore, safety blocker reasons where validation fails, plus a copyable Properties dialog with disk, partition, volume, SMART, flag, and free-space details
+- Advanced Windows-supported actions include file-system checks, surface tests, hide/unhide, active/inactive, partition type ID changes, initialize-disk, and delete-all-partitions
+
+**Safety**
+- Destructive operations queue first and execute only through cancellable Apply
+- Apply opens a final operation/risk/layout review before elevated execution
+- System/boot/EFI/MSR/recovery partition mutation is blocked in v1
+- Dynamic disks and Storage Spaces block normal writes; a one mounted simple-volume dynamic disk can queue dynamic-to-basic backup/delete/convert/recreate/restore verification.
+- Space Analyzer runs a read-only async mounted-volume usage scan with Tree View, Largest Files, and File Types tabs, sortable size/percent/path or count results, and safe right-click Open, Explore, and Copy Path actions.
+- Disk Benchmark opens the existing Benchmark and Diagnostics panel; Make Bootable Media opens Image Flasher; Manage BitLocker shows BitLocker status with copyable external commands and Windows management launch; Disk Defrag shows media-aware defrag/ReTrim command guidance, queues HDD defrag only for reported HDD media, blocks SSD/NVMe defrag, and executes through cancellable elevated Apply.
+- Quick Partition queues same-style equal-size or custom size/label full-disk layouts for non-system basic disks, including reusable saved presets; GPT layouts allow up to 9 partitions and MBR layouts are capped at four data partitions with Windows extended/logical container behavior recorded during certification; existing partitions are deleted only after Apply review.
+- Data Recovery can scan image files or raw volume/device paths read-only for PNG, JPEG, and PDF signatures, review recoverable candidates, and restore them to a separate destination while verifying the source hash stays unchanged.
+- Allocate Free Space is code-complete for an immediately adjacent mounted donor partition: it queues donor backup, donor delete, target extend, donor recreate, restore, SHA-256 manifest comparison, and repair scans. Allocate Free Space To on selected unallocated space now queues either online resize into following free space or MovePartition backup/delete/recreate/restore when moving the following partition backward into preceding free space.
+- Primary/logical conversion, volume serial-number changes, and one-volume dynamic-disk-to-basic conversion now queue direct destructive backup/rebuild/reformat/restore/verify scripts with off-volume backup and explicit confirmation requirements.
+- Disk clone, OS migration, and Copy Partition region targets block known targets smaller than the source before Apply and again in the generated script
+- Copy Partition raw-device and unallocated-region targets require explicit overwrite confirmation, payload target-disk identity checks, target size checks, and script-level raw-write safeguards before Apply
+- Recovered-partition write-back candidates require typed candidate identity, explicit acknowledgement, non-overlap checks, disk-bound checks, and target disk safety validation before Apply can run
+- OS migration writes post-copy target disk scheme, EFI/active partition validation, and firmware boot-order guidance into the execution report
+- FAT/FAT32-to-NTFS conversion, split, merge, and create-size requests are preflighted before Apply
+- Resize requests are preflighted for required target size, no-op targets, shrink-below-used-space requests, and extend targets that exceed contiguous free space immediately after the partition; the queued layout preview consumes or creates free-space spans for resize operations.
+- Move partition start payloads use the `MovePartition` backup/recreate/restore engine. Legacy `Resize` payloads that try to smuggle start offsets or donor partition numbers are still blocked so only the explicit MovePartition and Allocate Free Space engines can perform those workflows.
+- Create, format, and Change Cluster Size allocation-unit choices are limited to supported `Format-Volume -AllocationUnitSize` values; unsupported payloads are rejected before script execution
+- Create partition type choices are limited to Windows-supported GPT Basic Data, GPT Recovery, GPT EFI System, MBR IFS/NTFS, and MBR FAT32 payloads; incompatible file-system/type combinations are blocked before Apply
+- Create honors the selected unallocated region by carrying a relative placement offset into `New-Partition -Offset`, then blocks any size/offset pair that does not fit inside that exact region
+- Dry Run shows generated scripts without changing disks
+- HTML/JSON operation reports include before/after layout hashes, warnings, steps, stdout/stderr, and result status
+- Destructive certification uses a strict disposable-VHD handoff first, then a non-mutating strict hardware handoff that verifies the external VM/hardware/lab manifest, checklist, and evidence package before any hardware-certified release claim is allowed
 
 ---
 
@@ -635,11 +686,44 @@ powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
 For unsigned local preflight builds, omit `-RequireSignedPackage`; signed package validation remains required before publication.
 
 This verifies secret scanning, blocking-pattern rules, accessibility coverage,
-style-token/style-literal/layout constants, global magic numbers, logged dialog
+PowerShell syntax, style-token/style-literal/layout constants, global magic numbers, logged dialog
 usage, Lizard limits, third-party license documentation, Qt resource manifests,
-portable package contents, startup E2E smoke, and Authenticode signatures. See
+Partition Manager certification-matrix integrity, commercial/destructive feature mapping, VHD preflight reporting, certification-gap reporting, certification-artifact bundling, feature-matrix coverage, portable package contents, startup E2E smoke, and Authenticode signatures. See
 [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md) and
 [docs/SECURITY_THREAT_MODEL.md](docs/SECURITY_THREAT_MODEL.md).
+
+Partition Manager destructive storage paths have a separate certification harness:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_destructive_certification.ps1 `
+  -RunVhdDataDiskMatrix
+```
+
+For the one-command strict VHD handoff, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_vhd_certification_strict.ps1 `
+  -RelaunchElevated
+```
+
+That harness uses disposable VHD media only and covers create/format/resize/delete,
+FAT32-to-NTFS conversion, Quick Partition GPT equal/custom and MBR four-data-partition layouts, adjacent Extend Wizard growth,
+recovered-partition write-back, empty GPT/MBR conversion, clear-disk wipe, and
+offline VHD image clone, image restore overwrite, and partition-clone raw-region evidence. The shared certification matrix in
+`docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` defines required evidence keys
+and safety contracts; the matrix-integrity guard, external JSON scaffold,
+Markdown lab checklist verifier, external lab package verifier, per-gate
+`report.json` importer, read-only VHD preflight report, certification-gap report,
+hashed certification-artifact bundle, certification verifier, and claim-level
+script reject incomplete,
+wrong-mode, or blank passed VHD or external evidence payload values. VM-lab evidence
+currently has all 18/18 external VM/hardware/lab gates passed, including
+System MBR-to-GPT, OS migration reboot proof, UEFI/BIOS boot repair, removable
+USB, SSD/NVMe, SSD secure erase, non-adjacent partition move, primary/logical,
+volume serial-number, dynamic-to-basic, and physical wipe cases. Strict
+hardware-certified readiness requires both `-PartitionExternalEvidenceManifest`
+and `-PartitionExternalEvidenceChecklist`. See
+[docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md).
 
 ### Dependencies
 
@@ -670,7 +754,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Partition Manager (inventory parsing, safety blockers, script generation, layout-hash queue guards, panel chrome, direct destructive queue dialogs, disk-map resizing, and feature-matrix release gating), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 

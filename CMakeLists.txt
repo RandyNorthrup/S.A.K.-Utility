@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.7
+    VERSION 0.9.1.8
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -341,6 +341,16 @@ set(CORE_SOURCES
     src/core/thermal_monitor.cpp
     src/core/diagnostic_report_generator.cpp
     src/core/diagnostic_controller.cpp
+    src/core/file_recovery_engine.cpp
+    src/core/partition_manager_types.cpp
+    src/core/storage_inventory_worker.cpp
+    src/core/partition_safety_validator.cpp
+    src/core/partition_script_builder.cpp
+    src/core/partition_operation_planner.cpp
+    src/core/partition_operation_queue.cpp
+    src/core/partition_executor.cpp
+    src/core/partition_manager_controller.cpp
+    src/core/partition_report_generator.cpp
     include/sak/logger.h
     include/sak/app_paths.h
     include/sak/file_hash.h
@@ -405,6 +415,16 @@ set(CORE_SOURCES
     include/sak/thermal_monitor.h
     include/sak/diagnostic_report_generator.h
     include/sak/diagnostic_controller.h
+    include/sak/file_recovery_engine.h
+    include/sak/partition_manager_types.h
+    include/sak/storage_inventory_worker.h
+    include/sak/partition_safety_validator.h
+    include/sak/partition_script_builder.h
+    include/sak/partition_operation_planner.h
+    include/sak/partition_operation_queue.h
+    include/sak/partition_executor.h
+    include/sak/partition_manager_controller.h
+    include/sak/partition_report_generator.h
     src/core/advanced_search_worker.cpp
     src/core/advanced_search_controller.cpp
     src/core/regex_pattern_library.cpp
@@ -568,6 +588,8 @@ set(GUI_SOURCES
     include/sak/user_profile_restore_wizard.h
     src/gui/image_flasher_panel.cpp
     include/sak/image_flasher_panel.h
+    src/gui/partition_manager_panel.cpp
+    include/sak/partition_manager_panel.h
     src/gui/windows_iso_download_dialog.cpp
     include/sak/windows_iso_download_dialog.h
     src/gui/linux_iso_download_dialog.cpp

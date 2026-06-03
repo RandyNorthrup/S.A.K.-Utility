@@ -50,6 +50,15 @@ enum ResultColumn {
 constexpr int kPackageResultColumnCount = 3;
 constexpr int kPublisherResultColumn = 2;
 
+namespace {
+
+void applyCompactQueueButton(QPushButton* button, const QString& style) {
+    button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
+    button->setStyleSheet(style);
+}
+
+}  // namespace
+
 AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     : QWidget(parent)
     , m_choco_manager(std::make_shared<ChocolateyManager>())
@@ -137,8 +146,6 @@ void AppInstallationPanel::setupUi() {
     setupUi_packageTable(sideBySide);
     setupUi_queueSection(sideBySide);
     onlineLayout->addLayout(sideBySide, 1);
-
-    setupUi_installActions(onlineLayout);
 
     m_tabWidget->addTab(onlineTab, tr("Online Install"));
 
@@ -229,20 +236,41 @@ void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* sideBySide) {
     m_queueList->setToolTip(QStringLiteral("Packages queued for installation"));
     queueLayout->addWidget(m_queueList, 1);
 
+    setupUi_queueButtons(queueLayout);
+    setupUi_queueProgress(queueLayout);
+    sideBySide->addWidget(queueGroup, 1);
+}
+
+void AppInstallationPanel::setupUi_queueButtons(QVBoxLayout* queueLayout) {
     auto* queueBtnRow = new QHBoxLayout();
     m_removeFromQueueButton = new QPushButton(tr("Remove"), this);
     m_removeFromQueueButton->setEnabled(false);
     m_removeFromQueueButton->setAccessibleName(QStringLiteral("Remove from Queue"));
     m_removeFromQueueButton->setToolTip(QStringLiteral("Remove selected packages from the queue"));
-    m_removeFromQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    applyCompactQueueButton(m_removeFromQueueButton, sak::ui::kCompactPrimaryButtonStyle);
     queueBtnRow->addWidget(m_removeFromQueueButton);
 
     m_clearQueueButton = new QPushButton(tr("Clear All"), this);
     m_clearQueueButton->setEnabled(false);
     m_clearQueueButton->setAccessibleName(QStringLiteral("Clear Queue"));
     m_clearQueueButton->setToolTip(QStringLiteral("Remove all packages from the queue"));
-    m_clearQueueButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+    applyCompactQueueButton(m_clearQueueButton, sak::ui::kCompactPrimaryButtonStyle);
     queueBtnRow->addWidget(m_clearQueueButton);
+
+    m_installButton = new QPushButton(tr("Install All"), this);
+    m_installButton->setEnabled(false);
+    m_installButton->setAccessibleName(QStringLiteral("Install All Packages"));
+    m_installButton->setToolTip(QStringLiteral("Install all queued packages"));
+    applyCompactQueueButton(m_installButton, sak::ui::kCompactPrimaryButtonStyle);
+    queueBtnRow->addWidget(m_installButton);
+
+    m_cancelButton = new QPushButton(tr("Cancel"), this);
+    m_cancelButton->setEnabled(false);
+    m_cancelButton->setVisible(false);
+    m_cancelButton->setAccessibleName(QStringLiteral("Cancel Installation"));
+    m_cancelButton->setToolTip(QStringLiteral("Cancel the current installation process"));
+    applyCompactQueueButton(m_cancelButton, sak::ui::kCompactDangerButtonStyle);
+    queueBtnRow->addWidget(m_cancelButton);
 
     queueBtnRow->addStretch();
 
@@ -251,51 +279,32 @@ void AppInstallationPanel::setupUi_queueSection(QHBoxLayout* sideBySide) {
     m_saveQueueButton->setToolTip(
         tr("Save the current install queue to a JSON file for later use"));
     m_saveQueueButton->setEnabled(false);
-    m_saveQueueButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    applyCompactQueueButton(m_saveQueueButton, sak::ui::kCompactSecondaryButtonStyle);
     connect(m_saveQueueButton, &QPushButton::clicked, this, &AppInstallationPanel::saveQueueToFile);
     queueBtnRow->addWidget(m_saveQueueButton);
 
     auto* loadQueueBtn = new QPushButton(tr("Load List"), this);
     loadQueueBtn->setAccessibleName(QStringLiteral("Load Install List"));
     loadQueueBtn->setToolTip(tr("Load a previously saved app list into the install queue"));
-    loadQueueBtn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    applyCompactQueueButton(loadQueueBtn, sak::ui::kCompactSecondaryButtonStyle);
     connect(loadQueueBtn, &QPushButton::clicked, this, &AppInstallationPanel::loadQueueFromFile);
     queueBtnRow->addWidget(loadQueueBtn);
 
     queueLayout->addLayout(queueBtnRow);
-    sideBySide->addWidget(queueGroup, 1);
 }
 
-void AppInstallationPanel::setupUi_installActions(QVBoxLayout* mainLayout) {
-    auto* actionsGroup = new QGroupBox(tr("Installation Actions"), this);
-    auto* actionsLayout = new QVBoxLayout(actionsGroup);
-
-    m_installButton = new QPushButton(tr("Install All"), this);
-    m_installButton->setEnabled(false);
-    m_installButton->setAccessibleName(QStringLiteral("Install All Packages"));
-    m_installButton->setToolTip(QStringLiteral("Install all queued packages"));
-    m_installButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    actionsLayout->addWidget(m_installButton);
-
+void AppInstallationPanel::setupUi_queueProgress(QVBoxLayout* queueLayout) {
     m_progressLabel = new QLabel(this);
+    m_progressLabel->setAccessibleName(QStringLiteral("Installation Progress Status"));
     m_progressLabel->setVisible(false);
-    actionsLayout->addWidget(m_progressLabel);
+    queueLayout->addWidget(m_progressLabel);
 
     m_progressBar = new QProgressBar(this);
+    m_progressBar->setAccessibleName(QStringLiteral("Installation Progress"));
     m_progressBar->setVisible(false);
     m_progressBar->setTextVisible(true);
     m_progressBar->setFormat("%v / %m");
-    actionsLayout->addWidget(m_progressBar);
-
-    m_cancelButton = new QPushButton(tr("Cancel"), this);
-    m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
-    m_cancelButton->setEnabled(false);
-    m_cancelButton->setVisible(false);
-    m_cancelButton->setAccessibleName(QStringLiteral("Cancel Installation"));
-    m_cancelButton->setToolTip(QStringLiteral("Cancel the current installation process"));
-    actionsLayout->addWidget(m_cancelButton);
-
-    mainLayout->addWidget(actionsGroup);
+    queueLayout->addWidget(m_progressBar);
 }
 
 void AppInstallationPanel::setupUi_bottomBar(QVBoxLayout* mainLayout) {

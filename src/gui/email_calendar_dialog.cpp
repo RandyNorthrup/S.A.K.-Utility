@@ -24,6 +24,7 @@
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -833,7 +834,9 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     const QString nav_style = ui::calendarNavButtonStyle();
 
     m_prev_button = new QToolButton(this);
-    m_prev_button->setText(QStringLiteral("\u25C0"));
+    m_prev_button->setIcon(QIcon(ui::themedSelectorChevronLeftIcon()));
+    m_prev_button->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_prev_button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_prev_button->setToolTip(tr("Previous"));
     m_prev_button->setAccessibleName(tr("Previous calendar period"));
     m_prev_button->setStyleSheet(nav_style);
@@ -848,7 +851,9 @@ void EmailCalendarDialog::setupNavButtons(QHBoxLayout* layout) {
     layout->addWidget(m_today_button);
 
     m_next_button = new QToolButton(this);
-    m_next_button->setText(QStringLiteral("\u25B6"));
+    m_next_button->setIcon(QIcon(ui::themedSelectorChevronRightIcon()));
+    m_next_button->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_next_button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_next_button->setToolTip(tr("Next"));
     m_next_button->setAccessibleName(tr("Next calendar period"));
     m_next_button->setStyleSheet(nav_style);

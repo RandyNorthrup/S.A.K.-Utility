@@ -13,6 +13,7 @@
 #include "sak/shield_icon.h"
 #include "sak/style_constants.h"
 
+#include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -150,6 +151,36 @@ private Q_SLOTS:
         QString color = QLatin1String(sak::ui::kColorPrimary);
         QVERIFY(color.startsWith('#'));
         QCOMPARE(color.length(), 7);
+    }
+
+    void testSharedIconResourceConstantsLoad() {
+        const QStringList icons = {sak::ui::kIconPasswordEyeOpen,
+                                   sak::ui::kIconPasswordEyeClosed,
+                                   sak::ui::kIconPasswordEyeOpenOnTone,
+                                   sak::ui::kIconPasswordEyeClosedOnTone,
+                                   sak::ui::kIconSelectorChevronUpOnTone,
+                                   sak::ui::kIconSelectorChevronDownOnTone,
+                                   sak::ui::kIconSelectorChevronLeft,
+                                   sak::ui::kIconSelectorChevronLeftDark,
+                                   sak::ui::kIconSelectorChevronLeftOnTone,
+                                   sak::ui::kIconSelectorChevronRight,
+                                   sak::ui::kIconSelectorChevronRightDark,
+                                   sak::ui::kIconSelectorChevronRightOnTone};
+        for (const QString& icon_path : icons) {
+            QVERIFY2(QFile::exists(icon_path), qPrintable(icon_path));
+            const QPixmap pixmap = QIcon(icon_path).pixmap(sak::ui::kUiIconSmall,
+                                                           sak::ui::kUiIconSmall);
+            QVERIFY2(!pixmap.isNull(), qPrintable(icon_path));
+        }
+
+        for (const QIcon& icon : {sak::ui::passwordEyeOpenToolButtonIcon(),
+                                  sak::ui::passwordEyeClosedToolButtonIcon(),
+                                  sak::ui::selectorChevronUpToolButtonIcon(),
+                                  sak::ui::selectorChevronDownToolButtonIcon(),
+                                  sak::ui::selectorChevronLeftToolButtonIcon(),
+                                  sak::ui::selectorChevronRightToolButtonIcon()}) {
+            QVERIFY(!icon.pixmap(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall).isNull());
+        }
     }
 };
 

@@ -60,6 +60,9 @@ public:
     /// @brief Read the next framed message from the client
     [[nodiscard]] auto readMessage() -> std::expected<PipeMessage, sak::error_code>;
 
+    /// @brief Check whether at least one byte is pending on the pipe
+    [[nodiscard]] bool hasPendingMessage() const;
+
     /// @brief Check if client is still connected
     [[nodiscard]] bool isConnected() const;
 

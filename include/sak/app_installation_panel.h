@@ -137,8 +137,10 @@ private:
     void setupUi_packageTable(QHBoxLayout* sideBySide);
     /** @brief Build the install queue section panel */
     void setupUi_queueSection(QHBoxLayout* sideBySide);
-    /** @brief Build the installation actions section */
-    void setupUi_installActions(QVBoxLayout* layout);
+    /** @brief Build the online install queue button row */
+    void setupUi_queueButtons(QVBoxLayout* queueLayout);
+    /** @brief Build the online install progress widgets */
+    void setupUi_queueProgress(QVBoxLayout* queueLayout);
     /** @brief Build the bottom bar with log toggle */
     void setupUi_bottomBar(QVBoxLayout* layout);
     /** @brief Build the offline deployment tab content */

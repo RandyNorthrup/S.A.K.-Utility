@@ -122,7 +122,8 @@ QString themeTabAndButtonStyles() {
                     colorWithAlpha(kColorPrimaryDark, kPrimaryGradientBottomAlpha),
                     QString::fromLatin1(kColorButtonTextOnTone)) +
            actionButtonStyle(
-               "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss);
+               "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
+           tabBarScrollControlsStyle();
 }
 
 QString themeInputStyles() {
@@ -199,7 +200,13 @@ QString themeContainerAndTableStyles() {
         .arg(colorWithAlpha(kColorPrimary, kSelectionMediumAlpha))
         .arg(QString::fromLatin1(kColorTextPrimary))
         .arg(colorWithAlpha(kColorPrimary, kSelectionStrongAlpha))
-        .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha));
+        .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha))
+        .arg(kUiGroupBoxBorderRadius)
+        .arg(kUiGroupBoxTitleMarginTop)
+        .arg(kUiGroupBoxContentPaddingTop)
+        .arg(kUiGroupBoxContentPaddingHorizontal)
+        .arg(kUiGroupBoxContentPaddingBottom)
+        .arg(kUiGroupBoxTitlePaddingHorizontal);
 }
 
 QString themeSliderStyles() {

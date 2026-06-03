@@ -295,8 +295,9 @@ void WifiManagerPanel::setupNetworkPasswordField(QFormLayout* layout) {
     m_password_input->setAccessibleName(QStringLiteral("Network Password"));
     m_password_toggle_btn = new QToolButton(m_form_group);
     m_password_toggle_btn->setCheckable(true);
-    m_password_toggle_btn->setIcon(QIcon(":/icons/eye_open.svg"));
+    m_password_toggle_btn->setIcon(ui::passwordEyeOpenToolButtonIcon());
     m_password_toggle_btn->setIconSize(QSize(kWifiPasswordIconSize, kWifiPasswordIconSize));
+    m_password_toggle_btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_password_toggle_btn->setToolTip("Show/hide password");
     m_password_toggle_btn->setAccessibleName(QStringLiteral("Toggle password visibility"));
     passRow->addWidget(m_password_input);
@@ -377,12 +378,16 @@ void WifiManagerPanel::setupTableSearchRow(QVBoxLayout* layout) {
     m_search_input->setPlaceholderText("Search networks\u2026");
     m_search_input->setAccessibleName(QStringLiteral("Search Networks"));
     m_search_up_btn = new QToolButton(m_table_group);
-    m_search_up_btn->setText("\u25b2");
+    m_search_up_btn->setIcon(ui::selectorChevronUpToolButtonIcon());
+    m_search_up_btn->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_search_up_btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_search_up_btn->setToolTip("Previous match");
     m_search_up_btn->setAccessibleName(QStringLiteral("Previous search match"));
     m_search_up_btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     m_search_down_btn = new QToolButton(m_table_group);
-    m_search_down_btn->setText("\u25bc");
+    m_search_down_btn->setIcon(ui::selectorChevronDownToolButtonIcon());
+    m_search_down_btn->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_search_down_btn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_search_down_btn->setToolTip("Next match");
     m_search_down_btn->setAccessibleName(QStringLiteral("Next search match"));
     m_search_down_btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
@@ -578,8 +583,8 @@ void WifiManagerPanel::onTogglePasswordVisibility() {
     const bool showing = m_password_toggle_btn->isChecked();
     m_password_input->setEchoMode(showing ? QLineEdit::Normal : QLineEdit::Password);
     // Eye open = "click to show" (password hidden); Eye closed = "click to hide" (password shown)
-    m_password_toggle_btn->setIcon(
-        QIcon(showing ? ":/icons/eye_closed.svg" : ":/icons/eye_open.svg"));
+    m_password_toggle_btn->setIcon(showing ? ui::passwordEyeClosedToolButtonIcon()
+                                           : ui::passwordEyeOpenToolButtonIcon());
 }
 
 void WifiManagerPanel::onAddToTableClicked() {
@@ -2251,7 +2256,7 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg) {
         lbl->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 
         auto* eyeBtn = new QToolButton(container);
-        eyeBtn->setIcon(QIcon(":/icons/eye_open.svg"));
+        eyeBtn->setIcon(QIcon(ui::kIconPasswordEyeOpen));
         eyeBtn->setIconSize(QSize(kPasswordRevealIconSize, kPasswordRevealIconSize));
         eyeBtn->setCheckable(true);
         eyeBtn->setFixedSize(sak::kEyeButtonSize, sak::kEyeButtonSize);
@@ -2265,7 +2270,7 @@ void WifiManagerPanel::addRowToTable(const WifiConfig& cfg) {
                                  : (pwd.isEmpty()
                                         ? QString{}
                                         : QString(pwd.length(), QChar(kPasswordBulletCharacter))));
-            eyeBtn->setIcon(QIcon(showing ? ":/icons/eye_closed.svg" : ":/icons/eye_open.svg"));
+            eyeBtn->setIcon(QIcon(showing ? ui::kIconPasswordEyeClosed : ui::kIconPasswordEyeOpen));
         });
 
         hbox->addWidget(lbl, 1);

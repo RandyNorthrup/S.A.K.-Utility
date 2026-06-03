@@ -994,10 +994,11 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
 
     auto make_button = [&](const QString& text, const QString& tooltip, const QString& key) {
         auto* btn = new QPushButton(text, group);
-        btn->setMinimumHeight(sak::kButtonHeightTall);
+        btn->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
+        btn->setMaximumHeight(sak::ui::kUiButtonHeightDialog);
         btn->setToolTip(tooltip);
         btn->setAccessibleName(text);
-        btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
+        btn->setStyleSheet(sak::ui::kCompactPrimaryButtonStyle);
         m_qa_buttons.insert(key, btn);
         btn_layout->addWidget(btn);
     };
@@ -1018,10 +1019,6 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
 
     btn_layout->addStretch();
     layout->addLayout(btn_layout);
-
-    m_qa_status_label = new QLabel(tr("Ready"), group);
-    m_qa_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
-    layout->addWidget(m_qa_status_label);
 
     m_qa_progress_bar = new QProgressBar(group);
     m_qa_progress_bar->setRange(0, kProgressMaximum);
@@ -1081,7 +1078,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
 void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
     logMessage(QString("Executing: %1").arg(action->name()));
-    m_qa_status_label->setText(QString("Running: %1...").arg(action->name()));
+    Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(0);
     m_qa_progress_bar->setVisible(true);
     m_qa_controller->executeAction(action->name(), false);
@@ -1091,7 +1088,7 @@ void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction* action,
                                                      const QString& message,
                                                      int progress) {
     Q_ASSERT(action);
-    m_qa_status_label->setText(message);
+    Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(progress);
 }
 
@@ -1101,7 +1098,6 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
     const QString status = result.success
                                ? QString("Completed: %1").arg(action->name())
                                : QString("Failed: %1 - %2").arg(action->name(), result.message);
-    m_qa_status_label->setText(status);
     m_qa_progress_bar->setVisible(false);
     logMessage(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
@@ -1111,9 +1107,9 @@ void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
                                                   const QString& error_message) {
     Q_ASSERT(action);
     const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
-    m_qa_status_label->setText(status);
     m_qa_progress_bar->setVisible(false);
     logMessage(status);
+    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
     sak::logError("Quick action error: {} - {}",
                   action->name().toStdString(),
                   error_message.toStdString());

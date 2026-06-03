@@ -36,15 +36,20 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QPainter>
+#include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStorageInfo>
 #include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QTabWidget>
 #include <QTextBrowser>
 #include <QTimer>
@@ -52,10 +57,25 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <functional>
+#include <utility>
+
 namespace sak {
 
 namespace {
 
+constexpr int kEmailHeaderCheckRadiusPx = ui::kCssRadiusSmallPx;
+constexpr int kEmailHeaderCheckTickPenWidth = ui::kCssBorderWidthAccentPx;
+constexpr int kEmailHeaderCheckTickX0 = 3;
+constexpr int kEmailHeaderCheckTickY0 = 8;
+constexpr int kEmailHeaderCheckTickX1 = 6;
+constexpr int kEmailHeaderCheckTickY1 = 11;
+constexpr int kEmailHeaderCheckTickX2 = 13;
+constexpr int kEmailHeaderCheckTickY2 = 4;
+constexpr int kEmailHeaderCheckDashX0 = 4;
+constexpr int kEmailHeaderCheckDashY = 8;
+constexpr int kEmailHeaderCheckDashX1 = 12;
+constexpr int kEmailSelectHeaderColumn = 0;
 constexpr double kRibbonPrimaryHoverAlpha = ui::kHoverAlphaSubtle;
 constexpr double kRibbonPrimaryHoverBorderAlpha = 0.25;
 constexpr double kRibbonPrimaryPressedAlpha = ui::kPressedAlphaSubtle;
@@ -79,6 +99,96 @@ constexpr int kInlineImageAttrPrefixCaptureGroup = 1;
 constexpr int kInlineImageAttrQuoteCaptureGroup = 2;
 constexpr int kInlineImageSrcCaptureGroup = 3;
 constexpr int kLargeByteDisplayPrecision = 2;
+
+class EmailSelectHeaderView : public QHeaderView {
+public:
+    explicit EmailSelectHeaderView(QWidget* parent = nullptr)
+        : QHeaderView(Qt::Horizontal, parent) {
+        setSectionsClickable(true);
+    }
+
+    void setTriState(Qt::CheckState state) {
+        if (m_state == state) {
+            return;
+        }
+        m_state = state;
+        viewport()->update();
+    }
+
+    void setToggleHandler(std::function<void(bool)> handler) {
+        m_toggle_handler = std::move(handler);
+    }
+
+protected:
+    void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override {
+        Q_ASSERT(painter != nullptr);
+        QHeaderView::paintSection(painter, rect, logicalIndex);
+        if (logicalIndex != kEmailSelectHeaderColumn) {
+            return;
+        }
+
+        constexpr int side = ui::kUiIconSmall;
+        const int cx = rect.x() + (rect.width() - side) / 2;
+        const int cy = rect.y() + (rect.height() - side) / 2;
+        const QRect check_rect(cx, cy, side, side);
+
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        if (m_state == Qt::Unchecked) {
+            painter->setBrush(QColor(QString::fromLatin1(ui::kColorBgSurface)));
+            painter->setPen(QPen(QColor(QString::fromLatin1(ui::kColorBorderMuted)),
+                                 ui::kCssBorderWidthDefaultPx));
+            painter->drawRoundedRect(check_rect,
+                                     kEmailHeaderCheckRadiusPx,
+                                     kEmailHeaderCheckRadiusPx);
+        } else {
+            painter->setBrush(QColor(QString::fromLatin1(ui::kColorPrimary)));
+            painter->setPen(QPen(QColor(QString::fromLatin1(ui::kColorPrimaryDark)),
+                                 ui::kCssBorderWidthDefaultPx));
+            painter->drawRoundedRect(check_rect,
+                                     kEmailHeaderCheckRadiusPx,
+                                     kEmailHeaderCheckRadiusPx);
+            painter->setPen(QPen(Qt::white,
+                                 kEmailHeaderCheckTickPenWidth,
+                                 Qt::SolidLine,
+                                 Qt::RoundCap,
+                                 Qt::RoundJoin));
+            painter->setBrush(Qt::NoBrush);
+            if (m_state == Qt::Checked) {
+                QPainterPath tick;
+                tick.moveTo(cx + kEmailHeaderCheckTickX0, cy + kEmailHeaderCheckTickY0);
+                tick.lineTo(cx + kEmailHeaderCheckTickX1, cy + kEmailHeaderCheckTickY1);
+                tick.lineTo(cx + kEmailHeaderCheckTickX2, cy + kEmailHeaderCheckTickY2);
+                painter->drawPath(tick);
+            } else {
+                painter->drawLine(cx + kEmailHeaderCheckDashX0,
+                                  cy + kEmailHeaderCheckDashY,
+                                  cx + kEmailHeaderCheckDashX1,
+                                  cy + kEmailHeaderCheckDashY);
+            }
+        }
+        painter->restore();
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        Q_ASSERT(event != nullptr);
+        if (logicalIndexAt(event->pos()) == kEmailSelectHeaderColumn) {
+            const bool should_check_all = (m_state != Qt::Checked);
+            m_state = should_check_all ? Qt::Checked : Qt::Unchecked;
+            viewport()->update();
+            if (m_toggle_handler) {
+                m_toggle_handler(should_check_all);
+            }
+            event->accept();
+            return;
+        }
+        QHeaderView::mousePressEvent(event);
+    }
+
+private:
+    Qt::CheckState m_state{Qt::Unchecked};
+    std::function<void(bool)> m_toggle_handler;
+};
 
 /// Detect an image MIME type from raw bytes using `QImageReader`.
 /// Returns the IANA name (e.g. `image/png`) or an empty `QByteArray` if the
@@ -470,7 +580,9 @@ QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     connect(m_page_size_combo, &QComboBox::currentIndexChanged, this, [this] { applyPageSize(); });
 
     m_prev_page_button = new QToolButton(group);
-    m_prev_page_button->setText(QStringLiteral("\u25C0"));
+    m_prev_page_button->setIcon(ui::selectorChevronLeftToolButtonIcon());
+    m_prev_page_button->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_prev_page_button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_prev_page_button->setToolTip(tr("Previous page"));
     m_prev_page_button->setAccessibleName(tr("Previous email page"));
     m_prev_page_button->setEnabled(false);
@@ -486,7 +598,9 @@ QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     m_page_label->setAlignment(Qt::AlignCenter);
 
     m_next_page_button = new QToolButton(group);
-    m_next_page_button->setText(QStringLiteral("\u25B6"));
+    m_next_page_button->setIcon(ui::selectorChevronRightToolButtonIcon());
+    m_next_page_button->setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
+    m_next_page_button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_next_page_button->setToolTip(tr("Next page"));
     m_next_page_button->setAccessibleName(tr("Next email page"));
     m_next_page_button->setEnabled(false);
@@ -514,10 +628,15 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list = new QTableWidget(group);
     m_item_list->setColumnCount(ColCount);
     m_item_list->setAccessibleName(QStringLiteral("Email Items List"));
+    auto* select_header = new EmailSelectHeaderView(m_item_list);
+    select_header->setAccessibleName(tr("Select all emails"));
+    select_header->setToolTip(tr("Select or deselect all emails for export"));
+    select_header->setToggleHandler([this](bool checked) { setAllItemListChecks(checked); });
+    m_item_list->setHorizontalHeader(select_header);
     m_item_list->setHorizontalHeaderLabels(
         {QString(), tr("Subject"), tr("From / Name"), tr("Date"), tr("Size"), tr("Type")});
-    m_item_list->horizontalHeaderItem(ColSelect)->setIcon(QIcon(ui::kIconSelectorCheck));
-    m_item_list->horizontalHeaderItem(ColSelect)->setToolTip(tr("Select emails for export"));
+    m_item_list->horizontalHeaderItem(ColSelect)->setToolTip(
+        tr("Select or deselect all emails for export"));
     m_item_list->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_item_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_item_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -539,6 +658,11 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
             &QTableWidget::customContextMenuRequested,
             this,
             &EmailInspectorPanel::onItemListContextMenu);
+    connect(m_item_list, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+        if (item != nullptr && item->column() == ColSelect) {
+            updateItemListHeaderCheckState();
+        }
+    });
 }
 
 QWidget* EmailInspectorPanel::createItemListPanel() {
@@ -994,6 +1118,52 @@ uint64_t EmailInspectorPanel::itemIdForRow(int row) const {
     return ok ? item_id : 0;
 }
 
+void EmailInspectorPanel::setAllItemListChecks(bool checked) {
+    if (m_item_list == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(m_item_list);
+    const Qt::CheckState state = checked ? Qt::Checked : Qt::Unchecked;
+    for (int row = 0; row < m_item_list->rowCount(); ++row) {
+        auto* select_item = m_item_list->item(row, ColSelect);
+        if (select_item != nullptr) {
+            select_item->setCheckState(state);
+        }
+    }
+    updateItemListHeaderCheckState();
+}
+
+void EmailInspectorPanel::updateItemListHeaderCheckState() {
+    if (m_item_list == nullptr) {
+        return;
+    }
+    auto* select_header = dynamic_cast<EmailSelectHeaderView*>(m_item_list->horizontalHeader());
+    if (select_header == nullptr) {
+        return;
+    }
+
+    int selectable_count = 0;
+    int checked_count = 0;
+    for (int row = 0; row < m_item_list->rowCount(); ++row) {
+        auto* select_item = m_item_list->item(row, ColSelect);
+        if (select_item == nullptr || !select_item->flags().testFlag(Qt::ItemIsUserCheckable)) {
+            continue;
+        }
+        ++selectable_count;
+        if (select_item->checkState() == Qt::Checked) {
+            ++checked_count;
+        }
+    }
+
+    Qt::CheckState state = Qt::Unchecked;
+    if (selectable_count > 0 && checked_count == selectable_count) {
+        state = Qt::Checked;
+    } else if (checked_count > 0) {
+        state = Qt::PartiallyChecked;
+    }
+    select_header->setTriState(state);
+}
+
 QVector<uint64_t> EmailInspectorPanel::checkedItemIds() const {
     QVector<uint64_t> ids;
     if (m_item_list == nullptr) {
@@ -1175,6 +1345,7 @@ void EmailInspectorPanel::onFolderTreeLoaded(sak::PstFolderTree tree) {
 void EmailInspectorPanel::onFileClosed() {
     m_folder_tree->clear();
     m_item_list->setRowCount(0);
+    updateItemListHeaderCheckState();
     m_content_browser->clear();
     m_headers_browser->clear();
     m_properties_table->setRowCount(0);
@@ -1393,6 +1564,7 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     }
     m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
+    updateItemListHeaderCheckState();
     int filtered = total - count;
     QString label = tr("%1 messages (showing %2)").arg(total).arg(count);
     if (filtered > 0) {
@@ -1718,6 +1890,7 @@ void EmailInspectorPanel::populateItemList(const QVector<sak::PstItemSummary>& i
     }
     m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
+    updateItemListHeaderCheckState();
 }
 
 void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {

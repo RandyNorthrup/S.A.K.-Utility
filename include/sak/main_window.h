@@ -7,7 +7,6 @@
 #include <QList>
 #include <QMainWindow>
 #include <QMap>
-#include <QMenuBar>
 #include <QProgressBar>
 #include <QStatusBar>
 #include <QStringList>
@@ -26,6 +25,7 @@ namespace sak {
 // Forward declarations for feature panels
 class UserMigrationPanel;
 class OrganizerPanel;
+class PartitionManagerPanel;
 class ImageFlasherPanel;
 class AppInstallationPanel;
 class DiagnosticBenchmarkPanel;
@@ -103,11 +103,6 @@ private:
     void setupUi();
 
     /**
-     * @brief Create menu bar
-     */
-    void createMenuBar();
-
-    /**
      * @brief Create status bar
      */
     void createStatusBar();
@@ -124,6 +119,7 @@ private:
     void createSimplePanels();
     void createBackupRestorePanel();
     void createFileManagementPanel();
+    void createPartitionManagerPanel();
     void createImageFlasherPanel();
     void createDiagnosticPanel();
     void createEmailToolsPanel();
@@ -156,6 +152,7 @@ private:
 
     /// @brief Connect panel status and progress signals to the main window
     void connectPanelSignals();
+    void connectPartitionManagerNavigation();
 
     /// @brief Connect remaining panel status/progress signals
     void connectRemainingPanelSignals();
@@ -227,6 +224,7 @@ private:
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
     std::unique_ptr<OrganizerPanel> m_organizer_panel;
+    std::unique_ptr<PartitionManagerPanel> m_partition_manager_panel;
     std::unique_ptr<AppInstallationPanel> m_app_installation_panel;
     std::unique_ptr<VulnerabilityPanel> m_vulnerability_panel;
     std::unique_ptr<ImageFlasherPanel> m_image_flasher_panel;
