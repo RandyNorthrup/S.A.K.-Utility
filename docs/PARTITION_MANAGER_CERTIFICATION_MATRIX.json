@@ -1,0 +1,561 @@
+{
+  "schema_version": 1,
+  "vhd_scenarios": [
+    {
+      "id": "vhd.create-format-resize-delete",
+      "name": "Create, format, resize, and delete data partition",
+      "required_evidence_keys": [
+        "disk_number",
+        "initial_size_bytes",
+        "resized_size_bytes",
+        "remaining_partitions"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "non_system_disk",
+        "partition_identity_verified",
+        "post_delete_no_data_partition_verified"
+      ]
+    },
+    {
+      "id": "vhd.fat32-to-ntfs",
+      "name": "FAT32 to NTFS in-place conversion",
+      "required_evidence_keys": [
+        "disk_number",
+        "drive_letter",
+        "final_file_system"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "non_system_disk",
+        "mounted_volume_identity_verified",
+        "post_conversion_file_system_verified"
+      ]
+    },
+    {
+      "id": "vhd.quick-partition",
+      "name": "Quick Partition equal-size data-disk layout",
+      "required_evidence_keys": [
+        "disk_number",
+        "partition_count",
+        "expected_slice_bytes",
+        "created"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "existing_partitions_deleted_before_layout",
+        "partition_count_verified",
+        "partition_sizes_verified"
+      ]
+    },
+    {
+      "id": "vhd.quick-partition-custom",
+      "name": "Quick Partition custom size and label layout",
+      "required_evidence_keys": [
+        "disk_number",
+        "partition_count",
+        "requested_sizes",
+        "created"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "custom_sizes_verified",
+        "labels_verified",
+        "partition_order_verified"
+      ]
+    },
+    {
+      "id": "vhd.quick-partition-mbr",
+      "name": "Quick Partition MBR four-data-partition layout",
+      "required_evidence_keys": [
+        "disk_number",
+        "partition_style",
+        "partition_count",
+        "expected_slice_bytes",
+        "created",
+        "extended_container_count",
+        "partition_types"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "mbr_style_verified",
+        "four_data_partitions_verified",
+        "extended_logical_container_recorded",
+        "partition_sizes_verified"
+      ]
+    },
+    {
+      "id": "vhd.adjacent-extend",
+      "name": "Adjacent free-space Extend Partition Wizard path",
+      "required_evidence_keys": [
+        "disk_number",
+        "partition_number",
+        "initial_size_bytes",
+        "extended_size_bytes"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "adjacent_free_space_created",
+        "partition_identity_verified",
+        "post_extend_size_verified"
+      ]
+    },
+    {
+      "id": "vhd.recovered-partition-restore",
+      "name": "Recovered partition write-back candidate restore",
+      "required_evidence_keys": [
+        "disk_number",
+        "offset_bytes",
+        "size_bytes",
+        "type_id"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "candidate_offset_verified",
+        "candidate_size_verified",
+        "candidate_type_verified"
+      ]
+    },
+    {
+      "id": "vhd.empty-style-conversion",
+      "name": "Empty data disk GPT/MBR conversion",
+      "required_evidence_keys": [
+        "disk_number",
+        "final_partition_style"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "empty_disk_only",
+        "mbr_conversion_verified",
+        "gpt_conversion_verified"
+      ]
+    },
+    {
+      "id": "vhd.clear-disk-wipe",
+      "name": "Clear-level non-system disk wipe",
+      "required_evidence_keys": [
+        "disk_number",
+        "final_partition_style",
+        "remaining_partitions"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "non_system_disk",
+        "clear_disk_completed",
+        "raw_empty_layout_verified"
+      ]
+    },
+    {
+      "id": "vhd.image-clone",
+      "name": "Offline VHD image clone and sentinel verification",
+      "required_evidence_keys": [
+        "source_image",
+        "target_image",
+        "target_disk_number",
+        "sentinel_verified"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "source_dismounted_before_copy",
+        "target_attached_after_copy",
+        "sentinel_file_verified"
+      ]
+    },
+    {
+      "id": "vhd.image-restore",
+      "name": "Offline VHD image restore and overwrite verification",
+      "required_evidence_keys": [
+        "source_image",
+        "target_image",
+        "target_disk_number",
+        "pre_restore_marker",
+        "sentinel_verified",
+        "target_overwritten"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "source_dismounted_before_restore",
+        "target_identity_recorded_before_overwrite",
+        "target_attached_after_restore",
+        "restored_sentinel_file_verified"
+      ]
+    },
+    {
+      "id": "vhd.partition-clone-region",
+      "name": "Partition clone to raw target region",
+      "required_evidence_keys": [
+        "source_disk_number",
+        "target_disk_number",
+        "source_offset_bytes",
+        "target_offset_bytes",
+        "clone_size_bytes",
+        "signature_verified",
+        "outside_marker_preserved"
+      ],
+      "safety_contract": [
+        "disposable_vhd_only",
+        "source_partition_identity_verified",
+        "target_region_identity_recorded_before_write",
+        "raw_region_copy_verified",
+        "outside_target_marker_preserved"
+      ]
+    }
+  ],
+  "external_gates": [
+    {
+      "id": "external.system-mbr2gpt",
+      "name": "System MBR-to-GPT conversion in disposable boot VM",
+      "required_evidence_keys": [
+        "vm_id",
+        "before_partition_style",
+        "mbr2gpt_validate_exit_code",
+        "mbr2gpt_convert_exit_code",
+        "after_partition_style",
+        "boot_result"
+      ],
+      "safety_contract": [
+        "disposable_boot_vm_only",
+        "pre_conversion_snapshot",
+        "validate_before_convert",
+        "post_conversion_boot_verified"
+      ]
+    },
+    {
+      "id": "external.os-migration-reboot",
+      "name": "OS migration target boot and firmware-order proof",
+      "required_evidence_keys": [
+        "source_disk_id",
+        "target_disk_id",
+        "clone_verification_mode",
+        "boot_validation_output",
+        "firmware_boot_order",
+        "target_boot_result"
+      ],
+      "safety_contract": [
+        "disposable_vm_or_lab_disk",
+        "target_overwrite_confirmed",
+        "source_target_identity_recorded",
+        "target_boot_verified"
+      ]
+    },
+    {
+      "id": "external.boot-repair-uefi",
+      "name": "UEFI boot repair with intentionally broken BCD",
+      "required_evidence_keys": [
+        "vm_id",
+        "boot_mode",
+        "broken_boot_symptom",
+        "repair_commands",
+        "post_repair_boot_result"
+      ],
+      "required_evidence_values": {
+        "boot_mode": {
+          "allowed_values": [
+            "UEFI"
+          ]
+        }
+      },
+      "safety_contract": [
+        "disposable_uefi_boot_vm_only",
+        "pre_repair_snapshot",
+        "commands_logged",
+        "post_repair_boot_verified"
+      ]
+    },
+    {
+      "id": "external.boot-repair-bios",
+      "name": "BIOS/MBR boot repair with intentionally broken BCD",
+      "required_evidence_keys": [
+        "vm_id",
+        "boot_mode",
+        "broken_boot_symptom",
+        "repair_commands",
+        "post_repair_boot_result"
+      ],
+      "required_evidence_values": {
+        "boot_mode": {
+          "allowed_values": [
+            "BIOS",
+            "Legacy BIOS"
+          ]
+        }
+      },
+      "safety_contract": [
+        "disposable_bios_boot_vm_only",
+        "pre_repair_snapshot",
+        "commands_logged",
+        "post_repair_boot_verified"
+      ]
+    },
+    {
+      "id": "external.usb-removable",
+      "name": "USB removable disk destructive operation proof",
+      "required_evidence_keys": [
+        "device_model",
+        "serial_number",
+        "bus_type",
+        "operation",
+        "before_layout",
+        "after_layout"
+      ],
+      "safety_contract": [
+        "disposable_usb_media_only",
+        "device_identity_recorded",
+        "operator_confirmation_recorded",
+        "post_operation_layout_verified"
+      ]
+    },
+    {
+      "id": "external.file-level-data-recovery",
+      "name": "File-level Data Recovery scan and restore proof",
+      "required_evidence_keys": [
+        "source_volume_id",
+        "file_system",
+        "deleted_fixture_name",
+        "scan_result",
+        "restore_destination",
+        "recovered_file_hash",
+        "source_not_mutated"
+      ],
+      "safety_contract": [
+        "disposable_recovery_volume",
+        "read_only_source_scan",
+        "restore_to_separate_destination",
+        "recovered_hash_verified"
+      ]
+    },
+    {
+      "id": "external.ssd-retrim",
+      "name": "SSD/NVMe ReTrim and vendor purge warning proof",
+      "required_evidence_keys": [
+        "device_model",
+        "media_type",
+        "trim_status_before",
+        "retrim_output",
+        "purge_warning_visible"
+      ],
+      "safety_contract": [
+        "ssd_or_nvme_device",
+        "no_hdd_defrag_path",
+        "purge_warning_present",
+        "retrim_output_recorded"
+      ]
+    },
+    {
+      "id": "external.hdd-defrag-execution",
+      "name": "Direct in-app HDD defrag execution proof",
+      "required_evidence_keys": [
+        "device_model",
+        "media_type",
+        "drive_letter",
+        "analyze_output",
+        "defrag_output",
+        "duration_seconds",
+        "post_defrag_health_check"
+      ],
+      "safety_contract": [
+        "disposable_hdd_volume_only",
+        "media_type_verified_not_ssd",
+        "long_running_operation_cancellable",
+        "post_defrag_health_verified"
+      ]
+    },
+    {
+      "id": "external.ssd-secure-erase",
+      "name": "SSD/NVMe secure erase command execution proof",
+      "required_evidence_keys": [
+        "device_model",
+        "serial_number",
+        "media_type",
+        "purge_command",
+        "operator_confirmation",
+        "before_layout",
+        "after_layout",
+        "post_purge_identity_check"
+      ],
+      "safety_contract": [
+        "disposable_ssd_or_nvme_device_only",
+        "non_system_disk_identity_recorded",
+        "typed_operator_confirmation_recorded",
+        "post_purge_empty_or_vendor_expected_layout_verified"
+      ]
+    },
+    {
+      "id": "external.bitlocker",
+      "name": "BitLocker locked/unlocked data-volume blocker proof",
+      "required_evidence_keys": [
+        "volume_id",
+        "locked_state_blocker",
+        "unlocked_state_behavior",
+        "dirty_bit_state",
+        "operation_attempted"
+      ],
+      "safety_contract": [
+        "disposable_bitlocker_volume",
+        "locked_mutation_blocked",
+        "unlocked_state_revalidated",
+        "dirty_bit_handling_recorded"
+      ]
+    },
+    {
+      "id": "external.bitlocker-mutation",
+      "name": "In-app BitLocker unlock/suspend/resume mutation proof",
+      "required_evidence_keys": [
+        "volume_id",
+        "initial_lock_state",
+        "unlock_result",
+        "suspend_result",
+        "resume_result",
+        "final_protection_state",
+        "operation_audit_log"
+      ],
+      "safety_contract": [
+        "disposable_bitlocker_volume_only",
+        "recovery_key_or_password_fixture_recorded",
+        "mutation_commands_logged",
+        "final_protection_state_verified"
+      ]
+    },
+    {
+      "id": "external.allocate-free-space",
+      "name": "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof",
+      "required_evidence_keys": [
+        "source_volume_id",
+        "donor_volume_id",
+        "before_layout",
+        "after_layout",
+        "volume_size_delta",
+        "file_hash_validation",
+        "mount_validation",
+        "rollback_or_backup_evidence"
+      ],
+      "safety_contract": [
+        "disposable_source_and_donor_volumes_only",
+        "source_donor_identity_recorded",
+        "before_after_layout_verified",
+        "mount_and_file_hash_verified"
+      ]
+    },
+    {
+      "id": "external.partition-move",
+      "name": "Offline partition start-move proof",
+      "required_evidence_keys": [
+        "partition_id",
+        "before_offset_bytes",
+        "after_offset_bytes",
+        "before_layout",
+        "after_layout",
+        "file_hash_validation",
+        "mount_validation",
+        "rollback_or_backup_evidence"
+      ],
+      "safety_contract": [
+        "disposable_partition_only",
+        "offline_move_engine_used",
+        "offset_change_verified",
+        "mount_and_file_hash_verified"
+      ]
+    },
+    {
+      "id": "external.cluster-size-change",
+      "name": "Existing-volume cluster-size change proof",
+      "required_evidence_keys": [
+        "volume_id",
+        "before_allocation_unit_size",
+        "after_allocation_unit_size",
+        "file_count",
+        "acl_validation",
+        "alternate_stream_validation",
+        "file_hash_validation",
+        "rollback_or_backup_evidence"
+      ],
+      "safety_contract": [
+        "disposable_volume_only",
+        "full_file_tree_copied",
+        "metadata_preserved",
+        "hash_acl_stream_validation_passed"
+      ]
+    },
+    {
+      "id": "external.primary-logical-conversion",
+      "name": "Primary/logical conversion on disposable MBR disk",
+      "required_evidence_keys": [
+        "disk_id",
+        "before_layout",
+        "extended_container_identity",
+        "logical_volume_identity",
+        "after_layout",
+        "partition_order_offsets",
+        "mount_validation",
+        "file_hash_validation",
+        "bootability_result"
+      ],
+      "safety_contract": [
+        "disposable_mbr_disk_only",
+        "extended_container_identity_recorded",
+        "logical_volume_identity_recorded",
+        "before_after_order_offsets_verified",
+        "mount_and_file_hash_verified",
+        "bootability_verified_when_applicable"
+      ]
+    },
+    {
+      "id": "external.volume-serial-number",
+      "name": "Volume serial-number metadata mutation proof",
+      "required_evidence_keys": [
+        "volume_id",
+        "file_system",
+        "before_serial_number",
+        "after_serial_number",
+        "mount_validation",
+        "chkdsk_output",
+        "file_hash_validation",
+        "rollback_or_backup_evidence"
+      ],
+      "safety_contract": [
+        "disposable_volume_only",
+        "file_system_specific_writer_used",
+        "metadata_change_verified",
+        "mount_chkdsk_hash_verified"
+      ]
+    },
+    {
+      "id": "external.dynamic-to-basic",
+      "name": "Dynamic disk to basic conversion proof",
+      "required_evidence_keys": [
+        "vm_id",
+        "disk_id",
+        "before_disk_type",
+        "before_layout",
+        "backup_evidence",
+        "after_disk_type",
+        "after_layout",
+        "restore_hash_validation"
+      ],
+      "safety_contract": [
+        "disposable_dynamic_disk_vm_only",
+        "pre_conversion_snapshot",
+        "data_backup_before_destructive_conversion",
+        "basic_disk_restore_verified"
+      ]
+    },
+    {
+      "id": "external.hardware-wipe",
+      "name": "Non-system hardware wipe on disposable physical disk",
+      "required_evidence_keys": [
+        "device_model",
+        "serial_number",
+        "operator_confirmation",
+        "wipe_method",
+        "before_layout",
+        "after_layout"
+      ],
+      "safety_contract": [
+        "disposable_physical_disk_only",
+        "non_system_disk_identity_recorded",
+        "typed_confirmation_recorded",
+        "post_wipe_empty_layout_verified"
+      ]
+    }
+  ]
+}
