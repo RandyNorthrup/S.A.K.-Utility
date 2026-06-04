@@ -18,6 +18,8 @@ class AiConversationStoreTests : public QObject {
 private Q_SLOTS:
     void startSession_writesManifestAndListsSession();
     void appendTranscript_loadsDisplayLines();
+    void latestAssistantResponseId_returnsLastAssistantMetadata();
+    void latestSessionRole_returnsLastUserRoleMetadata();
     void listPromptedSessions_filtersUnpromptedSessions();
     void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
@@ -60,6 +62,62 @@ void AiConversationStoreTests::appendTranscript_loadsDisplayLines() {
     QCOMPARE(lines.size(), 2);
     QCOMPARE(lines[0], QStringLiteral("\n[USER REQUEST]\ncheck disk"));
     QCOMPARE(lines[1], QStringLiteral("\n[ASSISTANT RESULT]\ndisk ok"));
+}
+
+void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMetadata() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Chat"), &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("first"), {}, &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("Assistant"),
+                                   QStringLiteral("old"),
+                                   QJsonObject{
+                                       {QStringLiteral("response_id"), QStringLiteral("resp_old")}},
+                                   &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("Tool Result"),
+                                   QStringLiteral("not a chat response"),
+                                   QJsonObject{{QStringLiteral("response_id"),
+                                                QStringLiteral("resp_tool")}},
+                                   &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("Assistant"),
+                                   QStringLiteral("new"),
+                                   QJsonObject{
+                                       {QStringLiteral("response_id"), QStringLiteral("resp_new")}},
+                                   &error));
+
+    QCOMPARE(store.latestAssistantResponseId(store.currentSessionId(), &error),
+             QStringLiteral("resp_new"));
+    QVERIFY(error.isEmpty());
+}
+
+void AiConversationStoreTests::latestSessionRole_returnsLastUserRoleMetadata() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Chat"), &error));
+    QVERIFY(store.appendTranscript(
+        QStringLiteral("You"),
+        QStringLiteral("fix updates"),
+        QJsonObject{{QStringLiteral("session_role"), QStringLiteral("Windows Repair Technician")},
+                    {QStringLiteral("session_role_source"), QStringLiteral("prompt")}},
+        &error));
+    QVERIFY(store.appendTranscript(
+        QStringLiteral("You"),
+        QStringLiteral("act as report writer"),
+        QJsonObject{{QStringLiteral("session_role"), QStringLiteral("Customer Report Writer")},
+                    {QStringLiteral("session_role_source"), QStringLiteral("user")}},
+        &error));
+
+    QString source;
+    QCOMPARE(store.latestSessionRole(store.currentSessionId(), &source, &error),
+             QStringLiteral("Customer Report Writer"));
+    QCOMPARE(source, QStringLiteral("user"));
+    QVERIFY(error.isEmpty());
 }
 
 void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() {

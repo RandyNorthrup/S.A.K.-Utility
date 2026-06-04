@@ -12,6 +12,9 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+#include <memory>
+
 namespace sak::ai {
 
 inline constexpr int kDefaultSubagentTimeoutSeconds = 600;
@@ -93,6 +96,7 @@ public:
         QString model;
         QString reasoning_effort;
         QString api_key;
+        QString safety_identifier;
         int token_budget{0};
     };
 
@@ -107,6 +111,8 @@ public:
     [[nodiscard]] virtual Response invoke(const Request& request,
                                           const CancellationToken& token) = 0;
 };
+
+using AiModelClientFactory = std::function<std::unique_ptr<IAiModelClient>()>;
 
 struct AiSubagentRunnerOptions {
     int max_retries{0};            ///< Extra attempts after the first failure.
@@ -126,12 +132,14 @@ public:
 
     void setOptions(const AiSubagentRunnerOptions& options);
     [[nodiscard]] AiSubagentRunnerOptions options() const { return m_options; }
+    void setModelClientFactory(AiModelClientFactory factory);
 
     [[nodiscard]] AiSubagentResult run(const AiSubagentTask& task,
                                        const CancellationToken& parent_token) const;
 
 private:
     IAiModelClient* m_model_client{nullptr};
+    AiModelClientFactory m_model_client_factory;
     AiSubagentRunnerOptions m_options;
 };
 

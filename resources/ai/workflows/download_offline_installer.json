@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "download_offline_installer",
   "title": "Download Offline Installer",
-  "role": "Software Installer",
+  "role": "Software Deployment Technician",
   "category": "Software",
   "description": "Download offline installers through SAK tooling first, capture source paths and checksums, and verify usable artifacts.",
   "starter_prompt": "Download an offline installer for the requested application. Use SAK offline downloader first.",

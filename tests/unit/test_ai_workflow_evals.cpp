@@ -275,6 +275,7 @@ private Q_SLOTS:
     void reportFailureRunsAlwaysCleanup();
     void seededWorkflowCatalogHasUniqueIdsAndResources();
     void seededWorkflowsParseAndExpose();
+    void seededWorkflowRolesAreSpecificAndDiverse();
     void seededWorkflowsHaveReportVerifyCleanupShape();
     void seededWorkflowsVerifyAfterToolWork();
     void seededWorkflowReportsMeetTechnicianStandard();
@@ -494,6 +495,14 @@ QStringList seededWorkflowFiles() {
         QStringLiteral("network_connectivity_repair.json"),
         QStringLiteral("startup_performance_triage.json"),
         QStringLiteral("printer_troubleshooting.json"),
+        QStringLiteral("disk_space_cleanup_triage.json"),
+        QStringLiteral("browser_issue_cleanup.json"),
+        QStringLiteral("driver_device_troubleshooting.json"),
+        QStringLiteral("laptop_battery_health.json"),
+        QStringLiteral("user_profile_login_repair.json"),
+        QStringLiteral("windows_search_index_repair.json"),
+        QStringLiteral("audio_device_troubleshooting.json"),
+        QStringLiteral("time_sync_repair.json"),
         QStringLiteral("technician_tool_assisted_task.json"),
         QStringLiteral("malware_virus_removal.json"),
         QStringLiteral("pc_cleanup_bloatware_adware.json"),
@@ -573,6 +582,42 @@ void AiWorkflowEvalsTests::seededWorkflowsParseAndExpose() {
                  qPrintable(QStringLiteral("%1: %2").arg(
                      f, validation_errors.join(QStringLiteral("; ")))));
     }
+}
+
+void AiWorkflowEvalsTests::seededWorkflowRolesAreSpecificAndDiverse() {
+    const QStringList files = seededWorkflowFiles();
+    QHash<QString, QString> role_by_id;
+    QSet<QString> roles;
+    int generic_pc_roles = 0;
+
+    for (const auto& f : files) {
+        QString err;
+        const auto wf = loadGoldenWorkflow(f, &err);
+        QVERIFY2(err.isEmpty(), qPrintable(QStringLiteral("%1: %2").arg(f, err)));
+        QVERIFY2(!wf.role.trimmed().isEmpty(), qPrintable(QStringLiteral("%1: empty role").arg(f)));
+        role_by_id.insert(wf.id, wf.role);
+        roles.insert(wf.role);
+        if (wf.role == QLatin1String("PC Technician")) {
+            ++generic_pc_roles;
+        }
+    }
+
+    QVERIFY2(roles.size() >= 10,
+             qPrintable(
+                 QStringLiteral("Workflow roles collapsed to %1 role(s)").arg(roles.size())));
+    QVERIFY2(generic_pc_roles <= 1,
+             qPrintable(QStringLiteral("Too many workflows use generic PC Technician role: %1")
+                            .arg(generic_pc_roles)));
+    QCOMPARE(role_by_id.value(QStringLiteral("windows_update_repair")),
+             QStringLiteral("Windows Repair Technician"));
+    QCOMPARE(role_by_id.value(QStringLiteral("driver_device_troubleshooting")),
+             QStringLiteral("Driver and Device Technician"));
+    QCOMPARE(role_by_id.value(QStringLiteral("browser_issue_cleanup")),
+             QStringLiteral("Browser Support Technician"));
+    QCOMPARE(role_by_id.value(QStringLiteral("full_pc_health_check")),
+             QStringLiteral("Diagnostic Technician"));
+    QCOMPARE(role_by_id.value(QStringLiteral("technician_service_report")),
+             QStringLiteral("Customer Report Writer"));
 }
 
 void AiWorkflowEvalsTests::seededWorkflowsHaveReportVerifyCleanupShape() {

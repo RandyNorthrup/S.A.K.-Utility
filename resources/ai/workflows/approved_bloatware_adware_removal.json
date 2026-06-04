@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "approved_bloatware_adware_removal",
   "title": "Approved Bloatware or Adware Removal",
-  "role": "System Cleanup",
+  "role": "System Cleanup Technician",
   "category": "Cleanup",
   "description": "Remove explicitly approved unwanted software with ownership, startup/persistence, uninstall, verification, cleanup, and handoff evidence.",
   "starter_prompt": "Remove this approved unwanted, bloatware, or adware application. Identify it first, uninstall only the exact approved target, preserve user data unless explicitly approved, verify removal, and report leftovers.",

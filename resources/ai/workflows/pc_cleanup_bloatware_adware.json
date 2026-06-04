@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "pc_cleanup_bloatware_adware",
   "title": "PC Cleanup, Bloatware, and Adware Review",
-  "role": "System Cleanup",
+  "role": "System Cleanup Technician",
   "category": "Cleanup",
   "description": "Review disk pressure, temp files, startup clutter, unwanted apps, and browser/proxy adware clues before approved cleanup and verification.",
   "starter_prompt": "Clean up this PC and review bloatware or adware. Start read-only, show findings, use Windows/SAK built-in tools first, do not remove user data or apps without approval, verify afterward, and report.",

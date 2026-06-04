@@ -9,6 +9,8 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <memory>
+
 class FakeModelClient : public sak::ai::IAiModelClient {
 public:
     Response invoke(const Request& request, const sak::ai::CancellationToken& token) override {
@@ -31,6 +33,33 @@ public:
     int invocation_count{0};
 };
 
+class FactoryCountingModelClient : public sak::ai::IAiModelClient {
+public:
+    FactoryCountingModelClient(int* created, int* live, int* invocations)
+        : m_created(created), m_live(live), m_invocations(invocations) {
+        ++(*m_created);
+        ++(*m_live);
+    }
+
+    ~FactoryCountingModelClient() override { --(*m_live); }
+
+    Response invoke(const Request&, const sak::ai::CancellationToken&) override {
+        ++(*m_invocations);
+        Response response;
+        response.success = true;
+        QJsonObject payload;
+        payload[QStringLiteral("status")] = QStringLiteral("complete");
+        payload[QStringLiteral("summary")] = QStringLiteral("factory ok");
+        response.text = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+        return response;
+    }
+
+private:
+    int* m_created{nullptr};
+    int* m_live{nullptr};
+    int* m_invocations{nullptr};
+};
+
 class AiSubagentRunnerTests : public QObject {
     Q_OBJECT
 
@@ -46,6 +75,8 @@ private Q_SLOTS:
     void retriesUntilSuccess();
     void retriesExhaustedReturnsLastFailure();
     void wallClockTimeoutMarksTimedOut();
+    void factoryCreatesFreshClientPerRun();
+    void cancelledParentDoesNotCreateFactoryClient();
 };
 
 void AiSubagentRunnerTests::completeRoundTripPopulatesFields() {
@@ -316,6 +347,52 @@ void AiSubagentRunnerTests::wallClockTimeoutMarksTimedOut() {
     QCOMPARE(result.status, sak::ai::AiSubagentStatus::TimedOut);
     QVERIFY(result.error_message.contains(QStringLiteral("timeout")));
     QVERIFY(client.invocation_count < 6);
+}
+
+void AiSubagentRunnerTests::factoryCreatesFreshClientPerRun() {
+    int created = 0;
+    int live = 0;
+    int invocations = 0;
+    sak::ai::AiSubagentRunner runner(nullptr);
+    runner.setModelClientFactory([&created, &live, &invocations]() {
+        return std::make_unique<FactoryCountingModelClient>(&created, &live, &invocations);
+    });
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("factory");
+    task.agent_id = QStringLiteral("a");
+
+    const auto first = runner.run(task, {});
+    const auto second = runner.run(task, {});
+
+    QCOMPARE(first.status, sak::ai::AiSubagentStatus::Complete);
+    QCOMPARE(second.status, sak::ai::AiSubagentStatus::Complete);
+    QCOMPARE(created, 2);
+    QCOMPARE(invocations, 2);
+    QCOMPARE(live, 0);
+}
+
+void AiSubagentRunnerTests::cancelledParentDoesNotCreateFactoryClient() {
+    int created = 0;
+    int live = 0;
+    int invocations = 0;
+    sak::ai::AiSubagentRunner runner(nullptr);
+    runner.setModelClientFactory([&created, &live, &invocations]() {
+        return std::make_unique<FactoryCountingModelClient>(&created, &live, &invocations);
+    });
+
+    sak::ai::AiSubagentTask task;
+    task.task_id = QStringLiteral("factory_cancel");
+    task.agent_id = QStringLiteral("a");
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("run"));
+    root.cancel(QStringLiteral("already_cancelled"));
+
+    const auto result = runner.run(task, root);
+
+    QCOMPARE(result.status, sak::ai::AiSubagentStatus::Cancelled);
+    QCOMPARE(created, 0);
+    QCOMPARE(invocations, 0);
+    QCOMPARE(live, 0);
 }
 
 QTEST_GUILESS_MAIN(AiSubagentRunnerTests)

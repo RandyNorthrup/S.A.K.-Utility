@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "id": "windows_search_index_repair",
+  "title": "Windows Search Index Repair",
+  "role": "Windows Repair Technician",
+  "category": "Repair",
+  "description": "Diagnose Windows Search/indexing failures, restart Search only when approved, and verify service health.",
+  "starter_prompt": "Fix Windows search or indexing problems with approval before service changes.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "search_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 6000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 3000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "plan", "type": "overseer", "prompt": "Scope the search/indexing symptom and collect evidence before restarting services.", "completion": "Search repair scope is clear."},
+    {
+      "id": "collect_search_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Search service'; Get-Service WSearch -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType,CanStop | Format-List; Section 'Search process'; Get-Process SearchIndexer,SearchProtocolHost,SearchFilterHost -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,CPU,WorkingSet64 | Format-Table -AutoSize; Section 'Search events'; Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Microsoft-Windows-Search'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 120 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List",
+        "timeout_seconds": 150,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only Windows Search service, process, and event evidence.",
+      "risk": "read_only",
+      "completion": "Search evidence is captured."
+    },
+    {"id": "analyze_search", "type": "delegate", "agent": "search_agent", "prompt": "Analyze Search evidence and decide whether restart/reindex guidance is justified. Call out missing event evidence.", "expected_output": "search_findings", "risk": "read_only", "completion": "Search findings are prioritized."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask for explicit approval before restarting Windows Search. Offer restore point handling for service/system changes.", "completion": "Approval and restore point decision are recorded."},
+    {
+      "id": "approved_search_restart",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "repair",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; Write-Output 'Restarting Windows Search after approval.'; Restart-Service WSearch -Force -ErrorAction Stop; Get-Service WSearch | Select-Object Name,Status,StartType | Format-List",
+        "timeout_seconds": 120,
+        "requires_admin": true,
+        "max_output_bytes": 524288
+      },
+      "prompt": "Run only after approval and restore point offer. Restart Windows Search and capture final service status.",
+      "risk": "system_change",
+      "completion": "Approved service restart completed or failure is recorded."
+    },
+    {
+      "id": "verify_search",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "verify",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; Get-Service WSearch -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-List; Get-Process SearchIndexer -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,CPU,WorkingSet64 | Format-List",
+        "timeout_seconds": 60,
+        "requires_admin": false,
+        "max_output_bytes": 262144
+      },
+      "prompt": "Verify Windows Search service/process state after any approved action.",
+      "risk": "read_only",
+      "completion": "Search verification evidence is captured."
+    },
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Check that service restart was justified and that deeper index reset is left as a separate approved step.", "expected_output": "quality_review", "risk": "none", "completion": "Quality review is complete."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician and customer-ready handoff report with evidence, findings, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and prioritized follow-up next actions.", "expected_output": "report_outline", "risk": "none", "completion": "Report outline is ready."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Keep logs and reports. Remove only workflow-created scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Search evidence is collected before service restart.",
+    "Service restart runs only after approval.",
+    "Verification captures Search service/process state.",
+    "Final report includes evidence, actions, cleanup status, risks, and follow-up items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

@@ -258,11 +258,12 @@ Completed:
 - Added eval coverage that fails any seeded workflow `run_powershell` phase
   missing an explicit `arguments.command`.
 - Fixed the workflow stall found during Drive Health Deep Check manual QA:
-  production workflow runs now force serial subagent model calls until the model
-  adapter has per-agent network isolation, model calls have a hard timeout,
-  stale open-on-close run snapshots are marked cancelled on reload, and workflow
-  tool phases marshal safely back to the UI thread before touching panel-owned
-  Qt objects.
+  model calls have a hard timeout, stale open-on-close run snapshots are marked
+  cancelled on reload, and workflow tool phases marshal safely back to the UI
+  thread before touching panel-owned Qt objects. The production workflow runner
+  now uses a per-subagent OpenAI model-client factory, so workflow-declared
+  read-only delegate phases can run in parallel without sharing a signal-based
+  Responses client instance.
 - Converted seeded evidence/search phases that need real local data from model
   delegates into concrete `tool_action` steps. Drive, PC health, BSOD, Windows
   Update, clean uninstall, install, offline download, and offline bundle
@@ -366,6 +367,7 @@ criteria, and updates this document when complete.
 | AutoGen group chat / termination | Multi-agent work needs explicit speaker choice and stop conditions. | Avoid open-ended agent chat. SAK workflows use finite phases, max retries, max subagents, token budgets, and cancellation tokens. |
 | CrewAI Flows / Tasks / Memory | Workflows are explicit tasks with state and memory. | Workflow JSON is the source of truth: role, phases, required tools, instructions, skills, cleanup, reporting, acceptance criteria. |
 | LlamaIndex human-in-loop | High-risk operations should ask humans at tool boundaries. | Guard local tools and destructive actions at dispatcher/lease level, not only prompt level. |
+| OpenAI API safety identifiers | Stable privacy-preserving identifiers help isolate abuse handling to one user/session instead of the whole organization. | Send a hashed local AI session/run identifier in `safety_identifier` for Responses calls. |
 
 ### Non-Negotiable Design Rules
 
@@ -719,6 +721,8 @@ Action items:
 - Run optional real-model workflow smoke test.
 - Review logs for secret redaction.
 - Confirm no API key appears in UI, logs, reports, activity, trace, or memory.
+- Confirm OpenAI request payload tests include `safety_identifier` without raw
+  user identity or raw local session IDs.
 - Confirm feature remains isolated behind `SAK_ENABLE_AI_ASSISTANT`.
 
 Release gate:
@@ -1414,7 +1418,7 @@ Each workflow must define:
   "schema_version": 1,
   "id": "offline_installer_download",
   "title": "Download Offline Installer",
-  "role": "Software Installer",
+  "role": "Software Deployment Technician",
   "category": "Software",
   "description": "Find and download offline installer artifacts using SAK tools first.",
   "starter_prompt": "Download an offline installer for {{app_name}}.",
@@ -2059,7 +2063,7 @@ AI: Running | Phase: Diagnose | Agents: 2 active/5 done | Turn: ... | Session: .
 - Thermal/Performance Triage
 - Post-Repair Verification
 
-### Windows Repair
+### Windows Repair Technician
 
 - Windows Update Repair
 - Component Store Repair
@@ -2072,7 +2076,7 @@ AI: Running | Phase: Diagnose | Agents: 2 active/5 done | Turn: ... | Session: .
 - Service Startup Failure
 - Restore/Rollback Planning
 
-### Software Installer
+### Software Deployment Technician
 
 - Install App Now
 - Download Offline Installer
@@ -2098,7 +2102,7 @@ AI: Running | Phase: Diagnose | Agents: 2 active/5 done | Turn: ... | Session: .
 - Forum Evidence Synthesis
 - Citation Brief
 
-### Report Writer
+### Customer Report Writer
 
 - Technician Service Report
 - Customer Handoff Summary
@@ -2386,6 +2390,17 @@ Acceptance:
 Status: Complete for v1 workflow scope. Core orchestrator has unit tests
 against fake subagent runner + fake tool executor and is wired into the panel
 when a workflow chip is attached.
+
+2026-06-04 quality pass: Codex docs/repo research reinforced the current shape:
+explicit subagent workflows, read-heavy parallelism, summarized subagent output,
+and serialized mutation. The chat prompt now states those rules directly, and
+`test_ai_prompt_assembler`, `test_ai_orchestrator`, and `test_ai_workflow_evals`
+cover the policy and wiring.
+
+2026-06-04 second quality pass: the panel no longer caps production workflow
+delegates at one. It uses per-subagent OpenAI client isolation and a conservative
+three-subagent cap, while the orchestrator still batches only consecutive
+read-only delegate phases and serializes mutating or conditional phases.
 
 Deliverables:
 

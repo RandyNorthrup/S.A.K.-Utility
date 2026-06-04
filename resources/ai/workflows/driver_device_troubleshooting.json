@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "driver_device_troubleshooting",
+  "title": "Driver and Device Troubleshooting",
+  "role": "Driver and Device Technician",
+  "category": "Diagnostics",
+  "description": "Collect problem-device, driver, and event evidence for hardware or driver issues before recommending safe next steps.",
+  "starter_prompt": "Troubleshoot driver or device problems with read-only evidence first.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "driver_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 3000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "plan", "type": "overseer", "prompt": "Identify device class, recent changes, and whether rollback/update guidance is needed. Keep execution read-only.", "completion": "Device scope is clear."},
+    {
+      "id": "collect_device_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Problem devices'; Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'OK' } | Select-Object Class,FriendlyName,InstanceId,Status,Problem | Format-List; Section 'Recent driver inventory'; Get-CimInstance Win32_PnPSignedDriver | Select-Object DeviceName,DriverVersion,DriverProviderName,DriverDate,InfName | Sort-Object DriverDate -Descending | Select-Object -First 80 | Format-Table -AutoSize; Section 'Device setup events'; Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-DriverFrameworks-UserMode/Operational'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 80 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,ProviderName,Message | Format-List",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only problem-device, signed-driver, and recent device event evidence.",
+      "risk": "read_only",
+      "completion": "Driver/device evidence is captured."
+    },
+    {"id": "analyze_device_evidence", "type": "delegate", "agent": "driver_agent", "prompt": "Analyze device and driver evidence. Identify likely driver class, confidence, safe vendor/OEM next steps, and rollback/update risks.", "expected_output": "driver_findings", "risk": "read_only", "completion": "Driver findings are prioritized."},
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Check that recommendations are evidence-backed and do not instruct blind driver installs or unsafe unsigned driver changes.", "expected_output": "quality_review", "risk": "none", "completion": "Quality review is complete."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician and customer-ready handoff report with evidence, findings, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and prioritized follow-up next actions.", "expected_output": "report_outline", "risk": "none", "completion": "Report outline is ready."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Keep logs and reports. Remove only workflow-created scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Problem-device and signed-driver evidence are captured.",
+    "Recommendations identify risk and vendor/OEM source expectations.",
+    "No driver installation or removal runs without a separate explicit workflow.",
+    "Final report includes evidence, actions, cleanup status, risks, and follow-up items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

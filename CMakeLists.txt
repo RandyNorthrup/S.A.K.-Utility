@@ -15,7 +15,7 @@ endif()
 
 # Project definition
 project(SAK_Utility
-    VERSION 0.9.1.8
+    VERSION 0.9.1.9
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES CXX
 )# C++23 Standard - Strict compliance required
@@ -657,6 +657,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_cancellation_token.cpp
         src/ai/ai_command_guard.cpp
         src/ai/ai_command_tool_planner.cpp
+        src/ai/ai_chat_title.cpp
         src/ai/ai_conversation_store.cpp
         src/ai/ai_execution_broker.cpp
         src/ai/ai_human_gate.cpp
@@ -697,6 +698,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_cancellation_token.h
         include/sak/ai/ai_command_guard.h
         include/sak/ai/ai_command_tool_planner.h
+        include/sak/ai/ai_chat_title.h
         include/sak/ai/ai_conversation_store.h
         include/sak/ai/ai_execution_broker.h
         include/sak/ai/ai_human_gate.h

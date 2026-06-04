@@ -53,6 +53,7 @@ struct OpenAIResponseRequest {
     QVector<OpenAIFunctionOutput> function_outputs;
     QString reasoning_effort;
     QString previous_response_id;
+    QString safety_identifier;
     bool enable_web_search{false};
     bool enable_local_tools{false};
 };

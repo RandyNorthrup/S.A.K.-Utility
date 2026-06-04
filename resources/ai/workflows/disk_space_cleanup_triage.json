@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "disk_space_cleanup_triage",
+  "title": "Low Disk Space Cleanup Triage",
+  "role": "System Cleanup Technician",
+  "category": "Cleanup",
+  "description": "Diagnose low disk space, identify safe cleanup targets, run only approved cleanup actions, then verify recovered space.",
+  "starter_prompt": "Diagnose low disk space and prepare a safe cleanup plan before deleting anything.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "cleanup_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 3500},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "plan", "type": "overseer", "prompt": "Define cleanup scope. Treat user files, app data, and browser profiles as preserve-by-default unless explicitly approved.", "completion": "Safe cleanup scope is documented."},
+    {
+      "id": "collect_space_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Volumes'; Get-Volume | Select-Object DriveLetter,FileSystemLabel,HealthStatus,SizeRemaining,Size | Format-Table -AutoSize; Section 'Common cleanup locations'; $paths=@($env:TEMP, \"$env:LOCALAPPDATA\\Temp\", \"$env:USERPROFILE\\Downloads\", \"$env:USERPROFILE\\Desktop\"); foreach($p in $paths){ if(Test-Path -LiteralPath $p){ $m=Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum; [pscustomobject]@{Path=$p;Items=$m.Count;Bytes=[int64]$m.Sum} } }; Section 'Windows cleanup candidates'; Get-ChildItem -LiteralPath \"$env:SystemRoot\\Temp\" -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum | ForEach-Object { [pscustomobject]@{Path=\"$env:SystemRoot\\Temp\";Items=$_.Count;Bytes=[int64]$_.Sum} }; Section 'Recycle bin estimate'; Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,FreeSpace,Size | Format-Table -AutoSize",
+        "timeout_seconds": 120,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only free-space and candidate-location evidence. Do not delete files in this phase.",
+      "risk": "read_only",
+      "completion": "Space pressure and candidate cleanup targets are visible."
+    },
+    {"id": "analyze_targets", "type": "delegate", "agent": "cleanup_agent", "prompt": "Analyze cleanup targets. Separate safe temp cleanup from user-file review items. Include confidence and any missing evidence.", "expected_output": "cleanup_findings", "risk": "read_only", "completion": "Safe and review-required targets are separated."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask for explicit user approval before cleanup. Offer restore point handling when system locations or admin cleanup are involved.", "completion": "Approval and restore point decision are recorded."},
+    {
+      "id": "approved_temp_cleanup",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "cleanup",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; $cutoff=(Get-Date).AddDays(-7); $targets=@($env:TEMP, \"$env:LOCALAPPDATA\\Temp\"); foreach($t in $targets){ if(Test-Path -LiteralPath $t){ Write-Output ('== Cleaning old temp files: ' + $t + ' =='); Get-ChildItem -LiteralPath $t -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cutoff } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }; Write-Output 'Approved temp cleanup complete. User files, Downloads, Desktop, and browser profiles were not deleted.'",
+        "timeout_seconds": 240,
+        "requires_admin": false,
+        "max_output_bytes": 524288
+      },
+      "prompt": "Run only user-approved temp cleanup after approval and restore point offer. Never delete user documents or downloads automatically.",
+      "risk": "system_change",
+      "completion": "Approved cleanup completed or failure is captured."
+    },
+    {
+      "id": "verify_space",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "verify",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; Get-Volume | Select-Object DriveLetter,FileSystemLabel,HealthStatus,SizeRemaining,Size | Format-Table -AutoSize",
+        "timeout_seconds": 60,
+        "requires_admin": false,
+        "max_output_bytes": 262144
+      },
+      "prompt": "Verify free-space state after approved cleanup and note whether more manual review is needed.",
+      "risk": "read_only",
+      "completion": "Post-cleanup free-space evidence is captured."
+    },
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Verify cleanup did not overreach. Check that evidence supports actions and that user data was not targeted.", "expected_output": "quality_review", "risk": "none", "completion": "Cleanup quality review is complete."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician and customer-ready handoff report with evidence, findings, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and prioritized follow-up next actions.", "expected_output": "report_outline", "risk": "none", "completion": "Report outline is ready."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Keep logs and reports. Remove only workflow-created scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Read-only disk-space evidence is collected before cleanup.",
+    "User data locations are preserve-by-default.",
+    "Cleanup actions run only after explicit approval.",
+    "Verification captures post-cleanup free space.",
+    "Final report lists evidence, actions, cleanup status, risks, and follow-up items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

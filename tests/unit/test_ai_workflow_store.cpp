@@ -104,10 +104,11 @@ void AiWorkflowStoreTests::loadBuiltInWorkflows() {
     QVERIFY(store.workflowById(QStringLiteral("malware_virus_removal")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("pc_cleanup_bloatware_adware")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("approved_bloatware_adware_removal")) != nullptr);
-    QVERIFY(store.roles().contains(QStringLiteral("Software Installer")));
+    QVERIFY(store.roles().contains(QStringLiteral("Software Deployment Technician")));
     QVERIFY(store.roles().contains(QStringLiteral("Security Technician")));
-    QVERIFY(store.roles().contains(QStringLiteral("System Cleanup")));
-    QVERIFY(!store.workflowsForRole(QStringLiteral("PC Technician")).isEmpty());
+    QVERIFY(store.roles().contains(QStringLiteral("System Cleanup Technician")));
+    QVERIFY(store.roles().contains(QStringLiteral("Diagnostic Technician")));
+    QVERIFY(!store.workflowsForRole(QStringLiteral("Windows Repair Technician")).isEmpty());
 }
 
 void AiWorkflowStoreTests::userDirectoryOverridesBuiltInWorkflow() {

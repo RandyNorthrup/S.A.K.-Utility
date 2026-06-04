@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "user_profile_login_repair",
+  "title": "User Profile and Login Repair",
+  "role": "Windows Repair Technician",
+  "category": "Repair",
+  "description": "Diagnose profile, sign-in, shell, and recent logon errors before recommending repair or escalation.",
+  "starter_prompt": "Troubleshoot Windows user profile or login problems safely.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/windows_repair_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "profile_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 7000},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 3000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "plan", "type": "overseer", "prompt": "Scope affected user, sign-in symptom, and whether the machine is domain/Azure AD joined. Keep commands read-only.", "completion": "Profile/login scope is clear."},
+    {
+      "id": "collect_profile_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Current identity'; whoami /all | Out-String | Write-Output; Section 'Profiles'; Get-CimInstance Win32_UserProfile | Select-Object LocalPath,SID,Loaded,Special,LastUseTime,Status | Format-Table -AutoSize; Section 'Profile service events'; Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Microsoft-Windows-User Profiles Service'; StartTime=(Get-Date).AddDays(-14)} -MaxEvents 120 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,LevelDisplayName,Message | Format-List; Section 'Shell and logon events'; Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 120 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'Winlogon|User32|Shell' } | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List",
+        "timeout_seconds": 180,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only profile, identity, and event evidence. Do not edit registry hives or profile folders.",
+      "risk": "read_only",
+      "completion": "Profile/login evidence is captured."
+    },
+    {"id": "analyze_profile", "type": "delegate", "agent": "profile_agent", "prompt": "Analyze profile and login evidence. Distinguish corrupt profile, temporary profile, permission, domain/AAD, shell, and storage causes. Recommend only reversible next steps.", "expected_output": "profile_findings", "risk": "read_only", "completion": "Profile findings are prioritized."},
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Check that no destructive profile, registry, or identity repair is recommended without backup and explicit approval.", "expected_output": "quality_review", "risk": "none", "completion": "Quality review is complete."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician and customer-ready handoff report with evidence, findings, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and prioritized follow-up next actions.", "expected_output": "report_outline", "risk": "none", "completion": "Report outline is ready."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Keep logs and reports. Remove only workflow-created scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Profile and login evidence are collected read-only.",
+    "Recommendations require backup/approval before profile or registry repair.",
+    "Domain/Azure AD possibilities are disclosed when evidence is incomplete.",
+    "Final report includes evidence, actions, cleanup status, risks, and follow-up items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

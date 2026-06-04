@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "build_offline_deployment_bundle",
   "title": "Build Offline Deployment Bundle",
-  "role": "Software Installer",
+  "role": "Software Deployment Technician",
   "category": "Software",
   "description": "Build an offline Chocolatey deployment bundle with package manifests, cached payloads, checksums, and install instructions.",
   "starter_prompt": "Build an offline deployment bundle for the requested apps using SAK offline downloader.",

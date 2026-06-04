@@ -6,6 +6,7 @@
 
 #include "sak/ai_assistant_panel.h"
 
+#include "sak/ai/ai_chat_title.h"
 #include "sak/ai/ai_command_guard.h"
 #include "sak/ai/ai_command_tool_planner.h"
 #include "sak/ai/ai_conversation_store.h"
@@ -81,6 +82,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QListWidget>
+#include <QLocale>
 #include <QMessageBox>
 #include <QMimeDatabase>
 #include <QMimeType>
@@ -156,6 +158,8 @@ constexpr int kContextScrollMinWidth = 340;
 constexpr int kContextScrollMaxWidth = 460;
 constexpr int kWorkflowProgressMinWidth = 160;
 constexpr int kWorkflowProgressMaxWidth = 520;
+constexpr int kAgentActivityLabelMinWidth = 96;
+constexpr int kContextWindowLabelMinWidth = 154;
 constexpr int kMessageEditMinHeight = 92;
 constexpr int kMessageEditMaxHeight = 160;
 constexpr int kContextListMinHeight = 42;
@@ -223,13 +227,27 @@ constexpr ushort kStatusMarkerError = 0x2718;
 constexpr int kActivityTimerIntervalMs = 450;
 constexpr int kCommandIdWidth = 3;
 constexpr int kCommandIdBase = 10;
+constexpr int kWorkflowInferenceWordMinChars = 4;
+constexpr qsizetype kSafetyIdentifierDigestChars = 32;
+constexpr int kFieldLabelFontWeight = 400;
+constexpr qint64 kTokenCompactMillion = 1'000'000;
+constexpr qint64 kTokenCompactThousand = 1000;
+constexpr double kContextUsageErrorRatio = 0.95;
+constexpr double kContextUsageWarningRatio = 0.80;
 constexpr int kArtifactCountDisplayLimit = 999;
 constexpr int kContextChipColumns = 2;
 constexpr int kContextItemTooltipMaxChars = 400;
 constexpr int kWorkflowWorkerCancelPollMs = 150;
 constexpr int kWorkflowRunnerMaxRetries = 1;
 constexpr int kWorkflowWallClockTimeoutMs = 300'000;
-constexpr int kWorkflowMaxParallelSubagents = 1;
+constexpr int kWorkflowMaxParallelSubagents = 3;
+constexpr int kContextTokenDebounceMs = 700;
+constexpr qint64 kDefaultContextWindowTokens = 128'000;
+constexpr qint64 kGptFiveFrontierContextWindowTokens = 1'050'000;
+constexpr qint64 kGptFourOneContextWindowTokens = 1'047'576;
+constexpr qint64 kGptFiveContextWindowTokens = 400'000;
+constexpr qint64 kReasoningContextWindowTokens = 200'000;
+constexpr qint64 kLegacyGptFourContextWindowTokens = 8192;
 constexpr int kRestorePointTimeoutSec = 180;
 constexpr int kRestorePointMaxOutputBytes = 32 * sak::kBytesPerKB;
 constexpr int kRestorePointSuccessExitCode = 0;
@@ -284,6 +302,489 @@ bool containsAny(const QString& value, std::initializer_list<const char*> needle
         }
     }
     return false;
+}
+
+void appendUniqueProfile(QStringList* profiles, const QString& profile) {
+    const QString clean = profile.trimmed();
+    if (clean.isEmpty()) {
+        return;
+    }
+    for (const auto& existing : std::as_const(*profiles)) {
+        if (existing.compare(clean, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+    profiles->append(clean);
+}
+
+constexpr const char* kDefaultSessionRole = "PC Technician";
+constexpr const char* kSessionRoleSourcePending = "pending";
+constexpr const char* kSessionRoleSourceDefault = "default";
+constexpr const char* kSessionRoleSourcePrompt = "prompt";
+constexpr const char* kSessionRoleSourceWorkflow = "workflow";
+constexpr const char* kSessionRoleSourceWorkflowSelection = "workflow_selection";
+constexpr const char* kSessionRoleSourceUser = "user";
+
+QStringList defaultAgentProfiles() {
+    return {QStringLiteral("PC Technician")};
+}
+
+QStringList agentProfilesForWorkflowStore(const ai::WorkflowStore* store) {
+    QStringList profiles;
+    if (!store) {
+        return defaultAgentProfiles();
+    }
+    const QStringList roles = store->roles();
+    for (const auto& role : roles) {
+        appendUniqueProfile(&profiles, role);
+    }
+    if (profiles.isEmpty()) {
+        profiles = defaultAgentProfiles();
+    }
+    return profiles;
+}
+
+QString normalizedRolePromptText(QString text) {
+    text = text.toLower();
+    text.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral(" "));
+    return text.simplified();
+}
+
+bool roleDirectivePresent(const QString& normalized) {
+    return containsAny(normalized,
+                       {"act as",
+                        "assume",
+                        "switch to",
+                        "be a",
+                        "be an",
+                        "become",
+                        "serve as",
+                        "work as",
+                        "from now on",
+                        "role",
+                        "profile",
+                        "persona"});
+}
+
+void appendRoleAlias(QVector<QPair<QString, QString>>* aliases,
+                     const QStringList& available_roles,
+                     const QString& role,
+                     const QString& alias) {
+    if (!aliases || alias.trimmed().isEmpty()) {
+        return;
+    }
+    const auto role_it = std::find_if(available_roles.cbegin(),
+                                      available_roles.cend(),
+                                      [&](const QString& available) {
+                                          return available.compare(role, Qt::CaseInsensitive) == 0;
+                                      });
+    if (role_it == available_roles.cend()) {
+        return;
+    }
+    aliases->append({*role_it, normalizedRolePromptText(alias)});
+}
+
+QVector<QPair<QString, QString>> roleAliases(const ai::WorkflowStore* store) {
+    const QStringList roles = agentProfilesForWorkflowStore(store);
+    QVector<QPair<QString, QString>> aliases;
+    for (const auto& role : roles) {
+        appendRoleAlias(&aliases, roles, role, role);
+    }
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("it technician"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("desktop support"));
+    appendRoleAlias(&aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("help desk"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Diagnostic Technician"),
+                    QStringLiteral("health check technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Diagnostic Technician"),
+                    QStringLiteral("system diagnostic"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Storage Diagnostic Technician"),
+                    QStringLiteral("drive technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Storage Diagnostic Technician"),
+                    QStringLiteral("storage technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Storage Diagnostic Technician"),
+                    QStringLiteral("disk health"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Driver and Device Technician"),
+                    QStringLiteral("hardware technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Driver and Device Technician"),
+                    QStringLiteral("driver technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Driver and Device Technician"),
+                    QStringLiteral("device technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Audio Device Technician"),
+                    QStringLiteral("audio technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Printer Technician"),
+                    QStringLiteral("printer technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Battery Health Technician"),
+                    QStringLiteral("battery technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Browser Support Technician"),
+                    QStringLiteral("browser technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Performance Technician"),
+                    QStringLiteral("performance technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Windows Repair Technician"),
+                    QStringLiteral("windows technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Windows Repair Technician"),
+                    QStringLiteral("windows repair"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Windows Repair Technician"),
+                    QStringLiteral("windows repair technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Windows Repair Technician"),
+                    QStringLiteral("network technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Windows Repair Technician"),
+                    QStringLiteral("repair technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("System Cleanup Technician"),
+                    QStringLiteral("cleanup technician"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("System Cleanup Technician"),
+                    QStringLiteral("system optimizer"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Software Deployment Technician"),
+                    QStringLiteral("software deployment"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Software Deployment Technician"),
+                    QStringLiteral("installer"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("Security Technician"), QStringLiteral("security analyst"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("Security Technician"), QStringLiteral("malware analyst"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Security Technician"),
+                    QStringLiteral("incident responder"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("Research Assistant"), QStringLiteral("researcher"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("Research Assistant"), QStringLiteral("web researcher"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Customer Report Writer"),
+                    QStringLiteral("service writer"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Customer Report Writer"),
+                    QStringLiteral("documentation specialist"));
+    appendRoleAlias(&aliases,
+                    roles,
+                    QStringLiteral("Customer Report Writer"),
+                    QStringLiteral("handoff writer"));
+    appendRoleAlias(
+        &aliases, roles, QStringLiteral("Customer Report Writer"), QStringLiteral("report writer"));
+    std::sort(aliases.begin(), aliases.end(), [](const auto& left, const auto& right) {
+        return left.second.size() > right.second.size();
+    });
+    return aliases;
+}
+
+QString explicitRoleFromPrompt(const QString& message, const ai::WorkflowStore* store) {
+    const QString normalized = normalizedRolePromptText(message);
+    if (!roleDirectivePresent(normalized)) {
+        return {};
+    }
+    for (const auto& alias : roleAliases(store)) {
+        if (normalized.contains(alias.second)) {
+            return alias.first;
+        }
+    }
+    return {};
+}
+
+int promptKeywordScore(const QString& normalized, std::initializer_list<const char*> needles) {
+    int score = 0;
+    for (const char* needle : needles) {
+        const QString term = normalizedRolePromptText(QString::fromLatin1(needle));
+        if (normalized.contains(term)) {
+            score += std::max(
+                1, static_cast<int>(term.split(QLatin1Char(' '), Qt::SkipEmptyParts).size()));
+        }
+    }
+    return score;
+}
+
+QString bestRoleFromScores(const QHash<QString, int>& scores) {
+    QString best_role;
+    int best_score = 0;
+    for (auto it = scores.cbegin(); it != scores.cend(); ++it) {
+        if (it.value() > best_score) {
+            best_score = it.value();
+            best_role = it.key();
+        }
+    }
+    return best_score > 0 ? best_role : QString{};
+}
+
+QString inferredRoleFromPrompt(const QString& message, const ai::WorkflowStore* store) {
+    const QString normalized = normalizedRolePromptText(message);
+    if (normalized.isEmpty()) {
+        return QString::fromLatin1(kDefaultSessionRole);
+    }
+
+    QHash<QString, int> scores;
+    scores[QStringLiteral("Customer Report Writer")] +=
+        promptKeywordScore(normalized, {"report", "handoff", "write up", "customer ready"});
+    scores[QStringLiteral("Research Assistant")] += promptKeywordScore(
+        normalized, {"research", "look up", "latest", "documentation", "compare", "advisory"});
+    scores[QStringLiteral("Security Technician")] += promptKeywordScore(normalized,
+                                                                        {"malware",
+                                                                         "virus",
+                                                                         "ransomware",
+                                                                         "infected",
+                                                                         "suspicious",
+                                                                         "defender",
+                                                                         "antivirus",
+                                                                         "threat",
+                                                                         "quarantine",
+                                                                         "vulnerability"});
+    scores[QStringLiteral("Software Deployment Technician")] +=
+        promptKeywordScore(normalized,
+                           {"install",
+                            "uninstall",
+                            "upgrade",
+                            "package",
+                            "offline installer",
+                            "deployment bundle",
+                            "chocolatey",
+                            "winget"});
+    scores[QStringLiteral("System Cleanup Technician")] += promptKeywordScore(normalized,
+                                                                              {"cleanup",
+                                                                               "clean up",
+                                                                               "optimize",
+                                                                               "disk space",
+                                                                               "storage full",
+                                                                               "bloatware",
+                                                                               "adware",
+                                                                               "temporary files",
+                                                                               "startup clutter"});
+    scores[QStringLiteral("Windows Repair Technician")] += promptKeywordScore(normalized,
+                                                                              {"windows update",
+                                                                               "blue screen",
+                                                                               "bsod",
+                                                                               "network",
+                                                                               "wifi",
+                                                                               "dns",
+                                                                               "time sync",
+                                                                               "search index",
+                                                                               "profile",
+                                                                               "login",
+                                                                               "sfc",
+                                                                               "dism",
+                                                                               "service",
+                                                                               "registry",
+                                                                               "repair windows"});
+    scores[QStringLiteral("Diagnostic Technician")] +=
+        promptKeywordScore(normalized, {"health check", "diagnose pc", "full diagnostic"});
+    scores[QStringLiteral("Storage Diagnostic Technician")] +=
+        promptKeywordScore(normalized, {"hard drive", "disk health", "smart", "ssd", "storage"});
+    scores[QStringLiteral("Driver and Device Technician")] +=
+        promptKeywordScore(normalized, {"driver", "device", "hardware", "pnp", "usb"});
+    scores[QStringLiteral("Audio Device Technician")] +=
+        promptKeywordScore(normalized, {"audio", "sound", "microphone", "speaker"});
+    scores[QStringLiteral("Printer Technician")] +=
+        promptKeywordScore(normalized, {"printer", "print spooler", "printing"});
+    scores[QStringLiteral("Battery Health Technician")] +=
+        promptKeywordScore(normalized, {"battery", "laptop battery", "powercfg"});
+    scores[QStringLiteral("Browser Support Technician")] +=
+        promptKeywordScore(normalized, {"browser", "chrome", "edge", "firefox", "proxy"});
+    scores[QStringLiteral("Performance Technician")] +=
+        promptKeywordScore(normalized, {"performance", "startup", "slow boot", "slow pc"});
+    scores[QStringLiteral("PC Technician")] +=
+        promptKeywordScore(normalized, {"general pc", "pc technician", "technician task"});
+
+    if (store) {
+        for (const auto& workflow : store->workflows()) {
+            const QString role = workflow.role.trimmed();
+            if (role.isEmpty()) {
+                continue;
+            }
+            const QString corpus = normalizedRolePromptText(
+                QStringLiteral("%1 %2 %3 %4")
+                    .arg(workflow.id, workflow.title, workflow.category, workflow.description));
+            int workflow_score = 0;
+            for (const auto& word : corpus.split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+                if (word.size() >= kWorkflowInferenceWordMinChars && normalized.contains(word)) {
+                    ++workflow_score;
+                }
+            }
+            scores[role] += workflow_score;
+        }
+    }
+
+    const QString scored = bestRoleFromScores(scores);
+    return scored.isEmpty() ? QString::fromLatin1(kDefaultSessionRole) : scored;
+}
+
+QString safetyIdentifierFromSeed(const QString& seed) {
+    const QString clean = seed.trimmed();
+    if (clean.isEmpty()) {
+        return {};
+    }
+    const QByteArray digest =
+        QCryptographicHash::hash(clean.toUtf8(), QCryptographicHash::Sha256).toHex();
+    return QStringLiteral("sak-session-%1")
+        .arg(QString::fromLatin1(digest.left(kSafetyIdentifierDigestChars)));
+}
+
+struct ModelContextWindow {
+    qint64 tokens{kDefaultContextWindowTokens};
+    bool documented{false};
+};
+
+struct ModelContextRule {
+    QStringList starts_with;
+    QStringList contains_all;
+    QStringList starts_with_excluded;
+    qint64 tokens{kDefaultContextWindowTokens};
+};
+
+bool modelStartsWithAny(const QString& model, const QStringList& prefixes) {
+    return std::any_of(prefixes.cbegin(), prefixes.cend(), [&](const QString& prefix) {
+        return model.startsWith(prefix);
+    });
+}
+
+bool modelContainsAll(const QString& model, const QStringList& needles) {
+    return std::all_of(needles.cbegin(), needles.cend(), [&](const QString& needle) {
+        return model.contains(needle);
+    });
+}
+
+bool modelMatchesRule(const QString& model, const ModelContextRule& rule) {
+    const bool starts_ok = rule.starts_with.isEmpty() ||
+                           modelStartsWithAny(model, rule.starts_with);
+    return starts_ok && modelContainsAll(model, rule.contains_all) &&
+           !modelStartsWithAny(model, rule.starts_with_excluded);
+}
+
+ModelContextWindow modelContextWindowInfo(const QString& model_id) {
+    const QString model = model_id.trimmed().toLower();
+    if (model.isEmpty()) {
+        return {};
+    }
+    const QVector<ModelContextRule> rules{
+        {{QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4")},
+         {},
+         {QStringLiteral("gpt-5.4-mini"), QStringLiteral("gpt-5.4-nano")},
+         kGptFiveFrontierContextWindowTokens},
+        {{}, {QStringLiteral("gpt-5"), QStringLiteral("chat")}, {}, kGptFiveContextWindowTokens},
+        {{QStringLiteral("gpt-5")}, {}, {}, kGptFiveContextWindowTokens},
+        {{QStringLiteral("gpt-4.1")}, {}, {}, kGptFourOneContextWindowTokens},
+        {{QStringLiteral("o3"), QStringLiteral("o4")}, {}, {}, kReasoningContextWindowTokens},
+        {{}, {QStringLiteral("deep-research")}, {}, kReasoningContextWindowTokens},
+        {{QStringLiteral("gpt-4o"), QStringLiteral("gpt-4-turbo")},
+         {},
+         {},
+         kDefaultContextWindowTokens},
+        {{QStringLiteral("gpt-4")}, {}, {}, kLegacyGptFourContextWindowTokens},
+    };
+    for (const auto& rule : rules) {
+        if (modelMatchesRule(model, rule)) {
+            return {rule.tokens, true};
+        }
+    }
+    return {};
+}
+
+qint64 modelContextWindowTokens(const QString& model_id) {
+    return modelContextWindowInfo(model_id).tokens;
+}
+
+bool modelContextWindowIsDocumented(const QString& model_id) {
+    return modelContextWindowInfo(model_id).documented;
+}
+
+enum class ComposerKeyAction {
+    None,
+    InsertNewline,
+    Send,
+    PreviousHistory,
+    NextHistory
+};
+
+ComposerKeyAction composerKeyAction(const QKeyEvent& event) {
+    const bool is_return = event.key() == Qt::Key_Return || event.key() == Qt::Key_Enter;
+    if (is_return && event.modifiers().testFlag(Qt::ControlModifier)) {
+        return ComposerKeyAction::InsertNewline;
+    }
+    if (is_return && event.modifiers() == Qt::NoModifier) {
+        return ComposerKeyAction::Send;
+    }
+    if (event.modifiers() == Qt::NoModifier && event.key() == Qt::Key_Up) {
+        return ComposerKeyAction::PreviousHistory;
+    }
+    if (event.modifiers() == Qt::NoModifier && event.key() == Qt::Key_Down) {
+        return ComposerKeyAction::NextHistory;
+    }
+    return ComposerKeyAction::None;
+}
+
+QLabel* makeFieldLabel(QWidget* parent, const QString& text) {
+    auto* label = new QLabel(text, parent);
+    label->setStyleSheet(sak::ui::transparentTextStyle(
+        sak::ui::kFontSizeSmall, kFieldLabelFontWeight, sak::ui::kColorTextMuted));
+    label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    return label;
+}
+
+QString compactTokenCount(qint64 value) {
+    const QLocale locale;
+    if (value >= kTokenCompactMillion) {
+        return QStringLiteral("%1M").arg(
+            locale.toString(static_cast<double>(value) / kTokenCompactMillion, 'f', 1));
+    }
+    if (value >= kTokenCompactThousand) {
+        return QStringLiteral("%1k").arg(
+            locale.toString(static_cast<double>(value) / kTokenCompactThousand, 'f', 0));
+    }
+    return locale.toString(value);
+}
+
+const char* contextUsageStatusColor(double ratio) {
+    if (ratio >= kContextUsageErrorRatio) {
+        return sak::ui::kStatusColorError;
+    }
+    if (ratio >= kContextUsageWarningRatio) {
+        return sak::ui::kStatusColorWarning;
+    }
+    return sak::ui::kColorTextMuted;
 }
 
 bool looksLikeNoisyBinaryLogLine(const QString& line) {
@@ -2966,9 +3467,11 @@ QString AiAssistantPanel::statusDetails() const {
         m_tokenTracker ? ai::TokenUsageTracker::formatSession(m_tokenTracker->sessionTotal())
                        : tr("0 total");
     const QString phase = m_runState.phase_id.isEmpty() ? tr("none") : m_runState.phase_id;
-    return tr("AI: %1 | Key: %2 | Access: %3 | Phase: %4 | Tokens: %5 / %6 | Tools: %7 (%8 active) "
-              "| Agents: %9/%10")
+    const QString context = contextWindowStatusText();
+    return tr("AI: %1 | Key: %2 | Access: %3 | Phase: %4 | Tokens: %5 / %6 | Context: %7 | "
+              "Tools: %8 (%9 active) | Agents: %10/%11")
         .arg(task, key, access, phase, turn, session)
+        .arg(context)
         .arg(m_toolCallsThisSession)
         .arg(m_runState.active_tools)
         .arg(m_runState.active_subagents)
@@ -2995,19 +3498,33 @@ bool AiAssistantPanel::filterMessageEditKeyPress(QEvent* event) {
     if (event->type() != QEvent::KeyPress) {
         return false;
     }
-    auto* key_event = static_cast<QKeyEvent*>(event);
-    const bool is_return = key_event->key() == Qt::Key_Return || key_event->key() == Qt::Key_Enter;
-    if (is_return && key_event->modifiers().testFlag(Qt::ControlModifier)) {
+    const auto* key_event = static_cast<QKeyEvent*>(event);
+    return handleComposerKeyAction(static_cast<int>(composerKeyAction(*key_event)));
+}
+
+bool AiAssistantPanel::handleComposerKeyAction(int action) {
+    const auto composer_action = static_cast<ComposerKeyAction>(action);
+    if (composer_action == ComposerKeyAction::InsertNewline) {
+        if (m_messageEdit) {
+            m_messageEdit->insertPlainText(QStringLiteral("\n"));
+        }
+        return true;
+    }
+    if (composer_action == ComposerKeyAction::Send) {
         onSendClicked();
         return true;
     }
-    if (key_event->modifiers() != Qt::NoModifier) {
-        return false;
-    }
-    if (key_event->key() == Qt::Key_Up && m_messageEdit->textCursor().atStart()) {
+    return handleComposerHistoryKeyAction(action);
+}
+
+bool AiAssistantPanel::handleComposerHistoryKeyAction(int action) {
+    const auto composer_action = static_cast<ComposerKeyAction>(action);
+    if (composer_action == ComposerKeyAction::PreviousHistory && m_messageEdit &&
+        m_messageEdit->textCursor().atStart()) {
         return cyclePromptHistory(-1);
     }
-    if (key_event->key() == Qt::Key_Down && m_messageEdit->textCursor().atEnd()) {
+    if (composer_action == ComposerKeyAction::NextHistory && m_messageEdit &&
+        m_messageEdit->textCursor().atEnd()) {
         return cyclePromptHistory(1);
     }
     return false;
@@ -3102,6 +3619,7 @@ QWidget* AiAssistantPanel::createContextPane() {
 
 void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addWidget(makeRailTitle(pane, tr("Session")));
+    layout->addWidget(makeFieldLabel(pane, tr("Chat session")));
 
     m_sessionCombo = new QComboBox(pane);
     configureReadableCombo(m_sessionCombo, kSessionComboContentsLength, kSessionComboPopupMinWidth);
@@ -3155,8 +3673,9 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
 
 void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
-    layout->addWidget(makeRailTitle(pane, tr("Agent")));
+    layout->addWidget(makeRailTitle(pane, tr("GPT Assistant")));
 
+    layout->addWidget(makeFieldLabel(pane, tr("Model")));
     m_modelCombo = new QComboBox(pane);
     configureReadableCombo(m_modelCombo);
     requireFocusForWheel(m_modelCombo, this);
@@ -3165,32 +3684,29 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
         {QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4"), QStringLiteral("gpt-5.4-mini")});
     m_modelCombo->setToolTip(tr("Choose or type the OpenAI model for this session"));
     setAccessible(m_modelCombo, tr("AI model"), tr("OpenAI model for the active session"));
+    connect(m_modelCombo, &QComboBox::currentTextChanged, this, [this]() {
+        scheduleContextTokenRefresh();
+        updateRunTelemetryLabels();
+    });
     layout->addWidget(m_modelCombo);
 
-    m_agentProfileCombo = new QComboBox(pane);
-    configureReadableCombo(m_agentProfileCombo);
-    requireFocusForWheel(m_agentProfileCombo, this);
-    m_agentProfileCombo->addItems({tr("PC Technician"),
-                                   tr("Research Assistant"),
-                                   tr("Windows Repair"),
-                                   tr("Software Installer"),
-                                   tr("Security Technician"),
-                                   tr("System Cleanup"),
-                                   tr("Report Writer")});
-    m_agentProfileCombo->setToolTip(tr("Choose the assistant role for this session"));
-    setAccessible(m_agentProfileCombo,
-                  tr("Agent profile"),
-                  tr("Behavior profile for the AI Assistant"));
-    connect(m_agentProfileCombo,
-            &QComboBox::currentIndexChanged,
-            this,
-            &AiAssistantPanel::onAgentProfileChanged);
-    layout->addWidget(m_agentProfileCombo);
+    layout->addWidget(makeFieldLabel(pane, tr("Session role")));
+    m_sessionRoleValueLabel = new QLabel(pane);
+    m_sessionRoleValueLabel->setWordWrap(true);
+    m_sessionRoleValueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_sessionRoleValueLabel->setStyleSheet(
+        sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextBody, sak::ui::kFontSizeBody));
+    setAccessible(m_sessionRoleValueLabel,
+                  tr("Session role"),
+                  tr("Technician role inferred from workflow or first prompt"));
+    layout->addWidget(m_sessionRoleValueLabel);
+    resetSessionRole();
     setupContextPaneWorkflowPicker(layout, pane);
     setupContextPaneWorkflowDetails(layout, pane);
 
     refreshPromptTemplates();
 
+    layout->addWidget(makeFieldLabel(pane, tr("Reasoning effort")));
     m_reasoningEffortCombo = new QComboBox(pane);
     configureReadableCombo(m_reasoningEffortCombo,
                            kReasoningComboContentsLength,
@@ -3206,6 +3722,7 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
 }
 
 void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane) {
+    layout->addWidget(makeFieldLabel(pane, tr("Workflow")));
     m_promptTemplateCombo = new QComboBox(pane);
     configureReadableCombo(m_promptTemplateCombo,
                            kWorkflowComboContentsLength,
@@ -3215,7 +3732,7 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
         tr("Choose a multi-step workflow. The list shows category, job name, and phase count."));
     setAccessible(m_promptTemplateCombo,
                   tr("Workflow library"),
-                  tr("Role-specific AI workflow templates"));
+                  tr("AI workflow templates for technician tasks"));
     connect(m_promptTemplateCombo,
             &QComboBox::currentIndexChanged,
             this,
@@ -3243,7 +3760,7 @@ void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
         m_addWorkflowButton->setEnabled(has_selection);
     }
     if (!has_selection) {
-        hideWorkflowDetails();
+        clearWorkflowSelectionPreview();
         return;
     }
     if (!m_workflowStore || !m_promptTemplateCombo) {
@@ -3251,15 +3768,39 @@ void AiAssistantPanel::onWorkflowTemplatePickerChanged(int index) {
     }
     const QString item_data = m_promptTemplateCombo->itemData(index).toString();
     if (const auto* workflow = m_workflowStore->workflowById(item_data)) {
-        showWorkflowDetails(*workflow);
+        previewWorkflowTemplateSelection(*workflow);
         return;
     }
-    if (m_workflowDetailsPanel && m_workflowDetailsBody && m_workflowDetailsTitle) {
-        m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
-        m_workflowDetailsBody->setPlainText(tr("No structured details available for this entry."));
-        m_workflowDetailsPanel->setVisible(true);
-        m_workflowDetailsCurrentId.clear();
+    showUnstructuredWorkflowTemplateSelection(index);
+}
+
+void AiAssistantPanel::clearWorkflowSelectionPreview() {
+    hideWorkflowDetails();
+    if (m_sessionRoleSource == QLatin1String(kSessionRoleSourceWorkflowSelection)) {
+        resetSessionRole();
+        return;
     }
+    updateSessionRoleDisplay();
+}
+
+void AiAssistantPanel::previewWorkflowTemplateSelection(const ai::WorkflowTemplate& workflow) {
+    if (!workflow.role.trimmed().isEmpty()) {
+        setSessionRole(workflow.role.trimmed(),
+                       QString::fromLatin1(kSessionRoleSourceWorkflowSelection),
+                       false);
+    }
+    showWorkflowDetails(workflow);
+}
+
+void AiAssistantPanel::showUnstructuredWorkflowTemplateSelection(int index) {
+    if (!m_promptTemplateCombo || !m_workflowDetailsPanel || !m_workflowDetailsBody ||
+        !m_workflowDetailsTitle) {
+        return;
+    }
+    m_workflowDetailsTitle->setText(m_promptTemplateCombo->itemText(index));
+    m_workflowDetailsBody->setPlainText(tr("No structured details available for this entry."));
+    m_workflowDetailsPanel->setVisible(true);
+    m_workflowDetailsCurrentId.clear();
 }
 
 void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWidget* pane) {
@@ -3305,6 +3846,7 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
     layout->addSpacing(sak::ui::kSpacingMedium);
     layout->addWidget(makeRailTitle(pane, tr("Access")));
 
+    layout->addWidget(makeFieldLabel(pane, tr("Local tool access")));
     m_accessModeCombo = new QComboBox(pane);
     configureReadableCombo(m_accessModeCombo);
     requireFocusForWheel(m_accessModeCombo, this);
@@ -3414,6 +3956,18 @@ void AiAssistantPanel::setupConversationStatusRow(QVBoxLayout* layout, QWidget* 
                   tr("AI workflow progress"),
                   tr("Shows live workflow phase progress while a multi-agent workflow runs"));
     statusRow->addWidget(m_workflowProgressBar, 1);
+
+    m_agentActivityLabel = new QLabel(header);
+    m_agentActivityLabel->setMinimumWidth(kAgentActivityLabelMinWidth);
+    m_agentActivityLabel->setAlignment(Qt::AlignCenter);
+    m_agentActivityLabel->setToolTip(tr("Background subagent activity for the current run"));
+    m_agentActivityLabel->setStyleSheet(
+        sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextMuted));
+    setAccessible(m_agentActivityLabel,
+                  tr("AI background agents"),
+                  tr("Shows active and completed background subagents"));
+    statusRow->addWidget(m_agentActivityLabel);
+    updateRunTelemetryLabels();
     layout->addLayout(statusRow);
 }
 
@@ -3490,8 +4044,8 @@ void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer
     m_messageEdit = new QPlainTextEdit(composer);
     m_messageEdit->setPlaceholderText(tr("Ask S.A.K. AI"));
     m_messageEdit->setToolTip(
-        tr("Type your request. Press Ctrl+Enter to send. Up/Down at the start/end cycles prompt "
-           "history."));
+        tr("Type your request. Press Enter to send, Ctrl+Enter for a new line. Up/Down at the "
+           "start/end cycles prompt history."));
     m_messageEdit->setMinimumHeight(kMessageEditMinHeight);
     m_messageEdit->setMaximumHeight(kMessageEditMaxHeight);
     m_messageEdit->setFrameShape(QFrame::NoFrame);
@@ -3500,6 +4054,8 @@ void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer
     setAccessible(m_messageEdit, tr("AI message input"));
     connect(m_messageEdit, &QPlainTextEdit::textChanged, this, [this]() {
         updateCredentialControls();
+        scheduleContextTokenRefresh();
+        updateRunTelemetryLabels();
     });
     layout->addWidget(m_messageEdit);
 }
@@ -3569,6 +4125,17 @@ void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* compos
 
     actionRow->addStretch();
 
+    m_contextWindowLabel = new QLabel(composer);
+    m_contextWindowLabel->setMinimumWidth(kContextWindowLabelMinWidth);
+    m_contextWindowLabel->setAlignment(Qt::AlignCenter);
+    m_contextWindowLabel->setToolTip(tr("Exact context window usage for the selected model"));
+    m_contextWindowLabel->setStyleSheet(
+        sak::ui::fontWeightAndColorStyle(kFontWeightBold, sak::ui::kColorTextMuted));
+    setAccessible(m_contextWindowLabel,
+                  tr("AI context window usage"),
+                  tr("Shows exact input tokens used against selected model context window"));
+    actionRow->addWidget(m_contextWindowLabel);
+
     m_sendButton = new QPushButton(tr("Send"), composer);
     m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
@@ -3605,6 +4172,7 @@ void AiAssistantPanel::connectAiClient() {
     connectExecutionBrokerSignals();
     connectElevationBrokerSignals();
     ensureActivityTimer();
+    ensureContextTokenTimer();
 }
 
 void AiAssistantPanel::connectOpenAiClientSignals() {
@@ -3626,6 +4194,14 @@ void AiAssistantPanel::connectOpenAiClientSignals() {
             &ai::OpenAIResponsesClient::modelsReady,
             this,
             &AiAssistantPanel::onModelsReady);
+    connect(m_client.get(),
+            &ai::OpenAIResponsesClient::inputTokenCountReady,
+            this,
+            &AiAssistantPanel::onInputTokenCountReady);
+    connect(m_client.get(),
+            &ai::OpenAIResponsesClient::inputTokenCountFailed,
+            this,
+            &AiAssistantPanel::onInputTokenCountFailed);
     connect(m_client.get(),
             &ai::OpenAIResponsesClient::requestFailed,
             this,
@@ -3714,6 +4290,7 @@ void AiAssistantPanel::loadRememberedApiKey() {
                         QString(QChar(kStatusMarkerSuccess)),
                         sak::ui::kStatusColorSuccess);
         appendLocalEvent(tr("Remembered OpenAI key loaded from encrypted app credential file"));
+        scheduleContextTokenRefresh();
     } else if (!error.isEmpty()) {
         setApiKeyStatus(tr("Credential load failed"),
                         sak::ui::kStatusColorError,
@@ -3806,6 +4383,12 @@ void AiAssistantPanel::updateCredentialControls() {
     const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
     const bool busy = isAiBusy();
     updateLoadKeyButton(has_key, busy);
+    if (m_newSessionButton) {
+        m_newSessionButton->setEnabled(!busy);
+        m_newSessionButton->setToolTip(busy
+                                           ? tr("Stop the active AI run before starting a new chat")
+                                           : tr("Start a new AI chat session"));
+    }
     if (m_renameSessionButton) {
         const bool has_persistent_session = m_conversationStore &&
                                             !m_conversationStore->currentSessionId().isEmpty();
@@ -3847,8 +4430,139 @@ void AiAssistantPanel::updatePrimaryActionButton() {
     setAccessible(m_sendButton, tr("Send AI message"));
 }
 
+qint64 AiAssistantPanel::currentContextWindowTokens() const {
+    return modelContextWindowTokens(m_modelCombo ? m_modelCombo->currentText() : QString{});
+}
+
+bool AiAssistantPanel::currentContextWindowIsDocumented() const {
+    return modelContextWindowIsDocumented(m_modelCombo ? m_modelCombo->currentText() : QString{});
+}
+
+void AiAssistantPanel::ensureContextTokenTimer() {
+    if (m_contextTokenTimer) {
+        return;
+    }
+    m_contextTokenTimer = new QTimer(this);
+    m_contextTokenTimer->setSingleShot(true);
+    m_contextTokenTimer->setInterval(kContextTokenDebounceMs);
+    connect(
+        m_contextTokenTimer, &QTimer::timeout, this, &AiAssistantPanel::refreshContextTokenCount);
+}
+
+void AiAssistantPanel::scheduleContextTokenRefresh() {
+    if (!m_contextWindowLabel) {
+        return;
+    }
+    ensureContextTokenTimer();
+    if (!ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
+        resetContextTokenCount(tr("key needed"));
+        return;
+    }
+    if (!m_modelCombo || m_modelCombo->currentText().trimmed().isEmpty()) {
+        resetContextTokenCount(tr("model needed"));
+        return;
+    }
+    m_contextTokenStatus = tr("counting");
+    updateRunTelemetryLabels();
+    m_contextTokenTimer->start();
+}
+
+void AiAssistantPanel::refreshContextTokenCount() {
+    if (!m_client || !ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) || !m_modelCombo) {
+        resetContextTokenCount(tr("key needed"));
+        return;
+    }
+    ai::OpenAIResponseRequest request = buildChatRequest(messageText());
+    request.function_outputs.clear();
+    m_contextTokenRequestId = QStringLiteral("ctx_%1").arg(m_nextContextTokenRequestSequence++);
+    m_contextTokenStatus = tr("counting");
+    updateRunTelemetryLabels();
+    m_client->countInputTokens(request, m_contextTokenRequestId);
+}
+
+void AiAssistantPanel::resetContextTokenCount(const QString& status) {
+    m_contextInputTokens = -1;
+    m_contextTokenRequestId.clear();
+    m_contextTokenStatus = status;
+    if (m_contextTokenTimer) {
+        m_contextTokenTimer->stop();
+    }
+    updateRunTelemetryLabels();
+}
+
+qint64 AiAssistantPanel::exactContextUsageTokens() const {
+    return std::max<qint64>(-1, m_contextInputTokens);
+}
+
+QString AiAssistantPanel::contextWindowStatusText() const {
+    const qint64 limit = currentContextWindowTokens();
+    const bool documented_limit = currentContextWindowIsDocumented();
+    const QString limit_text = documented_limit ? compactTokenCount(limit) : tr("unknown");
+    const qint64 used = exactContextUsageTokens();
+    if (used >= 0) {
+        return documented_limit ? tr("%1/%2 exact").arg(compactTokenCount(used), limit_text)
+                                : tr("%1/%2 input exact").arg(compactTokenCount(used), limit_text);
+    }
+    const QString status = m_contextTokenStatus.trimmed().isEmpty() ? tr("pending")
+                                                                    : m_contextTokenStatus;
+    return tr("%1/%2").arg(status, limit_text);
+}
+
+void AiAssistantPanel::updateRunTelemetryLabels() {
+    updateAgentActivityLabel();
+    updateContextWindowUsageLabel();
+}
+
+void AiAssistantPanel::updateAgentActivityLabel() {
+    if (m_agentActivityLabel) {
+        const QString text = tr("Agents: %1/%2")
+                                 .arg(std::max(0, m_runState.active_subagents))
+                                 .arg(std::max(0, m_runState.completed_subagents));
+        m_agentActivityLabel->setText(text);
+        m_agentActivityLabel->setToolTip(
+            tr("%1 active background subagent(s), %2 completed in this run.")
+                .arg(std::max(0, m_runState.active_subagents))
+                .arg(std::max(0, m_runState.completed_subagents)));
+        const char* color = m_runState.active_subagents > 0 ? sak::ui::kStatusColorRunning
+                                                            : sak::ui::kColorTextMuted;
+        m_agentActivityLabel->setStyleSheet(
+            sak::ui::fontWeightAndColorStyle(kFontWeightBold, color));
+    }
+}
+
+void AiAssistantPanel::updateContextWindowUsageLabel() {
+    if (m_contextWindowLabel) {
+        const qint64 used = exactContextUsageTokens();
+        const qint64 limit = currentContextWindowTokens();
+        const bool documented_limit = currentContextWindowIsDocumented();
+        const double ratio = documented_limit && limit > 0 && used >= 0
+                                 ? static_cast<double>(used) / static_cast<double>(limit)
+                                 : 0.0;
+        const char* color = contextUsageStatusColor(ratio);
+        m_contextWindowLabel->setText(tr("Ctx: %1").arg(contextWindowStatusText()));
+        const QString usage = used >= 0 ? QLocale().toString(used) : m_contextTokenStatus.trimmed();
+        const QString limit_text = documented_limit ? QLocale().toString(limit) : tr("unknown");
+        const QString compact_hint =
+            documented_limit ? tr(" Consider compacting or starting a fresh chat near 80%.")
+                             : tr(" Select a documented OpenAI model to show the exact window.");
+        m_contextWindowLabel->setToolTip(
+            tr("Exact input context usage: %1 of %2 tokens for %3. Count comes from OpenAI "
+               "/v1/responses/input_tokens using the same model-visible Responses payload, "
+               "including current draft, instructions, tools, previous response chain, and "
+               "attached context.%4")
+                .arg(usage.isEmpty() ? tr("pending") : usage,
+                     limit_text,
+                     m_modelCombo ? m_modelCombo->currentText().trimmed() : tr("selected model"),
+                     compact_hint));
+        m_contextWindowLabel->setStyleSheet(
+            sak::ui::fontWeightAndColorStyle(kFontWeightBold, color));
+    }
+}
+
 void AiAssistantPanel::updateTokenLabels() {
     Q_ASSERT(m_tokenTracker);
+    scheduleContextTokenRefresh();
+    updateRunTelemetryLabels();
     emitStatusDetails();
 }
 
@@ -4084,6 +4798,7 @@ QString AiAssistantPanel::apiKey() const {
 }
 
 void AiAssistantPanel::emitStatusDetails() {
+    updateRunTelemetryLabels();
     Q_EMIT statusDetailsChanged(statusDetails());
 }
 
@@ -4168,7 +4883,7 @@ void AiAssistantPanel::populateWorkflowTemplatePicker(
 }
 
 void AiAssistantPanel::refreshPromptTemplates() {
-    if (!m_promptTemplateCombo || !m_agentProfileCombo) {
+    if (!m_promptTemplateCombo) {
         return;
     }
 
@@ -4176,10 +4891,7 @@ void AiAssistantPanel::refreshPromptTemplates() {
     resetPromptTemplatePicker();
 
     if (m_workflowStore && !m_workflowStore->workflows().isEmpty()) {
-        const QString role = m_agentProfileCombo->currentText();
-        QVector<ai::WorkflowTemplate> workflows = m_workflowStore->workflowsForRole(role);
-        populateWorkflowTemplatePicker(workflows.isEmpty() ? m_workflowStore->workflows()
-                                                           : workflows);
+        populateWorkflowTemplatePicker(m_workflowStore->workflows());
         return;
     }
 
@@ -4189,6 +4901,159 @@ void AiAssistantPanel::refreshPromptTemplates() {
                                           "resource load error before using workflow prompts."),
                                        Qt::ToolTipRole);
     m_promptTemplateCombo->setEnabled(false);
+}
+
+void AiAssistantPanel::syncSessionRoleForWorkflow(const ai::WorkflowTemplate* workflow) {
+    if (workflow && !workflow->role.trimmed().isEmpty()) {
+        setSessionRole(workflow->role.trimmed(),
+                       QString::fromLatin1(kSessionRoleSourceWorkflow),
+                       true);
+        return;
+    }
+    if (m_sessionRoleSource == QLatin1String(kSessionRoleSourceWorkflow)) {
+        resetSessionRole();
+    } else {
+        updateSessionRoleDisplay();
+    }
+}
+
+void AiAssistantPanel::updateSessionRoleDisplay() {
+    if (!m_sessionRoleValueLabel) {
+        return;
+    }
+    const QString role = currentWorkflowRole();
+    const QString source = m_sessionRoleSource.trimmed();
+    QString source_label;
+    if (source == QLatin1String(kSessionRoleSourceWorkflow)) {
+        source_label = tr("workflow");
+    } else if (source == QLatin1String(kSessionRoleSourceWorkflowSelection)) {
+        source_label = tr("selected workflow");
+    } else if (source == QLatin1String(kSessionRoleSourcePrompt)) {
+        source_label = tr("first prompt");
+    } else if (source == QLatin1String(kSessionRoleSourceUser)) {
+        source_label = tr("user directed");
+    } else if (source == QLatin1String(kSessionRoleSourcePending) || m_sessionRole.isEmpty()) {
+        source_label = tr("pending first prompt");
+    } else {
+        source_label = tr("default");
+    }
+    m_sessionRoleValueLabel->setText(tr("%1 (%2)").arg(role, source_label));
+    m_sessionRoleValueLabel->setToolTip(
+        tr("Role is selected from the workflow, the first prompt, or an explicit user request to "
+           "assume another role."));
+}
+
+void AiAssistantPanel::resetSessionRole() {
+    m_sessionRole.clear();
+    m_sessionRoleSource = QString::fromLatin1(kSessionRoleSourcePending);
+    updateSessionRoleDisplay();
+}
+
+void AiAssistantPanel::restoreSessionRoleForSession(const QString& session_id) {
+    if (!m_conversationStore || session_id.trimmed().isEmpty()) {
+        resetSessionRole();
+        return;
+    }
+    QString source;
+    QString error;
+    const QString role = m_conversationStore->latestSessionRole(session_id, &source, &error);
+    if (!error.isEmpty()) {
+        appendLocalEvent(tr("Could not restore AI session role: %1").arg(error));
+    }
+    if (role.trimmed().isEmpty()) {
+        resetSessionRole();
+        return;
+    }
+    setSessionRole(role,
+                   source.trimmed().isEmpty() ? QString::fromLatin1(kSessionRoleSourcePrompt)
+                                              : source.trimmed(),
+                   false);
+}
+
+void AiAssistantPanel::updateSessionRoleForPrompt(const QString& message) {
+    const QString explicit_role = explicitRoleFromPrompt(message, m_workflowStore.get());
+    if (!explicit_role.isEmpty()) {
+        setSessionRole(explicit_role, QString::fromLatin1(kSessionRoleSourceUser), true);
+        return;
+    }
+
+    if (const auto* workflow = attachedWorkflow()) {
+        if (!workflow->role.trimmed().isEmpty()) {
+            setSessionRole(workflow->role.trimmed(),
+                           QString::fromLatin1(kSessionRoleSourceWorkflow),
+                           true);
+            return;
+        }
+    }
+
+    if (const auto* workflow = selectedWorkflowTemplate()) {
+        if (!workflow->role.trimmed().isEmpty()) {
+            setSessionRole(workflow->role.trimmed(),
+                           QString::fromLatin1(kSessionRoleSourceWorkflowSelection),
+                           true);
+            return;
+        }
+    }
+
+    const bool role_pending = m_sessionRole.trimmed().isEmpty() ||
+                              m_sessionRoleSource == QLatin1String(kSessionRoleSourcePending);
+    const bool creating_session = !m_conversationStore ||
+                                  m_conversationStore->currentSessionId().isEmpty();
+    if (role_pending || creating_session) {
+        setSessionRole(inferredRoleFromPrompt(message, m_workflowStore.get()),
+                       QString::fromLatin1(kSessionRoleSourcePrompt),
+                       true);
+    } else {
+        updateSessionRoleDisplay();
+    }
+}
+
+void AiAssistantPanel::setSessionRole(const QString& role, const QString& source, bool persist) {
+    const QString clean_role = role.trimmed().isEmpty() ? QString::fromLatin1(kDefaultSessionRole)
+                                                        : role.trimmed();
+    const QString clean_source = source.trimmed().isEmpty()
+                                     ? QString::fromLatin1(kSessionRoleSourceDefault)
+                                     : source.trimmed();
+    const bool changed = clean_role.compare(m_sessionRole, Qt::CaseInsensitive) != 0 ||
+                         clean_source.compare(m_sessionRoleSource, Qt::CaseInsensitive) != 0;
+    m_sessionRole = clean_role;
+    m_sessionRoleSource = clean_source;
+    updateSessionRoleDisplay();
+    if (changed && persist) {
+        persistSessionRoleChoice();
+    }
+}
+
+void AiAssistantPanel::persistSessionRoleChoice() {
+    if (!m_conversationStore || m_conversationStore->currentSessionId().isEmpty()) {
+        return;
+    }
+    appendSessionMemory(
+        QStringLiteral("Session"),
+        QStringLiteral("Role"),
+        tr("Active AI role: %1\nRole source: %2").arg(currentWorkflowRole(), m_sessionRoleSource));
+}
+
+QString AiAssistantPanel::currentWorkflowRole() const {
+    if (!m_sessionRole.trimmed().isEmpty()) {
+        return m_sessionRole.trimmed();
+    }
+    return QString::fromLatin1(kDefaultSessionRole);
+}
+
+const ai::WorkflowTemplate* AiAssistantPanel::selectedWorkflowTemplate() const {
+    if (!m_promptTemplateCombo || !m_workflowStore) {
+        return nullptr;
+    }
+    const int index = m_promptTemplateCombo->currentIndex();
+    if (index <= 0) {
+        return nullptr;
+    }
+    const QString workflow_id = m_promptTemplateCombo->itemData(index).toString();
+    if (workflow_id.trimmed().isEmpty()) {
+        return nullptr;
+    }
+    return m_workflowStore->workflowById(workflow_id);
 }
 
 void AiAssistantPanel::applyPromptTemplate(const QString& title, const QString& prompt) {
@@ -4210,6 +5075,7 @@ void AiAssistantPanel::applyPromptTemplate(const QString& title, const QString& 
 }
 
 void AiAssistantPanel::applyWorkflowTemplate(const ai::WorkflowTemplate& workflow) {
+    syncSessionRoleForWorkflow(&workflow);
     applyPromptTemplate(workflow.title, workflow.promptSummary());
     addWorkflowContextChip(workflow);
 
@@ -4297,7 +5163,7 @@ QString AiAssistantPanel::messageText() const {
 QString AiAssistantPanel::buildInstructions() const {
     ai::AiPromptAssemblyInput input;
     input.access_mode_label = currentAccessModeLabel();
-    input.agent_profile = m_agentProfileCombo->currentText();
+    input.agent_profile = currentWorkflowRole();
     input.workflow_catalog = workflowCatalogInstructions(m_workflowStore.get());
     input.context_notes = contextInstructions();
     input.pending_steering_messages = m_pendingSteeringMessages;
@@ -6474,6 +7340,10 @@ void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& re
     request.function_outputs = std::move(outputs);
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();
     request.previous_response_id = result.id;
+    if (m_conversationStore) {
+        request.safety_identifier =
+            safetyIdentifierFromSeed(m_conversationStore->currentSessionId());
+    }
     request.enable_web_search = true;
     request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
     QJsonObject metadata;
@@ -6631,6 +7501,9 @@ void AiAssistantPanel::refreshContextList() {
     if (m_clearContextButton) {
         m_clearContextButton->setEnabled(!m_contextItems.isEmpty());
     }
+    syncSessionRoleForWorkflow(attachedWorkflow());
+    scheduleContextTokenRefresh();
+    updateRunTelemetryLabels();
 }
 
 AiAssistantPanel::ContextChipPalette AiAssistantPanel::contextChipPalette(
@@ -6675,6 +7548,12 @@ void AiAssistantPanel::reloadSessionPicker() {
     m_sessionCombo->clear();
     const auto sessions = m_conversationStore->listPromptedSessions();
     int selected_index = -1;
+    if (current_id.isEmpty()) {
+        const QString draft_title =
+            m_pendingSessionTitle.trimmed().isEmpty() ? tr("AI Session") : m_pendingSessionTitle;
+        m_sessionCombo->addItem(tr("%1  (new)").arg(draft_title), QString());
+        selected_index = 0;
+    }
     for (const auto& session : sessions) {
         const QString label = QStringLiteral("%1  %2").arg(
             session.title,
@@ -6728,6 +7607,40 @@ bool AiAssistantPanel::ensurePersistentSession(const QString& title) {
     return !m_conversationStore->currentSessionId().isEmpty();
 }
 
+QString AiAssistantPanel::workflowTitleForChatRename(const QString& workflow_id) const {
+    if (workflow_id.trimmed().isEmpty() || !m_workflowStore) {
+        return {};
+    }
+    const auto* workflow = m_workflowStore->workflowById(workflow_id);
+    return workflow ? workflow->title : QString{};
+}
+
+void AiAssistantPanel::autoRenameDefaultChatFromFirstPrompt(const QString& message,
+                                                            const QString& workflow_id) {
+    if (!m_conversationStore || m_conversationStore->currentSessionId().isEmpty()) {
+        return;
+    }
+    const QString current_title = m_conversationStore->currentSessionInfo().title;
+    if (!ai::isDefaultChatTitle(current_title)) {
+        return;
+    }
+
+    const QString generated_title =
+        ai::chatTitleFromFirstPrompt(message, workflowTitleForChatRename(workflow_id));
+    if (generated_title.isEmpty() ||
+        generated_title.compare(current_title, Qt::CaseInsensitive) == 0) {
+        return;
+    }
+
+    QString error;
+    if (!m_conversationStore->renameCurrentSession(generated_title, &error)) {
+        appendLocalEvent(tr("AI chat auto-rename failed: %1").arg(error));
+        return;
+    }
+    m_pendingSessionTitle = generated_title;
+    appendLocalEvent(tr("AI chat auto-renamed: %1").arg(generated_title));
+}
+
 void AiAssistantPanel::loadSessionTranscript(const QString& session_id) {
     if (!m_conversationStore || !m_transcriptView) {
         return;
@@ -6740,9 +7653,16 @@ void AiAssistantPanel::loadSessionTranscript(const QString& session_id) {
     for (const auto& line : lines) {
         appendLoadedTranscriptLine(line);
     }
+    QString response_error;
+    m_previousResponseId = m_conversationStore->latestAssistantResponseId(session_id,
+                                                                          &response_error);
+    restoreSessionRoleForSession(session_id);
     renderTranscriptMessages(true);
     if (!error.isEmpty()) {
         appendLocalEvent(tr("Could not load AI transcript: %1").arg(error));
+    }
+    if (!response_error.isEmpty()) {
+        appendLocalEvent(tr("Could not restore AI response chain: %1").arg(response_error));
     }
     refreshArtifactList();
     updateCredentialControls();
@@ -8242,9 +9162,12 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
 }
 
 ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunLaunch& launch) {
-    ai::OpenAIResponsesModelClient model_client;
-    model_client.setEnableWebSearch(true);
-    ai::AiSubagentRunner runner(&model_client);
+    ai::AiSubagentRunner runner(nullptr);
+    runner.setModelClientFactory([]() {
+        auto client = std::make_unique<ai::OpenAIResponsesModelClient>();
+        client->setEnableWebSearch(true);
+        return client;
+    });
     configureWorkflowRunner(&runner);
     ai::AiOrchestrator orchestrator(&runner, launch.executor);
     orchestrator.setOptions(workflowOrchestrationOptions(launch));
@@ -8449,11 +9372,6 @@ void AiAssistantPanel::onAccessModeChanged(int index) {
     appendLocalEvent(tr("Access mode set to %1").arg(currentAccessModeLabel()));
     Q_EMIT statusMessage(tr("AI access mode: %1").arg(currentAccessModeLabel()),
                          sak::kTimerStatusDefaultMs);
-}
-
-void AiAssistantPanel::onAgentProfileChanged(int index) {
-    (void)index;
-    refreshPromptTemplates();
 }
 
 void AiAssistantPanel::onPromptTemplateSelected(int index) {
@@ -9008,6 +9926,7 @@ void AiAssistantPanel::onSessionSelected(int index) {
     loadRunStateSnapshotForSession();
     traceAiEvent(QStringLiteral("session"), QStringLiteral("session"), QStringLiteral("opened"));
     loadSessionTranscript(session_id);
+    scheduleContextTokenRefresh();
     appendLocalEvent(tr("Opened AI session: %1").arg(session_id));
 }
 
@@ -9040,41 +9959,70 @@ void AiAssistantPanel::onRenameSessionClicked() {
 }
 
 void AiAssistantPanel::onNewSessionClicked() {
-    bool accepted = false;
-    const QString title = QInputDialog::getText(this,
-                                                tr("New AI Chat"),
-                                                tr("Chat name"),
-                                                QLineEdit::Normal,
-                                                tr("AI Session"),
-                                                &accepted)
-                              .trimmed();
-    if (!accepted) {
+    if (isAiBusy()) {
+        Q_EMIT statusMessage(tr("Stop the active AI run before starting a new chat"),
+                             sak::kTimerStatusDefaultMs);
         return;
     }
+    const QString title = tr("AI Session");
     m_previousResponseId.clear();
     m_currentRunId.clear();
     m_pendingWorkflowRunId.clear();
+    resetSessionRole();
+    m_activeUserMessage.clear();
+    m_activeWorkflowUserMessage.clear();
+    m_activeWorkflowInputValues = {};
+    m_workflowPhaseHistory.clear();
+    m_activeWorkflowPhaseOrder.clear();
+    m_activeWorkflowTitle.clear();
+    m_activeWorkflowCurrentPhase.clear();
+    m_activeWorkflowPhaseStartCounts.clear();
+    m_activeWorkflowCompletedPhaseCount = 0;
+    m_toolTurn.reset();
+    m_pendingTurnToken = {};
+    m_pendingCallToken = {};
+    m_currentCommandPreview.clear();
+    m_currentStdoutBuffer.clear();
+    m_currentStderrBuffer.clear();
+    m_pendingSteeringMessages.clear();
+    m_queuedUserMessages.clear();
+    m_resumedApprovedToolCallIds.clear();
+    m_resumedRestoreToolCallIds.clear();
+    m_citations.clear();
+    m_toolCallsThisSession = 0;
+    m_toolTurnIterations = 0;
+    m_toolNamesThisMessage.clear();
+    m_toolFailureClassesThisMessage.clear();
     m_runToken = {};
     m_runState = {};
     m_taskStatus = tr("Idle");
+    resetContextTokenCount(ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("pending")
+                                                                                : tr("key needed"));
     if (m_tokenTracker) {
         m_tokenTracker->reset();
         updateTokenLabels();
+    }
+    if (m_messageEdit) {
+        m_messageEdit->clear();
     }
     if (m_transcriptView) {
         m_transcriptView->clearMessages(false);
     }
     m_contextItems.clear();
     refreshContextList();
-    m_pendingSessionTitle = title.isEmpty() ? tr("AI Session") : title;
+    m_pendingSessionTitle = title;
     if (m_conversationStore) {
         m_conversationStore->clearCurrentSession();
     }
     refreshTraceStoreForSession();
+    saveRunStateSnapshot();
+    updateWorkflowProgressUi();
     reloadSessionPicker();
     refreshArtifactList();
     updateCredentialControls();
-    appendLocalEvent(tr("New AI chat workspace ready; history will be saved after first prompt"));
+    emitStatusDetails();
+    appendLocalEvent(tr("New AI chat workspace ready as %1; it will auto-rename after first prompt")
+                         .arg(m_pendingSessionTitle));
     Q_EMIT statusMessage(tr("AI chat workspace ready"), sak::kTimerStatusDefaultMs);
 }
 
@@ -9095,6 +10043,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
         const bool deleted = !m_credentialStore || m_credentialStore->deleteApiKey(&error);
         m_apiKey.clear();
         if (deleted) {
+            resetContextTokenCount(tr("key needed"));
             setApiKeyStatus(tr("Not loaded"),
                             sak::ui::kStatusColorError,
                             QString(QChar(kStatusMarkerError)),
@@ -9126,6 +10075,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
     }
     if (key.isEmpty()) {
         m_apiKey.clear();
+        resetContextTokenCount(tr("key needed"));
         setApiKeyStatus(tr("Not loaded"),
                         sak::ui::kStatusColorError,
                         QString(QChar(kStatusMarkerError)),
@@ -9135,6 +10085,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
     }
 
     m_apiKey = key;
+    resetContextTokenCount(tr("counting"));
     setApiKeyStatus(tr("Key loaded; testing"),
                     sak::ui::kStatusColorWarning,
                     QStringLiteral("..."),
@@ -9193,6 +10144,7 @@ void AiAssistantPanel::onSendClicked() {
     m_toolTurnIterations = 0;
     m_toolNamesThisMessage.clear();
     m_toolFailureClassesThisMessage.clear();
+    updateSessionRoleForPrompt(message);
 
     if (startAttachedWorkflowFromPrompt(message) == WorkflowSendResult::Handled) {
         return;
@@ -9256,6 +10208,8 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
                                   m_conversationStore->currentSessionId().isEmpty();
     if (creating_session) {
         (void)ensurePersistentSession(m_pendingSessionTitle);
+        autoRenameDefaultChatFromFirstPrompt(message, workflow_id);
+        persistSessionRoleChoice();
         for (const auto& item : std::as_const(m_contextItems)) {
             persistContextItem(item);
         }
@@ -9270,6 +10224,8 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
     if (m_conversationStore) {
         QJsonObject metadata;
         metadata[QStringLiteral("context_items")] = m_contextItems.size();
+        metadata[QStringLiteral("session_role")] = currentWorkflowRole();
+        metadata[QStringLiteral("session_role_source")] = m_sessionRoleSource;
         if (!workflow_id.isEmpty()) {
             metadata[QStringLiteral("workflow_id")] = workflow_id;
             metadata[QStringLiteral("workflow_inputs")] = workflow_inputs;
@@ -9293,6 +10249,10 @@ ai::OpenAIResponseRequest AiAssistantPanel::buildChatRequest(const QString& mess
     request.attachments = buildContextAttachments();
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();
     request.previous_response_id = m_previousResponseId;
+    if (m_conversationStore) {
+        request.safety_identifier =
+            safetyIdentifierFromSeed(m_conversationStore->currentSessionId());
+    }
     request.enable_web_search = true;
     request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
     return request;
@@ -9589,21 +10549,45 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
 void AiAssistantPanel::handleAssistantResponse(const ai::OpenAIResponseResult& result,
                                                const QJsonObject& response_metadata) {
     if (m_transcriptView) {
-        QString assistant_text = result.output_text;
-        if (!result.citations.isEmpty()) {
-            QStringList lines;
-            lines << tr("Sources:");
-            for (int i = 0; i < result.citations.size(); ++i) {
-                const auto& citation = result.citations.at(i);
-                const QString display = citation.title.isEmpty() ? citation.url : citation.title;
-                lines << QStringLiteral("  [%1] %2 - %3").arg(i + 1).arg(display, citation.url);
-            }
-            assistant_text += QStringLiteral("\n\n") + lines.join(QLatin1Char('\n'));
-        }
-        appendTranscriptMessage(QStringLiteral("Assistant"), assistant_text);
+        appendTranscriptMessage(QStringLiteral("Assistant"), assistantTextWithCitations(result));
     }
     appendCitationsToList(result.citations);
+    const QJsonObject assistant_metadata = assistantResponseMetadata(result);
+    persistAssistantResponse(result, assistant_metadata);
+    appendSessionMemory(QStringLiteral("Assistant"),
+                        QStringLiteral("Response"),
+                        result.output_text.left(kOpenAiResponsePreviewMaxChars));
+    appendLocalEvent(tr("OpenAI response complete (%1 tokens, %2 sources)")
+                         .arg(result.usage.total_tokens)
+                         .arg(result.citations.size()));
+    finishAiRunTrace(QStringLiteral("completed"), response_metadata);
+    m_activeUserMessage.clear();
+    m_pendingSteeringMessages.clear();
+    Q_EMIT statusMessage(tr("AI response complete"), sak::kTimerStatusDefaultMs);
+}
+
+QString AiAssistantPanel::assistantTextWithCitations(const ai::OpenAIResponseResult& result) const {
+    if (result.citations.isEmpty()) {
+        return result.output_text;
+    }
+    QStringList lines;
+    lines << tr("Sources:");
+    for (int i = 0; i < result.citations.size(); ++i) {
+        const auto& citation = result.citations.at(i);
+        const QString display = citation.title.isEmpty() ? citation.url : citation.title;
+        lines << QStringLiteral("  [%1] %2 - %3").arg(i + 1).arg(display, citation.url);
+    }
+    return result.output_text + QStringLiteral("\n\n") + lines.join(QLatin1Char('\n'));
+}
+
+QJsonObject AiAssistantPanel::assistantResponseMetadata(
+    const ai::OpenAIResponseResult& result) const {
     QJsonObject assistant_metadata;
+    if (!result.id.trimmed().isEmpty()) {
+        assistant_metadata[QStringLiteral("response_id")] = result.id.trimmed();
+    }
+    assistant_metadata[QStringLiteral("total_tokens")] =
+        static_cast<double>(result.usage.total_tokens);
     if (!result.citations.isEmpty()) {
         QJsonArray citation_array;
         for (const auto& citation : result.citations) {
@@ -9616,6 +10600,11 @@ void AiAssistantPanel::handleAssistantResponse(const ai::OpenAIResponseResult& r
         }
         assistant_metadata[QStringLiteral("citations")] = citation_array;
     }
+    return assistant_metadata;
+}
+
+void AiAssistantPanel::persistAssistantResponse(const ai::OpenAIResponseResult& result,
+                                                const QJsonObject& assistant_metadata) {
     if (m_conversationStore) {
         QString error;
         (void)m_conversationStore->appendTranscript(
@@ -9632,16 +10621,6 @@ void AiAssistantPanel::handleAssistantResponse(const ai::OpenAIResponseResult& r
         }
         reloadSessionPicker();
     }
-    appendSessionMemory(QStringLiteral("Assistant"),
-                        QStringLiteral("Response"),
-                        result.output_text.left(kOpenAiResponsePreviewMaxChars));
-    appendLocalEvent(tr("OpenAI response complete (%1 tokens, %2 sources)")
-                         .arg(result.usage.total_tokens)
-                         .arg(result.citations.size()));
-    finishAiRunTrace(QStringLiteral("completed"), response_metadata);
-    m_activeUserMessage.clear();
-    m_pendingSteeringMessages.clear();
-    Q_EMIT statusMessage(tr("AI response complete"), sak::kTimerStatusDefaultMs);
 }
 
 void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
@@ -9655,6 +10634,7 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     if (current_index >= 0) {
         m_modelCombo->setCurrentIndex(current_index);
     }
+    updateRunTelemetryLabels();
 
     QString save_error;
     const bool saved = m_credentialStore && m_credentialStore->saveApiKey(apiKey(), &save_error);
@@ -9667,6 +10647,32 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     }
     appendLocalEvent(tr("Loaded %1 OpenAI models").arg(model_ids.size()));
     Q_EMIT statusMessage(tr("OpenAI key valid; models loaded"), sak::kTimerStatusDefaultMs);
+}
+
+void AiAssistantPanel::onInputTokenCountReady(const QString& request_id, qint64 input_tokens) {
+    if (request_id != m_contextTokenRequestId) {
+        return;
+    }
+    m_contextInputTokens = input_tokens;
+    m_contextTokenStatus = tr("exact");
+    m_contextTokenRequestId.clear();
+    updateRunTelemetryLabels();
+    emitStatusDetails();
+}
+
+void AiAssistantPanel::onInputTokenCountFailed(const QString& request_id,
+                                               const QString& error_message) {
+    if (request_id != m_contextTokenRequestId) {
+        return;
+    }
+    m_contextInputTokens = -1;
+    m_contextTokenStatus = tr("unavailable");
+    m_contextTokenRequestId.clear();
+    updateRunTelemetryLabels();
+    emitStatusDetails();
+    appendLocalEvent(
+        tr("OpenAI context token count unavailable: %1")
+            .arg(ai::CredentialStore::redactSecrets(error_message).left(kMetadataPreviewMaxChars)));
 }
 
 void AiAssistantPanel::onRequestFailed(const QString& error_message) {

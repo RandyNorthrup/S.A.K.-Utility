@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "network_connectivity_repair",
   "title": "Network Connectivity Repair",
-  "role": "Windows Repair",
+  "role": "Windows Repair Technician",
   "category": "Network",
   "description": "Diagnose Windows network issues with read-only adapter, DNS, route, and connectivity evidence before approved repairs or resets.",
   "starter_prompt": "Diagnose this PC's network connectivity problem. Start read-only and ask before resets.",

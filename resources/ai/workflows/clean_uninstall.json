@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "clean_uninstall",
   "title": "Clean Uninstall",
-  "role": "Software Installer",
+  "role": "Software Deployment Technician",
   "category": "Software",
   "description": "Uninstall selected software with approval gates, user-data preservation by default, leftover review, verification, and reportable evidence.",
   "starter_prompt": "Uninstall the requested application cleanly. Preserve user data unless I explicitly ask otherwise.",

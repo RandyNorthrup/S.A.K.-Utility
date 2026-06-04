@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "bsod_investigation",
   "title": "BSOD Investigation",
-  "role": "Windows Repair",
+  "role": "Windows Repair Technician",
   "category": "Diagnostics",
   "description": "Collect crash, dump, driver, hardware, and event evidence to identify likely bugcheck causes and safe next diagnostics.",
   "starter_prompt": "Investigate recent blue screens. Collect evidence and recommend next diagnostics.",

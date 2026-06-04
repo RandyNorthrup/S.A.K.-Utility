@@ -104,7 +104,6 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onAccessModeChanged(int index);
-    void onAgentProfileChanged(int index);
     void onPromptTemplateSelected(int index);
     void onAddWorkflowClicked();
     void onWorkflowDetailsClicked();
@@ -123,6 +122,8 @@ private Q_SLOTS:
     void onRequestFinished();
     void onResponseReady(const sak::ai::OpenAIResponseResult& result);
     void onModelsReady(const QStringList& model_ids);
+    void onInputTokenCountReady(const QString& request_id, qint64 input_tokens);
+    void onInputTokenCountFailed(const QString& request_id, const QString& error_message);
     void onRequestFailed(const QString& error_message);
     void onBrokerStarted(const QString& command_id);
     void onBrokerStdoutChunk(const QString& command_id, const QString& chunk);
@@ -223,6 +224,9 @@ private:
     void setupContextPaneAccessSection(QVBoxLayout* layout, QWidget* pane);
     void setupContextPaneCredentialSection(QVBoxLayout* layout, QWidget* pane);
     void onWorkflowTemplatePickerChanged(int index);
+    void clearWorkflowSelectionPreview();
+    void previewWorkflowTemplateSelection(const ai::WorkflowTemplate& workflow);
+    void showUnstructuredWorkflowTemplateSelection(int index);
     void setupConversationHeader(QVBoxLayout* layout, QWidget* pane);
     void setupConversationStatusRow(QVBoxLayout* layout, QWidget* header);
     void setupConversationHeaderActions(QVBoxLayout* layout, QWidget* header);
@@ -243,6 +247,17 @@ private:
     void updateReportButton(bool busy);
     void updateResumeGateButton(bool has_key, bool busy);
     void updatePrimaryActionButton();
+    void updateRunTelemetryLabels();
+    void updateAgentActivityLabel();
+    void updateContextWindowUsageLabel();
+    void ensureContextTokenTimer();
+    void scheduleContextTokenRefresh();
+    void refreshContextTokenCount();
+    void resetContextTokenCount(const QString& status);
+    [[nodiscard]] qint64 exactContextUsageTokens() const;
+    [[nodiscard]] qint64 currentContextWindowTokens() const;
+    [[nodiscard]] bool currentContextWindowIsDocumented() const;
+    [[nodiscard]] QString contextWindowStatusText() const;
     void setApiKeyStatus(const QString& text,
                          const char* color,
                          const QString& marker,
@@ -250,6 +265,15 @@ private:
     void updateTokenLabels();
     void refreshPromptTemplates();
     void resetPromptTemplatePicker();
+    void syncSessionRoleForWorkflow(const ai::WorkflowTemplate* workflow);
+    void updateSessionRoleDisplay();
+    void resetSessionRole();
+    void restoreSessionRoleForSession(const QString& session_id);
+    void updateSessionRoleForPrompt(const QString& message);
+    void setSessionRole(const QString& role, const QString& source, bool persist);
+    void persistSessionRoleChoice();
+    [[nodiscard]] QString currentWorkflowRole() const;
+    [[nodiscard]] const ai::WorkflowTemplate* selectedWorkflowTemplate() const;
     [[nodiscard]] QString workflowTemplateComboLabel(const ai::WorkflowTemplate& workflow) const;
     [[nodiscard]] QString workflowTemplateTooltip(const ai::WorkflowTemplate& workflow,
                                                   const QString& label) const;
@@ -262,6 +286,8 @@ private:
     void reloadSessionPicker();
     void startNewPersistentSession(const QString& title);
     [[nodiscard]] bool ensurePersistentSession(const QString& title);
+    [[nodiscard]] QString workflowTitleForChatRename(const QString& workflow_id) const;
+    void autoRenameDefaultChatFromFirstPrompt(const QString& message, const QString& workflow_id);
     void loadSessionTranscript(const QString& session_id);
     [[nodiscard]] bool isAiBusy() const;
     void setUiBusy(bool busy);
@@ -286,6 +312,8 @@ private:
     [[nodiscard]] QString messageText() const;
     [[nodiscard]] bool filterWheelEvent(QObject* watched, QEvent* event);
     [[nodiscard]] bool filterMessageEditKeyPress(QEvent* event);
+    [[nodiscard]] bool handleComposerKeyAction(int action);
+    [[nodiscard]] bool handleComposerHistoryKeyAction(int action);
     [[nodiscard]] QString buildInstructions() const;
     [[nodiscard]] QString contextInstructions() const;
     [[nodiscard]] QVector<ai::OpenAIInputAttachment> buildContextAttachments() const;
@@ -687,6 +715,11 @@ private:
                                  const QJsonObject& response_metadata);
     void handleAssistantResponse(const ai::OpenAIResponseResult& result,
                                  const QJsonObject& response_metadata);
+    [[nodiscard]] QString assistantTextWithCitations(const ai::OpenAIResponseResult& result) const;
+    [[nodiscard]] QJsonObject assistantResponseMetadata(
+        const ai::OpenAIResponseResult& result) const;
+    void persistAssistantResponse(const ai::OpenAIResponseResult& result,
+                                  const QJsonObject& assistant_metadata);
     void recordToolLoopObservation(const QString& tool_name, const QJsonObject& result = {});
     [[nodiscard]] QString toolLoopCapSummary() const;
 
@@ -695,7 +728,7 @@ private:
 
     QPushButton* m_loadKeyButton{nullptr};
     QComboBox* m_modelCombo{nullptr};
-    QComboBox* m_agentProfileCombo{nullptr};
+    QLabel* m_sessionRoleValueLabel{nullptr};
     QComboBox* m_promptTemplateCombo{nullptr};
     QComboBox* m_reasoningEffortCombo{nullptr};
     QComboBox* m_sessionCombo{nullptr};
@@ -707,6 +740,8 @@ private:
 
     AiTranscriptView* m_transcriptView{nullptr};
     QProgressBar* m_workflowProgressBar{nullptr};
+    QLabel* m_agentActivityLabel{nullptr};
+    QLabel* m_contextWindowLabel{nullptr};
     QListWidget* m_contextList{nullptr};
     QPushButton* m_artifactsButton{nullptr};
     QPlainTextEdit* m_messageEdit{nullptr};
@@ -742,6 +777,8 @@ private:
     QString m_apiKey;
     QString m_taskStatus;
     QString m_previousResponseId;
+    QString m_sessionRole;
+    QString m_sessionRoleSource;
     QString m_currentRunId;
     QString m_pendingWorkflowRunId;
     QString m_pendingSessionTitle;
@@ -779,6 +816,11 @@ private:
     QFutureWatcher<ai::AiOrchestratorResult>* m_workflowRunWatcher{nullptr};
     bool m_workflowRunActive{false};
     QTimer* m_activityTimer{nullptr};
+    QTimer* m_contextTokenTimer{nullptr};
+    QString m_contextTokenRequestId;
+    QString m_contextTokenStatus;
+    qint64 m_contextInputTokens{-1};
+    int m_nextContextTokenRequestSequence{1};
     QString m_currentCommandId;
     QString m_currentCommandLeaseId;
     QString m_currentCommandPreview;

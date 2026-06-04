@@ -9,8 +9,8 @@
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
-[![Version](https://img.shields.io/badge/Version-0.9.1.8-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-132%20passing-brightgreen.svg)](tests/)
+[![Version](https://img.shields.io/badge/Version-0.9.1.9-orange.svg)](VERSION)
+[![Tests](https://img.shields.io/badge/Tests-133%20passing-brightgreen.svg)](tests/)
 
 Migration · Maintenance · Recovery · Imaging · Deployment — one portable toolkit.
 
@@ -22,7 +22,7 @@ Migration · Maintenance · Recovery · Imaging · Deployment — one portable t
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-**Latest: v0.9.1.8** - Hardware-certified Partition Manager release with direct queued execution for shipped destructive workflows, full VM/VHD evidence alignment, PST/OST parser fixes, checkbox email and attachment selection, selected email export with attachment preservation, fixed splash sizing, shared control icon polish, raw-style constant enforcement, and pinned secret-scan workflows.
+**Latest: v0.9.1.9** - AI Assistant production hardening release with exact context-window usage, workflow-selection role preview, task-specific technician roles, first-prompt role inference, chat title/rename/resume continuity, result-bubble copy, Enter-to-send, background-agent telemetry, live OpenAI smoke coverage, and the hardware-certified Partition Manager scope from v0.9.1.8.
 
 ---
 
@@ -103,17 +103,20 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 
 **Chat Workspace**
 - Modern chat layout with right-aligned prompt bubbles and left-aligned assistant results
+- Assistant, workflow, tool, and system result bubbles include a copy icon that copies only that bubble's redacted contents
 - Expand/collapse support for long results and tool output
-- Prompt history navigation with Up/Down in the input box
+- Enter submits, Ctrl+Enter inserts a new line, and Up/Down at the input start/end cycles prompt history
 - Session picker with new chat and rename controls
-- Status bar integration for API key state, access mode, activity, workflow progress, and token usage
+- New Chat closes the current chat workspace immediately, clears the transcript/composer, assigns a draft `AI Session` name, and auto-renames from the first prompt or attached workflow while keeping manual rename available after the chat is saved
+- Header/status integration for API key state, access mode, activity, workflow progress, background subagent counts, exact `Ctx: x/y` context usage in the composer beside Send, and token usage
 - Details panel for active workflow/run state; artifacts button opens the current session artifact directory when content exists
 
 **OpenAI Integration**
 - User-supplied OpenAI API key with encrypted app-local storage under the portable `data/credentials/` directory
 - Load/clear key workflow with visible loaded/not-loaded status
 - Model list retrieval and selectable chat model
-- OpenAI Responses API client with conversation state, usage parsing, strict function-tool schemas, and citation parsing
+- OpenAI Responses API client with persisted response-chain continuity across reopened chats, usage parsing, strict function-tool schemas, and citation parsing
+- Privacy-preserving `safety_identifier` values derived from local AI session IDs for model requests
 - Token usage meter for input, cached input, output, reasoning, and total token counts
 - Secret redaction for API keys, bearer tokens, GitHub tokens, AWS keys, Google keys, Slack tokens, Stripe keys, and common `password=`/`secret=`/`token=` assignments
 
@@ -135,10 +138,13 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 - Human approval prompts for risky or destructive actions, with restore-point offers when rollback may be needed
 - Stop/cancel handling across model calls, local tools, workflows, and subagents
 
-**Agent Roles and Workflows**
-- Role-aware prompt/workflow library with technician-focused roles such as General Technician, Security Technician, System Cleanup, Deployment Technician, Network Technician, Printer Technician, and Reporting Technician
+**Workflow Roles and Workflows**
+- Workflow-selected technician roles so the right prompt stance previews immediately when a workflow is selected, then stays with the workflow after Add
+- First-prompt role inference when no workflow is selected, with explicit user role changes such as "act as a report writer" honored for later turns
+- The plain Session role text is populated from the workflow catalog so user-added workflow roles appear without editing panel code
 - The assistant is aware of the workflow catalog and can describe what each workflow does, when to use it, required inputs, risk level, verification, reporting, cleanup, and expected artifacts
 - Multi-agent workflow orchestration with a main overseer, specialized subagents, shared session memory, phase tracking, cancellation, recovery policy, and human handoff when needed
+- Codex-inspired workflow policy keeps the main chat as overseer, runs workflow-declared read-only subagents in parallel with per-subagent OpenAI client isolation, serializes mutating phases, and summarizes subagent evidence instead of flooding the transcript with raw logs
 - Workflow resources can include prompts, instruction files, skills, required software, tool phases, troubleshooting guidance, verification steps, cleanup, and reporting requirements
 
 **Built-in Technician Workflows**
@@ -153,6 +159,14 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 | Printer Troubleshooting | Checks spooler, printer queue, driver, port, and connectivity state |
 | Startup Performance Triage | Reviews startup apps, services, boot symptoms, and high-impact processes |
 | Security Advisory Check | Reviews security posture and relevant advisories without making destructive changes |
+| Disk Space Cleanup Triage | Finds reclaimable space with read-only evidence first, then recommends safe cleanup actions |
+| Browser Issue Cleanup | Diagnoses browser performance, extension, cache, profile, and policy issues before recommending cleanup |
+| Driver and Device Troubleshooting | Collects device/driver evidence, checks rollback/update options, and verifies device health after approved changes |
+| Laptop Battery Health | Reviews battery report, power settings, charging symptoms, and practical replacement/optimization guidance |
+| User Profile and Login Repair | Diagnoses profile load, shell, registry, and sign-in issues with rollback-aware repair guidance |
+| Windows Search Index Repair | Checks indexer state, catalog health, service state, and approved rebuild paths |
+| Audio Device Troubleshooting | Diagnoses playback/recording devices, driver state, service health, and approved audio resets |
+| Time Sync Repair | Checks time service, NTP source, skew, event logs, and approved synchronization repairs |
 | Malware and Virus Removal | Runs a technician-guided malware triage/removal flow with evidence capture, approvals, verification, and cleanup |
 | PC Cleanup, Bloatware, and Adware Removal | Identifies unwanted software/startup clutter, removes approved items, verifies system state, and reports changes |
 | Approved Bloatware/Adware Removal | Removes a user-approved list with explicit verification and rollback-aware reporting |
@@ -772,6 +786,9 @@ AI Assistant sessions and credentials are intentionally portable-app local:
 | `<app>/data/ai/providers/` | Portable AI provider registry overrides |
 | `<app>/data/ai/app_manifests/` | Portable app-control manifests for scanner/tool workflows |
 | `<app>/data/ai/workflows/` | User-added workflow templates |
+
+OpenAI API calls include a `safety_identifier` derived from the local AI session
+ID hash. The raw session ID and user identity are not sent for this field.
 
 The provider gateway exposes Microsoft Learn and Context7 public documentation
 lookups through HTTP MCP, plus bundled Win32 MCP calls through the portable

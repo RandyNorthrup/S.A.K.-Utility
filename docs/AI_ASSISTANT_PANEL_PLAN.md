@@ -21,7 +21,7 @@ Next-phase planning:
 
 Delivered in v1:
 
-- Panel skeleton + feature flag, Credential/Model/Profile/Access-mode UI, Responses client + basic chat,
+- Panel skeleton + feature flag, Credential/Model/Session role/Access-mode UI, Responses client + basic chat,
   local conversation store, async execution broker (`run_powershell`, `run_cmd`, `run_process`) with
   streaming chunks, cancel, and clamped timeouts, elevated PowerShell via the existing per-task helper
   (one UAC per session), tool-loop with iteration cap and tool-call counter, web research with clickable
@@ -38,15 +38,17 @@ Future hardening (deferred beyond v1):
 - Streamed stdout/stderr for elevated commands (current v1 returns batched output via the helper).
 - Reasoning-effort manual override per session.
 - OCR / computer-use loops for screenshots.
-- Token-cost estimation via an updatable pricing config.
+- Token-cost/pricing display via an updatable pricing config. Exact context-window
+  usage is now handled by OpenAI `/v1/responses/input_tokens`.
 
 ---
 
 ## Executive Summary
 
 The AI Assistant Panel adds a technician-grade AI agent to S.A.K. Utility. The panel
-lets a user enter an OpenAI API key, choose an AI model and agent profile, chat with
-the assistant, monitor token consumption, recall previous conversations, research the
+lets a user enter an OpenAI API key, choose an AI model and workflow, chat with
+the assistant under the workflow-selected technician role, monitor token consumption,
+recall previous conversations, research the
 web, inspect the PC, download tools, install and uninstall software, run PowerShell
 or other commands, take screenshots, inspect logs, fix problems, and create reports.
 
@@ -68,7 +70,8 @@ collection built in from the beginning.
 
 - Add a fully separate AI Assistant Panel without entangling existing SAK panels.
 - Let the user enter and optionally save an OpenAI API key.
-- Let the user choose both model and agent profile.
+- Let the user choose a model and workflow, with the workflow selecting the role
+  automatically.
 - Show per-turn and per-session token usage, including input, cached input, output,
   reasoning, and total tokens when returned by the API.
 - Persist local chat history and execution artifacts.
@@ -221,7 +224,7 @@ Responsibilities:
 
 - API key entry and validation.
 - Model selector.
-- Agent profile selector.
+- Plain Session role text.
 - Access mode selector.
 - Chat transcript.
 - Command/action timeline.
@@ -270,6 +273,8 @@ Responsibilities:
 - Detect tool calls.
 - Dispatch local tools.
 - Return tool outputs to the model.
+- Send a privacy-preserving `safety_identifier` derived from local session/run
+  identity.
 - Update token meter.
 - Persist transcript and artifacts.
 - Enforce selected access mode.
@@ -317,7 +322,7 @@ OpenAI API surface to plan around:
 - Web search built-in tool for current research and citations.
 - Local shell tool or equivalent function tool for arbitrary command execution.
 - Conversation state with local transcript as source of truth.
-- Token counting endpoint for preflight estimates on large contexts/tools.
+- Token counting endpoint for exact preflight input counts on large contexts/tools.
 
 Reference docs:
 
@@ -517,7 +522,7 @@ Suggested layout:
   "created_at": "2026-05-13T14:20:03-07:00",
   "title": "Repair Windows Update",
   "model": "gpt-5.5",
-  "agent_profile": "PC Technician",
+  "workflow_role": "Windows Repair Technician",
   "access_mode": "UnattendedFullAccess",
   "last_response_id": "resp_..."
 }
@@ -571,7 +576,7 @@ Per session:
 - Cumulative totals
 - Current model
 - Largest turn
-- Context estimate before send
+- Exact input context count before send
 - Warning when transcript is approaching selected context budget
 
 UI meter:
@@ -655,37 +660,34 @@ a second-class or later-added path.
 
 ---
 
-## Agent Profiles
+## Workflow Roles
 
-The user should choose an agent profile separately from the model. Profiles are prompt
-and behavior templates.
+The user chooses the workflow, not a separate free-form role dropdown. Each
+workflow carries the role that best matches its task, and the side-rail Session
+role text updates as soon as a workflow is selected, before Add is pressed. When
+no workflow is selected, the first prompt infers the session role. Later explicit
+user requests such as "act as a report writer" change the role until another
+explicit role change.
 
-v1 profiles:
+Common workflow roles include:
 
 ```text
 PC Technician
-  - balanced repair and diagnostics
-  - documents work clearly
-  - asks before irreversible changes unless unattended mode says otherwise
-
-Research Assistant
-  - prioritizes web research and citations
-  - avoids local changes unless asked
-
-Windows Repair
-  - focuses on logs, services, registry, DISM/SFC, drivers, updates
-  - creates before/after reports
-
-Software Installer
-  - downloads, installs, uninstalls, verifies apps
-  - supports Chocolatey, Winget, vendor installers
-
-Report Writer
-  - turns session evidence into technician/customer reports
+Diagnostic Technician
+Storage Diagnostic Technician
+Windows Repair Technician
+Driver and Device Technician
+Security Technician
+System Cleanup Technician
+Software Deployment Technician
+Browser Support Technician
+Performance Technician
+Customer Report Writer
 ```
 
-Users should be able to edit or create custom profiles later. Store profile files as
-JSON or Markdown in a user-editable directory.
+The Session role text is populated from the loaded workflow catalog. User-added
+workflow templates can introduce new role labels without editing panel code.
+Separate user-editable profile files remain a future extension.
 
 ---
 
@@ -696,7 +698,7 @@ Requirements:
 - Curated default list.
 - Fetch available models using the user's API key where possible.
 - Manual model ID entry.
-- Per-profile default model.
+- Per-workflow default model remains a future extension.
 - Per-session model override.
 - Reasoning effort control when supported by the selected model.
 
@@ -729,7 +731,7 @@ Basic turn flow:
 1. User enters message.
 2. AiSessionController builds request:
    - model
-   - agent profile instructions
+   - workflow role instructions
    - access mode instructions
    - recent local transcript/context
    - tools
@@ -944,7 +946,7 @@ Logs are not an optional add-on. They are part of the v1 Full Access design.
 Record:
 
 - Session start/end.
-- Model and agent profile.
+- Model and workflow-selected role.
 - Access mode.
 - Every model-requested tool call.
 - Every command/script.
@@ -1026,8 +1028,11 @@ Current v1 chat layout:
 - Conversation pane has a narrow header, transcript area, and pinned bottom composer.
 - Composer has removable, color-coded attached-context chips below the text input, then
   context actions on the left and Send/Stop actions on the right.
-- Right rail owns session picker, model/profile/reasoning selectors, access mode,
-  role-specific prompt templates, and hidden API key loading/status.
+- Right rail owns session picker, model/reasoning selectors, plain Session role
+  text, full workflow library, access mode, and hidden API key
+  loading/status.
+- Default new chats auto-title from the first prompt or attached workflow after
+  the first send, but the Rename Chat control remains available for user edits.
 - Chat header owns report generation and an artifacts drop-down for reports,
   screenshots, downloads, command logs, and cited sources.
 - The global status bar owns AI task status, per-turn usage, per-session usage, and tool count.
@@ -1044,10 +1049,13 @@ Controls:
   - curated list
   - refresh from API
   - manual model ID
-- Agent profile combo.
-- Role prompt template combo:
-  - options change with the selected role
-  - selected templates append into the composer as editable task instructions
+- Session role text:
+  - not a dropdown
+  - previews from the selected workflow before Add, attaches with the workflow
+    after Add, infers from the first prompt when no workflow is selected, or
+    changes by explicit user role direction
+- Workflow library combo:
+  - selected workflows append into the composer as editable task instructions
   - templates cover a broad library of role work such as PC health, drive checks,
     Windows repair, installers/uninstallers, research, security advisories, driver
     repair, escalation packets, and reports
@@ -1263,7 +1271,7 @@ Exit criteria:
 - Session-only key storage.
 - Windows remembered key storage.
 - Model selector.
-- Agent profile selector.
+- Session role text.
 - Access mode selector, including Unattended Full Access.
 
 Exit criteria:
@@ -1383,7 +1391,8 @@ v1 is complete when:
 
 - AI panel is separate and can be disabled at build/runtime.
 - User can enter and test an OpenAI API key.
-- User can choose model and agent profile.
+- User can choose model and workflow; workflow selection previews and
+  auto-selects the role.
 - User can see token usage per turn and per session.
 - User can save/reopen chat history.
 - Agent can use web research with citations.

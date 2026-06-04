@@ -1163,6 +1163,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_conversation_store.cpp")
     message(STATUS "Added unit test: test_ai_conversation_store")
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_chat_title.cpp")
+    add_executable(test_ai_chat_title
+        unit/test_ai_chat_title.cpp
+        ../src/ai/ai_chat_title.cpp
+        ../include/sak/ai/ai_chat_title.h
+    )
+    set_target_properties(test_ai_chat_title PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_chat_title PRIVATE
+        Qt6::Core Qt6::Test
+    )
+    target_include_directories(test_ai_chat_title PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_chat_title")
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
     add_executable(test_ai_execution_broker
         unit/test_ai_execution_broker.cpp

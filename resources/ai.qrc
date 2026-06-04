@@ -14,6 +14,14 @@
         <file alias="workflows/network_connectivity_repair.json">ai/workflows/network_connectivity_repair.json</file>
         <file alias="workflows/startup_performance_triage.json">ai/workflows/startup_performance_triage.json</file>
         <file alias="workflows/printer_troubleshooting.json">ai/workflows/printer_troubleshooting.json</file>
+        <file alias="workflows/disk_space_cleanup_triage.json">ai/workflows/disk_space_cleanup_triage.json</file>
+        <file alias="workflows/browser_issue_cleanup.json">ai/workflows/browser_issue_cleanup.json</file>
+        <file alias="workflows/driver_device_troubleshooting.json">ai/workflows/driver_device_troubleshooting.json</file>
+        <file alias="workflows/laptop_battery_health.json">ai/workflows/laptop_battery_health.json</file>
+        <file alias="workflows/user_profile_login_repair.json">ai/workflows/user_profile_login_repair.json</file>
+        <file alias="workflows/windows_search_index_repair.json">ai/workflows/windows_search_index_repair.json</file>
+        <file alias="workflows/audio_device_troubleshooting.json">ai/workflows/audio_device_troubleshooting.json</file>
+        <file alias="workflows/time_sync_repair.json">ai/workflows/time_sync_repair.json</file>
         <file alias="workflows/technician_tool_assisted_task.json">ai/workflows/technician_tool_assisted_task.json</file>
         <file alias="workflows/malware_virus_removal.json">ai/workflows/malware_virus_removal.json</file>
         <file alias="workflows/pc_cleanup_bloatware_adware.json">ai/workflows/pc_cleanup_bloatware_adware.json</file>

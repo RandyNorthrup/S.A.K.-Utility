@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "drive_health_deep_check",
   "title": "Drive Health Deep Check",
-  "role": "PC Technician",
+  "role": "Storage Diagnostic Technician",
   "category": "Diagnostics",
   "description": "Inspect drive and volume health using SMART, Windows storage, filesystem, and event evidence before recommending repair.",
   "starter_prompt": "Check my drive health deeply. Use read-only checks first and explain any repair risk.",

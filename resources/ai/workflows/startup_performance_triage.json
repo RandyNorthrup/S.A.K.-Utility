@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "startup_performance_triage",
   "title": "Startup Performance Triage",
-  "role": "PC Technician",
+  "role": "Performance Technician",
   "category": "Performance",
   "description": "Investigate slow startup and login performance using startup, service, boot, and process evidence before approved changes.",
   "starter_prompt": "Find why startup or login is slow. Collect evidence first and do not disable anything without approval.",

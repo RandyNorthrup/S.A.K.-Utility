@@ -1,4 +1,4 @@
-# Release Readiness
+﻿# Release Readiness
 
 ## Automated Gates
 
@@ -139,6 +139,45 @@ non-boot, and non-system. Evidence:
 `artifacts\partition-manager-certification\vm-lab\partition-vm-admin-report.json`.
 This does not replace the 18 external VM/hardware/lab gates required for
 the hardware-certified claim level.
+
+AI Assistant VM live E2E passed on 2026-06-03 PDT / 2026-06-04 UTC in the
+same `SAK-PM-Lab-Win11` Windows 11 VM from shared root `\\vboxsvr\sakrepo`.
+The package-only harness read the OpenAI key from the provided key file without
+writing it to reports, then passed `test_openai_responses_client.exe` with live
+Responses API plain-response and function tool-loop smoke, portable startup
+smoke, runtime accessibility audit, and the AI smoke checklist. Evidence:
+`artifacts\ai-assistant-vm-smoke\run-20260604-033445\ai-assistant-vm-smoke-report.json`.
+
+AI Assistant current-binary host/live quality pass completed on 2026-06-04 UTC:
+Release `sak_utility`, `test_ai_subagent_runner`, `test_ai_chat_title`,
+`test_ai_prompt_assembler`, `test_ai_orchestrator`, `test_ai_workflow_evals`, and
+`test_openai_responses_client` built successfully; targeted CTest passed 7/7;
+live OpenAI plain response and function tool-loop CTest passed using the key
+file without printing the key; host package/live smoke passed at
+`artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`;
+and the full Release CTest suite passed 133/133.
+The follow-up multi-agent quality pass removed the production UI serial-only
+cap for workflow delegates: read-only delegate phases can now run up to three
+parallel subagents with a fresh OpenAI model client per subagent, while
+mutating and conditional phases remain serialized by the orchestrator.
+The latest chat-continuity pass now persists assistant response ids into
+transcript metadata and restores the last assistant response id when a saved
+chat is reopened, preserving Responses API `previous_response_id` continuity
+for follow-up turns instead of detaching the reopened chat from server-side
+conversation state.
+The latest UI polish pass also adds result-bubble copy buttons, Enter-to-send
+with Ctrl+Enter newline behavior, New Chat draft reset semantics, visible
+background-agent counts, workflow-selection role preview without a role dropdown,
+first-prompt role inference with explicit user role-switch support, and an exact composer-side
+`Ctx: x/y` context-window meter tied to the selected model through OpenAI
+`/v1/responses/input_tokens` so operators can judge when summary/report
+compaction is needed.
+The same current-binary VM rerun was attempted after booting `SAK-PM-Lab-Win11`
+to Guest Additions run level 3, but host guest-control login as `saklab` with a
+blank password was rejected. The VM was powered off. This is not a blocker for
+non-destructive AI Assistant readiness because the current-binary local and host
+package/live smoke passed; rerunning inside the VM only needs the VM desktop or
+valid guest-control credentials if a VM-specific package proof is requested.
 
 Fourteen matrix-backed external gates now pass in VM-lab evidence:
 `external.bitlocker`, `external.bitlocker-mutation`,

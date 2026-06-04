@@ -1,7 +1,7 @@
-# S.A.K. Utility Production Grade Audit
+﻿# S.A.K. Utility Production Grade Audit
 
 Generated: 2026-05-27  
-Last updated: 2026-06-03 UTC / 2026-06-03 PDT
+Last updated: 2026-06-04 UTC / 2026-06-03 PDT
 
 Scope: source scan of `src/`, `include/`, `tests/`, `docs/`, and release scripts, followed by
 Release build, CTest, release-readiness gates, runtime accessibility audit, global magic-number
@@ -16,7 +16,7 @@ This document only makes claims backed by code inspection or passing automated c
 | Check | Result | Evidence |
 |---|---:|---|
 | Release build | Pass | `cmake --build build --config Release --parallel` completed successfully on 2026-06-02 01:24 PDT / 2026-06-02 UTC after final source edits. |
-| Full CTest suite | Pass | `ctest --test-dir build -C Release --output-on-failure --timeout 120`: 132/132 passed on 2026-06-02 01:30 PDT / 2026-06-02 UTC. |
+| Full CTest suite | Pass | `ctest --test-dir build -C Release --output-on-failure`: 133/133 passed on 2026-06-04 PDT before the v0.9.1.9 release push. |
 | Global magic-number gate | Pass | `python scripts\check_magic_numbers.py`: 0 violations. The check is now wired into `scripts/check_release_readiness.ps1`. |
 | GUI raw color-token gate | Pass | `scripts/check_gui_style_tokens.ps1`: no raw hex/rgba tokens outside approved theme/report/color constants. |
 | GUI raw stylesheet-literal gate | Pass | `scripts/check_gui_stylesheet_literals.ps1`: no raw CSS/rich-text style literals across `src/` and `include/` outside approved style/color/report constants. |
@@ -39,6 +39,8 @@ This document only makes claims backed by code inspection or passing automated c
 | Partition Manager feature matrix gate | Pass | `scripts/check_partition_manager_feature_matrix.ps1`: 12 commercial-parity feature groups verified against implementation, UI, tests, documentation, certification matrix, release-claim guard, and certification gates. |
 | Partition Manager release-claim guard | Pass | `scripts/check_partition_manager_release_claims.ps1`: certification wording in README, changelog, audit, plan, certification, and readiness docs is tied to generated claim levels, including the current strict `HardwareCertified` handoff. |
 | Partition Manager Windows 11 VM smoke | Pass | VirtualBox 7.2.8 VM `SAK-PM-Lab-Win11` on Windows 11 25H2 passed `SAK_STARTUP_SMOKE_OK` from read-only path `\\vboxsvr\sakrepo\build\Release\sak_utility.exe`; visible Partition Manager UI from the same shared executable rendered 3 disks, including two RAW 4 GB data disks, at `artifacts\partition-manager-certification\vm-lab\sak-utility-share-partition-manager-mouse-fixed.png`. This verifies non-admin inventory and read-only share startup, not destructive guest mutation. |
+| AI Assistant Windows 11 VM live E2E | Pass | VirtualBox 7.2.8 VM `SAK-PM-Lab-Win11` on Windows 11 Pro passed the package-only live E2E harness from `\\vboxsvr\sakrepo` on 2026-06-03 PDT / 2026-06-04 UTC. `live_client_executable` passed the live OpenAI response and function tool-loop smoke, `portable_startup_smoke` passed from the shared Release package, `accessibility_audit` exited 0, and the smoke checklist ran. Evidence: `artifacts\ai-assistant-vm-smoke\run-20260604-033445\ai-assistant-vm-smoke-report.json`; the key was read only from the provided key file and is not written to the report. |
+| AI Assistant chat-title, response-chain, UX telemetry, and subagent policy pass | Pass | Added first-prompt chat-title generation/redaction, default-only auto rename, persisted assistant response-id restoration for reopened chats, result-bubble copy, Enter-to-send/Ctrl+Enter-newline, draft New Chat reset, visible background-agent counts, exact composer-side context-window counts from OpenAI `/v1/responses/input_tokens`, workflow-selection role preview without a role dropdown, first-prompt role inference with explicit user role-switch support, expanded common PC repair/cleanup/optimization workflow coverage, Codex-inspired workflow/subagent guardrails, per-subagent OpenAI model-client isolation, and a conservative production cap of three parallel read-only workflow delegates. `cmake --build build --config Release --target sak_utility test_ai_conversation_store test_ai_subagent_runner test_ai_chat_title test_ai_prompt_assembler test_ai_orchestrator test_ai_workflow_evals test_openai_responses_client` passed. Targeted CTest passed 7/7, live OpenAI CTest passed, host package/live smoke passed at `artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`, accessibility audit reported `missing=0`, and full Release CTest passed 133/133. Current-binary VM rerun was attempted after booting `SAK-PM-Lab-Win11` to Guest Additions run level 3, but `VBoxManage guestcontrol` login as `saklab` with a blank password was rejected; VM was powered off. This is not a release blocker for non-destructive AI Assistant validation because local/host smoke covers the current binary. |
 | Partition Manager RAW disk regression | Pass | `test_partition_manager_core` now verifies a non-system RAW basic disk parses as initializable unallocated media, not as a dynamic disk, so Initialize Disk and Quick Partition are not blocked by the dynamic-disk read-only guard on disposable RAW lab disks. |
 | Partition Manager Windows 11 VM destructive data-disk smoke | Pass | Elevated VirtualBox VM smoke passed on 2026-06-02 07:44 PDT with `is_admin=true`; boot/system/model/size guards allowed only disposable 4 GB VBOX data disks 1 and 2, then verified GPT NTFS create/format/resize/delete/clear, MBR FAT32-to-NTFS conversion, and final RAW cleanup. Evidence: `artifacts\partition-manager-certification\vm-lab\partition-vm-admin-report.json`. This is supplemental VM data-disk proof, not a completed 18-gate external hardware certification manifest. |
 | Partition Manager Windows 11 VM BitLocker external gate | Pass | `external.bitlocker` passed on 2026-06-02 09:26 PDT in VM `SAK-PM-Lab-Win11`: disposable VBOX disk 2 was formatted NTFS, encrypted with BitLocker used-space-only, locked-write blocking was verified, recovery-password unlock allowed a hashed write, dirty-bit state was clean, host evidence redacted the disposable recovery password, and disk 2 was cleared back to RAW. Evidence: `artifacts\partition-manager-certification\vm-lab\external-evidence\external.bitlocker\report.json`; imported manifest: `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`; paired imported checklist: `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md`. |
@@ -190,7 +192,7 @@ This document only makes claims backed by code inspection or passing automated c
 ### Documentation
 
 - Updated this audit with current pass/fail evidence.
-- `tests/README.md` reflects 132 registered tests across 156 test source files and 153 unit test source/header files.
+- `tests/README.md` reflects 133 registered tests across 158 test source files.
 - `README.md` now documents the current distro catalog, dark theme support, fixed splash sizing, shared control icons, and bundled tool versions.
 - `README.md` and `CHANGELOG.md` now document checkbox email/attachment selection, selected email export formats, and attachment preservation behavior.
 - `README.md` now documents portable config paths, Qt minimum versus release CI version, and the accurate bundled dependency table.
@@ -216,5 +218,5 @@ Remaining non-certified area:
 ## Next Steps
 
 1. For release packaging, run readiness again with `-PackageRoot` and signature verification after staging a package.
-2. Verify hosted GitHub release assets, signatures, and `SHA256SUMS.txt` after the `v0.9.1.8` tag workflow publishes.
+2. Verify hosted GitHub release assets, signatures, and `SHA256SUMS.txt` after the `v0.9.1.9` tag workflow publishes.
 3. Keep the imported 18/18 VM/hardware/lab evidence bundle with the release artifacts so future claim-level checks can reproduce the completed release wording.

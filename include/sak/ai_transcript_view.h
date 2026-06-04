@@ -69,6 +69,7 @@ private:
     [[nodiscard]] int transcriptBubbleMaxWidth() const;
     void appendRenderedRows(int bubble_max_width);
     void restoreRenderScroll(bool follow_newest, int previous_scroll_value);
+    void copyMessageToClipboard(const Message& message, QPushButton* button);
     void toggleMessageExpanded(const QString& message_id);
     void clearLayout();
     void applyActivityFrame();

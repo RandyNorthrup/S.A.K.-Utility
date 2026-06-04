@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "install_app_now",
   "title": "Install App Now",
-  "role": "Software Installer",
+  "role": "Software Deployment Technician",
   "category": "Software",
   "description": "Install an approved application through SAK package management first, then verify installation state and record evidence.",
   "starter_prompt": "Install the requested application. Use SAK package manager before raw shell commands.",

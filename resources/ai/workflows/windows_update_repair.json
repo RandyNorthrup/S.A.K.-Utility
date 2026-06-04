@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "windows_update_repair",
   "title": "Windows Update Repair",
-  "role": "Windows Repair",
+  "role": "Windows Repair Technician",
   "category": "Repair",
   "description": "Diagnose Windows Update failures with service, log, component-store, and policy evidence before staged approved repairs.",
   "starter_prompt": "Diagnose and repair Windows Update. Start with read-only checks and verify with an update scan.",

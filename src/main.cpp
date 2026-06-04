@@ -425,6 +425,11 @@ int runAccessibilityAuditHeadless(QApplication& app, sak::MainWindow& main_windo
     app.setQuitOnLastWindowClosed(previous_quit_on_last_window_closed);
     sak::logInfo("Accessibility audit shutting down with exit code: {}", result);
     sak::logger::instance().flush();
+    if (result == 0) {
+        // Audit status is already written; avoid Qt/shared-folder teardown crashes in automation.
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
     return result;
 }
 

@@ -46,6 +46,11 @@ public:
     [[nodiscard]] QVector<AiSessionInfo> listPromptedSessions() const;
     [[nodiscard]] QStringList loadTranscriptLines(const QString& session_id,
                                                   QString* error_message = nullptr) const;
+    [[nodiscard]] QString latestAssistantResponseId(const QString& session_id,
+                                                    QString* error_message = nullptr) const;
+    [[nodiscard]] QString latestSessionRole(const QString& session_id,
+                                            QString* source = nullptr,
+                                            QString* error_message = nullptr) const;
     [[nodiscard]] QVector<AiSessionSearchResult> searchSessions(
         const QString& query, int max_results = 50, QString* error_message = nullptr) const;
 

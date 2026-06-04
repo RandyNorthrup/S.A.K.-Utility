@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_subagent_runner.h"
 
+#include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QJsonArray>
@@ -11,10 +12,24 @@
 #include <QStringList>
 #include <QThread>
 
+#include <utility>
+
 namespace sak::ai {
 
 namespace {
 constexpr qsizetype kSubagentSummaryMaxChars = 2000;
+constexpr qsizetype kSafetyIdentifierDigestChars = 32;
+
+QString safetyIdentifierFromRunSeed(const QString& seed) {
+    const QString clean = seed.trimmed();
+    if (clean.isEmpty()) {
+        return {};
+    }
+    const QByteArray digest =
+        QCryptographicHash::hash(clean.toUtf8(), QCryptographicHash::Sha256).toHex();
+    return QStringLiteral("sak-run-%1")
+        .arg(QString::fromLatin1(digest.left(kSafetyIdentifierDigestChars)));
+}
 
 QStringList readStringList(const QJsonValue& value) {
     QStringList out;
@@ -104,6 +119,7 @@ IAiModelClient::Request modelRequestForTask(const AiSubagentTask& task) {
     request.model = task.model;
     request.reasoning_effort = task.reasoning_effort;
     request.api_key = task.api_key;
+    request.safety_identifier = safetyIdentifierFromRunSeed(task.run_id);
     request.token_budget = task.token_budget;
     return request;
 }
@@ -441,21 +457,32 @@ void AiSubagentRunner::setOptions(const AiSubagentRunnerOptions& options) {
     }
 }
 
+void AiSubagentRunner::setModelClientFactory(AiModelClientFactory factory) {
+    m_model_client_factory = std::move(factory);
+}
+
 AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
                                        const CancellationToken& parent_token) const {
-    if (!m_model_client) {
+    if (tokenCancelled(parent_token)) {
+        return baseResult(task, AiSubagentStatus::Cancelled, parent_token.cancelReason());
+    }
+
+    std::unique_ptr<IAiModelClient> owned_client;
+    IAiModelClient* model_client = m_model_client;
+    if (m_model_client_factory) {
+        owned_client = m_model_client_factory();
+        model_client = owned_client.get();
+    }
+
+    if (!model_client) {
         return baseResult(task,
                           AiSubagentStatus::Failed,
                           QStringLiteral("No model client configured"));
     }
 
-    if (tokenCancelled(parent_token)) {
-        return baseResult(task, AiSubagentStatus::Cancelled, parent_token.cancelReason());
-    }
-
     const CancellationToken agent_token = agentTokenForTask(task, parent_token);
     const IAiModelClient::Request request = modelRequestForTask(task);
-    return runSubagentAttempts(m_model_client, task, m_options, agent_token, request);
+    return runSubagentAttempts(model_client, task, m_options, agent_token, request);
 }
 
 }  // namespace sak::ai

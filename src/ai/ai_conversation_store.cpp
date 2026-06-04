@@ -495,6 +495,37 @@ std::optional<QJsonObject> parseJsonLineObject(const QByteArray& raw_line) {
     return doc.object();
 }
 
+bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
+    if (!file->exists()) {
+        if (error_message) {
+            error_message->clear();
+        }
+        return false;
+    }
+    if (file->open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return true;
+    }
+    if (error_message) {
+        *error_message = QStringLiteral("Could not read transcript: %1").arg(file->errorString());
+    }
+    return false;
+}
+
+struct SessionRoleMetadata {
+    QString role;
+    QString source;
+};
+
+SessionRoleMetadata sessionRoleMetadataFromLine(const QByteArray& raw_line) {
+    const auto obj = parseJsonLineObject(raw_line);
+    if (!obj.has_value()) {
+        return {};
+    }
+    const QJsonObject metadata = obj->value(QStringLiteral("metadata")).toObject();
+    return {.role = metadata.value(QStringLiteral("session_role")).toString().trimmed(),
+            .source = metadata.value(QStringLiteral("session_role_source")).toString().trimmed()};
+}
+
 struct SearchHitCandidate {
     QString source;
     QString text;
@@ -679,6 +710,63 @@ QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
         }
     }
     return lines;
+}
+
+QString ConversationStore::latestAssistantResponseId(const QString& session_id,
+                                                     QString* error_message) const {
+    QFile file(QDir(sessionPath(session_id)).filePath(QString::fromLatin1(kTranscriptFile)));
+    if (!openOptionalTranscriptFile(&file, error_message)) {
+        return {};
+    }
+
+    QString latest;
+    while (!file.atEnd()) {
+        const auto obj = parseJsonLineObject(file.readLine());
+        if (!obj.has_value()) {
+            continue;
+        }
+        const QString role = obj->value(QStringLiteral("role")).toString().trimmed().toLower();
+        if (role != QLatin1String("assistant")) {
+            continue;
+        }
+        const QString response_id = obj->value(QStringLiteral("metadata"))
+                                        .toObject()
+                                        .value(QStringLiteral("response_id"))
+                                        .toString()
+                                        .trimmed();
+        if (!response_id.isEmpty()) {
+            latest = response_id;
+        }
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return latest;
+}
+
+QString ConversationStore::latestSessionRole(const QString& session_id,
+                                             QString* source,
+                                             QString* error_message) const {
+    if (source) {
+        source->clear();
+    }
+    QFile file(QDir(sessionPath(session_id)).filePath(QString::fromLatin1(kTranscriptFile)));
+    if (!openOptionalTranscriptFile(&file, error_message)) {
+        return {};
+    }
+
+    SessionRoleMetadata latest;
+    while (!file.atEnd()) {
+        const SessionRoleMetadata candidate = sessionRoleMetadataFromLine(file.readLine());
+        latest = candidate.role.isEmpty() ? latest : candidate;
+    }
+    if (source) {
+        *source = latest.source;
+    }
+    if (error_message) {
+        error_message->clear();
+    }
+    return latest.role;
 }
 
 QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& query,

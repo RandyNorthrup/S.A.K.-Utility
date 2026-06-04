@@ -544,6 +544,63 @@ QJsonArray localToolDefinitions() {
     return tools;
 }
 
+QJsonValue responseInputValue(const OpenAIResponseRequest& request) {
+    if (!request.function_outputs.isEmpty()) {
+        return functionOutputInputItems(request.function_outputs);
+    }
+    if (!request.attachments.isEmpty()) {
+        return attachmentInput(request);
+    }
+    return request.input;
+}
+
+QJsonObject reasoningObject(const OpenAIResponseRequest& request) {
+    const QString effort = request.reasoning_effort.trimmed().toLower();
+    if (effort.isEmpty() || effort == QLatin1String("none")) {
+        return {};
+    }
+    QJsonObject reasoning;
+    reasoning[QStringLiteral("effort")] = effort;
+    return reasoning;
+}
+
+QJsonArray enabledToolDefinitions(const OpenAIResponseRequest& request) {
+    QJsonArray tools;
+    if (request.enable_web_search) {
+        tools.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("web_search_preview")}});
+    }
+    if (request.enable_local_tools) {
+        for (const auto& tool : localToolDefinitions()) {
+            tools.append(tool);
+        }
+    }
+    return tools;
+}
+
+void appendResponseOptionalFields(QJsonObject* root, const OpenAIResponseRequest& request) {
+    const QString previous_response_id = request.previous_response_id.trimmed();
+    const QString safety_identifier = request.safety_identifier.trimmed();
+    if (!previous_response_id.isEmpty()) {
+        root->insert(QStringLiteral("previous_response_id"), previous_response_id);
+    }
+    if (!safety_identifier.isEmpty()) {
+        root->insert(QStringLiteral("safety_identifier"), safety_identifier);
+    }
+    const QJsonObject reasoning = reasoningObject(request);
+    if (!reasoning.isEmpty()) {
+        root->insert(QStringLiteral("reasoning"), reasoning);
+    }
+}
+
+void appendResponseTools(QJsonObject* root, const OpenAIResponseRequest& request) {
+    const QJsonArray tools = enabledToolDefinitions(request);
+    if (tools.isEmpty()) {
+        return;
+    }
+    root->insert(QStringLiteral("tools"), tools);
+    root->insert(QStringLiteral("parallel_tool_calls"), false);
+}
+
 }  // namespace
 
 OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) {
@@ -552,6 +609,7 @@ OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) 
 
 OpenAIResponsesClient::~OpenAIResponsesClient() {
     cancel();
+    cancelInputTokenCount();
 }
 
 void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request) {
@@ -581,6 +639,32 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
         handleCreateFinished(reply);
     });
     Q_EMIT requestStarted();
+}
+
+void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& request,
+                                             const QString& request_id) {
+    if (!hasUsableApiKey(request.api_key)) {
+        Q_EMIT inputTokenCountFailed(request_id,
+                                     QStringLiteral("OpenAI API key is missing or too short"));
+        return;
+    }
+    if (request.model.trimmed().isEmpty()) {
+        Q_EMIT inputTokenCountFailed(request_id, QStringLiteral("OpenAI model is empty"));
+        return;
+    }
+
+    cancelInputTokenCount();
+    auto network_request = buildRequest(QStringLiteral("/v1/responses/input_tokens"),
+                                        request.api_key);
+    auto count_request = request;
+    count_request.safety_identifier.clear();
+    const QByteArray payload = buildResponsePayload(count_request);
+    auto* reply = m_network_manager.post(network_request, payload);
+    m_input_tokens_reply = reply;
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, request_id]() {
+        handleInputTokenCountFinished(reply, request_id);
+    });
 }
 
 void OpenAIResponsesClient::listModels(const QString& api_key) {
@@ -707,6 +791,32 @@ QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
     return message;
 }
 
+qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
+                                                         QString* error_message) {
+    if (error_message) {
+        error_message->clear();
+    }
+    const auto root = responseRootObject(data, error_message);
+    if (!root.has_value()) {
+        return -1;
+    }
+    const auto value = root->value(QStringLiteral("input_tokens"));
+    if (!value.isDouble()) {
+        if (error_message) {
+            *error_message = QStringLiteral("OpenAI input token count missing input_tokens");
+        }
+        return -1;
+    }
+    const qint64 tokens = static_cast<qint64>(value.toDouble());
+    if (tokens < 0) {
+        if (error_message) {
+            *error_message = QStringLiteral("OpenAI input token count was negative");
+        }
+        return -1;
+    }
+    return tokens;
+}
+
 bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
     return api_key.trimmed().size() >= kMinimumOpenAiApiKeyLength;
 }
@@ -740,40 +850,9 @@ QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseReque
     QJsonObject root;
     root[QStringLiteral("model")] = request.model.trimmed();
     root[QStringLiteral("instructions")] = request.instructions;
-    if (!request.function_outputs.isEmpty()) {
-        root[QStringLiteral("input")] = functionOutputInputItems(request.function_outputs);
-    } else if (!request.attachments.isEmpty()) {
-        root[QStringLiteral("input")] = attachmentInput(request);
-    } else {
-        root[QStringLiteral("input")] = request.input;
-    }
-
-    if (!request.previous_response_id.trimmed().isEmpty()) {
-        root[QStringLiteral("previous_response_id")] = request.previous_response_id.trimmed();
-    }
-
-    const QString effort = request.reasoning_effort.trimmed().toLower();
-    if (!effort.isEmpty() && effort != QLatin1String("none")) {
-        QJsonObject reasoning;
-        reasoning[QStringLiteral("effort")] = effort;
-        root[QStringLiteral("reasoning")] = reasoning;
-    }
-
-    QJsonArray tools;
-    if (request.enable_web_search) {
-        QJsonObject web_search;
-        web_search[QStringLiteral("type")] = QStringLiteral("web_search_preview");
-        tools.append(web_search);
-    }
-    if (request.enable_local_tools) {
-        for (const auto& tool : localToolDefinitions()) {
-            tools.append(tool);
-        }
-    }
-    if (!tools.isEmpty()) {
-        root[QStringLiteral("tools")] = tools;
-        root[QStringLiteral("parallel_tool_calls")] = false;
-    }
+    root[QStringLiteral("input")] = responseInputValue(request);
+    appendResponseOptionalFields(&root, request);
+    appendResponseTools(&root, request);
 
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
@@ -835,6 +914,40 @@ void OpenAIResponsesClient::handleModelsFinished(QNetworkReply* reply) {
 
     Q_EMIT modelsReady(models);
     Q_EMIT requestFinished();
+}
+
+void OpenAIResponsesClient::handleInputTokenCountFinished(QNetworkReply* reply,
+                                                          const QString& request_id) {
+    if (m_input_tokens_reply == reply) {
+        m_input_tokens_reply = nullptr;
+    }
+    reply->deleteLater();
+
+    const QByteArray body = reply->readAll();
+    if (reply->error() != QNetworkReply::NoError) {
+        const QString api_error = extractApiError(body);
+        Q_EMIT inputTokenCountFailed(request_id,
+                                     firstNonEmptyError(api_error, reply->errorString()));
+        return;
+    }
+
+    QString parse_error;
+    const qint64 tokens = parseInputTokenCountObject(body, &parse_error);
+    if (!parse_error.isEmpty()) {
+        Q_EMIT inputTokenCountFailed(request_id, parse_error);
+        return;
+    }
+    Q_EMIT inputTokenCountReady(request_id, tokens);
+}
+
+void OpenAIResponsesClient::cancelInputTokenCount() {
+    if (!m_input_tokens_reply) {
+        return;
+    }
+    auto* reply = m_input_tokens_reply;
+    m_input_tokens_reply = nullptr;
+    reply->abort();
+    reply->deleteLater();
 }
 
 }  // namespace sak::ai

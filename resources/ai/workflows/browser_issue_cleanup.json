@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "browser_issue_cleanup",
+  "title": "Browser Issue Cleanup",
+  "role": "Browser Support Technician",
+  "category": "Troubleshooting",
+  "description": "Diagnose browser slowness, popups, bad proxy settings, cache/profile symptoms, and extension risk before applying approved network/browser cleanup.",
+  "starter_prompt": "Troubleshoot browser issues and only apply approved cleanup or proxy reset actions.",
+  "required_inputs": [],
+  "required_software": [
+    {"id": "run_powershell", "kind": "sak_tool", "required": true, "install_policy": "built_in_only"}
+  ],
+  "instructions": ["instructions/evidence_policy.md", "instructions/security_cleanup_safety.md", "instructions/reporting_standard.md"],
+  "skills": ["skills/artifact-verification.md", "skills/customer-handoff-report.md", "skills/cleanup-after-job.md"],
+  "agents": [
+    {"id": "browser_agent", "model_policy": "fast_reasoning", "tool_policy": "read_only_pc", "token_budget": 6500},
+    {"id": "critic_agent", "model_policy": "fast_reasoning", "tool_policy": "no_local_execution", "token_budget": 3000},
+    {"id": "report_agent", "model_policy": "writer", "tool_policy": "no_local_execution", "token_budget": 5000}
+  ],
+  "phases": [
+    {"id": "plan", "type": "overseer", "prompt": "Scope the browser symptom, preserve browser profiles and saved passwords, and identify whether network/proxy cleanup is relevant.", "completion": "Browser cleanup scope is safe."},
+    {
+      "id": "collect_browser_evidence",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "diagnose",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; function Section($n){ Write-Output ('== ' + $n + ' ==') }; Section 'Installed browsers'; Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*,HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Chrome|Edge|Firefox|Brave|Opera' } | Select-Object DisplayName,DisplayVersion,Publisher,InstallLocation | Sort-Object DisplayName | Format-Table -AutoSize; Section 'Proxy'; netsh winhttp show proxy; Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue | Select-Object ProxyEnable,ProxyServer,AutoConfigURL | Format-List; Section 'Browser profile folders'; $paths=@(\"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\", \"$env:LOCALAPPDATA\\Microsoft\\Edge\\User Data\", \"$env:APPDATA\\Mozilla\\Firefox\\Profiles\"); foreach($p in $paths){ if(Test-Path -LiteralPath $p){ [pscustomobject]@{Path=$p;Exists=$true;Items=(Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue | Measure-Object).Count} } }",
+        "timeout_seconds": 120,
+        "requires_admin": false,
+        "max_output_bytes": 1048576
+      },
+      "prompt": "Collect read-only installed-browser, proxy, and profile-folder evidence. Do not modify browser profiles.",
+      "risk": "read_only",
+      "completion": "Browser and proxy evidence is captured."
+    },
+    {"id": "analyze_browser_evidence", "type": "delegate", "agent": "browser_agent", "prompt": "Analyze browser evidence for proxy hijack, profile bloat, extension/manual-review needs, outdated browsers, and next safe checks.", "expected_output": "browser_findings", "risk": "read_only", "completion": "Browser findings are prioritized."},
+    {"id": "approval_gate", "type": "overseer", "prompt": "Ask for explicit approval before resetting WinHTTP proxy or flushing browser-related network state. Offer restore point handling if registry/proxy changes are involved.", "completion": "Approval and restore point decision are recorded."},
+    {
+      "id": "approved_proxy_reset",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "repair",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; Write-Output 'Resetting WinHTTP proxy after approval.'; netsh winhttp reset proxy; Write-Output 'WinHTTP proxy reset complete. Browser profile data was not changed.'",
+        "timeout_seconds": 60,
+        "requires_admin": false,
+        "max_output_bytes": 262144
+      },
+      "prompt": "Run only if the user approved proxy cleanup and evidence supports it. Do not clear browser profiles, passwords, cookies, or history automatically.",
+      "risk": "system_change",
+      "completion": "Approved proxy cleanup is complete or failure is recorded."
+    },
+    {
+      "id": "verify_browser_state",
+      "type": "tool_action",
+      "tool": "run_powershell",
+      "operation": "verify",
+      "arguments": {
+        "command": "$ErrorActionPreference='Continue'; netsh winhttp show proxy; Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue | Select-Object ProxyEnable,ProxyServer,AutoConfigURL | Format-List",
+        "timeout_seconds": 60,
+        "requires_admin": false,
+        "max_output_bytes": 262144
+      },
+      "prompt": "Verify browser-related proxy state after any approved action.",
+      "risk": "read_only",
+      "completion": "Verification evidence is captured."
+    },
+    {"id": "critic", "type": "delegate", "agent": "critic_agent", "prompt": "Check that the workflow preserved browser profile data and that repair actions match evidence.", "expected_output": "quality_review", "risk": "none", "completion": "Quality review is complete."},
+    {"id": "report", "type": "delegate", "agent": "report_agent", "prompt": "Create a technician and customer-ready handoff report with evidence, findings, actions/tools used, verification status, artifacts/logs, cleanup status, residual risk, and prioritized follow-up next actions.", "expected_output": "report_outline", "risk": "none", "completion": "Report outline is ready."},
+    {"id": "cleanup", "type": "cleanup", "always_run": true, "prompt": "Keep logs and reports. Remove only workflow-created scratch files.", "completion": "Cleanup status is recorded."}
+  ],
+  "acceptance_criteria": [
+    "Read-only browser/proxy evidence is captured before repair.",
+    "Browser profile data is not modified automatically.",
+    "Proxy cleanup runs only after approval.",
+    "Verification captures post-action proxy state.",
+    "Final report includes evidence, actions, cleanup status, risks, and follow-up items."
+  ],
+  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+}

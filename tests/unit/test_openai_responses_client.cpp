@@ -9,6 +9,8 @@
 #include <QTimer>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 class OpenAIResponsesClientTests : public QObject {
     Q_OBJECT
 
@@ -17,15 +19,20 @@ private Q_SLOTS:
     void parseResponseObject_extractsFunctionCall();
     void parseResponseObject_extractsUrlCitations();
     void parseResponseObject_apiError_reportsMessage();
+    void parseInputTokenCountObject_extractsExactCount();
     void parseModelsList_extractsIds();
     void redactSecrets_redactsOpenAiAndBearerTokens();
     void redactSecrets_redactsGitHubAndCloudTokens();
     void redactSecrets_redactsAssignmentStyleSecrets();
     void buildPayload_chatModeOmitsLocalTools();
     void buildPayload_assistedOrUnattendedAdvertisesLocalTools();
+    void buildPayload_includesSafetyIdentifierWhenProvided();
+    void buildPayload_functionToolsUseStrictSchemas();
     void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
     void realModelSmokeTest_optIn();
+    void realInputTokenCountSmokeTest_optIn();
+    void realModelToolLoopSmokeTest_optIn();
 };
 
 namespace {
@@ -185,6 +192,148 @@ namespace {
     return result;
 }
 
+[[nodiscard]] qint64 runSmokeInputTokenCount(sak::ai::OpenAIResponsesClient& client,
+                                             const QString& api_key,
+                                             const QString& model,
+                                             QString* failure) {
+    qint64 input_tokens = -1;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() {
+        *failure = QStringLiteral("Timed out waiting for OpenAI input token count");
+        loop.quit();
+    });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::inputTokenCountReady,
+                     &loop,
+                     [&](const QString& request_id, qint64 tokens) {
+                         if (request_id == QLatin1String("live_input_token_smoke")) {
+                             input_tokens = tokens;
+                             loop.quit();
+                         }
+                     });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::inputTokenCountFailed,
+                     &loop,
+                     [&](const QString& request_id, const QString& error_message) {
+                         if (request_id == QLatin1String("live_input_token_smoke")) {
+                             *failure = sak::ai::CredentialStore::redactSecrets(error_message);
+                             loop.quit();
+                         }
+                     });
+
+    sak::ai::OpenAIResponseRequest request;
+    request.api_key = api_key;
+    request.model = model;
+    request.instructions = QStringLiteral(
+        "This is a S.A.K. Utility live input-token smoke test. Do not execute tools.");
+    request.input = QStringLiteral("Count this exact Responses API input token payload.");
+    request.safety_identifier = QStringLiteral("sak-live-input-token-smoke");
+    timeout.start(120'000);
+    client.countInputTokens(request, QStringLiteral("live_input_token_smoke"));
+    loop.exec();
+    return input_tokens;
+}
+
+[[nodiscard]] sak::ai::OpenAIResponseResult runSmokeToolCall(sak::ai::OpenAIResponsesClient& client,
+                                                             const QString& api_key,
+                                                             const QString& model,
+                                                             QString* failure) {
+    sak::ai::OpenAIResponseResult result;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() {
+        *failure = QStringLiteral("Timed out waiting for OpenAI smoke tool call");
+        loop.quit();
+    });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::responseReady,
+                     &loop,
+                     [&](const sak::ai::OpenAIResponseResult& response) {
+                         result = response;
+                         loop.quit();
+                     });
+    QObject::connect(&client,
+                     &sak::ai::OpenAIResponsesClient::requestFailed,
+                     &loop,
+                     [&](const QString& error_message) {
+                         *failure = sak::ai::CredentialStore::redactSecrets(error_message);
+                         loop.quit();
+                     });
+
+    sak::ai::OpenAIResponseRequest request;
+    request.api_key = api_key;
+    request.model = model;
+    request.instructions = QStringLiteral(
+        "This is a live tool-loop smoke test for S.A.K. Utility. You must call exactly one tool: "
+        "run_powershell with command \"Write-Output SAK_TOOL_LOOP_SMOKE_OUTPUT\", "
+        "timeout_seconds 5, and requires_admin false. Do not answer in text until tool output is "
+        "returned. After tool output is returned, reply exactly SAK_TOOL_LOOP_SMOKE_OK.");
+    request.input = QStringLiteral("Start the S.A.K. live tool-loop smoke.");
+    request.enable_local_tools = true;
+    request.safety_identifier = QStringLiteral("sak-live-tool-loop-smoke");
+    timeout.start(120'000);
+    client.createResponse(request);
+    loop.exec();
+    return result;
+}
+
+struct SmokeToolLoopContinuation {
+    sak::ai::OpenAIResponsesClient* client{nullptr};
+    QString api_key;
+    QString model;
+    QString previous_response_id;
+    QString call_id;
+    QString* failure{nullptr};
+};
+
+[[nodiscard]] sak::ai::OpenAIResponseResult continueSmokeToolLoop(
+    const SmokeToolLoopContinuation& continuation) {
+    sak::ai::OpenAIResponseResult result;
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() {
+        *continuation.failure =
+            QStringLiteral("Timed out waiting for OpenAI smoke tool-loop completion");
+        loop.quit();
+    });
+    QObject::connect(continuation.client,
+                     &sak::ai::OpenAIResponsesClient::responseReady,
+                     &loop,
+                     [&](const sak::ai::OpenAIResponseResult& response) {
+                         result = response;
+                         loop.quit();
+                     });
+    QObject::connect(continuation.client,
+                     &sak::ai::OpenAIResponsesClient::requestFailed,
+                     &loop,
+                     [&](const QString& error_message) {
+                         *continuation.failure =
+                             sak::ai::CredentialStore::redactSecrets(error_message);
+                         loop.quit();
+                     });
+
+    sak::ai::OpenAIResponseRequest request;
+    request.api_key = continuation.api_key;
+    request.model = continuation.model;
+    request.instructions = QStringLiteral(
+        "Complete the live S.A.K. tool-loop smoke. Reply exactly SAK_TOOL_LOOP_SMOKE_OK.");
+    request.previous_response_id = continuation.previous_response_id;
+    request.safety_identifier = QStringLiteral("sak-live-tool-loop-smoke");
+    sak::ai::OpenAIFunctionOutput output;
+    output.call_id = continuation.call_id;
+    output.output = QStringLiteral(
+        "{\"stdout\":\"SAK_TOOL_LOOP_SMOKE_OUTPUT\\n\",\"stderr\":\"\",\"exit_code\":0}");
+    request.function_outputs.append(output);
+    timeout.start(120'000);
+    continuation.client->createResponse(request);
+    loop.exec();
+    return result;
+}
+
 }  // namespace
 
 void OpenAIResponsesClientTests::parseResponseObject_extractsTextUsageAndId() {
@@ -298,6 +447,19 @@ void OpenAIResponsesClientTests::parseResponseObject_apiError_reportsMessage() {
     QVERIFY(result.output_text.isEmpty());
     QVERIFY(error.contains(QStringLiteral("Bad key")));
     QVERIFY(error.contains(QStringLiteral("invalid_request_error")));
+}
+
+void OpenAIResponsesClientTests::parseInputTokenCountObject_extractsExactCount() {
+    const QByteArray json = R"({
+      "object": "response.input_tokens",
+      "input_tokens": 12345
+    })";
+
+    QString error;
+    const qint64 tokens = sak::ai::OpenAIResponsesClient::parseInputTokenCountObject(json, &error);
+
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(tokens, qint64{12'345});
 }
 
 void OpenAIResponsesClientTests::parseModelsList_extractsIds() {
@@ -432,6 +594,43 @@ void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLoca
     QCOMPARE(root.value(QStringLiteral("parallel_tool_calls")).toBool(true), false);
 }
 
+void OpenAIResponsesClientTests::buildPayload_includesSafetyIdentifierWhenProvided() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("diagnose this PC");
+    request.safety_identifier = QStringLiteral("sak-session-0123456789abcdef");
+
+    const QJsonObject root = payloadObject(request);
+
+    QCOMPARE(root.value(QStringLiteral("safety_identifier")).toString(),
+             QStringLiteral("sak-session-0123456789abcdef"));
+}
+
+void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("check my hard drive");
+    request.enable_local_tools = true;
+
+    const QJsonObject root = payloadObject(request);
+    const QJsonArray tools = root.value(QStringLiteral("tools")).toArray();
+
+    int function_tool_count = 0;
+    for (const auto& value : tools) {
+        const QJsonObject tool = value.toObject();
+        if (tool.value(QStringLiteral("type")).toString() != QLatin1String("function")) {
+            continue;
+        }
+        ++function_tool_count;
+        QCOMPARE(tool.value(QStringLiteral("strict")).toBool(false), true);
+        const QJsonObject parameters = tool.value(QStringLiteral("parameters")).toObject();
+        QCOMPARE(parameters.value(QStringLiteral("type")).toString(), QStringLiteral("object"));
+        QCOMPARE(parameters.value(QStringLiteral("additionalProperties")).toBool(true), false);
+        QVERIFY(!parameters.value(QStringLiteral("required")).toArray().isEmpty());
+    }
+    QVERIFY(function_tool_count >= 8);
+}
+
 void OpenAIResponsesClientTests::buildPayload_providerGatewayArgumentsAreStrictSchemaSafe() {
     sak::ai::OpenAIResponseRequest request;
     request.model = QStringLiteral("gpt-5.5");
@@ -503,6 +702,99 @@ void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {
              qPrintable(QStringLiteral("Unexpected smoke response from %1: %2")
                             .arg(model, result.output_text.left(500))));
     QVERIFY2(result.usage.total_tokens > 0, "Live response did not include token usage.");
+}
+
+void OpenAIResponsesClientTests::realInputTokenCountSmokeTest_optIn() {
+    if (qEnvironmentVariable("SAK_AI_REAL_MODEL_TEST").trimmed() != QLatin1String("1") &&
+        qEnvironmentVariable("SAK_RUN_OPENAI_LIVE_TESTS").trimmed() != QLatin1String("1")) {
+        QSKIP("Set SAK_AI_REAL_MODEL_TEST=1 to run the live OpenAI input-token smoke test.");
+    }
+
+    QString api_key = firstEnvironmentValue(
+        {QStringLiteral("OPENAI_API_KEY"), QStringLiteral("SAK_OPENAI_API_KEY")});
+    if (api_key.isEmpty()) {
+        QString credential_error;
+        api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
+        if (api_key.isEmpty()) {
+            QSKIP("No OpenAI API key found in environment or encrypted app storage.");
+        }
+    }
+    QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
+             "OpenAI API key is present but not usable.");
+
+    sak::ai::OpenAIResponsesClient model_client;
+    QString failure;
+    const QStringList models = listModelsForSmoke(model_client, api_key, &failure);
+    QVERIFY2(failure.isEmpty(), qPrintable(failure));
+    const QString model = pickSmokeTestModel(models);
+    QVERIFY2(!model.isEmpty(), "No chat-capable GPT model found for smoke token-count test.");
+
+    sak::ai::OpenAIResponsesClient count_client;
+    failure.clear();
+    const qint64 input_tokens = runSmokeInputTokenCount(count_client, api_key, model, &failure);
+    QVERIFY2(failure.isEmpty(), qPrintable(failure));
+    QVERIFY2(
+        input_tokens > 0,
+        qPrintable(
+            QStringLiteral("Live input token count from %1 was %2").arg(model).arg(input_tokens)));
+}
+
+void OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn() {
+    if (qEnvironmentVariable("SAK_AI_REAL_MODEL_TEST").trimmed() != QLatin1String("1") &&
+        qEnvironmentVariable("SAK_RUN_OPENAI_LIVE_TESTS").trimmed() != QLatin1String("1")) {
+        QSKIP("Set SAK_AI_REAL_MODEL_TEST=1 to run the live OpenAI tool-loop smoke test.");
+    }
+
+    QString api_key = firstEnvironmentValue(
+        {QStringLiteral("OPENAI_API_KEY"), QStringLiteral("SAK_OPENAI_API_KEY")});
+    if (api_key.isEmpty()) {
+        QString credential_error;
+        api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
+        if (api_key.isEmpty()) {
+            QSKIP("No OpenAI API key found in environment or encrypted app storage.");
+        }
+    }
+    QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
+             "OpenAI API key is present but not usable.");
+
+    sak::ai::OpenAIResponsesClient model_client;
+    QString failure;
+    const QStringList models = listModelsForSmoke(model_client, api_key, &failure);
+    QVERIFY2(failure.isEmpty(), qPrintable(failure));
+    const QString model = pickSmokeTestModel(models);
+    QVERIFY2(!model.isEmpty(), "No chat-capable GPT model found for smoke tool-loop test.");
+
+    sak::ai::OpenAIResponsesClient first_turn_client;
+    const sak::ai::OpenAIResponseResult first =
+        runSmokeToolCall(first_turn_client, api_key, model, &failure);
+    QVERIFY2(failure.isEmpty(), qPrintable(failure));
+    QVERIFY2(!first.id.trimmed().isEmpty(), "Tool-loop first response did not include an id.");
+    QVERIFY2(!first.function_calls.isEmpty(), "Model did not request a local tool call.");
+
+    const auto tool_it = std::find_if(first.function_calls.cbegin(),
+                                      first.function_calls.cend(),
+                                      [](const sak::ai::OpenAIFunctionCall& call) {
+                                          return call.name == QLatin1String("run_powershell");
+                                      });
+    QVERIFY2(tool_it != first.function_calls.cend(),
+             qPrintable(QStringLiteral("Expected run_powershell tool call, got %1")
+                            .arg(first.function_calls.first().name)));
+    QVERIFY(tool_it->arguments_json.contains(QStringLiteral("SAK_TOOL_LOOP_SMOKE_OUTPUT")));
+
+    sak::ai::OpenAIResponsesClient second_turn_client;
+    failure.clear();
+    const sak::ai::OpenAIResponseResult second =
+        continueSmokeToolLoop({.client = &second_turn_client,
+                               .api_key = api_key,
+                               .model = model,
+                               .previous_response_id = first.id,
+                               .call_id = tool_it->call_id,
+                               .failure = &failure});
+    QVERIFY2(failure.isEmpty(), qPrintable(failure));
+    QVERIFY2(second.output_text.contains(QStringLiteral("SAK_TOOL_LOOP_SMOKE_OK")),
+             qPrintable(QStringLiteral("Unexpected smoke tool-loop response from %1: %2")
+                            .arg(model, second.output_text.left(500))));
+    QVERIFY2(second.usage.total_tokens > 0, "Live tool-loop response did not include token usage.");
 }
 
 QTEST_GUILESS_MAIN(OpenAIResponsesClientTests)

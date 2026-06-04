@@ -3,7 +3,9 @@
 
 #include "sak/ai_transcript_view.h"
 
+#include <QClipboard>
 #include <QEvent>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QPushButton>
 #include <QtTest/QtTest>
@@ -42,6 +44,7 @@ private Q_SLOTS:
     void appendMessageRendersRedactedText();
     void appendLoadedLineParsesRoleAndBody();
     void longMessageCanExpand();
+    void resultBubbleCopyCopiesOnlyThatMessage();
 };
 
 void AiTranscriptViewTests::appendMessageRendersRedactedText() {
@@ -85,6 +88,24 @@ void AiTranscriptViewTests::longMessageCanExpand() {
 
     QVERIFY(buttonWithText(view, QStringLiteral("Collapse")) != nullptr);
     QVERIFY(!hasLabelContaining(view, QStringLiteral("...[truncated]")));
+}
+
+void AiTranscriptViewTests::resultBubbleCopyCopiesOnlyThatMessage() {
+    sak::AiTranscriptView view;
+    view.resize(900, 700);
+    view.setTextRedactor(redactSecret);
+
+    QVERIFY(view.appendMessage(QStringLiteral("You"), QStringLiteral("User prompt"), true));
+    QVERIFY(view.appendMessage(
+        QStringLiteral("Assistant"), QStringLiteral("First SECRET result"), true));
+    QVERIFY(view.appendMessage(QStringLiteral("Assistant"), QStringLiteral("Second result"), true));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    const auto buttons = view.findChildren<QPushButton*>(QStringLiteral("aiTranscriptCopyButton"));
+    QCOMPARE(buttons.size(), 2);
+    buttons.first()->click();
+
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("First [REDACTED] result"));
 }
 
 QTEST_MAIN(AiTranscriptViewTests)

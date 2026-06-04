@@ -50,6 +50,7 @@ OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Reques
     req.instructions = request.system_instructions;
     req.input = combinedInput(request);
     req.reasoning_effort = request.reasoning_effort;
+    req.safety_identifier = request.safety_identifier;
     req.enable_web_search = enable_web_search;
     req.enable_local_tools = false;
     return req;

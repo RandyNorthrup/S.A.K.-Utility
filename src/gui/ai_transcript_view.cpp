@@ -8,7 +8,9 @@
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
+#include <QClipboard>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -31,6 +33,7 @@ constexpr int kFallbackViewportWidth = 900;
 constexpr int kBubbleWidthPercent = 76;
 constexpr double kTranscriptBodyFontPointSize = 9.5;
 constexpr int kActivityAnimationFrameCount = 4;
+constexpr int kCopyButtonSize = 26;
 
 QScrollArea* createTranscriptScrollArea(QWidget* parent, QWidget* content) {
     auto* scroll = new QScrollArea(parent);
@@ -355,12 +358,36 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
                                       sak::ui::kSpacingDefault);
     bubble_layout->setSpacing(sak::ui::kSpacingSmall);
 
+    auto* heading_row = new QHBoxLayout();
+    heading_row->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    heading_row->setSpacing(sak::ui::kSpacingSmall);
+
     auto* role_label = new QLabel(chatRoleHeading(message.role), bubble);
     role_label->setStyleSheet(sak::ui::transparentTextStyle(sak::ui::kFontSizeSmall,
                                                             sak::ui::kFontWeightBold,
                                                             user ? sak::ui::kColorBgUserBubbleText
                                                                  : sak::ui::kColorTextMuted));
-    bubble_layout->addWidget(role_label);
+    heading_row->addWidget(role_label, 1);
+    if (!user) {
+        auto* copy = new QPushButton(bubble);
+        copy->setObjectName(QStringLiteral("aiTranscriptCopyButton"));
+        copy->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-pm-copy.svg")));
+        copy->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
+        copy->setFixedSize(kCopyButtonSize, kCopyButtonSize);
+        copy->setFlat(true);
+        copy->setCursor(Qt::PointingHandCursor);
+        copy->setToolTip(QObject::tr("Copy this chat result"));
+        copy->setAccessibleName(QObject::tr("Copy chat result"));
+        copy->setAccessibleDescription(
+            QObject::tr("Copies only this chat result bubble to the clipboard"));
+        copy->setStyleSheet(sak::ui::transparentHoverButtonStyle(sak::ui::kColorBgPageHover));
+        connect(copy, &QPushButton::clicked, this, [this, message, copy]() {
+            copyMessageToClipboard(message, copy);
+        });
+        heading_row->addWidget(copy, 0, Qt::AlignRight | Qt::AlignTop);
+    }
+    bubble_layout->addLayout(heading_row);
 
     auto* body_label = new QLabel(body, bubble);
     body_label->setWordWrap(true);
@@ -425,6 +452,15 @@ QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {
     row_layout->addWidget(bubble);
     row_layout->addStretch();
     return row;
+}
+
+void AiTranscriptView::copyMessageToClipboard(const Message& message, QPushButton* button) {
+    if (auto* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(message.text);
+    }
+    if (button) {
+        button->setToolTip(QObject::tr("Copied"));
+    }
 }
 
 void AiTranscriptView::toggleMessageExpanded(const QString& message_id) {
