@@ -1,0 +1,47 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T18:42:26.2161977Z",
+    "gate_id":  "external.system-mbr2gpt",
+    "gate_name":  "System MBR-to-GPT conversion in disposable boot VM",
+    "status":  "Passed",
+    "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.system-mbr2gpt/report.json",
+    "safety_contract":  [
+                            "disposable_boot_vm_only",
+                            "pre_conversion_snapshot",
+                            "validate_before_convert",
+                            "post_conversion_boot_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "vm_id",
+                                   "before_partition_style",
+                                   "mbr2gpt_validate_exit_code",
+                                   "mbr2gpt_convert_exit_code",
+                                   "after_partition_style",
+                                   "boot_result"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "vm_id":  "SAK-PM-BIOS-MBR-Fixture-20260603-091138 converted disk; pre-conversion snapshot pre-system-mbr2gpt-20260603-1110 UUID=f5ea0620-64d3-4ced-826c-811091364e10; fresh EFI boot VM SAK-PM-MBR2GPT-EFI-Boot-20260603-1140",
+                     "before_partition_style":  "MBR",
+                     "mbr2gpt_validate_exit_code":  "0",
+                     "mbr2gpt_convert_exit_code":  "0",
+                     "after_partition_style":  "GPT",
+                     "boot_result":  "Passed: mbr2gpt converted the disposable boot/system disk from MBR to GPT and created an EFI System partition; after VirtualBox UEFI boot-file normalization with bcdboot/fallback BOOTX64.EFI, the same converted disk booted in fresh EFI VM SAK-PM-MBR2GPT-EFI-Boot-20260603-1140 to GuestAdditionsRunLevel=3, VideoMode=1024,768,32; poll_artifact=artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/fresh-efi-boot-poll.json"
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/20260603-111310/system-mbr2gpt-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/20260603-111310/system-mbr2gpt-commands.json",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/post-conversion-boot-20260603-111310/post-conversion-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-112832/offline-uefi-repair-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-112832/offline-uefi-repair-commands.json",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/target-showvminfo-before-boot.txt",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/fresh-efi-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/fresh-efi-boot-8.png",
+                      "artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/target-showvminfo-after-boot.txt"
+                  ],
+    "verification_summary":  "Disposable BIOS/MBR boot VM validated and converted its system disk with mbr2gpt exit code 0, the disk layout changed to GPT with an EFI System partition, and the converted disk booted under UEFI in a fresh disposable EFI VM to Guest Additions run level 3.",
+    "operator_notes":  "Original BIOS VM EFI variable store produced a 0x0 display after firmware flip; a fresh EFI VM was used to prove the converted disk bootability. Offline bcdboot/fallback repair was recorded because VirtualBox UEFI did not carry a firmware boot entry from the BIOS VM."
+}

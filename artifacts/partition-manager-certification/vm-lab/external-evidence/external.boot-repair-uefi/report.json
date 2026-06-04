@@ -1,0 +1,53 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T15:58:11.2769777Z",
+    "gate_id":  "external.boot-repair-uefi",
+    "gate_name":  "UEFI boot repair with intentionally broken BCD",
+    "status":  "Passed",
+    "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.boot-repair-uefi/report.json",
+    "safety_contract":  [
+                            "disposable_uefi_boot_vm_only",
+                            "pre_repair_snapshot",
+                            "commands_logged",
+                            "post_repair_boot_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "vm_id",
+                                   "boot_mode",
+                                   "broken_boot_symptom",
+                                   "repair_commands",
+                                   "post_repair_boot_result"
+                               ],
+    "required_evidence_values":  {
+                                     "boot_mode":  {
+                                                       "allowed_values":  [
+                                                                              "UEFI"
+                                                                          ]
+                                                   }
+                                 },
+    "evidence":  {
+                     "vm_id":  "SAK-PM-OS-Migration-ConfigClone-20260603-073901; pre-repair snapshot pre-uefi-bcd-break-20260603-0833 UUID=8f9871ac-77bb-46d2-af82-87e9e96be10a; offline repair runner SAK-PM-LAB",
+                     "boot_mode":  "UEFI",
+                     "broken_boot_symptom":  "BCD and fallback loader removed on disposable target disk 3; target boot screenshot shows BdsDxe failed to load Windows Boot Manager and no bootable option; GuestAdditionsRunLevel stayed 0 for six polls; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/broken-20260603-083630/broken-boot-poll.json",
+                     "repair_commands":  "Disk GUID reset to 969b2a76-8cfa-464f-9834-c22abacb396a; bcdboot D:\\Windows /s S: /f UEFI exited 0; fallback BOOTX64.EFI exists=True; commands_artifact=artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-085333/offline-uefi-repair-commands.json",
+                     "post_repair_boot_result":  "Passed: target VM reached VMState=running, GuestAdditionsRunLevel=3, VideoMode=1024,768,32\"@0,0 1 after repair; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/post-repair-20260603-085333/post-repair-boot-poll.json"
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/snapshot-list-20260603-085333.txt",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-break/20260603-083630/offline-uefi-break-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-break/20260603-083630/offline-uefi-break-actions.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/broken-20260603-083630/broken-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/broken-20260603-083630/broken-boot-6.png",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/broken-20260603-083630/target-showvminfo-after-broken-boot.txt",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-085333/offline-uefi-repair-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-085333/offline-uefi-repair-commands.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/post-repair-20260603-085333/post-repair-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/post-repair-20260603-085333/post-repair-boot-11.png",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/post-repair-20260603-085333/target-showvminfo-after-post-repair-boot.txt"
+                  ],
+    "verification_summary":  "Disposable UEFI target VM was snapshotted, intentionally broken by removing EFI BCD/fallback loader, failed boot with UEFI no-bootable-option symptom, repaired offline with bcdboot, and booted back to Guest Additions run level 3.",
+    "operator_notes":  "Only disposable cloned target disk was attached to the lab VM. Source lab system disk was never selected as repair target."
+}

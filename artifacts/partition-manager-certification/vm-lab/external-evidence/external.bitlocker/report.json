@@ -1,0 +1,39 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-02T16:29:09.0959896Z",
+    "gate_id":  "external.bitlocker",
+    "gate_name":  "BitLocker locked/unlocked data-volume blocker proof",
+    "status":  "Passed",
+    "manifest":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.bitlocker/report.json",
+    "safety_contract":  [
+                            "disposable_bitlocker_volume",
+                            "locked_mutation_blocked",
+                            "unlocked_state_revalidated",
+                            "dirty_bit_handling_recorded"
+                        ],
+    "required_evidence_keys":  [
+                                   "volume_id",
+                                   "locked_state_blocker",
+                                   "unlocked_state_behavior",
+                                   "dirty_bit_state",
+                                   "operation_attempted"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "volume_id":  "\\\\?\\Volume{77be9f05-981b-4c10-9205-e8e01b9dd0d5}\\",
+                     "locked_state_blocker":  "This drive is locked by BitLocker Drive Encryption. You must unlock this drive from Control Panel.\r\n",
+                     "unlocked_state_behavior":  "Unlocked write succeeded; SHA256=BA72DEA6AD6FEEFB0B050E339EB3E3D64D158B5AD3599AC7321E11792328D86D",
+                     "dirty_bit_state":  "Volume - D: is NOT Dirty",
+                     "operation_attempted":  "Write attempt while locked, then write/hash after recovery-password unlock"
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/external-bitlocker-guest-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-bitlocker-uac-prompt.png",
+                      "artifacts/partition-manager-certification/vm-lab/external-bitlocker-after.png"
+                  ],
+    "verification_summary":  "Windows 11 VirtualBox VM SAK-PM-Lab-Win11 used disposable 4 GB VBOX disk 2, enabled BitLocker used-space-only on data volume, confirmed locked write blocked, unlocked with generated recovery password, verified unlocked write hash and fsutil dirty clean, then cleared disk 2 back to RAW non-system state.",
+    "operator_notes":  "Recovery password redacted from host evidence; source volume was disposable and final disk state is RAW with zero partitions."
+}

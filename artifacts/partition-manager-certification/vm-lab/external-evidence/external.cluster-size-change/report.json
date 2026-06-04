@@ -1,0 +1,92 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T04:03:45.0579156Z",
+    "gate_id":  "external.cluster-size-change",
+    "gate_name":  "Existing-volume cluster-size change proof",
+    "status":  "Passed",
+    "manifest":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/report.json",
+    "safety_contract":  [
+                            "disposable_volume_only",
+                            "full_file_tree_copied",
+                            "metadata_preserved",
+                            "hash_acl_stream_validation_passed"
+                        ],
+    "required_evidence_keys":  [
+                                   "volume_id",
+                                   "before_allocation_unit_size",
+                                   "after_allocation_unit_size",
+                                   "file_count",
+                                   "acl_validation",
+                                   "alternate_stream_validation",
+                                   "file_hash_validation",
+                                   "rollback_or_backup_evidence"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "volume_id":  {
+                                       "before":  "\\\\?\\Volume{fa7885d1-be0e-4f95-88cc-5bab929dca90}\\",
+                                       "after":  "\\\\?\\Volume{fa7885d1-be0e-4f95-88cc-5bab929dca90}\\",
+                                       "drive_letter":  "T:"
+                                   },
+                     "before_allocation_unit_size":  4096,
+                     "after_allocation_unit_size":  16384,
+                     "file_count":  3,
+                     "acl_validation":  {
+                                            "matched":  true,
+                                            "expected_entry_count":  4,
+                                            "actual_entry_count":  4,
+                                            "errors":  [
+
+                                                       ],
+                                            "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-before.json",
+                                            "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-after.json"
+                                        },
+                     "alternate_stream_validation":  {
+                                                         "matched":  true,
+                                                         "expected_stream_count":  1,
+                                                         "actual_stream_count":  1,
+                                                         "errors":  [
+
+                                                                    ],
+                                                         "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-before.json",
+                                                         "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-after.json"
+                                                     },
+                     "file_hash_validation":  {
+                                                  "matched":  true,
+                                                  "expected_file_count":  3,
+                                                  "actual_file_count":  3,
+                                                  "errors":  [
+
+                                                             ],
+                                                  "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-before.json",
+                                                  "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-after.json"
+                                              },
+                     "rollback_or_backup_evidence":  {
+                                                         "backup_directory":  "artifacts/partition-manager-certification/vm-lab/cluster-size-stage-debug/run-20260602-210331/cluster-backup",
+                                                         "backup_command":  "robocopy fixture -\u003e backup /MIR /COPY:DATS /DCOPY:DAT /R:1 /W:1",
+                                                         "restore_command":  "robocopy backup -\u003e fixture /MIR /COPY:DATS /DCOPY:DAT /R:1 /W:1",
+                                                         "repair_scan":  {
+                                                                             "drive_letter":  "T",
+                                                                             "status":  "Completed",
+                                                                             "output":  "NoErrorsFound"
+                                                                         },
+                                                         "cleanup_mode":  "VHD dismounted and removed",
+                                                         "run_root":  "artifacts/partition-manager-certification/vm-lab/cluster-size-stage-debug/run-20260602-210331"
+                                                     }
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/external-cluster-size-guest-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-before.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-after.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-before.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-after.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-before.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-after.json",
+                      "artifacts/partition-manager-certification/vm-lab/cluster-size-stage-debug/run-20260602-210331/run_partition_manager_cluster_size_external_gate.log"
+                  ],
+    "verification_summary":  "Disposable VHD NTFS volume \\\\?\\Volume{fa7885d1-be0e-4f95-88cc-5bab929dca90}\\ changed allocation unit size from 4096 to 16384 bytes after full fixture backup, reformat, restore, SHA256, ACL, ADS, and Repair-Volume validation.",
+    "operator_notes":  "Run used only a generated disposable VHDX under the certification artifact root; no physical disk numbers were selected by operator input."
+}

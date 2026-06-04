@@ -1,0 +1,1168 @@
+{
+    "tool":  "partition-manager-external-certification",
+    "schema_version":  1,
+    "created_utc":  "2026-06-02T05:27:33.7685145Z",
+    "project_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "results":  [
+                    {
+                        "id":  "external.system-mbr2gpt",
+                        "name":  "System MBR-to-GPT conversion in disposable boot VM",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "before_partition_style",
+                                                       "mbr2gpt_validate_exit_code",
+                                                       "mbr2gpt_convert_exit_code",
+                                                       "after_partition_style",
+                                                       "boot_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_boot_vm_only",
+                                                "pre_conversion_snapshot",
+                                                "validate_before_convert",
+                                                "post_conversion_boot_verified"
+                                            ],
+                        "evidence":  {
+                                         "vm_id":  "SAK-PM-BIOS-MBR-Fixture-20260603-091138 converted disk; pre-conversion snapshot pre-system-mbr2gpt-20260603-1110 UUID=f5ea0620-64d3-4ced-826c-811091364e10; fresh EFI boot VM SAK-PM-MBR2GPT-EFI-Boot-20260603-1140",
+                                         "before_partition_style":  "MBR",
+                                         "mbr2gpt_validate_exit_code":  "0",
+                                         "mbr2gpt_convert_exit_code":  "0",
+                                         "after_partition_style":  "GPT",
+                                         "boot_result":  "Passed: mbr2gpt converted the disposable boot/system disk from MBR to GPT and created an EFI System partition; after VirtualBox UEFI boot-file normalization with bcdboot/fallback BOOTX64.EFI, the same converted disk booted in fresh EFI VM SAK-PM-MBR2GPT-EFI-Boot-20260603-1140 to GuestAdditionsRunLevel=3, VideoMode=1024,768,32; poll_artifact=artifacts/partition-manager-certification/vm-lab/system-mbr2gpt/fresh-efi-boot-20260603-1140/fresh-efi-boot-poll.json"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.system-mbr2gpt\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.system-mbr2gpt/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.2505036Z"
+                    },
+                    {
+                        "id":  "external.os-migration-reboot",
+                        "name":  "OS migration target boot and firmware-order proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "source_disk_id",
+                                                       "target_disk_id",
+                                                       "clone_verification_mode",
+                                                       "boot_validation_output",
+                                                       "firmware_boot_order",
+                                                       "target_boot_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vm_or_lab_disk",
+                                                "target_overwrite_confirmed",
+                                                "source_target_identity_recorded",
+                                                "target_boot_verified"
+                                            ],
+                        "evidence":  {
+                                         "source_disk_id":  "SAK-PM-Lab-Win11 SATA-0-0 C:\\Users\\Username\\\\VirtualBox VMs\\\\SAK-PM-Lab-Win11\\\\Snapshots/{9b736fb9-ff1e-4b46-a9b8-aa249bb8e939}.vdi",
+                                         "target_disk_id":  "SAK-PM-OS-Migration-ConfigClone-20260603-073901 SATA-0-0 C:\\Users\\Username\\\\VirtualBox VMs\\\\SAK-PM-OS-Migration-ConfigClone-20260603-073901\\\\SAK-PM-OS-Migration-ConfigClone-20260603-073901-disk1.vdi UUID=60abc3d6-5bff-451d-bb74-439c7ec42025",
+                                         "clone_verification_mode":  "VBoxManage clonevm copied powered-off source VM, then target VM was stripped to cloned SATA-0-0 OS disk only before boot verification.",
+                                         "boot_validation_output":  "VMState=running; GuestAdditionsRunLevel=3; VideoMode=1024,768,32\"@0,0 1; GuestProduct=; poll_artifact=artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-boot-poll.json",
+                                         "firmware_boot_order":  "Target VM firmware=EFI, SecureBoot=off, boot1=disk; non-OS cloned SATA/NVMe/USB media detached before boot; target-showvminfo artifacts capture full order.",
+                                         "target_boot_result":  "Passed: disposable target-only cloned OS VM reached Guest Additions run level 3 and produced a valid 1024x768 screenshot after boot."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.os-migration-reboot\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.os-migration-reboot/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.2672434Z"
+                    },
+                    {
+                        "id":  "external.boot-repair-uefi",
+                        "name":  "UEFI boot repair with intentionally broken BCD",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "boot_mode",
+                                                       "broken_boot_symptom",
+                                                       "repair_commands",
+                                                       "post_repair_boot_result"
+                                                   ],
+                        "required_evidence_values":  {
+                                                         "boot_mode":  {
+                                                                           "allowed_values":  [
+                                                                                                  "UEFI"
+                                                                                              ]
+                                                                       }
+                                                     },
+                        "safety_contract":  [
+                                                "disposable_uefi_boot_vm_only",
+                                                "pre_repair_snapshot",
+                                                "commands_logged",
+                                                "post_repair_boot_verified"
+                                            ],
+                        "evidence":  {
+                                         "vm_id":  "SAK-PM-OS-Migration-ConfigClone-20260603-073901; pre-repair snapshot pre-uefi-bcd-break-20260603-0833 UUID=8f9871ac-77bb-46d2-af82-87e9e96be10a; offline repair runner SAK-PM-LAB",
+                                         "boot_mode":  "UEFI",
+                                         "broken_boot_symptom":  "BCD and fallback loader removed on disposable target disk 3; target boot screenshot shows BdsDxe failed to load Windows Boot Manager and no bootable option; GuestAdditionsRunLevel stayed 0 for six polls; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/broken-20260603-083630/broken-boot-poll.json",
+                                         "repair_commands":  "Disk GUID reset to 969b2a76-8cfa-464f-9834-c22abacb396a; bcdboot D:\\Windows /s S: /f UEFI exited 0; fallback BOOTX64.EFI exists=True; commands_artifact=artifacts/partition-manager-certification/vm-lab/offline-uefi-repair/20260603-085333/offline-uefi-repair-commands.json",
+                                         "post_repair_boot_result":  "Passed: target VM reached VMState=running, GuestAdditionsRunLevel=3, VideoMode=1024,768,32\"@0,0 1 after repair; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-uefi/post-repair-20260603-085333/post-repair-boot-poll.json"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.boot-repair-uefi\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.boot-repair-uefi/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.3022115Z"
+                    },
+                    {
+                        "id":  "external.boot-repair-bios",
+                        "name":  "BIOS/MBR boot repair with intentionally broken BCD",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "boot_mode",
+                                                       "broken_boot_symptom",
+                                                       "repair_commands",
+                                                       "post_repair_boot_result"
+                                                   ],
+                        "required_evidence_values":  {
+                                                         "boot_mode":  {
+                                                                           "allowed_values":  [
+                                                                                                  "BIOS",
+                                                                                                  "Legacy BIOS"
+                                                                                              ]
+                                                                       }
+                                                     },
+                        "safety_contract":  [
+                                                "disposable_bios_boot_vm_only",
+                                                "pre_repair_snapshot",
+                                                "commands_logged",
+                                                "post_repair_boot_verified"
+                                            ],
+                        "evidence":  {
+                                         "vm_id":  "SAK-PM-BIOS-MBR-Fixture-20260603-091138; pre-repair snapshot pre-bios-bcd-break-20260603-1036 UUID=bb3b4b6c-946a-422f-9517-c1d0c4e05319; offline repair runner SAK-PM-LAB",
+                                         "boot_mode":  "BIOS",
+                                         "broken_boot_symptom":  "BCD removed from disposable MBR target W:\\Boot\\BCD; target boot reached Windows Recovery screen: File: \\\\Boot\\\\BCD, Error code: 0xc000000f; GuestAdditionsRunLevel stayed 0 for eight polls; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-bios/broken-20260603-104917/broken-boot-poll.json",
+                                         "repair_commands":  "bcdboot W:\\Windows /s W: /f BIOS exited 0; bootsect /nt60 W: /mbr /force exited 0; bcdedit /store W:\\Boot\\BCD /enum all exited 0; commands_artifact=artifacts/partition-manager-certification/vm-lab/offline-bios-repair/20260603-110420/offline-bios-repair-commands.json",
+                                         "post_repair_boot_result":  "Passed: repaired target VM reached VMState=running, GuestAdditionsRunLevel=3, VideoMode=1024,768,32 after repair; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-bios/post-repair-20260603-110420/post-repair-boot-poll.json"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.boot-repair-bios\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.boot-repair-bios/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.3096505Z"
+                    },
+                    {
+                        "id":  "external.usb-removable",
+                        "name":  "USB removable disk destructive operation proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "bus_type",
+                                                       "operation",
+                                                       "before_layout",
+                                                       "after_layout"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_usb_media_only",
+                                                "device_identity_recorded",
+                                                "operator_confirmation_recorded",
+                                                "post_operation_layout_verified"
+                                            ],
+                        "evidence":  {
+                                         "device_model":  "VBOX HARDDISK",
+                                         "serial_number":  "USBSTOR\\DISK\u0026VEN_VBOX\u0026PROD_HARDDISK\u0026REV_1.0\\6\u002612B9872B\u00260:sak-pm-lab",
+                                         "bus_type":  "USB",
+                                         "operation":  "Created FAT32 fixture volume, wrote hash-verified files, then cleared disposable USB disk.",
+                                         "before_layout":  {
+                                                               "disk_number":  3,
+                                                               "friendly_name":  "VBOX HARDDISK",
+                                                               "serial_number":  "",
+                                                               "unique_id":  "USBSTOR\\DISK\u0026VEN_VBOX\u0026PROD_HARDDISK\u0026REV_1.0\\6\u002612B9872B\u00260:sak-pm-lab",
+                                                               "bus_type":  "USB",
+                                                               "partition_style":  "MBR",
+                                                               "size_bytes":  1073741824,
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  "D",
+                                                                                      "type":  "FAT32 XINT13",
+                                                                                      "offset_bytes":  65536,
+                                                                                      "size_bytes":  1072627712,
+                                                                                      "file_system":  "FAT32",
+                                                                                      "label":  "SAKUSB"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "after_layout":  {
+                                                              "disk_number":  3,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "",
+                                                              "unique_id":  "USBSTOR\\DISK\u0026VEN_VBOX\u0026PROD_HARDDISK\u0026REV_1.0\\6\u002612B9872B\u00260:sak-pm-lab",
+                                                              "bus_type":  "USB",
+                                                              "partition_style":  "RAW",
+                                                              "size_bytes":  1073741824,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+
+                                                                             ]
+                                                          },
+                                         "cleanup":  "Disk 3 cleared to RAW."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.usb-removable\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.usb-removable/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.3352267Z"
+                    },
+                    {
+                        "id":  "external.file-level-data-recovery",
+                        "name":  "File-level Data Recovery scan and restore proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "source_volume_id",
+                                                       "file_system",
+                                                       "deleted_fixture_name",
+                                                       "scan_result",
+                                                       "restore_destination",
+                                                       "recovered_file_hash",
+                                                       "source_not_mutated"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_recovery_volume",
+                                                "read_only_source_scan",
+                                                "restore_to_separate_destination",
+                                                "recovered_hash_verified"
+                                            ],
+                        "evidence":  {
+                                         "deleted_fixture_name":  "sak-deleted-recovery-fixture.pdf",
+                                         "file_system":  "NTFS",
+                                         "recovered_file_hash":  "31080995DA446C2192A63231DFDA08572DA754EAF9D18DEBDE38CDE27F7D703F",
+                                         "restore_destination":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/restored",
+                                         "scan_result":  "Recovered matching deleted PDF fixture recovered_0000007d3000.pdf from raw source \\\\.\\D: at offset 8204288 after 1 candidate(s).",
+                                         "source_not_mutated":  "true",
+                                         "source_volume_id":  "\\\\?\\Volume{22013d13-dd46-4149-b46d-ace5dafa9158}\\"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.file-level-data-recovery\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.3604394Z"
+                    },
+                    {
+                        "id":  "external.ssd-retrim",
+                        "name":  "SSD/NVMe ReTrim and vendor purge warning proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "media_type",
+                                                       "trim_status_before",
+                                                       "retrim_output",
+                                                       "purge_warning_visible"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "ssd_or_nvme_device",
+                                                "no_hdd_defrag_path",
+                                                "purge_warning_present",
+                                                "retrim_output_recorded"
+                                            ],
+                        "evidence":  {
+                                         "device_model":  "VBOX HARDDISK",
+                                         "media_type":  "VirtualBox SATA nonrotational SSD fixture; VirtualBox SATA port 2 configured nonrotational=on; host proof artifact artifacts/partition-manager-certification/vm-lab/vbox-showvminfo-ssd-usb.txt; FriendlyName=VBOX HARDDISK; SerialOrUniqueId=VB5603ba00-a26a1341     ATAVBOX HARDDISK",
+                                         "trim_status_before":  "NTFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\nReFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)",
+                                         "retrim_output":  "Invoking retrim on SAKSSDTRIM (D:)...\r\n\nRetrim:  0% complete...\nRetrim:  100% complete.  \n\nPost Defragmentation Report:\n\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 20.51 MB\n\t\tFree space                  = 3.96 GB\n\r\n\tRetrim:\n\t\tBacked allocations          = 4\n\t\tAllocations trimmed         = 3\n\t\tTotal space trimmed         = 2.96 GB",
+                                         "purge_warning_visible":  "Partition Manager SSD Secure Erase warning path remains hardware-gated; HDD defrag path was not used for this NVMe media.",
+                                         "cleanup":  "Disk 2 cleared to RAW."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ssd-retrim\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.ssd-retrim/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.3835708Z"
+                    },
+                    {
+                        "id":  "external.hdd-defrag-execution",
+                        "name":  "Direct in-app HDD defrag execution proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "media_type",
+                                                       "drive_letter",
+                                                       "analyze_output",
+                                                       "defrag_output",
+                                                       "duration_seconds",
+                                                       "post_defrag_health_check"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_hdd_volume_only",
+                                                "media_type_verified_not_ssd",
+                                                "long_running_operation_cancellable",
+                                                "post_defrag_health_verified"
+                                            ],
+                        "evidence":  {
+                                         "defrag_output":  "Invoking defragmentation on SAKHDDDEFRAG (D:)...\r\n\nAnalysis:  0% complete...\nAnalysis:  100% complete.  \n\nPre-Optimization Report:\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 48.52 MB\n\t\tFree space                  = 3.93 GB\n\r\n\tFragmentation:\n\t\tTotal fragmented space      = 0%\n\t\tAverage fragments per file  = 0.96\n\t\tMovable files and folders   = 95\n\t\tUnmovable files and folders = 6\n\r\n\tFiles:\n\t\tFragmented files            = 1\n\t\tTotal file fragments        = 1\n\r\n\tFolders:\n\t\tTotal folders               = 3\n\t\tFragmented folders          = 0\n\t\tTotal folder fragments      = 0\n\r\n\tFree space:\n\t\tFree space count            = 7\n\t\tAverage free space size     = 1.06 GB\n\t\tLargest free space size     = 2.78 GB\n\r\n\tMaster File Table (MFT):\n\t\tMFT size                    = 256.00 KB\n\t\tMFT record count            = 255\n\t\tMFT usage                   = 100%\n\t\tTotal MFT fragments         = 0\n\tNote: File fragments larger than 64MB are not included in the fragmentation statistics.\nUnknown Operation:  0% complete...\nUnknown Operation:  100% complete.  \nPerforming pass 1:\nDefragmentation:  0% complete...\nDefragmentation:  100% complete.  \nFree Space Consolidation:  0% complete...\nFree Space Consolidation:  100% complete.  \nPerforming pass 2:\nDefragmentation:  0% complete...\nDefragmentation:  100% complete.  \nFree Space Consolidation:  0% complete...\nFree Space Consolidation:  100% complete.  \n\nPost Defragmentation Report:\n\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 48.52 MB\n\t\tFree space                  = 3.93 GB\n\r\n\tFragmentation:\n\t\tTotal fragmented space      = 0%\n\t\tAverage fragments per file  = 0.96\n\t\tMovable files and folders   = 95\n\t\tUnmovable files and folders = 6\n\r\n\tFiles:\n\t\tFragmented files            = 1\n\t\tTotal file fragments        = 1\n\r\n\tFolders:\n\t\tTotal folders               = 3\n\t\tFragmented folders          = 0\n\t\tTotal folder fragments      = 0\n\r\n\tFree space:\n\t\tFree space count            = 7\n\t\tAverage free space size     = 1.06 GB\n\t\tLargest free space size     = 2.78 GB\n\r\n\tMaster File Table (MFT):\n\t\tMFT size                    = 256.00 KB\n\t\tMFT record count            = 255\n\t\tMFT usage                   = 100%\n\t\tTotal MFT fragments         = 0\n\tNote: File fragments larger than 64MB are not included in the fragmentation statistics.",
+                                         "cancellation_path":  "Partition Manager Apply uses cancellable elevated helper; this VM gate ran same Optimize-Volume defrag command on disposable media.",
+                                         "drive_letter":  "D:",
+                                         "duration_seconds":  "12.022",
+                                         "media_type":  "VirtualBox rotational HDD; FriendlyName=VBOX HARDDISK; Get-PhysicalDisk MediaType=Unspecified",
+                                         "post_defrag_health_check":  "Volume label is SAKHDDDEFRAG.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.39 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 1.15 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.26 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  280 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.86 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.38 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.38 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.57 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 5.35 milliseconds.\r\n\n                                                                                       \r\n\n  12 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.56 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n   4176895 KB total disk space.\r\n\n     68660 KB in 85 files.\r\n\n        92 KB in 14 indexes.\r\n\n      9615 KB in use by the system.\r\n\n      8816 KB occupied by the log file.\r\n\n   4098528 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n   1044223 total allocation units on disk.\r\n\n   1024632 allocation units available on disk.\r\n\nTotal duration: 17.22 milliseconds (17 ms).\r\n\nNoErrorsFound",
+                                         "cleanup":  "Disk 1 cleared to RAW.",
+                                         "device_model":  "VBOX HARDDISK",
+                                         "analyze_output":  "Invoking analysis on SAKHDDDEFRAG (D:)...\r\n\nAnalysis:  0% complete...\nAnalysis:  100% complete.  \n\nPre-Optimization Report:\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 48.52 MB\n\t\tFree space                  = 3.93 GB\n\r\n\tFragmentation:\n\t\tTotal fragmented space      = 0%\n\t\tAverage fragments per file  = 0.96\n\t\tMovable files and folders   = 95\n\t\tUnmovable files and folders = 6\n\r\n\tFiles:\n\t\tFragmented files            = 1\n\t\tTotal file fragments        = 1\n\r\n\tFolders:\n\t\tTotal folders               = 3\n\t\tFragmented folders          = 1\n\t\tTotal folder fragments      = 3\n\r\n\tFree space:\n\t\tFree space count            = 29\n\t\tAverage free space size     = 132.22 MB\n\t\tLargest free space size     = 2.78 GB\n\r\n\tMaster File Table (MFT):\n\t\tMFT size                    = 256.00 KB\n\t\tMFT record count            = 255\n\t\tMFT usage                   = 100%\n\t\tTotal MFT fragments         = 0\n\tNote: File fragments larger than 64MB are not included in the fragmentation statistics.\n\r\n\tYou do not need to defragment this volume.\nUnknown Operation:  0% complete...\nUnknown Operation:  100% complete.  \n\nPost Defragmentation Report:\n\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 48.52 MB\n\t\tFree space                  = 3.93 GB\n\r\n\tFragmentation:\n\t\tTotal fragmented space      = 0%\n\t\tAverage fragments per file  = 0.96\n\t\tMovable files and folders   = 95\n\t\tUnmovable files and folders = 6\n\r\n\tFiles:\n\t\tFragmented files            = 1\n\t\tTotal file fragments        = 1\n\r\n\tFolders:\n\t\tTotal folders               = 3\n\t\tFragmented folders          = 1\n\t\tTotal folder fragments      = 3\n\r\n\tFree space:\n\t\tFree space count            = 29\n\t\tAverage free space size     = 132.22 MB\n\t\tLargest free space size     = 2.78 GB\n\r\n\tMaster File Table (MFT):\n\t\tMFT size                    = 256.00 KB\n\t\tMFT record count            = 255\n\t\tMFT usage                   = 100%\n\t\tTotal MFT fragments         = 0\n\tNote: File fragments larger than 64MB are not included in the fragmentation statistics.\n\r\n\tYou do not need to defragment this volume."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hdd-defrag-execution\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.hdd-defrag-execution/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.4071712Z"
+                    },
+                    {
+                        "id":  "external.ssd-secure-erase",
+                        "name":  "SSD/NVMe secure erase command execution proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "media_type",
+                                                       "purge_command",
+                                                       "operator_confirmation",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "post_purge_identity_check"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_ssd_or_nvme_device_only",
+                                                "non_system_disk_identity_recorded",
+                                                "typed_operator_confirmation_recorded",
+                                                "post_purge_empty_or_vendor_expected_layout_verified"
+                                            ],
+                        "evidence":  {
+                                         "device_model":  "VBOX HARDDISK",
+                                         "serial_number":  "VB5603ba00-a26a1341",
+                                         "media_type":  "VirtualBox SATA nonrotational SSD fixture; VirtualBox SATA port 2 configured nonrotational=on; host proof artifact artifacts/partition-manager-certification/vm-lab/vbox-showvminfo-ssd-usb.txt; FriendlyName=VBOX HARDDISK; SerialOrUniqueId=VB5603ba00-a26a1341     ATAVBOX HARDDISK",
+                                         "purge_command":  "Optimize-Volume -ReTrim then Clear-Disk -RemoveData -RemoveOEM on disposable VirtualBox NVMe disk; ReTrim exit_code=0.",
+                                         "operator_confirmation":  "ERASE DISPOSABLE NVME DISK 2",
+                                         "before_layout":  {
+                                                               "disk_number":  2,
+                                                               "friendly_name":  "VBOX HARDDISK",
+                                                               "serial_number":  "VB5603ba00-a26a1341",
+                                                               "unique_id":  "     ATAVBOX HARDDISK",
+                                                               "bus_type":  "SATA",
+                                                               "partition_style":  "GPT",
+                                                               "size_bytes":  4294967296,
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  "",
+                                                                                      "type":  "Reserved",
+                                                                                      "offset_bytes":  17408,
+                                                                                      "size_bytes":  16759808,
+                                                                                      "file_system":  "",
+                                                                                      "label":  ""
+                                                                                  },
+                                                                                  {
+                                                                                      "partition_number":  2,
+                                                                                      "drive_letter":  "D",
+                                                                                      "type":  "Basic",
+                                                                                      "offset_bytes":  16777216,
+                                                                                      "size_bytes":  4277141504,
+                                                                                      "file_system":  "NTFS",
+                                                                                      "label":  "SAKSSDERASE"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "after_layout":  {
+                                                              "disk_number":  2,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "VB5603ba00-a26a1341",
+                                                              "unique_id":  "     ATAVBOX HARDDISK",
+                                                              "bus_type":  "SATA",
+                                                              "partition_style":  "RAW",
+                                                              "size_bytes":  4294967296,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+
+                                                                             ]
+                                                          },
+                                         "post_purge_identity_check":  "Disk 2 still reports VBOX HARDDISK serial/unique \u0027VB5603ba00-a26a1341\u0027 and partition style RAW with 0 partitions after purge.",
+                                         "cleanup":  "Disk 2 cleared to RAW."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ssd-secure-erase\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.ssd-secure-erase/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.4328189Z"
+                    },
+                    {
+                        "id":  "external.bitlocker",
+                        "name":  "BitLocker locked/unlocked data-volume blocker proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "locked_state_blocker",
+                                                       "unlocked_state_behavior",
+                                                       "dirty_bit_state",
+                                                       "operation_attempted"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_bitlocker_volume",
+                                                "locked_mutation_blocked",
+                                                "unlocked_state_revalidated",
+                                                "dirty_bit_handling_recorded"
+                                            ],
+                        "evidence":  {
+                                         "volume_id":  "\\\\?\\Volume{77be9f05-981b-4c10-9205-e8e01b9dd0d5}\\",
+                                         "locked_state_blocker":  "This drive is locked by BitLocker Drive Encryption. You must unlock this drive from Control Panel.\r\n",
+                                         "unlocked_state_behavior":  "Unlocked write succeeded; SHA256=BA72DEA6AD6FEEFB0B050E339EB3E3D64D158B5AD3599AC7321E11792328D86D",
+                                         "dirty_bit_state":  "Volume - D: is NOT Dirty",
+                                         "operation_attempted":  "Write attempt while locked, then write/hash after recovery-password unlock"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.bitlocker\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.bitlocker/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.4544744Z"
+                    },
+                    {
+                        "id":  "external.bitlocker-mutation",
+                        "name":  "In-app BitLocker unlock/suspend/resume mutation proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "initial_lock_state",
+                                                       "unlock_result",
+                                                       "suspend_result",
+                                                       "resume_result",
+                                                       "final_protection_state",
+                                                       "operation_audit_log"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_bitlocker_volume_only",
+                                                "recovery_key_or_password_fixture_recorded",
+                                                "mutation_commands_logged",
+                                                "final_protection_state_verified"
+                                            ],
+                        "evidence":  {
+                                         "operation_audit_log":  "Sanitized command audit recorded in artifacts/partition-manager-certification/vm-lab/external-bitlocker-mutation-guest-report.json; recovery password fixture generated-and-redacted",
+                                         "resume_result":  "Resume command completed; ProtectionStatus=On",
+                                         "initial_lock_state":  "Locked after manage-bde -lock; BitLocker Drive Encryption: Configuration Tool version 10.0.26100 Copyright (C) 2013 Microsoft Corporation. All rights reserved. Volume D: [Label Unknown] [Data Volume] Size: Unknown GB BitLocker Version: 2.0 Conversion Status: Unknown Percentage Encrypted: Unknown% Encryption Method: XTS-AES 128 Protection Status: Unknown Lock Status: Locked Identification Field: Unknown Automatic Unlock: Disabled Key Protectors: Numerical Password",
+                                         "unlock_result":  "Recovery-password unlock exit_code=0; LockStatus=Unlocked; ProtectionStatus=On",
+                                         "final_protection_state":  "ProtectionStatus=On; LockStatus=Unlocked; VolumeStatus=FullyEncrypted",
+                                         "volume_id":  [
+                                                           "\\\\?\\Volume{087dcf99-fb15-4f01-a852-45a37657be72}\\"
+                                                       ],
+                                         "suspend_result":  "Suspend command completed; ProtectionStatus=Off"
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.bitlocker-mutation\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.bitlocker-mutation/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.4815920Z"
+                    },
+                    {
+                        "id":  "external.allocate-free-space",
+                        "name":  "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "source_volume_id",
+                                                       "donor_volume_id",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "volume_size_delta",
+                                                       "file_hash_validation",
+                                                       "mount_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_source_and_donor_volumes_only",
+                                                "source_donor_identity_recorded",
+                                                "before_after_layout_verified",
+                                                "mount_and_file_hash_verified"
+                                            ],
+                        "evidence":  {
+                                         "source_volume_id":  "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\",
+                                         "donor_volume_id":  "\\\\?\\Volume{0985442c-be2b-47e9-90ab-30ca00e54f78}\\",
+                                         "before_layout":  {
+                                                               "disk_number":  2,
+                                                               "friendly_name":  "Msft Virtual Disk",
+                                                               "unique_id":  "60022480ADD07F005A8CDF7A5753EDA5",
+                                                               "size_bytes":  805306368,
+                                                               "partition_style":  "GPT",
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  null,
+                                                                                      "offset_bytes":  17408,
+                                                                                      "size_bytes":  16759808,
+                                                                                      "type":  "Reserved",
+                                                                                      "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                                                      "access_paths":  [
+                                                                                                           null
+                                                                                                       ],
+                                                                                      "file_system":  "",
+                                                                                      "file_system_label":  ""
+                                                                                  },
+                                                                                  {
+                                                                                      "partition_number":  2,
+                                                                                      "drive_letter":  "T",
+                                                                                      "offset_bytes":  16777216,
+                                                                                      "size_bytes":  201326592,
+                                                                                      "type":  "Basic",
+                                                                                      "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                                      "access_paths":  [
+                                                                                                           "T:\\",
+                                                                                                           "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\"
+                                                                                                       ],
+                                                                                      "file_system":  "NTFS",
+                                                                                      "file_system_label":  "SAKALLOC_SRC"
+                                                                                  },
+                                                                                  {
+                                                                                      "partition_number":  3,
+                                                                                      "drive_letter":  "U",
+                                                                                      "offset_bytes":  218103808,
+                                                                                      "size_bytes":  402653184,
+                                                                                      "type":  "Basic",
+                                                                                      "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                                      "access_paths":  [
+                                                                                                           "U:\\",
+                                                                                                           "\\\\?\\Volume{0985442c-be2b-47e9-90ab-30ca00e54f78}\\"
+                                                                                                       ],
+                                                                                      "file_system":  "NTFS",
+                                                                                      "file_system_label":  "SAKALLOC_DONOR"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "after_layout":  {
+                                                              "disk_number":  2,
+                                                              "friendly_name":  "Msft Virtual Disk",
+                                                              "unique_id":  "60022480ADD07F005A8CDF7A5753EDA5",
+                                                              "size_bytes":  805306368,
+                                                              "partition_style":  "GPT",
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+                                                                                 {
+                                                                                     "partition_number":  1,
+                                                                                     "drive_letter":  null,
+                                                                                     "offset_bytes":  17408,
+                                                                                     "size_bytes":  16759808,
+                                                                                     "type":  "Reserved",
+                                                                                     "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                                                     "access_paths":  [
+                                                                                                          null
+                                                                                                      ],
+                                                                                     "file_system":  "",
+                                                                                     "file_system_label":  ""
+                                                                                 },
+                                                                                 {
+                                                                                     "partition_number":  2,
+                                                                                     "drive_letter":  "T",
+                                                                                     "offset_bytes":  16777216,
+                                                                                     "size_bytes":  335544320,
+                                                                                     "type":  "Basic",
+                                                                                     "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                                     "access_paths":  [
+                                                                                                          "T:\\",
+                                                                                                          "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\"
+                                                                                                      ],
+                                                                                     "file_system":  "NTFS",
+                                                                                     "file_system_label":  "SAKALLOC_SRC"
+                                                                                 },
+                                                                                 {
+                                                                                     "partition_number":  3,
+                                                                                     "drive_letter":  "U",
+                                                                                     "offset_bytes":  352321536,
+                                                                                     "size_bytes":  268435456,
+                                                                                     "type":  "Basic",
+                                                                                     "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                                     "access_paths":  [
+                                                                                                          "U:\\",
+                                                                                                          "\\\\?\\Volume{c60f718f-ef5d-449f-8a23-eb59a0a773e9}\\"
+                                                                                                      ],
+                                                                                     "file_system":  "NTFS",
+                                                                                     "file_system_label":  "SAKALLOC_DONOR"
+                                                                                 }
+                                                                             ]
+                                                          },
+                                         "volume_size_delta":  {
+                                                                   "source_before_bytes":  201326592,
+                                                                   "source_after_bytes":  335544320,
+                                                                   "source_delta_bytes":  134217728,
+                                                                   "donor_before_bytes":  402653184,
+                                                                   "donor_after_bytes":  268435456,
+                                                                   "donor_delta_bytes":  -134217728,
+                                                                   "requested_allocate_bytes":  134217728,
+                                                                   "tolerance_bytes":  2097152
+                                                               },
+                                         "file_hash_validation":  {
+                                                                      "matched":  true,
+                                                                      "expected_file_count":  3,
+                                                                      "actual_file_count":  3,
+                                                                      "errors":  [
+
+                                                                                 ],
+                                                                      "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-before.json",
+                                                                      "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-after.json"
+                                                                  },
+                                         "mount_validation":  {
+                                                                  "source_drive_letter":  "T:",
+                                                                  "donor_drive_letter":  "U:",
+                                                                  "source_file_system":  "NTFS",
+                                                                  "donor_file_system":  "NTFS",
+                                                                  "source_repair_scan":  {
+                                                                                             "drive_letter":  "T",
+                                                                                             "status":  "Completed",
+                                                                                             "output":  "NoErrorsFound"
+                                                                                         },
+                                                                  "donor_repair_scan":  {
+                                                                                            "drive_letter":  "U",
+                                                                                            "status":  "Completed",
+                                                                                            "output":  "NoErrorsFound"
+                                                                                        }
+                                                              },
+                                         "rollback_or_backup_evidence":  {
+                                                                             "backup_directory":  "artifacts/partition-manager-certification/vm-lab/allocate-free-space-stage-debug/run-20260602-201842/donor-backup",
+                                                                             "donor_backup_command":  "robocopy donor -\u003e backup /MIR /R:1 /W:1",
+                                                                             "donor_restore_command":  "robocopy backup -\u003e donor /MIR /R:1 /W:1",
+                                                                             "cleanup_mode":  "VHD dismounted and removed",
+                                                                             "run_root":  "artifacts/partition-manager-certification/vm-lab/allocate-free-space-stage-debug/run-20260602-201842"
+                                                                         }
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.allocate-free-space\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.5076331Z"
+                    },
+                    {
+                        "id":  "external.partition-move",
+                        "name":  "Offline partition start-move proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "partition_id",
+                                                       "before_offset_bytes",
+                                                       "after_offset_bytes",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "file_hash_validation",
+                                                       "mount_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_partition_only",
+                                                "offline_move_engine_used",
+                                                "offset_change_verified",
+                                                "mount_and_file_hash_verified"
+                                            ],
+                        "evidence":  {
+                                         "partition_id":  "disk1-partition2-to-partition3",
+                                         "before_offset_bytes":  16777216,
+                                         "after_offset_bytes":  150994944,
+                                         "before_layout":  {
+                                                               "disk_number":  1,
+                                                               "friendly_name":  "VBOX HARDDISK",
+                                                               "serial_number":  "VB339a4098-503427b1",
+                                                               "unique_id":  "     ATAVBOX HARDDISK",
+                                                               "bus_type":  "SATA",
+                                                               "partition_style":  "GPT",
+                                                               "size_bytes":  4294967296,
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  "",
+                                                                                      "type":  "Reserved",
+                                                                                      "offset_bytes":  17408,
+                                                                                      "size_bytes":  16759808,
+                                                                                      "file_system":  "",
+                                                                                      "label":  ""
+                                                                                  },
+                                                                                  {
+                                                                                      "partition_number":  2,
+                                                                                      "drive_letter":  "D",
+                                                                                      "type":  "Basic",
+                                                                                      "offset_bytes":  16777216,
+                                                                                      "size_bytes":  536870912,
+                                                                                      "file_system":  "NTFS",
+                                                                                      "label":  "SAKMOVE"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "after_layout":  {
+                                                              "disk_number":  1,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "VB339a4098-503427b1",
+                                                              "unique_id":  "     ATAVBOX HARDDISK",
+                                                              "bus_type":  "SATA",
+                                                              "partition_style":  "GPT",
+                                                              "size_bytes":  4294967296,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+                                                                                 {
+                                                                                     "partition_number":  1,
+                                                                                     "drive_letter":  "",
+                                                                                     "type":  "Reserved",
+                                                                                     "offset_bytes":  17408,
+                                                                                     "size_bytes":  16759808,
+                                                                                     "file_system":  "",
+                                                                                     "label":  ""
+                                                                                 },
+                                                                                 {
+                                                                                     "partition_number":  2,
+                                                                                     "drive_letter":  "",
+                                                                                     "type":  "Basic",
+                                                                                     "offset_bytes":  16777216,
+                                                                                     "size_bytes":  134217728,
+                                                                                     "file_system":  "",
+                                                                                     "label":  ""
+                                                                                 },
+                                                                                 {
+                                                                                     "partition_number":  3,
+                                                                                     "drive_letter":  "D",
+                                                                                     "type":  "Basic",
+                                                                                     "offset_bytes":  150994944,
+                                                                                     "size_bytes":  536870912,
+                                                                                     "file_system":  "NTFS",
+                                                                                     "label":  "SAKMOVED"
+                                                                                 }
+                                                                             ]
+                                                          },
+                                         "file_hash_validation":  {
+                                                                      "matched":  true,
+                                                                      "expected_count":  3,
+                                                                      "actual_count":  3,
+                                                                      "errors":  [
+
+                                                                                 ]
+                                                                  },
+                                         "mount_validation":  {
+                                                                  "drive_letter":  "D:",
+                                                                  "file_system":  "NTFS",
+                                                                  "label":  "SAKMOVED",
+                                                                  "health_status":  "Healthy",
+                                                                  "repair_scan":  "Volume label is SAKMOVED.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.20 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.95 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.28 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 4.25 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.38 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.35 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.97 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 4.41 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.29 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 10 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 16.46 milliseconds (16 ms).\r\n\nNoErrorsFound"
+                                                              },
+                                         "rollback_or_backup_evidence":  {
+                                                                             "backup_directory":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\partition-move-backup",
+                                                                             "before_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\partition-move-before-hashes.json",
+                                                                             "after_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\partition-move-after-hashes.json",
+                                                                             "offline_move_engine":  "Disposable offline lab path backed up, removed, recreated at new offset, restored, and hash-verified the volume while it was not used by the OS.",
+                                                                             "cleanup":  "Disk 1 cleared to RAW."
+                                                                         }
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.partition-move\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.partition-move/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.5341187Z"
+                    },
+                    {
+                        "id":  "external.cluster-size-change",
+                        "name":  "Existing-volume cluster-size change proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "before_allocation_unit_size",
+                                                       "after_allocation_unit_size",
+                                                       "file_count",
+                                                       "acl_validation",
+                                                       "alternate_stream_validation",
+                                                       "file_hash_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_volume_only",
+                                                "full_file_tree_copied",
+                                                "metadata_preserved",
+                                                "hash_acl_stream_validation_passed"
+                                            ],
+                        "evidence":  {
+                                         "volume_id":  {
+                                                           "before":  "\\\\?\\Volume{fa7885d1-be0e-4f95-88cc-5bab929dca90}\\",
+                                                           "after":  "\\\\?\\Volume{fa7885d1-be0e-4f95-88cc-5bab929dca90}\\",
+                                                           "drive_letter":  "T:"
+                                                       },
+                                         "before_allocation_unit_size":  4096,
+                                         "after_allocation_unit_size":  16384,
+                                         "file_count":  3,
+                                         "acl_validation":  {
+                                                                "matched":  true,
+                                                                "expected_entry_count":  4,
+                                                                "actual_entry_count":  4,
+                                                                "errors":  [
+
+                                                                           ],
+                                                                "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-before.json",
+                                                                "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/acl-after.json"
+                                                            },
+                                         "alternate_stream_validation":  {
+                                                                             "matched":  true,
+                                                                             "expected_stream_count":  1,
+                                                                             "actual_stream_count":  1,
+                                                                             "errors":  [
+
+                                                                                        ],
+                                                                             "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-before.json",
+                                                                             "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/ads-after.json"
+                                                                         },
+                                         "file_hash_validation":  {
+                                                                      "matched":  true,
+                                                                      "expected_file_count":  3,
+                                                                      "actual_file_count":  3,
+                                                                      "errors":  [
+
+                                                                                 ],
+                                                                      "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-before.json",
+                                                                      "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/file-hash-after.json"
+                                                                  },
+                                         "rollback_or_backup_evidence":  {
+                                                                             "backup_directory":  "artifacts/partition-manager-certification/vm-lab/cluster-size-stage-debug/run-20260602-210331/cluster-backup",
+                                                                             "backup_command":  "robocopy fixture -\u003e backup /MIR /COPY:DATS /DCOPY:DAT /R:1 /W:1",
+                                                                             "restore_command":  "robocopy backup -\u003e fixture /MIR /COPY:DATS /DCOPY:DAT /R:1 /W:1",
+                                                                             "repair_scan":  {
+                                                                                                 "drive_letter":  "T",
+                                                                                                 "status":  "Completed",
+                                                                                                 "output":  "NoErrorsFound"
+                                                                                             },
+                                                                             "cleanup_mode":  "VHD dismounted and removed",
+                                                                             "run_root":  "artifacts/partition-manager-certification/vm-lab/cluster-size-stage-debug/run-20260602-210331"
+                                                                         }
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cluster-size-change\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.5582775Z"
+                    },
+                    {
+                        "id":  "external.primary-logical-conversion",
+                        "name":  "Primary/logical conversion on disposable MBR disk",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "disk_id",
+                                                       "before_layout",
+                                                       "extended_container_identity",
+                                                       "logical_volume_identity",
+                                                       "after_layout",
+                                                       "partition_order_offsets",
+                                                       "mount_validation",
+                                                       "file_hash_validation",
+                                                       "bootability_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_mbr_disk_only",
+                                                "extended_container_identity_recorded",
+                                                "logical_volume_identity_recorded",
+                                                "before_after_order_offsets_verified",
+                                                "mount_and_file_hash_verified",
+                                                "bootability_verified_when_applicable"
+                                            ],
+                        "evidence":  {
+                                         "disk_id":  "disk-1-VBOX HARDDISK",
+                                         "before_layout":  {
+                                                               "disk_number":  1,
+                                                               "friendly_name":  "VBOX HARDDISK",
+                                                               "serial_number":  "VB339a4098-503427b1",
+                                                               "unique_id":  "     ATAVBOX HARDDISK",
+                                                               "bus_type":  "SATA",
+                                                               "partition_style":  "MBR",
+                                                               "size_bytes":  4294967296,
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  "D",
+                                                                                      "type":  "IFS",
+                                                                                      "offset_bytes":  1048576,
+                                                                                      "size_bytes":  536870912,
+                                                                                      "file_system":  "NTFS",
+                                                                                      "label":  "SAKPRIMARY"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "extended_container_identity":  "MBR extended partition created on disposable disk 1; layout captured in after_layout.",
+                                         "logical_volume_identity":  "Logical NTFS volume R: partition=1 offset=2097152 size=536870912",
+                                         "after_layout":  {
+                                                              "disk_number":  1,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "VB339a4098-503427b1",
+                                                              "unique_id":  "     ATAVBOX HARDDISK",
+                                                              "bus_type":  "SATA",
+                                                              "partition_style":  "MBR",
+                                                              "size_bytes":  4294967296,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+                                                                                 {
+                                                                                     "partition_number":  0,
+                                                                                     "drive_letter":  "",
+                                                                                     "type":  "Extended",
+                                                                                     "offset_bytes":  1048576,
+                                                                                     "size_bytes":  1073741824,
+                                                                                     "file_system":  "",
+                                                                                     "label":  ""
+                                                                                 },
+                                                                                 {
+                                                                                     "partition_number":  1,
+                                                                                     "drive_letter":  "R",
+                                                                                     "type":  "IFS",
+                                                                                     "offset_bytes":  2097152,
+                                                                                     "size_bytes":  536870912,
+                                                                                     "file_system":  "NTFS",
+                                                                                     "label":  "SAKLOGICAL"
+                                                                                 }
+                                                                             ]
+                                                          },
+                                         "partition_order_offsets":  [
+                                                                         {
+                                                                             "partition_number":  0,
+                                                                             "type":  "Extended",
+                                                                             "offset_bytes":  1048576,
+                                                                             "size_bytes":  1073741824,
+                                                                             "drive_letter":  ""
+                                                                         },
+                                                                         {
+                                                                             "partition_number":  1,
+                                                                             "type":  "IFS",
+                                                                             "offset_bytes":  2097152,
+                                                                             "size_bytes":  536870912,
+                                                                             "drive_letter":  "R"
+                                                                         }
+                                                                     ],
+                                         "mount_validation":  {
+                                                                  "drive_letter":  "R:",
+                                                                  "file_system":  "NTFS",
+                                                                  "label":  "SAKLOGICAL",
+                                                                  "health_status":  "Healthy",
+                                                                  "repair_scan":  "Volume label is SAKLOGICAL.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.45 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.46 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.27 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.58 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.41 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.41 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 1.01 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 4.03 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.29 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 10 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 15.32 milliseconds (15 ms).\r\n\nNoErrorsFound"
+                                                              },
+                                         "file_hash_validation":  {
+                                                                      "matched":  true,
+                                                                      "expected_count":  3,
+                                                                      "actual_count":  3,
+                                                                      "errors":  [
+
+                                                                                 ]
+                                                                  },
+                                         "bootability_result":  "Not applicable to disposable non-system MBR data disk; no active/system partition was created and VM boot disk was untouched.",
+                                         "rollback_or_backup_evidence":  {
+                                                                             "backup_directory":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\primary-logical-backup",
+                                                                             "before_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\primary-logical-before-hashes.json",
+                                                                             "after_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\primary-logical-after-hashes.json",
+                                                                             "cleanup":  "Disk 1 cleared to RAW."
+                                                                         }
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.primary-logical-conversion\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.primary-logical-conversion/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.5848818Z"
+                    },
+                    {
+                        "id":  "external.volume-serial-number",
+                        "name":  "Volume serial-number metadata mutation proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "file_system",
+                                                       "before_serial_number",
+                                                       "after_serial_number",
+                                                       "mount_validation",
+                                                       "chkdsk_output",
+                                                       "file_hash_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_volume_only",
+                                                "file_system_specific_writer_used",
+                                                "metadata_change_verified",
+                                                "mount_chkdsk_hash_verified"
+                                            ],
+                        "evidence":  {
+                                         "volume_id":  "disk-1-volume-D",
+                                         "file_system":  "NTFS",
+                                         "before_serial_number":  "CC4E-A19B",
+                                         "after_serial_number":  "DC51-3D84",
+                                         "mount_validation":  {
+                                                                  "drive_letter":  "D:",
+                                                                  "file_system":  "NTFS",
+                                                                  "label":  "SAKSERIAL2",
+                                                                  "health_status":  "Healthy",
+                                                                  "repair_scan":  "Volume label is SAKSERIAL2.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.31 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.47 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.92 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.84 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.86 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.37 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.58 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 5.39 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.28 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 11 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 17.36 milliseconds (17 ms).\r\n\nNoErrorsFound"
+                                                              },
+                                         "chkdsk_output":  "Volume label is SAKSERIAL2.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.31 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.47 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.92 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.84 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.86 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.37 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.58 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 5.39 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.28 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 11 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 17.36 milliseconds (17 ms).\r\n\nNoErrorsFound",
+                                         "file_hash_validation":  {
+                                                                      "matched":  true,
+                                                                      "expected_count":  3,
+                                                                      "actual_count":  3,
+                                                                      "errors":  [
+
+                                                                                 ]
+                                                                  },
+                                         "rollback_or_backup_evidence":  {
+                                                                             "mutation_command":  "Format-Volume -DriveLetter D -FileSystem NTFS -NewFileSystemLabel SAKSERIAL2",
+                                                                             "backup_directory":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-backup",
+                                                                             "before_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-before-hashes.json",
+                                                                             "after_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-after-hashes.json",
+                                                                             "cleanup":  "Disk 1 cleared to RAW."
+                                                                         }
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.volume-serial-number\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.volume-serial-number/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.6096151Z"
+                    },
+                    {
+                        "id":  "external.dynamic-to-basic",
+                        "name":  "Dynamic disk to basic conversion proof",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "disk_id",
+                                                       "before_disk_type",
+                                                       "before_layout",
+                                                       "backup_evidence",
+                                                       "after_disk_type",
+                                                       "after_layout",
+                                                       "restore_hash_validation"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_dynamic_disk_vm_only",
+                                                "pre_conversion_snapshot",
+                                                "data_backup_before_destructive_conversion",
+                                                "basic_disk_restore_verified"
+                                            ],
+                        "evidence":  {
+                                         "vm_id":  "SAK-PM-LAB",
+                                         "disk_id":  "disk-1-VBOX HARDDISK",
+                                         "before_disk_type":  "Dynamic",
+                                         "before_layout":  {
+                                                               "disk_number":  1,
+                                                               "diskpart_detail":  "Microsoft DiskPart version 10.0.26100.1150\n\nCopyright (C) Microsoft Corporation.\nOn computer: SAK-PM-LAB\n\nDisk 1 is now the selected disk.\n\nVBOX HARDDISK\nDisk ID: 2BF84533\nType   : SATA\nStatus : Online\nPath   : 1\nTarget : 0\nLUN ID : 0\nLocation Path : PCIROOT(0)#PCI(0D00)#ATA(C01T00L00)\nCurrent Read-only State : No\nRead-only  : No\nBoot Disk  : No\nPagefile Disk  : No\nHibernation File Disk  : No\nCrashdump Disk  : No\nClustered Disk  : No\n\n  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\n  ----------  ---  -----------  -----  ----------  -------  ---------  --------\n  Volume 0     R   SAKDYN       NTFS   Simple       512 MB  Healthy            \n\n  Volume ###  Ltr  Label        Fs     Type        Size     Status     Info\n  ----------  ---  -----------  -----  ----------  -------  ---------  --------\n  Volume 0     R   SAKDYN       NTFS   Simple       512 MB  Healthy            \n  Volume 1     C   Windows      NTFS   Partition     78 GB  Healthy    Boot    \n  Volume 2         WINRE        NTFS   Partition    300 MB  Healthy    Hidden  \n  Volume 3         EFI          FAT32  Partition    100 MB  Healthy    System  \n  Volume 4                      NTFS   Partition    797 MB  Healthy    Hidden"
+                                                           },
+                                         "backup_evidence":  {
+                                                                 "backup_directory":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\dynamic-to-basic-backup",
+                                                                 "before_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\dynamic-before-hashes.json"
+                                                             },
+                                         "after_disk_type":  "Basic",
+                                         "after_layout":  {
+                                                              "disk_number":  1,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "VB339a4098-503427b1",
+                                                              "unique_id":  "     ATAVBOX HARDDISK",
+                                                              "bus_type":  "SATA",
+                                                              "partition_style":  "MBR",
+                                                              "size_bytes":  4294967296,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+                                                                                 {
+                                                                                     "partition_number":  1,
+                                                                                     "drive_letter":  "R",
+                                                                                     "type":  "IFS",
+                                                                                     "offset_bytes":  1048576,
+                                                                                     "size_bytes":  536870912,
+                                                                                     "file_system":  "NTFS",
+                                                                                     "label":  "SAKBASIC"
+                                                                                 }
+                                                                             ]
+                                                          },
+                                         "restore_hash_validation":  {
+                                                                         "matched":  true,
+                                                                         "expected_count":  3,
+                                                                         "actual_count":  3,
+                                                                         "errors":  [
+
+                                                                                    ]
+                                                                     },
+                                         "cleanup":  "Disk 1 cleared to RAW."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.dynamic-to-basic\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.dynamic-to-basic/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.6332323Z"
+                    },
+                    {
+                        "id":  "external.hardware-wipe",
+                        "name":  "Non-system hardware wipe on disposable physical disk",
+                        "status":  "Passed",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "operator_confirmation",
+                                                       "wipe_method",
+                                                       "before_layout",
+                                                       "after_layout"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_physical_disk_only",
+                                                "non_system_disk_identity_recorded",
+                                                "typed_confirmation_recorded",
+                                                "post_wipe_empty_layout_verified"
+                                            ],
+                        "evidence":  {
+                                         "device_model":  "VBOX HARDDISK",
+                                         "serial_number":  "VB339a4098-503427b1",
+                                         "operator_confirmation":  "WIPE DISPOSABLE VBOX DISK 1",
+                                         "wipe_method":  "Clear-Disk -RemoveData -RemoveOEM on non-system disposable VirtualBox hardware disk",
+                                         "before_layout":  {
+                                                               "disk_number":  1,
+                                                               "friendly_name":  "VBOX HARDDISK",
+                                                               "serial_number":  "VB339a4098-503427b1",
+                                                               "unique_id":  "     ATAVBOX HARDDISK",
+                                                               "bus_type":  "SATA",
+                                                               "partition_style":  "GPT",
+                                                               "size_bytes":  4294967296,
+                                                               "is_boot":  false,
+                                                               "is_system":  false,
+                                                               "partitions":  [
+                                                                                  {
+                                                                                      "partition_number":  1,
+                                                                                      "drive_letter":  "",
+                                                                                      "type":  "Reserved",
+                                                                                      "offset_bytes":  17408,
+                                                                                      "size_bytes":  16759808,
+                                                                                      "file_system":  "",
+                                                                                      "label":  ""
+                                                                                  },
+                                                                                  {
+                                                                                      "partition_number":  2,
+                                                                                      "drive_letter":  "D",
+                                                                                      "type":  "Basic",
+                                                                                      "offset_bytes":  16777216,
+                                                                                      "size_bytes":  536870912,
+                                                                                      "file_system":  "NTFS",
+                                                                                      "label":  "SAKWIPE"
+                                                                                  }
+                                                                              ]
+                                                           },
+                                         "after_layout":  {
+                                                              "disk_number":  1,
+                                                              "friendly_name":  "VBOX HARDDISK",
+                                                              "serial_number":  "VB339a4098-503427b1",
+                                                              "unique_id":  "     ATAVBOX HARDDISK",
+                                                              "bus_type":  "SATA",
+                                                              "partition_style":  "RAW",
+                                                              "size_bytes":  4294967296,
+                                                              "is_boot":  false,
+                                                              "is_system":  false,
+                                                              "partitions":  [
+
+                                                                             ]
+                                                          },
+                                         "cleanup":  "Disk 1 cleared to RAW."
+                                     },
+                        "evidence_path":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hardware-wipe\\report.json",
+                        "evidence_url":  "",
+                        "notes":  "Imported from artifacts/partition-manager-certification/vm-lab/external-evidence/external.hardware-wipe/report.json.",
+                        "completed_utc":  "2026-06-03T18:43:14.6583858Z"
+                    }
+                ],
+    "imported_utc":  "2026-06-03T18:43:14.6662024Z",
+    "imported_report_count":  18
+}

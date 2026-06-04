@@ -1,0 +1,54 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T18:42:26.1900922Z",
+    "gate_id":  "external.boot-repair-bios",
+    "gate_name":  "BIOS/MBR boot repair with intentionally broken BCD",
+    "status":  "Passed",
+    "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.boot-repair-bios/report.json",
+    "safety_contract":  [
+                            "disposable_bios_boot_vm_only",
+                            "pre_repair_snapshot",
+                            "commands_logged",
+                            "post_repair_boot_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "vm_id",
+                                   "boot_mode",
+                                   "broken_boot_symptom",
+                                   "repair_commands",
+                                   "post_repair_boot_result"
+                               ],
+    "required_evidence_values":  {
+                                     "boot_mode":  {
+                                                       "allowed_values":  [
+                                                                              "BIOS",
+                                                                              "Legacy BIOS"
+                                                                          ]
+                                                   }
+                                 },
+    "evidence":  {
+                     "vm_id":  "SAK-PM-BIOS-MBR-Fixture-20260603-091138; pre-repair snapshot pre-bios-bcd-break-20260603-1036 UUID=bb3b4b6c-946a-422f-9517-c1d0c4e05319; offline repair runner SAK-PM-LAB",
+                     "boot_mode":  "BIOS",
+                     "broken_boot_symptom":  "BCD removed from disposable MBR target W:\\Boot\\BCD; target boot reached Windows Recovery screen: File: \\\\Boot\\\\BCD, Error code: 0xc000000f; GuestAdditionsRunLevel stayed 0 for eight polls; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-bios/broken-20260603-104917/broken-boot-poll.json",
+                     "repair_commands":  "bcdboot W:\\Windows /s W: /f BIOS exited 0; bootsect /nt60 W: /mbr /force exited 0; bcdedit /store W:\\Boot\\BCD /enum all exited 0; commands_artifact=artifacts/partition-manager-certification/vm-lab/offline-bios-repair/20260603-110420/offline-bios-repair-commands.json",
+                     "post_repair_boot_result":  "Passed: repaired target VM reached VMState=running, GuestAdditionsRunLevel=3, VideoMode=1024,768,32 after repair; poll_artifact=artifacts/partition-manager-certification/vm-lab/boot-repair-bios/post-repair-20260603-110420/post-repair-boot-poll.json"
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/snapshot-list-20260603-110420.txt",
+                      "artifacts/partition-manager-certification/vm-lab/offline-bios-break/20260603-104907/offline-bios-break-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-bios-break/20260603-104907/offline-bios-break-actions.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/broken-20260603-104917/broken-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/broken-20260603-104917/broken-boot-8.png",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/broken-20260603-104917/target-showvminfo-after-broken-boot.txt",
+                      "artifacts/partition-manager-certification/vm-lab/offline-bios-repair/20260603-110420/offline-bios-repair-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/offline-bios-repair/20260603-110420/offline-bios-repair-commands.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/post-repair-20260603-110420/post-repair-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/post-repair-20260603-110420/post-repair-boot-10.png",
+                      "artifacts/partition-manager-certification/vm-lab/boot-repair-bios/post-repair-20260603-110420/target-showvminfo-after-post-repair-boot.txt"
+                  ],
+    "verification_summary":  "Disposable BIOS/MBR target VM was snapshotted, intentionally broken by removing W:\\Boot\\BCD, failed boot with Windows Recovery 0xc000000f, repaired offline with bcdboot and bootsect, and booted back to Guest Additions run level 3.",
+    "operator_notes":  "Only the disposable BIOS fixture disk was attached to the lab VM. Lab system disk was not selected as repair target."
+}

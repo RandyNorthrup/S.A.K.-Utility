@@ -1,0 +1,43 @@
+{
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/file-recovery-certifier-run.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/restored/recovered_0000007d3000.pdf",
+                      "artifacts/partition-manager-certification/vm-lab/file-recovery-stage-debug/run_partition_manager_file_recovery_external_gate.log"
+                  ],
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "created_utc":  "2026-06-03T01:00:46.544Z",
+    "evidence":  {
+                     "deleted_fixture_name":  "sak-deleted-recovery-fixture.pdf",
+                     "file_system":  "NTFS",
+                     "recovered_file_hash":  "31080995DA446C2192A63231DFDA08572DA754EAF9D18DEBDE38CDE27F7D703F",
+                     "restore_destination":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/restored",
+                     "scan_result":  "Recovered matching deleted PDF fixture recovered_0000007d3000.pdf from raw source \\\\.\\D: at offset 8204288 after 1 candidate(s).",
+                     "source_not_mutated":  "true",
+                     "source_volume_id":  "\\\\?\\Volume{22013d13-dd46-4149-b46d-ace5dafa9158}\\"
+                 },
+    "gate_id":  "external.file-level-data-recovery",
+    "gate_name":  "File-level Data Recovery scan and restore proof",
+    "manifest":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence.json",
+    "operator_notes":  "Run from VM/lab admin context against disposable data volume; artifacts copied from VM local staging into the repo evidence directory.",
+    "required_evidence_keys":  [
+                                   "source_volume_id",
+                                   "file_system",
+                                   "deleted_fixture_name",
+                                   "scan_result",
+                                   "restore_destination",
+                                   "recovered_file_hash",
+                                   "source_not_mutated"
+                               ],
+    "required_evidence_values":  null,
+    "safety_contract":  [
+                            "disposable_recovery_volume",
+                            "read_only_source_scan",
+                            "restore_to_separate_destination",
+                            "recovered_hash_verified"
+                        ],
+    "schema_version":  1,
+    "status":  "Passed",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/report.json",
+    "tool":  "partition-manager-external-evidence-report",
+    "verification_summary":  "Disposable NTFS volume \\\\?\\Volume{22013d13-dd46-4149-b46d-ace5dafa9158}\\ created and deleted fixture sak-deleted-recovery-fixture.pdf, scanned raw source read-only with FileRecoveryEngine, restored matching candidate to a separate destination, verified SHA256 31080995DA446C2192A63231DFDA08572DA754EAF9D18DEBDE38CDE27F7D703F, and verified the scanned source range was unchanged."
+}

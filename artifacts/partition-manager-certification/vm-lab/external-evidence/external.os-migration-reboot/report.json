@@ -1,0 +1,48 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T14:44:09.1110013Z",
+    "gate_id":  "external.os-migration-reboot",
+    "gate_name":  "OS migration target boot and firmware-order proof",
+    "status":  "Passed",
+    "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.os-migration-reboot/report.json",
+    "safety_contract":  [
+                            "disposable_vm_or_lab_disk",
+                            "target_overwrite_confirmed",
+                            "source_target_identity_recorded",
+                            "target_boot_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "source_disk_id",
+                                   "target_disk_id",
+                                   "clone_verification_mode",
+                                   "boot_validation_output",
+                                   "firmware_boot_order",
+                                   "target_boot_result"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "source_disk_id":  "SAK-PM-Lab-Win11 SATA-0-0 C:\\Users\\Username\\\\VirtualBox VMs\\\\SAK-PM-Lab-Win11\\\\Snapshots/{9b736fb9-ff1e-4b46-a9b8-aa249bb8e939}.vdi",
+                     "target_disk_id":  "SAK-PM-OS-Migration-ConfigClone-20260603-073901 SATA-0-0 C:\\Users\\Username\\\\VirtualBox VMs\\\\SAK-PM-OS-Migration-ConfigClone-20260603-073901\\\\SAK-PM-OS-Migration-ConfigClone-20260603-073901-disk1.vdi UUID=60abc3d6-5bff-451d-bb74-439c7ec42025",
+                     "clone_verification_mode":  "VBoxManage clonevm copied powered-off source VM, then target VM was stripped to cloned SATA-0-0 OS disk only before boot verification.",
+                     "boot_validation_output":  "VMState=running; GuestAdditionsRunLevel=3; VideoMode=1024,768,32\"@0,0 1; GuestProduct=; poll_artifact=artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-boot-poll.json",
+                     "firmware_boot_order":  "Target VM firmware=EFI, SecureBoot=off, boot1=disk; non-OS cloned SATA/NVMe/USB media detached before boot; target-showvminfo artifacts capture full order.",
+                     "target_boot_result":  "Passed: disposable target-only cloned OS VM reached Guest Additions run level 3 and produced a valid 1024x768 screenshot after boot."
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/source-showvminfo.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/source-showmediuminfo.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-showmediuminfo.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-showvminfo-before-boot.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-showvminfo-after-boot.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-boot-poll.json",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/target-boot-12.png",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/startvm.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/acpipowerbutton.txt",
+                      "artifacts/partition-manager-certification/vm-lab/os-migration/configclone-20260603-073901/os-migration-configclone-commands.json"
+                  ],
+    "verification_summary":  "Disposable VirtualBox target VM booted from cloned source OS disk after non-OS cloned disks were detached, reached Guest Additions run level 3, and produced valid display/screenshot evidence.",
+    "operator_notes":  "Target VM and cloned disks are disposable OS-migration proof artifacts. Source VM was cleanly powered off before cloning and was not booted as the target."
+}

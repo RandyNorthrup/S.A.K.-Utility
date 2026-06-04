@@ -1,0 +1,44 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T01:38:01.2151725Z",
+    "gate_id":  "external.bitlocker-mutation",
+    "gate_name":  "In-app BitLocker unlock/suspend/resume mutation proof",
+    "status":  "Passed",
+    "manifest":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.bitlocker-mutation/report.json",
+    "safety_contract":  [
+                            "disposable_bitlocker_volume_only",
+                            "recovery_key_or_password_fixture_recorded",
+                            "mutation_commands_logged",
+                            "final_protection_state_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "volume_id",
+                                   "initial_lock_state",
+                                   "unlock_result",
+                                   "suspend_result",
+                                   "resume_result",
+                                   "final_protection_state",
+                                   "operation_audit_log"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "operation_audit_log":  "Sanitized command audit recorded in artifacts/partition-manager-certification/vm-lab/external-bitlocker-mutation-guest-report.json; recovery password fixture generated-and-redacted",
+                     "resume_result":  "Resume command completed; ProtectionStatus=On",
+                     "initial_lock_state":  "Locked after manage-bde -lock; BitLocker Drive Encryption: Configuration Tool version 10.0.26100 Copyright (C) 2013 Microsoft Corporation. All rights reserved. Volume D: [Label Unknown] [Data Volume] Size: Unknown GB BitLocker Version: 2.0 Conversion Status: Unknown Percentage Encrypted: Unknown% Encryption Method: XTS-AES 128 Protection Status: Unknown Lock Status: Locked Identification Field: Unknown Automatic Unlock: Disabled Key Protectors: Numerical Password",
+                     "unlock_result":  "Recovery-password unlock exit_code=0; LockStatus=Unlocked; ProtectionStatus=On",
+                     "final_protection_state":  "ProtectionStatus=On; LockStatus=Unlocked; VolumeStatus=FullyEncrypted",
+                     "volume_id":  [
+                                       "\\\\?\\Volume{087dcf99-fb15-4f01-a852-45a37657be72}\\"
+                                   ],
+                     "suspend_result":  "Suspend command completed; ProtectionStatus=Off"
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/external-bitlocker-mutation-guest-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/bitlocker-mutation-stage-debug/run_partition_manager_bitlocker_mutation_external_gate.log"
+                  ],
+    "verification_summary":  "Windows 11 VirtualBox VM SAK-PM-LAB used disposable VBOX disk 2, enabled BitLocker used-space-only on a data volume, locked it, unlocked with a generated recovery password, suspended and resumed protection, verified final protection On, and kept all command output sanitized.",
+    "operator_notes":  "Recovery password was generated only for the disposable lab volume and redacted from host evidence; command flow matches the S.A.K. Partition Manager BitLocker dialog templates."
+}

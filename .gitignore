@@ -431,6 +431,24 @@ secrets/
 .cache/
 cache/
 artifacts/
+!artifacts/
+artifacts/*
+!artifacts/partition-manager-certification/
+artifacts/partition-manager-certification/*
+!artifacts/partition-manager-certification/vhd-strict/
+artifacts/partition-manager-certification/vhd-strict/*
+!artifacts/partition-manager-certification/vhd-strict/run-20260602-194934/
+artifacts/partition-manager-certification/vhd-strict/run-20260602-194934/*
+!artifacts/partition-manager-certification/vhd-strict/run-20260602-194934/partition-manager-certification-report.json
+!artifacts/partition-manager-certification/vm-lab/
+artifacts/partition-manager-certification/vm-lab/*
+!artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json
+!artifacts/partition-manager-certification/vm-lab/external-evidence.imported.checklist.md
+!artifacts/partition-manager-certification/vm-lab/external-evidence/
+artifacts/partition-manager-certification/vm-lab/external-evidence/*
+!artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/
+artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/*
+!artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/report.json
 
 # ============================================================================
 # Miscellaneous

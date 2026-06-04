@@ -1,0 +1,187 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "created_utc":  "2026-06-03T03:19:05.6522079Z",
+    "gate_id":  "external.allocate-free-space",
+    "gate_name":  "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof",
+    "status":  "Passed",
+    "manifest":  "artifacts\\partition-manager-certification\\vm-lab\\external-evidence.json",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/report.json",
+    "safety_contract":  [
+                            "disposable_source_and_donor_volumes_only",
+                            "source_donor_identity_recorded",
+                            "before_after_layout_verified",
+                            "mount_and_file_hash_verified"
+                        ],
+    "required_evidence_keys":  [
+                                   "source_volume_id",
+                                   "donor_volume_id",
+                                   "before_layout",
+                                   "after_layout",
+                                   "volume_size_delta",
+                                   "file_hash_validation",
+                                   "mount_validation",
+                                   "rollback_or_backup_evidence"
+                               ],
+    "required_evidence_values":  null,
+    "evidence":  {
+                     "source_volume_id":  "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\",
+                     "donor_volume_id":  "\\\\?\\Volume{0985442c-be2b-47e9-90ab-30ca00e54f78}\\",
+                     "before_layout":  {
+                                           "disk_number":  2,
+                                           "friendly_name":  "Msft Virtual Disk",
+                                           "unique_id":  "60022480ADD07F005A8CDF7A5753EDA5",
+                                           "size_bytes":  805306368,
+                                           "partition_style":  "GPT",
+                                           "is_boot":  false,
+                                           "is_system":  false,
+                                           "partitions":  [
+                                                              {
+                                                                  "partition_number":  1,
+                                                                  "drive_letter":  null,
+                                                                  "offset_bytes":  17408,
+                                                                  "size_bytes":  16759808,
+                                                                  "type":  "Reserved",
+                                                                  "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                                  "access_paths":  [
+                                                                                       null
+                                                                                   ],
+                                                                  "file_system":  "",
+                                                                  "file_system_label":  ""
+                                                              },
+                                                              {
+                                                                  "partition_number":  2,
+                                                                  "drive_letter":  "T",
+                                                                  "offset_bytes":  16777216,
+                                                                  "size_bytes":  201326592,
+                                                                  "type":  "Basic",
+                                                                  "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                  "access_paths":  [
+                                                                                       "T:\\",
+                                                                                       "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\"
+                                                                                   ],
+                                                                  "file_system":  "NTFS",
+                                                                  "file_system_label":  "SAKALLOC_SRC"
+                                                              },
+                                                              {
+                                                                  "partition_number":  3,
+                                                                  "drive_letter":  "U",
+                                                                  "offset_bytes":  218103808,
+                                                                  "size_bytes":  402653184,
+                                                                  "type":  "Basic",
+                                                                  "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                  "access_paths":  [
+                                                                                       "U:\\",
+                                                                                       "\\\\?\\Volume{0985442c-be2b-47e9-90ab-30ca00e54f78}\\"
+                                                                                   ],
+                                                                  "file_system":  "NTFS",
+                                                                  "file_system_label":  "SAKALLOC_DONOR"
+                                                              }
+                                                          ]
+                                       },
+                     "after_layout":  {
+                                          "disk_number":  2,
+                                          "friendly_name":  "Msft Virtual Disk",
+                                          "unique_id":  "60022480ADD07F005A8CDF7A5753EDA5",
+                                          "size_bytes":  805306368,
+                                          "partition_style":  "GPT",
+                                          "is_boot":  false,
+                                          "is_system":  false,
+                                          "partitions":  [
+                                                             {
+                                                                 "partition_number":  1,
+                                                                 "drive_letter":  null,
+                                                                 "offset_bytes":  17408,
+                                                                 "size_bytes":  16759808,
+                                                                 "type":  "Reserved",
+                                                                 "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                                 "access_paths":  [
+                                                                                      null
+                                                                                  ],
+                                                                 "file_system":  "",
+                                                                 "file_system_label":  ""
+                                                             },
+                                                             {
+                                                                 "partition_number":  2,
+                                                                 "drive_letter":  "T",
+                                                                 "offset_bytes":  16777216,
+                                                                 "size_bytes":  335544320,
+                                                                 "type":  "Basic",
+                                                                 "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                 "access_paths":  [
+                                                                                      "T:\\",
+                                                                                      "\\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\"
+                                                                                  ],
+                                                                 "file_system":  "NTFS",
+                                                                 "file_system_label":  "SAKALLOC_SRC"
+                                                             },
+                                                             {
+                                                                 "partition_number":  3,
+                                                                 "drive_letter":  "U",
+                                                                 "offset_bytes":  352321536,
+                                                                 "size_bytes":  268435456,
+                                                                 "type":  "Basic",
+                                                                 "gpt_type":  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}",
+                                                                 "access_paths":  [
+                                                                                      "U:\\",
+                                                                                      "\\\\?\\Volume{c60f718f-ef5d-449f-8a23-eb59a0a773e9}\\"
+                                                                                  ],
+                                                                 "file_system":  "NTFS",
+                                                                 "file_system_label":  "SAKALLOC_DONOR"
+                                                             }
+                                                         ]
+                                      },
+                     "volume_size_delta":  {
+                                               "source_before_bytes":  201326592,
+                                               "source_after_bytes":  335544320,
+                                               "source_delta_bytes":  134217728,
+                                               "donor_before_bytes":  402653184,
+                                               "donor_after_bytes":  268435456,
+                                               "donor_delta_bytes":  -134217728,
+                                               "requested_allocate_bytes":  134217728,
+                                               "tolerance_bytes":  2097152
+                                           },
+                     "file_hash_validation":  {
+                                                  "matched":  true,
+                                                  "expected_file_count":  3,
+                                                  "actual_file_count":  3,
+                                                  "errors":  [
+
+                                                             ],
+                                                  "before_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-before.json",
+                                                  "after_manifest_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-after.json"
+                                              },
+                     "mount_validation":  {
+                                              "source_drive_letter":  "T:",
+                                              "donor_drive_letter":  "U:",
+                                              "source_file_system":  "NTFS",
+                                              "donor_file_system":  "NTFS",
+                                              "source_repair_scan":  {
+                                                                         "drive_letter":  "T",
+                                                                         "status":  "Completed",
+                                                                         "output":  "NoErrorsFound"
+                                                                     },
+                                              "donor_repair_scan":  {
+                                                                        "drive_letter":  "U",
+                                                                        "status":  "Completed",
+                                                                        "output":  "NoErrorsFound"
+                                                                    }
+                                          },
+                     "rollback_or_backup_evidence":  {
+                                                         "backup_directory":  "artifacts/partition-manager-certification/vm-lab/allocate-free-space-stage-debug/run-20260602-201842/donor-backup",
+                                                         "donor_backup_command":  "robocopy donor -\u003e backup /MIR /R:1 /W:1",
+                                                         "donor_restore_command":  "robocopy backup -\u003e donor /MIR /R:1 /W:1",
+                                                         "cleanup_mode":  "VHD dismounted and removed",
+                                                         "run_root":  "artifacts/partition-manager-certification/vm-lab/allocate-free-space-stage-debug/run-20260602-201842"
+                                                     }
+                 },
+    "artifacts":  [
+                      "artifacts/partition-manager-certification/vm-lab/external-allocate-free-space-guest-report.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-before.json",
+                      "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/donor-manifest-after.json",
+                      "artifacts/partition-manager-certification/vm-lab/allocate-free-space-stage-debug/run-20260602-201842/run_partition_manager_allocate_free_space_external_gate.log"
+                  ],
+    "verification_summary":  "Disposable VHD source volume \\\\?\\Volume{395621b5-9935-4f38-b742-a47a78e158ac}\\ and adjacent donor volume \\\\?\\Volume{0985442c-be2b-47e9-90ab-30ca00e54f78}\\ were created, donor data was backed up off the VHD, donor partition was deleted, source was extended by 134217728 bytes, donor was recreated from remaining space, donor data was restored, SHA256 manifest comparison passed, and both volumes remounted as NTFS.",
+    "operator_notes":  "Run used only a generated disposable VHDX under the certification artifact root; no physical disk numbers were selected by operator input."
+}

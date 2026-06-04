@@ -1,0 +1,62 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "gate_id":  "external.volume-serial-number",
+    "gate_name":  "Volume serial-number metadata mutation proof",
+    "status":  "Passed",
+    "created_utc":  "2026-06-03T08:02:39.1701902Z",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "required_evidence_keys":  [
+                                   "volume_id",
+                                   "file_system",
+                                   "before_serial_number",
+                                   "after_serial_number",
+                                   "mount_validation",
+                                   "chkdsk_output",
+                                   "file_hash_validation",
+                                   "rollback_or_backup_evidence"
+                               ],
+    "safety_contract":  [
+                            "disposable_volume_only",
+                            "file_system_specific_writer_used",
+                            "metadata_change_verified",
+                            "mount_chkdsk_hash_verified"
+                        ],
+    "evidence":  {
+                     "volume_id":  "disk-1-volume-D",
+                     "file_system":  "NTFS",
+                     "before_serial_number":  "CC4E-A19B",
+                     "after_serial_number":  "DC51-3D84",
+                     "mount_validation":  {
+                                              "drive_letter":  "D:",
+                                              "file_system":  "NTFS",
+                                              "label":  "SAKSERIAL2",
+                                              "health_status":  "Healthy",
+                                              "repair_scan":  "Volume label is SAKSERIAL2.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.31 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.47 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.92 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.84 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.86 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.37 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.58 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 5.39 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.28 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 11 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 17.36 milliseconds (17 ms).\r\n\nNoErrorsFound"
+                                          },
+                     "chkdsk_output":  "Volume label is SAKSERIAL2.\r\n\nStage 1: Examining basic file system structure ...\r\n\n                                                                                       \r\n\n  256 file records processed.                                                        \r\n\nFile verification completed.\r\n\n Phase duration (File record verification): 4.31 milliseconds.\r\n\n                                                                                       \r\n\n  0 large file records processed.                                   \r\n\n Phase duration (Orphan file record recovery): 0.47 milliseconds.\r\n\n                                                                                       \r\n\n  0 bad file records processed.                                     \r\n\n Phase duration (Bad file record checking): 0.92 milliseconds.\r\n\nStage 2: Examining file name linkage ...\r\n\n                                                                                       \r\n\n  282 index entries processed.                                                       \r\n\nIndex verification completed.\r\n\n Phase duration (Index verification): 3.84 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan reconnection): 0.86 milliseconds.\r\n\n                                                                                       \r\n\n Phase duration (Orphan recovery to lost and found): 0.37 milliseconds.\r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n                                                                                       \r\n\n  0 reparse records processed.                                      \r\n\n Phase duration (Reparse point and Object ID verification): 0.58 milliseconds.\r\n\nStage 3: Examining security descriptors ...\r\n\nSecurity descriptor verification completed.\r\n\n Phase duration (Security descriptor verification): 5.39 milliseconds.\r\n\n                                                                                       \r\n\n  13 data files processed.                                           \r\n\n Phase duration (Data attribute verification): 0.28 milliseconds.\r\n\nWindows has scanned the file system and found no problems.\r\n\nNo further action is required.\r\n\n    524287 KB total disk space.\r\n\n     40304 KB in 11 files.\r\n\n        76 KB in 15 indexes.\r\n\n      4927 KB in use by the system.\r\n\n      4240 KB occupied by the log file.\r\n\n    478980 KB available on disk.\r\n\n      4096 bytes in each allocation unit.\r\n\n    131071 total allocation units on disk.\r\n\n    119745 allocation units available on disk.\r\n\nTotal duration: 17.36 milliseconds (17 ms).\r\n\nNoErrorsFound",
+                     "file_hash_validation":  {
+                                                  "matched":  true,
+                                                  "expected_count":  3,
+                                                  "actual_count":  3,
+                                                  "errors":  [
+
+                                                             ]
+                                              },
+                     "rollback_or_backup_evidence":  {
+                                                         "mutation_command":  "Format-Volume -DriveLetter D -FileSystem NTFS -NewFileSystemLabel SAKSERIAL2",
+                                                         "backup_directory":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-backup",
+                                                         "before_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-before-hashes.json",
+                                                         "after_manifest":  "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-after-hashes.json",
+                                                         "cleanup":  "Disk 1 cleared to RAW."
+                                                     }
+                 },
+    "artifacts":  [
+                      "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-before-hashes.json",
+                      "C:\\Users\\Public\\sak-vm-data-external-gates\\vm-data-gates-run-20260603-005959\\volume-serial-after-hashes.json",
+                      "C:\\Users\\Public\\sak-vm-data-external-gates\\external-vm-data-gates-guest-report.json"
+                  ],
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.volume-serial-number/report.json",
+    "verification_summary":  "Disposable NTFS volume D: changed serial from CC4E-A19B to DC51-3D84 via NTFS format mutation, then restored fixture files, hash-verified, repair-scanned, and cleared the disk.",
+    "operator_notes":  "Serial mutation was destructive and used only backup/restore on a disposable volume."
+}

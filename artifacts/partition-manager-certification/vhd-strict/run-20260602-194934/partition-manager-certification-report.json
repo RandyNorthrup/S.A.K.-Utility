@@ -1,0 +1,852 @@
+{
+    "tool":  "partition-manager-destructive-certification",
+    "schema_version":  1,
+    "status":  "Partial",
+    "started_utc":  "2026-06-03T02:49:34.8041671Z",
+    "completed_utc":  "2026-06-03T02:54:09.0541315Z",
+    "host":  "MINI-DT",
+    "project_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility",
+    "output_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "run_vhd_data_disk_matrix":  true,
+    "elevated_relaunch_requested":  false,
+    "require_vhd_data_disk_evidence":  true,
+    "keep_vhd":  false,
+    "vhd_size_mb":  768,
+    "administrator":  true,
+    "summary":  {
+                    "passed":  12,
+                    "failed":  0,
+                    "skipped":  0,
+                    "external_gates":  18
+                },
+    "results":  [
+                    {
+                        "id":  "vhd.create-format-resize-delete",
+                        "name":  "Create, format, resize, and delete data partition",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "initial_size_bytes",
+                                                       "resized_size_bytes",
+                                                       "remaining_partitions"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "non_system_disk",
+                                                "partition_identity_verified",
+                                                "post_delete_no_data_partition_verified"
+                                            ],
+                        "evidence":  {
+                                         "remaining_partitions":  0,
+                                         "resized_size_bytes":  201326592,
+                                         "disk_number":  2,
+                                         "initial_size_bytes":  134217728
+                                     },
+                        "completed_utc":  "2026-06-03T02:49:41.3064813Z"
+                    },
+                    {
+                        "id":  "vhd.fat32-to-ntfs",
+                        "name":  "FAT32 to NTFS in-place conversion",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "drive_letter",
+                                                       "final_file_system"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "non_system_disk",
+                                                "mounted_volume_identity_verified",
+                                                "post_conversion_file_system_verified"
+                                            ],
+                        "evidence":  {
+                                         "final_file_system":  "NTFS",
+                                         "drive_letter":  "F",
+                                         "disk_number":  2
+                                     },
+                        "completed_utc":  "2026-06-03T02:49:46.2704418Z"
+                    },
+                    {
+                        "id":  "vhd.quick-partition",
+                        "name":  "Quick Partition equal-size data-disk layout",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "partition_count",
+                                                       "expected_slice_bytes",
+                                                       "created"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "existing_partitions_deleted_before_layout",
+                                                "partition_count_verified",
+                                                "partition_sizes_verified"
+                                            ],
+                        "evidence":  {
+                                         "partition_count":  2,
+                                         "created":  [
+                                                         {
+                                                             "partition_number":  1,
+                                                             "size_bytes":  384827392,
+                                                             "drive_letter":  "F"
+                                                         },
+                                                         {
+                                                             "partition_number":  2,
+                                                             "size_bytes":  385875968,
+                                                             "drive_letter":  "G"
+                                                         }
+                                                     ],
+                                         "disk_number":  2,
+                                         "expected_slice_bytes":  384827392
+                                     },
+                        "completed_utc":  "2026-06-03T02:49:54.2712215Z"
+                    },
+                    {
+                        "id":  "vhd.quick-partition-custom",
+                        "name":  "Quick Partition custom size and label layout",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "partition_count",
+                                                       "requested_sizes",
+                                                       "created"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "custom_sizes_verified",
+                                                "labels_verified",
+                                                "partition_order_verified"
+                                            ],
+                        "evidence":  {
+                                         "partition_count":  3,
+                                         "created":  [
+                                                         {
+                                                             "partition_number":  1,
+                                                             "size_bytes":  100663296,
+                                                             "drive_letter":  "F",
+                                                             "label":  "SAKQC1"
+                                                         },
+                                                         {
+                                                             "partition_number":  2,
+                                                             "size_bytes":  134217728,
+                                                             "drive_letter":  "G",
+                                                             "label":  "SAKQC2"
+                                                         },
+                                                         {
+                                                             "partition_number":  3,
+                                                             "size_bytes":  167772160,
+                                                             "drive_letter":  "H",
+                                                             "label":  "SAKQC3"
+                                                         }
+                                                     ],
+                                         "disk_number":  2,
+                                         "requested_sizes":  [
+                                                                 100663296,
+                                                                 134217728,
+                                                                 167772160
+                                                             ]
+                                     },
+                        "completed_utc":  "2026-06-03T02:50:05.3906065Z"
+                    },
+                    {
+                        "id":  "vhd.quick-partition-mbr",
+                        "name":  "Quick Partition MBR four-data-partition layout",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "partition_style",
+                                                       "partition_count",
+                                                       "expected_slice_bytes",
+                                                       "created",
+                                                       "extended_container_count",
+                                                       "partition_types"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "mbr_style_verified",
+                                                "four_data_partitions_verified",
+                                                "extended_logical_container_recorded",
+                                                "partition_sizes_verified"
+                                            ],
+                        "evidence":  {
+                                         "partition_style":  "MBR",
+                                         "created":  [
+                                                         {
+                                                             "partition_number":  1,
+                                                             "size_bytes":  191889408,
+                                                             "drive_letter":  "F"
+                                                         },
+                                                         {
+                                                             "partition_number":  2,
+                                                             "size_bytes":  191889408,
+                                                             "drive_letter":  "G"
+                                                         },
+                                                         {
+                                                             "partition_number":  3,
+                                                             "size_bytes":  191889408,
+                                                             "drive_letter":  "H"
+                                                         },
+                                                         {
+                                                             "partition_number":  4,
+                                                             "size_bytes":  195035136,
+                                                             "drive_letter":  "I"
+                                                         }
+                                                     ],
+                                         "extended_container_count":  1,
+                                         "disk_number":  2,
+                                         "partition_count":  4,
+                                         "expected_slice_bytes":  191889408,
+                                         "partition_types":  [
+                                                                 "IFS",
+                                                                 "IFS",
+                                                                 "IFS",
+                                                                 "Extended",
+                                                                 "IFS"
+                                                             ]
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:19.1940289Z"
+                    },
+                    {
+                        "id":  "vhd.adjacent-extend",
+                        "name":  "Adjacent free-space Extend Partition Wizard path",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "partition_number",
+                                                       "initial_size_bytes",
+                                                       "extended_size_bytes"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "adjacent_free_space_created",
+                                                "partition_identity_verified",
+                                                "post_extend_size_verified"
+                                            ],
+                        "evidence":  {
+                                         "extended_size_bytes":  201326592,
+                                         "initial_size_bytes":  134217728,
+                                         "disk_number":  2,
+                                         "partition_number":  2
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:24.2116396Z"
+                    },
+                    {
+                        "id":  "vhd.recovered-partition-restore",
+                        "name":  "Recovered partition write-back candidate restore",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "offset_bytes",
+                                                       "size_bytes",
+                                                       "type_id"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "candidate_offset_verified",
+                                                "candidate_size_verified",
+                                                "candidate_type_verified"
+                                            ],
+                        "evidence":  {
+                                         "size_bytes":  100663296,
+                                         "offset_bytes":  16777216,
+                                         "type_id":  "{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}",
+                                         "disk_number":  2
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:27.6712754Z"
+                    },
+                    {
+                        "id":  "vhd.empty-style-conversion",
+                        "name":  "Empty data disk GPT/MBR conversion",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "final_partition_style"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "empty_disk_only",
+                                                "mbr_conversion_verified",
+                                                "gpt_conversion_verified"
+                                            ],
+                        "evidence":  {
+                                         "disk_number":  2,
+                                         "final_partition_style":  "GPT"
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:36.3367282Z"
+                    },
+                    {
+                        "id":  "vhd.clear-disk-wipe",
+                        "name":  "Clear-level non-system disk wipe",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "disk_number",
+                                                       "final_partition_style",
+                                                       "remaining_partitions"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "non_system_disk",
+                                                "clear_disk_completed",
+                                                "raw_empty_layout_verified"
+                                            ],
+                        "evidence":  {
+                                         "remaining_partitions":  0,
+                                         "disk_number":  2,
+                                         "final_partition_style":  "RAW"
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:42.1830366Z"
+                    },
+                    {
+                        "id":  "vhd.image-clone",
+                        "name":  "Offline VHD image clone and sentinel verification",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "source_image",
+                                                       "target_image",
+                                                       "target_disk_number",
+                                                       "sentinel_verified"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "source_dismounted_before_copy",
+                                                "target_attached_after_copy",
+                                                "sentinel_file_verified"
+                                            ],
+                        "evidence":  {
+                                         "source_image":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934\\image-clone-source.vhdx",
+                                         "sentinel_verified":  true,
+                                         "target_image":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934\\image-clone-target.vhdx",
+                                         "target_disk_number":  2
+                                     },
+                        "completed_utc":  "2026-06-03T02:53:48.8729205Z"
+                    },
+                    {
+                        "id":  "vhd.image-restore",
+                        "name":  "Offline VHD image restore and overwrite verification",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "source_image",
+                                                       "target_image",
+                                                       "target_disk_number",
+                                                       "pre_restore_marker",
+                                                       "sentinel_verified",
+                                                       "target_overwritten"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "source_dismounted_before_restore",
+                                                "target_identity_recorded_before_overwrite",
+                                                "target_attached_after_restore",
+                                                "restored_sentinel_file_verified"
+                                            ],
+                        "evidence":  {
+                                         "target_overwritten":  true,
+                                         "target_disk_number":  2,
+                                         "source_image":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934\\image-restore-source.vhdx",
+                                         "sentinel_verified":  true,
+                                         "pre_restore_marker":  "target-before-restore",
+                                         "target_image":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934\\image-restore-target.vhdx"
+                                     },
+                        "completed_utc":  "2026-06-03T02:54:01.6023518Z"
+                    },
+                    {
+                        "id":  "vhd.partition-clone-region",
+                        "name":  "Partition clone to raw target region",
+                        "status":  "Passed",
+                        "message":  "",
+                        "required_evidence_keys":  [
+                                                       "source_disk_number",
+                                                       "target_disk_number",
+                                                       "source_offset_bytes",
+                                                       "target_offset_bytes",
+                                                       "clone_size_bytes",
+                                                       "signature_verified",
+                                                       "outside_marker_preserved"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vhd_only",
+                                                "source_partition_identity_verified",
+                                                "target_region_identity_recorded_before_write",
+                                                "raw_region_copy_verified",
+                                                "outside_target_marker_preserved"
+                                            ],
+                        "evidence":  {
+                                         "target_offset_bytes":  51380224,
+                                         "target_disk_number":  3,
+                                         "outside_marker_preserved":  true,
+                                         "clone_size_bytes":  16777216,
+                                         "signature_verified":  true,
+                                         "source_offset_bytes":  16777216,
+                                         "source_disk_number":  2
+                                     },
+                        "completed_utc":  "2026-06-03T02:54:08.9378709Z"
+                    },
+                    {
+                        "id":  "external.system-mbr2gpt",
+                        "name":  "System MBR-to-GPT conversion in disposable boot VM",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "before_partition_style",
+                                                       "mbr2gpt_validate_exit_code",
+                                                       "mbr2gpt_convert_exit_code",
+                                                       "after_partition_style",
+                                                       "boot_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_boot_vm_only",
+                                                "pre_conversion_snapshot",
+                                                "validate_before_convert",
+                                                "post_conversion_boot_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9423107Z"
+                    },
+                    {
+                        "id":  "external.os-migration-reboot",
+                        "name":  "OS migration target boot and firmware-order proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "source_disk_id",
+                                                       "target_disk_id",
+                                                       "clone_verification_mode",
+                                                       "boot_validation_output",
+                                                       "firmware_boot_order",
+                                                       "target_boot_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_vm_or_lab_disk",
+                                                "target_overwrite_confirmed",
+                                                "source_target_identity_recorded",
+                                                "target_boot_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9462165Z"
+                    },
+                    {
+                        "id":  "external.boot-repair-uefi",
+                        "name":  "UEFI boot repair with intentionally broken BCD",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "boot_mode",
+                                                       "broken_boot_symptom",
+                                                       "repair_commands",
+                                                       "post_repair_boot_result"
+                                                   ],
+                        "required_evidence_values":  {
+                                                         "boot_mode":  {
+                                                                           "allowed_values":  [
+                                                                                                  "UEFI"
+                                                                                              ]
+                                                                       }
+                                                     },
+                        "safety_contract":  [
+                                                "disposable_uefi_boot_vm_only",
+                                                "pre_repair_snapshot",
+                                                "commands_logged",
+                                                "post_repair_boot_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9491469Z"
+                    },
+                    {
+                        "id":  "external.boot-repair-bios",
+                        "name":  "BIOS/MBR boot repair with intentionally broken BCD",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "boot_mode",
+                                                       "broken_boot_symptom",
+                                                       "repair_commands",
+                                                       "post_repair_boot_result"
+                                                   ],
+                        "required_evidence_values":  {
+                                                         "boot_mode":  {
+                                                                           "allowed_values":  [
+                                                                                                  "BIOS",
+                                                                                                  "Legacy BIOS"
+                                                                                              ]
+                                                                       }
+                                                     },
+                        "safety_contract":  [
+                                                "disposable_bios_boot_vm_only",
+                                                "pre_repair_snapshot",
+                                                "commands_logged",
+                                                "post_repair_boot_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9536203Z"
+                    },
+                    {
+                        "id":  "external.usb-removable",
+                        "name":  "USB removable disk destructive operation proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "bus_type",
+                                                       "operation",
+                                                       "before_layout",
+                                                       "after_layout"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_usb_media_only",
+                                                "device_identity_recorded",
+                                                "operator_confirmation_recorded",
+                                                "post_operation_layout_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9565556Z"
+                    },
+                    {
+                        "id":  "external.file-level-data-recovery",
+                        "name":  "File-level Data Recovery scan and restore proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "source_volume_id",
+                                                       "file_system",
+                                                       "deleted_fixture_name",
+                                                       "scan_result",
+                                                       "restore_destination",
+                                                       "recovered_file_hash",
+                                                       "source_not_mutated"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_recovery_volume",
+                                                "read_only_source_scan",
+                                                "restore_to_separate_destination",
+                                                "recovered_hash_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9610713Z"
+                    },
+                    {
+                        "id":  "external.ssd-retrim",
+                        "name":  "SSD/NVMe ReTrim and vendor purge warning proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "media_type",
+                                                       "trim_status_before",
+                                                       "retrim_output",
+                                                       "purge_warning_visible"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "ssd_or_nvme_device",
+                                                "no_hdd_defrag_path",
+                                                "purge_warning_present",
+                                                "retrim_output_recorded"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9649840Z"
+                    },
+                    {
+                        "id":  "external.hdd-defrag-execution",
+                        "name":  "Direct in-app HDD defrag execution proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "media_type",
+                                                       "drive_letter",
+                                                       "analyze_output",
+                                                       "defrag_output",
+                                                       "duration_seconds",
+                                                       "post_defrag_health_check"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_hdd_volume_only",
+                                                "media_type_verified_not_ssd",
+                                                "long_running_operation_cancellable",
+                                                "post_defrag_health_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9688918Z"
+                    },
+                    {
+                        "id":  "external.ssd-secure-erase",
+                        "name":  "SSD/NVMe secure erase command execution proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "media_type",
+                                                       "purge_command",
+                                                       "operator_confirmation",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "post_purge_identity_check"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_ssd_or_nvme_device_only",
+                                                "non_system_disk_identity_recorded",
+                                                "typed_operator_confirmation_recorded",
+                                                "post_purge_empty_or_vendor_expected_layout_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9743948Z"
+                    },
+                    {
+                        "id":  "external.bitlocker",
+                        "name":  "BitLocker locked/unlocked data-volume blocker proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "locked_state_blocker",
+                                                       "unlocked_state_behavior",
+                                                       "dirty_bit_state",
+                                                       "operation_attempted"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_bitlocker_volume",
+                                                "locked_mutation_blocked",
+                                                "unlocked_state_revalidated",
+                                                "dirty_bit_handling_recorded"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9783347Z"
+                    },
+                    {
+                        "id":  "external.bitlocker-mutation",
+                        "name":  "In-app BitLocker unlock/suspend/resume mutation proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "initial_lock_state",
+                                                       "unlock_result",
+                                                       "suspend_result",
+                                                       "resume_result",
+                                                       "final_protection_state",
+                                                       "operation_audit_log"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_bitlocker_volume_only",
+                                                "recovery_key_or_password_fixture_recorded",
+                                                "mutation_commands_logged",
+                                                "final_protection_state_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9817916Z"
+                    },
+                    {
+                        "id":  "external.allocate-free-space",
+                        "name":  "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "source_volume_id",
+                                                       "donor_volume_id",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "volume_size_delta",
+                                                       "file_hash_validation",
+                                                       "mount_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_source_and_donor_volumes_only",
+                                                "source_donor_identity_recorded",
+                                                "before_after_layout_verified",
+                                                "mount_and_file_hash_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9891700Z"
+                    },
+                    {
+                        "id":  "external.partition-move",
+                        "name":  "Offline partition start-move proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "partition_id",
+                                                       "before_offset_bytes",
+                                                       "after_offset_bytes",
+                                                       "before_layout",
+                                                       "after_layout",
+                                                       "file_hash_validation",
+                                                       "mount_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_partition_only",
+                                                "offline_move_engine_used",
+                                                "offset_change_verified",
+                                                "mount_and_file_hash_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9921261Z"
+                    },
+                    {
+                        "id":  "external.cluster-size-change",
+                        "name":  "Existing-volume cluster-size change proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "before_allocation_unit_size",
+                                                       "after_allocation_unit_size",
+                                                       "file_count",
+                                                       "acl_validation",
+                                                       "alternate_stream_validation",
+                                                       "file_hash_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_volume_only",
+                                                "full_file_tree_copied",
+                                                "metadata_preserved",
+                                                "hash_acl_stream_validation_passed"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9960387Z"
+                    },
+                    {
+                        "id":  "external.primary-logical-conversion",
+                        "name":  "Primary/logical conversion on disposable MBR disk",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "disk_id",
+                                                       "before_layout",
+                                                       "extended_container_identity",
+                                                       "logical_volume_identity",
+                                                       "after_layout",
+                                                       "partition_order_offsets",
+                                                       "mount_validation",
+                                                       "file_hash_validation",
+                                                       "bootability_result"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_mbr_disk_only",
+                                                "extended_container_identity_recorded",
+                                                "logical_volume_identity_recorded",
+                                                "before_after_order_offsets_verified",
+                                                "mount_and_file_hash_verified",
+                                                "bootability_verified_when_applicable"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:08.9989673Z"
+                    },
+                    {
+                        "id":  "external.volume-serial-number",
+                        "name":  "Volume serial-number metadata mutation proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "volume_id",
+                                                       "file_system",
+                                                       "before_serial_number",
+                                                       "after_serial_number",
+                                                       "mount_validation",
+                                                       "chkdsk_output",
+                                                       "file_hash_validation",
+                                                       "rollback_or_backup_evidence"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_volume_only",
+                                                "file_system_specific_writer_used",
+                                                "metadata_change_verified",
+                                                "mount_chkdsk_hash_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:09.0024259Z"
+                    },
+                    {
+                        "id":  "external.dynamic-to-basic",
+                        "name":  "Dynamic disk to basic conversion proof",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "vm_id",
+                                                       "disk_id",
+                                                       "before_disk_type",
+                                                       "before_layout",
+                                                       "backup_evidence",
+                                                       "after_disk_type",
+                                                       "after_layout",
+                                                       "restore_hash_validation"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_dynamic_disk_vm_only",
+                                                "pre_conversion_snapshot",
+                                                "data_backup_before_destructive_conversion",
+                                                "basic_disk_restore_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:09.0059142Z"
+                    },
+                    {
+                        "id":  "external.hardware-wipe",
+                        "name":  "Non-system hardware wipe on disposable physical disk",
+                        "status":  "ExternalGate",
+                        "message":  "Requires disposable VM, hardware, or lab evidence; not run by this VHD harness.",
+                        "required_evidence_keys":  [
+                                                       "device_model",
+                                                       "serial_number",
+                                                       "operator_confirmation",
+                                                       "wipe_method",
+                                                       "before_layout",
+                                                       "after_layout"
+                                                   ],
+                        "required_evidence_values":  null,
+                        "safety_contract":  [
+                                                "disposable_physical_disk_only",
+                                                "non_system_disk_identity_recorded",
+                                                "typed_confirmation_recorded",
+                                                "post_wipe_empty_layout_verified"
+                                            ],
+                        "evidence":  null,
+                        "completed_utc":  "2026-06-03T02:54:09.0393914Z"
+                    }
+                ]
+}

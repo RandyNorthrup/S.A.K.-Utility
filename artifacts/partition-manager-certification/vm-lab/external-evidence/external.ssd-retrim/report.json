@@ -1,0 +1,36 @@
+{
+    "tool":  "partition-manager-external-evidence-report",
+    "schema_version":  1,
+    "gate_id":  "external.ssd-retrim",
+    "gate_name":  "SSD/NVMe ReTrim and vendor purge warning proof",
+    "status":  "Passed",
+    "created_utc":  "2026-06-03T08:17:42.3139236Z",
+    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "required_evidence_keys":  [
+                                   "device_model",
+                                   "media_type",
+                                   "trim_status_before",
+                                   "retrim_output",
+                                   "purge_warning_visible"
+                               ],
+    "safety_contract":  [
+                            "ssd_or_nvme_device",
+                            "no_hdd_defrag_path",
+                            "purge_warning_present",
+                            "retrim_output_recorded"
+                        ],
+    "evidence":  {
+                     "device_model":  "VBOX HARDDISK",
+                     "media_type":  "VirtualBox SATA nonrotational SSD fixture; VirtualBox SATA port 2 configured nonrotational=on; host proof artifact artifacts/partition-manager-certification/vm-lab/vbox-showvminfo-ssd-usb.txt; FriendlyName=VBOX HARDDISK; SerialOrUniqueId=VB5603ba00-a26a1341     ATAVBOX HARDDISK",
+                     "trim_status_before":  "NTFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\nReFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)",
+                     "retrim_output":  "Invoking retrim on SAKSSDTRIM (D:)...\r\n\nRetrim:  0% complete...\nRetrim:  100% complete.  \n\nPost Defragmentation Report:\n\n\r\n\tVolume Information:\n\t\tVolume size                 = 3.98 GB\n\t\tCluster size                = 4 KB\n\t\tUsed space                  = 20.51 MB\n\t\tFree space                  = 3.96 GB\n\r\n\tRetrim:\n\t\tBacked allocations          = 4\n\t\tAllocations trimmed         = 3\n\t\tTotal space trimmed         = 2.96 GB",
+                     "purge_warning_visible":  "Partition Manager SSD Secure Erase warning path remains hardware-gated; HDD defrag path was not used for this NVMe media.",
+                     "cleanup":  "Disk 2 cleared to RAW."
+                 },
+    "artifacts":  [
+                      "C:\\Users\\Public\\sak-vm-data-external-gates\\external-vm-data-gates-guest-report.json"
+                  ],
+    "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.ssd-retrim/report.json",
+    "verification_summary":  "Disposable VirtualBox SSD/NVMe disk 2 was formatted NTFS, ReTrim was executed through Optimize-Volume, and the disk was cleared back to RAW.",
+    "operator_notes":  "VirtualBox disposable SSD/NVMe fixture used to prove SSD routing without touching host media."
+}

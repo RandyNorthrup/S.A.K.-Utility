@@ -173,6 +173,11 @@ on 2026-06-03 PDT:
 Strict release readiness with
 `-RequirePartitionVhdEvidence -RequirePartitionExternalEvidence` passes and the
 release-claim guard accepts the completed certification wording.
+The minimal machine-readable release evidence snapshot is tracked under
+`artifacts\partition-manager-certification\vhd-strict\run-20260602-194934\`
+and `artifacts\partition-manager-certification\vm-lab\external-evidence\` so a
+clean CI checkout can verify `HardwareCertified` claims without local-only
+artifact state.
 
 1. Extract the release ZIP into a clean folder.
 2. Run `sak_utility.exe`.
