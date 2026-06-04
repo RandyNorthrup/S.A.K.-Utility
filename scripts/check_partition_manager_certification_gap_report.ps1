@@ -144,7 +144,9 @@ try {
     Assert-Condition -Condition ($markdown.Contains($gapReport.claim_level)) -Message "Gap Markdown missing claim level"
     Assert-Condition -Condition (-not $markdown.Contains("run_partition_manager_destructive_certification.ps1")) -Message "Gap Markdown contains stale direct destructive harness command instead of strict VHD handoff"
 
-    $nextCommands = @($gapReport.next_commands | ForEach-Object { $_.ToString() })
+    $nextCommands = @($gapReport.next_commands | Where-Object {
+            $null -ne $_ -and -not [string]::IsNullOrWhiteSpace($_.ToString()) -and $_.ToString() -ne "@{}"
+        } | ForEach-Object { $_.ToString() })
     if ($expectedVhdGapIds.Count -gt 0) {
         Assert-Condition -Condition (($nextCommands -join "`n").Contains("run_partition_manager_vhd_certification_strict.ps1")) -Message "Gap report missing strict VHD handoff command"
         Assert-Condition -Condition ($markdown.Contains("run_partition_manager_vhd_certification_strict.ps1")) -Message "Gap Markdown missing strict VHD handoff command"

@@ -147,7 +147,7 @@ function New-NextCommandList {
         $commands.Add("powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_partition_manager_hardware_certification_strict.ps1 -CertificationRoot $strictCertificationRootArg -ExternalEvidenceManifest $externalImportedManifestArg -ExternalEvidenceChecklist $externalChecklistArg -ExternalEvidenceRoot $externalEvidenceRootArg")
     }
 
-    return @($commands)
+    return $commands.ToArray()
 }
 
 function Write-GapMarkdown {
@@ -246,6 +246,7 @@ try {
         $gaps += New-GapEntry -Matrix $matrix -Id $id -Category "external_gate"
     }
 
+    $nextCommands = @(New-NextCommandList -Status $status -StatusDirectory $statusDirectory -VhdGapIds $vhdGapIds -ExternalGapIds $externalGapIds)
     $report = [ordered]@{
         tool = "partition-manager-certification-gap-report"
         schema_version = 1
@@ -267,8 +268,8 @@ try {
                 incomplete = $externalGapIds.Count
             }
         }
-        next_commands = New-NextCommandList -Status $status -StatusDirectory $statusDirectory -VhdGapIds $vhdGapIds -ExternalGapIds $externalGapIds
-        gaps = $gaps
+        next_commands = $nextCommands
+        gaps = @($gaps)
     }
 
     $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedOutputPath -Encoding UTF8
