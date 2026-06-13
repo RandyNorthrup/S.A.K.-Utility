@@ -228,6 +228,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_manager_types.cpp
         ../src/core/partition_file_system_detector.cpp
@@ -303,6 +304,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_filesystem_probe_
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../include/sak/partition_file_system_detector.h
         ../include/sak/partition_apfs_file_system_reader.h
@@ -357,6 +359,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certif
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/threading/duplicate_finder_worker.cpp
         ../src/threading/worker_base.cpp
@@ -441,6 +444,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_manager_controller.cpp
         ../src/core/partition_manager_types.cpp
@@ -989,6 +993,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
@@ -1039,6 +1044,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
@@ -2711,6 +2717,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
@@ -3259,6 +3266,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
@@ -3300,6 +3308,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
         ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_writer.cpp
         ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp

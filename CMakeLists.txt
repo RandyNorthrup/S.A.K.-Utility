@@ -351,6 +351,7 @@ set(CORE_SOURCES
     src/core/partition_apfs_writer.cpp
     src/core/partition_ext_file_system_reader.cpp
     src/core/partition_hfs_file_system_reader.cpp
+    src/core/partition_hfs_file_system_writer.cpp
     src/core/partition_raw_device_io.cpp
     src/core/partition_manager_types.cpp
     src/core/partition_file_system_detector.cpp
@@ -439,6 +440,7 @@ set(CORE_SOURCES
     include/sak/partition_apfs_writer.h
     include/sak/partition_ext_file_system_reader.h
     include/sak/partition_hfs_file_system_reader.h
+    include/sak/partition_hfs_internal.h
     include/sak/partition_raw_device_io.h
     include/sak/partition_manager_types.h
     include/sak/partition_file_system_detector.h
@@ -981,8 +983,10 @@ add_dependencies(sak_utility sak_apfs_writer_cli)
 add_executable(sak_hfs_writer_cli
     src/tools/sak_hfs_writer_cli.cpp
     src/core/partition_hfs_file_system_reader.cpp
+    src/core/partition_hfs_file_system_writer.cpp
     src/core/partition_raw_device_io.cpp
     include/sak/partition_hfs_file_system_reader.h
+    include/sak/partition_hfs_internal.h
     include/sak/partition_raw_device_io.h
 )
 
