@@ -6395,7 +6395,13 @@ void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() 
          .volume_name = QStringLiteral("SAK Oversized"),
          .options = options});
     QVERIFY(!oversized.ok);
-    QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("one-spaceman-chunk")));
+    const QString oversizedBlockers = oversized.blockers.join(' ');
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("one-spaceman-chunk")));
+    // Geometry-aware blocker: 256 MiB = 65536 blocks = 2 chunks, 1 CIB.
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("65536-block")));
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("2 spaceman chunk(s)")));
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("1 chunk-info block(s)")));
+    QVERIFY(!oversizedBlockers.contains(QStringLiteral("multi-CIB CAB tier")));
     QVERIFY(!QFileInfo::exists(oversizedImagePath));
 
     auto oldFalsePassFixture = apfsRawDetectionFixture();

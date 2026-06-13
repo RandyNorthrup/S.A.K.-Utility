@@ -1778,12 +1778,19 @@ struct GeneratedApfsLayoutContext {
     QStringList* blockers{nullptr};
 };
 
-QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose) {
+QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose, uint64_t blockCount) {
+    const PartitionApfsContainerGeometry geometry =
+        PartitionApfsWriter::computeContainerGeometry(blockCount);
     return QStringLiteral(
                "APFS %1 currently supports S.A.K.-generated one-spaceman-chunk containers only "
-               "(64 MiB through 128 MiB); larger targets require multi-CIB spaceman support "
-               "and Apple fsck validation")
-        .arg(purpose);
+               "(64 MiB through 128 MiB); this %2-block target needs %3 spaceman chunk(s) across "
+               "%4 chunk-info block(s)%5, which requires multi-chunk spaceman emission and Apple "
+               "fsck validation")
+        .arg(purpose)
+        .arg(blockCount)
+        .arg(geometry.chunk_count)
+        .arg(geometry.cib_count)
+        .arg(geometry.multi_cib ? QStringLiteral(" (multi-CIB CAB tier)") : QString());
 }
 
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
@@ -1795,7 +1802,8 @@ bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
         return false;
     }
     if (context.geometry.blockCount > kGeneratedApfsSingleChunkMaxBlocks) {
-        context.blockers->append(generatedApfsSingleChunkLimitBlocker(context.purpose));
+        context.blockers->append(
+            generatedApfsSingleChunkLimitBlocker(context.purpose, context.geometry.blockCount));
         return false;
     }
     return true;
@@ -2556,8 +2564,9 @@ PartitionApfsWritePreflight preflightNewContainerFormat(uint64_t target_containe
             "APFS format requires at least 64 MiB target container size"));
     }
     if (target_container_bytes > kGeneratedApfsSingleChunkMaxBytes) {
-        result.blockers.append(
-            generatedApfsSingleChunkLimitBlocker(QLatin1StringView("format")));
+        result.blockers.append(generatedApfsSingleChunkLimitBlocker(
+            QLatin1StringView("format"),
+            target_container_bytes / kSupportedApfsBlockSizeBytes));
     }
     if (block_size_bytes != kSupportedApfsBlockSizeBytes) {
         result.blockers.append(QStringLiteral(
