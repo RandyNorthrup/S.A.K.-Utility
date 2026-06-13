@@ -430,9 +430,44 @@ struct PartitionApfsRawRepairRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Derived geometry of an APFS container's space-manager device:
+///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
+///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
+///        blocks a container of @c block_count blocks requires.
+///
+/// This is the geometry the multi-chunk format builder (A1 of the APFS/HFS
+/// full driver plan) must emit to exceed the current single-chunk
+/// (64-128 MiB) certified envelope. The internal-pool sizing
+/// @c ip_block_count = 3 * (cib_count + chunk_count) was derived from two real
+/// Apple `newfs_apfs` containers (apple-fresh.img: 1 CIB + 1 chunk -> 6;
+/// ref 3.apfs: 1 CIB + 10 chunks -> 33) and is verified for the single-CIB
+/// tier; the CIB term remains a hypothesis for the multi-CIB tier until a
+/// >126-chunk Apple container is harvested in the macOS VM.
+struct PartitionApfsContainerGeometry {
+    uint64_t block_count{0};
+    uint32_t block_size{0};
+    uint64_t blocks_per_chunk{0};
+    uint64_t chunk_count{0};
+    uint64_t chunks_per_cib{0};
+    uint64_t cib_count{0};
+    uint64_t cibs_per_cab{0};
+    uint64_t cab_count{0};
+    uint64_t chunk_bitmap_block_count{0};
+    uint64_t ip_bitmap_block_count{0};
+    uint64_t ip_block_count{0};
+    bool single_chunk{false};  ///< true for the 64-128 MiB certified envelope
+    bool multi_cib{false};     ///< chunk_count > chunks_per_cib -> needs the CAB tier
+};
+
 class PartitionApfsWriter {
 public:
     [[nodiscard]] static QString operationName(PartitionApfsWriteOperation operation);
+    /// @brief Compute the multi-chunk/multi-CIB space-manager geometry for a
+    ///        container of @p block_count blocks (default APFS 4096-byte blocks).
+    ///        Pure function; no I/O. See @ref PartitionApfsContainerGeometry.
+    [[nodiscard]] static PartitionApfsContainerGeometry computeContainerGeometry(
+        uint64_t block_count,
+        uint32_t block_size = 4096);
     [[nodiscard]] static std::optional<uint64_t> computeObjectChecksum(
         const QByteArray& object_bytes);
     [[nodiscard]] static bool stampObjectChecksum(QByteArray* object_bytes);

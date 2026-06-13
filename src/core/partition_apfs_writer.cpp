@@ -2944,6 +2944,42 @@ QString PartitionApfsWriter::operationName(PartitionApfsWriteOperation operation
     return QStringLiteral("APFS operation");
 }
 
+PartitionApfsContainerGeometry PartitionApfsWriter::computeContainerGeometry(
+    uint64_t block_count, uint32_t block_size) {
+    PartitionApfsContainerGeometry geometry;
+    geometry.block_count = block_count;
+    geometry.block_size = block_size;
+    geometry.blocks_per_chunk = kApfsSpacemanBlocksPerChunk;
+    geometry.chunks_per_cib = kApfsSpacemanChunksPerCib;
+    geometry.cibs_per_cab = kApfsSpacemanCibsPerCab;
+    geometry.ip_bitmap_block_count = kApfsFormatIpBitmapBlocks;
+    if (block_count == 0 || geometry.blocks_per_chunk == 0) {
+        return geometry;
+    }
+    // One spaceman chunk covers blocks_per_chunk (32768) blocks; one 4096-byte
+    // allocation bitmap (32768 bits) covers exactly one chunk.
+    geometry.chunk_count =
+        (block_count + geometry.blocks_per_chunk - 1) / geometry.blocks_per_chunk;
+    geometry.chunk_bitmap_block_count = geometry.chunk_count;
+    // Chunk-info entries pack chunks_per_cib (126) per chunk-info block; CIBs
+    // pack cibs_per_cab (507) per chunk-info address block.
+    geometry.cib_count =
+        (geometry.chunk_count + geometry.chunks_per_cib - 1) / geometry.chunks_per_cib;
+    if (geometry.cib_count == 0) {
+        geometry.cib_count = 1;
+    }
+    geometry.multi_cib = geometry.cib_count > 1;
+    geometry.cab_count =
+        geometry.multi_cib
+            ? (geometry.cib_count + geometry.cibs_per_cab - 1) / geometry.cibs_per_cab
+            : 0;
+    // Internal-pool block count derived from real Apple newfs_apfs containers
+    // (see PartitionApfsContainerGeometry doc): 3 * (cib_count + chunk_count).
+    geometry.ip_block_count = 3ULL * (geometry.cib_count + geometry.chunk_count);
+    geometry.single_chunk = geometry.chunk_count == 1;
+    return geometry;
+}
+
 std::optional<uint64_t> PartitionApfsWriter::computeObjectChecksum(
     const QByteArray& object_bytes) {
     const qsizetype payloadBytes = object_bytes.size() - kApfsObjectChecksumBytes;

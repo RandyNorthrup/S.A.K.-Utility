@@ -1652,6 +1652,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_deletesAllocatedFilesAndReleasesBitmap();
     void apfsFileSystemReader_rejectsCorruptMetadataChecksum();
     void apfsWriter_computesAndVerifiesObjectChecksums();
+    void apfsWriter_computesMultiChunkContainerGeometry();
     void apfsWriter_blocksOversizedGeneratedContainers();
     void apfsWriter_blocksGeneratedLayoutWithSnapshotState();
     void apfsWriter_preflightFailsClosedUntilCertified();
@@ -5259,6 +5260,75 @@ void PartitionManagerCoreTests::apfsWriter_computesAndVerifiesObjectChecksums() 
     QByteArray malformed(kTestApfsChecksumObjectBytes - 1, '\0');
     QVERIFY(!PartitionApfsWriter::computeObjectChecksum(malformed).has_value());
     QVERIFY(!PartitionApfsWriter::stampObjectChecksum(nullptr));
+}
+
+void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry() {
+    constexpr uint64_t kBlocksPerChunk = 32768;  // one spaceman chunk (4096-byte blocks)
+    constexpr uint64_t kChunksPerCib = 126;
+
+    // Empty/degenerate input is fully defined and harmless.
+    const auto empty = PartitionApfsWriter::computeContainerGeometry(0);
+    QCOMPARE(empty.chunk_count, static_cast<uint64_t>(0));
+    QCOMPARE(empty.cib_count, static_cast<uint64_t>(0));
+    QCOMPARE(empty.ip_block_count, static_cast<uint64_t>(0));
+
+    // 64 MiB (16384 blocks) -> the current single-chunk certified floor.
+    const auto sixtyFour = PartitionApfsWriter::computeContainerGeometry(16384);
+    QCOMPARE(sixtyFour.chunk_count, static_cast<uint64_t>(1));
+    QCOMPARE(sixtyFour.cib_count, static_cast<uint64_t>(1));
+    QCOMPARE(sixtyFour.chunk_bitmap_block_count, static_cast<uint64_t>(1));
+    QVERIFY(sixtyFour.single_chunk);
+    QVERIFY(!sixtyFour.multi_cib);
+    // Matches the real apple-fresh.img spaceman ip_block_count (6).
+    QCOMPARE(sixtyFour.ip_block_count, static_cast<uint64_t>(6));
+
+    // 128 MiB (32768 blocks) is exactly one chunk -> the single-chunk ceiling.
+    const auto oneTwentyEight = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk);
+    QCOMPARE(oneTwentyEight.chunk_count, static_cast<uint64_t>(1));
+    QVERIFY(oneTwentyEight.single_chunk);
+    QCOMPARE(oneTwentyEight.ip_block_count, static_cast<uint64_t>(6));
+
+    // One block past 128 MiB needs a second chunk (multi-chunk, single CIB).
+    const auto justOver = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk + 1);
+    QCOMPARE(justOver.chunk_count, static_cast<uint64_t>(2));
+    QCOMPARE(justOver.cib_count, static_cast<uint64_t>(1));
+    QVERIFY(!justOver.single_chunk);
+    QVERIFY(!justOver.multi_cib);
+    QCOMPARE(justOver.ip_block_count, static_cast<uint64_t>(9));  // 3 * (1 + 2)
+
+    // 512 MiB (131072 blocks) -> 4 chunks, 1 CIB.
+    const auto fiveTwelve = PartitionApfsWriter::computeContainerGeometry(131072);
+    QCOMPARE(fiveTwelve.chunk_count, static_cast<uint64_t>(4));
+    QCOMPARE(fiveTwelve.cib_count, static_cast<uint64_t>(1));
+    QCOMPARE(fiveTwelve.chunk_bitmap_block_count, static_cast<uint64_t>(4));
+    QCOMPARE(fiveTwelve.ip_block_count, static_cast<uint64_t>(15));  // 3 * (1 + 4)
+
+    // The real ref/3.apfs geometry: 300032 blocks -> 10 chunks, 1 CIB,
+    // ip_block_count 33 (validated host-side against the container).
+    const auto refThree = PartitionApfsWriter::computeContainerGeometry(300032);
+    QCOMPARE(refThree.chunk_count, static_cast<uint64_t>(10));
+    QCOMPARE(refThree.cib_count, static_cast<uint64_t>(1));
+    QCOMPARE(refThree.ip_block_count, static_cast<uint64_t>(33));  // 3 * (1 + 10)
+
+    // Exactly chunks_per_cib chunks still fits one CIB.
+    const auto fullCib =
+        PartitionApfsWriter::computeContainerGeometry(kChunksPerCib * kBlocksPerChunk);
+    QCOMPARE(fullCib.chunk_count, kChunksPerCib);
+    QCOMPARE(fullCib.cib_count, static_cast<uint64_t>(1));
+    QVERIFY(!fullCib.multi_cib);
+
+    // One chunk past a full CIB crosses into the multi-CIB (CAB) tier.
+    const auto multiCib =
+        PartitionApfsWriter::computeContainerGeometry((kChunksPerCib + 1) * kBlocksPerChunk);
+    QCOMPARE(multiCib.chunk_count, kChunksPerCib + 1);
+    QCOMPARE(multiCib.cib_count, static_cast<uint64_t>(2));
+    QVERIFY(multiCib.multi_cib);
+    QCOMPARE(multiCib.cab_count, static_cast<uint64_t>(1));
+    QCOMPARE(multiCib.ip_block_count, 3ULL * (2 + (kChunksPerCib + 1)));
+
+    // Partial trailing chunk rounds up.
+    const auto partial = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk * 3 + 17);
+    QCOMPARE(partial.chunk_count, static_cast<uint64_t>(4));
 }
 
 PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
