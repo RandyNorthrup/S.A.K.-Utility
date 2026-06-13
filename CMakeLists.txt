@@ -17,7 +17,7 @@ endif()
 project(SAK_Utility
     VERSION 0.9.1.9
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
-    LANGUAGES CXX
+    LANGUAGES C CXX
 )# C++23 Standard - Strict compliance required
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -342,7 +342,21 @@ set(CORE_SOURCES
     src/core/diagnostic_report_generator.cpp
     src/core/diagnostic_controller.cpp
     src/core/file_recovery_engine.cpp
+    src/core/file_explorer_types.cpp
+    src/core/file_explorer_item_model.cpp
+    src/core/file_explorer_sort_filter_model.cpp
+    src/core/file_explorer_command_registry.cpp
+    src/core/file_management_file_system.cpp
+    src/core/partition_apfs_file_system_reader.cpp
+    src/core/partition_apfs_writer.cpp
+    src/core/partition_ext_file_system_reader.cpp
+    src/core/partition_hfs_file_system_reader.cpp
+    src/core/partition_raw_device_io.cpp
     src/core/partition_manager_types.cpp
+    src/core/partition_file_system_detector.cpp
+    src/core/partition_file_system_registry.cpp
+    src/core/partition_file_system_tool_manifest.cpp
+    src/core/partition_file_system_tool_runner.cpp
     src/core/storage_inventory_worker.cpp
     src/core/partition_safety_validator.cpp
     src/core/partition_script_builder.cpp
@@ -416,7 +430,21 @@ set(CORE_SOURCES
     include/sak/diagnostic_report_generator.h
     include/sak/diagnostic_controller.h
     include/sak/file_recovery_engine.h
+    include/sak/file_explorer_types.h
+    include/sak/file_explorer_item_model.h
+    include/sak/file_explorer_sort_filter_model.h
+    include/sak/file_explorer_command_registry.h
+    include/sak/file_management_file_system.h
+    include/sak/partition_apfs_file_system_reader.h
+    include/sak/partition_apfs_writer.h
+    include/sak/partition_ext_file_system_reader.h
+    include/sak/partition_hfs_file_system_reader.h
+    include/sak/partition_raw_device_io.h
     include/sak/partition_manager_types.h
+    include/sak/partition_file_system_detector.h
+    include/sak/partition_file_system_registry.h
+    include/sak/partition_file_system_tool_manifest.h
+    include/sak/partition_file_system_tool_runner.h
     include/sak/storage_inventory_worker.h
     include/sak/partition_safety_validator.h
     include/sak/partition_script_builder.h
@@ -563,10 +591,26 @@ set(GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
+    src/gui/file_explorer_sidebar.cpp
+    src/gui/file_explorer_icon_registry.cpp
+    src/gui/file_explorer_command_bar.cpp
+    src/gui/file_explorer_omnibar.cpp
+    src/gui/file_explorer_details_view.cpp
+    src/gui/file_explorer_pane.cpp
+    src/gui/file_explorer_details_pane.cpp
+    src/gui/file_management_explorer_panel.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
     include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
+    include/sak/file_explorer_sidebar.h
+    include/sak/file_explorer_icon_registry.h
+    include/sak/file_explorer_command_bar.h
+    include/sak/file_explorer_omnibar.h
+    include/sak/file_explorer_details_view.h
+    include/sak/file_explorer_pane.h
+    include/sak/file_explorer_details_pane.h
+    include/sak/file_management_explorer_panel.h
     include/sak/log_viewer.h
     include/sak/settings_dialog.h
     src/gui/settings_dialog.cpp
@@ -802,6 +846,29 @@ set(ALL_SOURCES
 )
 
 # ============================================================================
+# Vendored lzfse/lzvn reference library (Apple, BSD-3) for HFS+ decmpfs codecs
+# ============================================================================
+
+add_library(sak_lzfse STATIC
+    third_party/lzfse/src/lzfse_decode.c
+    third_party/lzfse/src/lzfse_decode_base.c
+    third_party/lzfse/src/lzfse_encode.c
+    third_party/lzfse/src/lzfse_encode_base.c
+    third_party/lzfse/src/lzfse_fse.c
+    third_party/lzfse/src/lzvn_decode_base.c
+    third_party/lzfse/src/lzvn_encode_base.c
+    third_party/lzfse/sak_lzvn_shim.c
+)
+target_include_directories(sak_lzfse PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzfse/src
+)
+if(MSVC)
+    target_compile_options(sak_lzfse PRIVATE /w)
+else()
+    target_compile_options(sak_lzfse PRIVATE -w)
+endif()
+
+# ============================================================================
 # Executable Target
 # ============================================================================
 
@@ -829,6 +896,7 @@ target_link_libraries(sak_utility PRIVATE
     ZLIB::ZLIB
     BZip2::BZip2
     LibLZMA::LibLZMA
+    sak_lzfse
     ${PLATFORM_LIBS}
 )
 
@@ -856,6 +924,101 @@ target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/qrcodegen
 )
+
+# ============================================================================
+# APFS Writer CLI (Partition Manager raw/image apply bridge)
+# ============================================================================
+
+add_executable(sak_apfs_writer_cli
+    src/tools/sak_apfs_writer_cli.cpp
+    src/core/partition_apfs_file_system_reader.cpp
+    src/core/partition_apfs_writer.cpp
+    src/core/partition_file_system_detector.cpp
+    src/core/partition_raw_device_io.cpp
+    include/sak/partition_apfs_writer.h
+    include/sak/partition_apfs_file_system_reader.h
+    include/sak/partition_file_system_detector.h
+    include/sak/partition_raw_device_io.h
+)
+
+set_target_properties(sak_apfs_writer_cli PROPERTIES
+    AUTOMOC ON
+    WIN32_EXECUTABLE FALSE
+)
+
+target_include_directories(sak_apfs_writer_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+
+target_link_libraries(sak_apfs_writer_cli PRIVATE
+    Qt6::Core
+    ${PLATFORM_LIBS}
+)
+
+target_compile_definitions(sak_apfs_writer_cli PRIVATE
+    QT_NO_KEYWORDS
+    QT_DEPRECATED_WARNINGS
+    QT_DISABLE_DEPRECATED_BEFORE=0x060000
+)
+
+if(MSVC)
+    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_apfs_cli_crt_pos)
+    if(_sak_apfs_cli_crt_pos EQUAL -1)
+        target_link_options(sak_apfs_writer_cli PRIVATE
+            /NODEFAULTLIB:MSVCRT
+            /NODEFAULTLIB:MSVCRTD
+        )
+    endif()
+endif()
+
+add_dependencies(sak_utility sak_apfs_writer_cli)
+
+# ============================================================================
+# HFS Writer CLI (Partition Manager image-only HFS apply bridge)
+# ============================================================================
+
+add_executable(sak_hfs_writer_cli
+    src/tools/sak_hfs_writer_cli.cpp
+    src/core/partition_hfs_file_system_reader.cpp
+    src/core/partition_raw_device_io.cpp
+    include/sak/partition_hfs_file_system_reader.h
+    include/sak/partition_raw_device_io.h
+)
+
+set_target_properties(sak_hfs_writer_cli PROPERTIES
+    AUTOMOC ON
+    WIN32_EXECUTABLE FALSE
+)
+
+target_include_directories(sak_hfs_writer_cli PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+
+target_link_libraries(sak_hfs_writer_cli PRIVATE
+    Qt6::Core
+    sak_lzfse
+    ${PLATFORM_LIBS}
+)
+
+target_compile_definitions(sak_hfs_writer_cli PRIVATE
+    QT_NO_KEYWORDS
+    QT_DEPRECATED_WARNINGS
+    QT_DISABLE_DEPRECATED_BEFORE=0x060000
+)
+
+if(MSVC)
+    string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_hfs_cli_crt_pos)
+    if(_sak_hfs_cli_crt_pos EQUAL -1)
+        target_link_options(sak_hfs_writer_cli PRIVATE
+            /NODEFAULTLIB:MSVCRT
+            /NODEFAULTLIB:MSVCRTD
+        )
+    endif()
+endif()
+
+add_dependencies(sak_utility sak_hfs_writer_cli)
 
 # ============================================================================
 # Elevated Helper Executable (Phase 2 — per-task elevation)
@@ -990,16 +1153,20 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/win32-mcp-server/win32-mcp-
                         "before configuring/building so SAK ships with portable MCP automation.")
 endif()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/filesystem/manifest.json")
+    message(FATAL_ERROR "Partition filesystem tool manifest not bundled. "
+                        "tools/filesystem/manifest.json is required even when no non-native "
+                        "filesystem tools are approved yet.")
+endif()
+
 # Copy embedded tools directory to output
 add_custom_command(TARGET sak_utility POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E rm -rf
-        "$<TARGET_FILE_DIR:sak_utility>/tools"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools"
-        "$<TARGET_FILE_DIR:sak_utility>/tools"
-    COMMAND ${CMAKE_COMMAND} -E rm -rf
-        "$<TARGET_FILE_DIR:sak_utility>/tools/mcp/_build"
+    COMMAND ${CMAKE_COMMAND}
+        "-DSAK_TOOLS_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/tools"
+        "-DSAK_TOOLS_DESTINATION=$<TARGET_FILE_DIR:sak_utility>/tools"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_tools_bundle.cmake"
     COMMENT "Copying bundled tools to output directory"
+    VERBATIM
 )
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")

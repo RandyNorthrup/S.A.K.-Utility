@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -41,6 +42,20 @@ const QVector<QPair<QString, QString>> kOfficePcPackages = {
     {"greenshot", ""},
     {"everything", ""},
 };
+
+bool isTransientPackageServiceError(const QString& error) {
+    return error.contains(QStringLiteral("Nupkg download failed"), Qt::CaseInsensitive) &&
+           (error.contains(QStringLiteral("Error transferring"), Qt::CaseInsensitive) ||
+            error.contains(QStringLiteral("server replied"), Qt::CaseInsensitive) ||
+            error.contains(QStringLiteral("HTTP 503"), Qt::CaseInsensitive) ||
+            error.contains(QStringLiteral("HTTP 504"), Qt::CaseInsensitive));
+}
+
+bool allPackageFailuresAreTransient(const QHash<QString, QString>& package_errors) {
+    const QStringList errors = package_errors.values();
+    return !errors.isEmpty() &&
+           std::all_of(errors.cbegin(), errors.cend(), isTransientPackageServiceError);
+}
 
 }  // namespace
 
@@ -70,6 +85,7 @@ private:
                                   const WorkerDiagnosticsContext& context);
     void verifyManifest(const sak::BatchStats& final_stats) const;
     void verifyPackageFiles(const sak::BatchStats& final_stats) const;
+    void logFinalSummary(const sak::BatchStats& final_stats) const;
     QTemporaryDir m_output_dir;
 };
 
@@ -151,6 +167,13 @@ void TestOfflinePackageBuilder::verifyPackageFiles(const sak::BatchStats& final_
     }
 }
 
+void TestOfflinePackageBuilder::logFinalSummary(const sak::BatchStats& final_stats) const {
+    qInfo().noquote() << QString("Result: %1/%2 succeeded, %3 failed")
+                             .arg(final_stats.completed)
+                             .arg(final_stats.total)
+                             .arg(final_stats.failed);
+}
+
 // ============================================================================
 // Test: Build the Office PC bundle end-to-end
 // ============================================================================
@@ -198,16 +221,15 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
              qPrintable("Worker reported an operation error: " + operation_error));
 
     QCOMPARE(final_stats.total, kOfficePcPackages.size());
+    if (final_stats.completed == 0 && allPackageFailuresAreTransient(package_errors)) {
+        QSKIP("Chocolatey package service/CDN returned only transient transfer errors.");
+    }
     QVERIFY2(final_stats.completed > 0, "No packages completed successfully");
 
     verifyManifest(final_stats);
     verifyPackageFiles(final_stats);
 
-    // Log final summary
-    qInfo().noquote() << QString("Result: %1/%2 succeeded, %3 failed")
-                             .arg(final_stats.completed)
-                             .arg(final_stats.total)
-                             .arg(final_stats.failed);
+    logFinalSummary(final_stats);
 
     // At least kMinSuccessCount packages must succeed — some may fail due to
     // transient CDN errors, unresolvable URLs (e.g., ${locale} in firefox),

@@ -1,0 +1,70 @@
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+new file mode 100644
+--- /dev/null
++++ b/include/linux/sysctl.h
+@@ -0,0 +1,6 @@
++#ifndef SAK_HFSPROGS_LINUX_SYSCTL_H
++#define SAK_HFSPROGS_LINUX_SYSCTL_H
++
++#include "../sys/sysctl.h"
++
++#endif
+diff --git a/include/sys/ioctl.h b/include/sys/ioctl.h
+new file mode 100644
+--- /dev/null
++++ b/include/sys/ioctl.h
+@@ -0,0 +1,20 @@
++#ifndef SAK_HFSPROGS_SYS_IOCTL_H
++#define SAK_HFSPROGS_SYS_IOCTL_H
++
++#include_next <sys/ioctl.h>
++
++#undef _IOC
++#undef _IO
++#undef _IOR
++
++#define _IOC(dir, type, nr, size) \
++    (((dir) << 30) | ((sizeof(size) & 0x1fff) << 16) | ((type) << 8) | (nr))
++
++#define _IO(type, nr) _IOC(0U, (type), (nr), char)
++
++#define _IOR(type, nr, size) _IOC(2U, (type), (nr), size)
++
++#endif
+diff --git a/include/sys/sysctl.h b/include/sys/sysctl.h
+new file mode 100644
+--- /dev/null
++++ b/include/sys/sysctl.h
+@@ -0,0 +1,31 @@
++#ifndef SAK_HFSPROGS_SYS_SYSCTL_H
++#define SAK_HFSPROGS_SYS_SYSCTL_H
++
++#include <stddef.h>
++
++#define CTL_VFS 10
++#define CTL_KERN 1
++#define CTL_VM 2
++#define VFS_GENERIC 0
++#define VFS_MAXTYPENUM 1
++#define KERN_HOSTNAME 10
++#define KERN_OSRELEASE 2
++#define KERN_VERSION 4
++#define KERN_BOOTTIME 21
++#define VM_METER 1
++
++static inline int sysctl(const int *name,
++                         unsigned int namelen,
++                         void *oldp,
++                         size_t *oldlenp,
++                         const void *newp,
++                         size_t newlen) {
++    (void)name;
++    (void)namelen;
++    (void)oldp;
++    (void)oldlenp;
++    (void)newp;
++    (void)newlen;
++    return -1;
++}
++
++#endif

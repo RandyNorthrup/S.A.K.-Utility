@@ -10,6 +10,9 @@
 #include "sak/logger.h"
 #include "sak/partition_report_generator.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QMetaObject>
 #include <QtConcurrent>
@@ -33,6 +36,17 @@ std::shared_ptr<PartitionExecutor> makeAsyncExecutor() {
             delete executor;
         });
 }
+
+QString runtimeFilesystemManifestPath() {
+    const QString appManifest = PartitionFileSystemToolManifest::defaultRuntimeManifestPath(
+        QCoreApplication::applicationDirPath());
+    if (QFileInfo::exists(appManifest)) {
+        return appManifest;
+    }
+    const QString cwdManifest =
+        QDir::current().filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());
+    return cwdManifest;
+}
 }  // namespace
 
 PartitionManagerController::PartitionManagerController(QObject* parent) : QObject(parent) {}
@@ -55,6 +69,19 @@ PartitionManagerController::~PartitionManagerController() {
         }
     }
     m_apply_executor.reset();
+    if (m_file_system_check_watcher) {
+        auto* watcher = m_file_system_check_watcher;
+        m_file_system_check_watcher = nullptr;
+        QObject::disconnect(watcher, nullptr, this, nullptr);
+        watcher->setParent(nullptr);
+        connect(watcher,
+                &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
+                watcher,
+                &QObject::deleteLater);
+        if (watcher->isFinished()) {
+            watcher->deleteLater();
+        }
+    }
 }
 
 const PartitionInventory& PartitionManagerController::inventory() const noexcept {
@@ -223,6 +250,59 @@ void PartitionManagerController::cancel() {
     setState(PartitionManagerState::Cancelled);
     Q_EMIT statusMessage(QStringLiteral("Partition operation cancellation requested"),
                          sak::kTimerStatusDefaultMs);
+}
+
+void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_system,
+                                                            const QString& target_path) {
+    if (m_file_system_check_watcher && !m_file_system_check_watcher->isFinished()) {
+        Q_EMIT statusMessage(QStringLiteral("Filesystem check already running"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
+
+    const QString manifestPath = runtimeFilesystemManifestPath();
+    const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
+    PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifestPath,
+                                                    .tools_root = toolsRoot,
+                                                    .file_system = file_system,
+                                                    .target_path = target_path,
+                                                    .timeout_ms = 0};
+    Q_EMIT statusMessage(QStringLiteral("Running read-only %1 filesystem check").arg(file_system),
+                         0);
+    auto* watcher = new QFutureWatcher<PartitionFileSystemToolRunResult>(this);
+    m_file_system_check_watcher = watcher;
+    connect(watcher,
+            &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
+            this,
+            [this, watcher]() {
+                const auto result = watcher->result();
+                if (!result.std_out.trimmed().isEmpty()) {
+                    Q_EMIT logOutput(result.std_out.trimmed());
+                }
+                if (!result.std_err.trimmed().isEmpty()) {
+                    Q_EMIT logOutput(result.std_err.trimmed());
+                }
+                if (result.blocked) {
+                    Q_EMIT statusMessage(QStringLiteral("Filesystem check blocked: %1")
+                                             .arg(result.blockers.join(QStringLiteral("; "))),
+                                         sak::kTimerStatusDefaultMs);
+                } else if (result.success) {
+                    Q_EMIT statusMessage(QStringLiteral("Filesystem check complete"),
+                                         sak::kTimerStatusDefaultMs);
+                } else {
+                    Q_EMIT statusMessage(QStringLiteral("Filesystem check failed with exit code %1")
+                                             .arg(result.exit_code),
+                                         sak::kTimerStatusDefaultMs);
+                }
+                Q_EMIT fileSystemCheckFinished(result);
+                if (m_file_system_check_watcher == watcher) {
+                    m_file_system_check_watcher = nullptr;
+                }
+                watcher->deleteLater();
+            });
+    watcher->setFuture(QtConcurrent::run([request]() {
+        return PartitionFileSystemToolRunner::runReadOnlyCheck(request);
+    }));
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS

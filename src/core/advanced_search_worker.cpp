@@ -64,6 +64,7 @@ constexpr int kId3SizeByte1 = 7;
 constexpr int kId3SizeByte2 = 8;
 constexpr int kId3SizeByte3 = 9;
 constexpr qint64 kDefaultBinarySearchBytes = 100LL * sak::kBytesPerMB;
+constexpr int kTargetSearchBrowseMaxEntries = 10'000;
 }  // namespace
 
 // -- Zlib Inflate Helper ------------------------------------------------------
@@ -215,7 +216,7 @@ auto AdvancedSearchWorker::prepareSearchConfig()
     }
 
     // Check network accessibility
-    if (isNetworkPath(m_config.root_path)) {
+    if (!m_config.use_file_system_target && isNetworkPath(m_config.root_path)) {
         if (!checkNetworkPathAccessible(m_config.root_path)) {
             logError(
                 "AdvancedSearchWorker: network path "
@@ -242,6 +243,20 @@ bool AdvancedSearchWorker::shouldSkipFile(const QString& file_path) const {
         }
     }
     return false;
+}
+
+bool AdvancedSearchWorker::shouldSkipTargetFile(const FileManagementEntry& file) const {
+    if (!file.regular_file) {
+        return true;
+    }
+    if (isExcluded(file.path)) {
+        return true;
+    }
+    if (!matchesExtensionFilter(file.path)) {
+        return true;
+    }
+    return m_config.max_file_size > 0 &&
+           static_cast<qint64>(file.size_bytes) > m_config.max_file_size;
 }
 
 bool AdvancedSearchWorker::processSearchFile(const QString& file_path,
@@ -328,6 +343,107 @@ void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
                        .arg(file_count));
 }
 
+bool AdvancedSearchWorker::searchTargetDirectory(const QString& directory_path,
+                                                 const QRegularExpression& regex,
+                                                 QVector<SearchMatch>& batch_matches,
+                                                 int& total_matches,
+                                                 int& total_files,
+                                                 int& file_count) {
+    if (checkStop()) {
+        return false;
+    }
+
+    const auto listing = FileManagementFileSystemBridge::listDirectory(
+        m_config.file_system_target, directory_path, kTargetSearchBrowseMaxEntries);
+    if (!listing.ok) {
+        logWarning("AdvancedSearchWorker: target listing failed at '{}': {}",
+                   directory_path.toStdString(),
+                   listing.blockers.join(QStringLiteral("; ")).toStdString());
+        return true;
+    }
+
+    for (const auto& entry : listing.entries) {
+        if (checkStop()) {
+            return false;
+        }
+        if (entry.regular_file) {
+            ++file_count;
+            if (!shouldSkipTargetFile(entry) &&
+                !processTargetFile(entry, regex, batch_matches, total_matches, total_files)) {
+                return false;
+            }
+            if (file_count % kBatchSize == 0 && !batch_matches.isEmpty()) {
+                Q_EMIT resultsReady(batch_matches);
+                batch_matches.clear();
+            }
+            constexpr int kProgressInterval = 100;
+            if (file_count % kProgressInterval == 0) {
+                reportProgress(file_count,
+                               0,
+                               QString("Searching target... %1 files scanned, %2 matches found")
+                                   .arg(file_count)
+                                   .arg(total_matches));
+            }
+        } else if (entry.directory) {
+            if (!searchTargetDirectory(entry.path,
+                                       regex,
+                                       batch_matches,
+                                       total_matches,
+                                       total_files,
+                                       file_count)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool AdvancedSearchWorker::processTargetFile(const FileManagementEntry& file,
+                                             const QRegularExpression& regex,
+                                             QVector<SearchMatch>& batch_matches,
+                                             int& total_matches,
+                                             int& total_files) {
+    auto matches = searchTargetFile(file, regex);
+    if (matches.isEmpty()) {
+        return true;
+    }
+
+    Q_EMIT fileSearched(file.path, matches.size());
+    batch_matches.append(matches);
+    total_matches += matches.size();
+    total_files++;
+
+    if (m_config.max_results > 0 && total_matches >= m_config.max_results) {
+        logInfo("AdvancedSearchWorker: max results limit ({}) reached", m_config.max_results);
+        return false;
+    }
+    return true;
+}
+
+void AdvancedSearchWorker::runFileSystemTargetSearch(const QRegularExpression& regex,
+                                                     int& total_matches,
+                                                     int& total_files) {
+    int file_count = 0;
+    QVector<SearchMatch> batch_matches;
+    searchTargetDirectory(m_config.root_path.trimmed().isEmpty() ? QStringLiteral("/")
+                                                                : m_config.root_path,
+                          regex,
+                          batch_matches,
+                          total_matches,
+                          total_files,
+                          file_count);
+
+    if (!batch_matches.isEmpty()) {
+        Q_EMIT resultsReady(batch_matches);
+    }
+    reportProgress(file_count,
+                   file_count,
+                   QString("Search complete: %1 matches in %2 files (%3 files scanned)")
+                       .arg(total_matches)
+                       .arg(total_files)
+                       .arg(file_count));
+}
+
 auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
     logInfo("AdvancedSearchWorker: starting search for '{}' in '{}'",
             m_config.pattern.toStdString(),
@@ -341,6 +457,21 @@ auto AdvancedSearchWorker::execute() -> std::expected<void, sak::error_code> {
 
     int totalMatches = 0;
     int totalFiles = 0;
+
+    if (m_config.use_file_system_target) {
+        if (!m_config.file_system_target.can_advanced_search) {
+            logError("AdvancedSearchWorker: target does not support advanced search: {}",
+                     m_config.file_system_target.label.toStdString());
+            return std::unexpected(sak::error_code::invalid_argument);
+        }
+        runFileSystemTargetSearch(regex, totalMatches, totalFiles);
+        logInfo(
+            "AdvancedSearchWorker: target search complete -- "
+            "{} matches in {} files",
+            totalMatches,
+            totalFiles);
+        return {};
+    }
 
     // Single file search -- no directory iteration needed
     if (QFileInfo(m_config.root_path).isFile()) {
@@ -416,6 +547,35 @@ QVector<SearchMatch> AdvancedSearchWorker::searchFile(const QString& filePath,
     return matches;
 }
 
+QVector<SearchMatch> AdvancedSearchWorker::searchTargetFile(const FileManagementEntry& file,
+                                                            const QRegularExpression& regex) {
+    QVector<SearchMatch> matches;
+    if (m_config.search_file_metadata) {
+        QMap<QString, QString> metadata;
+        metadata.insert(QStringLiteral("FileName"), file.name);
+        metadata.insert(QStringLiteral("FilePath"), file.path);
+        metadata.insert(QStringLiteral("FileSize"), QStringLiteral("%1 bytes").arg(file.size_bytes));
+        metadata.insert(QStringLiteral("FileType"), QFileInfo(file.path).suffix().toUpper());
+        matches.append(collectMetadataMatches(file.path, regex, metadata));
+    }
+
+    const uint64_t readLimit =
+        m_config.max_file_size > 0 ? static_cast<uint64_t>(m_config.max_file_size)
+                                   : static_cast<uint64_t>(kDefaultBinarySearchBytes);
+    const auto read =
+        FileManagementFileSystemBridge::readFile(m_config.file_system_target, file.path, readLimit);
+    if (!read.ok) {
+        return matches;
+    }
+
+    if (m_config.hex_search) {
+        matches.append(searchBinaryBytes(file.path, read.data, regex));
+    } else if (shouldSearchText(QFileInfo(file.path).suffix().toLower(), false)) {
+        matches.append(searchTextBytes(file.path, read.data, regex));
+    }
+    return matches;
+}
+
 // -- Text Content Search -----------------------------------------------------
 
 SearchMatch AdvancedSearchWorker::buildContextMatch(
@@ -486,6 +646,33 @@ QVector<SearchMatch> AdvancedSearchWorker::searchTextContent(const QString& file
         }
     }
 
+    return matches;
+}
+
+QVector<SearchMatch> AdvancedSearchWorker::searchTextBytes(const QString& file_path,
+                                                           const QByteArray& data,
+                                                           const QRegularExpression& regex) const {
+    QVector<SearchMatch> matches;
+    const QStringList lines = QString::fromUtf8(data).split(QLatin1Char('\n'));
+    if (lines.size() > kMaxTextSearchLines) {
+        logWarning("AdvancedSearchWorker: virtual file '{}' exceeds 500k lines, skipping",
+                   file_path.toStdString());
+        return matches;
+    }
+
+    for (int i = 0; i < lines.size(); ++i) {
+        if (checkStop()) {
+            return matches;
+        }
+        auto match_iter = regex.globalMatch(lines.at(i));
+        while (match_iter.hasNext()) {
+            const auto regex_match = match_iter.next();
+            matches.append(buildContextMatch(file_path, lines, i, regex_match));
+            if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
+                return matches;
+            }
+        }
+    }
     return matches;
 }
 
@@ -1726,6 +1913,39 @@ QVector<SearchMatch> AdvancedSearchWorker::searchBinary(const QString& filePath,
         }
     }
 
+    return matches;
+}
+
+QVector<SearchMatch> AdvancedSearchWorker::searchBinaryBytes(
+    const QString& file_path,
+    const QByteArray& data,
+    const QRegularExpression& regex) const {
+    QVector<SearchMatch> matches;
+    const QString textContent = QString::fromUtf8(data);
+    auto matchIter = regex.globalMatch(textContent);
+    while (matchIter.hasNext()) {
+        const auto regexMatch = matchIter.next();
+
+        SearchMatch match;
+        match.file_path = file_path;
+        match.line_number = static_cast<int>(regexMatch.capturedStart());
+        match.line_content = regexMatch.captured();
+        match.match_start = 0;
+        match.match_end = static_cast<int>(regexMatch.capturedLength());
+
+        constexpr int kBinaryContextBytes = 16;
+        const int start =
+            std::max(0, static_cast<int>(regexMatch.capturedStart()) - kBinaryContextBytes);
+        const int end = std::min(static_cast<int>(data.size()),
+                                 static_cast<int>(regexMatch.capturedEnd()) +
+                                     kBinaryContextBytes);
+        match.context_before.append(QString("Hex: %1").arg(QString(data.mid(start, end - start).toHex(' '))));
+        matches.append(match);
+
+        if (m_config.max_results > 0 && matches.size() >= m_config.max_results) {
+            break;
+        }
+    }
     return matches;
 }
 

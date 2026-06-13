@@ -87,18 +87,22 @@ Latest host-side package/live harness pass:
 `artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`.
 It covered targeted AI CTest, live OpenAI plain response and function tool-loop,
 portable startup smoke, runtime accessibility audit, and the smoke checklist.
-The same quality pass also completed a full Release build and full CTest run:
-133/133 tests passed.
+The latest local quality pass also completed a full Release build and full CTest
+run: 136/136 tests passed.
 The current workflow runner uses a per-subagent OpenAI model-client factory and
 a conservative three-subagent production cap, so workflow-declared read-only
 delegates can run in parallel without sharing one Responses client instance.
 
-Latest current-binary VM rerun attempt: `SAK-PM-Lab-Win11` booted headless and
-reached Guest Additions run level 3, but host `VBoxManage guestcontrol` login as
-`saklab` with a blank password was rejected, so the in-guest harness could not
-be launched non-interactively. The VM was powered off after the attempt. This is
-not a blocker for non-destructive AI Assistant changes because local/host
-package smoke covers the current binary. Prior package-only VM evidence remains
+Latest current-binary VM rerun note: do not use blank-password guest-control
+auth for `SAK-PM-Lab-Win11`. The VM's non-empty `saklab` password is resolved
+from the local VM unattended metadata or cached `temp\vm-auth` password file and
+passed to `VBoxManage guestcontrol` with `--passwordfile`. Future
+noninteractive VM reruns should use the direct-admin automation VM pattern from
+`scripts\new_partition_manager_automation_vm.ps1`; keypress-based UAC acceptance
+is fallback-only and should not be the normal auth path. Current
+non-destructive AI Assistant changes remain covered by local/host package
+smoke, and prior package-only VM evidence
+remains
 `artifacts\ai-assistant-vm-smoke\run-20260604-033445\ai-assistant-vm-smoke-report.json`.
 
 ## Chat Title Smoke

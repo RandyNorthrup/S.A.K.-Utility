@@ -104,6 +104,9 @@ private:
     void createRegexPatternMenu();
 
     // -- File Explorer Helpers --
+    void populateSearchTargets(QVector<FileManagementTarget> targets);
+    void addManualSearchTarget();
+    [[nodiscard]] FileManagementTarget currentSearchTarget() const;
     void populateFileExplorerRoot();
     void populateDirectoryChildren(QTreeWidgetItem* parentItem, const QString& dirPath);
     void addPlaceholderChild(QTreeWidgetItem* parentItem);
@@ -149,6 +152,11 @@ private:
     QCheckBox* m_archive_search_check{nullptr};
     QCheckBox* m_binary_hex_check{nullptr};
     QMenu* m_regex_menu{nullptr};
+    QComboBox* m_target_combo{nullptr};
+    QPushButton* m_target_refresh_button{nullptr};
+    QPushButton* m_target_scan_button{nullptr};
+    QPushButton* m_target_manual_button{nullptr};
+    QVector<FileManagementTarget> m_search_targets;
 
     // -- Three-Panel Splitter --
     QSplitter* m_splitter{nullptr};

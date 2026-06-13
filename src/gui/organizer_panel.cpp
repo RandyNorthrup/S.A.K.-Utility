@@ -8,11 +8,13 @@
 
 #include "sak/detachable_log_window.h"
 #include "sak/duplicate_finder_worker.h"
+#include "sak/file_management_explorer_panel.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/organizer_worker.h"
+#include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -31,8 +33,10 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QScrollArea>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QThread>
 #include <QVBoxLayout>
 
@@ -142,6 +146,7 @@ DedupSettingsWidgets addDedupSettingsRows(QFormLayout* layout,
 
 OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(nullptr) {
     setupUi();
+    refreshMountedFileSystemTargets();
     setupDefaultCategories();
     logInfo("OrganizerPanel initialized");
 }
@@ -186,10 +191,25 @@ void OrganizerPanel::setupUi() {
     m_tabs = new QTabWidget(this);
     m_tabs->addTab(createOrganizerTab(), tr("File Organizer"));
     m_tabs->addTab(createDuplicateFinderTab(), tr("Duplicate Finder"));
+    m_file_explorer_panel = new FileManagementExplorerPanel(this);
+    m_tabs->addTab(m_file_explorer_panel, tr("File Explorer"));
     setAccessible(m_tabs,
                   tr("File management tools"),
-                  tr("Switch between file organizer and duplicate finder"));
+                  tr("Switch between file organizer, duplicate finder, file explorer, and advanced search"));
     rootLayout->addWidget(m_tabs, 1);
+
+    connect(m_file_explorer_panel,
+            &FileManagementExplorerPanel::statusMessage,
+            this,
+            &OrganizerPanel::statusMessage);
+    connect(m_file_explorer_panel,
+            &FileManagementExplorerPanel::progressUpdate,
+            this,
+            &OrganizerPanel::progressUpdate);
+    connect(m_file_explorer_panel,
+            &FileManagementExplorerPanel::logOutput,
+            this,
+            &OrganizerPanel::logOutput);
 
     // Update header when sub-tab changes
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
@@ -205,6 +225,9 @@ void OrganizerPanel::setupUi() {
             {":/icons/icons/icons8-duplicate.svg",
              "Duplicate Finder",
              "Find duplicate files to reclaim disk space"},
+            {":/icons/icons/panel_search.svg",
+             "File Explorer",
+             "Browse mounted and supported non-Windows file systems"},
             {":/icons/icons/panel_search.svg",
              "Advanced Search",
              "Search file contents, metadata, archives, and binary data across directory trees"},
@@ -226,6 +249,104 @@ void OrganizerPanel::setupUi() {
     rootLayout->addLayout(statusRow);
 }
 
+void OrganizerPanel::refreshMountedFileSystemTargets() {
+    m_file_system_targets = FileManagementFileSystemBridge::mountedTargets();
+    populateFileSystemTargetCombos();
+}
+
+void OrganizerPanel::scanFileSystemTargets() {
+    Q_EMIT statusMessage(tr("Scanning disk and partition file-system targets..."), 0);
+    setEnabled(false);
+    const auto inventory = StorageInventoryWorker::scanCurrentSystem();
+    setEnabled(true);
+    m_file_system_targets = FileManagementFileSystemBridge::targetsFromInventory(inventory);
+    populateFileSystemTargetCombos();
+    Q_EMIT statusMessage(tr("File-system targets scanned"), sak::kTimerStatusDefaultMs);
+}
+
+void OrganizerPanel::addManualFileSystemTarget() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Add Raw or Image Target"));
+    dialog.setMinimumWidth(sak::kDialogWidthLarge);
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* path = new QLineEdit(&dialog);
+    path->setAccessibleName(tr("Raw or image target path"));
+    auto* browse = new QPushButton(tr("Browse"), &dialog);
+    browse->setStyleSheet(ui::kSecondaryButtonStyle);
+    auto* row = new QHBoxLayout();
+    row->addWidget(path, 1);
+    row->addWidget(browse);
+    layout->addRow(tr("Target path:"), row);
+
+    auto* fs = new QComboBox(&dialog);
+    fs->addItems({QStringLiteral("ext2"),
+                  QStringLiteral("ext3"),
+                  QStringLiteral("ext4"),
+                  QStringLiteral("HFS+"),
+                  QStringLiteral("HFSX"),
+                  QStringLiteral("APFS"),
+                  QStringLiteral("XFS"),
+                  QStringLiteral("Btrfs")});
+    layout->addRow(tr("File system:"), fs);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Add Target"));
+    layout->addRow(buttons);
+    connect(browse, &QPushButton::clicked, &dialog, [this, path]() {
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select Raw or Image Target"));
+        if (!file.isEmpty()) {
+            path->setText(file);
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted || path->text().trimmed().isEmpty()) {
+        return;
+    }
+    m_file_system_targets.append(
+        FileManagementFileSystemBridge::manualTarget(path->text(), fs->currentText()));
+    populateFileSystemTargetCombos();
+}
+
+void OrganizerPanel::populateFileSystemTargetCombos() {
+    const auto fillCombo = [this](QComboBox* combo) {
+        if (!combo) {
+            return;
+        }
+        QSignalBlocker blocker(combo);
+        combo->clear();
+        for (const auto& target : m_file_system_targets) {
+            combo->addItem(target.label);
+        }
+        if (!m_file_system_targets.isEmpty()) {
+            combo->setCurrentIndex(0);
+        }
+    };
+    fillCombo(m_organizer_target_combo);
+    fillCombo(m_dedup_target_combo);
+    onOrganizerTargetChanged(m_organizer_target_combo ? m_organizer_target_combo->currentIndex()
+                                                      : -1);
+    onDedupTargetChanged(m_dedup_target_combo ? m_dedup_target_combo->currentIndex() : -1);
+}
+
+FileManagementTarget OrganizerPanel::currentTargetForCombo(const QComboBox* combo) const {
+    const int index = combo ? combo->currentIndex() : -1;
+    if (index < 0 || index >= m_file_system_targets.size()) {
+        return {};
+    }
+    return m_file_system_targets.at(index);
+}
+
+FileManagementTarget OrganizerPanel::currentOrganizerTarget() const {
+    return currentTargetForCombo(m_organizer_target_combo);
+}
+
+FileManagementTarget OrganizerPanel::currentDedupTarget() const {
+    return currentTargetForCombo(m_dedup_target_combo);
+}
+
 // ============================================================================
 // Tab 1 -- File Organizer
 // ============================================================================
@@ -235,8 +356,31 @@ void OrganizerPanel::setupUi() {
 // ============================================================================
 
 QGroupBox* OrganizerPanel::createTargetDirectoryGroup() {
-    auto* group = new QGroupBox(tr("Target Directory"), this);
+    auto* group = new QGroupBox(tr("File-System Target"), this);
     auto* group_layout = new QVBoxLayout(group);
+
+    auto* target_row = new QHBoxLayout();
+    m_organizer_target_combo = new QComboBox(this);
+    m_organizer_target_combo->setAccessibleName(tr("Organizer file-system target"));
+    m_organizer_target_combo->setToolTip(
+        tr("Choose a mounted volume or supported raw/image target"));
+    target_row->addWidget(m_organizer_target_combo, 1);
+
+    m_target_refresh_button = new QPushButton(tr("Refresh"), this);
+    m_target_refresh_button->setAccessibleName(tr("Refresh organizer targets"));
+    m_target_refresh_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    target_row->addWidget(m_target_refresh_button);
+
+    m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
+    m_target_scan_button->setAccessibleName(tr("Scan disk and partition organizer targets"));
+    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    target_row->addWidget(m_target_scan_button);
+
+    m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
+    m_target_manual_button->setAccessibleName(tr("Add raw or image organizer target"));
+    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    target_row->addWidget(m_target_manual_button);
+    group_layout->addLayout(target_row);
 
     auto* path_row = new QHBoxLayout();
     m_target_path = new QLineEdit(this);
@@ -349,6 +493,22 @@ QWidget* OrganizerPanel::createOrganizerTab() {
 
     // Connections
     connect(m_target_path, &QLineEdit::textChanged, this, &OrganizerPanel::onTargetPathChanged);
+    connect(m_organizer_target_combo,
+            &QComboBox::currentIndexChanged,
+            this,
+            &OrganizerPanel::onOrganizerTargetChanged);
+    connect(m_target_refresh_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::refreshMountedFileSystemTargets);
+    connect(m_target_scan_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::scanFileSystemTargets);
+    connect(m_target_manual_button,
+            &QPushButton::clicked,
+            this,
+            &OrganizerPanel::addManualFileSystemTarget);
     connect(m_browse_button, &QPushButton::clicked, this, &OrganizerPanel::onBrowseClicked);
     connect(m_preview_button, &QPushButton::clicked, this, &OrganizerPanel::onPreviewClicked);
     connect(m_execute_button, &QPushButton::clicked, this, &OrganizerPanel::onExecuteClicked);
@@ -413,6 +573,14 @@ void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& 
 QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     auto* group = new QGroupBox(tr("Scan Directories"), this);
     auto* group_layout = new QVBoxLayout(group);
+
+    auto* target_row = new QHBoxLayout();
+    m_dedup_target_combo = new QComboBox(this);
+    m_dedup_target_combo->setAccessibleName(tr("Duplicate finder file-system target"));
+    m_dedup_target_combo->setToolTip(
+        tr("Choose a mounted volume or supported raw/image target"));
+    target_row->addWidget(m_dedup_target_combo, 1);
+    group_layout->addLayout(target_row);
 
     m_dedup_directory_list = new QListWidget(this);
     m_dedup_directory_list->setMinimumHeight(sak::kListAreaMinH);
@@ -541,6 +709,10 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
             &QPushButton::clicked,
             this,
             &OrganizerPanel::onDedupAddDirectoryClicked);
+    connect(m_dedup_target_combo,
+            &QComboBox::currentIndexChanged,
+            this,
+            &OrganizerPanel::onDedupTargetChanged);
     connect(m_dedup_remove_button,
             &QPushButton::clicked,
             this,
@@ -587,12 +759,29 @@ void OrganizerPanel::onTargetPathChanged(const QString& path) {
     updateDirectorySummary();
 }
 
+void OrganizerPanel::onOrganizerTargetChanged(int index) {
+    Q_UNUSED(index)
+    const auto target = currentOrganizerTarget();
+    if (!m_target_path || target.root_path.isEmpty()) {
+        return;
+    }
+    m_browse_button->setEnabled(target.local_file_system && !m_operation_running);
+    m_target_path->setText(target.local_file_system ? target.root_path : QStringLiteral("/"));
+    updateDirectorySummary();
+}
+
 void OrganizerPanel::updateDirectorySummary() {
     Q_ASSERT(m_target_path);
     Q_ASSERT(m_dir_summary_label);
     const QString path = m_target_path->text().trimmed();
+    const auto target = currentOrganizerTarget();
     if (path.isEmpty()) {
         m_dir_summary_label->setText(tr("No directory selected"));
+        return;
+    }
+
+    if (!target.root_path.isEmpty() && !target.can_organize) {
+        m_dir_summary_label->setText(target.blockers.join(QStringLiteral("; ")));
         return;
     }
 
@@ -644,6 +833,15 @@ void OrganizerPanel::onPreviewClicked() {
 }
 
 bool OrganizerPanel::validateOrganizerTarget() {
+    const auto target = currentOrganizerTarget();
+    if (!target.root_path.isEmpty() && !target.can_organize) {
+        sak::showWarningLogged(
+            this,
+            tr("Organizer Target Blocked"),
+            target.blockers.join(QStringLiteral("\n")));
+        return false;
+    }
+
     if (m_target_path->text().isEmpty()) {
         sak::logWarning("Organization: no target directory selected");
         sak::showWarningLogged(this,
@@ -882,10 +1080,15 @@ void OrganizerPanel::setOperationRunning(bool running) {
     Q_ASSERT(m_target_path);
     Q_ASSERT(m_browse_button);
     m_operation_running = running;
+    const auto organizerTarget = currentOrganizerTarget();
 
     // Organizer controls
+    m_organizer_target_combo->setEnabled(!running);
+    m_target_refresh_button->setEnabled(!running);
+    m_target_scan_button->setEnabled(!running);
+    m_target_manual_button->setEnabled(!running);
     m_target_path->setEnabled(!running);
-    m_browse_button->setEnabled(!running);
+    m_browse_button->setEnabled(!running && organizerTarget.local_file_system);
     m_category_table->setEnabled(!running);
     m_add_category_button->setEnabled(!running);
     m_remove_category_button->setEnabled(!running);
@@ -895,8 +1098,12 @@ void OrganizerPanel::setOperationRunning(bool running) {
     m_execute_button->setEnabled(!running);
     m_cancel_button->setEnabled(running);
 
-    // Cross-lock: disable dedup tab and other tab while running
-    m_tabs->setTabEnabled(1, !running);
+    // Cross-lock: disable other file-management tabs while mutating organizer runs.
+    for (int index = 0; index < m_tabs->count(); ++index) {
+        if (index != 0) {
+            m_tabs->setTabEnabled(index, !running);
+        }
+    }
 }
 
 void OrganizerPanel::logMessage(const QString& message) {
@@ -1018,6 +1225,15 @@ void OrganizerPanel::updateDedupDirectorySummary() {
         return;
     }
 
+    const auto target = currentDedupTarget();
+    if (!target.root_path.isEmpty() && !target.local_file_system) {
+        m_dedup_summary_label->setText(
+            tr("%1 virtual directories on %2 - %3")
+                .arg(count)
+                .arg(target.label, FileManagementFileSystemBridge::capabilitySummary(target)));
+        return;
+    }
+
     qint64 totalSize = 0;
     int totalFiles = 0;
     for (int i = 0; i < count; ++i) {
@@ -1052,6 +1268,32 @@ void OrganizerPanel::updateDedupDirectorySummary() {
 
 void OrganizerPanel::onDedupAddDirectoryClicked() {
     Q_ASSERT(m_dedup_directory_list);
+    const auto target = currentDedupTarget();
+    if (!target.root_path.isEmpty() && !target.local_file_system) {
+        if (!target.can_duplicate_scan) {
+            sak::showWarningLogged(this,
+                                   tr("Duplicate Finder Target Blocked"),
+                                   target.blockers.join(QStringLiteral("\n")));
+            return;
+        }
+        bool ok = false;
+        const QString virtualPath =
+            QInputDialog::getText(this,
+                                  tr("Add Target Directory"),
+                                  tr("Directory path inside %1:").arg(target.label),
+                                  QLineEdit::Normal,
+                                  QStringLiteral("/"),
+                                  &ok)
+                .trimmed();
+        if (!ok || virtualPath.isEmpty()) {
+            return;
+        }
+        m_dedup_directory_list->addItem(virtualPath);
+        updateDedupDirectorySummary();
+        logMessage(QString("Added virtual scan directory: %1").arg(virtualPath));
+        return;
+    }
+
     QString dir = QFileDialog::getExistingDirectory(this,
                                                     tr("Select Directory to Scan"),
                                                     QString(),
@@ -1124,8 +1366,23 @@ void OrganizerPanel::onDedupScanClicked() {
     m_dedup_worker.reset();
 
     DuplicateFinderWorker::Config config;
-    for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
-        config.scanDirectories.push_back(m_dedup_directory_list->item(i)->text());
+    const auto target = currentDedupTarget();
+    if (!target.root_path.isEmpty() && !target.local_file_system) {
+        if (!target.can_duplicate_scan) {
+            sak::showWarningLogged(this,
+                                   tr("Duplicate Finder Target Blocked"),
+                                   target.blockers.join(QStringLiteral("\n")));
+            return;
+        }
+        config.use_file_system_target = true;
+        config.file_system_target = target;
+        for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
+            config.virtual_directories.push_back(m_dedup_directory_list->item(i)->text());
+        }
+    } else {
+        for (int i = 0; i < m_dedup_directory_list->count(); ++i) {
+            config.scanDirectories.push_back(m_dedup_directory_list->item(i)->text());
+        }
     }
     config.minimum_file_size = m_dedup_min_size->value() * sak::kBytesPerKB;
     config.recursive_scan = m_dedup_recursive->isChecked();
@@ -1201,6 +1458,14 @@ void OrganizerPanel::onDedupSettingsClicked() {
         m_dedup_thread_count->setValue(widgets.threadSpin->value());
         updateDedupDirectorySummary();
     }
+}
+
+void OrganizerPanel::onDedupTargetChanged(int index) {
+    Q_UNUSED(index)
+    if (m_dedup_directory_list) {
+        m_dedup_directory_list->clear();
+    }
+    updateDedupDirectorySummary();
 }
 
 void OrganizerPanel::onDedupWorkerStarted() {
@@ -1288,6 +1553,7 @@ void OrganizerPanel::setDedupRunning(bool running) {
     Q_ASSERT(m_dedup_add_button);
     m_dedup_running = running;
 
+    m_dedup_target_combo->setEnabled(!running);
     m_dedup_directory_list->setEnabled(!running);
     m_dedup_add_button->setEnabled(!running);
     m_dedup_remove_button->setEnabled(!running);
@@ -1295,8 +1561,12 @@ void OrganizerPanel::setDedupRunning(bool running) {
     m_dedup_scan_button->setEnabled(!running);
     m_dedup_cancel_button->setEnabled(running);
 
-    // Cross-lock: disable organizer tab while scanning
-    m_tabs->setTabEnabled(0, !running);
+    // Cross-lock: disable other file-management tabs while duplicate scan runs.
+    for (int index = 0; index < m_tabs->count(); ++index) {
+        if (index != 1) {
+            m_tabs->setTabEnabled(index, !running);
+        }
+    }
 }
 
 }  // namespace sak

@@ -345,7 +345,20 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
         row_layout->addStretch();
     }
 
-    auto* bubble = new QFrame(row);
+    auto* bubble = createTranscriptBubble(message, body, long_text, bubble_max_width);
+    row_layout->addWidget(bubble);
+    if (!user) {
+        row_layout->addStretch();
+    }
+    return row;
+}
+
+QFrame* AiTranscriptView::createTranscriptBubble(const Message& message,
+                                                 const QString& body,
+                                                 bool long_text,
+                                                 int bubble_max_width) {
+    const bool user = isUserChatRole(message.role);
+    auto* bubble = new QFrame(m_content);
     bubble->setObjectName(user ? QStringLiteral("aiTranscriptBubbleUser")
                                : QStringLiteral("aiTranscriptBubbleResult"));
     bubble->setMaximumWidth(bubble_max_width);
@@ -357,7 +370,16 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
                                       sak::ui::kMarginLarge,
                                       sak::ui::kSpacingDefault);
     bubble_layout->setSpacing(sak::ui::kSpacingSmall);
+    addTranscriptHeading(bubble_layout, bubble, message);
+    addTranscriptBody(bubble_layout, bubble, body, user);
+    addTranscriptToggle(bubble_layout, bubble, message, user, long_text);
+    return bubble;
+}
 
+void AiTranscriptView::addTranscriptHeading(QVBoxLayout* bubble_layout,
+                                            QFrame* bubble,
+                                            const Message& message) {
+    const bool user = isUserChatRole(message.role);
     auto* heading_row = new QHBoxLayout();
     heading_row->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
@@ -388,34 +410,40 @@ QWidget* AiTranscriptView::createTranscriptRow(const Message& message, int bubbl
         heading_row->addWidget(copy, 0, Qt::AlignRight | Qt::AlignTop);
     }
     bubble_layout->addLayout(heading_row);
+}
 
+void AiTranscriptView::addTranscriptBody(QVBoxLayout* bubble_layout,
+                                         QFrame* bubble,
+                                         const QString& body,
+                                         bool user) {
     auto* body_label = new QLabel(body, bubble);
     body_label->setWordWrap(true);
     body_label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     body_label->setStyleSheet(sak::ui::transparentBodyTextStyle(
         kTranscriptBodyFontPointSize, user ? sak::ui::kColorBgWhite : sak::ui::kColorTextBody));
     bubble_layout->addWidget(body_label);
+}
 
-    if (long_text) {
-        auto* toggle = new QPushButton(
-            message.expanded ? QObject::tr("Collapse") : QObject::tr("Expand full result"), bubble);
-        toggle->setFlat(true);
-        toggle->setCursor(Qt::PointingHandCursor);
-        toggle->setStyleSheet(
-            sak::ui::transcriptToggleStyle(user ? QString::fromLatin1(sak::ui::kColorBgWhite)
-                                                : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
-        const QString message_id = message.id;
-        connect(toggle, &QPushButton::clicked, this, [this, message_id]() {
-            toggleMessageExpanded(message_id);
-        });
-        bubble_layout->addWidget(toggle, 0, Qt::AlignLeft);
+void AiTranscriptView::addTranscriptToggle(QVBoxLayout* bubble_layout,
+                                           QFrame* bubble,
+                                           const Message& message,
+                                           bool user,
+                                           bool long_text) {
+    if (!long_text) {
+        return;
     }
-
-    row_layout->addWidget(bubble);
-    if (!user) {
-        row_layout->addStretch();
-    }
-    return row;
+    auto* toggle = new QPushButton(
+        message.expanded ? QObject::tr("Collapse") : QObject::tr("Expand full result"), bubble);
+    toggle->setFlat(true);
+    toggle->setCursor(Qt::PointingHandCursor);
+    toggle->setStyleSheet(
+        sak::ui::transcriptToggleStyle(user ? QString::fromLatin1(sak::ui::kColorBgWhite)
+                                            : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
+    const QString message_id = message.id;
+    connect(toggle, &QPushButton::clicked, this, [this, message_id]() {
+        toggleMessageExpanded(message_id);
+    });
+    bubble_layout->addWidget(toggle, 0, Qt::AlignLeft);
 }
 
 QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {

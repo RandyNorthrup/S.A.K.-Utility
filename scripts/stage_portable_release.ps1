@@ -52,6 +52,42 @@ function Copy-RequiredDirectoryContents([string]$SourceDirectory, [string]$Desti
     Write-Host "  Bundled: $Description"
 }
 
+function Copy-DirectoryExcludingBuildScratch([string]$SourceDirectory, [string]$DestinationDirectory, [string]$Description) {
+    if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
+        throw "$Description directory missing: $SourceDirectory"
+    }
+
+    $sourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).Path.TrimEnd('\', '/')
+    New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
+    $destinationRoot = (Resolve-Path -LiteralPath $DestinationDirectory).Path.TrimEnd('\', '/')
+
+    $stack = [System.Collections.Generic.Stack[string]]::new()
+    $stack.Push($sourceRoot)
+
+    while ($stack.Count -gt 0) {
+        $current = $stack.Pop()
+        $relative = $current.Substring($sourceRoot.Length).TrimStart('\', '/')
+        $targetDirectory = if ([string]::IsNullOrEmpty($relative)) {
+            $destinationRoot
+        } else {
+            Join-Path $destinationRoot $relative
+        }
+        New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+
+        Get-ChildItem -LiteralPath $current -File -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $targetDirectory -Force
+        }
+
+        Get-ChildItem -LiteralPath $current -Directory -Force | ForEach-Object {
+            if ($_.Name -ne "_build") {
+                $stack.Push($_.FullName)
+            }
+        }
+    }
+
+    Write-Host "  Bundled: $Description"
+}
+
 function Remove-PathIfExists([string]$Path) {
     if (Test-Path -LiteralPath $Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
@@ -79,6 +115,8 @@ Write-Host "Staging portable release: $packageRoot"
 
 Copy-RequiredFile (Join-Path $buildRoot "sak_utility.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_elevated_helper.exe") $packageRoot
+Copy-RequiredFile (Join-Path $buildRoot "sak_apfs_writer_cli.exe") $packageRoot
+Copy-RequiredFile (Join-Path $buildRoot "sak_hfs_writer_cli.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_splash.png") $packageRoot
 Copy-OptionalFile (Join-Path $buildRoot "icon.ico") $packageRoot
 
@@ -125,11 +163,11 @@ $toolsSource = Join-Path $buildRoot "tools"
 if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {
     throw "Bundled tools directory missing from build output: $toolsSource"
 }
-Copy-Item -LiteralPath $toolsSource -Destination $packageRoot -Recurse -Force
-Write-Host "  Bundled: tools/"
+Copy-DirectoryExcludingBuildScratch $toolsSource (Join-Path $packageRoot "tools") "tools/"
 
 $toolsRoot = Join-Path $packageRoot "tools"
 Remove-PathIfExists (Join-Path $toolsRoot "mcp/_build")
+Remove-PathIfExists (Join-Path $toolsRoot "filesystem/_build")
 Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue |
     Remove-Item -Force
 
@@ -171,6 +209,7 @@ $critical = @(
     "Qt6Core.dll",
     "Qt6Widgets.dll",
     "platforms/qwindows.dll",
+    "tools/filesystem/manifest.json",
     "tools/mcp/win32-mcp-server/win32-mcp-server.exe",
     "tools/mcp/win32-mcp-server/THIRD_PARTY_LICENSES.txt",
     "data/ai/providers/providers.json",

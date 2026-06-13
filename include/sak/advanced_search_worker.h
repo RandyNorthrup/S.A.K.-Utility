@@ -106,6 +106,11 @@ private:
     /// @brief Run directory-recursive search loop
     void runDirectorySearch(const QRegularExpression& regex, int& total_matches, int& total_files);
 
+    /// @brief Run a search through FileManagementFileSystemBridge
+    void runFileSystemTargetSearch(const QRegularExpression& regex,
+                                   int& total_matches,
+                                   int& total_files);
+
     /// @brief Process a single file during search, returns false if max results reached
     bool processSearchFile(const QString& file_path,
                            const QRegularExpression& regex,
@@ -113,8 +118,40 @@ private:
                            int& total_matches,
                            int& total_files);
 
+    /// @brief Process a virtual/raw target file during search
+    bool processTargetFile(const FileManagementEntry& file,
+                           const QRegularExpression& regex,
+                           QVector<SearchMatch>& batch_matches,
+                           int& total_matches,
+                           int& total_files);
+
     /// @brief Check if a file should be skipped (excluded, wrong extension, too large)
     [[nodiscard]] bool shouldSkipFile(const QString& file_path) const;
+
+    /// @brief Check if a virtual/raw target file should be skipped
+    [[nodiscard]] bool shouldSkipTargetFile(const FileManagementEntry& file) const;
+
+    /// @brief Stream-search a virtual/raw target directory recursively
+    bool searchTargetDirectory(const QString& directory_path,
+                               const QRegularExpression& regex,
+                               QVector<SearchMatch>& batch_matches,
+                               int& total_matches,
+                               int& total_files,
+                               int& file_count);
+
+    /// @brief Search a virtual/raw target file from bytes
+    [[nodiscard]] QVector<SearchMatch> searchTargetFile(const FileManagementEntry& file,
+                                                        const QRegularExpression& regex);
+
+    /// @brief Search text bytes with normal line-context behavior
+    [[nodiscard]] QVector<SearchMatch> searchTextBytes(const QString& file_path,
+                                                       const QByteArray& data,
+                                                       const QRegularExpression& regex) const;
+
+    /// @brief Search binary bytes from a virtual/raw target file
+    [[nodiscard]] QVector<SearchMatch> searchBinaryBytes(const QString& file_path,
+                                                         const QByteArray& data,
+                                                         const QRegularExpression& regex) const;
 
     /// @brief Build a SearchMatch with context lines around a regex hit
     [[nodiscard]] SearchMatch buildContextMatch(const QString& file_path,

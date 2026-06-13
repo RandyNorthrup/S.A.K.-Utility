@@ -30,6 +30,7 @@ try {
         "win32-mcp-server",
         "Context7 MCP",
         "Microsoft Learn MCP",
+        "Partition filesystem tools",
         "aria2",
         "UUPMediaCreator",
         "wimlib / libwim",
@@ -107,6 +108,25 @@ try {
         }
         if ($forbiddenRows.Count -gt 0) {
             throw "Forbidden win32 MCP runtime licenses found:`n$($forbiddenRows -join "`n")"
+        }
+    }
+
+    $filesystemManifestPath = "tools/filesystem/manifest.json"
+    if (Test-Path -LiteralPath $filesystemManifestPath -PathType Leaf) {
+        $filesystemManifest = Get-Content -LiteralPath $filesystemManifestPath -Raw | ConvertFrom-Json
+        foreach ($tool in @($filesystemManifest.tools)) {
+            $toolId = [string]$tool.id
+            $displayName = [string]$tool.display_name
+            $upstreamUrl = [string]$tool.upstream_url
+            $license = [string]$tool.license
+            foreach ($requiredPhrase in @($toolId, $displayName, $upstreamUrl, $license, "tools/filesystem")) {
+                if ([string]::IsNullOrWhiteSpace($requiredPhrase)) {
+                    continue
+                }
+                if (-not $licenseText.Contains($requiredPhrase)) {
+                    throw "Filesystem tool '$toolId' is approved in $filesystemManifestPath but missing from THIRD_PARTY_LICENSES.md: $requiredPhrase"
+                }
+            }
         }
     }
 

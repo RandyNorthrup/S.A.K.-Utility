@@ -1,0 +1,208 @@
+// Copyright (c) 2026 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+#include "sak/file_explorer_icon_registry.h"
+
+namespace sak {
+namespace {
+
+using IconDescriptor = FileExplorerIconDescriptor;
+
+[[nodiscard]] IconDescriptor descriptor(
+    const char* key,
+    const char* file_name,
+    const char* upstream_key,
+    const char* upstream_source) {
+    return {QString::fromLatin1(key),
+            QStringLiteral(":/icons/icons/files/%1.svg").arg(QString::fromLatin1(file_name)),
+            QString::fromLatin1(upstream_key),
+            QString::fromLatin1(upstream_source),
+            QStringLiteral("MIT")};
+}
+
+[[nodiscard]] const QVector<IconDescriptor>& iconDescriptors() {
+    static const QVector<IconDescriptor> items{
+        descriptor("open",
+                   "open",
+                   "App.ThemedIcons.Open",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Open.xaml"),
+        descriptor("open-in-new-tab",
+                   "open-in-new-tab",
+                   "App.ThemedIcons.OpenInTab",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Open.xaml"),
+        descriptor("copy-path",
+                   "copy-path",
+                   "App.ThemedIcons.CopyAsPath",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+        descriptor("refresh",
+                   "refresh",
+                   "App.ThemedIcons.Refresh",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+        descriptor("new-folder",
+                   "new-folder",
+                   "App.ThemedIcons.New.Folder",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.New.xaml"),
+        descriptor("write-file",
+                   "write-file",
+                   "App.ThemedIcons.New.File",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.New.xaml"),
+        descriptor("rename",
+                   "rename",
+                   "App.ThemedIcons.Rename",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+        descriptor("delete",
+                   "delete",
+                   "App.ThemedIcons.Delete",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+        descriptor("view-details",
+                   "view-details",
+                   "App.ThemedIcons.IconLayout.Details",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+        descriptor("view-list",
+                   "view-list",
+                   "App.ThemedIcons.IconLayout.List",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+        descriptor("view-grid",
+                   "view-grid",
+                   "App.ThemedIcons.IconSize.Small",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+        descriptor("view-cards",
+                   "view-cards",
+                   "App.ThemedIcons.IconLayout.Tiles",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+        descriptor("view-columns",
+                   "view-columns",
+                   "App.ThemedIcons.IconLayout.Columns",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+        descriptor("view-details-28",
+                   "view-details-28",
+                   "App.ThemedIcons.IconLayout.Details.28",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+        descriptor("view-list-28",
+                   "view-list-28",
+                   "App.ThemedIcons.IconLayout.List.28",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+        descriptor("view-grid-28",
+                   "view-grid-28",
+                   "App.ThemedIcons.IconLayout.Grid.28",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+        descriptor("view-cards-28",
+                   "view-cards-28",
+                   "App.ThemedIcons.IconLayout.Tiles.28",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+        descriptor("view-columns-28",
+                   "view-columns-28",
+                   "App.ThemedIcons.IconLayout.Columns.28",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+        descriptor("panel-left",
+                   "panel-left",
+                   "App.ThemedIcons.PanelLeft",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Panel.xaml"),
+        descriptor("details-pane",
+                   "details-pane",
+                   "App.ThemedIcons.PanelRight",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Panel.xaml"),
+        descriptor("dual-pane",
+                   "dual-pane",
+                   "App.ThemedIcons.Panes.Vertical",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.TabPane.xaml"),
+        descriptor("favorite",
+                   "favorite",
+                   "App.ThemedIcons.Favorite",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Favorite.xaml"),
+        descriptor("status-warning",
+                   "status-warning",
+                   "App.ThemedIcons.Status.Warning",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Status.xaml"),
+        descriptor("properties-general",
+                   "properties-general",
+                   "App.ThemedIcons.Properties.General",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Properties.Dialog.xaml"),
+        descriptor("properties-security",
+                   "properties-security",
+                   "App.ThemedIcons.Properties.Security",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Properties.Dialog.xaml"),
+        descriptor("more",
+                   "more",
+                   "App.ThemedIcons.More",
+                   "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+    };
+    return items;
+}
+
+}  // namespace
+
+QIcon FileExplorerIconRegistry::iconForCommand(const FileExplorerCommandId command) {
+    const QString key = iconKeyForCommand(command);
+    return iconForKey(key);
+}
+
+QIcon FileExplorerIconRegistry::iconForKey(const QString& key) {
+    if (key.isEmpty()) {
+        return {};
+    }
+
+    const FileExplorerIconDescriptor icon = descriptorForKey(key);
+    if (icon.resource_path.isEmpty()) {
+        return {};
+    }
+    return QIcon(icon.resource_path);
+}
+
+QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId command) {
+    switch (command) {
+    case FileExplorerCommandId::Open:
+        return QStringLiteral("open");
+    case FileExplorerCommandId::OpenInNewTab:
+        return QStringLiteral("open-in-new-tab");
+    case FileExplorerCommandId::CopyPath:
+    case FileExplorerCommandId::CopyItemPath:
+        return QStringLiteral("copy-path");
+    case FileExplorerCommandId::Refresh:
+        return QStringLiteral("refresh");
+    case FileExplorerCommandId::NewFolder:
+        return QStringLiteral("new-folder");
+    case FileExplorerCommandId::WriteFile:
+        return QStringLiteral("write-file");
+    case FileExplorerCommandId::Rename:
+        return QStringLiteral("rename");
+    case FileExplorerCommandId::Delete:
+        return QStringLiteral("delete");
+    case FileExplorerCommandId::ViewDetails:
+        return QStringLiteral("view-details");
+    case FileExplorerCommandId::ViewList:
+        return QStringLiteral("view-list");
+    case FileExplorerCommandId::ViewGrid:
+        return QStringLiteral("view-grid");
+    case FileExplorerCommandId::ViewCards:
+        return QStringLiteral("view-cards");
+    case FileExplorerCommandId::ViewColumns:
+        return QStringLiteral("view-columns");
+    case FileExplorerCommandId::ViewAdaptive:
+        return QStringLiteral("view-grid");
+    case FileExplorerCommandId::TogglePreviewPane:
+        return QStringLiteral("details-pane");
+    case FileExplorerCommandId::ToggleDualPane:
+        return QStringLiteral("dual-pane");
+    case FileExplorerCommandId::OpenInSecondPane:
+        return QStringLiteral("dual-pane");
+    default:
+        return {};
+    }
+}
+
+FileExplorerIconDescriptor FileExplorerIconRegistry::descriptorForKey(const QString& key) {
+    const auto& items = iconDescriptors();
+    for (const auto& item : items) {
+        if (item.key == key) {
+            return item;
+        }
+    }
+    return {};
+}
+
+QVector<FileExplorerIconDescriptor> FileExplorerIconRegistry::descriptors() {
+    return iconDescriptors();
+}
+
+}  // namespace sak

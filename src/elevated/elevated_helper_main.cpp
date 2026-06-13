@@ -39,7 +39,9 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <limits>
 #include <memory>
+#include <optional>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -228,6 +230,7 @@ constexpr int kPowerShellRunningProgress = 5;
 constexpr int kPowerShellOutputProgress = 50;
 constexpr int kPowerShellFinishedProgress = 100;
 constexpr int kActiveTaskCancelPollMs = 50;
+constexpr uint64_t kMaxPartitionProbeBytes = 2ULL * 1024ULL * 1024ULL;
 
 struct ElevatedPowerShellConfig {
     QString command;
@@ -427,6 +430,136 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     return task;
 }
 
+bool isAllowedPhysicalDrivePath(const QString& path) {
+    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
+    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return false;
+    }
+    const QString suffix = path.mid(prefix.size());
+    if (suffix.isEmpty()) {
+        return false;
+    }
+    return std::all_of(suffix.cbegin(), suffix.cend(), [](QChar ch) { return ch.isDigit(); });
+}
+
+std::optional<uint64_t> payloadUInt64(const QJsonObject& payload, const QString& key) {
+    const auto value = payload.value(key);
+    bool ok = false;
+    const QString text = value.toString();
+    if (!text.isEmpty()) {
+        const auto parsed = text.toULongLong(&ok);
+        if (ok) {
+            return static_cast<uint64_t>(parsed);
+        }
+    }
+    if (value.isDouble() && value.toDouble() >= 0) {
+        return static_cast<uint64_t>(value.toDouble());
+    }
+    return std::nullopt;
+}
+
+uint64_t partitionProbeReadLimit(uint64_t partition_size_bytes, uint64_t requested_bytes) {
+    uint64_t limit = kMaxPartitionProbeBytes;
+    if (partition_size_bytes > 0) {
+        limit = std::min(limit, partition_size_bytes);
+    }
+    if (requested_bytes > 0) {
+        limit = std::min(limit, requested_bytes);
+    }
+    return limit;
+}
+
+struct PartitionProbeRequest {
+    QString device_path;
+    uint64_t offset_bytes{0};
+    uint64_t read_limit{0};
+};
+
+sak::TaskHandlerResult partitionProbeFailure(const QString& message) {
+    return {false, {}, message};
+}
+
+std::optional<PartitionProbeRequest> partitionProbeRequest(const QJsonObject& payload,
+                                                           QString* errorMessage) {
+    const QString devicePath = payload.value(QStringLiteral("device_path")).toString();
+    if (!isAllowedPhysicalDrivePath(devicePath)) {
+        *errorMessage = QStringLiteral("Raw probe target must be \\\\.\\PhysicalDriveN");
+        return std::nullopt;
+    }
+
+    const auto offset = payloadUInt64(payload, QStringLiteral("partition_offset_bytes"));
+    const auto partitionSize = payloadUInt64(payload, QStringLiteral("partition_size_bytes"));
+    if (!offset.has_value() || !partitionSize.has_value()) {
+        *errorMessage = QStringLiteral("Raw probe offset and partition size are required");
+        return std::nullopt;
+    }
+    if (*offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
+        *errorMessage = QStringLiteral("Raw probe offset is too large");
+        return std::nullopt;
+    }
+    const uint64_t requestedBytes =
+        payloadUInt64(payload, QStringLiteral("max_bytes")).value_or(kMaxPartitionProbeBytes);
+    const uint64_t readLimit = partitionProbeReadLimit(*partitionSize, requestedBytes);
+    if (readLimit == 0 || readLimit > kMaxPartitionProbeBytes) {
+        *errorMessage = QStringLiteral("Raw probe byte limit is invalid");
+        return std::nullopt;
+    }
+    return PartitionProbeRequest{devicePath, *offset, readLimit};
+}
+
+std::optional<QByteArray> readPartitionProbeBytes(const PartitionProbeRequest& request,
+                                                  QString* errorMessage) {
+    QFile device(request.device_path);
+    if (!device.open(QIODevice::ReadOnly)) {
+        *errorMessage = QStringLiteral("Raw probe open failed: %1").arg(device.errorString());
+        return std::nullopt;
+    }
+    if (!device.seek(static_cast<qint64>(request.offset_bytes))) {
+        *errorMessage = QStringLiteral("Raw probe seek failed: %1").arg(device.errorString());
+        return std::nullopt;
+    }
+    const QByteArray bytes = device.read(static_cast<qint64>(request.read_limit));
+    if (!bytes.isEmpty() || device.error() == QFileDevice::NoError) {
+        return bytes;
+    }
+    *errorMessage = QStringLiteral("Raw probe read failed: %1").arg(device.errorString());
+    return std::nullopt;
+}
+
+sak::TaskHandlerResult partitionProbeSuccess(const PartitionProbeRequest& request,
+                                             const QByteArray& bytes) {
+    QJsonObject data;
+    data[QStringLiteral("device_path")] = request.device_path;
+    data[QStringLiteral("bytes_read")] = static_cast<double>(bytes.size());
+    data[QStringLiteral("bytes_base64")] = QString::fromLatin1(bytes.toBase64());
+    return {true, data, {}};
+}
+
+sak::TaskHandlerResult runPartitionProbeReadTask(const QJsonObject& payload,
+                                                 sak::ProgressCallback progress,
+                                                 sak::CancelCheck is_cancelled) {
+    QString errorMessage;
+    const auto request = partitionProbeRequest(payload, &errorMessage);
+    if (!request.has_value()) {
+        return partitionProbeFailure(errorMessage);
+    }
+    if (is_cancelled()) {
+        return partitionProbeFailure(QStringLiteral("Raw probe cancelled"));
+    }
+
+    progress(0, QStringLiteral("Reading partition signature probe"));
+    const auto bytes = readPartitionProbeBytes(*request, &errorMessage);
+    if (!bytes.has_value()) {
+        return partitionProbeFailure(errorMessage);
+    }
+    if (is_cancelled()) {
+        return partitionProbeFailure(QStringLiteral("Raw probe cancelled"));
+    }
+
+    progress(sak::kPercentMax, QStringLiteral("Partition signature probe read"));
+    return partitionProbeSuccess(*request, *bytes);
+}
+
 void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
     dispatcher.registerHandler(QStringLiteral("Verify System Files"),
                                [](const QJsonObject& payload,
@@ -568,6 +701,8 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
             progress(sak::kPercentMax, QStringLiteral("Thermal data retrieved"));
             return {true, data, {}};
         });
+
+    dispatcher.registerHandler(QStringLiteral("ReadPartitionProbe"), runPartitionProbeReadTask);
 }
 
 void registerAiTasks(sak::ElevatedTaskDispatcher& dispatcher) {
@@ -588,7 +723,11 @@ void registerAllTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 void sendTaskDispatchResult(sak::ElevatedPipeServer& server,
                             const std::expected<sak::TaskHandlerResult, sak::error_code>& result) {
     if (result) {
-        server.sendResult(result->success, result->data);
+        QJsonObject data = result->data;
+        if (!result->success && !result->error_message.isEmpty()) {
+            data[QStringLiteral("error_message")] = result->error_message;
+        }
+        server.sendResult(result->success, data);
     } else {
         server.sendError(static_cast<int>(result.error()),
                          QString::fromStdString(std::string(sak::to_string(result.error()))));

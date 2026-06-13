@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/file_hash.h"
+#include "sak/file_management_file_system.h"
 #include "sak/worker_base.h"
 
 #include <QMap>
@@ -45,10 +46,13 @@ public:
      */
     struct Config {
         QVector<QString> scanDirectories;  ///< Directories to scan
+        sak::FileManagementTarget file_system_target;  ///< Optional raw/image target
+        QVector<QString> virtual_directories;          ///< Directories inside file_system_target
         qint64 minimum_file_size{0};       ///< Minimum file size to consider (bytes)
         bool recursive_scan{true};         ///< Scan subdirectories
         bool parallel_hashing{true};       ///< Use parallel hash calculation
         int hash_thread_count{0};          ///< Thread count (0 = auto-detect)
+        bool use_file_system_target{false};  ///< Scan via FileManagementFileSystemBridge
     };
 
     /**
@@ -137,6 +141,32 @@ private:
     auto hashFiles(const std::vector<std::filesystem::path>& files)
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
                          sak::error_code>;
+
+    struct VirtualFile {
+        QString path;
+        qint64 size{0};
+    };
+
+    /// @brief Execute duplicate detection against a raw/image file-system target
+    auto executeFileSystemTarget() -> std::expected<void, sak::error_code>;
+
+    /// @brief Collect files from the configured raw/image target
+    auto scanFileSystemTarget() -> std::expected<QVector<VirtualFile>, sak::error_code>;
+
+    /// @brief Recursively collect virtual file entries from a target directory
+    auto collectVirtualFiles(const QString& directory_path,
+                             QVector<VirtualFile>& files,
+                             int depth) -> std::expected<void, sak::error_code>;
+
+    /// @brief Hash virtual files using the shared bridge reader
+    auto hashVirtualFiles(const QVector<VirtualFile>& files)
+        -> std::expected<QVector<QPair<VirtualFile, QString>>, sak::error_code>;
+
+    /// @brief Build duplicate groups for virtual file hashes
+    std::vector<DuplicateGroup> buildVirtualDuplicateGroups(
+        const QVector<QPair<VirtualFile, QString>>& hashed_files,
+        int& total_duplicates,
+        qint64& total_wasted) const;
 
     /// @brief Collect files from a single directory with error handling
     auto collectFilesFromDirectory(const std::filesystem::path& dir_path,

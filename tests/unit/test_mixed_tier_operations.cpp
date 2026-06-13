@@ -220,13 +220,18 @@ private Q_SLOTS:
                                    [](const QJsonObject&, sak::ProgressCallback, sak::CancelCheck) {
                                        return sak::TaskHandlerResult{true, {}, {}};
                                    });
+        dispatcher.registerHandler(QStringLiteral("ReadPartitionProbe"),
+                                   [](const QJsonObject&, sak::ProgressCallback, sak::CancelCheck) {
+                                       return sak::TaskHandlerResult{true, {}, {}};
+                                   });
 
-        QCOMPARE(dispatcher.handlerCount(), 5);
+        QCOMPARE(dispatcher.handlerCount(), 6);
         QVERIFY(dispatcher.isAllowed("TakeOwnership"));
         QVERIFY(dispatcher.isAllowed("StripPermissions"));
         QVERIFY(dispatcher.isAllowed("SetStandardPermissions"));
         QVERIFY(dispatcher.isAllowed("BackupFile"));
         QVERIFY(dispatcher.isAllowed("ReadThermalData"));
+        QVERIFY(dispatcher.isAllowed("ReadPartitionProbe"));
         QVERIFY(!dispatcher.isAllowed("MaliciousTask"));
     }
 

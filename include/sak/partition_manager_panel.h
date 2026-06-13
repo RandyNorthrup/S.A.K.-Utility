@@ -27,7 +27,6 @@ class QVBoxLayout;
 class QTableWidget;
 class QTextEdit;
 class QWidget;
-class QShowEvent;
 class QPoint;
 
 namespace sak {
@@ -49,9 +48,6 @@ public:
     [[nodiscard]] bool showApplyReviewDialogForTest();
 #endif
 
-protected:
-    void showEvent(QShowEvent* event) override;
-
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -61,7 +57,6 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void refreshInventory();
-    void refreshInventoryOnceIfVisible();
     void applyQueue();
     void cancelApply();
     void dryRunQueue();
@@ -75,6 +70,11 @@ private Q_SLOTS:
     void onSetDriveLetter();
     void onSetPartitionLabel();
     void onCheckFileSystem();
+    void onInspectNonNativeFileSystem();
+    void onBrowseNonNativeFileSystem();
+    void onCheckNonNativeFileSystem();
+    void onApfsRootFileMutation();
+    void onHfsFileMutation();
     void onSurfaceTest();
     void onSpaceAnalyzer();
     void onSetPartitionHidden();
@@ -121,9 +121,50 @@ private:
         Unallocated,
     };
 
+    struct ActionLinkOptions {
+        QStringList target_kinds;
+        bool requires_drive_letter{false};
+        bool windows_native_filesystem{false};
+        bool resize_filesystem{false};
+        bool inspect_non_native_filesystem{false};
+        bool browse_non_native_filesystem{false};
+        bool check_non_native_filesystem{false};
+        bool apfs_root_file_mutation{false};
+        bool hfs_file_mutation{false};
+    };
+
+    struct ActionLinkSpec {
+        QString text;
+        QString icon_path;
+        QString tooltip;
+        void (PartitionManagerPanel::*slot)(){nullptr};
+        ActionLinkOptions options;
+    };
+
     void setupUi();
     void createRibbon(QVBoxLayout* root);
     QWidget* createActionsPane();
+    void addActionsPaneTitle(QVBoxLayout* layout, QWidget* pane);
+    void addActionSpecSection(QVBoxLayout* layout,
+                              QWidget* pane,
+                              const QString& title,
+                              const QVector<ActionLinkSpec>& specs,
+                              bool scroll_buttons = false);
+    void addPendingOperationsSection(QVBoxLayout* layout, QWidget* pane);
+    [[nodiscard]] ActionLinkSpec makeActionSpec(
+        const QString& text,
+        const QString& icon_path,
+        const QString& tooltip,
+        void (PartitionManagerPanel::*slot)(),
+        const ActionLinkOptions& options) const;
+    [[nodiscard]] QVector<ActionLinkSpec> wizardActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> partitionOperationActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> layoutOperationActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> filesystemOperationActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> maintenanceOperationActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> advancedOperationActionSpecs() const;
+    [[nodiscard]] QToolButton* createConfiguredActionLink(QWidget* parent,
+                                                          const ActionLinkSpec& spec);
     QWidget* createWorkspace(QWidget* parent);
     QWidget* createDiskMapPane(QWidget* parent);
     QWidget* createLegend(QWidget* parent);
@@ -148,13 +189,26 @@ private:
     void rebuildTable(const PartitionInventory& inventory);
     void rebuildDiskMap(const PartitionInventory& inventory);
     void addDiskMapRow(QVBoxLayout* layout, const PartitionDiskInfo& disk);
+    void addPartitionSegmentsToDiskMap(QHBoxLayout* layout,
+                                       const PartitionDiskInfo& disk,
+                                       const std::optional<PartitionTarget>& selected);
+    void addUnallocatedSegmentsToDiskMap(QHBoxLayout* layout,
+                                         const PartitionDiskInfo& disk,
+                                         const std::optional<PartitionTarget>& selected);
+    QWidget* createPartitionSegment(const PartitionDiskInfo& disk,
+                                    const PartitionInfoEx& partition,
+                                    const std::optional<PartitionTarget>& selected);
+    QWidget* createUnallocatedSegment(const UnallocatedRegion& region,
+                                      const std::optional<PartitionTarget>& selected);
     QWidget* createDiskTile(const PartitionDiskInfo& disk);
     void selectTargetInTable(const PartitionTarget& target);
     void addDiskRow(const PartitionDiskInfo& disk);
     void addPartitionRow(const PartitionDiskInfo& disk, const PartitionInfoEx& partition);
     void addUnallocatedRow(const UnallocatedRegion& region);
+    void attachDiskMapContextMenu(QWidget* widget, const PartitionTarget& target);
     void rebuildQueue(const QVector<PartitionOperation>& operations);
     void updateActionState();
+    void updateRefreshButtonState();
     void updateDetails();
     void queueOperation(PartitionOperationType type, const QJsonObject& payload = {});
     bool queueUnallocatedFreeSpace(const PartitionTarget& target, const PartitionDiskInfo& disk);
@@ -164,9 +218,13 @@ private:
     void queueQuickPartitionOperations(const PartitionDiskInfo& disk, const QJsonObject& options);
     void queueBitLockerUnlock(QJsonObject payload);
     [[nodiscard]] bool showApplyReviewDialog();
-    void addCommonContextMenuActions(QMenu& menu);
+    void showSelectedTargetContextMenuAt(const QPoint& global_position);
     void addDiskContextMenuActions(QMenu& menu);
     void addPartitionContextMenuActions(QMenu& menu, bool has_drive_letter);
+    void addPartitionLayoutContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);
+    void addPartitionFilesystemContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);
+    void addPartitionMaintenanceContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);
+    void addPartitionAdvancedContextMenuActions(QMenu& menu);
     void addUnallocatedContextMenuActions(QMenu& menu);
 
     [[nodiscard]] std::optional<PartitionTarget> selectedTarget() const;
@@ -187,7 +245,6 @@ private:
     QWidget* m_diskMapContainer{nullptr};
     QListWidget* m_queueList{nullptr};
     QTextEdit* m_details{nullptr};
-    QLabel* m_summaryLabel{nullptr};
     QLabel* m_pendingLabel{nullptr};
     QAbstractButton* m_refreshButton{nullptr};
     QAbstractButton* m_applyButton{nullptr};

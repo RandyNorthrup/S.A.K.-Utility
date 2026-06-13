@@ -1,0 +1,117 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.linux-swap-format-vm",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-06T05:01:07.4428415Z",
+    "finished_at_utc":  "2026-06-06T05:01:41.0670683Z",
+    "vm_id":  "SAK-PM-AUTO",
+    "user":  "SAK-PM-AUTO\\saklab",
+    "virtualbox_guest":  true,
+    "allow_non_virtualbox_guest":  false,
+    "disk_number":  1,
+    "partition_gpt_type":  "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}",
+    "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2",
+    "before_layout":  {
+                          "disk_number":  1,
+                          "friendly_name":  "VBOX HARDDISK",
+                          "serial_number":  "VBf2b1ab44-418b6b2e",
+                          "bus_type":  "SATA",
+                          "partition_style":  "RAW",
+                          "size_bytes":  4294967296,
+                          "is_boot":  false,
+                          "is_system":  false,
+                          "partitions":  [
+
+                                         ]
+                      },
+    "after_layout":  {
+                         "disk_number":  1,
+                         "friendly_name":  "VBOX HARDDISK",
+                         "serial_number":  "VBf2b1ab44-418b6b2e",
+                         "bus_type":  "SATA",
+                         "partition_style":  "GPT",
+                         "size_bytes":  4294967296,
+                         "is_boot":  false,
+                         "is_system":  false,
+                         "partitions":  [
+                                            {
+                                                "partition_number":  1,
+                                                "drive_letter":  "",
+                                                "type":  "Reserved",
+                                                "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                "offset_bytes":  17408,
+                                                "size_bytes":  16759808
+                                            },
+                                            {
+                                                "partition_number":  2,
+                                                "drive_letter":  "",
+                                                "type":  "Unknown",
+                                                "gpt_type":  "{0657fd6d-a4ab-43c4-84e5-0933c84b4f4f}",
+                                                "offset_bytes":  16777216,
+                                                "size_bytes":  134217728
+                                            }
+                                        ]
+                     },
+    "header":  {
+                   "page_size_bytes":  4096,
+                   "page_count":  "32768",
+                   "last_page":  "32767",
+                   "label":  "SAKSWAPVM",
+                   "uuid":  "c4bb824c-5b88-1f77-3701-488aca7f9a5a"
+               },
+    "verification":  {
+                         "signature":  "SWAPSPACE2",
+                         "version":  1,
+                         "last_page":  "32767",
+                         "label":  "SAKSWAPVM"
+                     },
+    "probe_report_path":  "\\\\vboxsvr\\sakrepo\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-vm\\run-20260605-220107\\linux-swap-raw-probe-report.json",
+    "probe":  {
+                  "blockers":  [
+
+                               ],
+                  "created_utc":  "2026-06-06T05:01:34.836Z",
+                  "details":  [
+                                  "Signature: SWAPSPACE2",
+                                  "Detected page size: 4096",
+                                  "Header version: 1",
+                                  "Last page: 32767",
+                                  "Bad pages: 0",
+                                  "UUID: c4bb824c-5b88-1f77-3701-488aca7f9a5a",
+                                  "Volume label: SAKSWAPVM",
+                                  "Total swap bytes: 134217728"
+                              ],
+                  "detected_file_system":  "Linux swap",
+                  "expected_file_system":  "Linux swap",
+                  "free_bytes":  "0",
+                  "input_path":  "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2",
+                  "input_size_bytes":  "134217728",
+                  "require_sane_metadata":  false,
+                  "schema_version":  1,
+                  "source":  "RawSignature",
+                  "status":  "Passed",
+                  "tool":  "partition-filesystem-probe-certifier",
+                  "total_bytes":  "134217728"
+              },
+    "commands":  [
+                     {
+                         "name":  "sak-probe-certifier-linux-swap-raw",
+                         "file_path":  "Microsoft.PowerShell.Core\\FileSystem::\\\\vboxsvr\\sakrepo\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2",
+                                           "--output",
+                                           "\\\\vboxsvr\\sakrepo\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-vm\\run-20260605-220107\\linux-swap-raw-probe-report.json",
+                                           "--expect",
+                                           "Linux swap",
+                                           "--input-size-bytes",
+                                           "134217728"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  2.236,
+                         "output":  "Detected Linux swap in Partition2"
+                     }
+                 ],
+    "cleanup":  "Disk 1 cleared to RAW.",
+    "error":  ""
+}

@@ -235,6 +235,8 @@ private:
     void setupComposerInput(QVBoxLayout* layout, QWidget* composer);
     void setupComposerContextList(QVBoxLayout* layout, QWidget* composer);
     void setupComposerActions(QVBoxLayout* layout, QWidget* composer);
+    void setupComposerContextActions(QHBoxLayout* actionRow, QWidget* composer);
+    void setupComposerSendActions(QHBoxLayout* actionRow, QWidget* composer);
     void connectAiClient();
     void connectOpenAiClientSignals();
     void connectExecutionBrokerSignals();

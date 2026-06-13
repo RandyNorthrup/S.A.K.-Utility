@@ -1,0 +1,175 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.ext-filesystem-write",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-06T05:43:50.7102263Z",
+    "finished_at_utc":  "2026-06-06T05:45:23.9491606Z",
+    "vm_id":  "SAK-PM-AUTO",
+    "user":  "SAK-PM-AUTO\\saklab",
+    "virtualbox_guest":  true,
+    "allow_non_virtualbox_guest":  false,
+    "disk_number":  1,
+    "file_system":  "ext4",
+    "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2",
+    "before_layout":  {
+                          "disk_number":  1,
+                          "friendly_name":  "VBOX HARDDISK",
+                          "serial_number":  "VBf2b1ab44-418b6b2e",
+                          "bus_type":  "SATA",
+                          "partition_style":  "RAW",
+                          "size_bytes":  4294967296,
+                          "is_boot":  false,
+                          "is_system":  false,
+                          "partitions":  [
+
+                                         ]
+                      },
+    "after_layout":  {
+                         "disk_number":  1,
+                         "friendly_name":  "VBOX HARDDISK",
+                         "serial_number":  "VBf2b1ab44-418b6b2e",
+                         "bus_type":  "SATA",
+                         "partition_style":  "GPT",
+                         "size_bytes":  4294967296,
+                         "is_boot":  false,
+                         "is_system":  false,
+                         "partitions":  [
+                                            {
+                                                "partition_number":  1,
+                                                "drive_letter":  "",
+                                                "type":  "Reserved",
+                                                "offset_bytes":  17408,
+                                                "size_bytes":  16759808
+                                            },
+                                            {
+                                                "partition_number":  2,
+                                                "drive_letter":  "",
+                                                "type":  "Basic",
+                                                "offset_bytes":  16777216,
+                                                "size_bytes":  671088640
+                                            }
+                                        ]
+                     },
+    "tool_hashes":  [
+                        {
+                            "id":  "mke2fs",
+                            "path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                            "expected_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+                            "actual_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356"
+                        },
+                        {
+                            "id":  "e2fsck",
+                            "path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                            "expected_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+                            "actual_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0"
+                        },
+                        {
+                            "id":  "resize2fs",
+                            "path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                            "expected_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+                            "actual_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3"
+                        }
+                    ],
+    "commands":  [
+                     {
+                         "name":  "mke2fs-format-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                         "arguments":  [
+                                           "-q",
+                                           "-t",
+                                           "ext4",
+                                           "-F",
+                                           "-L",
+                                           "SAKEXTVM",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  1.165,
+                         "output":  ""
+                     },
+                     {
+                         "name":  "e2fsck-repair-clean-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.674,
+                         "output":  "SAKEXTVM: 12/32768 files (0.0% non-contiguous), 6385/131072 blocks"
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-format-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.676,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXTVM: 12/32768 files (0.0% non-contiguous), 6385/131072 blocks"
+                     },
+                     {
+                         "name":  "resize2fs-grow-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.553,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2 to 196608 (4k) blocks.\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2 is now 196608 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-grow-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.627,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXTVM: 12/49152 files (0.0% non-contiguous), 7478/196608 blocks"
+                     },
+                     {
+                         "name":  "e2fsck-repair-before-shrink-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.625,
+                         "output":  "SAKEXTVM: 12/49152 files (0.0% non-contiguous), 7478/196608 blocks"
+                     },
+                     {
+                         "name":  "resize2fs-shrink-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2",
+                                           "655360K"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  7.914,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2 to 163840 (4k) blocks.\nBegin pass 3 (max = 6)\nScanning inode table          ----------------------------------------\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2 is now 163840 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-shrink-ext4",
+                         "file_path":  "\\\\vboxsvr\\sakrepo\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  63.632,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXTVM: 12/40960 files (0.0% non-contiguous), 6899/163840 blocks"
+                     }
+                 ],
+    "cleanup":  "Disk 1 cleared to RAW.",
+    "error":  ""
+}

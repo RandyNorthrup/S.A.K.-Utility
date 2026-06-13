@@ -15,7 +15,7 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 
 # Put test executables next to sak_utility.exe so they share deployed DLLs.
 # MSVC multi-config generators append the config name to RUNTIME_OUTPUT_DIRECTORY,
-# which would put tests in build/Release/Release/ — away from the DLLs that
+# which would put tests in build/Release/Release/ ??? away from the DLLs that
 # windeployqt placed in build/Release/.  Using the config-specific property
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
@@ -42,9 +42,9 @@ if(WIN32)
     endif()
     if(_qt_test_dll AND EXISTS "${_qt_test_dll}")
         file(COPY "${_qt_test_dll}" DESTINATION "${SAK_MAIN_OUTPUT_DIR}")
-        message(STATUS "Deployed ${_qt_test_dll} → ${SAK_MAIN_OUTPUT_DIR}")
+        message(STATUS "Deployed ${_qt_test_dll} ??? ${SAK_MAIN_OUTPUT_DIR}")
     else()
-        message(FATAL_ERROR "Qt6Test.dll not found — tests cannot run without it")
+        message(FATAL_ERROR "Qt6Test.dll not found ??? tests cannot run without it")
     endif()
 endif()
 
@@ -156,7 +156,7 @@ endforeach()
 # Unit Tests - Diagnostic & Benchmarking Panel
 # ============================================================================
 
-# test_worker_base — WorkerBase lifecycle, exception safety, cancellation
+# test_worker_base ??? WorkerBase lifecycle, exception safety, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
     add_executable(test_worker_base
         unit/test_worker_base.cpp
@@ -179,7 +179,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_worker_base.cpp")
     message(STATUS "Added unit test: test_worker_base")
 endif()
 
-# test_error_codes — to_string completeness
+# test_error_codes ??? to_string completeness
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
     add_executable(test_error_codes
         unit/test_error_codes.cpp
@@ -199,7 +199,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_error_codes.cpp")
     message(STATUS "Added unit test: test_error_codes")
 endif()
 
-# test_diagnostic_types — struct defaults and value semantics
+# test_diagnostic_types ??? struct defaults and value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_types.cpp")
     add_executable(test_diagnostic_types
         unit/test_diagnostic_types.cpp
@@ -224,8 +224,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
     add_executable(test_partition_manager_core
         unit/test_partition_manager_core.cpp
         ../src/core/file_recovery_engine.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_manager_types.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
+        ../src/core/partition_file_system_tool_manifest.cpp
+        ../src/core/partition_file_system_tool_runner.cpp
         ../src/core/storage_inventory_worker.cpp
+        ../src/core/elevation_broker.cpp
         ../src/core/partition_safety_validator.cpp
         ../src/core/partition_script_builder.cpp
         ../src/core/partition_operation_planner.cpp
@@ -233,6 +243,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
         ${SAK_PROCESS_RUNNER_SOURCES}
         ../src/core/logger.cpp
         ../include/sak/partition_manager_types.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
+        ../include/sak/partition_file_system_tool_manifest.h
+        ../include/sak/partition_file_system_tool_runner.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/elevation_broker.h
         ../include/sak/file_recovery_engine.h
         ../include/sak/storage_inventory_worker.h
         ../include/sak/partition_safety_validator.h
@@ -245,7 +265,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_partition_manager_core PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
     )
     target_include_directories(test_partition_manager_core PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -275,6 +295,140 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_file_recovery_cer
     message(STATUS "Added certification helper: partition_file_recovery_certifier")
 endif()
 
+# partition_filesystem_probe_certifier - external lab helper for raw filesystem metadata proof
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_filesystem_probe_certifier.cpp")
+    add_executable(partition_filesystem_probe_certifier
+        certification/partition_filesystem_probe_certifier.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+    )
+    set_target_properties(partition_filesystem_probe_certifier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(partition_filesystem_probe_certifier PRIVATE
+        Qt6::Core sak_lzfse
+    )
+    target_include_directories(partition_filesystem_probe_certifier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1")
+        find_program(SAK_TEST_POWERSHELL_PATH
+            NAMES pwsh.exe pwsh powershell.exe powershell
+            HINTS
+                "$ENV{ProgramFiles}/PowerShell/7"
+                "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+        if(SAK_TEST_POWERSHELL_PATH)
+            add_test(NAME test_partition_filesystem_probe_certifier
+                     COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                             -NoProfile
+                             -ExecutionPolicy Bypass
+                             -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
+                             -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
+                             -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
+                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+            message(STATUS "Added certification helper test: test_partition_filesystem_probe_certifier")
+        else()
+            message(WARNING "PowerShell not found; skipping partition_filesystem_probe_certifier CTest hook")
+        endif()
+    endif()
+    message(STATUS "Added certification helper: partition_filesystem_probe_certifier")
+endif()
+
+# file_management_live_certifier - live APFS/HFS File Management bridge proof
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certifier.cpp")
+    add_executable(file_management_live_certifier
+        certification/file_management_live_certifier.cpp
+        ../src/core/advanced_search_worker.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/logger.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/threading/duplicate_finder_worker.cpp
+        ../src/threading/worker_base.cpp
+        ../include/sak/advanced_search_worker.h
+        ../include/sak/duplicate_finder_worker.h
+        ../include/sak/file_hash.h
+        ../include/sak/file_management_file_system.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/worker_base.h
+    )
+    set_target_properties(file_management_live_certifier PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(file_management_live_certifier PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+    )
+    target_include_directories(file_management_live_certifier PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    message(STATUS "Added certification helper: file_management_live_certifier")
+endif()
+
+if(TARGET sak_apfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1")
+    find_program(SAK_APFS_CLI_TEST_POWERSHELL_PATH
+        NAMES pwsh.exe pwsh powershell.exe powershell
+        HINTS
+            "$ENV{ProgramFiles}/PowerShell/7"
+            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+    if(SAK_APFS_CLI_TEST_POWERSHELL_PATH)
+        add_test(NAME test_sak_apfs_writer_cli
+                 COMMAND "${SAK_APFS_CLI_TEST_POWERSHELL_PATH}"
+                         -NoProfile
+                         -ExecutionPolicy Bypass
+                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1"
+                         -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>"
+                         -OutputRoot "${TEST_OUTPUT_DIR}/sak_apfs_writer_cli"
+                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+        message(STATUS "Added APFS writer CLI self-test: test_sak_apfs_writer_cli")
+    else()
+        message(WARNING "PowerShell not found; skipping sak_apfs_writer_cli self-test")
+    endif()
+endif()
+
+if(TARGET sak_hfs_writer_cli AND WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1")
+    find_program(SAK_HFS_CLI_TEST_POWERSHELL_PATH
+        NAMES pwsh.exe pwsh powershell.exe powershell
+        HINTS
+            "$ENV{ProgramFiles}/PowerShell/7"
+            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+    if(SAK_HFS_CLI_TEST_POWERSHELL_PATH)
+        add_test(NAME test_sak_hfs_writer_cli
+                 COMMAND "${SAK_HFS_CLI_TEST_POWERSHELL_PATH}"
+                         -NoProfile
+                         -ExecutionPolicy Bypass
+                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1"
+                         -CliPath "$<TARGET_FILE:sak_hfs_writer_cli>"
+                         -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
+                         -OutputRoot "${TEST_OUTPUT_DIR}/sak_hfs_writer_cli"
+                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+        message(STATUS "Added HFS writer CLI self-test: test_sak_hfs_writer_cli")
+    else()
+        message(WARNING "PowerShell not found; skipping sak_hfs_writer_cli self-test")
+    endif()
+endif()
+
 # test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
     add_executable(test_partition_manager_panel
@@ -283,8 +437,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ../src/gui/detachable_log_window.cpp
         ../src/gui/follow_scroll_controller.cpp
         ../src/core/file_recovery_engine.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
         ../src/core/partition_manager_controller.cpp
         ../src/core/partition_manager_types.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
+        ../src/core/partition_file_system_tool_manifest.cpp
+        ../src/core/partition_file_system_tool_runner.cpp
         ../src/core/storage_inventory_worker.cpp
         ../src/core/partition_safety_validator.cpp
         ../src/core/partition_script_builder.cpp
@@ -300,6 +463,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ../resources/icons.qrc
         ../include/sak/partition_manager_panel.h
         ../include/sak/file_recovery_engine.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
+        ../include/sak/partition_file_system_tool_manifest.h
+        ../include/sak/partition_file_system_tool_runner.h
         ../include/sak/partition_manager_controller.h
         ../include/sak/partition_executor.h
         ../include/sak/storage_inventory_worker.h
@@ -313,7 +485,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_partition_manager_panel PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test sak_lzfse ${PLATFORM_LIBS}
     )
     target_compile_definitions(test_partition_manager_panel PRIVATE
         SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
@@ -327,7 +499,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
     message(STATUS "Added unit test: test_partition_manager_panel")
 endif()
 
-# test_diagnostic_controller — suite state machine, cancellation, error handling
+# test_diagnostic_controller ??? suite state machine, cancellation, error handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     add_executable(test_diagnostic_controller
         unit/test_diagnostic_controller.cpp
@@ -372,7 +544,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_controller.cpp")
     message(STATUS "Added unit test: test_diagnostic_controller")
 endif()
 
-# test_thermal_monitor — timer behavior and polling
+# test_thermal_monitor ??? timer behavior and polling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     add_executable(test_thermal_monitor
         unit/test_thermal_monitor.cpp
@@ -396,7 +568,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_thermal_monitor.cpp")
     message(STATUS "Added unit test: test_thermal_monitor")
 endif()
 
-# test_diagnostic_report_generator — HTML, JSON, CSV report output
+# test_diagnostic_report_generator ??? HTML, JSON, CSV report output
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp")
     add_executable(test_diagnostic_report_generator
         unit/test_diagnostic_report_generator.cpp
@@ -419,7 +591,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_diagnostic_report_generator.cpp
     message(STATUS "Added unit test: test_diagnostic_report_generator")
 endif()
 
-# test_cpu_benchmark_worker — construction, result defaults, signal types
+# test_cpu_benchmark_worker ??? construction, result defaults, signal types
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
     add_executable(test_cpu_benchmark_worker
         unit/test_cpu_benchmark_worker.cpp
@@ -444,7 +616,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cpu_benchmark_worker.cpp")
     message(STATUS "Added unit test: test_cpu_benchmark_worker")
 endif()
 
-# test_disk_benchmark_worker — construction, config, result defaults
+# test_disk_benchmark_worker ??? construction, config, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
     add_executable(test_disk_benchmark_worker
         unit/test_disk_benchmark_worker.cpp
@@ -471,7 +643,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_disk_benchmark_worker.cpp")
     message(STATUS "Added unit test: test_disk_benchmark_worker")
 endif()
 
-# test_memory_benchmark_worker — construction, result defaults
+# test_memory_benchmark_worker ??? construction, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
     add_executable(test_memory_benchmark_worker
         unit/test_memory_benchmark_worker.cpp
@@ -496,7 +668,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_memory_benchmark_worker.cpp")
     message(STATUS "Added unit test: test_memory_benchmark_worker")
 endif()
 
-# test_stress_test_worker — construction, config, result defaults
+# test_stress_test_worker ??? construction, config, result defaults
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_stress_test_worker.cpp")
     add_executable(test_stress_test_worker
         unit/test_stress_test_worker.cpp
@@ -532,7 +704,7 @@ endif()
 
 # --- Tier 1: Security & Data Integrity ---
 
-# test_encryption — AES-256-CBC round-trip, wrong password, corrupted ciphertext
+# test_encryption ??? AES-256-CBC round-trip, wrong password, corrupted ciphertext
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
     add_executable(test_encryption
         unit/test_encryption.cpp
@@ -555,7 +727,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_encryption.cpp")
     message(STATUS "Added unit test: test_encryption")
 endif()
 
-# test_file_hash — MD5/SHA256, verify correct/incorrect, progress, cancellation
+# test_file_hash ??? MD5/SHA256, verify correct/incorrect, progress, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
     add_executable(test_file_hash
         unit/test_file_hash.cpp
@@ -577,7 +749,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_hash.cpp")
     message(STATUS "Added unit test: test_file_hash")
 endif()
 
-# test_path_utils — safe path, traversal, pattern matching, directory size
+# test_path_utils ??? safe path, traversal, pattern matching, directory size
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
     add_executable(test_path_utils
         unit/test_path_utils.cpp
@@ -599,7 +771,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_path_utils.cpp")
     message(STATUS "Added unit test: test_path_utils")
 endif()
 
-# test_secure_memory — wipe, secure_buffer, secure_allocator, secure random
+# test_secure_memory ??? wipe, secure_buffer, secure_allocator, secure random
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
     add_executable(test_secure_memory
         unit/test_secure_memory.cpp
@@ -621,7 +793,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_secure_memory.cpp")
     message(STATUS "Added unit test: test_secure_memory")
 endif()
 
-# test_input_validator — path/string/numeric validation, safe arithmetic, buffer validation
+# test_input_validator ??? path/string/numeric validation, safe arithmetic, buffer validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_input_validator.cpp")
     add_executable(test_input_validator
         unit/test_input_validator.cpp
@@ -645,7 +817,7 @@ endif()
 
 # --- Tier 2: Core Business Logic ---
 
-# test_decompressor_factory — format detection, isCompressed, factory create
+# test_decompressor_factory ??? format detection, isCompressed, factory create
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
     add_executable(test_decompressor_factory
         unit/test_decompressor_factory.cpp
@@ -675,7 +847,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_decompressor_factory.cpp")
     message(STATUS "Added unit test: test_decompressor_factory")
 endif()
 
-# test_config_manager — singleton, get/set, defaults, signals, typed accessors
+# test_config_manager ??? singleton, get/set, defaults, signals, typed accessors
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
     add_executable(test_config_manager
         unit/test_config_manager.cpp
@@ -700,7 +872,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_config_manager.cpp")
     message(STATUS "Added unit test: test_config_manager")
 endif()
 
-# test_smart_file_filter — dangerous files, size limits, pattern/folder exclusion
+# test_smart_file_filter ??? dangerous files, size limits, pattern/folder exclusion
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
     add_executable(test_smart_file_filter
         unit/test_smart_file_filter.cpp
@@ -723,7 +895,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_file_filter.cpp")
     message(STATUS "Added unit test: test_smart_file_filter")
 endif()
 
-# test_file_scanner — scan, filters, cancellation, static convenience methods
+# test_file_scanner ??? scan, filters, cancellation, static convenience methods
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     add_executable(test_file_scanner
         unit/test_file_scanner.cpp
@@ -746,7 +918,155 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_scanner.cpp")
     message(STATUS "Added unit test: test_file_scanner")
 endif()
 
-# test_process_runner — echo, exit code, stderr, timeout, cancellation, PowerShell
+# test_file_explorer_types - File Explorer state and command registry
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
+    add_executable(test_file_explorer_types
+        unit/test_file_explorer_types.cpp
+        ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_command_registry.cpp
+        ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_command_registry.h
+        ../include/sak/file_management_file_system.h
+    )
+    set_target_properties(test_file_explorer_types PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_explorer_types PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_explorer_types PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_explorer_types COMMAND test_file_explorer_types
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_explorer_types")
+endif()
+
+# test_file_explorer_item_model - File Explorer model/view rows, roles, and sorting
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
+    add_executable(test_file_explorer_item_model
+        unit/test_file_explorer_item_model.cpp
+        ../src/core/file_explorer_item_model.cpp
+        ../src/core/file_explorer_sort_filter_model.cpp
+        ../include/sak/file_explorer_item_model.h
+        ../include/sak/file_explorer_sort_filter_model.h
+        ../include/sak/file_management_file_system.h
+    )
+    set_target_properties(test_file_explorer_item_model PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_explorer_item_model PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_explorer_item_model PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_explorer_item_model COMMAND test_file_explorer_item_model
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_explorer_item_model")
+endif()
+
+# test_file_management_explorer_panel - File Explorer shell and command-menu UI
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.cpp")
+    add_executable(test_file_management_explorer_panel
+        unit/test_file_management_explorer_panel.cpp
+        ../src/gui/file_explorer_sidebar.cpp
+        ../src/gui/file_explorer_icon_registry.cpp
+        ../src/gui/file_explorer_command_bar.cpp
+        ../src/gui/file_explorer_omnibar.cpp
+        ../src/gui/file_explorer_details_view.cpp
+        ../src/gui/file_explorer_pane.cpp
+        ../src/gui/file_explorer_details_pane.cpp
+        ../src/gui/file_management_explorer_panel.cpp
+        ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_item_model.cpp
+        ../src/core/file_explorer_sort_filter_model.cpp
+        ../src/core/file_explorer_command_registry.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
+        ../src/core/partition_manager_types.cpp
+        ../src/core/storage_inventory_worker.cpp
+        ../src/core/elevation_broker.cpp
+        ${SAK_PROCESS_RUNNER_SOURCES}
+        ../src/core/logger.cpp
+        ../resources/icons.qrc
+        ../include/sak/file_explorer_sidebar.h
+        ../include/sak/file_explorer_icon_registry.h
+        ../include/sak/file_explorer_command_bar.h
+        ../include/sak/file_explorer_omnibar.h
+        ../include/sak/file_explorer_details_view.h
+        ../include/sak/file_explorer_pane.h
+        ../include/sak/file_explorer_details_pane.h
+        ../include/sak/file_management_explorer_panel.h
+        ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_item_model.h
+        ../include/sak/file_explorer_sort_filter_model.h
+        ../include/sak/file_explorer_command_registry.h
+        ../include/sak/file_management_file_system.h
+        ../include/sak/storage_inventory_worker.h
+        ../include/sak/elevation_broker.h
+    )
+    set_target_properties(test_file_management_explorer_panel PROPERTIES
+        AUTOMOC ON
+        AUTORCC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_management_explorer_panel PRIVATE
+        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_management_explorer_panel PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_management_explorer_panel COMMAND test_file_management_explorer_panel
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_management_explorer_panel")
+endif()
+
+# test_file_management_file_system - File Management target bridge
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp")
+    add_executable(test_file_management_file_system
+        unit/test_file_management_file_system.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
+        ../include/sak/file_management_file_system.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
+    )
+    set_target_properties(test_file_management_file_system PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_management_file_system PRIVATE
+        Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_management_file_system PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_management_file_system COMMAND test_file_management_file_system
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_management_file_system")
+endif()
+
+# test_process_runner ??? echo, exit code, stderr, timeout, cancellation, PowerShell
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
     add_executable(test_process_runner
         unit/test_process_runner.cpp
@@ -768,7 +1088,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_process_runner.cpp")
     message(STATUS "Added unit test: test_process_runner")
 endif()
 
-# test_smart_disk_analyzer — SmartReport parsing, health assessment
+# test_smart_disk_analyzer ??? SmartReport parsing, health assessment
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_token_usage_tracker.cpp")
     add_executable(test_ai_token_usage_tracker
         unit/test_ai_token_usage_tracker.cpp
@@ -1725,7 +2045,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_smart_disk_analyzer.cpp")
     message(STATUS "Added unit test: test_smart_disk_analyzer")
 endif()
 
-# test_package_matcher — mapping CRUD, export/import, findMatch
+# test_package_matcher ??? mapping CRUD, export/import, findMatch
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_matcher.cpp")
     add_executable(test_package_matcher
         unit/test_package_matcher.cpp
@@ -1755,7 +2075,7 @@ endif()
 
 # --- Tier 3: Hardware & System ---
 
-# test_drive_scanner — DriveInfo struct, getDrives, lifecycle
+# test_drive_scanner ??? DriveInfo struct, getDrives, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
     add_executable(test_drive_scanner
         unit/test_drive_scanner.cpp
@@ -1778,7 +2098,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
     message(STATUS "Added unit test: test_drive_scanner")
 endif()
 
-# test_permission_manager — canModifyPermissions, getOwner, SDDL, stripPermissions
+# test_permission_manager ??? canModifyPermissions, getOwner, SDDL, stripPermissions
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     add_executable(test_permission_manager
         unit/test_permission_manager.cpp
@@ -1801,7 +2121,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_permission_manager.cpp")
     message(STATUS "Added unit test: test_permission_manager")
 endif()
 
-# test_elevation_manager — isElevated, canElevate, error messages
+# test_elevation_manager ??? isElevated, canElevate, error messages
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
     add_executable(test_elevation_manager
         unit/test_elevation_manager.cpp
@@ -1823,7 +2143,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_manager.cpp")
     message(STATUS "Added unit test: test_elevation_manager")
 endif()
 
-# test_elevation_tier — tier classification, feature lookup, table integrity
+# test_elevation_tier ??? tier classification, feature lookup, table integrity
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
     add_executable(test_elevation_tier
         unit/test_elevation_tier.cpp
@@ -1843,7 +2163,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_tier.cpp")
     message(STATUS "Added unit test: test_elevation_tier")
 endif()
 
-# test_elevated_pipe_protocol — wire protocol framing, parsing, pipe name generation
+# test_elevated_pipe_protocol ??? wire protocol framing, parsing, pipe name generation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
     add_executable(test_elevated_pipe_protocol
         unit/test_elevated_pipe_protocol.cpp
@@ -1863,7 +2183,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_pipe_protocol.cpp")
     message(STATUS "Added unit test: test_elevated_pipe_protocol")
 endif()
 
-# test_elevated_task_dispatcher — allowlist, dispatch, exception safety, callbacks
+# test_elevated_task_dispatcher ??? allowlist, dispatch, exception safety, callbacks
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
     add_executable(test_elevated_task_dispatcher
         unit/test_elevated_task_dispatcher.cpp
@@ -1887,7 +2207,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevated_task_dispatcher.cpp")
     message(STATUS "Added unit test: test_elevated_task_dispatcher")
 endif()
 
-# test_mixed_tier_operations — Phase 3 mixed-tier elevation: PermissionManager
+# test_mixed_tier_operations ??? Phase 3 mixed-tier elevation: PermissionManager
 # expected overloads, canReadPath, backup worker signal, task handlers, thermal
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
     add_executable(test_mixed_tier_operations
@@ -1923,7 +2243,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mixed_tier_operations.cpp")
     message(STATUS "Added unit test: test_mixed_tier_operations")
 endif()
 
-# test_elevation_ux — Phase 4 shield icon extraction, elevation banner, style tokens
+# test_elevation_ux ??? Phase 4 shield icon extraction, elevation banner, style tokens
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
     add_executable(test_elevation_ux
         unit/test_elevation_ux.cpp
@@ -1950,7 +2270,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_ux.cpp")
     message(STATUS "Added unit test: test_elevation_ux")
 endif()
 
-# test_elevation_hardening — Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
+# test_elevation_hardening ??? Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_elevation_hardening.cpp")
     add_executable(test_elevation_hardening
         unit/test_elevation_hardening.cpp
@@ -1979,7 +2299,7 @@ endif()
 
 # --- Tier 4: Streaming/IO ---
 
-# test_streaming_decompressor — gzip/bzip2/xz lifecycle, byte tracking
+# test_streaming_decompressor ??? gzip/bzip2/xz lifecycle, byte tracking
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
     add_executable(test_streaming_decompressor
         unit/test_streaming_decompressor.cpp
@@ -2009,7 +2329,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_streaming_decompressor.cpp")
     message(STATUS "Added unit test: test_streaming_decompressor")
 endif()
 
-# test_logger — initialization, level filtering, file output, thread safety
+# test_logger ??? initialization, level filtering, file output, thread safety
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_logger.cpp")
     add_executable(test_logger
         unit/test_logger.cpp
@@ -2034,7 +2354,7 @@ endif()
 # Unit Tests - Offline Deployment
 # ============================================================================
 
-# test_install_script_parser — PowerShell install script parsing
+# test_install_script_parser ??? PowerShell install script parsing
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
     add_executable(test_install_script_parser
         unit/test_install_script_parser.cpp
@@ -2057,7 +2377,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_install_script_parser.cpp")
     message(STATUS "Added unit test: test_install_script_parser")
 endif()
 
-# test_script_rewriter — URL replacement for offline deployment
+# test_script_rewriter ??? URL replacement for offline deployment
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
     add_executable(test_script_rewriter
         unit/test_script_rewriter.cpp
@@ -2082,7 +2402,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_script_rewriter.cpp")
     message(STATUS "Added unit test: test_script_rewriter")
 endif()
 
-# test_package_list_manager — curated package lists and presets
+# test_package_list_manager ??? curated package lists and presets
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_package_list_manager.cpp")
     add_executable(test_package_list_manager
         unit/test_package_list_manager.cpp
@@ -2130,7 +2450,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_vulnerability_scanner.cpp")
     message(STATUS "Added unit test: test_vulnerability_scanner")
 endif()
 
-# test_nuget_api_client — OData XML parsing, construction, metadata structs
+# test_nuget_api_client ??? OData XML parsing, construction, metadata structs
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     add_executable(test_nuget_api_client
         unit/test_nuget_api_client.cpp
@@ -2153,7 +2473,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_nuget_api_client.cpp")
     message(STATUS "Added unit test: test_nuget_api_client")
 endif()
 
-# test_offline_package_search — offline deploy search workflow, dedup, data flow
+# test_offline_package_search ??? offline deploy search workflow, dedup, data flow
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_offline_package_search.cpp")
     add_executable(test_offline_package_search
         unit/test_offline_package_search.cpp
@@ -2216,7 +2536,7 @@ endif()
 # Unit Tests - Quick Actions
 # ============================================================================
 
-# test_action_factory — Action metadata, category distribution, initial state
+# test_action_factory ??? Action metadata, category distribution, initial state
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_action_factory.cpp")
     add_executable(test_action_factory
         unit/actions/test_action_factory.cpp
@@ -2291,7 +2611,7 @@ endif()
 # Unit Tests - Enterprise Hardening Sprint (TST-02, TST-04, TST-05, TST-10, TST-11)
 # ============================================================================
 
-# test_flash_types — FlashProgress arithmetic, FlashResult checks (TST-02)
+# test_flash_types ??? FlashProgress arithmetic, FlashResult checks (TST-02)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     add_executable(test_flash_types
         unit/test_flash_types.cpp
@@ -2311,7 +2631,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_types.cpp")
     message(STATUS "Added unit test: test_flash_types")
 endif()
 
-# test_quick_action — QuickAction static helpers and base class (TST-10)
+# test_quick_action ??? QuickAction static helpers and base class (TST-10)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
     add_executable(test_quick_action
         unit/test_quick_action.cpp
@@ -2334,7 +2654,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action.cpp")
     message(STATUS "Added unit test: test_quick_action")
 endif()
 
-# test_user_profile_types — Serialization round-trips (TST-05)
+# test_user_profile_types ??? Serialization round-trips (TST-05)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
     add_executable(test_user_profile_types
         unit/test_user_profile_types.cpp
@@ -2356,7 +2676,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_types.cpp")
     message(STATUS "Added unit test: test_user_profile_types")
 endif()
 
-# test_user_data_manager — Checksums, data locations, size calc (TST-04)
+# test_user_data_manager ??? Checksums, data locations, size calc (TST-04)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
     add_executable(test_user_data_manager
         unit/test_user_data_manager.cpp
@@ -2382,12 +2702,28 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_data_manager.cpp")
     message(STATUS "Added unit test: test_user_data_manager")
 endif()
 
-# test_duplicate_finder_worker — Duplicate detection with temp files (TST-11)
+# test_duplicate_finder_worker ??? Duplicate detection with temp files (TST-11)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
     add_executable(test_duplicate_finder_worker
         unit/test_duplicate_finder_worker.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
         ../src/threading/duplicate_finder_worker.cpp
+        ../include/sak/file_management_file_system.h
         ../include/sak/duplicate_finder_worker.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
         ../src/threading/worker_base.cpp
         ../include/sak/worker_base.h
         ../src/core/file_hash.cpp
@@ -2399,7 +2735,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_duplicate_finder_worker PRIVATE
-        Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
     )
     target_include_directories(test_duplicate_finder_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2409,7 +2745,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
     message(STATUS "Added unit test: test_duplicate_finder_worker")
 endif()
 
-# test_organizer_worker — File categorization and undo (TST-11)
+# test_organizer_worker ??? File categorization and undo (TST-11)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
     add_executable(test_organizer_worker
         unit/test_organizer_worker.cpp
@@ -2435,7 +2771,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_organizer_worker.cpp")
     message(STATUS "Added unit test: test_organizer_worker")
 endif()
 
-# test_app_installation_worker — Job filtering, stats, state management (TST-03)
+# test_app_installation_worker ??? Job filtering, stats, state management (TST-03)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
     add_executable(test_app_installation_worker
         unit/test_app_installation_worker.cpp
@@ -2468,7 +2804,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_app_installation_worker.cpp")
     message(STATUS "Added unit test: test_app_installation_worker")
 endif()
 
-# test_user_profile_restore_worker — Restore flow, conflict resolution, signals (TST-06)
+# test_user_profile_restore_worker ??? Restore flow, conflict resolution, signals (TST-06)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp")
     add_executable(test_user_profile_restore_worker
         unit/test_user_profile_restore_worker.cpp
@@ -2503,7 +2839,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_restore_worker.cpp
     message(STATUS "Added unit test: test_user_profile_restore_worker")
 endif()
 
-# test_windows_usb_creator — Input validation, BUG-09 disk number injection (TST-07)
+# test_windows_usb_creator ??? Input validation, BUG-09 disk number injection (TST-07)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
     add_executable(test_windows_usb_creator
         unit/test_windows_usb_creator.cpp
@@ -2528,7 +2864,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_windows_usb_creator.cpp")
     message(STATUS "Added unit test: test_windows_usb_creator")
 endif()
 
-# test_flash_worker — Structs, validation, early-exit paths, cancellation (TST-09)
+# test_flash_worker ??? Structs, validation, early-exit paths, cancellation (TST-09)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_worker.cpp")
     add_executable(test_flash_worker
         unit/test_flash_worker.cpp
@@ -2574,7 +2910,7 @@ endif()
 # Unit Tests - Phase 8: Expanded Test Coverage
 # ============================================================================
 
-# test_quick_action_result_io — enum ↔ string round-trips, file write/read
+# test_quick_action_result_io ??? enum ??? string round-trips, file write/read
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
     add_executable(test_quick_action_result_io
         unit/test_quick_action_result_io.cpp
@@ -2599,7 +2935,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_result_io.cpp")
     message(STATUS "Added unit test: test_quick_action_result_io")
 endif()
 
-# test_quick_action_controller — registration, lookup, category filtering
+# test_quick_action_controller ??? registration, lookup, category filtering
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     add_executable(test_quick_action_controller
         unit/test_quick_action_controller.cpp
@@ -2637,7 +2973,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_quick_action_controller.cpp")
     message(STATUS "Added unit test: test_quick_action_controller")
 endif()
 
-# test_migration_report — entry CRUD, selection, counts, distribution
+# test_migration_report ??? entry CRUD, selection, counts, distribution
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
     add_executable(test_migration_report
         unit/test_migration_report.cpp
@@ -2668,7 +3004,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_migration_report.cpp")
     message(STATUS "Added unit test: test_migration_report")
 endif()
 
-# test_linux_distro_catalog — catalog integrity, category filtering, resolution
+# test_linux_distro_catalog ??? catalog integrity, category filtering, resolution
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
     add_executable(test_linux_distro_catalog
         unit/test_linux_distro_catalog.cpp
@@ -2691,7 +3027,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_linux_distro_catalog.cpp")
     message(STATUS "Added unit test: test_linux_distro_catalog")
 endif()
 
-# test_flash_coordinator — defaults, config, guards, cancel safety
+# test_flash_coordinator ??? defaults, config, guards, cancel safety
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
     add_executable(test_flash_coordinator
         unit/test_flash_coordinator.cpp
@@ -2739,7 +3075,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
     message(STATUS "Added unit test: test_flash_coordinator")
 endif()
 
-# test_user_profile_backup_worker — construction, initial state, cancel
+# test_user_profile_backup_worker ??? construction, initial state, cancel
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp")
     add_executable(test_user_profile_backup_worker
         unit/test_user_profile_backup_worker.cpp
@@ -2771,7 +3107,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_user_profile_backup_worker.cpp"
     message(STATUS "Added unit test: test_user_profile_backup_worker")
 endif()
 
-# test_uup_iso_builder — phase defaults, cancel, weight constants
+# test_uup_iso_builder ??? phase defaults, cancel, weight constants
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     add_executable(test_uup_iso_builder
         unit/test_uup_iso_builder.cpp
@@ -2802,7 +3138,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_uup_iso_builder.cpp")
     message(STATUS "Added unit test: test_uup_iso_builder")
 endif()
 
-# test_all_actions_metadata — per-action expected values, cancel behavior
+# test_all_actions_metadata ??? per-action expected values, cancel behavior
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/actions/test_all_actions_metadata.cpp")
     add_executable(test_all_actions_metadata
         unit/actions/test_all_actions_metadata.cpp
@@ -2869,7 +3205,7 @@ endif()
 # Unit Tests - Advanced Search Panel
 # ============================================================================
 
-# test_advanced_search_types — struct defaults, extension sets, value semantics
+# test_advanced_search_types ??? struct defaults, extension sets, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
     add_executable(test_advanced_search_types
         unit/test_advanced_search_types.cpp
@@ -2889,7 +3225,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_types.cpp")
     message(STATUS "Added unit test: test_advanced_search_types")
 endif()
 
-# test_regex_pattern_library — built-in/custom patterns, enable/disable, CRUD, combined
+# test_regex_pattern_library ??? built-in/custom patterns, enable/disable, CRUD, combined
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
     add_executable(test_regex_pattern_library
         unit/test_regex_pattern_library.cpp
@@ -2914,14 +3250,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_regex_pattern_library.cpp")
     message(STATUS "Added unit test: test_regex_pattern_library")
 endif()
 
-# test_advanced_search_worker — regex compilation, text/metadata/archive/binary search
+# test_advanced_search_worker ??? regex compilation, text/metadata/archive/binary search
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
     add_executable(test_advanced_search_worker
         unit/test_advanced_search_worker.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
         ../src/core/advanced_search_worker.cpp
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
+        ../include/sak/file_management_file_system.h
         ../include/sak/advanced_search_worker.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
         ../include/sak/worker_base.h
     )
     set_target_properties(test_advanced_search_worker PROPERTIES
@@ -2929,7 +3281,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_search_worker PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
+        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
     )
     target_include_directories(test_advanced_search_worker PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2939,10 +3291,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
     message(STATUS "Added unit test: test_advanced_search_worker")
 endif()
 
-# test_advanced_search_controller — state machine, history, preferences, lifecycle
+# test_advanced_search_controller ??? state machine, history, preferences, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp")
     add_executable(test_advanced_search_controller
         unit/test_advanced_search_controller.cpp
+        ../src/core/file_management_file_system.cpp
+        ../src/core/partition_apfs_file_system_reader.cpp
+        ../src/core/partition_apfs_writer.cpp
+        ../src/core/partition_ext_file_system_reader.cpp
+        ../src/core/partition_hfs_file_system_reader.cpp
+        ../src/core/partition_raw_device_io.cpp
+        ../src/core/partition_file_system_detector.cpp
+        ../src/core/partition_file_system_registry.cpp
         ../src/core/advanced_search_controller.cpp
         ../src/core/advanced_search_worker.cpp
         ../src/core/regex_pattern_library.cpp
@@ -2950,8 +3310,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         ${SAK_APP_PATHS_SOURCES}
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
+        ../include/sak/file_management_file_system.h
         ../include/sak/advanced_search_controller.h
         ../include/sak/advanced_search_worker.h
+        ../include/sak/partition_apfs_file_system_reader.h
+        ../include/sak/partition_apfs_writer.h
+        ../include/sak/partition_ext_file_system_reader.h
+        ../include/sak/partition_hfs_file_system_reader.h
+        ../include/sak/partition_raw_device_io.h
+        ../include/sak/partition_file_system_detector.h
+        ../include/sak/partition_file_system_registry.h
         ../include/sak/regex_pattern_library.h
         ../include/sak/config_manager.h
         ../include/sak/worker_base.h
@@ -2961,7 +3329,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_advanced_search_controller PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB
+        Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
     )
     target_include_directories(test_advanced_search_controller PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -2975,7 +3343,7 @@ endif()
 # Unit Tests - Advanced Uninstall Panel
 # ============================================================================
 
-# test_advanced_uninstall_types — struct defaults, enums, value semantics
+# test_advanced_uninstall_types ??? struct defaults, enums, value semantics
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     add_executable(test_advanced_uninstall_types
         unit/test_advanced_uninstall_types.cpp
@@ -2995,7 +3363,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_types.cpp")
     message(STATUS "Added unit test: test_advanced_uninstall_types")
 endif()
 
-# test_advanced_uninstall_controller — state machine, queue, settings, input validation
+# test_advanced_uninstall_controller ??? state machine, queue, settings, input validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.cpp")
     add_executable(test_advanced_uninstall_controller
         unit/test_advanced_uninstall_controller.cpp
@@ -3037,7 +3405,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
     message(STATUS "Added unit test: test_advanced_uninstall_controller")
 endif()
 
-# test_leftover_scanner — pattern building, risk classification, scan levels, cancellation
+# test_leftover_scanner ??? pattern building, risk classification, scan levels, cancellation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
     add_executable(test_leftover_scanner
         unit/test_leftover_scanner.cpp
@@ -3063,7 +3431,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_leftover_scanner.cpp")
     message(STATUS "Added unit test: test_leftover_scanner")
 endif()
 
-# test_registry_snapshot_engine — diff logic, pattern matching, capture smoke test
+# test_registry_snapshot_engine ??? diff logic, pattern matching, capture smoke test
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_registry_snapshot_engine.cpp")
     add_executable(test_registry_snapshot_engine
         unit/test_registry_snapshot_engine.cpp
@@ -3090,7 +3458,7 @@ endif()
 # Network Diagnostic Panel Tests
 # ============================================================================
 
-# test_network_diagnostic_types — value/move semantics, enums, compile-time invariants
+# test_network_diagnostic_types ??? value/move semantics, enums, compile-time invariants
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
     add_executable(test_network_diagnostic_types
         unit/test_network_diagnostic_types.cpp
@@ -3110,7 +3478,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_types.cpp")
     message(STATUS "Added unit test: test_network_diagnostic_types")
 endif()
 
-# test_network_diagnostic_utils — WiFi freq conversion, vendor lookup, port presets, DNS lists
+# test_network_diagnostic_utils ??? WiFi freq conversion, vendor lookup, port presets, DNS lists
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     add_executable(test_network_diagnostic_utils
         unit/test_network_diagnostic_utils.cpp
@@ -3138,7 +3506,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_utils.cpp")
     message(STATUS "Added unit test: test_network_diagnostic_utils")
 endif()
 
-# test_network_diagnostic_report — HTML/JSON report generation, sections, metadata
+# test_network_diagnostic_report ??? HTML/JSON report generation, sections, metadata
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_network_diagnostic_report.cpp")
     add_executable(test_network_diagnostic_report
         unit/test_network_diagnostic_report.cpp
@@ -3164,7 +3532,7 @@ endif()
 # Unit Tests - Utility & Deduplication
 # ============================================================================
 
-# test_format_utils — sak::formatBytes() display formatting
+# test_format_utils ??? sak::formatBytes() display formatting
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
     add_executable(test_format_utils
         unit/test_format_utils.cpp
@@ -3184,7 +3552,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_format_utils.cpp")
     message(STATUS "Added unit test: test_format_utils")
 endif()
 
-# test_wifi_profile_scanner — WiFi profile name/security parsing
+# test_wifi_profile_scanner ??? WiFi profile name/security parsing
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_wifi_profile_scanner.cpp")
     add_executable(test_wifi_profile_scanner
         unit/test_wifi_profile_scanner.cpp
@@ -3212,7 +3580,7 @@ endif()
 # Unit Tests - Email & PST/OST Inspector Panel
 # ============================================================================
 
-# test_email_types — struct defaults, enum values, constants validation
+# test_email_types ??? struct defaults, enum values, constants validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
     add_executable(test_email_types
         unit/test_email_types.cpp
@@ -3232,7 +3600,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_types.cpp")
     message(STATUS "Added unit test: test_email_types")
 endif()
 
-# test_pst_parser — header validation, magic, encryption, lifecycle
+# test_pst_parser ??? header validation, magic, encryption, lifecycle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
     add_executable(test_pst_parser
         unit/test_pst_parser.cpp
@@ -3255,7 +3623,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_parser.cpp")
     message(STATUS "Added unit test: test_pst_parser")
 endif()
 
-# test_ost_integration — opens real OST/PST files and exercises full parse pipeline
+# test_ost_integration ??? opens real OST/PST files and exercises full parse pipeline
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
     add_executable(test_ost_integration
         integration/test_ost_integration.cpp
@@ -3288,7 +3656,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_ost_integration.cpp")
     message(STATUS "Added integration test: test_ost_integration")
 endif()
 
-# test_mbox_parser — indexing, message loading, From line detection
+# test_mbox_parser ??? indexing, message loading, From line detection
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
     add_executable(test_mbox_parser
         unit/test_mbox_parser.cpp
@@ -3311,7 +3679,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_parser.cpp")
     message(STATUS "Added unit test: test_mbox_parser")
 endif()
 
-# test_email_search_worker — criteria, cancel, search hit structure
+# test_email_search_worker ??? criteria, cancel, search hit structure
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
     add_executable(test_email_search_worker
         unit/test_email_search_worker.cpp
@@ -3338,7 +3706,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_search_worker.cpp")
     message(STATUS "Added unit test: test_email_search_worker")
 endif()
 
-# test_email_export_worker — config, result, format coverage
+# test_email_export_worker ??? config, result, format coverage
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
     add_executable(test_email_export_worker
         unit/test_email_export_worker.cpp
@@ -3371,7 +3739,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_export_worker.cpp")
     message(STATUS "Added unit test: test_email_export_worker")
 endif()
 
-# test_email_profile_manager — discovery, backup/restore, linked files
+# test_email_profile_manager ??? discovery, backup/restore, linked files
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     add_executable(test_email_profile_manager
         unit/test_email_profile_manager.cpp
@@ -3395,7 +3763,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_profile_manager.cpp")
     message(STATUS "Added unit test: test_email_profile_manager")
 endif()
 
-# test_email_report_generator — HTML, JSON, CSV output validation
+# test_email_report_generator ??? HTML, JSON, CSV output validation
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     add_executable(test_email_report_generator
         unit/test_email_report_generator.cpp
@@ -3418,7 +3786,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_email_report_generator.cpp")
     message(STATUS "Added unit test: test_email_report_generator")
 endif()
 
-# test_offline_package_builder — builds the Office PC offline deployment bundle
+# test_offline_package_builder ??? builds the Office PC offline deployment bundle
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.cpp")
     add_executable(test_offline_package_builder
         integration/test_offline_package_builder.cpp
@@ -3456,7 +3824,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_offline_package_builder.
     message(STATUS "Added integration test: test_offline_package_builder")
 endif()
 
-# test_ost_converter_types — type defaults, constants, enum coverage
+# test_ost_converter_types ??? type defaults, constants, enum coverage
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
     add_executable(test_ost_converter_types
         unit/test_ost_converter_types.cpp
@@ -3478,7 +3846,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_types.cpp")
     message(STATUS "Added unit test: test_ost_converter_types")
 endif()
 
-# test_eml_writer — RFC 5322 output, filename sanitization, collision handling
+# test_eml_writer ??? RFC 5322 output, filename sanitization, collision handling
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
     add_executable(test_eml_writer
         unit/test_eml_writer.cpp
@@ -3502,7 +3870,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_eml_writer.cpp")
     message(STATUS "Added unit test: test_eml_writer")
 endif()
 
-# test_ost_converter_controller — queue management, duplicate detection
+# test_ost_converter_controller ??? queue management, duplicate detection
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
     add_executable(test_ost_converter_controller
         unit/test_ost_converter_controller.cpp
@@ -3543,7 +3911,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ost_converter_controller.cpp")
     message(STATUS "Added unit test: test_ost_converter_controller")
 endif()
 
-# test_pst_writer — PST binary creation, folder hierarchy, magic bytes
+# test_pst_writer ??? PST binary creation, folder hierarchy, magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
     add_executable(test_pst_writer
         unit/test_pst_writer.cpp
@@ -3567,7 +3935,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_writer.cpp")
     message(STATUS "Added unit test: test_pst_writer")
 endif()
 
-# test_pst_splitter — volume rotation, single volume, error cases
+# test_pst_splitter ??? volume rotation, single volume, error cases
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
     add_executable(test_pst_splitter
         unit/test_pst_splitter.cpp
@@ -3593,7 +3961,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pst_splitter.cpp")
     message(STATUS "Added unit test: test_pst_splitter")
 endif()
 
-# test_msg_writer — OLE2 compound file, MAPI properties, magic bytes
+# test_msg_writer ??? OLE2 compound file, MAPI properties, magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
     add_executable(test_msg_writer
         unit/test_msg_writer.cpp
@@ -3617,7 +3985,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_msg_writer.cpp")
     message(STATUS "Added unit test: test_msg_writer")
 endif()
 
-# test_mbox_writer — Unix mbox format, From_ escaping, per-folder
+# test_mbox_writer ??? Unix mbox format, From_ escaping, per-folder
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
     add_executable(test_mbox_writer
         unit/test_mbox_writer.cpp
@@ -3643,7 +4011,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mbox_writer.cpp")
     message(STATUS "Added unit test: test_mbox_writer")
 endif()
 
-# test_dbx_writer — Outlook Express DBX, folder magic bytes
+# test_dbx_writer ??? Outlook Express DBX, folder magic bytes
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
     add_executable(test_dbx_writer
         unit/test_dbx_writer.cpp
@@ -3669,7 +4037,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_dbx_writer.cpp")
     message(STATUS "Added unit test: test_dbx_writer")
 endif()
 
-# test_html_email_writer — styled HTML output, data URIs
+# test_html_email_writer ??? styled HTML output, data URIs
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
     add_executable(test_html_email_writer
         unit/test_html_email_writer.cpp
@@ -3693,7 +4061,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_html_email_writer.cpp")
     message(STATUS "Added unit test: test_html_email_writer")
 endif()
 
-# test_pdf_email_writer — QPdfWriter output, PDF header
+# test_pdf_email_writer ??? QPdfWriter output, PDF header
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
     add_executable(test_pdf_email_writer
         unit/test_pdf_email_writer.cpp
@@ -3717,7 +4085,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_pdf_email_writer.cpp")
     message(STATUS "Added unit test: test_pdf_email_writer")
 endif()
 
-# test_conversion_report_generator — HTML report, CSV manifest
+# test_conversion_report_generator ??? HTML report, CSV manifest
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_conversion_report_generator.cpp")
     add_executable(test_conversion_report_generator
         unit/test_conversion_report_generator.cpp

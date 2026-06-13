@@ -11,6 +11,8 @@
 #include <functional>
 
 class QLabel;
+class QFrame;
+class QHBoxLayout;
 class QPushButton;
 class QScrollArea;
 class QVBoxLayout;
@@ -64,6 +66,20 @@ private:
     [[nodiscard]] QString redactedText(const QString& text) const;
     [[nodiscard]] QString messageBody(const Message& message, bool* long_text) const;
     [[nodiscard]] QWidget* createTranscriptRow(const Message& message, int bubble_max_width);
+    [[nodiscard]] QFrame* createTranscriptBubble(const Message& message,
+                                                 const QString& body,
+                                                 bool long_text,
+                                                 int bubble_max_width);
+    void addTranscriptHeading(QVBoxLayout* bubble_layout, QFrame* bubble, const Message& message);
+    void addTranscriptBody(QVBoxLayout* bubble_layout,
+                           QFrame* bubble,
+                           const QString& body,
+                           bool user);
+    void addTranscriptToggle(QVBoxLayout* bubble_layout,
+                             QFrame* bubble,
+                             const Message& message,
+                             bool user,
+                             bool long_text);
     [[nodiscard]] QWidget* createActivityRow(int bubble_max_width);
     [[nodiscard]] bool shouldFollowNewest(bool scroll_to_bottom) const;
     [[nodiscard]] int transcriptBubbleMaxWidth() const;

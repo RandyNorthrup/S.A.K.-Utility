@@ -1,0 +1,750 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.cross-filesystem-physical-destructive",
+    "status":  "Passed",
+    "destructive":  true,
+    "writes_target_media":  true,
+    "started_at_utc":  "2026-06-06T06:32:29.8986788Z",
+    "finished_at_utc":  "2026-06-06T06:33:03.5007951Z",
+    "computer_name":  "MINI-DT",
+    "user":  "MINI-DT\\Randy",
+    "disk_number":  2,
+    "expected_serial_number":  "DD564198838A8",
+    "expected_friendly_name_pattern":  "Best Buy|NS-PCNVMEHDE",
+    "file_systems":  [
+                         "ext2",
+                         "ext3",
+                         "ext4"
+                     ],
+    "before_layout":  {
+                          "disk_number":  2,
+                          "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                          "serial_number":  "DD564198838A8",
+                          "bus_type":  "USB",
+                          "partition_style":  "GPT",
+                          "size_bytes":  "256060514304",
+                          "is_boot":  false,
+                          "is_system":  false,
+                          "is_offline":  false,
+                          "is_read_only":  false,
+                          "partitions":  [
+                                             {
+                                                 "partition_number":  1,
+                                                 "drive_letter":  "",
+                                                 "type":  "System",
+                                                 "gpt_type":  "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}",
+                                                 "offset_bytes":  "20480",
+                                                 "size_bytes":  "209715200",
+                                                 "file_system":  "FAT32",
+                                                 "label":  "EFI"
+                                             },
+                                             {
+                                                 "partition_number":  2,
+                                                 "drive_letter":  "",
+                                                 "type":  "Unknown",
+                                                 "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                                                 "offset_bytes":  "209735680",
+                                                 "size_bytes":  "127724052480",
+                                                 "file_system":  "",
+                                                 "label":  ""
+                                             },
+                                             {
+                                                 "partition_number":  3,
+                                                 "drive_letter":  "",
+                                                 "type":  "Unknown",
+                                                 "gpt_type":  "{7c3457ef-0000-11aa-aa11-00306543ecac}",
+                                                 "offset_bytes":  "128068005888",
+                                                 "size_bytes":  "127992487936",
+                                                 "file_system":  "",
+                                                 "label":  ""
+                                             }
+                                         ]
+                      },
+    "ext_results":  [
+                        {
+                            "file_system":  "ext2",
+                            "partition_number":  2,
+                            "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                            "initial_size_bytes":  "536870912",
+                            "grown_size_bytes":  "805306368",
+                            "shrunk_size_bytes":  "671088640",
+                            "probes":  [
+                                           {
+                                               "stage":  "after-format",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-format-probe.json",
+                                               "detected_file_system":  "ext2"
+                                           },
+                                           {
+                                               "stage":  "after-grow",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-grow-probe.json",
+                                               "detected_file_system":  "ext2"
+                                           },
+                                           {
+                                               "stage":  "after-shrink",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-shrink-probe.json",
+                                               "detected_file_system":  "ext2"
+                                           }
+                                       ]
+                        },
+                        {
+                            "file_system":  "ext3",
+                            "partition_number":  2,
+                            "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                            "initial_size_bytes":  "536870912",
+                            "grown_size_bytes":  "805306368",
+                            "shrunk_size_bytes":  "671088640",
+                            "probes":  [
+                                           {
+                                               "stage":  "after-format",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-format-probe.json",
+                                               "detected_file_system":  "ext3"
+                                           },
+                                           {
+                                               "stage":  "after-grow",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-grow-probe.json",
+                                               "detected_file_system":  "ext3"
+                                           },
+                                           {
+                                               "stage":  "after-shrink",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-shrink-probe.json",
+                                               "detected_file_system":  "ext3"
+                                           }
+                                       ]
+                        },
+                        {
+                            "file_system":  "ext4",
+                            "partition_number":  2,
+                            "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                            "initial_size_bytes":  "536870912",
+                            "grown_size_bytes":  "805306368",
+                            "shrunk_size_bytes":  "671088640",
+                            "probes":  [
+                                           {
+                                               "stage":  "after-format",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-format-probe.json",
+                                               "detected_file_system":  "ext4"
+                                           },
+                                           {
+                                               "stage":  "after-grow",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-grow-probe.json",
+                                               "detected_file_system":  "ext4"
+                                           },
+                                           {
+                                               "stage":  "after-shrink",
+                                               "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-shrink-probe.json",
+                                               "detected_file_system":  "ext4"
+                                           }
+                                       ]
+                        }
+                    ],
+    "linux_swap_result":  {
+                              "file_system":  "Linux swap",
+                              "partition_number":  2,
+                              "partition_gpt_type":  "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}",
+                              "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                              "size_bytes":  "134217728",
+                              "header":  {
+                                             "page_size_bytes":  4096,
+                                             "page_count":  "32768",
+                                             "last_page":  "32767",
+                                             "label":  "SAKPHY_SWAP",
+                                             "uuid":  "e321841e-ed8f-a206-f645-bfeed18f452c"
+                                         },
+                              "verification":  {
+                                                   "signature":  "SWAPSPACE2",
+                                                   "version":  1,
+                                                   "last_page":  "32767",
+                                                   "label":  "SAKPHY_SWAP"
+                                               },
+                              "probe":  {
+                                            "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\linux-swap-probe.json",
+                                            "detected_file_system":  "Linux swap"
+                                        }
+                          },
+    "after_layout":  {
+                         "disk_number":  2,
+                         "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                         "serial_number":  "DD564198838A8",
+                         "bus_type":  "USB",
+                         "partition_style":  "GPT",
+                         "size_bytes":  "256060514304",
+                         "is_boot":  false,
+                         "is_system":  false,
+                         "is_offline":  false,
+                         "is_read_only":  false,
+                         "partitions":  [
+                                            {
+                                                "partition_number":  1,
+                                                "drive_letter":  "",
+                                                "type":  "Reserved",
+                                                "gpt_type":  "{e3c9e316-0b5c-4db8-817d-f92df00215ae}",
+                                                "offset_bytes":  "17408",
+                                                "size_bytes":  "16759808",
+                                                "file_system":  "",
+                                                "label":  ""
+                                            },
+                                            {
+                                                "partition_number":  2,
+                                                "drive_letter":  "",
+                                                "type":  "Unknown",
+                                                "gpt_type":  "{0657fd6d-a4ab-43c4-84e5-0933c84b4f4f}",
+                                                "offset_bytes":  "16777216",
+                                                "size_bytes":  "134217728",
+                                                "file_system":  "",
+                                                "label":  ""
+                                            }
+                                        ]
+                     },
+    "tool_hashes":  [
+                        {
+                            "id":  "e2fsck",
+                            "operation":  "repair",
+                            "file_system":  "ext2",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                            "expected_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+                            "actual_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0"
+                        },
+                        {
+                            "id":  "e2fsck",
+                            "operation":  "repair",
+                            "file_system":  "ext3",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                            "expected_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+                            "actual_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0"
+                        },
+                        {
+                            "id":  "e2fsck",
+                            "operation":  "repair",
+                            "file_system":  "ext4",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                            "expected_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+                            "actual_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0"
+                        },
+                        {
+                            "id":  "mke2fs",
+                            "operation":  "format",
+                            "file_system":  "ext2",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                            "expected_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+                            "actual_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356"
+                        },
+                        {
+                            "id":  "mke2fs",
+                            "operation":  "format",
+                            "file_system":  "ext3",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                            "expected_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+                            "actual_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356"
+                        },
+                        {
+                            "id":  "mke2fs",
+                            "operation":  "format",
+                            "file_system":  "ext4",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                            "expected_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+                            "actual_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356"
+                        },
+                        {
+                            "id":  "resize2fs",
+                            "operation":  "resize",
+                            "file_system":  "ext2",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                            "expected_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+                            "actual_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3"
+                        },
+                        {
+                            "id":  "resize2fs",
+                            "operation":  "resize",
+                            "file_system":  "ext3",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                            "expected_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+                            "actual_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3"
+                        },
+                        {
+                            "id":  "resize2fs",
+                            "operation":  "resize",
+                            "file_system":  "ext4",
+                            "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                            "expected_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+                            "actual_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3"
+                        }
+                    ],
+    "commands":  [
+                     {
+                         "name":  "mke2fs-format-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                         "arguments":  [
+                                           "-q",
+                                           "-t",
+                                           "ext2",
+                                           "-F",
+                                           "-L",
+                                           "SAKEXT2PHY",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.176,
+                         "output":  ""
+                     },
+                     {
+                         "name":  "e2fsck-repair-clean-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.205,
+                         "output":  "SAKEXT2PHY: 11/32768 files (0.0% non-contiguous), 2161/131072 blocks"
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-format-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.088,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT2PHY: 11/32768 files (0.0% non-contiguous), 2161/131072 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-format-probe.json",
+                                           "--expect",
+                                           "ext2",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "536870912"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.082,
+                         "output":  "Detected ext2 in Partition2"
+                     },
+                     {
+                         "name":  "resize2fs-grow-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.137,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 196608 (4k) blocks.\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 196608 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-grow-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.117,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT2PHY: 11/49152 files (0.0% non-contiguous), 3222/196608 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-grow-probe.json",
+                                           "--expect",
+                                           "ext2",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "805306368"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.037,
+                         "output":  "Detected ext2 in Partition2"
+                     },
+                     {
+                         "name":  "e2fsck-repair-before-shrink-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.115,
+                         "output":  "SAKEXT2PHY: 11/49152 files (0.0% non-contiguous), 3222/196608 blocks"
+                     },
+                     {
+                         "name":  "resize2fs-shrink-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "655360K"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.115,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 163840 (4k) blocks.\nBegin pass 3 (max = 6)\nScanning inode table          ----------------------------------------\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 163840 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-shrink-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.093,
+                         "output":  "Pass 1: Checking inodes, blocks, and sizes\ne2fsck 1.47.4 (6-Mar-2025)\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT2PHY: 11/40960 files (0.0% non-contiguous), 2675/163840 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext2",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext2-after-shrink-probe.json",
+                                           "--expect",
+                                           "ext2",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "671088640"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.028,
+                         "output":  "Detected ext2 in Partition2"
+                     },
+                     {
+                         "name":  "mke2fs-format-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                         "arguments":  [
+                                           "-q",
+                                           "-t",
+                                           "ext3",
+                                           "-F",
+                                           "-L",
+                                           "SAKEXT3PHY",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.494,
+                         "output":  ""
+                     },
+                     {
+                         "name":  "e2fsck-repair-clean-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.089,
+                         "output":  "SAKEXT3PHY: 11/32768 files (0.0% non-contiguous), 6262/131072 blocks"
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-format-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.081,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT3PHY: 11/32768 files (0.0% non-contiguous), 6262/131072 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-format-probe.json",
+                                           "--expect",
+                                           "ext3",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "536870912"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.029,
+                         "output":  "Detected ext3 in Partition2"
+                     },
+                     {
+                         "name":  "resize2fs-grow-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.055,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 196608 (4k) blocks.\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 196608 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-grow-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.113,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT3PHY: 11/49152 files (0.0% non-contiguous), 7323/196608 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-grow-probe.json",
+                                           "--expect",
+                                           "ext3",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "805306368"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.03,
+                         "output":  "Detected ext3 in Partition2"
+                     },
+                     {
+                         "name":  "e2fsck-repair-before-shrink-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.121,
+                         "output":  "SAKEXT3PHY: 11/49152 files (0.0% non-contiguous), 7323/196608 blocks"
+                     },
+                     {
+                         "name":  "resize2fs-shrink-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "655360K"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.111,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 163840 (4k) blocks.\nBegin pass 3 (max = 6)\nScanning inode table          ----------------------------------------\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 163840 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-shrink-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.097,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT3PHY: 11/40960 files (0.0% non-contiguous), 6776/163840 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext3",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext3-after-shrink-probe.json",
+                                           "--expect",
+                                           "ext3",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "671088640"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.032,
+                         "output":  "Detected ext3 in Partition2"
+                     },
+                     {
+                         "name":  "mke2fs-format-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                         "arguments":  [
+                                           "-q",
+                                           "-t",
+                                           "ext4",
+                                           "-F",
+                                           "-L",
+                                           "SAKEXT4PHY",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.082,
+                         "output":  ""
+                     },
+                     {
+                         "name":  "e2fsck-repair-clean-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.043,
+                         "output":  "SAKEXT4PHY: 12/32768 files (0.0% non-contiguous), 6385/131072 blocks"
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-format-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.038,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT4PHY: 12/32768 files (0.0% non-contiguous), 6385/131072 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-format-probe.json",
+                                           "--expect",
+                                           "ext4",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "536870912"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.026,
+                         "output":  "Detected ext4 in Partition2"
+                     },
+                     {
+                         "name":  "resize2fs-grow-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.045,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 196608 (4k) blocks.\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 196608 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-grow-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.037,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT4PHY: 12/49152 files (0.0% non-contiguous), 7478/196608 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-grow-probe.json",
+                                           "--expect",
+                                           "ext4",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "805306368"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.027,
+                         "output":  "Detected ext4 in Partition2"
+                     },
+                     {
+                         "name":  "e2fsck-repair-before-shrink-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.038,
+                         "output":  "SAKEXT4PHY: 12/49152 files (0.0% non-contiguous), 7478/196608 blocks"
+                     },
+                     {
+                         "name":  "resize2fs-shrink-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "655360K"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.045,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 to 163840 (4k) blocks.\nBegin pass 3 (max = 6)\nScanning inode table          ----------------------------------------\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nThe filesystem on \\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2 is now 163840 (4k) blocks long."
+                     },
+                     {
+                         "name":  "e2fsck-readonly-after-shrink-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.045,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKEXT4PHY: 12/40960 files (0.0% non-contiguous), 6899/163840 blocks"
+                     },
+                     {
+                         "name":  "sak-probe-ext4",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\ext4-after-shrink-probe.json",
+                                           "--expect",
+                                           "ext4",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "671088640"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.037,
+                         "output":  "Detected ext4 in Partition2"
+                     },
+                     {
+                         "name":  "sak-probe-Linux swap",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.cross-filesystem-physical-destructive\\run-20260605-233229\\linux-swap-probe.json",
+                                           "--expect",
+                                           "Linux swap",
+                                           "--require-sane",
+                                           "--input-size-bytes",
+                                           "134217728"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.028,
+                         "output":  "Detected Linux swap in Partition2"
+                     }
+                 ],
+    "cleanup":  "Disk 2 cleared to RAW.",
+    "error":  ""
+}

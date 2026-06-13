@@ -1,0 +1,480 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.hfsprogs-physical-destructive",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-06T19:10:34.0180822Z",
+    "finished_at_utc":  "2026-06-06T19:10:45.4913446Z",
+    "output_root":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive",
+    "destructive":  true,
+    "writes_target_media":  true,
+    "disk":  {
+                 "disk_number":  2,
+                 "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                 "serial_number":  "DD564198838A8",
+                 "bus_type":  "USB",
+                 "partition_style":  "GPT",
+                 "size_bytes":  "256060514304",
+                 "is_boot":  false,
+                 "is_system":  false,
+                 "is_read_only":  false,
+                 "partitions":  [
+                                    {
+                                        "partition_number":  1,
+                                        "drive_letter":  "",
+                                        "type":  "System",
+                                        "gpt_type":  "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}",
+                                        "offset_bytes":  "20480",
+                                        "size_bytes":  "209715200",
+                                        "file_system":  "FAT32",
+                                        "label":  "EFI"
+                                    },
+                                    {
+                                        "partition_number":  2,
+                                        "drive_letter":  "",
+                                        "type":  "Unknown",
+                                        "gpt_type":  "{7c3457ef-0000-11aa-aa11-00306543ecac}",
+                                        "offset_bytes":  "209735680",
+                                        "size_bytes":  "127992487936",
+                                        "file_system":  "",
+                                        "label":  ""
+                                    },
+                                    {
+                                        "partition_number":  3,
+                                        "drive_letter":  "",
+                                        "type":  "Unknown",
+                                        "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                                        "offset_bytes":  "128202223616",
+                                        "size_bytes":  "127724052480",
+                                        "file_system":  "",
+                                        "label":  ""
+                                    }
+                                ]
+             },
+    "partition":  {
+                      "disk_number":  2,
+                      "partition_number":  3,
+                      "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                      "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                      "size_bytes":  "127724052480",
+                      "offset_bytes":  "128202223616"
+                  },
+    "before":  {
+                   "disk_number":  2,
+                   "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                   "serial_number":  "DD564198838A8",
+                   "bus_type":  "USB",
+                   "partition_style":  "GPT",
+                   "size_bytes":  "256060514304",
+                   "is_boot":  false,
+                   "is_system":  false,
+                   "is_read_only":  false,
+                   "partitions":  [
+                                      {
+                                          "partition_number":  1,
+                                          "drive_letter":  "",
+                                          "type":  "System",
+                                          "gpt_type":  "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}",
+                                          "offset_bytes":  "20480",
+                                          "size_bytes":  "209715200",
+                                          "file_system":  "FAT32",
+                                          "label":  "EFI"
+                                      },
+                                      {
+                                          "partition_number":  2,
+                                          "drive_letter":  "",
+                                          "type":  "Unknown",
+                                          "gpt_type":  "{7c3457ef-0000-11aa-aa11-00306543ecac}",
+                                          "offset_bytes":  "209735680",
+                                          "size_bytes":  "127992487936",
+                                          "file_system":  "",
+                                          "label":  ""
+                                      },
+                                      {
+                                          "partition_number":  3,
+                                          "drive_letter":  "",
+                                          "type":  "Unknown",
+                                          "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                                          "offset_bytes":  "128202223616",
+                                          "size_bytes":  "127724052480",
+                                          "file_system":  "",
+                                          "label":  ""
+                                      }
+                                  ]
+               },
+    "after":  {
+                  "disk_number":  2,
+                  "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                  "serial_number":  "DD564198838A8",
+                  "bus_type":  "USB",
+                  "partition_style":  "GPT",
+                  "size_bytes":  "256060514304",
+                  "is_boot":  false,
+                  "is_system":  false,
+                  "is_read_only":  false,
+                  "partitions":  [
+                                     {
+                                         "partition_number":  1,
+                                         "drive_letter":  "",
+                                         "type":  "System",
+                                         "gpt_type":  "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}",
+                                         "offset_bytes":  "20480",
+                                         "size_bytes":  "209715200",
+                                         "file_system":  "FAT32",
+                                         "label":  "EFI"
+                                     },
+                                     {
+                                         "partition_number":  2,
+                                         "drive_letter":  "",
+                                         "type":  "Unknown",
+                                         "gpt_type":  "{7c3457ef-0000-11aa-aa11-00306543ecac}",
+                                         "offset_bytes":  "209735680",
+                                         "size_bytes":  "127992487936",
+                                         "file_system":  "",
+                                         "label":  ""
+                                     },
+                                     {
+                                         "partition_number":  3,
+                                         "drive_letter":  "",
+                                         "type":  "Unknown",
+                                         "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                                         "offset_bytes":  "128202223616",
+                                         "size_bytes":  "127724052480",
+                                         "file_system":  "",
+                                         "label":  ""
+                                     }
+                                 ]
+              },
+    "tools":  [
+                  {
+                      "id":  "newfs_hfs",
+                      "operation":  "format",
+                      "file_system":  "HFS+",
+                      "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\newfs_hfs.exe",
+                      "expected_sha256":  "25f9467e1ec314b37a044df173c27c46ce631fcacb470469582955bcd4632aaf",
+                      "actual_sha256":  "25f9467e1ec314b37a044df173c27c46ce631fcacb470469582955bcd4632aaf"
+                  },
+                  {
+                      "id":  "fsck_hfs",
+                      "operation":  "repair",
+                      "file_system":  "HFS+",
+                      "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                      "expected_sha256":  "738222837c229b5f3f73cfab3ceb41055e1b16dcfbfd49cfee8c785bda4ec626",
+                      "actual_sha256":  "738222837c229b5f3f73cfab3ceb41055e1b16dcfbfd49cfee8c785bda4ec626"
+                  },
+                  {
+                      "id":  "partition_filesystem_probe_certifier",
+                      "operation":  "probe",
+                      "file_system":  "hfs",
+                      "path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                      "actual_sha256":  "e2f109db3a93214e88b4877521affe6f2a3f76ee22162840a64b097273b9cc6c"
+                  }
+              ],
+    "commands":  [
+                     {
+                         "name":  "newfs_hfs-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\newfs_hfs.exe",
+                         "arguments":  [
+                                           "-v",
+                                           "SAKPHY_HFS",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  1.566,
+                         "output":  "Initialized C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img as a 119 GB HFS Plus volume"
+                     },
+                     {
+                         "name":  "fsck_hfs-initial-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.143,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "fsck_hfs-repair-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.141,
+                         "output":  "Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "fsck_hfs-final-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.238,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "copy-staged-hfs-hfsplus",
+                         "file_path":  "System.IO.FileStream",
+                         "arguments":  [
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.732,
+                         "output":  "Copied 3 sparse range(s), 205348864 allocated byte(s); clipped 0 range(s); cleared 16777216 byte edge regions."
+                     },
+                     {
+                         "name":  "sak-probe-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.probe.json",
+                                           "--expect",
+                                           "HFS+",
+                                           "--hfs-check"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.043,
+                         "output":  "Detected HFS+ in Partition3"
+                     },
+                     {
+                         "name":  "newfs_hfs-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\newfs_hfs.exe",
+                         "arguments":  [
+                                           "-s",
+                                           "-v",
+                                           "SAKPHY_HFSX",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  1.44,
+                         "output":  "Initialized C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img as a 119 GB HFS Plus volume"
+                     },
+                     {
+                         "name":  "fsck_hfs-initial-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  8,
+                         "duration_seconds":  0.384,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n   HasFolderCount flag needs to be set (id = 2)\n   (It should be 0x10 instead of 0)\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFSX was found corrupt and needs to be repaired."
+                     },
+                     {
+                         "name":  "fsck_hfs-repair-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  8,
+                         "duration_seconds":  0.182,
+                         "output":  "Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n   HasFolderCount flag needs to be set (id = 2)\n   (It should be 0x10 instead of 0)\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** Repairing volume.\n** Rechecking volume.\n** The volume   could not be verified completely."
+                     },
+                     {
+                         "name":  "fsck_hfs-final-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  8,
+                         "duration_seconds":  0.301,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n   Volume header needs minor repair\n** The volume SAKPHY_HFSX was found corrupt and needs to be repaired."
+                     },
+                     {
+                         "name":  "fsck_hfs-repair2-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.426,
+                         "output":  "Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n   Volume header needs minor repair\n** Repairing volume.\n** Rechecking volume.\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFSX was repaired successfully."
+                     },
+                     {
+                         "name":  "fsck_hfs-final2-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.301,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n** Detected a case-sensitive volume.\n   The volume name is SAKPHY_HFSX\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFSX appears to be OK."
+                     },
+                     {
+                         "name":  "copy-staged-hfs-hfsx",
+                         "file_path":  "System.IO.FileStream",
+                         "arguments":  [
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.609,
+                         "output":  "Copied 3 sparse range(s), 205348864 allocated byte(s); clipped 1 range(s); cleared 16777216 byte edge regions."
+                     },
+                     {
+                         "name":  "sak-probe-hfsx",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.probe.json",
+                                           "--expect",
+                                           "HFSX",
+                                           "--hfs-check"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.046,
+                         "output":  "Detected HFSX in Partition3"
+                     },
+                     {
+                         "name":  "newfs_hfs-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\newfs_hfs.exe",
+                         "arguments":  [
+                                           "-v",
+                                           "SAKPHY_HFS",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  1.49,
+                         "output":  "Initialized C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img as a 119 GB HFS Plus volume"
+                     },
+                     {
+                         "name":  "fsck_hfs-initial-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.385,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "fsck_hfs-repair-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.143,
+                         "output":  "Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "fsck_hfs-final-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\tools\\filesystem\\hfsprogs\\fsck_hfs.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.18,
+                         "output":  "** C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img (NO WRITE)\n   Executing fsck_hfs (version 540.1-Linux).\n** Checking non-journaled HFS Plus Volume.\n   The volume name is SAKPHY_HFS\n** Checking extents overflow file.\n** Checking catalog file.\n** Checking multi-linked files.\n** Checking catalog hierarchy.\n** Checking extended attributes file.\n** Checking volume bitmap.\n** Checking volume information.\n** The volume SAKPHY_HFS appears to be OK."
+                     },
+                     {
+                         "name":  "copy-staged-hfs-hfsplus",
+                         "file_path":  "System.IO.FileStream",
+                         "arguments":  [
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.626,
+                         "output":  "Copied 3 sparse range(s), 205348864 allocated byte(s); clipped 0 range(s); cleared 16777216 byte edge regions."
+                     },
+                     {
+                         "name":  "sak-probe-hfsplus",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.probe.json",
+                                           "--expect",
+                                           "HFS+",
+                                           "--hfs-check"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.04,
+                         "output":  "Detected HFS+ in Partition3"
+                     }
+                 ],
+    "cases":  [
+                  {
+                      "index":  1,
+                      "file_system":  "HFS+",
+                      "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                      "staged_image_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.img",
+                      "initial_check_exit_code":  0,
+                      "final_check_exit_code":  0,
+                      "detected_file_system":  "HFS+",
+                      "probe_report":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.probe.json",
+                      "status":  "Passed",
+                      "format_command":  "newfs_hfs-hfsplus",
+                      "repair_command":  "fsck_hfs-repair-hfsplus",
+                      "copy_command":  "copy-staged-hfs-hfsplus",
+                      "probe_command":  "sak-probe-hfsplus"
+                  },
+                  {
+                      "index":  2,
+                      "file_system":  "HFSX",
+                      "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                      "staged_image_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.img",
+                      "initial_check_exit_code":  8,
+                      "final_check_exit_code":  0,
+                      "detected_file_system":  "HFSX",
+                      "probe_report":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.probe.json",
+                      "status":  "Passed",
+                      "format_command":  "newfs_hfs-hfsx",
+                      "repair_command":  [
+                                             "fsck_hfs-repair-hfsx",
+                                             "fsck_hfs-repair2-hfsx"
+                                         ],
+                      "copy_command":  "copy-staged-hfs-hfsx",
+                      "probe_command":  "sak-probe-hfsx"
+                  },
+                  {
+                      "index":  3,
+                      "file_system":  "HFS+",
+                      "raw_target":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                      "staged_image_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.img",
+                      "initial_check_exit_code":  0,
+                      "final_check_exit_code":  0,
+                      "detected_file_system":  "HFS+",
+                      "probe_report":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.probe.json",
+                      "status":  "Passed",
+                      "format_command":  "newfs_hfs-hfsplus",
+                      "repair_command":  "fsck_hfs-repair-hfsplus",
+                      "copy_command":  "copy-staged-hfs-hfsplus",
+                      "probe_command":  "sak-probe-hfsplus"
+                  }
+              ],
+    "artifacts":  [
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\01-hfsplus.probe.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\02-hfsx.probe.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.hfsprogs-physical-destructive\\03-hfsplus.probe.json"
+                  ],
+    "error":  ""
+}

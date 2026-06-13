@@ -384,131 +384,62 @@ void appendRoleAlias(QVector<QPair<QString, QString>>* aliases,
     aliases->append({*role_it, normalizedRolePromptText(alias)});
 }
 
+QVector<QPair<QString, QStringList>> roleAliasGroups() {
+    return {
+        {QStringLiteral("PC Technician"),
+         {QStringLiteral("it technician"),
+          QStringLiteral("desktop support"),
+          QStringLiteral("help desk")}},
+        {QStringLiteral("Diagnostic Technician"),
+         {QStringLiteral("health check technician"), QStringLiteral("system diagnostic")}},
+        {QStringLiteral("Storage Diagnostic Technician"),
+         {QStringLiteral("drive technician"),
+          QStringLiteral("storage technician"),
+          QStringLiteral("disk health")}},
+        {QStringLiteral("Driver and Device Technician"),
+         {QStringLiteral("hardware technician"),
+          QStringLiteral("driver technician"),
+          QStringLiteral("device technician")}},
+        {QStringLiteral("Audio Device Technician"), {QStringLiteral("audio technician")}},
+        {QStringLiteral("Printer Technician"), {QStringLiteral("printer technician")}},
+        {QStringLiteral("Battery Health Technician"), {QStringLiteral("battery technician")}},
+        {QStringLiteral("Browser Support Technician"), {QStringLiteral("browser technician")}},
+        {QStringLiteral("Performance Technician"), {QStringLiteral("performance technician")}},
+        {QStringLiteral("Windows Repair Technician"),
+         {QStringLiteral("windows technician"),
+          QStringLiteral("windows repair"),
+          QStringLiteral("windows repair technician"),
+          QStringLiteral("network technician"),
+          QStringLiteral("repair technician")}},
+        {QStringLiteral("System Cleanup Technician"),
+         {QStringLiteral("cleanup technician"), QStringLiteral("system optimizer")}},
+        {QStringLiteral("Software Deployment Technician"),
+         {QStringLiteral("software deployment"), QStringLiteral("installer")}},
+        {QStringLiteral("Security Technician"),
+         {QStringLiteral("security analyst"),
+          QStringLiteral("malware analyst"),
+          QStringLiteral("incident responder")}},
+        {QStringLiteral("Research Assistant"),
+         {QStringLiteral("researcher"), QStringLiteral("web researcher")}},
+        {QStringLiteral("Customer Report Writer"),
+         {QStringLiteral("service writer"),
+          QStringLiteral("documentation specialist"),
+          QStringLiteral("handoff writer"),
+          QStringLiteral("report writer")}},
+    };
+}
+
 QVector<QPair<QString, QString>> roleAliases(const ai::WorkflowStore* store) {
     const QStringList roles = agentProfilesForWorkflowStore(store);
     QVector<QPair<QString, QString>> aliases;
     for (const auto& role : roles) {
         appendRoleAlias(&aliases, roles, role, role);
     }
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("it technician"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("desktop support"));
-    appendRoleAlias(&aliases, roles, QStringLiteral("PC Technician"), QStringLiteral("help desk"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Diagnostic Technician"),
-                    QStringLiteral("health check technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Diagnostic Technician"),
-                    QStringLiteral("system diagnostic"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Storage Diagnostic Technician"),
-                    QStringLiteral("drive technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Storage Diagnostic Technician"),
-                    QStringLiteral("storage technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Storage Diagnostic Technician"),
-                    QStringLiteral("disk health"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Driver and Device Technician"),
-                    QStringLiteral("hardware technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Driver and Device Technician"),
-                    QStringLiteral("driver technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Driver and Device Technician"),
-                    QStringLiteral("device technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Audio Device Technician"),
-                    QStringLiteral("audio technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Printer Technician"),
-                    QStringLiteral("printer technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Battery Health Technician"),
-                    QStringLiteral("battery technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Browser Support Technician"),
-                    QStringLiteral("browser technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Performance Technician"),
-                    QStringLiteral("performance technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Windows Repair Technician"),
-                    QStringLiteral("windows technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Windows Repair Technician"),
-                    QStringLiteral("windows repair"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Windows Repair Technician"),
-                    QStringLiteral("windows repair technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Windows Repair Technician"),
-                    QStringLiteral("network technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Windows Repair Technician"),
-                    QStringLiteral("repair technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("System Cleanup Technician"),
-                    QStringLiteral("cleanup technician"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("System Cleanup Technician"),
-                    QStringLiteral("system optimizer"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Software Deployment Technician"),
-                    QStringLiteral("software deployment"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Software Deployment Technician"),
-                    QStringLiteral("installer"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("Security Technician"), QStringLiteral("security analyst"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("Security Technician"), QStringLiteral("malware analyst"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Security Technician"),
-                    QStringLiteral("incident responder"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("Research Assistant"), QStringLiteral("researcher"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("Research Assistant"), QStringLiteral("web researcher"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Customer Report Writer"),
-                    QStringLiteral("service writer"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Customer Report Writer"),
-                    QStringLiteral("documentation specialist"));
-    appendRoleAlias(&aliases,
-                    roles,
-                    QStringLiteral("Customer Report Writer"),
-                    QStringLiteral("handoff writer"));
-    appendRoleAlias(
-        &aliases, roles, QStringLiteral("Customer Report Writer"), QStringLiteral("report writer"));
+    for (const auto& group : roleAliasGroups()) {
+        for (const auto& alias : group.second) {
+            appendRoleAlias(&aliases, roles, group.first, alias);
+        }
+    }
     std::sort(aliases.begin(), aliases.end(), [](const auto& left, const auto& right) {
         return left.second.size() > right.second.size();
     });
@@ -528,16 +459,79 @@ QString explicitRoleFromPrompt(const QString& message, const ai::WorkflowStore* 
     return {};
 }
 
-int promptKeywordScore(const QString& normalized, std::initializer_list<const char*> needles) {
+int promptKeywordScore(const QString& normalized, const QStringList& needles) {
     int score = 0;
-    for (const char* needle : needles) {
-        const QString term = normalizedRolePromptText(QString::fromLatin1(needle));
+    for (const auto& needle : needles) {
+        const QString term = normalizedRolePromptText(needle);
         if (normalized.contains(term)) {
             score += std::max(
                 1, static_cast<int>(term.split(QLatin1Char(' '), Qt::SkipEmptyParts).size()));
         }
     }
     return score;
+}
+
+QVector<QPair<QString, QStringList>> roleKeywordGroups() {
+    return {
+        {QStringLiteral("Customer Report Writer"),
+         {QStringLiteral("report"),
+          QStringLiteral("handoff"),
+          QStringLiteral("write up"),
+          QStringLiteral("customer ready")}},
+        {QStringLiteral("Research Assistant"),
+         {QStringLiteral("research"),
+          QStringLiteral("look up"),
+          QStringLiteral("latest"),
+          QStringLiteral("documentation"),
+          QStringLiteral("compare"),
+          QStringLiteral("advisory")}},
+        {QStringLiteral("Security Technician"),
+         {QStringLiteral("malware"), QStringLiteral("virus"), QStringLiteral("ransomware"),
+          QStringLiteral("infected"), QStringLiteral("suspicious"), QStringLiteral("defender"),
+          QStringLiteral("antivirus"), QStringLiteral("threat"), QStringLiteral("quarantine"),
+          QStringLiteral("vulnerability")}},
+        {QStringLiteral("Software Deployment Technician"),
+         {QStringLiteral("install"), QStringLiteral("uninstall"), QStringLiteral("upgrade"),
+          QStringLiteral("package"), QStringLiteral("offline installer"),
+          QStringLiteral("deployment bundle"), QStringLiteral("chocolatey"),
+          QStringLiteral("winget")}},
+        {QStringLiteral("System Cleanup Technician"),
+         {QStringLiteral("cleanup"), QStringLiteral("clean up"), QStringLiteral("optimize"),
+          QStringLiteral("disk space"), QStringLiteral("storage full"), QStringLiteral("bloatware"),
+          QStringLiteral("adware"), QStringLiteral("temporary files"),
+          QStringLiteral("startup clutter")}},
+        {QStringLiteral("Windows Repair Technician"),
+         {QStringLiteral("windows update"), QStringLiteral("blue screen"), QStringLiteral("bsod"),
+          QStringLiteral("network"), QStringLiteral("wifi"), QStringLiteral("dns"),
+          QStringLiteral("time sync"), QStringLiteral("search index"), QStringLiteral("profile"),
+          QStringLiteral("login"), QStringLiteral("sfc"), QStringLiteral("dism"),
+          QStringLiteral("service"), QStringLiteral("registry"), QStringLiteral("repair windows")}},
+        {QStringLiteral("Diagnostic Technician"),
+         {QStringLiteral("health check"), QStringLiteral("diagnose pc"),
+          QStringLiteral("full diagnostic")}},
+        {QStringLiteral("Storage Diagnostic Technician"),
+         {QStringLiteral("hard drive"), QStringLiteral("disk health"), QStringLiteral("smart"),
+          QStringLiteral("ssd"), QStringLiteral("storage")}},
+        {QStringLiteral("Driver and Device Technician"),
+         {QStringLiteral("driver"), QStringLiteral("device"), QStringLiteral("hardware"),
+          QStringLiteral("pnp"), QStringLiteral("usb")}},
+        {QStringLiteral("Audio Device Technician"),
+         {QStringLiteral("audio"), QStringLiteral("sound"), QStringLiteral("microphone"),
+          QStringLiteral("speaker")}},
+        {QStringLiteral("Printer Technician"),
+         {QStringLiteral("printer"), QStringLiteral("print spooler"), QStringLiteral("printing")}},
+        {QStringLiteral("Battery Health Technician"),
+         {QStringLiteral("battery"), QStringLiteral("laptop battery"), QStringLiteral("powercfg")}},
+        {QStringLiteral("Browser Support Technician"),
+         {QStringLiteral("browser"), QStringLiteral("chrome"), QStringLiteral("edge"),
+          QStringLiteral("firefox"), QStringLiteral("proxy")}},
+        {QStringLiteral("Performance Technician"),
+         {QStringLiteral("performance"), QStringLiteral("startup"), QStringLiteral("slow boot"),
+          QStringLiteral("slow pc")}},
+        {QStringLiteral("PC Technician"),
+         {QStringLiteral("general pc"), QStringLiteral("pc technician"),
+          QStringLiteral("technician task")}},
+    };
 }
 
 QString bestRoleFromScores(const QHash<QString, int>& scores) {
@@ -559,75 +553,9 @@ QString inferredRoleFromPrompt(const QString& message, const ai::WorkflowStore* 
     }
 
     QHash<QString, int> scores;
-    scores[QStringLiteral("Customer Report Writer")] +=
-        promptKeywordScore(normalized, {"report", "handoff", "write up", "customer ready"});
-    scores[QStringLiteral("Research Assistant")] += promptKeywordScore(
-        normalized, {"research", "look up", "latest", "documentation", "compare", "advisory"});
-    scores[QStringLiteral("Security Technician")] += promptKeywordScore(normalized,
-                                                                        {"malware",
-                                                                         "virus",
-                                                                         "ransomware",
-                                                                         "infected",
-                                                                         "suspicious",
-                                                                         "defender",
-                                                                         "antivirus",
-                                                                         "threat",
-                                                                         "quarantine",
-                                                                         "vulnerability"});
-    scores[QStringLiteral("Software Deployment Technician")] +=
-        promptKeywordScore(normalized,
-                           {"install",
-                            "uninstall",
-                            "upgrade",
-                            "package",
-                            "offline installer",
-                            "deployment bundle",
-                            "chocolatey",
-                            "winget"});
-    scores[QStringLiteral("System Cleanup Technician")] += promptKeywordScore(normalized,
-                                                                              {"cleanup",
-                                                                               "clean up",
-                                                                               "optimize",
-                                                                               "disk space",
-                                                                               "storage full",
-                                                                               "bloatware",
-                                                                               "adware",
-                                                                               "temporary files",
-                                                                               "startup clutter"});
-    scores[QStringLiteral("Windows Repair Technician")] += promptKeywordScore(normalized,
-                                                                              {"windows update",
-                                                                               "blue screen",
-                                                                               "bsod",
-                                                                               "network",
-                                                                               "wifi",
-                                                                               "dns",
-                                                                               "time sync",
-                                                                               "search index",
-                                                                               "profile",
-                                                                               "login",
-                                                                               "sfc",
-                                                                               "dism",
-                                                                               "service",
-                                                                               "registry",
-                                                                               "repair windows"});
-    scores[QStringLiteral("Diagnostic Technician")] +=
-        promptKeywordScore(normalized, {"health check", "diagnose pc", "full diagnostic"});
-    scores[QStringLiteral("Storage Diagnostic Technician")] +=
-        promptKeywordScore(normalized, {"hard drive", "disk health", "smart", "ssd", "storage"});
-    scores[QStringLiteral("Driver and Device Technician")] +=
-        promptKeywordScore(normalized, {"driver", "device", "hardware", "pnp", "usb"});
-    scores[QStringLiteral("Audio Device Technician")] +=
-        promptKeywordScore(normalized, {"audio", "sound", "microphone", "speaker"});
-    scores[QStringLiteral("Printer Technician")] +=
-        promptKeywordScore(normalized, {"printer", "print spooler", "printing"});
-    scores[QStringLiteral("Battery Health Technician")] +=
-        promptKeywordScore(normalized, {"battery", "laptop battery", "powercfg"});
-    scores[QStringLiteral("Browser Support Technician")] +=
-        promptKeywordScore(normalized, {"browser", "chrome", "edge", "firefox", "proxy"});
-    scores[QStringLiteral("Performance Technician")] +=
-        promptKeywordScore(normalized, {"performance", "startup", "slow boot", "slow pc"});
-    scores[QStringLiteral("PC Technician")] +=
-        promptKeywordScore(normalized, {"general pc", "pc technician", "technician task"});
+    for (const auto& group : roleKeywordGroups()) {
+        scores[group.first] += promptKeywordScore(normalized, group.second);
+    }
 
     if (store) {
         for (const auto& workflow : store->workflows()) {
@@ -4085,7 +4013,14 @@ void AiAssistantPanel::setupComposerContextList(QVBoxLayout* layout, QWidget* co
 void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* composer) {
     auto* actionRow = new QHBoxLayout();
     actionRow->setSpacing(sak::ui::kSpacingSmall);
+    setupComposerContextActions(actionRow, composer);
+    actionRow->addStretch();
+    setupComposerSendActions(actionRow, composer);
+    updatePrimaryActionButton();
+    layout->addLayout(actionRow);
+}
 
+void AiAssistantPanel::setupComposerContextActions(QHBoxLayout* actionRow, QWidget* composer) {
     m_addContextFilesButton = new QPushButton(tr("Attach"), composer);
     configureCompactButton(m_addContextFilesButton,
                            QStringLiteral(":/icons/icons/icons8-attachment.svg"));
@@ -4122,9 +4057,9 @@ void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* compos
             this,
             &AiAssistantPanel::onClearContextClicked);
     actionRow->addWidget(m_clearContextButton);
+}
 
-    actionRow->addStretch();
-
+void AiAssistantPanel::setupComposerSendActions(QHBoxLayout* actionRow, QWidget* composer) {
     m_contextWindowLabel = new QLabel(composer);
     m_contextWindowLabel->setMinimumWidth(kContextWindowLabelMinWidth);
     m_contextWindowLabel->setAlignment(Qt::AlignCenter);
@@ -4151,8 +4086,6 @@ void AiAssistantPanel::setupComposerActions(QVBoxLayout* layout, QWidget* compos
         onSendClicked();
     });
     actionRow->addWidget(m_sendButton);
-    updatePrimaryActionButton();
-    layout->addLayout(actionRow);
 }
 
 void AiAssistantPanel::createStatusStrip(QVBoxLayout* rootLayout) {

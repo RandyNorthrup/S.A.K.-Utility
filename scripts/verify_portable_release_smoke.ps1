@@ -15,9 +15,12 @@ $root = (Resolve-Path -LiteralPath $PackageRoot).Path
 $required = @(
     'sak_utility.exe',
     'sak_elevated_helper.exe',
+    'sak_apfs_writer_cli.exe',
+    'sak_hfs_writer_cli.exe',
     'Qt6Core.dll',
     'Qt6Widgets.dll',
     'platforms/qwindows.dll',
+    'tools/filesystem/manifest.json',
     'tools/mcp/win32-mcp-server/win32-mcp-server.exe',
     'tools/mcp/win32-mcp-server/THIRD_PARTY_LICENSES.txt',
     'data/ai/providers/providers.json',
@@ -38,6 +41,9 @@ if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorActio
 }
 if (Test-Path -LiteralPath (Join-Path $root 'tools/mcp/_build')) {
     Fail 'tools/mcp/_build leaked into package'
+}
+if (Test-Path -LiteralPath (Join-Path $root 'tools/filesystem/_build')) {
+    Fail 'tools/filesystem/_build leaked into package'
 }
 foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', '_logs')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {

@@ -34,8 +34,10 @@ $Patterns = @(
 )
 
 $ExcludedPrefixes = @(
+    "artifacts/",
     "build/",
     ".git/",
+    "temp/",
     "_archived/"
 )
 

@@ -372,6 +372,15 @@ python_archive/**/*.egg-info/
 !resources/ai/app_manifests/*.json
 !docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
 
+# Partition Manager non-native filesystem tool bundle. This directory is
+# manifest-gated and may contain exe/dll/json/license/source artifacts.
+!tools/filesystem/
+!tools/filesystem/**
+tools/filesystem/_build/
+tools/filesystem/**/_build/
+tools/filesystem/**/*.local
+!tools/filesystem/manifest.json
+
 # User data (if any)
 user_data/
 backup/
@@ -462,6 +471,8 @@ artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/*
 # Patch files
 *.patch
 *.diff
+!tools/filesystem/**/*.patch
+!tools/filesystem/**/*.diff
 
 # Lock files
 *.lock

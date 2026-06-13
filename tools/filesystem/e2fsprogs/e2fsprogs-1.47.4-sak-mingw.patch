@@ -1,0 +1,802 @@
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/e2fsck.h e2fsprogs-1.47.4/e2fsck/e2fsck.h
+--- e2fsprogs-1.47.4-pristine/e2fsck/e2fsck.h	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/e2fsck.h	2026-06-05 11:28:49.423061200 -0700
+@@ -145,7 +145,10 @@
+
+ struct encrypted_file_info;
+
++#if !defined(_WIN32) && !defined(WIN32) && !defined(__CYGWIN__) && \
++	!defined(__MINGW32__) && !defined(__MINGW64__)
+ #define RESOURCE_TRACK
++#endif
+
+ #ifdef RESOURCE_TRACK
+ /*
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/ehandler.c e2fsprogs-1.47.4/e2fsck/ehandler.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/ehandler.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/ehandler.c	2026-06-05 11:22:51.538726900 -0700
+@@ -11,12 +11,16 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <ctype.h>
++#ifdef HAVE_TERMIOS_H
+ #include <termios.h>
++#endif
+
+ #include "e2fsck.h"
+
+ #include <sys/time.h>
++#ifdef HAVE_SYS_RESOURCE_H
+ #include <sys/resource.h>
++#endif
+
+ static const char *operation;
+
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/journal.c e2fsprogs-1.47.4/e2fsck/journal.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/journal.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/journal.c	2026-06-05 11:22:59.012907900 -0700
+@@ -1104,7 +1104,7 @@
+ 		}
+
+ 		jfs_debug(1, "Using journal file %s\n", journal_name);
+-		io_ptr = unix_io_manager;
++		io_ptr = default_io_manager;
+ 	}
+
+ #if 0
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/logfile.c e2fsprogs-1.47.4/e2fsck/logfile.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/logfile.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/logfile.c	2026-06-05 11:24:44.743118900 -0700
+@@ -78,8 +78,16 @@
+ 	    (ch == 'Y') ||
+ 	    (ch == 'T') || (ch == 'H') || (ch == 'M') || (ch == 'S')) {
+ 		tzset();
++#ifdef _WIN32
++		tm = (*flags & FLAG_UTC) ? gmtime(&ctx->now) : localtime(&ctx->now);
++		if (tm) {
++			tm_struct = *tm;
++			tm = &tm_struct;
++		}
++#else
+ 		tm = (*flags & FLAG_UTC) ? gmtime_r(&ctx->now, &tm_struct) :
+ 			localtime_r(&ctx->now, &tm_struct);
++#endif
+ 	}
+
+ 	switch (ch) {
+@@ -96,6 +104,8 @@
+ 	case 'h':
+ #ifdef TEST_PROGRAM
+ 		strcpy(buf, "server");
++#elif defined(_WIN32)
++		strcpy(buf, "windows");
+ #else
+ 		buf[0] = 0;
+ 		gethostname(buf, sizeof(buf));
+@@ -211,6 +221,19 @@
+  */
+ static FILE *save_output(const char *s0, const char *s1, const char *s2)
+ {
++#ifdef _WIN32
++	const char *target = NULL;
++
++	if (s0 && *s0)
++		target = s0;
++	else if (s1 && *s1)
++		target = s1;
++	else if (s2 && *s2)
++		target = s2;
++	if (!target)
++		return NULL;
++	return fopen(target, "w");
++#else
+ 	int c, fd, fds[2];
+ 	char *cp;
+ 	pid_t pid;
+@@ -285,6 +308,7 @@
+ 	if (!ret)
+ 		close(fds[1]);
+ 	return ret;
++#endif
+ }
+
+ #ifndef TEST_PROGRAM
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/message.c e2fsprogs-1.47.4/e2fsck/message.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/message.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/message.c	2026-06-05 11:31:20.878690200 -0700
+@@ -94,7 +94,9 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <ctype.h>
++#ifdef HAVE_TERMIOS_H
+ #include <termios.h>
++#endif
+ #include "support/quotaio.h"
+
+ #include "e2fsck.h"
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/mtrace.c e2fsprogs-1.47.4/e2fsck/mtrace.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/mtrace.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/mtrace.c	2026-06-05 11:25:23.256222700 -0700
+@@ -143,7 +143,13 @@
+   mallfile = getenv (mallenv);
+   if (mallfile != NULL || mallwatch != NULL)
+     {
+-      mallstream = fopen (mallfile != NULL ? mallfile : "/dev/null", "w");
++      mallstream = fopen (mallfile != NULL ? mallfile :
++#ifdef _WIN32
++			  "NUL",
++#else
++			  "/dev/null",
++#endif
++			  "w");
+       if (mallstream != NULL)
+ 	{
+ 	  /* Be sure it doesn't malloc its buffer!  */
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/pass5.c e2fsprogs-1.47.4/e2fsck/pass5.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/pass5.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/pass5.c	2026-06-05 11:28:09.388094600 -0700
+@@ -14,7 +14,9 @@
+ #include <stdint.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#ifdef HAVE_SYS_IOCTL_H
+ #include <sys/ioctl.h>
++#endif
+ #include <fcntl.h>
+ #include <errno.h>
+
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/problem.c e2fsprogs-1.47.4/e2fsck/problem.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/problem.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/problem.c	2026-06-05 11:31:13.743481100 -0700
+@@ -14,7 +14,9 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <ctype.h>
++#ifdef HAVE_TERMIOS_H
+ #include <termios.h>
++#endif
+
+ #include "e2fsck.h"
+
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/sigcatcher.c e2fsprogs-1.47.4/e2fsck/sigcatcher.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/sigcatcher.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/sigcatcher.c	2026-06-05 11:32:18.496944300 -0700
+@@ -331,6 +331,12 @@
+ 	return buf;
+ }
+
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || \
++	defined(__MINGW32__) || defined(__MINGW64__)
++void sigcatcher_setup(void)
++{
++}
++#else
+ static void die_signal_handler(int signum, siginfo_t *siginfo,
+ 			       void *context EXT2FS_ATTR((unused)))
+ {
+@@ -397,6 +403,7 @@
+ 	sigaction(SIGSEGV, &sa, 0);
+ 	sigaction(SIGABRT, &sa, 0);
+ }
++#endif
+
+
+ #ifdef DEBUG
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/unix.c e2fsprogs-1.47.4/e2fsck/unix.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/unix.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/unix.c	2026-06-05 11:44:46.341378500 -0700
+@@ -12,6 +12,10 @@
+ #define _XOPEN_SOURCE 600 /* for inclusion of sa_handler in Solaris */
+
+ #include "config.h"
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || \
++	defined(__MINGW32__) || defined(__MINGW64__)
++#undef HAVE_SIGNAL_H
++#endif
+ #include <stdio.h>
+ #ifdef HAVE_STDLIB_H
+ #include <stdlib.h>
+@@ -55,6 +59,7 @@
+ #include "support/devname.h"
+ #include "e2fsck.h"
+ #include "problem.h"
++#undef HAVE_SIGNAL_H
+ #include "jfs_user.h"
+ #include "../version.h"
+
+@@ -289,6 +294,10 @@
+
+ static int is_on_batt(void)
+ {
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || \
++	defined(__MINGW32__) || defined(__MINGW64__)
++	return 0;
++#else
+ 	FILE	*f;
+ 	DIR	*d;
+ 	char	tmp[80], tmp2[80], fname[NAME_MAX+30];
+@@ -332,6 +341,7 @@
+ 		closedir(d);
+ 	}
+ 	return 0;
++#endif
+ }
+
+ /*
+@@ -623,10 +633,21 @@
+ 	int	fd = 0;
+
+ 	while (fd <= 2) {
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || \
++	defined(__MINGW32__) || defined(__MINGW64__)
++		fd = open("NUL", O_RDWR);
++#else
+ 		fd = open("/dev/null", O_RDWR);
++#endif
+ 		if (fd < 0) {
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || \
++	defined(__MINGW32__) || defined(__MINGW64__)
++			fprintf(stderr, _("ERROR: Couldn't open "
++				"NUL (%s)\n"),
++#else
+ 			fprintf(stderr, _("ERROR: Couldn't open "
+ 				"/dev/null (%s)\n"),
++#endif
+ 				strerror(errno));
+ 			return;
+ 		}
+@@ -634,7 +655,7 @@
+ 	(void) close(fd);
+ }
+
+-#ifdef HAVE_SIGNAL_H
++#if 0
+ static void signal_progress_on(int sig EXT2FS_ATTR((unused)))
+ {
+ 	e2fsck_t ctx = e2fsck_global_ctx;
+@@ -813,6 +834,15 @@
+
+ static const char *config_fn[] = { ROOT_SYSCONFDIR "/e2fsck.conf", 0 };
+
++static int windows_raw_device_name(const char *path)
++{
++	return path &&
++		(!strncmp(path, "\\\\.\\", 4) ||
++		 !strncmp(path, "\\\\?\\", 4) ||
++		 !strncmp(path, "//./", 4) ||
++		 !strncmp(path, "//?/", 4));
++}
++
+ static errcode_t PRS(int argc, char *argv[], e2fsck_t *ret_ctx)
+ {
+ 	int		flush = 0;
+@@ -822,7 +852,7 @@
+ #endif
+ 	e2fsck_t	ctx;
+ 	errcode_t	retval;
+-#ifdef HAVE_SIGNAL_H
++#if 0
+ 	struct sigaction	sa;
+ #endif
+ 	char		*extended_opts = 0;
+@@ -1024,7 +1054,8 @@
+ 	if (ctx->options & E2F_OPT_NO)
+ 		ctx->options |= E2F_OPT_READONLY;
+
+-	ctx->io_options = strchr(argv[optind], '?');
++	ctx->io_options = windows_raw_device_name(argv[optind]) ? NULL :
++		strchr(argv[optind], '?');
+ 	if (ctx->io_options)
+ 		*ctx->io_options++ = 0;
+ 	ctx->filesystem_name = get_devname(ctx->blkid, argv[optind], 0);
+@@ -1116,7 +1147,7 @@
+ 					"be both used at the same time.\n"));
+ 		exit(FSCK_USAGE);
+ 	}
+-#ifdef HAVE_SIGNAL_H
++#if 0
+ 	/*
+ 	 * Set up signal action
+ 	 */
+@@ -1190,7 +1221,7 @@
+ 				retval = ext2fs_open2(ctx->filesystem_name,
+ 						      ctx->io_options, flags,
+ 						      ctx->superblock, blocksize,
+-						      unix_io_manager, ret_fs);
++						      default_io_manager, ret_fs);
+ 				if (*ret_fs) {
+ 					ext2fs_free(*ret_fs);
+ 					*ret_fs = NULL;
+@@ -1502,10 +1533,10 @@
+ #ifdef CONFIG_TESTIO_DEBUG
+ 	if (getenv("TEST_IO_FLAGS") || getenv("TEST_IO_BLOCK")) {
+ 		io_ptr = test_io_manager;
+-		test_io_backing_manager = unix_io_manager;
++		test_io_backing_manager = default_io_manager;
+ 	} else
+ #endif
+-		io_ptr = unix_io_manager;
++		io_ptr = default_io_manager;
+ 	flags |= EXT2_FLAG_NOFREE_ON_ERROR;
+ 	profile_get_boolean(ctx->profile, "options", "old_bitmaps", 0, 0,
+ 			    &old_bitmaps);
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/e2fsck/util.c e2fsprogs-1.47.4/e2fsck/util.c
+--- e2fsprogs-1.47.4-pristine/e2fsck/util.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/e2fsck/util.c	2026-06-05 11:29:39.391091000 -0700
+@@ -44,7 +44,9 @@
+ #include <stdarg.h>
+ #include <time.h>
+ #include <sys/time.h>
++#ifdef RESOURCE_TRACK
+ #include <sys/resource.h>
++#endif
+
+ void fatal_error(e2fsck_t ctx, const char *msg)
+ {
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/lib/ext2fs/getsize.c e2fsprogs-1.47.4/lib/ext2fs/getsize.c
+--- e2fsprogs-1.47.4-pristine/lib/ext2fs/getsize.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/lib/ext2fs/getsize.c	2026-06-05 11:20:24.219596700 -0700
+@@ -75,9 +75,13 @@
+ 				  blk64_t *retblocks)
+ {
+ 	int fd;
++	errcode_t retval = EINVAL;
+ 	HANDLE h;
++	GET_LENGTH_INFORMATION li;
+ 	PARTITION_INFORMATION pi;
++	PARTITION_INFORMATION_EX piex;
+ 	DISK_GEOMETRY gi;
++	DISK_GEOMETRY_EX giex;
+ 	DWORD retbytes;
+ #ifdef HAVE_GET_FILE_SIZE_EX
+ 	LARGE_INTEGER filesize;
+@@ -89,12 +93,34 @@
+ 	if (fd < 0)
+ 		return errno;
+ 	h = (HANDLE)_get_osfhandle(fd);
+-	if (DeviceIoControl(h, IOCTL_DISK_GET_PARTITION_INFO,
++	if (DeviceIoControl(h, IOCTL_DISK_GET_LENGTH_INFO,
++			    NULL, 0, &li, sizeof(li),
++			    &retbytes, NULL)) {
++
++		*retblocks = li.Length.QuadPart / blocksize;
++		retval = 0;
++
++	} else if (DeviceIoControl(h, IOCTL_DISK_GET_PARTITION_INFO_EX,
++			    NULL, 0, &piex, sizeof(piex),
++			    &retbytes, NULL)) {
++
++		*retblocks = piex.PartitionLength.QuadPart / blocksize;
++		retval = 0;
++
++	} else if (DeviceIoControl(h, IOCTL_DISK_GET_PARTITION_INFO,
+ 			    &pi, sizeof(PARTITION_INFORMATION),
+ 			    &pi, sizeof(PARTITION_INFORMATION),
+ 			    &retbytes, NULL)) {
+
+ 		*retblocks = pi.PartitionLength.QuadPart / blocksize;
++		retval = 0;
++
++	} else if (DeviceIoControl(h, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
++				NULL, 0, &giex, sizeof(giex),
++				&retbytes, NULL)) {
++
++		*retblocks = giex.DiskSize.QuadPart / blocksize;
++		retval = 0;
+
+ 	} else if (DeviceIoControl(h, IOCTL_DISK_GET_DRIVE_GEOMETRY,
+ 				&gi, sizeof(DISK_GEOMETRY),
+@@ -105,22 +131,25 @@
+ 			     gi.SectorsPerTrack *
+ 			     gi.TracksPerCylinder *
+ 			     gi.Cylinders.QuadPart / blocksize;
++		retval = 0;
+
+ #ifdef HAVE_GET_FILE_SIZE_EX
+ 	} else if (GetFileSizeEx(h, &filesize)) {
+ 		*retblocks = filesize.QuadPart / blocksize;
++		retval = 0;
+ 	}
+ #else
+ 	} else {
+ 		filesize = GetFileSize(h, NULL);
+ 		if (INVALID_FILE_SIZE != filesize) {
+ 			*retblocks = filesize / blocksize;
++			retval = 0;
+ 		}
+ 	}
+ #endif /* HAVE_GET_FILE_SIZE_EX */
+
+ 	close(fd);
+-	return 0;
++	return retval;
+ }
+
+ #else
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/lib/ext2fs/openfs.c e2fsprogs-1.47.4/lib/ext2fs/openfs.c
+--- e2fsprogs-1.47.4-pristine/lib/ext2fs/openfs.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/lib/ext2fs/openfs.c	2026-06-05 11:55:07.345136600 -0700
+@@ -32,6 +32,19 @@
+ #include "ext2fs.h"
+ #include "e2image.h"
+
++#if defined(_WIN32) || defined(WIN32) || defined(__MINGW32__) || defined(__MINGW64__)
++static int ext2fs_windows_raw_device_name(const char *name)
++{
++	return name &&
++		(!strncmp(name, "\\\\.\\", 4) ||
++		 !strncmp(name, "\\\\?\\", 4) ||
++		 !strncmp(name, "//./", 4) ||
++		 !strncmp(name, "//?/", 4));
++}
++#else
++#define ext2fs_windows_raw_device_name(name) 0
++#endif
++
+ blk64_t ext2fs_descriptor_block_loc2(ext2_filsys fs, blk64_t group_block,
+ 				     dgrp_t i)
+ {
+@@ -164,7 +177,7 @@
+ 		goto cleanup;
+ 	strcpy(fs->device_name, name);
+ 	cp = strchr(fs->device_name, '?');
+-	if (!io_options && cp) {
++	if (!io_options && cp && !ext2fs_windows_raw_device_name(fs->device_name)) {
+ 		*cp++ = 0;
+ 		io_options = cp;
+ 	}
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/lib/ext2fs/windows_io.c e2fsprogs-1.47.4/lib/ext2fs/windows_io.c
+--- e2fsprogs-1.47.4-pristine/lib/ext2fs/windows_io.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/lib/ext2fs/windows_io.c	2026-06-05 11:58:50.666228300 -0700
+@@ -162,6 +162,78 @@
+ 	return li;
+ }
+
++static int windows_is_raw_device_path(const char *path)
++{
++	return path &&
++		(!strncmp(path, "\\\\.\\", 4) ||
++		 !strncmp(path, "\\\\?\\", 4) ||
++		 !strncmp(path, "//./", 4) ||
++		 !strncmp(path, "//?/", 4));
++}
++
++static void windows_copy_raw_device_path(char *dest, size_t dest_size,
++					 const char *src)
++{
++	size_t i;
++
++	if (!dest_size)
++		return;
++	strncpy(dest, src, dest_size - 1);
++	dest[dest_size - 1] = 0;
++	if (!strncmp(src, "//./", 4) || !strncmp(src, "//?/", 4)) {
++		for (i = 0; dest[i]; i++)
++			if (dest[i] == '/')
++				dest[i] = '\\';
++	}
++}
++
++static int windows_query_handle_size(HANDLE handle, LARGE_INTEGER *size)
++{
++	DWORD retbytes;
++	GET_LENGTH_INFORMATION length_info;
++	PARTITION_INFORMATION_EX partition_info;
++	DISK_GEOMETRY_EX geometry;
++
++	if (DeviceIoControl(handle, IOCTL_DISK_GET_LENGTH_INFO,
++			    NULL, 0, &length_info, sizeof(length_info),
++			    &retbytes, NULL)) {
++		*size = length_info.Length;
++		return 1;
++	}
++
++	if (DeviceIoControl(handle, IOCTL_DISK_GET_PARTITION_INFO_EX,
++			    NULL, 0, &partition_info, sizeof(partition_info),
++			    &retbytes, NULL)) {
++		*size = partition_info.PartitionLength;
++		return 1;
++	}
++
++	if (DeviceIoControl(handle, IOCTL_DISK_GET_DRIVE_GEOMETRY_EX,
++			    NULL, 0, &geometry, sizeof(geometry),
++			    &retbytes, NULL)) {
++		*size = geometry.DiskSize;
++		return 1;
++	}
++
++	return 0;
++}
++
++static int windows_fill_raw_device_stat(HANDLE handle, ext2fs_struct_stat *buf)
++{
++	LARGE_INTEGER size;
++
++	if (handle == INVALID_HANDLE_VALUE)
++		return -1;
++
++	if (!windows_query_handle_size(handle, &size))
++		return -1;
++
++	memset(buf, 0, sizeof(*buf));
++	buf->st_mode = S_IFBLK;
++	buf->st_size = size.QuadPart;
++	return 0;
++}
++
+ /*
+  * Here are the raw I/O functions
+  */
+@@ -563,13 +635,20 @@
+ {
+ 	DWORD ret = 0;
+
+-	if (*data->name != '\\')
++	if (!strncmp(data->name, "//./", 4) || !strncmp(data->name, "//?/", 4))
++		windows_copy_raw_device_path(data->cf_device,
++					     sizeof(data->cf_device),
++					     data->name);
++	else if (*data->name != '\\')
+ 		strcpy(data->cf_device, data->name);
+ 	else if (fake_dos_name_for_device(data))
+ 		return -1;
+
++	int is_raw_device = windows_is_raw_device_path(data->name);
+ 	DWORD desired_access = GENERIC_READ | ((open_flags & O_RDWR) ? GENERIC_WRITE : 0);
+-	DWORD share_mode = (open_flags & O_EXCL) ? 0 : FILE_SHARE_READ | ((open_flags & O_RDWR) ? FILE_SHARE_WRITE : 0);
++	DWORD raw_share_mode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
++	DWORD share_mode = is_raw_device ? raw_share_mode :
++		((open_flags & O_EXCL) ? 0 : FILE_SHARE_READ | ((open_flags & O_RDWR) ? FILE_SHARE_WRITE : 0));
+ 	DWORD flags_and_attributes =
+ #if defined(O_DIRECT)
+ 	(open_flags & O_DIRECT) ? (FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH) : FILE_ATTRIBUTE_NORMAL;
+@@ -582,6 +661,18 @@
+
+ 	if (data->handle == INVALID_HANDLE_VALUE) {
+ 		ret = GetLastError();
++		if ((open_flags & O_EXCL) && is_raw_device) {
++			data->handle = CreateFile(data->cf_device, desired_access, raw_share_mode,
++						  NULL, OPEN_EXISTING,
++						  flags_and_attributes, NULL);
++			if (data->handle != INVALID_HANDLE_VALUE)
++				ret = 0;
++			else
++				ret = GetLastError();
++		}
++	}
++
++	if (data->handle == INVALID_HANDLE_VALUE) {
+ 		goto invalid_handle;
+ 	}
+
+@@ -936,34 +1027,27 @@
+ 		/* Not implemented until the BLKZEROOUT mess is fixed */
+ 		goto unimplemented;
+ 	} else {
+-		/* Regular file, try to use truncate/punch/zero. */
+-		struct stat statbuf;
++		LARGE_INTEGER	size;
++		LARGE_INTEGER	target;
+
+-		if (count == 0)
+-			return 0;
+ 		/*
+-		 * If we're trying to zero a range past the end of the file,
+-		 * extend the file size, then truncate everything.
++		 * MinGW fstat() reports unreliable sizes on file descriptors
++		 * created from CreateFile handles.  Use native size APIs so a
++		 * zeroout request never truncates a pre-sized image.
+ 		 */
+-		ret = fstat(data->dev, &statbuf);
+-		if (ret)
+-			goto err;
+-		if ((unsigned long long) statbuf.st_size <
+-			(block + count) * channel->block_size + data->offset) {
+-			ret = ftruncate(data->dev,
+-					(block + count) * channel->block_size + data->offset);
+-			if (ret)
+-				goto err;
++		target.QuadPart = (LONGLONG) ((block + count) *
++					     channel->block_size +
++					     data->offset);
++		if (GetFileSizeEx(data->handle, &size) &&
++		    size.QuadPart < target.QuadPart) {
++			if (!SetFilePointerEx(data->handle, target, NULL,
++					      FILE_BEGIN))
++				return GetLastError();
++			if (!SetEndOfFile(data->handle))
++				return GetLastError();
+ 		}
+ 		goto unimplemented;
+ 	}
+-err:
+-	if (ret < 0) {
+-		if (errno == EOPNOTSUPP)
+-			goto unimplemented;
+-		return errno;
+-	}
+-	return 0;
+ unimplemented:
+ 	return EXT2_ET_UNIMPLEMENTED;
+ }
+@@ -972,6 +1056,36 @@
+ {
+ 	flags |= O_BINARY;
+
++	if (windows_is_raw_device_path(pathname)) {
++		char cf_device[MAX_PATH];
++		DWORD desired_access = GENERIC_READ;
++		DWORD share_mode = FILE_SHARE_READ | FILE_SHARE_WRITE |
++			FILE_SHARE_DELETE;
++		HANDLE handle;
++		int fd;
++
++		if (flags & (O_RDWR | O_WRONLY))
++			desired_access |= GENERIC_WRITE;
++
++		windows_copy_raw_device_path(cf_device, sizeof(cf_device),
++					     pathname);
++		handle = CreateFile(cf_device, desired_access, share_mode, NULL,
++				    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
++		if (handle == INVALID_HANDLE_VALUE) {
++			errno = EACCES;
++			return -1;
++		}
++
++		fd = _open_osfhandle((intptr_t) handle,
++				     flags & (O_RDONLY | O_WRONLY | O_RDWR |
++					      O_APPEND | O_BINARY));
++		if (fd < 0) {
++			CloseHandle(handle);
++			return -1;
++		}
++		return fd;
++	}
++
+ 	if (mode)
+ #if defined(HAVE_OPEN64) && !defined(__OSX_AVAILABLE_BUT_DEPRECATED)
+ 		return open64(pathname, flags, mode);
+@@ -986,6 +1100,24 @@
+
+ int ext2fs_stat(const char *path, ext2fs_struct_stat *buf)
+ {
++	if (windows_is_raw_device_path(path)) {
++		char cf_device[MAX_PATH];
++		HANDLE handle;
++
++		windows_copy_raw_device_path(cf_device, sizeof(cf_device), path);
++		handle = CreateFile(cf_device, GENERIC_READ,
++					   FILE_SHARE_READ | FILE_SHARE_WRITE |
++					   FILE_SHARE_DELETE, NULL,
++					   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
++					   NULL);
++		if (handle != INVALID_HANDLE_VALUE) {
++			int ret = windows_fill_raw_device_stat(handle, buf);
++			CloseHandle(handle);
++			if (!ret)
++				return 0;
++		}
++	}
++
+ #if defined(HAVE_FSTAT64) && !defined(__OSX_AVAILABLE_BUT_DEPRECATED)
+ 	return stat64(path, buf);
+ #else
+@@ -995,6 +1127,12 @@
+
+ int ext2fs_fstat(int fd, ext2fs_struct_stat *buf)
+ {
++	HANDLE handle = (HANDLE)_get_osfhandle(fd);
++
++	if (handle != INVALID_HANDLE_VALUE &&
++	    windows_fill_raw_device_stat(handle, buf) == 0)
++		return 0;
++
+ #if defined(HAVE_FSTAT64) && !defined(__OSX_AVAILABLE_BUT_DEPRECATED)
+ 	return fstat64(fd, buf);
+ #else
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/lib/support/sort_r.h e2fsprogs-1.47.4/lib/support/sort_r.h
+--- e2fsprogs-1.47.4-pristine/lib/support/sort_r.h	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/lib/support/sort_r.h	2026-06-05 11:33:05.399453500 -0700
+@@ -28,8 +28,7 @@
+ #  define _SORT_R_GNU
+ #elif (defined HAVE_BSD_QSORT_R)
+ #  define _SORT_R_BSD
+-#elif (defined __gnu_hurd__ || defined __GNU__ || \
+-       defined __MINGW32__ || defined __GLIBC__)
++#elif (defined __gnu_hurd__ || defined __GNU__ || defined __GLIBC__)
+ #  define _SORT_R_GNU
+ #elif (defined __APPLE__ || defined __MACH__ || defined __DARWIN__ || \
+      defined __FreeBSD__ || defined __DragonFly__)
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/misc/mke2fs.c e2fsprogs-1.47.4/misc/mke2fs.c
+--- e2fsprogs-1.47.4-pristine/misc/mke2fs.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/misc/mke2fs.c	2026-06-05 11:20:35.690957900 -0700
+@@ -1646,6 +1646,17 @@
+  * Sets the geometry of a device (stripe/stride), and returns the
+  * device's alignment offset, if any, or a negative error.
+  */
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__)
++static int windows_is_raw_device_path(const char *path)
++{
++	return path &&
++		(!strncmp(path, "\\\\.\\", 4) ||
++		 !strncmp(path, "\\\\?\\", 4) ||
++		 !strncmp(path, "//./", 4) ||
++		 !strncmp(path, "//?/", 4));
++}
++#endif
++
+ static int get_device_geometry(const char *file,
+ 			       unsigned int blocksize,
+ 			       unsigned int psector_size,
+@@ -1658,6 +1669,11 @@
+
+ 	memset(dev_param, 0, sizeof(*dev_param));
+
++#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__)
++	if (windows_is_raw_device_path(file))
++		return 0;
++#endif
++
+ 	/* Nothing to do for a regular file */
+ 	if (!stat(file, &statbuf) && S_ISREG(statbuf.st_mode))
+ 		return 0;
+diff -ruN '--exclude=build-win' '--exclude=RELEASE-NOTES' e2fsprogs-1.47.4-pristine/resize/main.c e2fsprogs-1.47.4/resize/main.c
+--- e2fsprogs-1.47.4-pristine/resize/main.c	2026-03-06 09:17:36.000000000 -0800
++++ e2fsprogs-1.47.4/resize/main.c	2026-06-05 12:02:45.102278900 -0700
+@@ -30,6 +30,7 @@
+ #ifdef HAVE_STDLIB_H
+ #include <stdlib.h>
+ #endif
++#include <string.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <fcntl.h>
+@@ -44,6 +45,19 @@
+ char *program_name;
+ static char *device_name, *io_options;
+
++#if defined(_WIN32) || defined(WIN32) || defined(__MINGW32__) || defined(__MINGW64__)
++static int resize_windows_raw_device_name(const char *name)
++{
++	return name &&
++		(!strncmp(name, "\\\\.\\", 4) ||
++		 !strncmp(name, "\\\\?\\", 4) ||
++		 !strncmp(name, "//./", 4) ||
++		 !strncmp(name, "//?/", 4));
++}
++#else
++#define resize_windows_raw_device_name(name) 0
++#endif
++
+ static void usage (char *prog)
+ {
+ 	fprintf (stderr, _("Usage: %s [-d debug_flags] [-f] [-F] [-M] [-P] "
+@@ -337,6 +351,8 @@
+ 		usage(program_name);
+
+ 	io_options = strchr(device_name, '?');
++	if (io_options && resize_windows_raw_device_name(device_name))
++		io_options = NULL;
+ 	if (io_options)
+ 		*io_options++ = 0;
+
+@@ -400,13 +416,16 @@
+ #ifdef CONFIG_TESTIO_DEBUG
+ 	if (getenv("TEST_IO_FLAGS") || getenv("TEST_IO_BLOCK")) {
+ 		io_ptr = test_io_manager;
+-		test_io_backing_manager = unix_io_manager;
++		test_io_backing_manager = default_io_manager;
+ 	} else
+ #endif
+-		io_ptr = unix_io_manager;
++		io_ptr = default_io_manager;
+
+-	if (!(mount_flags & EXT2_MF_MOUNTED) && !print_min_size)
+-		io_flags = EXT2_FLAG_RW | EXT2_FLAG_EXCLUSIVE;
++	if (!(mount_flags & EXT2_MF_MOUNTED) && !print_min_size) {
++		io_flags = EXT2_FLAG_RW;
++		if (fd < 0)
++			io_flags |= EXT2_FLAG_EXCLUSIVE;
++	}
+ 	if (mount_flags & EXT2_MF_MOUNTED)
+ 		io_flags |= EXT2_FLAG_DIRECT_IO;

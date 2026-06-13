@@ -79,7 +79,7 @@ try {
                     $violations.Add(("{0}:{1}:raw style literal: {2}" -f $repoPath,
                             ($i + 1), $line.Trim()))
                 }
-                if ($line -match '\)[A-Za-z0-9_]*";') {
+                if ($line -match '\)[A-Za-z0-9_]*"\s*(?:;|\)|\.|,|$)') {
                     $inRawLiteral = $false
                 }
                 continue
@@ -92,7 +92,7 @@ try {
                     $violations.Add(("{0}:{1}:raw style literal: {2}" -f $repoPath,
                             ($rawLiteralStart), $line.Trim()))
                 }
-                if ($line -match '\)[A-Za-z0-9_]*";') {
+                if ($line -match '\)[A-Za-z0-9_]*"\s*(?:;|\)|\.|,|$)') {
                     $inRawLiteral = $false
                 }
                 continue

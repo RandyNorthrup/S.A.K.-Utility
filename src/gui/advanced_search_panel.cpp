@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/regex_pattern_library.h"
+#include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -21,6 +22,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
@@ -32,8 +34,8 @@
 #include <QProcess>
 #include <QScrollArea>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QSpinBox>
-#include <QStorageInfo>
 #include <QTextBlock>
 #include <QTextStream>
 #include <QTreeWidget>
@@ -73,6 +75,7 @@ constexpr int kMaxSearchResultsLimit = 1'000'000;
 constexpr int kPreviewSizeMaxMb = 500;
 constexpr int kSearchSizeMaxMb = 1000;
 constexpr int kSearchCacheMaxEntries = 1000;
+constexpr int kAdvancedSearchTargetBrowseMaxEntries = 10'000;
 constexpr int kSortMatchCountHigh = 2;
 constexpr int kSortMatchCountLow = 3;
 constexpr int kSortFileSizeLarge = 4;
@@ -81,7 +84,6 @@ constexpr int kSortModifiedNewest = 6;
 constexpr int kSortModifiedOldest = 7;
 constexpr int kSizeDecimalPlaces = 2;
 constexpr int kMetadataSeparatorLength = 2;
-constexpr int kDriveRootPrefixLength = 2;
 constexpr qint64 kBytesPerKiB = 1024;
 constexpr qint64 kBytesPerMiB = kBytesPerKiB * kBytesPerKiB;
 
@@ -651,6 +653,29 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
     auto* searchLayout = new QVBoxLayout(searchGroup);
     searchLayout->setSpacing(ui::kSpacingSmall);
 
+    auto* targetRow = new QHBoxLayout();
+    targetRow->setSpacing(ui::kSpacingSmall);
+    m_target_combo = new QComboBox(this);
+    m_target_combo->setAccessibleName(tr("Advanced search filesystem target"));
+    m_target_combo->setToolTip(tr("Choose a mounted volume or supported raw/image file system"));
+    targetRow->addWidget(m_target_combo, 1);
+
+    m_target_refresh_button = new QPushButton(tr("Refresh"), this);
+    m_target_refresh_button->setAccessibleName(tr("Refresh mounted search targets"));
+    m_target_refresh_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    targetRow->addWidget(m_target_refresh_button);
+
+    m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
+    m_target_scan_button->setAccessibleName(tr("Scan disk and partition search targets"));
+    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    targetRow->addWidget(m_target_scan_button);
+
+    m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
+    m_target_manual_button->setAccessibleName(tr("Add raw or image search target"));
+    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    targetRow->addWidget(m_target_manual_button);
+    searchLayout->addLayout(targetRow);
+
     // -- Row 1: Search input + buttons --
     auto* row1 = new QHBoxLayout();
     row1->setSpacing(ui::kSpacingSmall);
@@ -696,6 +721,8 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
 
     layout->addWidget(searchGroup);
 
+    populateSearchTargets(FileManagementFileSystemBridge::mountedTargets());
+
     // Connect search actions
     connect(m_search_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onSearchClicked);
     connect(m_stop_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onStopClicked);
@@ -703,6 +730,26 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
             &QPushButton::clicked,
             this,
             &AdvancedSearchPanel::onRegexPatternsClicked);
+    connect(m_target_combo,
+            &QComboBox::currentIndexChanged,
+            this,
+            [this](int) { populateFileExplorerRoot(); });
+    connect(m_target_refresh_button, &QPushButton::clicked, this, [this]() {
+        populateSearchTargets(FileManagementFileSystemBridge::mountedTargets());
+        Q_EMIT statusMessage(tr("Mounted search targets refreshed"), sak::kTimerStatusMessageMs);
+    });
+    connect(m_target_scan_button, &QPushButton::clicked, this, [this]() {
+        Q_EMIT statusMessage(tr("Scanning disk and partition search targets..."), 0);
+        setEnabled(false);
+        const auto inventory = StorageInventoryWorker::scanCurrentSystem();
+        setEnabled(true);
+        populateSearchTargets(FileManagementFileSystemBridge::targetsFromInventory(inventory));
+        Q_EMIT statusMessage(tr("Search targets scanned"), sak::kTimerStatusDefaultMs);
+    });
+    connect(m_target_manual_button,
+            &QPushButton::clicked,
+            this,
+            &AdvancedSearchPanel::addManualSearchTarget);
 
     // Enter key triggers search
     connect(m_search_combo->lineEdit(),
@@ -970,59 +1017,124 @@ void AdvancedSearchPanel::createRegexPatternMenu() {
 
 // -- File Explorer Population ------------------------------------------------
 
+void AdvancedSearchPanel::populateSearchTargets(QVector<FileManagementTarget> targets) {
+    m_search_targets = std::move(targets);
+    if (!m_target_combo) {
+        return;
+    }
+    QSignalBlocker blocker(m_target_combo);
+    m_target_combo->clear();
+    for (const auto& target : m_search_targets) {
+        m_target_combo->addItem(target.label);
+    }
+    if (!m_search_targets.isEmpty()) {
+        m_target_combo->setCurrentIndex(0);
+    }
+    if (m_file_explorer) {
+        populateFileExplorerRoot();
+    }
+}
+
+void AdvancedSearchPanel::addManualSearchTarget() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Add Raw or Image Search Target"));
+    dialog.setMinimumWidth(sak::kDialogWidthLarge);
+    auto* layout = new QFormLayout(&dialog);
+
+    auto* path = new QLineEdit(&dialog);
+    path->setAccessibleName(tr("Raw or image search target path"));
+    auto* browse = new QPushButton(tr("Browse"), &dialog);
+    browse->setStyleSheet(ui::kSecondaryButtonStyle);
+    auto* pathRow = new QHBoxLayout();
+    pathRow->addWidget(path, 1);
+    pathRow->addWidget(browse);
+    layout->addRow(tr("Target path:"), pathRow);
+
+    auto* fs = new QComboBox(&dialog);
+    fs->addItems({QStringLiteral("ext2"),
+                  QStringLiteral("ext3"),
+                  QStringLiteral("ext4"),
+                  QStringLiteral("HFS+"),
+                  QStringLiteral("HFSX"),
+                  QStringLiteral("APFS"),
+                  QStringLiteral("XFS"),
+                  QStringLiteral("Btrfs")});
+    fs->setAccessibleName(tr("Manual search target file system"));
+    layout->addRow(tr("File system:"), fs);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Add Target"));
+    layout->addRow(buttons);
+    connect(browse, &QPushButton::clicked, &dialog, [this, path]() {
+        const QString file = QFileDialog::getOpenFileName(this, tr("Select Raw or Image Target"));
+        if (!file.isEmpty()) {
+            path->setText(file);
+        }
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted || path->text().trimmed().isEmpty()) {
+        return;
+    }
+    m_search_targets.append(
+        FileManagementFileSystemBridge::manualTarget(path->text(), fs->currentText()));
+    m_target_combo->addItem(m_search_targets.constLast().label);
+    m_target_combo->setCurrentIndex(m_search_targets.size() - 1);
+}
+
+FileManagementTarget AdvancedSearchPanel::currentSearchTarget() const {
+    const int index = m_target_combo ? m_target_combo->currentIndex() : -1;
+    if (index < 0 || index >= m_search_targets.size()) {
+        return {};
+    }
+    return m_search_targets.at(index);
+}
+
 void AdvancedSearchPanel::populateFileExplorerRoot() {
     Q_ASSERT(m_file_explorer);
     m_file_explorer->clear();
 
-    // Add home directory
-    const QString homePath = QDir::homePath();
-    auto* homeItem = new QTreeWidgetItem(m_file_explorer);
-    homeItem->setText(0, tr("Home (%1)").arg(QFileInfo(homePath).fileName()));
-    homeItem->setData(0, Qt::UserRole, homePath);
-    homeItem->setIcon(0, style()->standardIcon(QStyle::SP_DirHomeIcon));
-    addPlaceholderChild(homeItem);
-
-    // Add drive letters (Windows)
-    const auto volumes = QStorageInfo::mountedVolumes();
-    for (const auto& vol : volumes) {
-        if (!vol.isValid() || !vol.isReady()) {
-            continue;
-        }
-
-        const QString rootPath = vol.rootPath();
-        QString label = vol.displayName();
-        if (label.isEmpty()) {
-            label = rootPath;
-        }
-
-        auto* driveItem = new QTreeWidgetItem(m_file_explorer);
-        driveItem->setText(0, QString("%1 (%2)").arg(label, rootPath.left(kDriveRootPrefixLength)));
-        driveItem->setData(0, Qt::UserRole, rootPath);
-        driveItem->setIcon(0, style()->standardIcon(QStyle::SP_DriveHDIcon));
-        addPlaceholderChild(driveItem);
+    const auto target = currentSearchTarget();
+    if (target.root_path.isEmpty()) {
+        return;
     }
 
-    // Expand home directory by default
-    m_file_explorer->expandItem(homeItem);
+    auto* rootItem = new QTreeWidgetItem(m_file_explorer);
+    rootItem->setText(0, target.label);
+    rootItem->setData(0, Qt::UserRole, target.local_file_system ? target.root_path
+                                                                : QStringLiteral("/"));
+    rootItem->setData(0, Qt::UserRole + 1, true);
+    rootItem->setIcon(0, style()->standardIcon(target.local_file_system ? QStyle::SP_DriveHDIcon
+                                                                        : QStyle::SP_DirIcon));
+    addPlaceholderChild(rootItem);
+    m_file_explorer->expandItem(rootItem);
 }
 
 void AdvancedSearchPanel::populateDirectoryChildren(QTreeWidgetItem* parentItem,
                                                     const QString& dirPath) {
-    const QDir dir(dirPath);
-    if (!dir.exists()) {
+    const auto target = currentSearchTarget();
+    if (target.root_path.isEmpty()) {
         return;
     }
 
-    // Get directories first, then files
-    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Files,
-                                           QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
-
-    for (const auto& entry : entries) {
+    const auto listing =
+        FileManagementFileSystemBridge::listDirectory(
+            target, dirPath, kAdvancedSearchTargetBrowseMaxEntries);
+    if (!listing.ok) {
         auto* item = new QTreeWidgetItem(parentItem);
-        item->setText(0, entry.fileName());
-        item->setData(0, Qt::UserRole, entry.absoluteFilePath());
+        item->setText(0, listing.blockers.join(QStringLiteral("; ")));
+        item->setFlags(Qt::NoItemFlags);
+        return;
+    }
 
-        if (entry.isDir()) {
+    for (const auto& entry : listing.entries) {
+        auto* item = new QTreeWidgetItem(parentItem);
+        item->setText(0, entry.name);
+        item->setData(0, Qt::UserRole, entry.path);
+        item->setData(0, Qt::UserRole + 1, entry.directory);
+
+        if (entry.directory) {
             item->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
             addPlaceholderChild(item);  // Enable expansion
         } else {
@@ -1112,6 +1224,9 @@ SearchConfig AdvancedSearchPanel::buildSearchConfig() const {
     if (selectedItem) {
         config.root_path = selectedItem->data(0, Qt::UserRole).toString();
     }
+    config.file_system_target = currentSearchTarget();
+    config.use_file_system_target = !config.file_system_target.root_path.isEmpty() &&
+                                    !config.file_system_target.local_file_system;
 
     // Get search pattern -- use regex patterns if active, otherwise text input
     const auto* library = m_controller->patternLibrary();
@@ -1270,10 +1385,12 @@ void AdvancedSearchPanel::onFileExplorerContextMenu(const QPoint& pos) {
     }
 
     const QString path = item->data(0, Qt::UserRole).toString();
+    const auto target = currentSearchTarget();
 
     QMenu menu(this);
 
     auto* openDirAction = menu.addAction(tr("Open in Explorer"));
+    openDirAction->setEnabled(target.local_file_system);
     connect(openDirAction, &QAction::triggered, this, [path]() {
         QDesktopServices::openUrl(
             QUrl::fromLocalFile(QFileInfo(path).isDir() ? path : QFileInfo(path).absolutePath()));
@@ -1317,7 +1434,7 @@ void AdvancedSearchPanel::onResultItemDoubleClicked(QTreeWidgetItem* item, int /
     }
 
     const QString filePath = item->data(0, Qt::UserRole).toString();
-    if (!filePath.isEmpty()) {
+    if (!filePath.isEmpty() && currentSearchTarget().local_file_system) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
     }
 }
@@ -1334,11 +1451,13 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
     QMenu menu(this);
 
     auto* openAction = menu.addAction(tr("Open File"));
+    openAction->setEnabled(currentSearchTarget().local_file_system);
     connect(openAction, &QAction::triggered, this, [filePath]() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
     });
 
     auto* openDirAction = menu.addAction(tr("Open Directory"));
+    openDirAction->setEnabled(currentSearchTarget().local_file_system);
     connect(openDirAction, &QAction::triggered, this, [filePath]() {
         const QString native = QDir::toNativeSeparators(filePath);
         QProcess::startDetached(QStringLiteral("explorer.exe"),
@@ -1353,6 +1472,7 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
     });
 
     auto* viewPropsAction = menu.addAction(tr("View Properties"));
+    viewPropsAction->setEnabled(currentSearchTarget().local_file_system);
     connect(viewPropsAction, &QAction::triggered, this, [filePath]() {
         const QString native = QDir::toNativeSeparators(filePath);
         SHELLEXECUTEINFOW sei = {};
@@ -1419,6 +1539,30 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
         return;
     }
 
+    const auto target = currentSearchTarget();
+    if (!target.local_file_system) {
+        const auto prefs = m_controller->preferences();
+        const uint64_t maxSize =
+            static_cast<uint64_t>(prefs.max_preview_file_size_mb) * kBytesPerMiB;
+        const auto read = FileManagementFileSystemBridge::readFile(target, filePath, maxSize);
+        if (!read.ok) {
+            m_preview_edit->setPlainText(read.blockers.join(QStringLiteral("\n")));
+            return;
+        }
+        QString content = QString::fromUtf8(read.data);
+        QTextStream stream(&content, QIODevice::ReadOnly);
+        m_preview_edit->setPlainText(buildTextPreview(stream, filePath, matches));
+        highlightMatches();
+        updateMatchCounter();
+        const bool hasMatches = !matches.isEmpty();
+        m_prev_match_button->setEnabled(hasMatches);
+        m_next_match_button->setEnabled(hasMatches);
+        if (hasMatches) {
+            navigateToMatch(0);
+        }
+        return;
+    }
+
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         m_preview_edit->setPlainText(tr("Unable to open file: %1").arg(filePath));
@@ -1451,6 +1595,41 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
 }
 
 void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
+    if (!currentSearchTarget().local_file_system) {
+        QMap<QString, QString> metadata;
+        const auto target = currentSearchTarget();
+        metadata[QStringLiteral("FilePath")] = filePath;
+        metadata[QStringLiteral("Target")] = target.label;
+        metadata[QStringLiteral("FileSystem")] = target.file_system;
+        if (m_all_results.contains(filePath)) {
+            const auto parsed = parseMetadataFromMatches(m_all_results.value(filePath));
+            for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
+                metadata.insert(it.key(), it.value());
+            }
+        }
+
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("Metadata - %1").arg(filePath));
+        dialog.resize(kMetadataDialogWidth, kMetadataDialogHeight);
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* tree = new QTreeWidget(&dialog);
+        tree->setHeaderLabels({tr("Property"), tr("Value")});
+        tree->setColumnWidth(kMetadataNameColumnIndex, kMetadataNameColumnWidth);
+        tree->setAlternatingRowColors(true);
+        tree->setRootIsDecorated(true);
+        populateMetadataTree(tree, metadata);
+        layout->addWidget(tree);
+        auto* close_btn = new QPushButton(tr("Close"), &dialog);
+        close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+        connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
+        auto* btn_layout = new QHBoxLayout();
+        btn_layout->addStretch();
+        btn_layout->addWidget(close_btn);
+        layout->addLayout(btn_layout);
+        dialog.exec();
+        return;
+    }
+
     const QFileInfo fi(filePath);
     if (!fi.exists()) {
         return;

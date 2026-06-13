@@ -67,6 +67,33 @@ enum class PartitionOperationType {
     ConvertPrimaryLogical,
     ChangeVolumeSerialNumber,
     ConvertDynamicDiskToBasic,
+    ApfsWriteRootFile,
+    ApfsPatchRootFile,
+    ApfsPatchRootDirectoryFile,
+    ApfsDeleteRootFile,
+    ApfsWriteRootDirectoryFile,
+    ApfsDeleteRootDirectoryFile,
+    ApfsCreateRootDirectory,
+    ApfsDeleteRootDirectory,
+    ApfsChangeVolumeLabel,
+    HfsOverwriteFile,
+    HfsReplaceFile,
+    HfsGrowFile,
+    HfsTruncateFile,
+    HfsReplaceResourceFork,
+    HfsGrowResourceFork,
+    HfsTruncateResourceFork,
+    HfsCreateEmptyFile,
+    HfsCreateFile,
+    HfsDeleteEmptyFile,
+    HfsDeleteFile,
+    HfsCreateEmptyFolder,
+    HfsDeleteEmptyFolder,
+    HfsDeleteFolderTree,
+    HfsRenameMoveCatalogEntry,
+    HfsReplaceInlineAttribute,
+    HfsReplaceForkAttribute,
+    HfsGrowForkAttribute,
 };
 
 enum class OperationRisk {
@@ -102,6 +129,8 @@ struct PartitionVolumeInfo {
     QString drive_letter;
     QString label;
     QString file_system;
+    QString file_system_source;
+    QStringList file_system_details;
     QString health_status;
     uint64_t total_bytes{0};
     uint64_t free_bytes{0};

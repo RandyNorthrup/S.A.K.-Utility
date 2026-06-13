@@ -70,6 +70,13 @@ try {
             "scripts/check_partition_manager_certification_bundle.ps1",
             "scripts/check_partition_manager_vhd_preflight_report.ps1",
             "scripts/check_partition_manager_feature_matrix.ps1",
+            "scripts/check_partition_filesystem_tool_manifest.ps1",
+            "scripts/test_partition_filesystem_probe_certifier.ps1",
+            "scripts/run_partition_manager_hfsprogs_image_validation.ps1",
+            "scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1",
+            "scripts/run_partition_manager_physical_hfsprogs_validation.ps1",
+            "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1",
+            "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1",
             "scripts/check_partition_manager_release_claims.ps1",
             "scripts/check_powershell_syntax.ps1",
             "scripts/check_logged_message_boxes.ps1",
@@ -83,8 +90,19 @@ try {
             "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1",
             "scripts/run_partition_manager_cluster_size_external_gate.ps1",
             "scripts/run_partition_manager_destructive_certification.ps1",
+            "scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1",
+            "scripts/run_partition_manager_ext_filesystem_vm_gate.ps1",
+            "scripts/run_partition_manager_ext_linux_validation.ps1",
             "scripts/run_partition_manager_file_recovery_external_gate.ps1",
             "scripts/run_partition_manager_hdd_defrag_external_gate.ps1",
+            "scripts/launch_partition_manager_hdd_defrag_external_gate_local.ps1",
+            "scripts/run_partition_manager_linux_metadata_validation.ps1",
+            "scripts/run_partition_manager_linux_swap_format_validation.ps1",
+            "scripts/launch_partition_manager_linux_swap_vm_gate_local.ps1",
+            "scripts/run_partition_manager_linux_swap_vm_gate.ps1",
+            "scripts/run_partition_manager_physical_apple_probe_validation.ps1",
+            "scripts/launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1",
+            "scripts/run_partition_manager_physical_cross_filesystem_destructive_validation.ps1",
             "scripts/run_partition_manager_hardware_certification_strict.ps1",
             "scripts/run_partition_manager_vhd_certification_strict.ps1",
             "scripts/test_partition_manager_certification_tools.ps1",
@@ -102,7 +120,9 @@ try {
         }
     }
 
-    & scripts/scan_secrets.ps1 -SkipExternalTools
+    Invoke-ReleaseReadinessScript -Name "scripts/scan_secrets.ps1" -Body {
+        & scripts/scan_secrets.ps1 -SkipExternalTools
+    }
     & scripts/check_blocking_patterns.ps1
     $syntaxFiles = @(git ls-files "*.ps1")
     $syntaxFiles += "scripts/get_partition_manager_certification_status.ps1"
@@ -115,14 +135,31 @@ try {
     $syntaxFiles += "scripts/check_partition_manager_certification_bundle.ps1"
     $syntaxFiles += "scripts/check_partition_manager_vhd_preflight_report.ps1"
     $syntaxFiles += "scripts/check_partition_manager_feature_matrix.ps1"
+    $syntaxFiles += "scripts/check_partition_filesystem_tool_manifest.ps1"
+    $syntaxFiles += "scripts/test_partition_filesystem_probe_certifier.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_hfsprogs_image_validation.ps1"
+    $syntaxFiles += "scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_physical_hfsprogs_validation.ps1"
+    $syntaxFiles += "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1"
     $syntaxFiles += "scripts/check_partition_manager_release_claims.ps1"
     $syntaxFiles += "scripts/run_partition_manager_allocate_free_space_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_cluster_size_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_destructive_certification.ps1"
+    $syntaxFiles += "scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_ext_filesystem_vm_gate.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_ext_linux_validation.ps1"
     $syntaxFiles += "scripts/run_partition_manager_file_recovery_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_hdd_defrag_external_gate.ps1"
     $syntaxFiles += "scripts/launch_partition_manager_hdd_defrag_external_gate_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_linux_metadata_validation.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_linux_swap_format_validation.ps1"
+    $syntaxFiles += "scripts/launch_partition_manager_linux_swap_vm_gate_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_linux_swap_vm_gate.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_physical_apple_probe_validation.ps1"
+    $syntaxFiles += "scripts/launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1"
+    $syntaxFiles += "scripts/run_partition_manager_physical_cross_filesystem_destructive_validation.ps1"
     $syntaxFiles += "scripts/run_partition_manager_hardware_certification_strict.ps1"
     $syntaxFiles += "scripts/run_partition_manager_vhd_certification_strict.ps1"
     $syntaxFiles += "scripts/test_partition_manager_certification_tools.ps1"
@@ -147,6 +184,13 @@ try {
         throw "Release readiness check failed: scripts/run_lizard.py"
     }
     & scripts/check_third_party_licenses.ps1
+    & scripts/check_partition_filesystem_tool_manifest.ps1
+    Invoke-ReleaseReadinessScript -Name "scripts/test_partition_filesystem_probe_certifier.ps1" -Body {
+        & scripts/test_partition_filesystem_probe_certifier.ps1
+    }
+    Invoke-ReleaseReadinessScript -Name "scripts/run_partition_manager_hfsprogs_image_validation.ps1" -Body {
+        & scripts/run_partition_manager_hfsprogs_image_validation.ps1
+    }
     & scripts/check_qrc_resources.ps1
     Invoke-ReleaseReadinessScript -Name "scripts/check_partition_manager_certification_matrix_integrity.ps1" -Body {
         & scripts/check_partition_manager_certification_matrix_integrity.ps1

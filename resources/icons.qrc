@@ -96,5 +96,32 @@
         <file>icons/icons8-pm-dry-run.svg</file>
         <file>icons/icons8-pm-ssd.svg</file>
         <file>icons/icons8-pm-os-drive.svg</file>
+        <file>icons/files/refresh.svg</file>
+        <file>icons/files/new-folder.svg</file>
+        <file>icons/files/write-file.svg</file>
+        <file>icons/files/rename.svg</file>
+        <file>icons/files/delete.svg</file>
+        <file>icons/files/open.svg</file>
+        <file>icons/files/open-in-new-tab.svg</file>
+        <file>icons/files/copy-path.svg</file>
+        <file>icons/files/view-details.svg</file>
+        <file>icons/files/view-list.svg</file>
+        <file>icons/files/view-grid.svg</file>
+        <file>icons/files/view-cards.svg</file>
+        <file>icons/files/view-columns.svg</file>
+        <file>icons/files/view-details-28.svg</file>
+        <file>icons/files/view-list-28.svg</file>
+        <file>icons/files/view-grid-28.svg</file>
+        <file>icons/files/view-cards-28.svg</file>
+        <file>icons/files/view-columns-28.svg</file>
+        <file>icons/files/panel-left.svg</file>
+        <file>icons/files/details-pane.svg</file>
+        <file>icons/files/dual-pane.svg</file>
+        <file>icons/files/favorite.svg</file>
+        <file>icons/files/status-warning.svg</file>
+        <file>icons/files/properties-general.svg</file>
+        <file>icons/files/properties-security.svg</file>
+        <file>icons/files/more.svg</file>
+        <file>icons/files/manifest.json</file>
     </qresource>
 </RCC>

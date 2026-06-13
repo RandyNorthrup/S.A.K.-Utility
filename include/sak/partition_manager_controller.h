@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/partition_executor.h"
+#include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_queue.h"
 #include "sak/storage_inventory_worker.h"
@@ -39,6 +40,7 @@ public Q_SLOTS:
     void discardQueue();
     void applyQueue(bool dry_run = false, bool use_elevation = true);
     void cancel();
+    void runReadOnlyFileSystemCheck(const QString& file_system, const QString& target_path);
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     void setTestInventory(const PartitionInventory& inventory);
@@ -52,6 +54,7 @@ Q_SIGNALS:
     void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
     void executionFinished(const sak::PartitionExecutionResult& result);
+    void fileSystemCheckFinished(const sak::PartitionFileSystemToolRunResult& result);
 
 private:
     PartitionOperationPlanner m_planner;
@@ -60,6 +63,7 @@ private:
     PartitionInventory m_inventory;
     PartitionInventory m_apply_before_inventory;
     QFutureWatcher<PartitionExecutionResult>* m_apply_watcher{nullptr};
+    QFutureWatcher<PartitionFileSystemToolRunResult>* m_file_system_check_watcher{nullptr};
     PartitionManagerState m_state{PartitionManagerState::Idle};
     bool m_apply_dry_run{false};
 

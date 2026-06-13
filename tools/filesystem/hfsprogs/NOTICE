@@ -1,0 +1,18 @@
+hfsprogs 540.1.linux3 is Apple-derived diskdev_cmds code distributed through
+Debian hfsprogs. The hfsprogs source files carry the Apple Public Source License
+2.0 notice.
+
+This S.A.K. bundle includes the original upstream source archive, Debian patch
+archive, and a small S.A.K. MSYS portability patch. The bundled executables are
+external tools invoked as separate processes.
+
+Runtime DLLs:
+
+- `msys-2.0.dll` from the MSYS2 runtime, derived from Cygwin.
+- `msys-crypto-3.dll` from the MSYS2 OpenSSL package.
+
+Runtime license files are shipped next to the binaries:
+
+- `CYGWIN_LICENSE`
+- `CYGWIN_COPYING`
+- `OPENSSL_LICENSE.txt`

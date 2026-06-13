@@ -6,7 +6,9 @@
 
 #include "sak/storage_inventory_worker.h"
 
+#include "sak/elevation_broker.h"
 #include "sak/layout_constants.h"
+#include "sak/partition_file_system_detector.h"
 #include "sak/process_runner.h"
 
 #include <QCryptographicHash>
@@ -15,6 +17,7 @@
 #include <QJsonObject>
 
 #include <algorithm>
+#include <memory>
 
 namespace sak {
 
@@ -55,12 +58,43 @@ void classifyPartition(PartitionInfoEx* partition) {
                                                           Qt::CaseInsensitive);
 }
 
+void applyProtectedPartitionFileSystemFallback(PartitionInfoEx* partition) {
+    if (!partition || (partition->volume && !partition->volume->file_system.trimmed().isEmpty())) {
+        return;
+    }
+
+    QString fileSystem;
+    QString healthStatus;
+    if (partition->is_efi) {
+        fileSystem = QStringLiteral("FAT32");
+        healthStatus = QStringLiteral("System");
+    } else if (partition->is_msr) {
+        fileSystem = QStringLiteral("Other");
+        healthStatus = QStringLiteral("Reserved");
+    }
+
+    if (fileSystem.isEmpty()) {
+        return;
+    }
+
+    PartitionVolumeInfo volume = partition->volume.value_or(PartitionVolumeInfo{});
+    volume.file_system = fileSystem;
+    volume.file_system_source = PartitionFileSystemDetector::inferredProtectedSource();
+    if (volume.health_status.isEmpty()) {
+        volume.health_status = healthStatus;
+    }
+    partition->volume = volume;
+}
+
 PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     PartitionVolumeInfo volume;
     volume.volume_guid = object.value(QStringLiteral("UniqueId")).toString();
     volume.drive_letter = object.value(QStringLiteral("DriveLetter")).toString();
     volume.label = object.value(QStringLiteral("FileSystemLabel")).toString();
     volume.file_system = object.value(QStringLiteral("FileSystem")).toString();
+    if (!volume.file_system.trimmed().isEmpty()) {
+        volume.file_system_source = PartitionFileSystemDetector::windowsVolumeSource();
+    }
     volume.health_status = object.value(QStringLiteral("HealthStatus")).toString();
     volume.total_bytes = jsonUInt64(object, QStringLiteral("Size"));
     volume.free_bytes = jsonUInt64(object, QStringLiteral("SizeRemaining"));
@@ -89,6 +123,7 @@ PartitionInfoEx parsePartition(uint32_t disk_number, const QJsonObject& object) 
         partition.volume = parseVolume(volume.toObject());
     }
     classifyPartition(&partition);
+    applyProtectedPartitionFileSystemFallback(&partition);
     return partition;
 }
 
@@ -131,6 +166,279 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
         }
     }
     return QString::fromLatin1(hash.result().toHex());
+}
+
+bool needsRawFileSystemDetection(const PartitionInfoEx& partition) {
+    return !partition.volume || partition.volume->file_system.trimmed().isEmpty();
+}
+
+void applyDetectedVolumeMetadata(PartitionVolumeInfo* volume,
+                                 const PartitionFileSystemDetection& detection) {
+    volume->file_system = detection.file_system;
+    volume->file_system_source = detection.source;
+    volume->file_system_details = detection.details;
+    if (volume->total_bytes == 0 && detection.total_bytes > 0) {
+        volume->total_bytes = detection.total_bytes;
+    }
+    if (volume->free_bytes == 0 && detection.free_bytes > 0) {
+        volume->free_bytes = detection.free_bytes;
+    }
+    if (volume->health_status.isEmpty()) {
+        volume->health_status = QStringLiteral("Detected");
+    }
+}
+
+void setProbeError(QString* errorMessage, const QString& message) {
+    if (errorMessage) {
+        *errorMessage = message;
+    }
+}
+
+QJsonObject elevatedProbePayload(const PartitionDiskInfo& disk,
+                                 const PartitionInfoEx& partition) {
+    QJsonObject payload;
+    payload[QStringLiteral("device_path")] = disk.device_path;
+    payload[QStringLiteral("partition_offset_bytes")] =
+        QString::number(partition.offset_bytes);
+    payload[QStringLiteral("partition_size_bytes")] = QString::number(partition.size_bytes);
+    payload[QStringLiteral("max_bytes")] =
+        QString::number(PartitionFileSystemDetector::probeReadLimit(partition.size_bytes));
+    return payload;
+}
+
+QString partitionDevicePath(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
+    if (partition.partition_number == 0) {
+        return {};
+    }
+    return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
+        .arg(disk.disk_number)
+        .arg(partition.partition_number);
+}
+
+QString elevationErrorText(error_code code) {
+    const auto text = to_string(code);
+    return QStringLiteral("Elevation failed: %1")
+        .arg(QString::fromLatin1(text.data(), static_cast<qsizetype>(text.size())));
+}
+
+std::optional<QByteArray> decodeElevatedProbeBytes(const QJsonObject& data,
+                                                   QString* errorMessage) {
+    QByteArray bytes =
+        QByteArray::fromBase64(data.value(QStringLiteral("bytes_base64")).toString().toLatin1());
+    const int expectedBytes =
+        static_cast<int>(data.value(QStringLiteral("bytes_read")).toDouble(-1));
+    if (expectedBytes < 0 || bytes.size() == expectedBytes) {
+        return bytes;
+    }
+    setProbeError(errorMessage, QStringLiteral("Elevated raw probe returned truncated data"));
+    return std::nullopt;
+}
+
+QString normalizedProbeError(const QString& errorText, const QString& fallback);
+
+std::optional<QByteArray> readElevatedProbeBytes(ElevationBroker* broker,
+                                                 const PartitionDiskInfo& disk,
+                                                 const PartitionInfoEx& partition,
+                                                 QString* errorMessage) {
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    if (!broker) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Elevation broker is unavailable");
+        }
+        return std::nullopt;
+    }
+
+    const auto result = broker->executeTask(QStringLiteral("ReadPartitionProbe"),
+                                            QStringLiteral("Read partition signature probe"),
+                                            elevatedProbePayload(disk, partition));
+    if (!result.has_value()) {
+        setProbeError(errorMessage, elevationErrorText(result.error()));
+        return std::nullopt;
+    }
+    if (!result->success) {
+        setProbeError(errorMessage,
+                      normalizedProbeError(result->error_message,
+                                           QStringLiteral("Elevated raw probe failed")));
+        return std::nullopt;
+    }
+    return decodeElevatedProbeBytes(result->data, errorMessage);
+}
+
+QString normalizedProbeError(const QString& errorText, const QString& fallback) {
+    return errorText.isEmpty() ? fallback : errorText;
+}
+
+bool elevatedProbeErrorDisablesRetry(const QString& errorText) {
+    return errorText.contains(QStringLiteral("denied"), Qt::CaseInsensitive) ||
+           errorText.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive) ||
+           errorText.contains(QStringLiteral("not found"), Qt::CaseInsensitive) ||
+           errorText.contains(QStringLiteral("Elevation failed"), Qt::CaseInsensitive);
+}
+
+void appendRawProbeWarning(PartitionInventory* inventory,
+                           const PartitionDiskInfo& disk,
+                           const PartitionInfoEx& partition,
+                           const QString& localError,
+                           const QString& elevatedError) {
+    inventory->warnings.append(
+        QStringLiteral("Raw file-system probe failed for disk %1 partition %2: %3; "
+                       "elevated retry: %4")
+            .arg(disk.disk_number)
+            .arg(partition.partition_number)
+            .arg(normalizedProbeError(localError,
+                                      QStringLiteral("local read did not return data")))
+            .arg(normalizedProbeError(elevatedError, QStringLiteral("not available"))));
+}
+
+std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
+                                                  const PartitionInfoEx& partition,
+                                                  ElevationBroker* broker,
+                                                  bool* elevatedProbeUnavailable,
+                                                  PartitionInventory* inventory) {
+    QString localProbeError;
+    auto bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
+        disk.device_path, partition.offset_bytes, partition.size_bytes, &localProbeError);
+    if (bytes.has_value() || *elevatedProbeUnavailable) {
+        return bytes;
+    }
+
+    const QString partitionPath = partitionDevicePath(disk, partition);
+    QString partitionProbeError;
+    if (!partitionPath.isEmpty()) {
+        bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
+            partitionPath, 0, partition.size_bytes, &partitionProbeError);
+        if (bytes.has_value()) {
+            return bytes;
+        }
+        localProbeError =
+            QStringLiteral("%1; partition alias %2: %3")
+                .arg(normalizedProbeError(localProbeError,
+                                          QStringLiteral("physical drive read failed")),
+                     partitionPath,
+                     normalizedProbeError(partitionProbeError,
+                                          QStringLiteral("local partition read failed")));
+    }
+
+    QString elevatedProbeError;
+    bytes = readElevatedProbeBytes(broker, disk, partition, &elevatedProbeError);
+    if (bytes.has_value()) {
+        return bytes;
+    }
+
+    appendRawProbeWarning(inventory, disk, partition, localProbeError, elevatedProbeError);
+    if (elevatedProbeErrorDisablesRetry(elevatedProbeError)) {
+        *elevatedProbeUnavailable = true;
+    }
+    return std::nullopt;
+}
+
+void applyDetectionToPartition(PartitionInfoEx* partition,
+                               const PartitionFileSystemDetection& detection) {
+    PartitionVolumeInfo volume = partition->volume.value_or(PartitionVolumeInfo{});
+    applyDetectedVolumeMetadata(&volume, detection);
+    partition->volume = volume;
+}
+
+bool apfsDetectionNeedsSupplementalSpaceManager(
+    const PartitionFileSystemDetection& detection) {
+    if (detection.file_system.compare(QStringLiteral("APFS"), Qt::CaseInsensitive) != 0) {
+        return false;
+    }
+    for (const auto& detail : detection.details) {
+        if (detail.startsWith(QStringLiteral("APFS space manager block:"))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<PartitionFileSystemDetection> detectFromLocalDevicePath(
+    const QString& devicePath,
+    uint64_t partitionOffsetBytes,
+    uint64_t partitionSizeBytes) {
+    QString error;
+    auto detection = PartitionFileSystemDetector::detectFromDevicePath(devicePath,
+                                                                       partitionOffsetBytes,
+                                                                       partitionSizeBytes,
+                                                                       &error);
+    if (!detection.has_value() || detection->file_system.trimmed().isEmpty()) {
+        return std::nullopt;
+    }
+    return detection;
+}
+
+std::optional<PartitionFileSystemDetection> supplementedRawFileSystemDetection(
+    const PartitionDiskInfo& disk,
+    const PartitionInfoEx& partition,
+    const PartitionFileSystemDetection& detection) {
+    if (!apfsDetectionNeedsSupplementalSpaceManager(detection)) {
+        return detection;
+    }
+
+    if (auto supplemented = detectFromLocalDevicePath(disk.device_path,
+                                                      partition.offset_bytes,
+                                                      partition.size_bytes);
+        supplemented.has_value()) {
+        return supplemented;
+    }
+
+    const QString partitionPath = partitionDevicePath(disk, partition);
+    if (!partitionPath.isEmpty()) {
+        if (auto supplemented = detectFromLocalDevicePath(partitionPath,
+                                                          0,
+                                                          partition.size_bytes);
+            supplemented.has_value()) {
+            return supplemented;
+        }
+    }
+
+    return detection;
+}
+
+void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
+                                            PartitionInfoEx* partition,
+                                            ElevationBroker* broker,
+                                            bool* elevatedProbeUnavailable,
+                                            PartitionInventory* inventory) {
+    if (!needsRawFileSystemDetection(*partition)) {
+        return;
+    }
+
+    const auto bytes =
+        readProbeBytesWithRetry(disk, *partition, broker, elevatedProbeUnavailable, inventory);
+    if (!bytes.has_value()) {
+        return;
+    }
+
+    const auto detection =
+        PartitionFileSystemDetector::detectBytes(*bytes, partition->size_bytes);
+    if (detection && !detection->file_system.trimmed().isEmpty()) {
+        const auto supplemented = supplementedRawFileSystemDetection(disk, *partition, *detection);
+        applyDetectionToPartition(partition, supplemented.value_or(*detection));
+    }
+}
+
+void applyRawFileSystemDetection(PartitionInventory* inventory) {
+    if (!inventory) {
+        return;
+    }
+
+    std::unique_ptr<ElevationBroker> elevatedBroker;
+    bool elevatedProbeUnavailable = false;
+    for (auto& disk : inventory->disks) {
+        for (auto& partition : disk.partitions) {
+            if (!elevatedBroker && needsRawFileSystemDetection(partition)) {
+                elevatedBroker = std::make_unique<ElevationBroker>();
+            }
+            applyRawFileSystemDetectionToPartition(disk,
+                                                   &partition,
+                                                   elevatedBroker.get(),
+                                                   &elevatedProbeUnavailable,
+                                                   inventory);
+        }
+    }
 }
 
 PartitionDiskInfo parseDisk(const QJsonObject& object) {
@@ -206,7 +514,10 @@ PartitionInventory StorageInventoryWorker::scanCurrentSystem() {
         return inventory;
     }
 
-    return parseInventoryJson(result.std_out.toUtf8());
+    auto inventory = parseInventoryJson(result.std_out.toUtf8());
+    applyRawFileSystemDetection(&inventory);
+    inventory.layout_hash = buildLayoutHash(inventory);
+    return inventory;
 }
 
 PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& json_data) {
@@ -230,12 +541,39 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
     return inventory;
 }
 
-QString StorageInventoryWorker::inventoryPowerShellScript() {
+QString inventoryPowerShellHeaderScript() {
     return QStringLiteral(R"PS(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $hasBitLocker = [bool](Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)
 $physicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue)
+)PS");
+}
+
+QString inventoryPowerShellVolumeLookupScript() {
+    return QStringLiteral(R"PS(
+function Get-SakVolumeForPartition {
+  param([Parameter(Mandatory = $true)]$Partition)
+
+  $volume = $Partition | Get-Volume -ErrorAction SilentlyContinue
+  if (-not $volume -and $Partition.DriveLetter) {
+    $volume = Get-Volume -DriveLetter $Partition.DriveLetter -ErrorAction SilentlyContinue
+  }
+  if (-not $volume -and $Partition.PSObject.Properties.Name -contains 'AccessPaths') {
+    foreach ($accessPath in @($Partition.AccessPaths)) {
+      if ([string]::IsNullOrWhiteSpace($accessPath)) { continue }
+      $volume = Get-Volume -Path $accessPath -ErrorAction SilentlyContinue
+      if ($volume) { break }
+    }
+  }
+
+  $volume | Select-Object -First 1
+}
+)PS");
+}
+
+QString inventoryPowerShellDiskPrefixScript() {
+    return QStringLiteral(R"PS(
 $disks = Get-Disk | ForEach-Object {
   $disk = $_
   $physical = $physicalDisks | Where-Object {
@@ -268,9 +606,14 @@ $disks = Get-Disk | ForEach-Object {
     IsSystem = [bool]$disk.IsSystem
     IsReadOnly = [bool]$disk.IsReadOnly
     IsDynamic = if ($disk.PSObject.Properties.Name -contains 'IsDynamic') { [bool]$disk.IsDynamic } else { $false }
+)PS");
+}
+
+QString inventoryPowerShellPartitionScript() {
+    return QStringLiteral(R"PS(
     Partitions = @(Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue | ForEach-Object {
       $partition = $_
-      $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+      $volume = Get-SakVolumeForPartition -Partition $partition
       $bitlocker = if ($hasBitLocker -and $volume -and $volume.DriveLetter) {
         Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction SilentlyContinue
       } else { $null }
@@ -307,10 +650,21 @@ $disks = Get-Disk | ForEach-Object {
         } else { $null }
       }
     })
+)PS");
+}
+
+QString inventoryPowerShellFooterScript() {
+    return QStringLiteral(R"PS(
   }
 }
 $disks | ConvertTo-Json -Depth 8 -Compress
 )PS");
+}
+
+QString StorageInventoryWorker::inventoryPowerShellScript() {
+    return inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
+           inventoryPowerShellDiskPrefixScript() + inventoryPowerShellPartitionScript() +
+           inventoryPowerShellFooterScript();
 }
 
 }  // namespace sak

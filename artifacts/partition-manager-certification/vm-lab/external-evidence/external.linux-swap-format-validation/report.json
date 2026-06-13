@@ -1,0 +1,162 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.linux-swap-format-validation",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-07T01:30:34.2608459Z",
+    "finished_at_utc":  "2026-06-07T01:30:35.3200115Z",
+    "distro_name":  "archlinux",
+    "image_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-format.img",
+    "linux_image_path":  "/mnt/c/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img",
+    "image_size_bytes":  "134217728",
+    "image_sha256":  "f77567e5bc20002d81682a6d15f62089aaac9b6c79d28ccf54cf8554d0fd5a51",
+    "header":  {
+                   "page_size_bytes":  4096,
+                   "page_count":  "32768",
+                   "last_page":  "32767",
+                   "label":  "SAKSWAP",
+                   "uuid":  "471a17aa-f2a5-7fba-b11c-22c58b294a33"
+               },
+    "probe_report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-probe-report.json",
+    "probe":  {
+                  "blockers":  [
+
+                               ],
+                  "created_utc":  "2026-06-07T01:30:34.914Z",
+                  "details":  [
+                                  "Signature: SWAPSPACE2",
+                                  "Detected page size: 4096",
+                                  "Header version: 1",
+                                  "Last page: 32767",
+                                  "Bad pages: 0",
+                                  "UUID: 471a17aa-f2a5-7fba-b11c-22c58b294a33",
+                                  "Volume label: SAKSWAP",
+                                  "Total swap bytes: 134217728"
+                              ],
+                  "detected_file_system":  "Linux swap",
+                  "expected_file_system":  "Linux swap",
+                  "free_bytes":  "0",
+                  "input_offset_bytes":  "0",
+                  "input_path":  "C:/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img",
+                  "input_size_bytes":  "134217728",
+                  "require_sane_metadata":  false,
+                  "schema_version":  1,
+                  "source":  "RawSignature",
+                  "status":  "Passed",
+                  "tool":  "partition-filesystem-probe-certifier",
+                  "total_bytes":  "134217728"
+              },
+    "blkid_output":  "DEVNAME=/mnt/c/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img\nENDIANNESS=LITTLE\nFSBLOCKSIZE=4096\nFSSIZE=134213632\nFSLASTBLOCK=32768\nLABEL=SAKSWAP\nUUID=471a17aa-f2a5-7fba-b11c-22c58b294a33\nVERSION=1\nTYPE=swap\nUSAGE=other",
+    "swaplabel_output":  "LABEL: SAKSWAP\nUUID:  471a17aa-f2a5-7fba-b11c-22c58b294a33",
+    "commands":  [
+                     {
+                         "name":  "wsl-uname",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "uname",
+                                           "-a"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.106,
+                         "output":  "Linux MINI-DT 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux"
+                     },
+                     {
+                         "name":  "linux-swap-tool-preflight",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKY29tbWFuZCAtdiBibGtpZApjb21tYW5kIC12IHN3YXBsYWJlbAppZA==\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.11,
+                         "output":  "/usr/sbin/blkid\n/usr/sbin/swaplabel\nuid=0(root) gid=0(root) groups=0(root)"
+                     },
+                     {
+                         "name":  "create-disposable-swap-image",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "createnew",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-format.img",
+                                           "134217728"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.013,
+                         "output":  "File C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-format.img is created"
+                     },
+                     {
+                         "name":  "sak-probe-certifier-linux-swap",
+                         "file_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-format.img",
+                                           "--output",
+                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-swap-format-validation\\run-20260606-183034\\sak-linux-swap-probe-report.json",
+                                           "--expect",
+                                           "Linux swap"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.023,
+                         "output":  "Detected Linux swap in sak-linux-swap-format.img"
+                     },
+                     {
+                         "name":  "wslpath",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "wslpath",
+                                           "-a",
+                                           "C:/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.101,
+                         "output":  "/mnt/c/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img"
+                     },
+                     {
+                         "name":  "linux-blkid-swap-probe",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKYmxraWQgLXAgLW8gZXhwb3J0ICcvbW50L2MvVXNlcnMvUmFuZHkvQ29kaW5nL1MuQS5LLi1VdGlsaXR5L2FydGlmYWN0cy9wYXJ0aXRpb24tbWFuYWdlci1jZXJ0aWZpY2F0aW9uL3ZtLWxhYi9leHRlcm5hbC1ldmlkZW5jZS9leHRlcm5hbC5saW51eC1zd2FwLWZvcm1hdC12YWxpZGF0aW9uL3J1bi0yMDI2MDYwNi0xODMwMzQvc2FrLWxpbnV4LXN3YXAtZm9ybWF0LmltZyc=\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.101,
+                         "output":  "DEVNAME=/mnt/c/Users/Randy/Coding/S.A.K.-Utility/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-swap-format-validation/run-20260606-183034/sak-linux-swap-format.img\nENDIANNESS=LITTLE\nFSBLOCKSIZE=4096\nFSSIZE=134213632\nFSLASTBLOCK=32768\nLABEL=SAKSWAP\nUUID=471a17aa-f2a5-7fba-b11c-22c58b294a33\nVERSION=1\nTYPE=swap\nUSAGE=other"
+                     },
+                     {
+                         "name":  "linux-swaplabel-probe",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKc3dhcGxhYmVsICcvbW50L2MvVXNlcnMvUmFuZHkvQ29kaW5nL1MuQS5LLi1VdGlsaXR5L2FydGlmYWN0cy9wYXJ0aXRpb24tbWFuYWdlci1jZXJ0aWZpY2F0aW9uL3ZtLWxhYi9leHRlcm5hbC1ldmlkZW5jZS9leHRlcm5hbC5saW51eC1zd2FwLWZvcm1hdC12YWxpZGF0aW9uL3J1bi0yMDI2MDYwNi0xODMwMzQvc2FrLWxpbnV4LXN3YXAtZm9ybWF0LmltZyc=\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.094,
+                         "output":  "LABEL: SAKSWAP\nUUID:  471a17aa-f2a5-7fba-b11c-22c58b294a33"
+                     }
+                 ],
+    "cleanup":  "Disposable swap image removed.",
+    "error":  ""
+}

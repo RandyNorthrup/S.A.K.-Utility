@@ -1,4 +1,4 @@
-﻿# Release Readiness
+# Release Readiness
 
 ## Automated Gates
 
@@ -10,6 +10,185 @@ Required before a release candidate is published:
 - Blocking-pattern guard passes.
 - Accessibility, raw style-token, raw style-literal, GUI magic-number, global magic-number, logged dialog, Partition Manager certification-matrix-integrity/commercial-destructive-feature-matrix/external-checklist/external-lab-package/certification-gap-report/VHD-preflight/certification-artifact-bundle/feature-matrix/evidence-payload/release-claim/strict-handoff, and Lizard gates pass.
 - Third-party license audit passes.
+- Partition Manager non-native filesystem tools remain blocked unless
+  `tools/filesystem/manifest.json` has pinned id/version/upstream/license/source-hash/binary-hash/file-system/operation metadata,
+  matching bundled binary hashes, and hashed `runtime_files` for companion
+  DLL/license/source/helper artifacts. CMake requires the manifest at configure
+  time, `scripts/check_partition_filesystem_tool_manifest.ps1` rejects missing
+  metadata, path traversal, missing binaries, hash mismatches, and unmanifested
+  files under `tools/filesystem`, `scripts/check_third_party_licenses.ps1`
+  requires license coverage for any approved manifest tool, and portable
+  staging/smoke checks require the manifest in the release package. Current
+  manifest approval includes e2fsprogs 1.47.4 `e2fsck` for ext2/ext3/ext4
+  `check-read-only` and confirmed `repair`, `mke2fs` for confirmed `format`,
+  and `resize2fs` for confirmed `resize`; it also includes hfsprogs
+  540.1.linux3-6+sak-msys `newfs_hfs` for HFS+/HFSX confirmed sparse-staged
+  `format` and `fsck_hfs` for HFS+/HFSX confirmed sparse-staged `repair`.
+  Confirmed ext format, repair, adjacent grow, and same-start shrink now route
+  through Pending Operations, safety validation, Apply review, elevated
+  PowerShell execution, manifest/hash revalidation, and explicit confirmation,
+  with destructive VM raw-media proof and destructive physical USB proof passed
+  on 2026-06-05. HFS+/HFSX format/repair routes through the same queue,
+  raw-target identity, manifest/hash, Apply review, and confirmation model with
+  sparse staging, image-level tool proof, and physical raw-partition HFS mutation
+  proof recorded. ext includes
+  read-only directory listing, selected-file extraction, bounded recursive
+  directory export through original parser code, and allowlisted elevated
+  read-only raw-probe retry when the normal process cannot open
+  `\\.\PhysicalDriveN`; Linux swap includes read-only header
+  version/page-size/UUID/label metadata plus confirmed original SWAPSPACE2 v1
+  format through Pending Operations, raw target identity, Apply review,
+  generated UUID/label metadata, page-size selection, and explicit
+  confirmation; XFS/Btrfs includes read-only superblock metadata, lightweight
+  sanity notes, and original-code metadata consistency reports from captured
+  probe data; APFS includes read-only container superblock, checkpoint ring
+  indexes/windows, object-map OID, visible object-map tree-anchor metadata,
+  visible referenced root/non-root B-tree node-header metadata, root
+  `btree_info_t` metadata, volume-OID metadata, bounded probe-window
+  volume-superblock candidate metadata, referenced-object-header preflight for
+  known OIDs found in the probe window, lightweight
+  block-geometry/checkpoint-window sanity notes, original-code metadata
+  consistency reports, metadata object-checksum validation on APFS object
+  blocks, volume browse, selected-file extraction, and bounded recursive
+  directory export; HFS+/HFSX includes read-only header metadata,
+  catalog consistency checks, attributes B-tree key scans with fork/inline
+  metadata reporting, catalog listing, selected data/resource-fork extraction,
+  selected attribute-value extraction, bounded recursive directory export with
+  `.rsrc` sidecars, catalog/data/resource/attribute extents-overflow
+  resolution, image-only data-fork overwrite, data/resource-fork
+  allocated-block grow/shrink replacement, bounded initial-extent allocation
+  growth, explicit zero-length truncate, constrained empty-file and empty-folder
+  create/delete, single-leaf catalog rename/move, bounded file create with data-fork allocation, allocated-file
+  delete, optional released-block zeroing for file/folder-tree delete, bounded folder-tree delete, inline-attribute and fork-backed-attribute
+  replacement/growth with read-back verification through `sak_hfs_writer_cli.exe`,
+  selected raw-partition staged data/resource-fork, single-leaf catalog rename/move, bounded create/delete with optional released-block zeroing, and
+  inline/fork-backed-attribute mutation including bounded growth through the HFS File queue/apply path, and
+  confirmed sparse-staged `newfs_hfs` format plus `fsck_hfs` repair. HFS File
+  Apply must stage the direct or wrapped HFS logical volume span, not the whole
+  containing partition, and physical proof is recorded at
+  `artifacts/partition-manager-certification/vm-lab/external-evidence/external.hfs-file-apply-physical/report.json`
+  with data/resource/inline-attribute raw read-back hashes plus optional secure
+  released-block zeroing proof for file/folder-tree delete and final root-listing
+  absence. Journaled HFS+
+  `fsck_hfs` exit code 8 may be tolerated only on this explicit journaled
+  HFS File mutation workflow and only with final read-back proof. APFS has a compiled fail-closed writer certification preflight,
+  original Fletcher-64 APFS object checksum calculation/stamping/verification,
+  deterministic image-only mutation plan generation, generated-layout
+  queue/apply root-file, empty root-directory, root-directory child-file, and
+  volume-label mutation proof, but user-facing APFS encrypted/compressed files,
+  arbitrary APFS
+  write/repair/format/resize, deep XFS/Btrfs tool checks, XFS/Btrfs writes,
+  unbounded HFS+ folder-tree delete, complex HFS+ file delete, HFS+ B-tree
+  split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice, inline/broad HFS+
+  attribute growth, compressed-file writes, and recursive HFS+
+  extents-overflow-file overflow operations remain blocked pending workflow and
+  certification proof.
+- APFS writer infrastructure is release-allowed only while fail-closed:
+  `PartitionApfsWriter` may compute/stamp/verify object checksums, build a
+  deterministic image-only mutation plan shape, build a new APFS image-only
+  format scratch image for certification, validate structured image-only
+  execution evidence, and expose only generated-layout create/format,
+  checksum-repair, bounded root-file write/patch/delete, empty
+  root-directory create/delete, root-directory child-file write/patch/delete,
+  and volume-label change
+  actions through UI/queue/apply. The certifier-generated format image must detect as
+  APFS, report nonzero spaceman free bytes, round-trip the requested volume name,
+  list the generated root directory, and read back the seeded multi-block proof
+  file through the read-only APFS browser. The certifier-only write lane may copy
+  a generated APFS image to a separate scratch image, add, replace, byte-range
+  patch, or delete one bounded root regular file, add/patch/delete one bounded
+  regular child file inside a supported generated root directory, preserve
+  existing bounded root regular files/directories, zero the previous generated
+  file-data region on delete, and prove create/add/replace/patch read-back plus
+  delete negative-read-back, empty-directory read-back, and sibling preservation
+  for generated images.
+  The hidden existing-image format lane may overwrite only after destructive
+  wipe confirmation and must prove post-format APFS detection plus empty-root
+  browse. The raw-capable target API and read/write raw-device opener must stay
+  fail-closed unless the request carries raw-target opt-in, non-image-only writer
+  options, destructive evidence, and raw hardware certification evidence. The
+  APFS raw-format validation lane must run only through
+  `scripts/run_partition_manager_apfs_raw_format_validation.ps1` or its UAC
+  launcher on pinned expendable APFS GPT media sized 64-128 MiB; passing this lane is required
+  before any APFS raw format/write/patch/delete, empty-root-directory create/delete,
+  root-directory-child-file write/patch/delete, volume-label change, or repair
+  certifier claim can be made. The previous 2026-06-12 PDT / 2026-06-13 UTC
+  51 GB JMicron run `run-20260612-192652` is retained as Windows-side evidence
+  only because Apple kernel validation later rejected the large generated
+  spaceman geometry. Current Windows-side proof passed on JMicron serial
+  `DD56419883A5B`, disk 2 partition 2, 134,217,728 bytes, at
+  `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`;
+  Apple-native validation of that small target is still required. The accepted lane uses bounded APFS detection/root-listing readback, generated-layout-gated
+  root-file write/readback, generated-layout raw root-file byte-range patch,
+  generated-layout empty root-directory create/delete with empty-listing and
+  root-absence proof, root-directory child-file write/read/patch/delete proof with
+  SHA-256 `f22535d6b86d4744537a0f58cdfc613162efa764610a9b191b53d5762a63566e`,
+  patched child-file SHA-256
+  `1d45dc05a258a2e29a7b77cdf5a6763e8f6ac138ee0c4066d6aaf6115eb45d27`,
+  non-empty directory delete blocker proof, intentional generated metadata block
+  199 checksum corruption, in-place checksum repair across the generated
+  metadata block set with
+  patched-file read-back, generated-layout raw volume-label change with relabeled
+  root-listing proof and patched-file hash preservation, raw root-file delete
+  with negative read-back, and an intentional full raw-device SHA-256 skip on a
+  one-spaceman-chunk target. The
+  certifier-only repair lane may
+  restamp recognized APFS metadata object checksums in a separate generated
+  scratch image and must prove corrupt-browse failure before repair plus
+  post-repair listing/read-back; it is not raw-media APFS repair approval.
+- APFS read-only browsing must fail closed on corrupt APFS metadata object
+  checksums. File extent payload blocks are not validated as APFS object blocks.
+- File Management cross-filesystem proof is destructive and remains outside
+  CTest. The latest live lane wrote to pinned expendable physical media through
+  `scripts\run_file_management_live_filesystem_certification.ps1`: APFS on
+  JMicron serial `DD56419883A5B`, disk 2 partition 2, passed File Explorer
+  create-directory, write/read, duplicate finder scan, advanced search,
+  delete-file, negative read, and delete-directory at
+  `artifacts\file-management-live-certification\disk2-apfs-script-after-fix\file-management-live-certification.json`;
+  HFS+ on Best Buy serial `DD564198838A8`, disk 3 partition 3, passed the same
+  lane plus rename at
+  `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
+  APFS destructive File Management proof is Windows-side until macOS Recovery
+  validates the 64-128 MiB one-spaceman-chunk generated APFS test partition.
+  File Organizer generic moves remain local/mounted-file-API only.
+- Partition Manager ext/HFS+/APFS image browsers must open both normal image
+  files and read-only Windows raw partition aliases through
+  `openFileOrRawDeviceReadOnly`; physical Apple proof requires HFS+ and APFS
+  root listing and can require selected-file read proof, HFS+ selected-attribute
+  proof, plus APFS bounded export proof with
+  `scripts/run_partition_manager_physical_apple_probe_validation.ps1 -RequireHfsFileProof -RequireHfsAttributeProof -RequireApfsFileProof -RequireApfsExportProof`.
+  Current physical proof read `/Fonts/00TT.TTF` from the expendable APFS
+  partition and recorded SHA-256
+  `d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`;
+  APFS bounded export proof exported `/Fonts` with 63 files, 1 directory,
+  64 scanned entries, and 21161830 bytes. The same report records HFS+
+  detection, root metadata, `total_bytes=127724052480`,
+  `free_bytes=125197647872`, and selected-file proof for
+  `/polyhavenassets_blendermarket_v1.2.0  (Blender 4.5+).zip` with SHA-256
+  `72222f9f83d177ea9a2970edb756ab9f3f9f6b00a12f47af63259f215d970709`.
+  HFS+ selected-attribute proof also passed by reading inline attribute
+  `com.apple.decmpfs` for file ID 1894 at 16 bytes with SHA-256
+  `e2aed0d76e90c81c39f9916d56a8f1631c440aec356877ea7dae197b069ea64f`; the
+  report records `validation_requirements` showing HFS file, HFS attribute,
+  APFS file, and APFS export proofs were required.
+  The five-partition APFS physical lane also passes the all-partition APFS
+  file/export proof flags using bounded recursive candidate search, including
+  hidden Apple metadata directories when no visible regular file is present.
+- APFS free-space reporting must stay verified both for probe-window
+  space-manager objects and for checkpoint data outside the first 2 MiB probe
+  window. The current physical regression command is
+  `scripts\run_partition_manager_physical_apple_probe_validation.ps1 -DiskNumber 3 -AllowMissingHfs -ProbeAllApfsPartitions -RequireAllApfsPartitions`;
+  it passed against five APFS partitions on a second expendable non-boot USB
+  disk and recorded nonzero `free_bytes` for every APFS partition under
+  `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-apfs-multipart-physical\report.json`.
+- Partition Manager non-native write payloads must use the exact selected
+  `\\?\GLOBALROOT\Device\HarddiskN\PartitionM` raw partition alias. Missing,
+  forged, or mismatched paths are blocked by safety validation and script
+  generation before Apply, and queued ext repair keeps the destructive target
+  field read-only.
+- Partition Manager ext browse is read-only and preserves symlink metadata by
+  displaying targets and exporting `.symlink.txt` sidecars; it does not follow
+  symlinks or create links on Windows.
 - QRC resource verification passes.
 - Portable package smoke passes from a clean extracted folder.
 - Startup E2E smoke passes from the packaged folder.
@@ -154,8 +333,11 @@ Release `sak_utility`, `test_ai_subagent_runner`, `test_ai_chat_title`,
 `test_openai_responses_client` built successfully; targeted CTest passed 7/7;
 live OpenAI plain response and function tool-loop CTest passed using the key
 file without printing the key; host package/live smoke passed at
-`artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`;
-and the full Release CTest suite passed 133/133.
+`artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`.
+The latest local follow-up on 2026-06-07 PDT / 2026-06-08 UTC passed the full
+Release CTest suite at 136/136, release readiness, `git diff --check`, and the
+Release app/helper rebuild after the APFS empty root-directory writer slice,
+HFS secure-delete physical proof, docs sync, and lizard refactors.
 The follow-up multi-agent quality pass removed the production UI serial-only
 cap for workflow delegates: read-only delegate phases can now run up to three
 parallel subagents with a fresh OpenAI model client per subagent, while
@@ -172,14 +354,255 @@ first-prompt role inference with explicit user role-switch support, and an exact
 `Ctx: x/y` context-window meter tied to the selected model through OpenAI
 `/v1/responses/input_tokens` so operators can judge when summary/report
 compaction is needed.
-The same current-binary VM rerun was attempted after booting `SAK-PM-Lab-Win11`
-to Guest Additions run level 3, but host guest-control login as `saklab` with a
-blank password was rejected. The VM was powered off. This is not a blocker for
-non-destructive AI Assistant readiness because the current-binary local and host
-package/live smoke passed; rerunning inside the VM only needs the VM desktop or
-valid guest-control credentials if a VM-specific package proof is requested.
+The current local package proof staged `S.A.K.-Utility-0.9.1.9`, passed portable
+dependency smoke, passed portable startup E2E smoke, passed package-root release
+readiness, and rebuilt `S.A.K.-Utility-0.9.1.9-Windows-x64.zip` after the
+refactors.
+Current staged-package hashes:
+- `sak_utility.exe`: `E587E51085199FF18027AF43883DFAA9FD6841FE2129DE0F72A953A7357D9277`
+- `sak_elevated_helper.exe`: `EC64933550AC73948F6113E4F7E800EF3BF4EDD084409168F330465DCF53B045`
+- `S.A.K.-Utility-0.9.1.9-Windows-x64.zip`: `1DA03D804D0A9EA87DB950BDE49D70482A4BE2D6DB59E532C75F0403D9819261`
+The earlier current-binary VM rerun attempted a blank-password guest-control
+login and failed before launching the in-guest harness. Do not use blank
+guest-control auth for this VM. The fixed host path uses a real guest password
+file resolved from the VM unattended metadata or `temp\vm-auth`, then passes it
+to `VBoxManage guestcontrol --passwordfile`. For production-grade noninteractive
+VM gates, the token must already be a direct administrator token. Keypress-based
+UAC acceptance is fallback-only and must be enabled explicitly with
+`-AllowUacKeypressFallback`; normal reruns should use the dedicated automation
+VM created by `scripts/new_partition_manager_automation_vm.ps1`. This is not a
+blocker for non-destructive AI Assistant readiness because the current-binary
+local and host package/live smoke passed.
 
-Fourteen matrix-backed external gates now pass in VM-lab evidence:
+Partition Manager ext filesystem write support has a dedicated destructive VM
+gate. Preferred host-driven run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\launch_partition_manager_vm_gate_host.ps1 `
+  -Gate ext-filesystem `
+  -DiskNumber 1 `
+  -FileSystem ext4
+```
+
+The host launcher resolves the real VM guest password file, validates
+guest-control auth, requires a direct administrator token, runs the destructive
+runner through guestcontrol, and waits for a fresh report. If the legacy lab VM
+only provides a filtered token, the launcher fails before deleting stale
+evidence unless `-AllowUacKeypressFallback` is supplied explicitly. Manual
+in-guest launch is still valid from the `SAK-PM-Lab-Win11` desktop:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  \\vboxsvr\sakrepo\scripts\launch_partition_manager_ext_filesystem_vm_gate_local.ps1 `
+  -DiskNumber 1 `
+  -FileSystem ext4
+```
+
+The elevated runner verifies the bundled e2fsprogs hashes, formats a raw ext4
+partition, runs the confirmed repair command path, grows the partition with
+`resize2fs`, shrinks the file system before shrinking the partition, rechecks
+the filesystem, clears the disposable disk, and writes
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write\report.json`.
+Latest evidence passed on 2026-06-05 against
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2` with exit code 0 for format,
+repair, read-only checks, grow, shrink, and cleanup. Keep future non-ext writes
+blocked until operation-specific proof exists.
+An unattended direct-admin rerun also passed in dedicated VM
+`SAK-PM-Automation-Win11` on 2026-06-05 PDT / 2026-06-06 UTC. The host report
+`artifacts\partition-manager-certification\vm-lab\host-launch\ext-filesystem-20260605224315.json`
+records `launch_mode=direct-admin`, `direct_admin_token=true`, and
+`uac_accept_sent_at=null`; the gate report is
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write\report.json`.
+The host launcher now retries Guest Additions desktop readiness before starting
+guestcontrol work so a cold-boot VM does not fail on one early `waitrunlevel`
+miss.
+
+Linux swap raw-partition automation rerun passed on 2026-06-05 PDT /
+2026-06-06 UTC in dedicated VM `SAK-PM-Automation-Win11`. The VM creation report
+records `direct_admin_guestcontrol_verified=true`, the host launch report
+records `launch_mode=direct-admin`, `direct_admin_token=true`, and
+`uac_accept_sent_at=null`, and the gate report records `status=Passed`,
+`detected_file_system=Linux swap`, raw target
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2`, and cleanup back to RAW. Evidence:
+`artifacts\partition-manager-certification\vm-lab\automation-vm\SAK-PM-Automation-Win11-20260605210356.json`,
+`artifacts\partition-manager-certification\vm-lab\host-launch\linux-swap-20260605220305.json`,
+and
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm\report.json`.
+
+Linux compatibility validation for the same bundle passed on 2026-06-07 UTC with
+`scripts/run_partition_manager_ext_linux_validation.ps1 -DistroName archlinux`
+for ext2, ext3, and ext4. The harness used Windows-bundled `mke2fs` and
+`resize2fs`, then Linux `e2fsck`, `dumpe2fs`, and loop mount accepted each
+grown/shrunk image, wrote a fixture file, rechecked clean, and bundled Windows
+`e2fsck` rechecked clean after the Linux write. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext2-linux-validation\report.json`,
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext3-linux-validation\report.json`,
+and
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext4-linux-validation\report.json`.
+This validation does not create a runtime WSL dependency.
+
+Linux-created XFS/Btrfs metadata validation passed again on 2026-06-07 UTC with
+`scripts/run_partition_manager_linux_metadata_validation.ps1 -DistroName archlinux`.
+The harness used Linux `mkfs.xfs` and `mkfs.btrfs` to create disposable images,
+then `partition_filesystem_probe_certifier.exe` validated S.A.K. raw detection,
+metadata fields, and sanity lines for XFS and Btrfs from Windows. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-metadata-validation\report.json`.
+This validation does not create a runtime WSL dependency. It supports the
+in-app original read-only metadata consistency check from captured probe data,
+but does not approve deep XFS/Btrfs tool checks, format, repair, or write
+support.
+
+Filesystem probe helper offset validation is now part of the local release
+gate. `partition_filesystem_probe_certifier.exe` accepts
+`--input-offset-bytes`, reports `input_offset_bytes` in JSON, and reads from the
+offset for regular files and raw Windows device paths. It also accepts
+`--hfs-check` for HFS+/HFSX consistency and attribute metadata output and
+HFS+ selected-attribute read arguments for file ID/name proof when matching
+attributes exist on media. The generated-fixture
+self-test `scripts/test_partition_filesystem_probe_certifier.ps1` is wired into
+CTest as `test_partition_filesystem_probe_certifier` and into release readiness;
+it creates a tiny padded ext2 fixture, verifies deterministic offset report
+fields, and confirms invalid offset input fails. A lab-only Sonoma 14 DMG HFS+
+fixture also passed at byte offset 134250496 with sane HFS+ header metadata.
+The unpacked Tahoe installer `SharedSupport.dmg` is a compressed UDIF with an
+HFS+ payload and is useful for future container-extraction validation only; it
+is not bundled or required at runtime.
+
+Physical Apple filesystem validation is optional and read-only:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\run_partition_manager_physical_apple_probe_validation.ps1 `
+  -DiskNumber 2
+```
+
+The current physical run passed on 2026-06-07 UTC against a
+non-boot external USB NVMe GPT disk with one Apple HFS partition and one Apple
+APFS partition. The script used `GLOBALROOT` partition aliases, detected HFS+
+and APFS with sane metadata, required HFS file, HFS attribute, APFS file, and
+APFS export proof, and wrote
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-filesystem-physical\report.json`.
+The latest APFS physical probe also verifies free-space reporting from the APFS
+space manager: `total_bytes=127992487936`, `free_bytes=127866097664`.
+This optional gate is not part of the 18-gate commercial destructive matrix and
+does not approve unbounded HFS+ folder-tree delete, complex HFS+ file delete,
+HFS+ B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice,
+inline/broad HFS+ attribute growth, compressed-file writes,
+arbitrary APFS mutation, non-generated APFS file-write, or APFS
+resize behavior. The APFS writer helper exposes generated/minimal APFS
+create/format, generated-image root-file create/replace/byte-range patch/delete,
+empty root-directory create/delete, root-directory child-file write/patch/delete,
+and volume-label change with read-back, directory-empty, old/new-label, or
+negative-read-back hashes, generated-layout
+raw root-file write/patch/delete, empty root-directory create/delete, and
+root-directory child-file write/patch/delete plus volume-label change
+queue/apply routes, and generated-layout checksum repair only. Production helper
+physical proof must now use a 64-128 MiB one-spaceman-chunk generated APFS
+target. Current Windows-side proof is recorded at
+`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
+The previous JMicron `disk3-apfs-raw-format` evidence and latest helper run
+`run-20260612-192652` are Windows-side-only after Apple kernel rejection of the
+large generated spaceman geometry; Apple-native validation of the small target
+remains pending.
+The production helper now runs without broad protected/compressed/snapshot/
+multi-volume APFS allow flags; only S.A.K. generated single-volume layouts
+pass, while active snapshot/revert metadata, unsupported incompatible feature
+flags, and multi-volume containers remain blocked.
+Full arbitrary APFS/HFS+/XFS/Btrfs write support is not a current release
+claim. Release wording must keep XFS/Btrfs to read-only metadata, HFS+/HFSX to
+read-only browse/extract/export, sparse-staged format/repair, and the certified
+bounded HFS File slices only, and APFS to read-only browse/extract/export plus
+64-128 MiB one-spaceman-chunk generated-layout format/write/patch/delete,
+empty-root-directory create/delete, root-directory-child-file write/patch/delete,
+and repair queue/apply scope only unless a future milestone adds full
+driver/tool proof.
+
+APFS image-offset proof also passed on 2026-06-06 UTC against
+`temp\Sonoma 14.dmg` using `--input-offset-bytes 1233310720`; evidence:
+`artifacts\partition-manager-certification\tool-tests\sonoma-apfs-offset-probe.json`.
+The Tahoe `SharedSupport.dmg` `NXSB` hits were rejected as direct APFS proof
+because no 4096-byte-aligned superblock hit with sane block geometry was found.
+
+HFS+/HFSX physical destructive tool proof uses
+`scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1` and
+`scripts/run_partition_manager_physical_hfsprogs_validation.ps1`. The launcher
+uses Windows `runas` UAC auth, not keypress automation; the runner requires
+admin, `-Force`, non-boot/non-system disk guards, USB media by default, and
+serial or friendly-name guards for large disks. The proof formats sparse staging
+images as HFS+, HFSX, then HFS+ again by default, runs `fsck_hfs`
+repair/final read-only checks on those images, copies allocated metadata ranges
+to the selected raw partition, verifies S.A.K. HFS detection with
+`partition_filesystem_probe_certifier.exe` after each case, and writes
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.hfsprogs-physical-destructive\report.json`.
+
+Physical cross-filesystem destructive validation is optional and must target
+known expendable external media:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1 `
+  -DiskNumber 2 `
+  -ExpectedSerialNumber DD564198838A8 `
+  -ExpectedFriendlyNamePattern "Best Buy|NS-PCNVMEHDE" `
+  -Force
+```
+
+The launcher uses Windows UAC `runas` auth, not keypress automation. The
+elevated runner requires admin, `-Force`, non-boot/non-system checks, USB media
+by default, and serial/friendly-name guards for large disks. The current run
+passed on 2026-06-05 PDT / 2026-06-06 UTC: ext2, ext3, and ext4 were formatted,
+repaired, read-only checked, grown, shrunk, and probe-verified after each stage;
+Linux swap SWAPSPACE2 metadata was written, reread, probe-verified, and the disk
+was cleared back to RAW. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.cross-filesystem-physical-destructive\report.json`.
+
+Linux swap format compatibility validation passed on 2026-06-05 PDT with
+`scripts/run_partition_manager_linux_swap_format_validation.ps1 -DistroName archlinux`.
+The harness wrote an original SWAPSPACE2 v1 header to a disposable image using
+the same metadata layout as the app formatter, then S.A.K.
+`partition_filesystem_probe_certifier.exe`, Linux `blkid`, and Linux
+`swaplabel` all recognized the image as swap with matching label, UUID, version,
+and page-size metadata. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-validation\report.json`.
+This validation does not create a runtime WSL dependency and does not replace a
+future raw-disposable-partition VM proof if Linux swap format is raised to a
+separate destructive-media certification gate.
+
+Linux swap raw-partition VM proof now has a dedicated destructive runner and
+launcher. Preferred host-driven run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\launch_partition_manager_vm_gate_host.ps1 `
+  -Gate linux-swap `
+  -DiskNumber 1 `
+  -PageSizeBytes 4096
+```
+
+Manual in-guest launch is still valid from the `SAK-PM-Lab-Win11` desktop when
+guest UAC is available:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  \\vboxsvr\sakrepo\scripts\launch_partition_manager_linux_swap_vm_gate_local.ps1 `
+  -DiskNumber 1 `
+  -PageSizeBytes 4096
+```
+
+The elevated runner writes original SWAPSPACE2 v1 metadata to an app-style raw
+partition target, rereads and verifies the header, runs
+`partition_filesystem_probe_certifier.exe` against the raw target, clears the
+disposable disk back to RAW, and writes
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm\report.json`.
+Latest evidence passed on 2026-06-05 PDT against
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2`; the host launch report is under
+`artifacts\partition-manager-certification\vm-lab\host-launch\` and redacts the
+password value. This gate is separate from the image-level Linux
+`blkid`/`swaplabel` validation above.
+
+Eighteen matrix-backed external gates now pass in VM-lab evidence. The first
+imported batch covered:
 `external.bitlocker`, `external.bitlocker-mutation`,
 `external.file-level-data-recovery`, `external.allocate-free-space`,
 `external.cluster-size-change`, `external.hdd-defrag-execution`,
@@ -189,7 +612,7 @@ Fourteen matrix-backed external gates now pass in VM-lab evidence:
 `external.dynamic-to-basic`, and `external.hardware-wipe`.
 Evidence lives under
 `artifacts\partition-manager-certification\vm-lab\external-evidence\`, with
-partial imported manifest
+imported manifest
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`
 and paired imported checklist
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md`.

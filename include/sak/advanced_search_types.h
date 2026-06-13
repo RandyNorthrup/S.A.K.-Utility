@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "sak/file_management_file_system.h"
 #include "sak/layout_constants.h"
 
 #include <QMetaType>
@@ -49,6 +50,8 @@ struct SearchMatch {
 struct SearchConfig {
     QString root_path;  ///< Directory or file to search
     QString pattern;    ///< Search pattern (text or regex)
+    FileManagementTarget file_system_target;  ///< Optional raw/image filesystem target
+    bool use_file_system_target = false;      ///< Search through FileManagementFileSystemBridge
 
     // Search mode flags
     bool case_sensitive = false;

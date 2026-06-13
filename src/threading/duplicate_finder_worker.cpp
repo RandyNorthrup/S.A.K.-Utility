@@ -9,7 +9,9 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QCryptographicHash>
 #include <QFileInfo>
+#include <QHash>
 #include <QtConcurrent>
 #include <QtGlobal>
 #include <QThreadPool>
@@ -23,16 +25,22 @@ constexpr std::size_t kExpectedDuplicateScanFiles = 1000;
 constexpr int kDuplicateSummarySizePrecision = 2;
 constexpr int kDuplicateSummaryGroupLimit = 10;
 constexpr int kDuplicateProgressInterval = 10;
+constexpr uint64_t kDuplicateVirtualReadMaxBytes = 512ULL * 1024ULL * 1024ULL;
+constexpr int kDuplicateVirtualBrowseMaxEntries = 10'000;
 }  // namespace
 
 DuplicateFinderWorker::DuplicateFinderWorker(const Config& config, QObject* parent)
     : WorkerBase(parent), m_config(config), m_hasher(sak::hash_algorithm::md5) {
-    Q_ASSERT_X(!config.scanDirectories.isEmpty(),
+    Q_ASSERT_X(config.use_file_system_target || !config.scanDirectories.isEmpty(),
                "DuplicateFinderWorker",
-               "scanDirectories must not be empty");
+               "scanDirectories must not be empty unless a file-system target is used");
 }
 
 auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
+    if (m_config.use_file_system_target) {
+        return executeFileSystemTarget();
+    }
+
     sak::logInfo("Starting duplicate file scan");
 
     // Scan all directories
@@ -75,6 +83,34 @@ auto DuplicateFinderWorker::execute() -> std::expected<void, sak::error_code> {
     QString summary = generateSummary(duplicate_groups);
     Q_EMIT resultsReady(summary, total_duplicates, total_wasted);
 
+    return {};
+}
+
+auto DuplicateFinderWorker::executeFileSystemTarget() -> std::expected<void, sak::error_code> {
+    sak::logInfo("Starting duplicate file scan on file-system target: {}",
+                 m_config.file_system_target.label.toStdString());
+
+    auto files_result = scanFileSystemTarget();
+    if (!files_result) {
+        return std::unexpected(files_result.error());
+    }
+    const auto& files = files_result.value();
+    if (files.isEmpty()) {
+        Q_EMIT resultsReady("No files found to scan.", 0, 0);
+        return {};
+    }
+
+    auto hashed_result = hashVirtualFiles(files);
+    if (!hashed_result) {
+        return std::unexpected(hashed_result.error());
+    }
+
+    int total_duplicates = 0;
+    qint64 total_wasted = 0;
+    const auto duplicate_groups =
+        buildVirtualDuplicateGroups(hashed_result.value(), total_duplicates, total_wasted);
+
+    Q_EMIT resultsReady(generateSummary(duplicate_groups), total_duplicates, total_wasted);
     return {};
 }
 
@@ -202,6 +238,123 @@ auto DuplicateFinderWorker::scanDirectories()
     }
 
     return files;
+}
+
+auto DuplicateFinderWorker::scanFileSystemTarget()
+    -> std::expected<QVector<VirtualFile>, sak::error_code> {
+    QVector<VirtualFile> files;
+    if (!m_config.file_system_target.can_duplicate_scan) {
+        sak::logError("Duplicate scan blocked for target: {}",
+                      m_config.file_system_target.label.toStdString());
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+
+    QVector<QString> roots = m_config.virtual_directories;
+    if (roots.isEmpty()) {
+        roots.append(QStringLiteral("/"));
+    }
+    for (const auto& root : roots) {
+        auto result = collectVirtualFiles(root.trimmed().isEmpty() ? QStringLiteral("/") : root,
+                                          files,
+                                          0);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+    }
+    return files;
+}
+
+auto DuplicateFinderWorker::collectVirtualFiles(const QString& directory_path,
+                                                QVector<VirtualFile>& files,
+                                                int depth)
+    -> std::expected<void, sak::error_code> {
+    Q_UNUSED(depth)
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    const auto listing = sak::FileManagementFileSystemBridge::listDirectory(
+        m_config.file_system_target, directory_path, kDuplicateVirtualBrowseMaxEntries);
+    if (!listing.ok) {
+        sak::logError("Duplicate scan target listing failed: {}",
+                      listing.blockers.join(QStringLiteral("; ")).toStdString());
+        return std::unexpected(sak::error_code::scan_failed);
+    }
+
+    for (const auto& entry : listing.entries) {
+        if (checkStop()) {
+            return std::unexpected(sak::error_code::operation_cancelled);
+        }
+        if (entry.regular_file &&
+            static_cast<qint64>(entry.size_bytes) >= m_config.minimum_file_size) {
+            files.append({entry.path, static_cast<qint64>(entry.size_bytes)});
+        }
+        if (m_config.recursive_scan && entry.directory) {
+            auto result = collectVirtualFiles(entry.path, files, depth + 1);
+            if (!result) {
+                return result;
+            }
+        }
+    }
+    return {};
+}
+
+auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)
+    -> std::expected<QVector<QPair<VirtualFile, QString>>, sak::error_code> {
+    QVector<QPair<VirtualFile, QString>> hashed;
+    hashed.reserve(files.size());
+    for (int i = 0; i < files.size(); ++i) {
+        if (checkStop()) {
+            return std::unexpected(sak::error_code::operation_cancelled);
+        }
+        const auto& file = files.at(i);
+        Q_EMIT scanProgress(i + 1, files.size(), file.path);
+        if (file.size < 0 || static_cast<uint64_t>(file.size) > kDuplicateVirtualReadMaxBytes) {
+            sak::logWarning("Skipping oversized file-system target entry: {}",
+                            file.path.toStdString());
+            continue;
+        }
+        const auto read = sak::FileManagementFileSystemBridge::readFile(
+            m_config.file_system_target, file.path, kDuplicateVirtualReadMaxBytes);
+        if (!read.ok) {
+            sak::logWarning("Failed to read file-system target entry: {}",
+                            file.path.toStdString());
+            continue;
+        }
+        const QByteArray hash =
+            QCryptographicHash::hash(read.data, QCryptographicHash::Md5).toHex();
+        hashed.append({file, QString::fromLatin1(hash)});
+    }
+    return hashed;
+}
+
+std::vector<DuplicateFinderWorker::DuplicateGroup> DuplicateFinderWorker::buildVirtualDuplicateGroups(
+    const QVector<QPair<VirtualFile, QString>>& hashed_files,
+    int& total_duplicates,
+    qint64& total_wasted) const {
+    QHash<QString, QVector<VirtualFile>> byHash;
+    for (const auto& item : hashed_files) {
+        byHash[item.second].append(item.first);
+    }
+
+    std::vector<DuplicateGroup> groups;
+    for (auto it = byHash.cbegin(); it != byHash.cend(); ++it) {
+        const auto& paths = it.value();
+        if (paths.size() <= 1) {
+            continue;
+        }
+        DuplicateGroup group;
+        group.hash = it.key();
+        group.file_size = paths.first().size;
+        group.wasted_space = group.file_size * (paths.size() - 1);
+        for (const auto& file : paths) {
+            group.file_paths.append(file.path);
+        }
+        groups.push_back(group);
+        total_duplicates += paths.size() - 1;
+        total_wasted += group.wasted_space;
+    }
+    return groups;
 }
 
 auto DuplicateFinderWorker::calculateFileHash(const std::filesystem::path& file_path)

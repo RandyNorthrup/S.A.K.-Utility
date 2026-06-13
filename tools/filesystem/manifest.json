@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "id": "e2fsck",
+      "display_name": "e2fsck",
+      "version": "1.47.4",
+      "upstream_url": "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/",
+      "license": "GPL-2.0-only",
+      "source_archive_sha256": "fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b",
+      "relative_path": "e2fsprogs/e2fsck.exe",
+      "binary_sha256": "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+      "file_systems": ["ext2", "ext3", "ext4"],
+      "operations": ["check-read-only", "repair"],
+      "runtime_files": [
+        {
+          "relative_path": "e2fsprogs/e2fsprogs-1.47.4.tar.xz",
+          "sha256": "fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b"
+        },
+        {
+          "relative_path": "e2fsprogs/e2fsprogs-1.47.4-sak-mingw.patch",
+          "sha256": "477782802a6f18b800e7cc6d582ba810ace88d4c0a22e4c64046417ae6bb7323"
+        },
+        {
+          "relative_path": "e2fsprogs/NOTICE",
+          "sha256": "adf8d9020e8499912cf340aaa11020a21d0829134e3ce152473a3dda77d3c4dd"
+        },
+        {
+          "relative_path": "e2fsprogs/BUILD-NOTES.md",
+          "sha256": "5aa93fa7ed97c2dcb4c239fceb2276cc62d0a9e48386e8db72f79cb1505d5a2b"
+        }
+      ]
+    },
+    {
+      "id": "mke2fs",
+      "display_name": "mke2fs",
+      "version": "1.47.4",
+      "upstream_url": "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/",
+      "license": "GPL-2.0-only",
+      "source_archive_sha256": "fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b",
+      "relative_path": "e2fsprogs/mke2fs.exe",
+      "binary_sha256": "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+      "file_systems": ["ext2", "ext3", "ext4"],
+      "operations": ["format"]
+    },
+    {
+      "id": "resize2fs",
+      "display_name": "resize2fs",
+      "version": "1.47.4",
+      "upstream_url": "https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/",
+      "license": "GPL-2.0-only",
+      "source_archive_sha256": "fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b",
+      "relative_path": "e2fsprogs/resize2fs.exe",
+      "binary_sha256": "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+      "file_systems": ["ext2", "ext3", "ext4"],
+      "operations": ["resize"]
+    },
+    {
+      "id": "newfs_hfs",
+      "display_name": "newfs_hfs",
+      "version": "540.1.linux3-6+sak-msys",
+      "upstream_url": "https://packages.debian.org/source/sid/hfsprogs",
+      "license": "APSL-2.0; GPL-3.0-or-later; Apache-2.0",
+      "source_archive_sha256": "b01b203a97f9a3bf36a027c13ddfc59292730552e62722d690d33bd5c24f5497",
+      "relative_path": "hfsprogs/newfs_hfs.exe",
+      "binary_sha256": "25f9467e1ec314b37a044df173c27c46ce631fcacb470469582955bcd4632aaf",
+      "file_systems": ["hfs+", "hfsx"],
+      "operations": ["format"],
+      "runtime_files": [
+        {
+          "relative_path": "hfsprogs/msys-2.0.dll",
+          "sha256": "80817f159a33b8f641e6a15de73d1efcc9af3a7557a69121e4798c99930152f1"
+        },
+        {
+          "relative_path": "hfsprogs/msys-crypto-3.dll",
+          "sha256": "5d20dcc0e48aafc56af6e9514d129a018bd18c37e2d3212721654dc86ba49f8f"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz",
+          "sha256": "b01b203a97f9a3bf36a027c13ddfc59292730552e62722d690d33bd5c24f5497"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs_540.1.linux3-6.debian.tar.xz",
+          "sha256": "a2752fc536c0b982f0f7b3cf24808a4e7b0f599ed0763f30e0913e015b75c46a"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs-540.1.linux3-sak-msys.patch",
+          "sha256": "86931256597e1aede7552e4f4ca8396b5b224c0a74c20036b1ec37d32a500e38"
+        },
+        {
+          "relative_path": "hfsprogs/NOTICE",
+          "sha256": "a7507a017964fa91bdf4586b32750dc9580027e63370e71ee4e7482ca21fc722"
+        },
+        {
+          "relative_path": "hfsprogs/BUILD-NOTES.md",
+          "sha256": "829205ee075db9624a5c465568f8c99daed8ea16c8d90cdd0933e16da0b97b05"
+        },
+        {
+          "relative_path": "hfsprogs/CYGWIN_LICENSE",
+          "sha256": "3338ed7c661dc39c8cfcbb3bed889bc7b74888ddf6918608ef729ca593ee5d55"
+        },
+        {
+          "relative_path": "hfsprogs/CYGWIN_COPYING",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        },
+        {
+          "relative_path": "hfsprogs/OPENSSL_LICENSE.txt",
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+        }
+      ]
+    },
+    {
+      "id": "fsck_hfs",
+      "display_name": "fsck_hfs",
+      "version": "540.1.linux3-6+sak-msys",
+      "upstream_url": "https://packages.debian.org/source/sid/hfsprogs",
+      "license": "APSL-2.0; GPL-3.0-or-later",
+      "source_archive_sha256": "b01b203a97f9a3bf36a027c13ddfc59292730552e62722d690d33bd5c24f5497",
+      "relative_path": "hfsprogs/fsck_hfs.exe",
+      "binary_sha256": "738222837c229b5f3f73cfab3ceb41055e1b16dcfbfd49cfee8c785bda4ec626",
+      "file_systems": ["hfs+", "hfsx"],
+      "operations": ["check-read-only", "repair"],
+      "runtime_files": [
+        {
+          "relative_path": "hfsprogs/msys-2.0.dll",
+          "sha256": "80817f159a33b8f641e6a15de73d1efcc9af3a7557a69121e4798c99930152f1"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz",
+          "sha256": "b01b203a97f9a3bf36a027c13ddfc59292730552e62722d690d33bd5c24f5497"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs_540.1.linux3-6.debian.tar.xz",
+          "sha256": "a2752fc536c0b982f0f7b3cf24808a4e7b0f599ed0763f30e0913e015b75c46a"
+        },
+        {
+          "relative_path": "hfsprogs/hfsprogs-540.1.linux3-sak-msys.patch",
+          "sha256": "86931256597e1aede7552e4f4ca8396b5b224c0a74c20036b1ec37d32a500e38"
+        },
+        {
+          "relative_path": "hfsprogs/NOTICE",
+          "sha256": "a7507a017964fa91bdf4586b32750dc9580027e63370e71ee4e7482ca21fc722"
+        },
+        {
+          "relative_path": "hfsprogs/BUILD-NOTES.md",
+          "sha256": "829205ee075db9624a5c465568f8c99daed8ea16c8d90cdd0933e16da0b97b05"
+        },
+        {
+          "relative_path": "hfsprogs/CYGWIN_LICENSE",
+          "sha256": "3338ed7c661dc39c8cfcbb3bed889bc7b74888ddf6918608ef729ca593ee5d55"
+        },
+        {
+          "relative_path": "hfsprogs/CYGWIN_COPYING",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        }
+      ]
+    }
+  ]
+}

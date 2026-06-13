@@ -95,6 +95,331 @@ non-system. This is supplemental VM destructive data-disk evidence only; it does
 not upgrade the claim level because it is not a complete external evidence
 manifest.
 
+Partition Manager ext filesystem write proof passed on 2026-06-05 PDT in the
+same VM. The elevated gate targeted only disposable VirtualBox disk 1, created
+an unmounted GPT data partition, used the app-style raw path
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2`, verified bundled e2fsprogs
+hashes, formatted ext4 with `mke2fs`, ran clean `e2fsck -p` repair and
+read-only checks, grew the partition, ran `resize2fs`, shrank the file system
+before shrinking the partition, rechecked clean, and
+cleared disk 1 back to RAW. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write\report.json`.
+The destructive runner now refuses to proceed outside a detected VirtualBox
+guest unless `-AllowNonVirtualBoxGuest` is explicitly supplied for a disposable
+non-VirtualBox lab VM, so `-Force` alone is not enough on a normal host.
+This certifies the queued ext format/repair/grow/shrink path. HFS+/XFS/Btrfs/APFS
+write paths remain blocked pending operation-specific destructive proof.
+
+A later ext direct-admin automation rerun passed on 2026-06-05 PDT /
+2026-06-06 UTC in `SAK-PM-Automation-Win11`. The host launcher used the real
+guest password file, waited for Guest Additions desktop readiness with retries,
+validated an already high-integrity administrator token through guestcontrol,
+and recorded `launch_mode=direct-admin`, `direct_admin_token=true`, and
+`uac_accept_sent_at=null`. Evidence:
+`artifacts\partition-manager-certification\vm-lab\host-launch\ext-filesystem-20260605224315.json`
+and
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write\report.json`.
+This supplemental cross-filesystem proof is not part of the imported 18/18
+commercial external matrix unless that matrix is expanded with non-Windows
+filesystem gates.
+
+Physical cross-filesystem destructive proof passed on 2026-06-05 PDT /
+2026-06-06 UTC against an expendable external USB NVMe disk after the read-only
+Apple HFS+/APFS evidence was captured. The local launcher used Windows UAC
+`runas` auth instead of keypress automation. The elevated runner required admin,
+`-Force`, non-boot/non-system guards, USB media by default, and serial or
+friendly-name matching for the large physical disk. It formatted ext2, ext3,
+and ext4 on app-style `\\?\GLOBALROOT\Device\Harddisk2\Partition2` raw targets,
+ran clean `e2fsck -p` repair and read-only checks, grew and shrank each file
+system with `resize2fs`, verified S.A.K. raw probes after format/grow/shrink,
+wrote and verified Linux swap SWAPSPACE2 metadata, detected Linux swap with
+`partition_filesystem_probe_certifier.exe`, and cleared the disk back to RAW.
+Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.cross-filesystem-physical-destructive\report.json`.
+This supplemental physical proof does not approve unbounded HFS+ folder-tree delete, complex HFS+ file delete,
+HFS+ B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice,
+inline/broad HFS+ attribute growth,
+compressed-file writes,
+arbitrary APFS media mutation, non-generated APFS file writes/resize/arbitrary repair,
+XFS/Btrfs writes, or deep XFS/Btrfs tool checks.
+APFS writer infrastructure includes fail-closed preflight, Fletcher-64 object
+checksum calculation/stamping/verification, deterministic mutation planning,
+generated/minimal raw-target format/write/patch/delete, empty root-directory
+create/delete, volume-label change, repair, and structured execution-evidence
+validation. The writer now also builds an APFS format scratch image with NXSB, object maps, APSB,
+root tree, spaceman accounting, stamped APFS object checksums, SHA-256 report
+output, and optional generated root seed-file read-back through a contiguous
+multi-block extent. It also has generated-image root-file write/patch/delete proof:
+the write path copies the source to a separate scratch image, adds or replaces
+one bounded root regular file, preserves existing bounded root regular files,
+updates root-tree/volume/spaceman metadata, and requires post-write
+listing/read-back proof. The patch path copies the source to a separate scratch
+image, applies a bounded byte-range update inside an existing root regular file,
+preserves sibling root files, rejects out-of-range writes, and requires exact
+read-back proof. The delete path removes one bounded root regular file, zeroes
+the previous generated file-data region, preserves sibling root files, and
+requires deleted-file hash plus negative read-back proof. The directory path
+creates or deletes one empty generated-layout root directory, preserves bounded
+root files and existing empty root directories across rewrites, verifies the
+created directory is empty, and verifies deleted-directory absence. It also has
+generated-image repair proof for
+recognized APFS metadata object checksums: the repair path copies the source to
+a separate scratch image, restamps corrupt supported object checksums, and
+requires post-repair detection/list/read-back proof. The execution gate requires
+matching evidence ID, operation,
+target path, structure mapping, checksum vectors, source/scratch image hash
+chain, copy-on-write checkpoint proof, object-map update proof, space-manager
+accounting proof, fsck/diskutil validation, target read-back proof,
+crash-replay proof, rollback-boundary proof, and artifact paths before even an
+image-only plan can be considered executable. Raw-media APFS exposure is
+currently limited to S.A.K.-generated one-spaceman-chunk targets from 64 MiB
+through 128 MiB; larger generated raw targets remain blocked because Apple
+kernel validation rejected the previous 51 GB generated spaceman geometry even
+though Windows-side detection accepted it.
+The writer now also formats existing image targets in place only after explicit
+destructive wipe confirmation, clears stale edge signatures, writes generated
+APFS metadata through a seekable-device block writer, and proves post-format
+APFS detection plus empty-root listing in unit coverage. Generated-layout APFS
+volume-label change now updates the APSB volume-name field only after
+generated-layout verification, restamps the APFS object checksum, reports
+old/new labels, and verifies read-back through the APFS browser in local image
+coverage. The production
+`sak_apfs_writer_cli.exe` bridge exposes generated APFS create/format,
+generated-layout checksum repair, and generated-layout root-file write/patch/delete
+plus empty root-directory create/delete and generated-layout volume-label change
+through queue/apply with raw partition identity, explicit confirmation, helper
+JSON output, and refresh evidence. Generated-image root-file
+create/replace/byte-range patch/delete and generated-image empty root-directory
+create/delete plus generated-image volume-label change remain helper-exposed
+with payload/read-back, directory-empty, old/new-label, or negative-read-back
+hashes. Arbitrary Apple APFS mutation remains blocked.
+The helper no longer blanket-enables protected, compressed, snapshot, or
+multi-volume APFS mutation options; generated APFS v2 single-volume layouts pass
+through the generated-layout proof path, while active snapshot/revert metadata,
+unsupported incompatible feature flags, and multi-volume containers remain
+blocked without future operation-specific proof.
+APFS generated-image and generated/raw-target mutation now enforce a
+S.A.K.-generated/minimal layout guard before writing: fixed NXSB, object-map,
+APSB, root-tree, spaceman headers, checksums, object-map references, root-tree
+bounds, and free-space accounting must match the generated layout. The repair
+path tolerates one or more bad checksums only on those known generated metadata
+objects and scans only the known generated metadata blocks, not arbitrary APFS
+objects. The guard also checks that generated spaceman chunk and CIB geometry
+matches the certified one-chunk layout before mutation.
+HFS+ arbitrary-write work has started with a constrained original-code core
+writer/helper slice: image-only data-fork overwrite, data/resource-fork
+allocated-block grow/shrink replacement, bounded initial-extent data/resource/fork-backed-attribute
+allocation growth, explicit zero-length truncate, constrained empty-file and
+empty-folder create/delete, bounded file create with data-fork allocation,
+single-leaf catalog rename/move,
+allocated-file delete, optional released-block zeroing for file/folder-tree delete,
+bounded folder-tree delete, and inline and fork-backed
+attribute replacement through `PartitionHfsFileSystemWriter` and
+`sak_hfs_writer_cli.exe`. It requires explicit writer enablement, target
+confirmation, certification evidence ID, journal override when the source
+volume is journaled, compressed-file blocking through `com.apple.decmpfs`, JSON
+helper output, catalog or attribute logical-size updates, allocation-bitmap/free-block-counter
+read-back for growth, delete/create operations, and secure released-block wipe,
+stale-tail zeroing on shrink/truncate,
+broad allocation-growth blocking, inline-attribute record-capacity enforcement,
+and read-back SHA-256 verification.
+The HFS File Partition Manager action now queues the same bounded data-fork,
+resource-fork, truncate, empty-file/folder create/delete, bounded file create
+with data, single-leaf catalog rename/move, allocated-file delete, optional released-block zeroing, bounded folder-tree delete, inline-attribute,
+fork-backed-attribute replacement, and bounded fork-backed-attribute growth
+mutation paths for selected HFS+/HFSX raw partitions through HFS logical-size
+sparse staging, exact raw-target validation, staged `fsck_hfs` repair/check,
+changed-range copyback, Apply review, and operation reports. The physical HFS File Apply proof passed
+on pinned expendable USB HFS media at
+`artifacts/partition-manager-certification/vm-lab/external-evidence/external.hfs-file-apply-physical/report.json`;
+it staged 262,144 logical HFS bytes, replaced the data fork, resource fork, and
+inline `com.apple.FinderInfo` attribute, created/deleted a file and an empty
+folder tree with optional secure released-block zeroing, and the refreshed
+2026-06-08 UTC physical lane staged a catalog rename before secure delete with
+read-back proof. It verified the helper
+zeroing warnings plus final root-listing absence, tolerated journaled `fsck_hfs`
+exit code 8 only for that explicitly allowed journaled workflow, copied one
+sparse range back, and verified raw read-back SHA-256 hashes. Bounded initial-extent
+data/resource/fork-backed-attribute allocation growth, single-leaf catalog rename/move,
+and bounded file create/delete are covered by core/helper tests; raw unbounded HFS+ file/folder create/delete,
+complex HFS+ file delete, HFS+ B-tree split/rebalance, inline/broad HFS+ attribute
+growth, compressed-file writes, and broad HFS+ allocation growth beyond the bounded initial-extent slice remain uncertified
+until operation-specific proof exists.
+The supplemental destructive APFS raw-format proof lane is
+`scripts/run_partition_manager_apfs_raw_format_validation.ps1`, with
+`scripts/launch_partition_manager_apfs_raw_format_validation_local.ps1` for UAC
+launch. It requires admin, `-Force`, APFS GPT type, non-boot/non-system target
+checks, optional serial/friendly-name pinning, raw-target opt-in, and hardware
+evidence flags before formatting an expendable APFS partition. The lane now
+also requires the target to be 64-128 MiB so the generated layout stays inside
+the certified one-spaceman-chunk envelope. The 2026-06-12 PDT / 2026-06-13 UTC
+JMicron run (`run-20260612-192652`, 51,170,148,352-byte target) is retained as
+Windows-side evidence only: the macOS recovery kernel later rejected that large
+generated APFS target with spaceman checkpoint/container corruption. Current
+Windows-side small-target proof passed on JMicron serial `DD56419883A5B`, Disk 2
+Partition 2, 134,217,728 bytes, with report
+`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
+Apple-native validation of that small target remains required before claiming
+Apple-native APFS destructive raw certification again.
+The APFS writer CLI self-test now also covers generated-image volume-label
+change, old/new-label JSON, APFS browser read-back, and raw volume-label refusal
+on normal file paths. Latest local proof:
+`artifacts\partition-manager-certification\vm-lab\apfs-cli-self-test\run-d609fd4714b244a38c21c8e9c79b78aa`.
+Physical raw APFS volume-label Apply proof is recorded in
+`artifacts\file-management-live-certification\disk3-apfs-raw-format\report.json`
+from guarded run `run-20260612-192652`; that large-target proof is
+Windows-side-only. Current 128 MiB Windows-side raw-format proof is recorded at
+`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`;
+Apple-native validation of that small generated target remains pending.
+The read-only APFS browser uses the same Fletcher-64 object-checksum verifier
+for APFS metadata object blocks and fails closed on corrupt metadata checksums;
+file extent payload blocks are read as data, not as APFS object metadata.
+
+File Management live cross-filesystem proof is destructive and separate from
+the Partition Manager matrix. Current Windows-side live evidence passed through
+`scripts\run_file_management_live_filesystem_certification.ps1` on pinned
+expendable raw media. APFS passed on JMicron serial `DD56419883A5B`, Disk 2
+Partition 2, 134,217,728 bytes, with File Explorer create/write/read,
+duplicate-finder, advanced-search, delete-file, negative-read, and
+delete-directory proof at
+`artifacts\file-management-live-certification\disk2-apfs-script-after-fix\file-management-live-certification.json`.
+HFS+ passed on Best Buy serial `DD564198838A8`, Disk 3 Partition 3, with File
+Explorer create/write/read, duplicate-finder, advanced-search, rename,
+delete-file, negative-read, and delete-directory proof at
+`artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
+APFS still needs macOS Recovery validation of the small generated slice before
+it can be called Apple-native certified.
+
+Linux compatibility validation for the ext bundle passed on 2026-06-07 UTC
+through Arch WSL for ext2, ext3, and ext4. The harness created each image with
+the bundled Windows `mke2fs`, grew and shrank it with bundled Windows
+`resize2fs`, verified clean Linux `e2fsck`/`dumpe2fs` output, loop-mounted the
+image read/write in Linux, wrote `sak-linux-proof.txt`, rechecked clean with
+Linux `e2fsck`, and rechecked clean with bundled Windows `e2fsck` after the
+Linux write. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext2-linux-validation\report.json`,
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext3-linux-validation\report.json`,
+and
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext4-linux-validation\report.json`.
+This is certification tooling only and does not add any WSL or Linux runtime
+dependency to the portable Windows app.
+
+Linux-created XFS/Btrfs metadata validation passed again on 2026-06-07 UTC through
+Arch WSL. The harness created disposable XFS and Btrfs images with `mkfs.xfs`
+and `mkfs.btrfs`, then ran `partition_filesystem_probe_certifier.exe` from
+Windows against each image with expected file-system and sanity requirements.
+S.A.K. detected XFS and Btrfs, captured label/UUID/geometry/counter metadata,
+reported sane metadata, and deleted the disposable images. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-metadata-validation\report.json`.
+This validates read-only detector metadata used by the in-app original metadata
+consistency check. Deep XFS/Btrfs tool checks, format, repair, and write support
+remain blocked pending approved Windows-portable tools and operation-specific
+proof.
+Full arbitrary APFS/HFS+/XFS/Btrfs write support is not certified. Any such
+claim requires a separate driver/tooling milestone that covers native
+allocation, logs/journals or checkpoints, metadata checksums, snapshots/clones,
+compression/encryption where applicable, multi-device or multi-volume state,
+crash replay, rollback, VM proof, physical proof, and UI/apply safety gates.
+
+Linux swap format compatibility validation passed on 2026-06-05 PDT through
+Arch WSL. The harness created a disposable image, wrote an original SWAPSPACE2
+v1 header using the same field layout as the queued app formatter, then verified
+the image with S.A.K. `partition_filesystem_probe_certifier.exe`, Linux `blkid`,
+and Linux `swaplabel`. All probes reported swap type, label, UUID, version, and
+page-size metadata consistently. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-validation\report.json`.
+This validates the app's generated Linux swap metadata format without adding a
+runtime WSL dependency.
+
+Linux swap raw-partition VM proof passed on 2026-06-05 PDT in
+`SAK-PM-Lab-Win11`. The host launcher
+`scripts/launch_partition_manager_vm_gate_host.ps1` resolved the real guest
+password file from VM unattended metadata, validated `VBoxManage guestcontrol`
+as `saklab`, and recorded a redacted host launch report. The elevated runner
+created a disposable GPT partition on VirtualBox disk 1, set the Linux swap GPT
+type, wrote original SWAPSPACE2 v1 metadata to
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2`, reread and verified the raw
+header, verified S.A.K. raw detection with
+`partition_filesystem_probe_certifier.exe`, and cleared disk 1 back to RAW.
+Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm\report.json`.
+The host launch report is under
+`artifacts\partition-manager-certification\vm-lab\host-launch\`. The original
+proof used a keypress UAC fallback on the legacy lab VM; that fallback is now
+opt-in only.
+
+A direct-admin automation rerun passed on 2026-06-05 PDT / 2026-06-06 UTC in
+`SAK-PM-Automation-Win11`, created by
+`scripts/new_partition_manager_automation_vm.ps1`. The VM-creation report
+`artifacts\partition-manager-certification\vm-lab\automation-vm\SAK-PM-Automation-Win11-20260605210356.json`
+records `direct_admin_guestcontrol_verified=true`. The host launch report
+`artifacts\partition-manager-certification\vm-lab\host-launch\linux-swap-20260605220305.json`
+records `launch_mode=direct-admin`, `direct_admin_token=true`, and
+`uac_accept_sent_at=null`. The VM gate report remains
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm\report.json`
+with `status=Passed`, `detected_file_system=Linux swap`, raw target
+`\\?\GLOBALROOT\Device\Harddisk1\Partition2`, exact 134217728-byte probe size,
+and cleanup back to RAW. This
+raw-media lane is supplemental and is not counted in the imported 18/18
+external matrix unless the matrix is expanded with a Linux swap gate.
+
+Filesystem probe helper offset proof was added on 2026-06-05 PDT. The helper
+`partition_filesystem_probe_certifier.exe` accepts `--input-offset-bytes`, reads
+regular files and Windows raw device paths from that offset, and reports the
+offset in JSON. `scripts/test_partition_filesystem_probe_certifier.ps1` creates
+a small padded ext2 fixture, validates the offset read, and verifies invalid
+offset input fails; the script is wired into CTest and release readiness. A
+lab-only Sonoma DMG HFS+ fixture also passed with `--input-offset-bytes
+134250496` and sane HFS+ header metadata. The unpacked Tahoe installer contains
+a compressed `SharedSupport.dmg` with an HFS+ payload, useful for future
+container extraction tests but not a runtime dependency or release asset.
+
+Physical Apple filesystem read-only proof passed on 2026-06-05 PDT /
+2026-06-06 UTC against an expendable external USB NVMe GPT disk. The disk was
+non-boot and non-system. Partition 2 used Apple APFS GUID
+`{7c3457ef-0000-11aa-aa11-00306543ecac}` and passed APFS detection, root
+listing, `/Fonts` listing, selected-file read proof, bounded export proof, and
+space-manager free-byte reporting through
+`\\?\GLOBALROOT\Device\Harddisk2\Partition2`; partition 3 used Apple HFS GUID
+`{48465300-0000-11aa-aa11-00306543ecac}` and passed HFS+ detection, root
+metadata, and free-byte reporting through
+`\\?\GLOBALROOT\Device\Harddisk2\Partition3`. The APFS file proof read
+`/Fonts/00TT.TTF` at 25056 bytes with SHA-256
+`d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-filesystem-physical\report.json`.
+APFS bounded recursive export proof also passed from `/Fonts` on the same
+raw-partition alias with 63 files, 1 directory, 64 scanned entries, and
+21161830 exported bytes. The latest APFS probe reported `total_bytes=127992487936`
+and `free_bytes=127866097664`; the latest HFS+ probe reported
+`total_bytes=127724052480` and `free_bytes=125197647872`, listed 9 root
+entries, and read
+`/polyhavenassets_blendermarket_v1.2.0  (Blender 4.5+).zip` at 185293 bytes
+with SHA-256
+`72222f9f83d177ea9a2970edb756ab9f3f9f6b00a12f47af63259f215d970709`, then
+read inline HFS+ attribute `com.apple.decmpfs` for file ID 1894 at 16 bytes
+with SHA-256
+`e2aed0d76e90c81c39f9916d56a8f1631c440aec356877ea7dae197b069ea64f`. The
+physical Apple report records `validation_requirements` showing HFS file,
+HFS attribute, APFS file, and APFS export proofs were required for the latest
+run.
+The app inventory path now tries those `GLOBALROOT` partition aliases before
+using elevated PhysicalDrive offset reads. This proof is read-only and does not
+approve unbounded HFS+ folder-tree delete, complex HFS+ file delete,
+HFS+ B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice,
+inline/broad HFS+ attribute growth, compressed-file writes,
+arbitrary APFS
+mutation, non-generated APFS file writes, or APFS resize behavior.
+
+APFS multi-partition physical probe coverage was expanded on 2026-06-07 UTC
+using a second expendable non-boot USB disk with five APFS partitions. The
+read-only validation command
+`scripts\run_partition_manager_physical_apple_probe_validation.ps1 -DiskNumber 3 -AllowMissingHfs -ProbeAllApfsPartitions -RequireAllApfsPartitions`
+passed, and every APFS partition reported sane nonzero free-space counters
+through `\\?\GLOBALROOT\Device\Harddisk3\PartitionN`. This specifically
+regresses APFS containers whose space-manager checkpoint object is outside the
+initial 2 MiB signature probe. Evidence:
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-apfs-multipart-physical\report.json`.
+
 The first matrix-backed external VM gate was completed on 2026-06-02 09:26 PDT:
 `external.bitlocker` - BitLocker locked/unlocked data-volume blocker proof. The
 VM lab created a disposable 1 GB NTFS data volume on

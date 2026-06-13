@@ -1,0 +1,227 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.linux-metadata-validation",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-07T01:30:34.1781676Z",
+    "finished_at_utc":  "2026-06-07T01:30:37.6799873Z",
+    "distro_name":  "archlinux",
+    "file_systems":  [
+                         "xfs",
+                         "btrfs"
+                     ],
+    "image_size_bytes":  536870912,
+    "certifier_path":  "<repo>\\build\\Release\\partition_filesystem_probe_certifier.exe",
+    "image_results":  [
+                          {
+                              "file_system":  "xfs",
+                              "image_path":  "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-metadata.img",
+                              "linux_image_path":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-xfs-metadata.img",
+                              "probe_report_path":  "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-probe-report.json",
+                              "image_sha256":  "1d22835429183c17ef48105dad56f39d4fd14a37c8c82359874e412ace4e0d7c",
+                              "detected_file_system":  "XFS",
+                              "total_bytes":  "536870912",
+                              "free_bytes":  "469614592",
+                              "details":  [
+                                              "Block size: 4096",
+                                              "Data blocks: 131072",
+                                              "Free data blocks: 114652",
+                                              "UUID: cfbd5d64-6d24-442a-8957-8666c07a46ad",
+                                              "File-system name: SAK_XFS",
+                                              "AG blocks: 32768",
+                                              "Allocation groups: 4",
+                                              "Sector size: 512",
+                                              "Inode size: 512",
+                                              "Inodes: 64",
+                                              "Free inodes: 61",
+                                              "Version flags: 0x0000b4b5",
+                                              "Features2: 0x0000018a",
+                                              "Metadata sanity: XFS superblock geometry is internally consistent"
+                                          ]
+                          },
+                          {
+                              "file_system":  "btrfs",
+                              "image_path":  "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-metadata.img",
+                              "linux_image_path":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-btrfs-metadata.img",
+                              "probe_report_path":  "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-probe-report.json",
+                              "image_sha256":  "cc6bb0dfd289d8291ba82909b43eb47cd2921c14202f9f0f14f2c98a2d8f6194",
+                              "detected_file_system":  "Btrfs",
+                              "total_bytes":  "536870912",
+                              "free_bytes":  "536707072",
+                              "details":  [
+                                              "Total bytes: 536870912",
+                                              "Bytes used: 163840",
+                                              "UUID: 5f92db5f-8129-4503-8d1f-416dbf30d967",
+                                              "Label: SAK_BTRFS",
+                                              "Generation: 8",
+                                              "Devices: 1",
+                                              "Sector size: 4096",
+                                              "Node size: 16384",
+                                              "Leaf size: 16384",
+                                              "Compat flags: 0x0000000000000000",
+                                              "Compat ro flags: 0x000000000000000b",
+                                              "Incompat flags: 0x0000000000000361",
+                                              "Metadata sanity: Btrfs superblock counters are internally consistent"
+                                          ]
+                          }
+                      ],
+    "image_cleanup":  [
+                          "Removed disposable xfs metadata image.",
+                          "Removed disposable btrfs metadata image."
+                      ],
+    "commands":  [
+                     {
+                         "name":  "wsl-uname",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "uname",
+                                           "-a"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.103,
+                         "output":  "Linux MINI-DT 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux"
+                     },
+                     {
+                         "name":  "linux-metadata-tool-preflight",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKY29tbWFuZCAtdiBta2ZzLnhmcwpjb21tYW5kIC12IG1rZnMuYnRyZnMKaWQ=\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.099,
+                         "output":  "/usr/sbin/mkfs.xfs\n/usr/sbin/mkfs.btrfs\nuid=0(root) gid=0(root) groups=0(root)"
+                     },
+                     {
+                         "name":  "create-disposable-image",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "createnew",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-metadata.img",
+                                           "536870912"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.016,
+                         "output":  "File <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-metadata.img is created"
+                     },
+                     {
+                         "name":  "wslpath",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "wslpath",
+                                           "-a",
+                                           "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-xfs-metadata.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.111,
+                         "output":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-xfs-metadata.img"
+                     },
+                     {
+                         "name":  "linux-format-xfs",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKbWtmcy54ZnMgLWYgLUwgJ1NBS19YRlMnICcvbW50L2MvVXNlcnMvUmFuZHkvQ29kaW5nL1MuQS5LLi1VdGlsaXR5L2FydGlmYWN0cy9wYXJ0aXRpb24tbWFuYWdlci1jZXJ0aWZpY2F0aW9uL3ZtLWxhYi9leHRlcm5hbC1ldmlkZW5jZS9leHRlcm5hbC5saW51eC1tZXRhZGF0YS12YWxpZGF0aW9uL3J1bi0yMDI2MDYwNi0xODMwMzQvc2FrLXhmcy1tZXRhZGF0YS5pbWcnCnN5bmM=\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.912,
+                         "output":  "meta-data=<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-xfs-metadata.img isize=512    agcount=4, agsize=32768 blks\n         =                       sectsz=512   attr=2, projid32bit=1\n         =                       crc=1        finobt=1, sparse=1, rmapbt=1\n         =                       reflink=1    bigtime=1 inobtcount=1 nrext64=1\n         =                       exchange=1   metadir=0\ndata     =                       bsize=4096   blocks=131072, imaxpct=25\n         =                       sunit=0      swidth=0 blks\nnaming   =version 2              bsize=4096   ascii-ci=0, ftype=1, parent=1\nlog      =internal log           bsize=4096   blocks=16384, version=2\n         =                       sectsz=512   sunit=0 blks, lazy-count=1\nrealtime =none                   extsz=4096   blocks=0, rtextents=0\n         =                       rgcount=0    rgsize=0 extents\n         =                       zoned=0      start=0 reserved=0"
+                     },
+                     {
+                         "name":  "sak-probe-certifier-xfs",
+                         "file_path":  "<repo>\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-metadata.img",
+                                           "--output",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-xfs-probe-report.json",
+                                           "--expect",
+                                           "XFS",
+                                           "--require-sane"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.02,
+                         "output":  "Detected XFS in sak-xfs-metadata.img"
+                     },
+                     {
+                         "name":  "create-disposable-image",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "createnew",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-metadata.img",
+                                           "536870912"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.012,
+                         "output":  "File <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-metadata.img is created"
+                     },
+                     {
+                         "name":  "wslpath",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "wslpath",
+                                           "-a",
+                                           "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-btrfs-metadata.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.09,
+                         "output":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.linux-metadata-validation/run-20260606-183034/sak-btrfs-metadata.img"
+                     },
+                     {
+                         "name":  "linux-format-btrfs",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKbWtmcy5idHJmcyAtZiAtTCAnU0FLX0JUUkZTJyAnL21udC9jL1VzZXJzL1JhbmR5L0NvZGluZy9TLkEuSy4tVXRpbGl0eS9hcnRpZmFjdHMvcGFydGl0aW9uLW1hbmFnZXItY2VydGlmaWNhdGlvbi92bS1sYWIvZXh0ZXJuYWwtZXZpZGVuY2UvZXh0ZXJuYWwubGludXgtbWV0YWRhdGEtdmFsaWRhdGlvbi9ydW4tMjAyNjA2MDYtMTgzMDM0L3Nhay1idHJmcy1tZXRhZGF0YS5pbWcnCnN5bmM=\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.398,
+                         "output":  "btrfs-progs v7.0\nSee https://btrfs.readthedocs.io for more information.\n\nNOTE: default settings have changed in version 6.19 (supported since linux 6.1):\n      - enable block-group-tree (-O bgt)\n\nLabel:              SAK_BTRFS\nUUID:               5f92db5f-8129-4503-8d1f-416dbf30d967\nNode size:          16384\nSector size:        4096\t(CPU page size: 4096)\nFilesystem size:    512.00MiB\nBlock group profiles:\n  Data:             single            8.00MiB\n  Metadata:         DUP              32.00MiB\n  System:           DUP               8.00MiB\nSSD detected:       no\nZoned device:       no\nFeatures:           extref, skinny-metadata, no-holes, free-space-tree, block-group-tree\nChecksum:           crc32c\nNumber of devices:  1\nDevices:\n   ID        SIZE  PATH                                                                                             \n    1   512.00MiB  <repo>/artifacts/partition-manager-certification/vm-lab/externa"
+                     },
+                     {
+                         "name":  "sak-probe-certifier-btrfs",
+                         "file_path":  "<repo>\\build\\Release\\partition_filesystem_probe_certifier.exe",
+                         "arguments":  [
+                                           "--input",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-metadata.img",
+                                           "--output",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.linux-metadata-validation\\run-20260606-183034\\sak-btrfs-probe-report.json",
+                                           "--expect",
+                                           "Btrfs",
+                                           "--require-sane"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.02,
+                         "output":  "Detected Btrfs in sak-btrfs-metadata.img"
+                     }
+                 ],
+    "error":  ""
+}

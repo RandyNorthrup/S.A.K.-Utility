@@ -1,0 +1,240 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.ext-linux-validation",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-07T01:30:05.9026444Z",
+    "finished_at_utc":  "2026-06-07T01:30:07.9902862Z",
+    "distro_name":  "archlinux",
+    "file_system":  "ext2",
+    "image_path":  "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img",
+    "linux_image_path":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.ext2-linux-validation/run-20260606-183005/sak-ext-linux-validation.img",
+    "initial_size_bytes":  67108864,
+    "grown_size_bytes":  100663296,
+    "shrunk_size_bytes":  83886080,
+    "image_sha256_after_windows_tools":  "950e59319badbff2b0eb45fd0a6e7834f3b4b631d2610f029f1ff02e123bcec9",
+    "image_sha256_after_linux_write":  "330c0908ce86d2025c0d373b4a24e8749a97a5f68095d405efa788f1fc9855a1",
+    "image_cleanup":  "Removed disposable validation image.",
+    "tool_hashes":  [
+                        {
+                            "id":  "mke2fs",
+                            "path":  "<repo>\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                            "expected_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356",
+                            "actual_sha256":  "323eb2583eae62c8165ed617faced8a2327993b95df602607b963500dbeaf356"
+                        },
+                        {
+                            "id":  "e2fsck",
+                            "path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                            "expected_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0",
+                            "actual_sha256":  "083d23deb032214df1150210a5813b3db519d844e352654d569419194e214eb0"
+                        },
+                        {
+                            "id":  "resize2fs",
+                            "path":  "<repo>\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                            "expected_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3",
+                            "actual_sha256":  "e704860c3b1a5155e931f18d78f812ac1c990a1e924a9610819b0cf1ef6367c3"
+                        }
+                    ],
+    "commands":  [
+                     {
+                         "name":  "wsl-uname",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "uname",
+                                           "-a"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.104,
+                         "output":  "Linux MINI-DT 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux"
+                     },
+                     {
+                         "name":  "linux-tool-preflight",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKY29tbWFuZCAtdiBlMmZzY2sKY29tbWFuZCAtdiBkdW1wZTJmcwpjb21tYW5kIC12IGRlYnVnZnMKY29tbWFuZCAtdiBtb3VudAppZA==\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.099,
+                         "output":  "/usr/sbin/e2fsck\n/usr/sbin/dumpe2fs\n/usr/sbin/debugfs\n/usr/sbin/mount\nuid=0(root) gid=0(root) groups=0(root)"
+                     },
+                     {
+                         "name":  "create-disposable-image",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "createnew",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img",
+                                           "67108864"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.012,
+                         "output":  "File <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img is created"
+                     },
+                     {
+                         "name":  "mke2fs-format-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\mke2fs.exe",
+                         "arguments":  [
+                                           "-q",
+                                           "-t",
+                                           "ext2",
+                                           "-F",
+                                           "-L",
+                                           "SAKLINUX",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.036,
+                         "output":  ""
+                     },
+                     {
+                         "name":  "windows-e2fsck-after-format-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.073,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 11/16384 files (0.0% non-contiguous), 5412/65536 blocks"
+                     },
+                     {
+                         "name":  "grow-disposable-image",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "seteof",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img",
+                                           "100663296"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.014,
+                         "output":  "File <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img eof set"
+                     },
+                     {
+                         "name":  "windows-resize2fs-grow-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.03,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img to 98304 (1k) blocks.\nThe filesystem on <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img is now 98304 (1k) blocks long."
+                     },
+                     {
+                         "name":  "windows-e2fsck-after-grow-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.097,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 11/24576 files (0.0% non-contiguous), 7725/98304 blocks"
+                     },
+                     {
+                         "name":  "windows-e2fsck-readonly-before-shrink-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.096,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 11/24576 files (0.0% non-contiguous), 7725/98304 blocks"
+                     },
+                     {
+                         "name":  "windows-resize2fs-shrink-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\resize2fs.exe",
+                         "arguments":  [
+                                           "-p",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img",
+                                           "81920K"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.082,
+                         "output":  "resize2fs 1.47.4 (6-Mar-2025)\nResizing the filesystem on <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img to 81920 (1k) blocks.\nBegin pass 3 (max = 12)\nScanning inode table          ----------------------------------------\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nThe filesystem on <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img is now 81920 (1k) blocks long."
+                     },
+                     {
+                         "name":  "shrink-disposable-image-container",
+                         "file_path":  "fsutil.exe",
+                         "arguments":  [
+                                           "file",
+                                           "seteof",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img",
+                                           "83886080"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.011,
+                         "output":  "File <repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img eof set"
+                     },
+                     {
+                         "name":  "windows-e2fsck-after-shrink-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.087,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 11/20480 files (0.0% non-contiguous), 6697/81920 blocks"
+                     },
+                     {
+                         "name":  "wslpath-image",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "--",
+                                           "wslpath",
+                                           "-a",
+                                           "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.ext2-linux-validation/run-20260606-183005/sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.105,
+                         "output":  "<repo>/artifacts/partition-manager-certification/vm-lab/external-evidence/external.ext2-linux-validation/run-20260606-183005/sak-ext-linux-validation.img"
+                     },
+                     {
+                         "name":  "linux-e2fsck-dumpe2fs-loopmount-write-ext2",
+                         "file_path":  "wsl.exe",
+                         "arguments":  [
+                                           "-d",
+                                           "archlinux",
+                                           "-u",
+                                           "root",
+                                           "--",
+                                           "sh",
+                                           "-lc",
+                                           "printf \u0027%s\u0027 \u0027c2V0IC1ldW8gcGlwZWZhaWwKaW1nPScvbW50L2MvVXNlcnMvUmFuZHkvQ29kaW5nL1MuQS5LLi1VdGlsaXR5L2FydGlmYWN0cy9wYXJ0aXRpb24tbWFuYWdlci1jZXJ0aWZpY2F0aW9uL3ZtLWxhYi9leHRlcm5hbC1ldmlkZW5jZS9leHRlcm5hbC5leHQyLWxpbnV4LXZhbGlkYXRpb24vcnVuLTIwMjYwNjA2LTE4MzAwNS9zYWstZXh0LWxpbnV4LXZhbGlkYXRpb24uaW1nJwptbnQ9L21udC9zYWstZXh0LWxpbnV4LXZhbGlkYXRpb24tJCQKY2xlYW51cCgpIHsKICBpZiBtb3VudHBvaW50IC1xICIkbW50IjsgdGhlbiB1bW91bnQgIiRtbnQiOyBmaQogIHJtZGlyICIkbW50IiAyPi9kZXYvbnVsbCB8fCB0cnVlCn0KdHJhcCBjbGVhbnVwIEVYSVQKZWNobyAibGludXgtdW5hbWU9JCh1bmFtZSAtYSkiCmUyZnNjayAtZiAtbiAiJGltZyIKZHVtcGUyZnMgLWggIiRpbWciIDI+L2Rldi9udWxsIHwgZ3JlcCAtRSAnRmlsZXN5c3RlbSB2b2x1bWUgbmFtZXxGaWxlc3lzdGVtIHN0YXRlfEZpbGVzeXN0ZW0gZmVhdHVyZXN8QmxvY2sgY291bnR8QmxvY2sgc2l6ZScKbWtkaXIgLXAgIiRtbnQiCm1vdW50IC1vIGxvb3AscncgIiRpbWciICIkbW50IgpwcmludGYgJ1NBSyBMaW51eCB2YWxpZGF0aW9uIGZpeHR1cmVcbicgPiAiJG1udC9zYWstbGludXgtcHJvb2YudHh0IgpzeW5jCnRlc3QgLXMgIiRtbnQvc2FrLWxpbnV4LXByb29mLnR4dCIKY2F0ICIkbW50L3Nhay1saW51eC1wcm9vZi50eHQiCnVtb3VudCAiJG1udCIKcm1kaXIgIiRtbnQiCmUyZnNjayAtZiAtbiAiJGltZyIKZGVidWdmcyAtUiAnc3RhdCAvc2FrLWxpbnV4LXByb29mLnR4dCcgIiRpbWciIDI+L2Rldi9udWxs\u0027 | base64 -d | bash"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.695,
+                         "output":  "linux-uname=Linux MINI-DT 6.6.114.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Dec  1 20:46:23 UTC 2025 x86_64 GNU/Linux\ne2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 11/20480 files (0.0% non-contiguous), 6697/81920 blocks\nFilesystem volume name:   SAKLINUX\nFilesystem features:      ext_attr resize_inode dir_index filetype sparse_super large_file\nFilesystem state:         clean\nBlock count:              81920\nBlock size:               1024\nSAK Linux validation fixture\ne2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 12/20480 files (0.0% non-contiguous), 6698/81920 blocks\nInode: 12   Type: regular    Mode:  0644   Flags: 0x0\nGeneration: 1758838659    Version: 0x00000000\nUser:     0   Group:     0   Size: 29\nFile ACL: 0\nLinks: 1   Blockcount: 2\nFragment:  Address: 0    Number: 0    Size: 0\nctime: 0x6a24c99f -- Sat Jun  6 18:30:07 2026\natime: 0x6a24c99f -- Sat Jun  6 18:30:07 2026\nmtime: 0x6a24c99f -- Sat Jun  6 18:30:07 2026\nSize of extra inode fields: 0\nBLOCKS:\n(0):7681\nTOTAL: 1"
+                     },
+                     {
+                         "name":  "windows-e2fsck-after-linux-write-ext2",
+                         "file_path":  "<repo>\\tools\\filesystem\\e2fsprogs\\e2fsck.exe",
+                         "arguments":  [
+                                           "-n",
+                                           "-f",
+                                           "<repo>\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.ext2-linux-validation\\run-20260606-183005\\sak-ext-linux-validation.img"
+                                       ],
+                         "exit_code":  0,
+                         "duration_seconds":  0.101,
+                         "output":  "e2fsck 1.47.4 (6-Mar-2025)\nPass 1: Checking inodes, blocks, and sizes\nPass 2: Checking directory structure\nPass 3: Checking directory connectivity\nPass 4: Checking reference counts\nPass 5: Checking group summary information\nSAKLINUX: 12/20480 files (0.0% non-contiguous), 6698/81920 blocks"
+                     }
+                 ],
+    "error":  ""
+}

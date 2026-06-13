@@ -1,0 +1,249 @@
+﻿{
+    "schema_version":  1,
+    "gate_id":  "external.apple-filesystem-physical",
+    "status":  "Passed",
+    "started_at_utc":  "2026-06-07T03:36:14.5824370Z",
+    "finished_at_utc":  "2026-06-07T03:36:17.9820441Z",
+    "output_root":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical",
+    "destructive":  false,
+    "writes_target_media":  false,
+    "validation_requirements":  {
+                                    "require_hfs_file_proof":  true,
+                                    "require_hfs_attribute_proof":  true,
+                                    "require_apfs_file_proof":  true,
+                                    "require_apfs_export_proof":  true,
+                                    "allow_missing_hfs":  false,
+                                    "probe_all_apfs_partitions":  false,
+                                    "require_all_apfs_partitions":  false
+                                },
+    "probe_limits":  {
+                         "hfs_browse_path":  "/",
+                         "hfs_file_probe_max_bytes":  "1048576",
+                         "hfs_attribute_probe_max_bytes":  "1048576",
+                         "apfs_browse_path":  "/",
+                         "apfs_file_probe_max_bytes":  "1048576",
+                         "apfs_candidate_search_max_directories":  128,
+                         "apfs_export_max_entries":  "64",
+                         "apfs_export_max_file_bytes":  "67108864",
+                         "apfs_export_max_total_bytes":  "536870912"
+                     },
+    "disk":  {
+                 "number":  2,
+                 "friendly_name":  "Best Buy NS-PCNVMEHDE(-C)",
+                 "serial_number":  "DD564198838A8",
+                 "bus_type":  "USB",
+                 "partition_style":  "GPT",
+                 "size_bytes":  "256060514304",
+                 "is_boot":  false,
+                 "is_system":  false
+             },
+    "results":  [
+                    {
+                        "partition_number":  3,
+                        "gpt_type":  "{48465300-0000-11aa-aa11-00306543ecac}",
+                        "offset_bytes":  "128202223616",
+                        "size_bytes":  "127724052480",
+                        "expected_file_system":  "HFS+",
+                        "target_path":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition3",
+                        "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-probe.json",
+                        "exit_code":  0,
+                        "output":  [
+                                       "Detected HFS+ in Partition3"
+                                   ],
+                        "status":  "Passed",
+                        "detected_file_system":  "HFS+",
+                        "total_bytes":  "127724052480",
+                        "free_bytes":  "125197647872",
+                        "details":  [
+                                        "Version: 4",
+                                        "Files: 5742",
+                                        "Folders: 23",
+                                        "Journaled: No",
+                                        "Block size: 4096",
+                                        "Total blocks: 31182630",
+                                        "Free blocks: 30565832"
+                                    ]
+                    },
+                    {
+                        "partition_number":  2,
+                        "gpt_type":  "{7c3457ef-0000-11aa-aa11-00306543ecac}",
+                        "offset_bytes":  "209735680",
+                        "size_bytes":  "127992487936",
+                        "expected_file_system":  "APFS",
+                        "target_path":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                        "report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-probe.json",
+                        "exit_code":  0,
+                        "output":  [
+                                       "Detected APFS in Partition2"
+                                   ],
+                        "status":  "Passed",
+                        "detected_file_system":  "APFS",
+                        "total_bytes":  "127992487936",
+                        "free_bytes":  "127866097664",
+                        "details":  [
+                                        "Block size: 4096",
+                                        "Block count: 31248166",
+                                        "Container UUID: 7a49dccc-bbe4-4b26-bc13-3654c1dbf0a2",
+                                        "Features: 0x0000000000000000",
+                                        "Read-only compatible features: 0x0000000000000000",
+                                        "Incompatible features: 0x0000000000000002",
+                                        "Next object ID: 1505",
+                                        "Next transaction ID: 77",
+                                        "Checkpoint descriptor blocks: 280",
+                                        "Checkpoint data blocks: 27672",
+                                        "Checkpoint descriptor base block: 1",
+                                        "Checkpoint data base block: 281",
+                                        "Checkpoint descriptor next index: 152",
+                                        "Checkpoint data next index: 440",
+                                        "Checkpoint descriptor start index: 150",
+                                        "Checkpoint data start index: 432",
+                                        "Checkpoint descriptor length: 2",
+                                        "Checkpoint data length: 8",
+                                        "Space manager OID: 1024",
+                                        "Object map OID: 443094",
+                                        "Reaper OID: 1025",
+                                        "Volume OID slots used: 1",
+                                        "Volume OIDs: 0:1026",
+                                        "APFS space manager block: 281",
+                                        "APFS space manager OID: 1024",
+                                        "APFS space manager block size: 4096",
+                                        "APFS space manager main blocks: 31248166",
+                                        "APFS space manager free blocks: 31217309",
+                                        "APFS free bytes: 127866097664",
+                                        "APFS referenced object headers in probe window: 16",
+                                        "APFS referenced object header block 281, labels container space manager OID, OID 1024, XID 1, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 282, labels container reaper OID, OID 1025, XID 1, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 283, labels container space manager OID, OID 1024, XID 2, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 284, labels container reaper OID, OID 1025, XID 2, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 287, labels container space manager OID, OID 1024, XID 3, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 288, labels container reaper OID, OID 1025, XID 3, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 291, labels container space manager OID, OID 1024, XID 4, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 292, labels container reaper OID, OID 1025, XID 4, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 295, labels container space manager OID, OID 1024, XID 5, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 296, labels container reaper OID, OID 1025, XID 5, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 299, labels container space manager OID, OID 1024, XID 6, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 300, labels container reaper OID, OID 1025, XID 6, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 303, labels container space manager OID, OID 1024, XID 7, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 304, labels container reaper OID, OID 1025, XID 7, object type 0x80000011, object subtype 0x00000000",
+                                        "APFS referenced object header block 307, labels container space manager OID, OID 1024, XID 8, object type 0x80000005, object subtype 0x00000000",
+                                        "APFS referenced object header block 308, labels container reaper OID, OID 1025, XID 8, object type 0x80000011, object subtype 0x00000000",
+                                        "Max file systems: 100",
+                                        "Metadata sanity: APFS container block geometry is internally consistent"
+                                    ]
+                    }
+                ],
+    "hfs_file_proof":  {
+                           "status":  "Passed",
+                           "selected_file_path":  "/polyhavenassets_blendermarket_v1.2.0  (Blender 4.5+).zip",
+                           "bytes_read":  "185293",
+                           "sha256":  "72222f9f83d177ea9a2970edb756ab9f3f9f6b00a12f47af63259f215d970709",
+                           "artifacts":  [
+                                             "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-read-file-proof.json"
+                                         ],
+                           "output":  [
+                                          "Detected HFS+ in Partition3"
+                                      ],
+                           "error":  ""
+                       },
+    "hfs_attribute_proof":  {
+                                "status":  "Passed",
+                                "file_id":  "1894",
+                                "attribute_name":  "com.apple.decmpfs",
+                                "storage":  "inline",
+                                "bytes_read":  "16",
+                                "sha256":  "e2aed0d76e90c81c39f9916d56a8f1631c440aec356877ea7dae197b069ea64f",
+                                "artifacts":  [
+                                                  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-check-attribute-scan.json",
+                                                  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-read-attribute-proof.json"
+                                              ],
+                                "output":  [
+                                               "Detected HFS+ in Partition3",
+                                               "Detected HFS+ in Partition3"
+                                           ],
+                                "error":  ""
+                            },
+    "apfs_file_proof":  {
+                            "status":  "Passed",
+                            "selected_file_path":  "/.fseventsd/0000000000d34037",
+                            "bytes_read":  "34163",
+                            "sha256":  "d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4",
+                            "candidate_directories_scanned":  1,
+                            "candidate_directories_queued":  3,
+                            "artifacts":  [
+                                              "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-list-file-candidate-001.json",
+                                              "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-read-file-proof.json"
+                                          ],
+                            "output":  [
+                                           "Detected APFS in Partition2",
+                                           "Detected APFS in Partition2"
+                                       ],
+                            "error":  ""
+                        },
+    "apfs_export_proof":  {
+                              "status":  "Passed",
+                              "source_path":  "/.fseventsd",
+                              "files_exported":  6,
+                              "directories_exported":  0,
+                              "symlinks_skipped":  0,
+                              "entries_scanned":  6,
+                              "bytes_exported":  "67906",
+                              "artifacts":  [
+                                                "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-export-proof.json"
+                                            ],
+                              "output":  [
+                                             "Detected APFS in Partition2"
+                                         ],
+                              "error":  ""
+                          },
+    "apfs_partition_proofs":  [
+                                  {
+                                      "partition_number":  2,
+                                      "target_path":  "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition2",
+                                      "probe_report_path":  "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-probe.json",
+                                      "file_proof":  {
+                                                         "status":  "Passed",
+                                                         "selected_file_path":  "/.fseventsd/0000000000d34037",
+                                                         "bytes_read":  "34163",
+                                                         "sha256":  "d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4",
+                                                         "candidate_directories_scanned":  1,
+                                                         "candidate_directories_queued":  3,
+                                                         "artifacts":  [
+                                                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-list-file-candidate-001.json",
+                                                                           "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-read-file-proof.json"
+                                                                       ],
+                                                         "output":  [
+                                                                        "Detected APFS in Partition2",
+                                                                        "Detected APFS in Partition2"
+                                                                    ],
+                                                         "error":  ""
+                                                     },
+                                      "export_proof":  {
+                                                           "status":  "Passed",
+                                                           "source_path":  "/.fseventsd",
+                                                           "files_exported":  6,
+                                                           "directories_exported":  0,
+                                                           "symlinks_skipped":  0,
+                                                           "entries_scanned":  6,
+                                                           "bytes_exported":  "67906",
+                                                           "artifacts":  [
+                                                                             "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-export-proof.json"
+                                                                         ],
+                                                           "output":  [
+                                                                          "Detected APFS in Partition2"
+                                                                      ],
+                                                           "error":  ""
+                                                       }
+                                  }
+                              ],
+    "artifacts":  [
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-probe.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-probe.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-read-file-proof.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-check-attribute-scan.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\hfs-read-attribute-proof.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-list-file-candidate-001.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-read-file-proof.json",
+                      "C:\\Users\\Randy\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vm-lab\\external-evidence\\external.apple-filesystem-physical\\apfs-export-proof.json"
+                  ],
+    "error":  ""
+}

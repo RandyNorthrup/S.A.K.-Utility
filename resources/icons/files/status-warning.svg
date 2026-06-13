@@ -1,0 +1,4 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Source: files-community/Files@8ea6d30 src/Files.App.Controls/ThemedIcon/Styles/Icons.Status.xaml App.ThemedIcons.Status.Warning, MIT. -->
+  <path fill="#242424" d="m7.5,9c.28,0,.5-.22.5-.5V3.5c0-.28-.22-.5-.5-.5s-.5.22-.5.5v5c0,.28.22.5.5.5Zm0,1.5c-.41,0-.75.34-.75.75s.34.75.75.75.75-.34.75-.75-.34-.75-.75-.75ZM12,0H3C1.34,0,0,1.34,0,3v9c0,1.66,1.34,3,3,3h9c1.66,0,3-1.34,3-3V3c0-1.66-1.34-3-3-3Zm2,12c0,1.1-.9,2-2,2H3c-1.1,0-2-.9-2-2V3c0-1.1.9-2,2-2h9c1.1,0,2,.9,2,2v9Z"/>
+</svg>

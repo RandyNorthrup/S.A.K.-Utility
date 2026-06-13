@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/partition_manager_panel.h"
+#include "sak/partition_file_system_detector.h"
+#include "sak/partition_file_system_tool_runner.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QFile>
 #include <QFrame>
 #include <QHash>
@@ -20,6 +24,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollArea>
@@ -29,31 +34,46 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
+#include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <cstdlib>
 
 class PartitionManagerPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void scanButtonIsStatefulAndInventorySummaryUsesStatusBar();
     void partitionTableUsesAomeiListChrome();
     void sidebarIsFixedAndHasNoRedundantPreviewBox();
     void sidebarActionsRenderAsCompactTextLinks();
+    void sidebarActionsGateBySelectedTargetKind();
+    void nonNativeFilesystemActionsExposeReadOnlyHfsCheck();
     void partitionOperationsScrollInsideGroup();
     void diskMapLegendContainsCommercialColorRoles();
     void diskMapLegendColorsMatchRenderedRoles();
+    void unallocatedRoleUsesDarkGrayPalette();
     void ribbonButtonsUseIcons8SvgSources();
     void diskMapUsesCompactSpacing();
     void diskMapHighlightsOnlySelectedPartition();
+    void diskMapHighlightsSelectedDiskRow();
+    void diskMapContextMenuSelectsMatchingTargets();
+    void contextMenuOmitsRibbonAndQueueControls();
     void diskMapSegmentsSelectMatchingTableRows();
     void redoButtonEnablesOnlyAfterUndo();
     void diskMapRendersTypeColorInsideNeutralShell();
     void bottomDiskMapCanResizeIntoTableSpace();
     void finalApplyReviewContainsLayoutDiff();
     void propertiesActionIsFirstClass();
+    void propertiesDialogShowsRawFilesystemMetadata();
+    void propertiesAndInspectShowRawFilesystemSanityNotes();
+    void extFilesystemWriteActionsQueueWithConfirmation();
+    void apfsRootFileMutationActionGatesGeneratedLayouts();
+    void hfsFileMutationActionQueuesStagedWrite();
+    void hfsEmptyFileMutationModesQueueWithoutPayload();
     void manageBitLockerShowsStatusDialog();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
@@ -76,14 +96,20 @@ constexpr int kOperationSizePreviewRowHeight = 24;
 constexpr int kPreviewDragTargetEndMegabytes = 448;
 constexpr int kPreviewDragExpectedSizeMegabytes = 300;
 constexpr int kHorizontalMarginCount = 2;
+constexpr int kRenderedSegmentFillLightness = 160;
 
 struct CreateDialogInspection {
     bool inspected{false};
     bool has_size_handle{false};
     bool has_location_handle{false};
+    bool has_non_native_file_systems{false};
+    bool raw_create_controls_toggle{false};
+    bool swap_create_controls_toggle{false};
     bool size_synced{false};
     bool location_synced{false};
     bool preview_drag_synced{false};
+    QString file_system_items;
+    QString raw_toggle_state;
 };
 
 template <typename Widget>
@@ -170,7 +196,179 @@ void flushDeferredDeletes() {
     QApplication::processEvents();
 }
 
-void inspectCreateDialog(QDialog* dialog, CreateDialogInspection* result) {
+void closeNextPopup() {
+    QTimer::singleShot(0, []() {
+        if (auto* popup = QApplication::activePopupWidget()) {
+            popup->close();
+        }
+    });
+}
+
+void sendContextMenu(QWidget* target) {
+    const QPoint point = target->rect().center();
+    closeNextPopup();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
+    QApplication::sendEvent(target, &event);
+    QApplication::processEvents();
+    flushDeferredDeletes();
+}
+
+QStringList contextMenuActionTexts(QWidget* target) {
+    QStringList texts;
+    QTimer::singleShot(0, [&texts]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        const auto actions = menu->actions();
+        for (const auto* action : actions) {
+            if (!action->isSeparator()) {
+                texts.append(action->text());
+            }
+        }
+        menu->close();
+    });
+    const QPoint point = target->rect().center();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
+    QApplication::sendEvent(target, &event);
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    return texts;
+}
+
+QHash<QString, bool> contextMenuActionStates(QWidget* target) {
+    QHash<QString, bool> states;
+    QTimer::singleShot(0, [&states]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (!menu) {
+            return;
+        }
+        const auto actions = menu->actions();
+        for (const auto* action : actions) {
+            if (!action->isSeparator()) {
+                states.insert(action->text(), action->isEnabled());
+            }
+        }
+        menu->close();
+    });
+    const QPoint point = target->rect().center();
+    QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
+    QApplication::sendEvent(target, &event);
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    return states;
+}
+
+bool comboHasItem(const QComboBox* combo, const QString& text) {
+    if (!combo) {
+        return false;
+    }
+    for (int index = 0; index < combo->count(); ++index) {
+        if (combo->itemText(index).compare(text, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void setComboItem(QComboBox* combo, const QString& text) {
+    if (!combo) {
+        return;
+    }
+    for (int index = 0; index < combo->count(); ++index) {
+        if (combo->itemText(index).compare(text, Qt::CaseInsensitive) == 0) {
+            combo->setCurrentIndex(index);
+            return;
+        }
+    }
+}
+
+QString comboItemsText(const QComboBox* combo) {
+    QStringList items;
+    for (int index = 0; combo && index < combo->count(); ++index) {
+        items.append(combo->itemText(index));
+    }
+    return items.join('|');
+}
+
+QString comboInventoryText(QDialog* dialog) {
+    QStringList comboDescriptions;
+    const auto combos = dialog->findChildren<QComboBox*>();
+    for (const auto* combo : combos) {
+        comboDescriptions.append(QStringLiteral("%1=[%2]")
+                                     .arg(combo->accessibleName(), comboItemsText(combo)));
+    }
+    return comboDescriptions.join(QStringLiteral("; "));
+}
+
+QComboBox* findCreateFileSystemCombo(QDialog* dialog) {
+    const auto combos = dialog->findChildren<QComboBox*>();
+    for (auto* combo : combos) {
+        if (comboHasItem(combo, QStringLiteral("NTFS")) &&
+            comboHasItem(combo, QStringLiteral("ext4"))) {
+            return combo;
+        }
+    }
+    return nullptr;
+}
+
+QCheckBox* findCreateRawConfirm(QDialog* dialog) {
+    auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
+                                                    QStringLiteral("Confirm ext filesystem format"));
+    if (confirm) {
+        return confirm;
+    }
+    return findAccessibleWidget<QCheckBox>(dialog,
+                                           QStringLiteral("Confirm raw filesystem format"));
+}
+
+void inspectCreateFileSystems(QDialog* dialog, CreateDialogInspection* result) {
+    auto* fileSystem = findCreateFileSystemCombo(dialog);
+    result->file_system_items =
+        fileSystem ? comboItemsText(fileSystem) : comboInventoryText(dialog);
+    result->has_non_native_file_systems =
+        fileSystem && comboHasItem(fileSystem, QStringLiteral("ext4")) &&
+        comboHasItem(fileSystem, QStringLiteral("HFSX")) &&
+        comboHasItem(fileSystem, QStringLiteral("Linux swap")) &&
+        comboHasItem(fileSystem, QStringLiteral("APFS"));
+}
+
+void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
+    auto* fileSystem = findCreateFileSystemCombo(dialog);
+    auto* allocationUnit = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Cluster size"));
+    auto* driveLetter = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Drive letter"));
+    auto* confirm = findCreateRawConfirm(dialog);
+    auto* swapPageSize =
+        findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Linux swap page size"));
+    result->raw_toggle_state =
+        QStringLiteral("fileSystem=%1 allocation=%2 drive=%3 confirm=%4 swap=%5")
+            .arg(fileSystem != nullptr)
+            .arg(allocationUnit != nullptr)
+            .arg(driveLetter != nullptr)
+            .arg(confirm != nullptr)
+            .arg(swapPageSize != nullptr);
+    if (!fileSystem || !allocationUnit || !driveLetter || !confirm || !swapPageSize) {
+        return;
+    }
+
+    setComboItem(fileSystem, QStringLiteral("ext4"));
+    QApplication::processEvents();
+    result->raw_create_controls_toggle =
+        confirm->isVisible() && !allocationUnit->isEnabled() && !driveLetter->isEnabled();
+    result->raw_toggle_state =
+        result->raw_toggle_state +
+        QStringLiteral("; confirmVisible=%1 allocationEnabled=%2 driveEnabled=%3")
+            .arg(confirm->isVisible())
+            .arg(allocationUnit->isEnabled())
+            .arg(driveLetter->isEnabled());
+    setComboItem(fileSystem, QStringLiteral("Linux swap"));
+    QApplication::processEvents();
+    result->swap_create_controls_toggle =
+        swapPageSize->isVisible() && confirm->isVisible() &&
+        confirm->accessibleName() == QStringLiteral("Confirm Linux swap format");
+}
+
+void inspectCreateHandleControls(QDialog* dialog, CreateDialogInspection* result) {
     auto* sizeHandle = findAccessibleWidget<QSlider>(dialog,
                                                      QStringLiteral("Partition size handle"));
     auto* locationHandle =
@@ -182,16 +380,24 @@ void inspectCreateDialog(QDialog* dialog, CreateDialogInspection* result) {
         dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"));
     result->has_size_handle = sizeHandle != nullptr;
     result->has_location_handle = locationHandle != nullptr;
-    if (sizeHandle && locationHandle && sizeSpin && locationSpin && sizePreview) {
-        sizeHandle->setValue(kCreateDialogSizeMegabytes);
-        locationHandle->setValue(kCreateDialogBeforeMegabytes);
-        result->size_synced = sizeSpin->value() == kCreateDialogSizeMegabytes;
-        result->location_synced = locationSpin->value() == kCreateDialogBeforeMegabytes;
-        QApplication::processEvents();
-        dragPreviewHandle(sizePreview);
-        result->preview_drag_synced = sizeSpin->value() >= kPreviewDragExpectedSizeMegabytes &&
-                                      locationSpin->value() == kCreateDialogBeforeMegabytes;
+    if (!sizeHandle || !locationHandle || !sizeSpin || !locationSpin || !sizePreview) {
+        return;
     }
+
+    sizeHandle->setValue(kCreateDialogSizeMegabytes);
+    locationHandle->setValue(kCreateDialogBeforeMegabytes);
+    result->size_synced = sizeSpin->value() == kCreateDialogSizeMegabytes;
+    result->location_synced = locationSpin->value() == kCreateDialogBeforeMegabytes;
+    QApplication::processEvents();
+    dragPreviewHandle(sizePreview);
+    result->preview_drag_synced = sizeSpin->value() >= kPreviewDragExpectedSizeMegabytes &&
+                                  locationSpin->value() == kCreateDialogBeforeMegabytes;
+}
+
+void inspectCreateDialog(QDialog* dialog, CreateDialogInspection* result) {
+    inspectCreateFileSystems(dialog, result);
+    inspectCreateRawControls(dialog, result);
+    inspectCreateHandleControls(dialog, result);
     result->inspected = true;
 }
 
@@ -222,6 +428,11 @@ int chroma(const QColor& color) {
     const int high = std::max({color.red(), color.green(), color.blue()});
     const int low = std::min({color.red(), color.green(), color.blue()});
     return high - low;
+}
+
+int colorDistance(const QColor& lhs, const QColor& rhs) {
+    return std::abs(lhs.red() - rhs.red()) + std::abs(lhs.green() - rhs.green()) +
+           std::abs(lhs.blue() - rhs.blue());
 }
 
 sak::PartitionInventory applyReviewInventoryFixture() {
@@ -424,7 +635,1016 @@ sak::PartitionInventory allColorRolesInventoryFixture() {
     return inventory;
 }
 
+void setRawFileSystem(sak::PartitionVolumeInfo* volume,
+                      const QString& fileSystem,
+                      const QStringList& details = {}) {
+    volume->file_system = fileSystem;
+    volume->file_system_source = sak::PartitionFileSystemDetector::rawSignatureSource();
+    volume->file_system_details = details;
+}
+
+void setRawExtVolumeForResize(sak::PartitionInventory* inventory, bool usePartitionReference) {
+    auto& partition = inventory->disks[0].partitions[0];
+    auto& volume = partition.volume.value();
+    setRawFileSystem(&volume, QStringLiteral("ext4"));
+    volume.drive_letter.clear();
+    volume.total_bytes = usePartitionReference ? partition.size_bytes
+                                                : inventory->disks[0].partitions[0].size_bytes;
+    volume.free_bytes = inventory->disks[0].partitions[0].size_bytes / 2;
+}
+
+void configureRawHfsPanel(sak::PartitionManagerPanel* panel) {
+    auto inventory = unallocatedAllocateInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("HFS+"),
+                     {QStringLiteral("HFS wrapper: Yes"),
+                      QStringLiteral("Version: 4"),
+                      QStringLiteral("Block size: 4096")});
+    panel->setTestInventoryForReview(inventory);
+}
+
+void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
+    auto* table = panel->findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    auto* inspect = findToolButtonByName(panel, QStringLiteral("Inspect Non-Windows File System"));
+    auto* browse = findToolButtonByName(panel, QStringLiteral("Browse Non-Windows File System"));
+    auto* check = findToolButtonByName(panel, QStringLiteral("Check Non-Windows File System"));
+    auto* resize = findToolButtonByName(panel, QStringLiteral("Resize/Move Partition"));
+    auto* nativeCheck = findToolButtonByName(panel, QStringLiteral("Check File System"));
+    auto* changeCluster = findToolButtonByName(panel, QStringLiteral("Change Cluster Size"));
+    auto* changeLabel = findToolButtonByName(panel, QStringLiteral("Change Label"));
+    QVERIFY2(inspect != nullptr && browse != nullptr && check != nullptr, "HFS actions exist");
+    QVERIFY2(resize != nullptr && nativeCheck != nullptr, "Native actions exist");
+    QVERIFY2(changeCluster != nullptr && changeLabel != nullptr, "Metadata actions exist");
+    QVERIFY(inspect->isEnabled());
+    QVERIFY(inspect->toolTip().contains(QStringLiteral("Inspect captured read-only HFS+")));
+    QVERIFY(browse->isEnabled());
+    QVERIFY(browse->toolTip().contains(QStringLiteral("Browse read-only HFS+")));
+    QVERIFY(check->isEnabled());
+    QVERIFY(check->toolTip().contains(QStringLiteral("fsck_hfs")));
+    QVERIFY(!resize->isEnabled());
+    QVERIFY(resize->toolTip().contains(QStringLiteral("HFS+ resize is not certified")));
+    QVERIFY(!nativeCheck->isEnabled());
+    QVERIFY(nativeCheck->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+    QVERIFY(!changeCluster->isEnabled());
+    QVERIFY(changeCluster->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+    QVERIFY(!changeLabel->isEnabled());
+    QVERIFY(changeLabel->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
+}
+
+void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Inspect filesystem dialog should open");
+        auto* properties =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
+        const QString metadata =
+            propertyTableValue(properties, QStringLiteral("Read-only metadata"));
+        QVERIFY(metadata.contains(QStringLiteral("HFS wrapper: Yes")));
+        QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("File system")),
+                 QStringLiteral("HFS+"));
+        inspected = true;
+        dialog->reject();
+    });
+    auto* inspect = findToolButtonByName(panel, QStringLiteral("Inspect Non-Windows File System"));
+    QVERIFY2(inspect != nullptr, "Inspect Non-Windows File System action should exist");
+    inspect->click();
+    QVERIFY(inspected);
+}
+
+void verifyRawHfsContextMenu(sak::PartitionManagerPanel* panel) {
+    auto* segment = panel->findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    QVERIFY2(segment != nullptr, "Disk map should render a partition segment");
+    const QStringList actions = contextMenuActionTexts(segment);
+    QVERIFY(actions.contains(QStringLiteral("Inspect Non-Windows File System")));
+    QVERIFY(actions.contains(QStringLiteral("Browse Non-Windows File System")));
+    QVERIFY(actions.contains(QStringLiteral("Check Non-Windows File System")));
+    const auto actionStates = contextMenuActionStates(segment);
+    QCOMPARE(actionStates.value(QStringLiteral("Resize/Move Partition")), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Check File System")), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Change Cluster Size")), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Change Label")), false);
+    QCOMPARE(actionStates.value(QStringLiteral("Browse Non-Windows File System")), true);
+    QCOMPARE(actionStates.value(QStringLiteral("Check Non-Windows File System")), true);
+}
+
+void configureRawMetadataPanel(sak::PartitionManagerPanel* panel,
+                               const QString& fileSystem,
+                               const QStringList& details) {
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(), fileSystem, details);
+    panel->setTestInventoryForReview(inventory);
+    auto* table = panel->findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+}
+
+void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedNeedle) {
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Metadata check dialog should open");
+        auto* properties =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        QVERIFY2(properties != nullptr, "Metadata check table should exist");
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Check type")),
+                 QStringLiteral("Original read-only metadata consistency check"));
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
+                 QStringLiteral("No sanity warnings"));
+        QVERIFY(propertyTableValue(properties, QStringLiteral("Findings")).contains(expectedNeedle));
+        inspected = true;
+        dialog->reject();
+    });
+    button->click();
+    QVERIFY(inspected);
+}
+
+void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
+    bool propertiesInspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Properties dialog should open");
+        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        QVERIFY2(properties != nullptr, "Properties table should exist");
+        const QString metadata =
+            propertyTableValue(properties, QStringLiteral("File system metadata"));
+        QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
+        propertiesInspected = true;
+        dialog->reject();
+    });
+    auto* propertiesButton = findToolButtonByName(panel, QStringLiteral("Properties"));
+    QVERIFY2(propertiesButton != nullptr, "Properties action should exist");
+    propertiesButton->click();
+    QVERIFY(propertiesInspected);
+
+    bool inspectInspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Inspect filesystem dialog should open");
+        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
+        const QString metadata = propertyTableValue(properties, QStringLiteral("Read-only metadata"));
+        QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
+        inspectInspected = true;
+        dialog->reject();
+    });
+    auto* inspectButton = findToolButtonByName(panel, QStringLiteral("Inspect Non-Windows File System"));
+    QVERIFY2(inspectButton != nullptr, "Inspect Non-Windows File System action should exist");
+    inspectButton->click();
+    QVERIFY(inspectInspected);
+}
+
+void configureRawWritePanel(sak::PartitionManagerPanel* panel, const QString& fileSystem) {
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(), fileSystem);
+    panel->setTestInventoryForReview(inventory);
+    auto* table = panel->findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+}
+
+void verifySingleQueuedOperation(sak::PartitionManagerPanel* panel, const QString& text) {
+    auto* queue = panel->findChild<QListWidget*>();
+    QVERIFY2(queue != nullptr, "Pending operation queue should exist");
+    QCOMPARE(queue->count(), 1);
+    QVERIFY(queue->item(0)->text().contains(text));
+}
+
+void queueExtFormatAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("ext4"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Format dialog should open");
+        auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
+        QVERIFY(fileSystem != nullptr);
+        QCOMPARE(fileSystem->currentText(), QStringLiteral("ext4"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem format"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
+    QVERIFY2(format != nullptr, "Format action should exist");
+    format->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+}
+
+void queueLinuxSwapFormatAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("Linux swap"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Format dialog should open");
+        auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
+        QVERIFY(fileSystem != nullptr);
+        QCOMPARE(fileSystem->currentText(), QStringLiteral("Linux swap"));
+        auto* pageSize =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Linux swap page size"));
+        QVERIFY(pageSize != nullptr);
+        QCOMPARE(pageSize->currentText(), QStringLiteral("4096"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm Linux swap format"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
+    QVERIFY2(format != nullptr, "Format action should exist");
+    format->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+}
+
+void queueApfsFormatAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("APFS"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Format dialog should open");
+        auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
+        QVERIFY(fileSystem != nullptr);
+        QCOMPARE(fileSystem->currentText(), QStringLiteral("APFS"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm APFS format"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* format = findToolButtonByName(&panel, QStringLiteral("Format Partition"));
+    QVERIFY2(format != nullptr, "Format action should exist");
+    format->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Format Partition"));
+}
+
+void queueExtRepairAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("ext4"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
+        auto* mode = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("Non-Windows filesystem check mode"));
+        QVERIFY(mode != nullptr);
+        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        QVERIFY(repairIndex >= 0);
+        mode->setCurrentIndex(repairIndex);
+        auto* targetPath =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Non-Windows filesystem target path"));
+        QVERIFY(targetPath != nullptr);
+        QVERIFY(targetPath->isReadOnly());
+        QVERIFY(targetPath->toolTip().contains(QStringLiteral("selected raw partition")));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem repair"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    QVERIFY2(check != nullptr, "Non-Windows check action should exist");
+    check->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+}
+
+void queueHfsRepairAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
+        auto* mode = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("Non-Windows filesystem check mode"));
+        QVERIFY(mode != nullptr);
+        QVERIFY(mode->findText(QStringLiteral("Original HFS+ catalog check now")) >= 0);
+        QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
+        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        QVERIFY(repairIndex >= 0);
+        mode->setCurrentIndex(repairIndex);
+        auto* targetPath =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Non-Windows filesystem target path"));
+        QVERIFY(targetPath != nullptr);
+        QVERIFY(targetPath->isReadOnly());
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS+ filesystem repair"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    QVERIFY2(check != nullptr, "Non-Windows check action should exist");
+    check->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+}
+
+void queueGeneratedApfsRepairAndVerify() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
+                      QStringLiteral("APFS space manager block: 10"),
+                      QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID 103 root tree OID 104"),
+                      QStringLiteral("Volume OIDs: 102")});
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
+        auto* mode = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("Non-Windows filesystem check mode"));
+        QVERIFY(mode != nullptr);
+        QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
+        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        QVERIFY(repairIndex >= 0);
+        mode->setCurrentIndex(repairIndex);
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm APFS filesystem repair"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    QVERIFY2(check != nullptr, "Non-Windows check action should exist");
+    check->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Check File System"));
+}
+
+sak::PartitionInventory generatedApfsInventoryFixture() {
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
+                      QStringLiteral("APFS space manager block: 10"),
+                      QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID 103 root tree OID 104"),
+                      QStringLiteral("Volume OIDs: 102")});
+    return inventory;
+}
+
+void queueApfsRootFileMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(generatedApfsInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS File"));
+    QVERIFY2(button != nullptr, "APFS File action should exist");
+    QVERIFY(button->isEnabled());
+    QVERIFY(button->toolTip().contains(QStringLiteral("generated APFS")));
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "APFS generated file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("APFS generated file mutation mode"));
+        QVERIFY(mode != nullptr);
+        QCOMPARE(mode->currentText(), QStringLiteral("Write root file"));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Write file in root directory")));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Patch file in root directory")));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Delete file in root directory")));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Create empty root directory")));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Delete empty root directory")));
+        QVERIFY(comboHasItem(mode, QStringLiteral("Change volume label")));
+        auto* fileName =
+            findAccessibleWidget<QLineEdit>(dialog,
+                                            QStringLiteral("APFS file or directory name"));
+        QVERIFY(fileName != nullptr);
+        fileName->setText(QStringLiteral("panel-test.txt"));
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("APFS file payload text"));
+        QVERIFY(payload != nullptr);
+        auto* directoryName =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS root directory name"));
+        QVERIFY(directoryName != nullptr);
+        auto* patchOffset =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS root file patch byte offset"));
+        QVERIFY(patchOffset != nullptr);
+        mode->setCurrentText(QStringLiteral("Write file in root directory"));
+        QVERIFY(directoryName->isVisible());
+        directoryName->setText(QStringLiteral("Proof Folder"));
+        QCOMPARE(fileName->placeholderText(), QStringLiteral("Child file name"));
+        mode->setCurrentText(QStringLiteral("Patch file in root directory"));
+        QVERIFY(directoryName->isVisible());
+        QVERIFY(payload->isVisible());
+        QVERIFY(patchOffset->isVisible());
+        QCOMPARE(fileName->placeholderText(), QStringLiteral("Child file name"));
+        mode->setCurrentText(QStringLiteral("Create empty root directory"));
+        QVERIFY(!payload->isVisible());
+        QVERIFY(!directoryName->isVisible());
+        QVERIFY(!patchOffset->isVisible());
+        mode->setCurrentText(QStringLiteral("Change volume label"));
+        QVERIFY(!payload->isVisible());
+        QVERIFY(!directoryName->isVisible());
+        QVERIFY(!patchOffset->isVisible());
+        QCOMPARE(fileName->placeholderText(), QStringLiteral("Volume label"));
+        mode->setCurrentText(QStringLiteral("Write root file"));
+        payload->setPlainText(QStringLiteral("panel payload"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm APFS generated file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Write Root File"));
+}
+
+void queueHfsFileMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+    QVERIFY(button->toolTip().contains(QStringLiteral("HFS+ staged file")));
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        QCOMPARE(mode->currentText(), QStringLiteral("Replace data fork within allocated blocks"));
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        hfsPath->setText(QStringLiteral("/panel-test.txt"));
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        payload->setPlainText(QStringLiteral("panel hfs payload"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Replace File"));
+}
+
+void queueHfsAllocationGrowthMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int index = mode->findText(QStringLiteral("Grow data fork with free blocks"));
+        QVERIFY(index >= 0);
+        mode->setCurrentIndex(index);
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        hfsPath->setText(QStringLiteral("/panel-growth.bin"));
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        payload->setPlainText(QStringLiteral("panel hfs allocation growth payload"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Grow File"));
+}
+
+void queueHfsCreateFileMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int index = mode->findText(QStringLiteral("Create file with data"));
+        QVERIFY(index >= 0);
+        mode->setCurrentIndex(index);
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        hfsPath->setText(QStringLiteral("/panel-created-data.txt"));
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        QVERIFY(payload->isVisible());
+        payload->setPlainText(QStringLiteral("panel created file payload"));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
+        QVERIFY(preview != nullptr);
+        QVERIFY(preview->text().contains(QStringLiteral("file create")));
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Create File"));
+}
+
+void queueHfsForkAttributeMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int modeIndex = mode->findText(QStringLiteral("Replace fork-backed attribute"));
+        QVERIFY2(modeIndex >= 0, "fork-backed attribute mode should exist");
+        mode->setCurrentIndex(modeIndex);
+
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        QVERIFY(!hfsPath->isVisible());
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        QVERIFY(payload->isVisible());
+        payload->setPlainText(QStringLiteral("panel fork attribute payload"));
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        QVERIFY(fileId != nullptr);
+        QVERIFY(fileId->isVisible());
+        fileId->setText(QStringLiteral("17"));
+        auto* attributeName =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        QVERIFY(attributeName != nullptr);
+        QVERIFY(attributeName->isVisible());
+        attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
+        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
+        QVERIFY(preview != nullptr);
+        QVERIFY(preview->text().contains(QStringLiteral("fork-backed attribute")));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        QApplication::processEvents();
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* accept = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(accept != nullptr);
+        QVERIFY(accept->isEnabled());
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Replace Fork Attribute"));
+}
+
+void queueHfsForkAttributeGrowthMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int modeIndex =
+            mode->findText(QStringLiteral("Grow fork-backed attribute with free blocks"));
+        QVERIFY2(modeIndex >= 0, "fork-backed attribute growth mode should exist");
+        mode->setCurrentIndex(modeIndex);
+
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        QVERIFY(!hfsPath->isVisible());
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        QVERIFY(payload->isVisible());
+        payload->setPlainText(QStringLiteral("panel fork attribute growth payload"));
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        QVERIFY(fileId != nullptr);
+        QVERIFY(fileId->isVisible());
+        fileId->setText(QStringLiteral("17"));
+        auto* attributeName =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        QVERIFY(attributeName != nullptr);
+        QVERIFY(attributeName->isVisible());
+        attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
+        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
+        QVERIFY(preview != nullptr);
+        QVERIFY(preview->text().contains(QStringLiteral("allocation growth")));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        QApplication::processEvents();
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* accept = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(accept != nullptr);
+        QVERIFY(accept->isEnabled());
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Grow Fork Attribute"));
+}
+
+void queueHfsRenameMoveMutationAndVerify() {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int modeIndex = mode->findText(QStringLiteral("Rename or move catalog entry"));
+        QVERIFY2(modeIndex >= 0, "HFS rename/move mode should exist");
+        mode->setCurrentIndex(modeIndex);
+
+        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPath != nullptr);
+        QVERIFY(hfsPath->isVisible());
+        hfsPath->setText(QStringLiteral("/panel-source.txt"));
+
+        auto* destination =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS destination path"));
+        QVERIFY(destination != nullptr);
+        QVERIFY(destination->isVisible());
+        QVERIFY(destination->isEnabled());
+        destination->setText(QStringLiteral("/Panel Folder/panel-renamed.txt"));
+
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        QVERIFY(!payload->isVisible());
+        QVERIFY(!payload->isEnabled());
+
+        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
+        QVERIFY(preview != nullptr);
+        QVERIFY(preview->text().contains(QStringLiteral("catalog rename/move")));
+
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        QApplication::processEvents();
+
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* accept = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(accept != nullptr);
+        QVERIFY(accept->isEnabled());
+
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Rename/Move Catalog Entry"));
+}
+
+void queueHfsEmptyFileMutationAndVerify(const QString& modeText,
+                                        const QString& hfsPath,
+                                        const QString& expectedQueueText,
+                                        const QString& expectedPreviewText) {
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(button->isEnabled());
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        auto* mode =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        QVERIFY(mode != nullptr);
+        const int modeIndex = mode->findText(modeText);
+        QVERIFY2(modeIndex >= 0, "HFS empty-file mutation mode should exist");
+        mode->setCurrentIndex(modeIndex);
+
+        auto* hfsPathInput = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        QVERIFY(hfsPathInput != nullptr);
+        QVERIFY(hfsPathInput->isVisible());
+        QVERIFY(hfsPathInput->isEnabled());
+        hfsPathInput->setText(hfsPath);
+
+        auto* destination =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS destination path"));
+        QVERIFY(destination != nullptr);
+        QVERIFY(!destination->isVisible());
+        QVERIFY(!destination->isEnabled());
+
+        auto* payload =
+            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
+        QVERIFY(payload != nullptr);
+        QVERIFY(!payload->isVisible());
+        QVERIFY(!payload->isEnabled());
+
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        QVERIFY(fileId != nullptr);
+        QVERIFY(!fileId->isVisible());
+        auto* attributeName =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        QVERIFY(attributeName != nullptr);
+        QVERIFY(!attributeName->isVisible());
+
+        auto* secureWipe = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Zero released HFS blocks before delete"));
+        QVERIFY(secureWipe != nullptr);
+        const bool secureWipeExpected =
+            modeText == QStringLiteral("Delete file") ||
+            modeText == QStringLiteral("Delete folder tree");
+        QCOMPARE(secureWipe->isVisible(), secureWipeExpected);
+        QCOMPARE(secureWipe->isEnabled(), secureWipeExpected);
+        if (secureWipeExpected) {
+            secureWipe->setChecked(true);
+            QApplication::processEvents();
+        }
+
+        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
+        QVERIFY(preview != nullptr);
+        QVERIFY(preview->text().contains(expectedPreviewText));
+        if (secureWipeExpected) {
+            QVERIFY(preview->text().contains(QStringLiteral("Released blocks will be zeroed")));
+        }
+
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        QApplication::processEvents();
+
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* accept = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(accept != nullptr);
+        QVERIFY(accept->isEnabled());
+
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, expectedQueueText);
+}
+
+void queueExtResizeAndVerify(bool grow) {
+    sak::PartitionManagerPanel panel;
+    auto inventory = unallocatedAllocateInventoryFixture();
+    setRawExtVolumeForResize(&inventory, grow);
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Resize dialog should open");
+        auto* size = findAccessibleWidget<QSpinBox>(dialog, QStringLiteral("Target partition size"));
+        QVERIFY(size != nullptr);
+        size->setValue(size->value() + (grow ? 64 : -64));
+        auto* confirm =
+            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem resize"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    QVERIFY2(resize != nullptr, "Resize action should exist");
+    resize->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Resize Partition"));
+}
+
+void queueUnallocatedAllocateAndVerifyResize() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(table->rowCount() - 1);
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
+        QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
+        auto* target =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Allocate free space target partition"));
+        QVERIFY(target != nullptr);
+        QCOMPARE(target->currentIndex(), 0);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
+    QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Resize"));
+}
+
+void queueUnallocatedAllocateAndVerifyMove() {
+    QTemporaryDir backupRoot;
+    QVERIFY(backupRoot.isValid());
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(table->rowCount() - 1);
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
+        QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
+        auto* target =
+            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Allocate free space target partition"));
+        QVERIFY(target != nullptr);
+        target->setCurrentIndex(1);
+        auto* backup =
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Allocate free space to backup directory"));
+        QVERIFY(backup != nullptr);
+        backup->setText(backupRoot.path());
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm allocate free space to backup and restore"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
+    QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Move Partition"));
+}
+
+struct ExpectedMetadataAction {
+    QString button;
+    QString dialog_name;
+    QString backup_accessible_name;
+    QString confirm_accessible_name;
+    QString queued_text;
+    bool dynamic_disk{false};
+    int selected_row{1};
+};
+
+QVector<ExpectedMetadataAction> expectedMetadataActions() {
+    return {{QStringLiteral("Convert Primary/Logical"),
+             QStringLiteral("Convert Primary/Logical"),
+             QStringLiteral("Primary logical backup directory"),
+             QStringLiteral("Confirm primary logical backup and restore"),
+             QStringLiteral("Convert Primary/Logical")},
+            {QStringLiteral("Change Serial Number"),
+             QStringLiteral("Change Serial Number"),
+             QStringLiteral("Volume serial backup directory"),
+             QStringLiteral("Confirm volume serial backup and restore"),
+             QStringLiteral("Change Volume Serial Number")},
+            {QStringLiteral("Convert Dynamic Disk to Basic"),
+             QStringLiteral("Convert Dynamic Disk to Basic"),
+             QStringLiteral("Dynamic to basic backup directory"),
+             QStringLiteral("Confirm dynamic to basic backup and restore"),
+             QStringLiteral("Convert Dynamic Disk to Basic"),
+             true,
+             0}};
+}
+
+void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
+                                  const QString& backupDirectory) {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(metadataRebuildInventoryFixture(action.dynamic_disk));
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(action.selected_row);
+    auto* button = findToolButtonByName(&panel, action.button);
+    QVERIFY2(button != nullptr, qPrintable(action.button));
+    QVERIFY(button->isEnabled());
+    QVERIFY(!button->toolTip().contains(QStringLiteral("blocked"), Qt::CaseInsensitive));
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Operation dialog should open");
+        QCOMPARE(dialog->accessibleName(), action.dialog_name);
+        auto* backup = findAccessibleWidget<QLineEdit>(dialog, action.backup_accessible_name);
+        QVERIFY2(backup != nullptr, qPrintable(action.backup_accessible_name));
+        backup->setText(backupDirectory);
+        auto* confirm = findAccessibleWidget<QCheckBox>(dialog, action.confirm_accessible_name);
+        QVERIFY2(confirm != nullptr, qPrintable(action.confirm_accessible_name));
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+    button->click();
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, action.queued_text);
+}
+
 }  // namespace
+
+void PartitionManagerPanelTests::scanButtonIsStatefulAndInventorySummaryUsesStatusBar() {
+    sak::PartitionManagerPanel panel;
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition Manager table should exist");
+    QCOMPARE(table->rowCount(), 0);
+
+    auto* scan = findToolButtonByName(&panel, QStringLiteral("Scan Disks"));
+    QVERIFY2(scan != nullptr, "Initial inventory button should be Scan Disks");
+    QCOMPARE(scan->toolTip(), QStringLiteral("Scan disk inventory"));
+    QVERIFY(panel.findChild<QLabel*>(QStringLiteral("Partition manager summary")) == nullptr);
+
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QTest::qWait(50);
+    QCOMPARE(table->rowCount(), 0);
+
+    QSignalSpy statusSpy(&panel, &sak::PartitionManagerPanel::statusMessage);
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    QVERIFY(!statusSpy.isEmpty());
+    const auto lastStatus = statusSpy.takeLast();
+    QCOMPARE(lastStatus.at(0).toString(), QStringLiteral("1 disk(s), layout panel-appl"));
+    QCOMPARE(lastStatus.at(1).toInt(), 0);
+
+    auto* refresh = findToolButtonByName(&panel, QStringLiteral("Refresh Disks"));
+    QVERIFY2(refresh != nullptr, "Inventory button should change to Refresh Disks after scan");
+    QCOMPARE(refresh->toolTip(), QStringLiteral("Refresh disk inventory"));
+}
 
 void PartitionManagerPanelTests::partitionTableUsesAomeiListChrome() {
     sak::PartitionManagerPanel panel;
@@ -489,6 +1709,77 @@ void PartitionManagerPanelTests::sidebarActionsRenderAsCompactTextLinks() {
     }
 }
 
+void PartitionManagerPanelTests::sidebarActionsGateBySelectedTargetKind() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+
+    auto* quickPartition = findToolButtonByName(&panel, QStringLiteral("Quick Partition"));
+    auto* copyDisk = findToolButtonByName(&panel, QStringLiteral("Copy Disk Wizard"));
+    auto* copyPartition = findToolButtonByName(&panel, QStringLiteral("Copy Partition Wizard"));
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    auto* create = findToolButtonByName(&panel, QStringLiteral("Create Partition"));
+    auto* allocate = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
+    auto* manageBitLocker = findToolButtonByName(&panel, QStringLiteral("Manage BitLocker"));
+    auto* dataRecovery = findToolButtonByName(&panel, QStringLiteral("Data Recovery"));
+    auto* properties = findToolButtonByName(&panel, QStringLiteral("Properties"));
+    QVERIFY(quickPartition && copyDisk && copyPartition && resize && create && allocate &&
+            manageBitLocker && dataRecovery && properties);
+
+    QVERIFY(!quickPartition->isEnabled());
+    QVERIFY(!copyDisk->isEnabled());
+    QVERIFY(!resize->isEnabled());
+    QVERIFY(!create->isEnabled());
+    QVERIFY(!dataRecovery->isEnabled());
+    QVERIFY(!properties->isEnabled());
+
+    table->selectRow(0);
+    QApplication::processEvents();
+    QVERIFY(quickPartition->isEnabled());
+    QVERIFY(copyDisk->isEnabled());
+    QVERIFY(dataRecovery->isEnabled());
+    QVERIFY(properties->isEnabled());
+    QVERIFY(!copyPartition->isEnabled());
+    QVERIFY(!resize->isEnabled());
+    QVERIFY(!create->isEnabled());
+    QVERIFY(!manageBitLocker->isEnabled());
+
+    table->selectRow(1);
+    QApplication::processEvents();
+    QVERIFY(copyPartition->isEnabled());
+    QVERIFY(resize->isEnabled());
+    QVERIFY(manageBitLocker->isEnabled());
+    QVERIFY(dataRecovery->isEnabled());
+    QVERIFY(properties->isEnabled());
+    QVERIFY(!quickPartition->isEnabled());
+    QVERIFY(!copyDisk->isEnabled());
+    QVERIFY(!create->isEnabled());
+
+    table->selectRow(table->rowCount() - 1);
+    QApplication::processEvents();
+    QVERIFY(create->isEnabled());
+    QVERIFY(allocate->isEnabled());
+    QVERIFY(dataRecovery->isEnabled());
+    QVERIFY(properties->isEnabled());
+    QVERIFY(!quickPartition->isEnabled());
+    QVERIFY(!copyPartition->isEnabled());
+    QVERIFY(!resize->isEnabled());
+}
+
+void PartitionManagerPanelTests::nonNativeFilesystemActionsExposeReadOnlyHfsCheck() {
+    sak::PartitionManagerPanel panel;
+    configureRawHfsPanel(&panel);
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+    verifyRawHfsSidebarControls(&panel);
+    verifyRawHfsInspectDialog(&panel);
+    verifyRawHfsContextMenu(&panel);
+}
+
 void PartitionManagerPanelTests::partitionOperationsScrollInsideGroup() {
     sak::PartitionManagerPanel panel;
 
@@ -519,7 +1810,7 @@ void PartitionManagerPanelTests::diskMapLegendContainsCommercialColorRoles() {
                                     QStringLiteral("Unallocated")};
     const auto swatches = panel.findChildren<QFrame*>(QStringLiteral("partitionLegendSwatch"));
     QStringList actualRoles;
-    for (const auto* swatch : swatches) {
+    for (auto* swatch : swatches) {
         actualRoles.append(swatch->property("colorRole").toString());
     }
     for (const auto& role : expectedRoles) {
@@ -531,19 +1822,39 @@ void PartitionManagerPanelTests::diskMapLegendContainsCommercialColorRoles() {
 void PartitionManagerPanelTests::diskMapLegendColorsMatchRenderedRoles() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(allColorRolesInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
 
     QHash<QString, QString> legendColors;
     const auto swatches = panel.findChildren<QFrame*>(QStringLiteral("partitionLegendSwatch"));
-    for (const auto* swatch : swatches) {
-        legendColors.insert(swatch->property("colorRole").toString(),
-                            swatch->property("colorValue").toString());
+    for (auto* swatch : swatches) {
+        const QString role = swatch->property("colorRole").toString();
+        const QColor expectedColor(swatch->property("colorValue").toString());
+        const QImage image = swatch->grab().toImage();
+        const QColor renderedColor =
+            averageColor(image, QRect(3, 3, image.width() - 6, image.height() - 6));
+        QVERIFY2(colorDistance(renderedColor, expectedColor) < 40,
+                 qPrintable(
+                     QStringLiteral("Legend swatch for %1 is not visibly painted").arg(role)));
+        legendColors.insert(role, expectedColor.name());
     }
 
     QHash<QString, QString> segmentColors;
     const auto segments = panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
-    for (const auto* segment : segments) {
-        segmentColors.insert(segment->property("innerColorRole").toString(),
-                             segment->property("innerColorValue").toString());
+    for (auto* segment : segments) {
+        const QString role = segment->property("innerColorRole").toString();
+        const QString colorName = segment->property("innerColorValue").toString();
+        const QColor expectedColor(colorName);
+        const QImage image = segment->grab().toImage();
+        const QRect sampleRect((image.width() * 3) / 4, sak::ui::kMarginSmall + 4, 8, 8);
+        const QColor renderedColor = averageColor(image, sampleRect);
+        QVERIFY2(colorDistance(renderedColor,
+                               expectedColor.lighter(kRenderedSegmentFillLightness)) < 140,
+                 qPrintable(
+                     QStringLiteral("Disk-map segment for %1 is not visibly colored").arg(role)));
+        segmentColors.insert(role, colorName);
         QCOMPARE(segment->property("outerColorRole").toString(), QStringLiteral("Neutral"));
     }
 
@@ -562,6 +1873,40 @@ void PartitionManagerPanelTests::diskMapLegendColorsMatchRenderedRoles() {
     }
 }
 
+void PartitionManagerPanelTests::unallocatedRoleUsesDarkGrayPalette() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(allColorRolesInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+
+    QFrame* unallocatedSwatch = nullptr;
+    const auto swatches = panel.findChildren<QFrame*>(QStringLiteral("partitionLegendSwatch"));
+    for (auto* swatch : swatches) {
+        if (swatch->property("colorRole").toString() == QStringLiteral("Unallocated")) {
+            unallocatedSwatch = swatch;
+            break;
+        }
+    }
+    QVERIFY2(unallocatedSwatch != nullptr, "Unallocated legend swatch should exist");
+    const QColor unallocatedColor(unallocatedSwatch->property("colorValue").toString());
+    QVERIFY2(unallocatedColor.lightness() < 110, "Unallocated should be dark gray, not white");
+    const QImage swatchImage = unallocatedSwatch->grab().toImage();
+    const QColor renderedSwatch =
+        averageColor(swatchImage, QRect(3, 3, swatchImage.width() - 6, swatchImage.height() - 6));
+    QVERIFY2(renderedSwatch.lightness() < 130,
+             "Rendered Unallocated swatch should be dark gray, not white");
+
+    const auto segments = panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    const auto it = std::find_if(segments.cbegin(), segments.cend(), [](const QWidget* segment) {
+        return segment->property("innerColorRole").toString() == QStringLiteral("Unallocated");
+    });
+    QVERIFY2(it != segments.cend(), "Unallocated disk-map segment should render");
+    QCOMPARE((*it)->property("innerColorValue").toString(),
+             unallocatedSwatch->property("colorValue").toString());
+}
+
 void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
     sak::PartitionManagerPanel panel;
 
@@ -570,7 +1915,7 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
         {QStringLiteral("Discard"), QStringLiteral(":/icons/icons/icons8-pm-discard.svg")},
         {QStringLiteral("Undo"), QStringLiteral(":/icons/icons/icons8-pm-undo.svg")},
         {QStringLiteral("Redo"), QStringLiteral(":/icons/icons/icons8-pm-redo.svg")},
-        {QStringLiteral("Reload"), QStringLiteral(":/icons/icons/icons8-pm-refresh.svg")},
+        {QStringLiteral("Scan Disks"), QStringLiteral(":/icons/icons/icons8-pm-refresh.svg")},
         {QStringLiteral("Dry Run"), QStringLiteral(":/icons/icons/icons8-pm-dry-run.svg")},
     };
 
@@ -633,12 +1978,15 @@ void PartitionManagerPanelTests::diskMapUsesCompactSpacing() {
     QVERIFY2(row != nullptr, "Disk map should render disk rows");
     QVERIFY2(row->property("cornerRadius").toInt() >= 8,
              "Disk map row container should use rounded corners");
+    QCOMPARE(row->contextMenuPolicy(), Qt::CustomContextMenu);
     auto* diskTile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
     QVERIFY2(diskTile != nullptr, "Disk map should render disk tiles");
     QVERIFY2(diskTile->property("cornerRadius").toInt() >= 8,
              "Disk tile container should use rounded corners");
+    QCOMPARE(diskTile->contextMenuPolicy(), Qt::CustomContextMenu);
     auto* segment = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
     QVERIFY2(segment != nullptr, "Disk map should render partition segments");
+    QCOMPARE(segment->contextMenuPolicy(), Qt::CustomContextMenu);
     QCOMPARE(segment->minimumHeight(), diskTile->minimumHeight());
     QCOMPARE(segment->sizeHint().height(), diskTile->minimumHeight());
 }
@@ -674,6 +2022,89 @@ void PartitionManagerPanelTests::diskMapHighlightsOnlySelectedPartition() {
             return item->property("selected").toBool();
         });
     QCOMPARE(selectedAfter, 1);
+}
+
+void PartitionManagerPanelTests::diskMapHighlightsSelectedDiskRow() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+
+    auto* row = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapRow"));
+    auto* tile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY2(row != nullptr, "Disk map row should exist");
+    QVERIFY2(tile != nullptr, "Disk tile should exist");
+    QVERIFY(!row->property("selected").toBool());
+    QVERIFY(!tile->property("selected").toBool());
+
+    table->selectRow(0);
+    QApplication::processEvents();
+    flushDeferredDeletes();
+
+    row = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapRow"));
+    tile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY(row->property("selected").toBool());
+    QVERIFY(tile->property("selected").toBool());
+    QCOMPARE(row->property("selectedColorRole").toString(), QStringLiteral("GPT/Primary"));
+
+    const auto selectedSegments =
+        panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    const auto selectedSegmentCount =
+        std::count_if(selectedSegments.cbegin(), selectedSegments.cend(), [](const QWidget* item) {
+            return item->property("selected").toBool();
+        });
+    QCOMPARE(selectedSegmentCount, 0);
+}
+
+void PartitionManagerPanelTests::diskMapContextMenuSelectsMatchingTargets() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+
+    auto* table = panel.findChild<QTableWidget*>();
+    auto* diskTile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    QVERIFY2(diskTile != nullptr, "Disk-map disk tile should exist");
+
+    sendContextMenu(diskTile);
+    QCOMPARE(table->currentRow(), 0);
+
+    auto* segment = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    QVERIFY2(segment != nullptr, "Disk-map partition segment should exist");
+    sendContextMenu(segment);
+    QCOMPARE(table->currentRow(), 1);
+}
+
+void PartitionManagerPanelTests::contextMenuOmitsRibbonAndQueueControls() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+
+    auto* diskTile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY2(diskTile != nullptr, "Disk-map disk tile should exist");
+    const QStringList actions = contextMenuActionTexts(diskTile);
+    QVERIFY2(actions.contains(QStringLiteral("Migrate OS to SSD/HDD Wizard")),
+             "Target menu should still contain disk actions");
+
+    const QStringList forbidden{QStringLiteral("Scan Disks"),
+                                QStringLiteral("Refresh Disks"),
+                                QStringLiteral("Apply Pending Changes"),
+                                QStringLiteral("Dry Run Pending Changes"),
+                                QStringLiteral("Cancel Running Operation"),
+                                QStringLiteral("Undo"),
+                                QStringLiteral("Redo"),
+                                QStringLiteral("Discard")};
+    for (const auto& text : forbidden) {
+        QVERIFY2(!actions.contains(text),
+                 qPrintable(QStringLiteral("Context menu should not contain %1").arg(text)));
+    }
 }
 
 void PartitionManagerPanelTests::diskMapSegmentsSelectMatchingTableRows() {
@@ -819,18 +2250,15 @@ void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
     QVERIFY2(
         hasActionButton(buttons,
                         QStringLiteral("Data Recovery"),
-                        QStringLiteral("Recover files from an image or raw volume/device path"),
-                        true),
+                        QStringLiteral("Recover files from an image or raw volume/device path")),
         "Data Recovery should expose image and raw path recovery");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Disk Benchmark"),
-                             QStringLiteral("Open Benchmark and Diagnostics"),
-                             true),
+                             QStringLiteral("Open Benchmark and Diagnostics")),
              "Disk Benchmark should route to the existing benchmark panel");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Make Bootable Media"),
-                             QStringLiteral("Open Image Flasher"),
-                             true),
+                             QStringLiteral("Open Image Flasher")),
              "Bootable media should route to Image Flasher");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Space Analyzer"),
@@ -846,20 +2274,175 @@ void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
              "Extend Partition Wizard should be a queued resize path");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Manage BitLocker"),
-                             QStringLiteral("Review BitLocker status and open Windows management"),
-                             true),
+                             QStringLiteral("Review BitLocker status and open Windows management")),
              "Manage BitLocker should show in-app status before Windows management");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Disk Defrag"),
                              QStringLiteral("Review defrag/ReTrim commands and open Windows "
-                                            "Optimize Drives"),
-                             true),
+                                            "Optimize Drives")),
              "Disk Defrag should show in-app guidance before Windows Optimize Drives");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("SSD Secure Erase"),
-                             QStringLiteral("Queue SSD/NVMe ReTrim plus clear-level wipe"),
-                             true),
+                             QStringLiteral("Queue SSD/NVMe ReTrim plus clear-level wipe")),
              "SSD Secure Erase should expose a queued ReTrim and wipe path");
+}
+
+void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    auto& volume = inventory.disks[0].partitions[0].volume.value();
+    volume.file_system = QStringLiteral("ext4");
+    volume.file_system_source = sak::PartitionFileSystemDetector::rawSignatureSource();
+    volume.file_system_details = {QStringLiteral("Block size: 4096"),
+                                  QStringLiteral("Total blocks: 2048"),
+                                  QStringLiteral("Volume label: SAK_EXT4")};
+    panel.setTestInventoryForReview(inventory);
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    auto* fileSystem = table->item(1, 1);
+    QVERIFY2(fileSystem != nullptr, "File system cell should exist");
+    QVERIFY(fileSystem->toolTip().contains(QStringLiteral("Block size: 4096")));
+    auto* browseButton =
+        findToolButtonByName(&panel, QStringLiteral("Browse Non-Windows File System"));
+    QVERIFY2(browseButton != nullptr, "Non-native filesystem browse action should exist");
+    QVERIFY(browseButton->isEnabled());
+    QVERIFY(browseButton->toolTip().contains(QStringLiteral("Browse read-only ext4")));
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Properties dialog should open");
+        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        QVERIFY2(properties != nullptr, "Properties table should exist");
+        const QString metadata =
+            propertyTableValue(properties, QStringLiteral("File system metadata"));
+        QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
+        QVERIFY(metadata.contains(QStringLiteral("Volume label: SAK_EXT4")));
+        inspected = true;
+        dialog->reject();
+    });
+
+    auto* propertiesButton = findToolButtonByName(&panel, QStringLiteral("Properties"));
+    QVERIFY2(propertiesButton != nullptr, "Properties action should exist");
+    propertiesButton->click();
+    QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNotes() {
+    sak::PartitionManagerPanel panel;
+    configureRawMetadataPanel(&panel,
+                              QStringLiteral("XFS"),
+                              {
+        QStringLiteral("Block size: 4096"),
+        QStringLiteral("Data blocks: 32768"),
+        QStringLiteral("Metadata sanity: XFS superblock geometry is internally consistent")});
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    auto* fileSystem = table->item(1, 1);
+    QVERIFY2(fileSystem != nullptr, "File system cell should exist");
+    QVERIFY(fileSystem->toolTip().contains(QStringLiteral("Metadata sanity: XFS")));
+
+    auto* checkButton =
+        findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    QVERIFY2(checkButton != nullptr, "Non-native filesystem check action should exist");
+    QVERIFY(checkButton->isEnabled());
+    QVERIFY(checkButton->toolTip().contains(QStringLiteral("original read-only")));
+    QVERIFY(checkButton->toolTip().contains(QStringLiteral("metadata consistency")));
+    verifyMetadataCheckDialog(checkButton, QStringLiteral("Metadata sanity: XFS"));
+    verifyXfsPropertiesAndInspect(&panel);
+
+    sak::PartitionManagerPanel apfsPanel;
+    configureRawMetadataPanel(&apfsPanel,
+                              QStringLiteral("APFS"),
+                              {
+        QStringLiteral("Block size: 4096"),
+        QStringLiteral("Container blocks: 4096"),
+        QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent")});
+    auto* apfsCheck =
+        findToolButtonByName(&apfsPanel, QStringLiteral("Check Non-Windows File System"));
+    QVERIFY2(apfsCheck != nullptr, "APFS non-native filesystem check action should exist");
+    QVERIFY(apfsCheck->isEnabled());
+    QVERIFY(apfsCheck->toolTip().contains(QStringLiteral("original read-only")));
+    verifyMetadataCheckDialog(apfsCheck, QStringLiteral("Metadata sanity: APFS"));
+}
+
+void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation() {
+    queueExtFormatAndVerify();
+    queueLinuxSwapFormatAndVerify();
+    queueApfsFormatAndVerify();
+    queueExtRepairAndVerify();
+    queueHfsRepairAndVerify();
+    queueGeneratedApfsRepairAndVerify();
+    queueExtResizeAndVerify(true);
+    queueExtResizeAndVerify(false);
+}
+
+void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts() {
+    queueApfsRootFileMutationAndVerify();
+
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent")});
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS File"));
+    QVERIFY2(button != nullptr, "APFS File action should exist");
+    QVERIFY(!button->isEnabled());
+    QVERIFY(button->toolTip().contains(QStringLiteral("S.A.K. generated APFS layouts")));
+}
+
+void PartitionManagerPanelTests::hfsFileMutationActionQueuesStagedWrite() {
+    queueHfsFileMutationAndVerify();
+    queueHfsAllocationGrowthMutationAndVerify();
+    queueHfsCreateFileMutationAndVerify();
+    queueHfsForkAttributeMutationAndVerify();
+    queueHfsForkAttributeGrowthMutationAndVerify();
+    queueHfsRenameMoveMutationAndVerify();
+
+    sak::PartitionManagerPanel panel;
+    configureRawWritePanel(&panel, QStringLiteral("APFS"));
+    QApplication::processEvents();
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
+    QVERIFY2(button != nullptr, "HFS File action should exist");
+    QVERIFY(!button->isEnabled());
+    QVERIFY(button->toolTip().contains(QStringLiteral("Select an HFS+ or HFSX partition")));
+}
+
+void PartitionManagerPanelTests::hfsEmptyFileMutationModesQueueWithoutPayload() {
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Create empty file"),
+                                       QStringLiteral("/panel-created.txt"),
+                                       QStringLiteral("HFS Create Empty File"),
+                                       QStringLiteral("empty-file create"));
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete empty file"),
+                                       QStringLiteral("/panel-created.txt"),
+                                       QStringLiteral("HFS Delete Empty File"),
+                                       QStringLiteral("empty-file delete"));
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete file"),
+                                       QStringLiteral("/panel-created.txt"),
+                                       QStringLiteral("HFS Delete File"),
+                                       QStringLiteral("allocated-file delete"));
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Create empty folder"),
+                                       QStringLiteral("/Panel Folder"),
+                                       QStringLiteral("HFS Create Empty Folder"),
+                                       QStringLiteral("empty-folder create"));
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete empty folder"),
+                                       QStringLiteral("/Panel Folder"),
+                                       QStringLiteral("HFS Delete Empty Folder"),
+                                       QStringLiteral("empty-folder delete"));
+    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete folder tree"),
+                                       QStringLiteral("/Panel Folder"),
+                                       QStringLiteral("HFS Delete Folder Tree"),
+                                       QStringLiteral("folder-tree delete"));
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
@@ -1157,156 +2740,16 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
 }
 
 void PartitionManagerPanelTests::unallocatedAllocateFreeSpaceQueuesAdjacentEngines() {
-    {
-        sak::PartitionManagerPanel panel;
-        panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
-
-        auto* table = panel.findChild<QTableWidget*>();
-        QVERIFY2(table != nullptr, "Partition table should exist");
-        table->selectRow(table->rowCount() - 1);
-
-        bool inspected = false;
-        QTimer::singleShot(0, [&]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
-            QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
-
-            auto* target = findAccessibleWidget<QComboBox>(
-                dialog, QStringLiteral("Allocate free space target partition"));
-            QVERIFY(target != nullptr);
-            QCOMPARE(target->currentIndex(), 0);
-            inspected = true;
-            dialog->accept();
-        });
-
-        auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
-        QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
-        button->click();
-        QVERIFY(inspected);
-
-        auto* queue = panel.findChild<QListWidget*>();
-        QVERIFY2(queue != nullptr, "Pending operation queue should exist");
-        QCOMPARE(queue->count(), 1);
-        QVERIFY(queue->item(0)->text().contains(QStringLiteral("Resize")));
-    }
-
-    {
-        QTemporaryDir backupRoot;
-        QVERIFY(backupRoot.isValid());
-
-        sak::PartitionManagerPanel panel;
-        panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
-
-        auto* table = panel.findChild<QTableWidget*>();
-        QVERIFY2(table != nullptr, "Partition table should exist");
-        table->selectRow(table->rowCount() - 1);
-
-        bool inspected = false;
-        QTimer::singleShot(0, [&]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
-            QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
-
-            auto* target = findAccessibleWidget<QComboBox>(
-                dialog, QStringLiteral("Allocate free space target partition"));
-            QVERIFY(target != nullptr);
-            target->setCurrentIndex(1);
-
-            auto* backup = findAccessibleWidget<QLineEdit>(
-                dialog, QStringLiteral("Allocate free space to backup directory"));
-            QVERIFY(backup != nullptr);
-            backup->setText(backupRoot.path());
-
-            auto* confirm = findAccessibleWidget<QCheckBox>(
-                dialog, QStringLiteral("Confirm allocate free space to backup and restore"));
-            QVERIFY(confirm != nullptr);
-            confirm->setChecked(true);
-            inspected = true;
-            dialog->accept();
-        });
-
-        auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
-        QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
-        button->click();
-        QVERIFY(inspected);
-
-        auto* queue = panel.findChild<QListWidget*>();
-        QVERIFY2(queue != nullptr, "Pending operation queue should exist");
-        QCOMPARE(queue->count(), 1);
-        QVERIFY(queue->item(0)->text().contains(QStringLiteral("Move Partition")));
-    }
+    queueUnallocatedAllocateAndVerifyResize();
+    queueUnallocatedAllocateAndVerifyMove();
 }
 
 void PartitionManagerPanelTests::formerCommercialCompatibilityActionsQueueDirectEngines() {
     QTemporaryDir backupRoot;
     QVERIFY(backupRoot.isValid());
 
-    struct ExpectedAction {
-        QString button;
-        QString dialog_name;
-        QString backup_accessible_name;
-        QString confirm_accessible_name;
-        QString queued_text;
-        bool dynamic_disk{false};
-        int selected_row{1};
-    };
-    const QVector<ExpectedAction> expected{
-        {QStringLiteral("Convert Primary/Logical"),
-         QStringLiteral("Convert Primary/Logical"),
-         QStringLiteral("Primary logical backup directory"),
-         QStringLiteral("Confirm primary logical backup and restore"),
-         QStringLiteral("Convert Primary/Logical")},
-        {QStringLiteral("Change Serial Number"),
-         QStringLiteral("Change Serial Number"),
-         QStringLiteral("Volume serial backup directory"),
-         QStringLiteral("Confirm volume serial backup and restore"),
-         QStringLiteral("Change Volume Serial Number")},
-        {QStringLiteral("Convert Dynamic Disk to Basic"),
-         QStringLiteral("Convert Dynamic Disk to Basic"),
-         QStringLiteral("Dynamic to basic backup directory"),
-         QStringLiteral("Confirm dynamic to basic backup and restore"),
-         QStringLiteral("Convert Dynamic Disk to Basic"),
-         true,
-         0},
-    };
-
-    for (const auto& action : expected) {
-        sak::PartitionManagerPanel panel;
-        panel.setTestInventoryForReview(metadataRebuildInventoryFixture(action.dynamic_disk));
-
-        auto* table = panel.findChild<QTableWidget*>();
-        QVERIFY2(table != nullptr, "Partition table should exist");
-        table->selectRow(action.selected_row);
-
-        auto* button = findToolButtonByName(&panel, action.button);
-        QVERIFY2(button != nullptr, qPrintable(action.button));
-        QVERIFY(button->isEnabled());
-        QVERIFY(!button->toolTip().contains(QStringLiteral("blocked"), Qt::CaseInsensitive));
-
-        bool inspected = false;
-        QTimer::singleShot(0, [&]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            QVERIFY2(dialog != nullptr, "Operation dialog should open");
-            QCOMPARE(dialog->accessibleName(), action.dialog_name);
-
-            auto* backup = findAccessibleWidget<QLineEdit>(dialog, action.backup_accessible_name);
-            QVERIFY2(backup != nullptr, qPrintable(action.backup_accessible_name));
-            backup->setText(backupRoot.path());
-
-            auto* confirm = findAccessibleWidget<QCheckBox>(dialog, action.confirm_accessible_name);
-            QVERIFY2(confirm != nullptr, qPrintable(action.confirm_accessible_name));
-            confirm->setChecked(true);
-            inspected = true;
-            dialog->accept();
-        });
-
-        button->click();
-        QVERIFY(inspected);
-
-        auto* queue = panel.findChild<QListWidget*>();
-        QVERIFY2(queue != nullptr, "Pending operation queue should exist");
-        QCOMPARE(queue->count(), 1);
-        QVERIFY(queue->item(0)->text().contains(action.queued_text));
+    for (const auto& action : expectedMetadataActions()) {
+        queueMetadataActionAndVerify(action, backupRoot.path());
     }
 }
 
@@ -1331,6 +2774,9 @@ void PartitionManagerPanelTests::createDialogExposesSynchronizedHandleControls()
     QVERIFY(result.inspected);
     QVERIFY(result.has_size_handle);
     QVERIFY(result.has_location_handle);
+    QVERIFY2(result.has_non_native_file_systems, qPrintable(result.file_system_items));
+    QVERIFY2(result.raw_create_controls_toggle, qPrintable(result.raw_toggle_state));
+    QVERIFY(result.swap_create_controls_toggle);
     QVERIFY(result.size_synced);
     QVERIFY(result.location_synced);
     QVERIFY(result.preview_drag_synced);

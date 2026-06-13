@@ -8,7 +8,12 @@
 
 #include "sak/partition_manager_types.h"
 
+#include <QHash>
+
 namespace sak {
+
+struct PartitionFileSystemToolCommand;
+struct ExternalFileSystemToolScriptRequest;
 
 struct PartitionScript {
     QString script;
@@ -28,6 +33,14 @@ public:
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
 
 private:
+    using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;
+
+    [[nodiscard]] static QHash<int, Builder> buildOperationDispatchTable();
+    static void appendCoreBuilders(QHash<int, Builder>* builders);
+    static void appendLayoutBuilders(QHash<int, Builder>* builders);
+    static void appendCloneAndMaintenanceBuilders(QHash<int, Builder>* builders);
+    static void appendAdvancedBuilders(QHash<int, Builder>* builders);
+
     [[nodiscard]] PartitionScript buildCreateScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildDeleteScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildFormatScript(const PartitionOperation& operation) const;
@@ -37,6 +50,9 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildCheckFileSystemScript(
         const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildExternalFileSystemToolScript(
+        const PartitionOperation& operation,
+        const ExternalFileSystemToolScriptRequest& request) const;
     [[nodiscard]] PartitionScript buildSurfaceTestScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildPartitionRecoveryScanScript(
         const PartitionOperation& operation) const;
@@ -78,6 +94,10 @@ private:
     [[nodiscard]] PartitionScript buildChangeVolumeSerialNumberScript(
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildConvertDynamicDiskToBasicScript(
+        const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildApfsRootFileMutationScript(
+        const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildHfsFileMutationScript(
         const PartitionOperation& operation) const;
 
     [[nodiscard]] static PartitionScript invalidScript(const QString& blocker);

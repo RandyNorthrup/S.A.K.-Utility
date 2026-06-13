@@ -125,6 +125,7 @@ auto ElevationBroker::handleTaskMessage(const PipeMessage& msg, const QString& t
         ElevatedTaskResult result;
         result.success = msg.json["success"].toBool(false);
         result.data = msg.json["data"].toObject();
+        result.error_message = result.data.value(QStringLiteral("error_message")).toString();
         m_current_task_id.clear();
         sak::logInfo("ElevationBroker: task '{}' completed (success={})",
                      task_id.toStdString(),

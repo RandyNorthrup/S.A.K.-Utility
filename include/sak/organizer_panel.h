@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/file_management_file_system.h"
 #include "sak/organizer_worker.h"
 #include "sak/widget_helpers.h"
 
@@ -29,6 +30,7 @@ class DuplicateFinderWorker;
 
 namespace sak {
 class DetachableLogWindow;
+class FileManagementExplorerPanel;
 class LogToggleSwitch;
 
 /**
@@ -74,6 +76,7 @@ private Q_SLOTS:
     void onResetCategoriesClicked();
     void onSettingsClicked();
     void onTargetPathChanged(const QString& path);
+    void onOrganizerTargetChanged(int index);
 
     void onWorkerStarted();
     void onWorkerFinished();
@@ -89,6 +92,7 @@ private Q_SLOTS:
     void onDedupScanClicked();
     void onDedupCancelClicked();
     void onDedupSettingsClicked();
+    void onDedupTargetChanged(int index);
     void onDedupWorkerStarted();
     void onDedupWorkerFinished();
     void onDedupWorkerFailed(int errorCode, const QString& errorMessage);
@@ -98,6 +102,13 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void refreshMountedFileSystemTargets();
+    void scanFileSystemTargets();
+    void addManualFileSystemTarget();
+    void populateFileSystemTargetCombos();
+    [[nodiscard]] FileManagementTarget currentTargetForCombo(const QComboBox* combo) const;
+    [[nodiscard]] FileManagementTarget currentOrganizerTarget() const;
+    [[nodiscard]] FileManagementTarget currentDedupTarget() const;
     QWidget* createOrganizerTab();
     QGroupBox* createTargetDirectoryGroup();
     QGroupBox* createCategoryMappingGroup();
@@ -122,12 +133,17 @@ private:
 
     // Tab widget
     QTabWidget* m_tabs{nullptr};
+    FileManagementExplorerPanel* m_file_explorer_panel{nullptr};
 
     // Dynamic header labels
     PanelHeaderWidgets m_headerWidgets{};
 
     // Organizer widgets
     QLineEdit* m_target_path{nullptr};
+    QComboBox* m_organizer_target_combo{nullptr};
+    QPushButton* m_target_refresh_button{nullptr};
+    QPushButton* m_target_scan_button{nullptr};
+    QPushButton* m_target_manual_button{nullptr};
     QPushButton* m_browse_button{nullptr};
     QLabel* m_dir_summary_label{nullptr};
 
@@ -153,6 +169,7 @@ private:
 
     // Duplicate detection widgets
     QListWidget* m_dedup_directory_list{nullptr};
+    QComboBox* m_dedup_target_combo{nullptr};
     QPushButton* m_dedup_add_button{nullptr};
     QPushButton* m_dedup_remove_button{nullptr};
     QPushButton* m_dedup_clear_button{nullptr};
@@ -168,6 +185,7 @@ private:
 
     std::unique_ptr<DuplicateFinderWorker> m_dedup_worker;
     bool m_dedup_running{false};
+    QVector<FileManagementTarget> m_file_system_targets;
 };
 
 }  // namespace sak

@@ -24,6 +24,45 @@ https://code.qt.io/ or https://download.qt.io/archive/qt/6.5/6.5.3/.
 
 ---
 
+## Files Community Icons
+
+**License:** MIT
+**Website:** https://github.com/files-community/Files
+**Source commit:** `8ea6d30`
+**Used for:** File Management Explorer command, layout, pane, and Files-inspired UI icons
+**Bundled at:** `resources/icons/files/*.svg`, with provenance in `resources/icons/files/manifest.json`
+
+The bundled SVGs were converted from generic MIT-licensed ThemedIcon XAML path
+data in `src/Files.App.Controls/ThemedIcon/Styles/*.xaml`. Files app identity
+art, Store assets, cloud-drive, Git, FTP, and third-party integration assets are
+not bundled.
+
+```
+MIT License
+
+Copyright (c) 2018 - present Files Community
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
 ## qrcodegen
 
 **License:** MIT
@@ -136,6 +175,57 @@ required and there is no charge to use it.
 
 ---
 
+## Partition filesystem tools
+
+**License:** GPL-2.0-only for the approved e2fsprogs bundle; APSL-2.0; GPL-3.0-or-later; Apache-2.0 for `newfs_hfs`; APSL-2.0; GPL-3.0-or-later for `fsck_hfs`
+**Version:** e2fsprogs 1.47.4; hfsprogs 540.1.linux3-6+sak-msys
+**Website:** https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/ and https://packages.debian.org/source/sid/hfsprogs
+**Used for:** Manifest-gated ext2/ext3/ext4 read-only checks plus approved
+format, repair, and resize command shapes; manifest-gated HFS+/HFSX format,
+read-only check, and repair command shapes in Partition Manager
+**Bundled at:** `tools/filesystem/`
+
+Current release state: `tools/filesystem/manifest.json` approves `e2fsck` for
+`check-read-only` and `repair`, `mke2fs` for `format`, and `resize2fs` for
+`resize` on ext2/ext3/ext4. It also approves `newfs_hfs` for `format` and
+`fsck_hfs` for `check-read-only` and `repair` on HFS+/HFSX. The bundled
+e2fsprogs executables are built from the upstream e2fsprogs 1.47.4 source
+archive with the local MinGW patch stored beside them:
+
+- `tools/filesystem/e2fsprogs/e2fsck.exe`
+- `tools/filesystem/e2fsprogs/mke2fs.exe`
+- `tools/filesystem/e2fsprogs/resize2fs.exe`
+- `tools/filesystem/e2fsprogs/e2fsprogs-1.47.4.tar.xz`
+- `tools/filesystem/e2fsprogs/e2fsprogs-1.47.4-sak-mingw.patch`
+- `tools/filesystem/e2fsprogs/NOTICE`
+- `tools/filesystem/e2fsprogs/BUILD-NOTES.md`
+- `tools/filesystem/hfsprogs/newfs_hfs.exe`
+- `tools/filesystem/hfsprogs/fsck_hfs.exe`
+- `tools/filesystem/hfsprogs/msys-2.0.dll`
+- `tools/filesystem/hfsprogs/msys-crypto-3.dll`
+- `tools/filesystem/hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz`
+- `tools/filesystem/hfsprogs/hfsprogs_540.1.linux3-6.debian.tar.xz`
+- `tools/filesystem/hfsprogs/hfsprogs-540.1.linux3-sak-msys.patch`
+- `tools/filesystem/hfsprogs/NOTICE`
+- `tools/filesystem/hfsprogs/BUILD-NOTES.md`
+- `tools/filesystem/hfsprogs/CYGWIN_LICENSE`
+- `tools/filesystem/hfsprogs/CYGWIN_COPYING`
+- `tools/filesystem/hfsprogs/OPENSSL_LICENSE.txt`
+
+As required by GPLv2, the complete source archive, local patch, upstream notice,
+and build notes are bundled with the e2fsprogs executables. The hfsprogs bundle
+ships the Debian source package, Debian patch archive, local Windows portability
+patch, runtime DLL license texts, and OpenSSL license text for the crypto runtime
+dependency used by `newfs_hfs`. User-visible ext format, repair, resize, Linux
+swap format, and HFS+/HFSX format/repair workflows route through the same
+Partition Manager queue/apply, safety, manifest/hash, and confirmation model.
+XFS, Btrfs, HFS+ attribute value writes, APFS write/repair/format/resize, and
+additional non-native write paths remain blocked until a tool has source,
+license, upstream URL, source SHA-256, binary SHA-256, supported-operation
+metadata, safety coverage, and certification evidence.
+
+---
+
 ## aria2
 
 **License:** GNU General Public License v2.0 (GPLv2)
@@ -221,6 +311,43 @@ A copy of the LGPL v3 is available at
 https://www.gnu.org/licenses/lgpl-3.0.html.
 
 Source code is available at: https://wimlib.net/downloads/index.html
+
+---
+
+## lzfse / lzvn (Apple reference implementation)
+
+**License:** BSD 3-Clause
+**Website:** https://github.com/lzfse/lzfse
+**Used for:** HFS+ decmpfs LZVN/LZFSE compressed-file codecs (vendored at `third_party/lzfse`)
+
+```
+Copyright (c) 2015-2016, Apple Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1.  Redistributions of source code must retain the above copyright notice, this
+    list of conditions and the following disclaimer.
+
+2.  Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+
+3.  Neither the name of the copyright holder(s) nor the names of any
+    contributors may be used to endorse or promote products derived from this
+    software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ---
 
