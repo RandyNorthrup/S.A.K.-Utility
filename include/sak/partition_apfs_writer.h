@@ -474,6 +474,16 @@ struct PartitionApfsImageFileDeleteCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to rename one root file in a generated APFS container with a
+///        true in-place copy-on-write checkpoint commit (A2).
+struct PartitionApfsImageFileRenameCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString file_name;
+    QString new_file_name;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -546,6 +556,8 @@ public:
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
         const PartitionApfsImageFileDeleteCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileRename(
+        const PartitionApfsImageFileRenameCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(

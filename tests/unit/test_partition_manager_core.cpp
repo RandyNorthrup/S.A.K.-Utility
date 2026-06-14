@@ -1649,6 +1649,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
+    void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6903,6 +6904,73 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreser
          .options = options});
     QVERIFY(!missing.ok);
     QVERIFY(missing.blockers.join(' ').contains(QStringLiteral("not found")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjectId() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString r0 = dir.filePath(QStringLiteral("rn0.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = r0,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("RN"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    const QByteArray payload = QByteArrayLiteral("renamed file keeps content");
+    const QString r1 = dir.filePath(QStringLiteral("rn1.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = r0,
+                                                            .written_image_path = r1,
+                                                            .file_name = "old.txt",
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+
+    const QString r2 = dir.filePath(QStringLiteral("rn2.apfs"));
+    const auto rename =
+        PartitionApfsWriter::commitImageOnlyFileRename({.source_image_path = r1,
+                                                        .written_image_path = r2,
+                                                        .file_name = QStringLiteral("old.txt"),
+                                                        .new_file_name = QStringLiteral("new.txt"),
+                                                        .options = options});
+    QVERIFY2(rename.ok, qPrintable(rename.blockers.join(QStringLiteral("; "))));
+
+    // The file is renamed but keeps its content (its data extent stayed put).
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(r2, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("new.txt"));
+    QCOMPARE(
+        PartitionApfsFileSystemReader::readFileFromImage(r2, QStringLiteral("/new.txt"), 4096).data,
+        payload);
+
+    // Renaming a missing file, or to an existing name, fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyFileRename(
+                 {.source_image_path = r2,
+                  .written_image_path = dir.filePath(QStringLiteral("rn-miss.apfs")),
+                  .file_name = QStringLiteral("nope.txt"),
+                  .new_file_name = QStringLiteral("x.txt"),
+                  .options = options})
+                 .ok);
+    const QString r3 = dir.filePath(QStringLiteral("rn3.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = r2,
+                                                            .written_image_path = r3,
+                                                            .file_name = "keep.txt",
+                                                            .file_data = {},
+                                                            .options = options})
+                .ok);
+    const auto collide = PartitionApfsWriter::commitImageOnlyFileRename(
+        {.source_image_path = r3,
+         .written_image_path = dir.filePath(QStringLiteral("rn-collide.apfs")),
+         .file_name = QStringLiteral("new.txt"),
+         .new_file_name = QStringLiteral("keep.txt"),
+         .options = options});
+    QVERIFY(!collide.ok);
+    QVERIFY(collide.blockers.join(' ').contains(QStringLiteral("already exists")));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

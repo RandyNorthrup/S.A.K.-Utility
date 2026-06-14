@@ -2413,6 +2413,119 @@ bool commitInPlaceFileDelete(QIODevice* image,
         blockers);
 }
 
+struct ApfsRenameListInput {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    ApfsLiveFsChain chain;
+    QVector<ApfsRootFilePayload> allFiles;
+    QString oldName;
+    QString newName;
+};
+
+// Build the root-file list with one file renamed (data extents preserved). Fails
+// closed if the old name is missing or the new name already exists.
+bool buildRenameFileList(const ApfsRenameListInput& in,
+                         QVector<ApfsRootFilePayload>* files,
+                         QStringList* blockers) {
+    const QHash<uint64_t, uint64_t> owners =
+        parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
+    bool found = false;
+    bool duplicate = false;
+    for (ApfsRootFilePayload file : in.allFiles) {
+        file.parentDirectoryId = kApfsRootDirectoryId;
+        file.privateId = file.fileId;
+        file.dataStartBlock = owners.value(file.fileId);
+        duplicate = duplicate || file.fileName == in.newName;
+        if (file.fileName == in.oldName) {
+            file.fileName = in.newName;
+            found = true;
+        }
+        files->append(file);
+    }
+    if (!found) {
+        blockers->append(
+            QStringLiteral("APFS file-rename-commit: file '%1' was not found").arg(in.oldName));
+        return false;
+    }
+    if (duplicate) {
+        blockers->append(QStringLiteral("APFS file-rename-commit: a file named '%1' already exists")
+                             .arg(in.newName));
+        return false;
+    }
+    return true;
+}
+
+struct ApfsRenameRequest {
+    QVector<ApfsRootFilePayload> allFiles;
+    QString oldName;
+    QString newName;
+};
+
+// A2: rename one root file in place. The renamed dirent/inode are rebuilt into
+// the copy-on-written root tree; the file keeps its object id and its data
+// extent stays put, so this is a net-zero allocation (six-block chain COW, no
+// extent-ref change).
+bool commitInPlaceFileRename(QIODevice* image,
+                             const ApfsRenameRequest& request,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
+        return false;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
+        return false;
+    }
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    ApfsLiveFsChain chain;
+    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootFilePayload> files;
+    if (!buildRenameFileList(
+            {image, geometry, chain, request.allFiles, request.oldName, request.newName},
+            &files,
+            blockers)) {
+        return false;
+    }
+    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
+    QVector<uint64_t> newBlocks;
+    if (!findFreeBlocksInBitmap(
+            {image, geometry, layout.chunkBitmap, layout.seedData, layout.chunk0Blocks, 6},
+            &newBlocks,
+            blockers)) {
+        return false;
+    }
+    const uint64_t newXid = live.xid + 1;
+    if (!writeFileInsertCowChain({.image = image,
+                                  .geometry = geometry,
+                                  .newXid = newXid,
+                                  .live = chain,
+                                  .newBlocks = newBlocks,
+                                  .files = files,
+                                  .allocBlockDelta = 0,
+                                  .extentRefNew = 0,
+                                  .fileCountDelta = 0,
+                                  .nextObjIdDelta = 0},
+                                 blockers)) {
+        return false;
+    }
+    if (!applyFileInsertAllocation({.image = image,
+                                    .geometry = geometry,
+                                    .layout = layout,
+                                    .freed = oldChainFreedBlocks(chain, false),
+                                    .allocated = newBlocks,
+                                    .cibFreeDelta = 0,
+                                    .newXid = newXid},
+                                   blockers)) {
+        return false;
+    }
+    return advanceCheckpoint({image, geometry, nxsb, live, newBlocks.at(5), 0}, result, blockers);
+}
+
 // Enumerate the root regular files of a generated container (name + object id +
 // size as a sized-but-empty payload) so an in-place commit can preserve them.
 bool collectAllRootFiles(const QString& sourcePath,
@@ -8299,6 +8412,76 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceFileDelete(&image, allFiles, cleanFileName, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileRename(
+    const PartitionApfsImageFileRenameCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place file rename remains image-only and is not exposed to user "
+        "actions; raw in-place commit support requires fsck_apfs/diskutil, crash replay, and "
+        "hardware evidence"));
+
+    const QString oldName = request.file_name.trimmed();
+    const QString newName = request.new_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            oldName, QLatin1StringView("file-rename-commit"), &result.blockers) ||
+        !appendRootFileNameBlockers(
+            newName, QLatin1StringView("file-rename-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-rename-commit"),
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-rename-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-rename-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.source_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-rename-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-rename-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileRename(&image, {allFiles, oldName, newName}, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

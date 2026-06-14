@@ -1192,6 +1192,38 @@ std::optional<QJsonObject> buildCommitCheckpointReport(const CliInvocation& invo
     return report;
 }
 
+std::optional<QJsonObject> buildCommitFileRenameReport(const CliInvocation& invocation,
+                                                       QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-rename.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileRename(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .file_name = invocation.file_name,
+         .new_file_name = invocation.directory_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file rename commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("old_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("new_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invocation,
                                                        QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -1270,6 +1302,9 @@ std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, Q
     if (invocation.command == QStringLiteral("commit-image-file-delete")) {
         return buildCommitFileDeleteReport(invocation, error);
     }
+    if (invocation.command == QStringLiteral("commit-image-file-rename")) {
+        return buildCommitFileRenameReport(invocation, error);
+    }
     if (isImageCommand(invocation.command)) {
         return buildImageCommandReport(invocation, error);
     }
@@ -1297,20 +1332,25 @@ bool isFileNameCommand(const QString& command) {
            command == QStringLiteral("delete-raw-root-directory-file") ||
            command == QStringLiteral("delete-raw-root-file") ||
            command == QStringLiteral("commit-image-file-insert") ||
-           command == QStringLiteral("commit-image-file-delete");
+           command == QStringLiteral("commit-image-file-delete") ||
+           command == QStringLiteral("commit-image-file-rename");
 }
 
 bool isDirectoryNameCommand(const QString& command) {
-    return command == QStringLiteral("create-image-root-directory") ||
-           command == QStringLiteral("write-image-root-directory-file") ||
-           command == QStringLiteral("patch-image-root-directory-file") ||
-           command == QStringLiteral("delete-image-root-directory-file") ||
-           command == QStringLiteral("delete-image-root-directory") ||
-           command == QStringLiteral("create-raw-root-directory") ||
-           command == QStringLiteral("write-raw-root-directory-file") ||
-           command == QStringLiteral("patch-raw-root-directory-file") ||
-           command == QStringLiteral("delete-raw-root-directory-file") ||
-           command == QStringLiteral("delete-raw-root-directory");
+    static const QStringList kDirectoryNameCommands = {
+        QStringLiteral("create-image-root-directory"),
+        QStringLiteral("write-image-root-directory-file"),
+        QStringLiteral("patch-image-root-directory-file"),
+        QStringLiteral("delete-image-root-directory-file"),
+        QStringLiteral("delete-image-root-directory"),
+        QStringLiteral("create-raw-root-directory"),
+        QStringLiteral("write-raw-root-directory-file"),
+        QStringLiteral("patch-raw-root-directory-file"),
+        QStringLiteral("delete-raw-root-directory-file"),
+        QStringLiteral("delete-raw-root-directory"),
+        QStringLiteral("commit-image-file-rename"),
+    };
+    return kDirectoryNameCommands.contains(command);
 }
 
 bool isFilePatchCommand(const QString& command) {
