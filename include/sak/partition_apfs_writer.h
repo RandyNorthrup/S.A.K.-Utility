@@ -455,6 +455,15 @@ struct PartitionApfsImageCheckpointCommitResult {
     QStringList warnings;
 };
 
+/// @brief Request to insert one empty file into a generated APFS container with
+///        a true in-place copy-on-write checkpoint commit (A2 increment 2).
+struct PartitionApfsImageFileInsertCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString file_name;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -523,6 +532,8 @@ public:
         const PartitionApfsImageRepairRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyCheckpoint(
         const PartitionApfsImageCheckpointCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
+        const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(

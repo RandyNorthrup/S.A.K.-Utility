@@ -1645,6 +1645,7 @@ private Q_SLOTS:
     void apfsWriter_blocksGeneratedLayoutWithSnapshotState();
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
+    void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6601,6 +6602,79 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransa
     QCOMPARE(le64(nxsb4, 0x10), 4ULL);
     QCOMPARE(le32(nxsb4, 0x88), 6U);   // descriptor index advanced one pair
     QCOMPARE(le32(nxsb4, 0x90), 10U);  // data index advanced one quad
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFile() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2fi-base.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = base,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("A2FI"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    const QString out = dir.filePath(QStringLiteral("a2fi-out.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = out,
+                                                        .file_name = QStringLiteral("proof.txt"),
+                                                        .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.previous_xid, 2ULL);
+    QCOMPARE(commit.new_xid, 3ULL);
+
+    // The S.A.K. reader walks the copy-on-written object-map chain
+    // (nx_omap_oid -> container omap -> volume superblock -> volume omap ->
+    // root tree) and finds the inserted file.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("A2FI"));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("proof.txt"));
+    QCOMPARE(listing.entries.first().size_bytes, 0ULL);
+
+    const auto readBlock = [](const QString& path, quint64 block) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le64 = [](const QByteArray& bytes, int offset) {
+        return qFromLittleEndian<quint64>(
+            reinterpret_cast<const uchar*>(bytes.constData() + offset));
+    };
+    const QByteArray nxsb = readBlock(out, 0);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    QCOMPARE(le64(nxsb, 0x10), 3ULL);  // o_xid advanced
+    QCOMPARE(le64(nxsb, 0xA0),
+             206ULL);  // nx_omap_oid -> the new container omap header (6th free block)
+
+    // Every copy-on-written object block carries a valid object checksum.
+    for (quint64 block : {201ULL, 202ULL, 203ULL, 204ULL, 205ULL, 206ULL}) {
+        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readBlock(out, block)),
+                 qPrintable(QStringLiteral("invalid object checksum at block %1").arg(block)));
+    }
+
+    // Net-zero allocation: the six old chain blocks are freed and the six new
+    // ones allocated in the chunk allocation bitmap.
+    const QByteArray bitmap = readBlock(out, 188);
+    const auto used = [&bitmap](quint64 block) {
+        return (static_cast<quint8>(bitmap.at(static_cast<qsizetype>(block / 8))) >> (block % 8)) &
+               1;
+    };
+    for (quint64 block : {193ULL, 194ULL, 197ULL, 198ULL, 199ULL, 200ULL}) {
+        QVERIFY2(used(block) == 0, qPrintable(QStringLiteral("old block %1 not freed").arg(block)));
+    }
+    for (quint64 block : {201ULL, 202ULL, 203ULL, 204ULL, 205ULL, 206ULL}) {
+        QVERIFY2(used(block) == 1,
+                 qPrintable(QStringLiteral("new block %1 not allocated").arg(block)));
+    }
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

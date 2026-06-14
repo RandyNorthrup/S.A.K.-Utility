@@ -266,6 +266,8 @@ constexpr qsizetype kApfsVolumeRootTreeOidOffset = 0x88;
 constexpr qsizetype kApfsVolumeSnapMetaTreeOidOffset = 0x98;
 constexpr qsizetype kApfsVolumeRevertToXidOffset = 0xA0;
 constexpr qsizetype kApfsVolumeRevertToSblockOidOffset = 0xA8;
+constexpr qsizetype kApfsVolumeNextObjectIdOffset = 0xB0;
+constexpr qsizetype kApfsVolumeFileCountOffset = 0xB8;
 constexpr qsizetype kApfsVolumeNumSnapshotsOffset = 0xD8;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
 constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
@@ -1727,14 +1729,67 @@ struct ApfsInPlaceCheckpointResult {
     uint64_t superblock_block{0};
 };
 
-// A2 increment 1: advance the container checkpoint by one transaction in place.
-// Re-emit the ephemeral object set into the next data-ring slot and write a
-// fresh checkpoint-map + nx_superblock into the next descriptor-ring slot, then
-// re-anchor block 0. No file-system COW is performed (the volume content,
-// object maps and spaceman free state carry forward unchanged); this exercises
-// the checkpoint-ring + checksum engine that the file-mutating commit builds
-// on. Mirrors the Apple apfs.kext container-only commit decoded in
+struct ApfsCheckpointAdvanceRequest {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    QByteArray nxsb;
+    ApfsLiveCheckpoint live;
+    uint64_t newContainerOmap{0};  // 0 = carry the existing container object map forward
+};
+
+// Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
+// ephemeral object set into the next data-ring slot, write a fresh
+// checkpoint-map + nx_superblock into the next descriptor-ring slot (optionally
+// re-pointing nx_omap_oid at a freshly COW'd container object map), and
+// re-anchor block 0. Mirrors the Apple apfs.kext commit decoded in
 // docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md.
+bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
+                       ApfsInPlaceCheckpointResult* result,
+                       QStringList* blockers) {
+    const ApfsRepairGeometry geometry = request.geometry;
+    const ApfsLiveCheckpoint live = request.live;
+    QByteArray checkpointMap(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            request.image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+        return false;
+    }
+    const uint32_t ephemeralCount = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    if (live.dataNext + ephemeralCount > live.dataBlocks) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: checkpoint data ring would wrap (unsupported in "
+                           "this increment)"));
+        return false;
+    }
+    const uint64_t newXid = live.xid + 1;
+    const uint64_t cpmBlock = live.descBase + live.descNext;
+    const uint64_t nxsbBlock = cpmBlock + 1;
+    const ApfsCheckpointCommitContext ctx{
+        request.image, geometry, live.dataBase, newXid, live.dataNext};
+    if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
+        return false;
+    }
+    writeLe64(&checkpointMap, kApfsObjectOidOffset, cpmBlock);
+    writeLe64(&checkpointMap, kApfsObjectXidOffset, newXid);
+    if (!stampAndWriteApfsBlock(request.image, geometry, cpmBlock, &checkpointMap, blockers)) {
+        return false;
+    }
+    advanceNxSuperblockCheckpoint(&request.nxsb, live, newXid, ephemeralCount);
+    if (request.newContainerOmap != 0) {
+        writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
+    }
+    if (!stampAndWriteApfsBlock(request.image, geometry, nxsbBlock, &request.nxsb, blockers) ||
+        !writeApfsRepairBlock(
+            request.image, geometry, kApfsFormatNxsbBlock, request.nxsb, blockers)) {
+        return false;
+    }
+    *result = {true, live.xid, newXid, cpmBlock, nxsbBlock};
+    return true;
+}
+
+// A2 increment 1: advance the container checkpoint by one transaction in place
+// with no file-system COW (the volume content, object maps and spaceman free
+// state carry forward unchanged). Proves the checkpoint-ring + checksum engine
+// the file-mutating commit builds on.
 bool commitInPlaceCheckpoint(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
@@ -1749,37 +1804,215 @@ bool commitInPlaceCheckpoint(QIODevice* image,
         return false;
     }
     const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    QByteArray checkpointMap(blockSize, '\0');
-    if (!readApfsRepairBlock(
-            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+    return advanceCheckpoint({image, geometry, nxsb, live, 0}, result, blockers);
+}
+
+// Single-entry object-map B-tree leaf: the value paddr sits at the very end of
+// the value area (blockSize - info(40) - value(16) + paddr offset(8)).
+uint64_t readOmapSingleEntryPaddr(const QByteArray& omapTreeNode, uint32_t blockSize) {
+    return le64(omapTreeNode,
+                static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes - kApfsObjectMapValueBytes +
+                    kApfsOmapValuePaddrOffset);
+}
+
+struct ApfsLiveFsChain {
+    uint64_t ctrOmapHdr{0};
+    uint64_t ctrOmapTree{0};
+    uint64_t volSb{0};
+    uint64_t volOmapHdr{0};
+    uint64_t volOmapTree{0};
+    uint64_t rootTree{0};
+};
+
+// Walk the container object map -> volume superblock -> volume object map ->
+// root file-system tree, recording the physical block of every node so the
+// commit can copy-on-write the whole chain.
+bool walkLiveFsChain(QIODevice* image,
+                     const ApfsRepairGeometry& geometry,
+                     uint64_t containerOmapHdr,
+                     ApfsLiveFsChain* chain,
+                     QStringList* blockers) {
+    chain->ctrOmapHdr = containerOmapHdr;
+    QByteArray node(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapHdr, &node, blockers)) {
         return false;
     }
-    const uint32_t ephemeralCount = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    if (live.dataNext + ephemeralCount > live.dataBlocks) {
-        blockers->append(
-            QStringLiteral("APFS in-place commit: checkpoint data ring would wrap (unsupported in "
-                           "this increment)"));
+    chain->ctrOmapTree = le64(node, kApfsOmapTreeOidOffset);
+    if (!readApfsRepairBlock(image, geometry, chain->ctrOmapTree, &node, blockers)) {
+        return false;
+    }
+    chain->volSb = readOmapSingleEntryPaddr(node, geometry.blockSize);
+    if (!readApfsRepairBlock(image, geometry, chain->volSb, &node, blockers)) {
+        return false;
+    }
+    chain->volOmapHdr = le64(node, kApfsVolumeOmapOidOffset);
+    if (!readApfsRepairBlock(image, geometry, chain->volOmapHdr, &node, blockers)) {
+        return false;
+    }
+    chain->volOmapTree = le64(node, kApfsOmapTreeOidOffset);
+    if (!readApfsRepairBlock(image, geometry, chain->volOmapTree, &node, blockers)) {
+        return false;
+    }
+    chain->rootTree = readOmapSingleEntryPaddr(node, geometry.blockSize);
+    return true;
+}
+
+struct ApfsFreeBlockScan {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    uint64_t bitmapBlock{0};
+    uint64_t startBlock{0};
+    int count{0};
+};
+
+// Scan the raw allocation bitmap for `count` free blocks at or after
+// `startBlock`, returning their addresses in ascending order.
+bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
+                            QVector<uint64_t>* freeBlocks,
+                            QStringList* blockers) {
+    QByteArray bitmap(scan.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(scan.image, scan.geometry, scan.bitmapBlock, &bitmap, blockers)) {
+        return false;
+    }
+    for (uint64_t block = scan.startBlock;
+         block < scan.geometry.blockCount && freeBlocks->size() < scan.count;
+         ++block) {
+        const bool used = (bitmap.at(static_cast<qsizetype>(block / 8)) >> (block % 8)) & 1;
+        if (!used) {
+            freeBlocks->append(block);
+        }
+    }
+    if (freeBlocks->size() < scan.count) {
+        blockers->append(QStringLiteral("APFS in-place file insert: not enough free blocks"));
+        return false;
+    }
+    return true;
+}
+
+void flipChunkBitmapBits(QByteArray* bitmap,
+                         const QVector<uint64_t>& freed,
+                         const QVector<uint64_t>& allocated) {
+    for (uint64_t block : freed) {
+        (*bitmap)[static_cast<qsizetype>(block / 8)] &= static_cast<char>(~(1 << (block % 8)));
+    }
+    for (uint64_t block : allocated) {
+        (*bitmap)[static_cast<qsizetype>(block / 8)] |= static_cast<char>(1 << (block % 8));
+    }
+}
+
+struct ApfsCowFileInsert {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    uint64_t newXid{0};
+    ApfsLiveFsChain live;
+    // [rootTree, volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
+    QVector<uint64_t> newBlocks;
+    QVector<ApfsRootFilePayload> files;
+};
+
+// Copy-on-write the file-system metadata chain to the newly allocated blocks
+// with the new file inserted: root tree -> volume object map -> volume
+// superblock -> container object map, all stamped at the new transaction id.
+bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t rootTree = cow.newBlocks.at(0);
+    const uint64_t volOmapTree = cow.newBlocks.at(1);
+    const uint64_t volOmapHdr = cow.newBlocks.at(2);
+    const uint64_t volSb = cow.newBlocks.at(3);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(4);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(5);
+
+    QByteArray root = buildRootTreeBlock(bs, cow.files, {}, blockers);
+    writeLe64(&root, kApfsObjectXidOffset, cow.newXid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, rootTree, &root, blockers)) {
+        return false;
+    }
+    QByteArray volTree = buildObjectMapTreeBlock(
+        bs, volOmapTree, {{kApfsFormatRootTreeOid, cow.newXid, rootTree}}, cow.newXid, blockers);
+    QByteArray volHdr = buildObjectMapBlock({bs, volOmapHdr, volOmapTree, cow.newXid, 0}, blockers);
+    if (!writeApfsRepairBlock(cow.image, cow.geometry, volOmapTree, volTree, blockers) ||
+        !writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers)) {
+        return false;
+    }
+    QByteArray vol(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volSb, &vol, blockers)) {
+        return false;
+    }
+    writeLe64(&vol, kApfsVolumeOmapOidOffset, volOmapHdr);
+    writeLe64(&vol, kApfsVolumeFileCountOffset, le64(vol, kApfsVolumeFileCountOffset) + 1);
+    writeLe64(&vol, kApfsVolumeNextObjectIdOffset, le64(vol, kApfsVolumeNextObjectIdOffset) + 1);
+    writeLe64(&vol, kApfsObjectXidOffset, cow.newXid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
+        return false;
+    }
+    QByteArray ctrTree = buildObjectMapTreeBlock(
+        bs, ctrOmapTree, {{kApfsFormatVolumeOid, cow.newXid, volSb}}, cow.newXid, blockers);
+    QByteArray ctrHdr = buildObjectMapBlock({bs, ctrOmapHdr, ctrOmapTree, cow.newXid, 1}, blockers);
+    if (!writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapTree, ctrTree, blockers) ||
+        !writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapHdr, ctrHdr, blockers)) {
+        return false;
+    }
+    return true;
+}
+
+// A2 increment 2: insert one empty file into a generated container with a true
+// in-place copy-on-write checkpoint commit. COW the fs-metadata chain to newly
+// allocated blocks, swap the allocation bitmap (free the six old chain blocks,
+// allocate the six new ones - a net-zero allocation so the spaceman free state
+// is unchanged), then advance the checkpoint via the shared engine with
+// nx_omap_oid re-pointed at the new container object map.
+bool commitInPlaceFileInsert(QIODevice* image,
+                             const QString& fileName,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
+        return false;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
+        return false;
+    }
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    ApfsLiveFsChain chain;
+    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    if (!findFreeBlocksInBitmap(
+            {image, geometry, kApfsFormatChunkBitmapBlock, kApfsFormatSeedFileDataBlock, 6},
+            &newBlocks,
+            blockers)) {
         return false;
     }
     const uint64_t newXid = live.xid + 1;
-    const uint64_t cpmBlock = live.descBase + live.descNext;
-    const uint64_t nxsbBlock = cpmBlock + 1;
-    const ApfsCheckpointCommitContext ctx{image, geometry, live.dataBase, newXid, live.dataNext};
-    if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
+    const QVector<ApfsRootFilePayload> files{{.fileName = fileName.trimmed(),
+                                              .data = {},
+                                              .parentDirectoryId = kApfsRootDirectoryId,
+                                              .fileId = kApfsFirstUserObjectId,
+                                              .privateId = kApfsFirstUserObjectId,
+                                              .dataStartBlock = 0}};
+    if (!writeFileInsertCowChain({image, geometry, newXid, chain, newBlocks, files}, blockers)) {
         return false;
     }
-    writeLe64(&checkpointMap, kApfsObjectOidOffset, cpmBlock);
-    writeLe64(&checkpointMap, kApfsObjectXidOffset, newXid);
-    if (!stampAndWriteApfsBlock(image, geometry, cpmBlock, &checkpointMap, blockers)) {
+    QByteArray bitmap(blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, kApfsFormatChunkBitmapBlock, &bitmap, blockers)) {
         return false;
     }
-    advanceNxSuperblockCheckpoint(&nxsb, live, newXid, ephemeralCount);
-    if (!stampAndWriteApfsBlock(image, geometry, nxsbBlock, &nxsb, blockers) ||
-        !writeApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, nxsb, blockers)) {
+    flipChunkBitmapBits(&bitmap,
+                        {chain.rootTree,
+                         chain.volOmapTree,
+                         chain.volOmapHdr,
+                         chain.volSb,
+                         chain.ctrOmapTree,
+                         chain.ctrOmapHdr},
+                        newBlocks);
+    if (!writeApfsRepairBlock(image, geometry, kApfsFormatChunkBitmapBlock, bitmap, blockers)) {
         return false;
     }
-    *result = {true, live.xid, newXid, cpmBlock, nxsbBlock};
-    return true;
+    return advanceCheckpoint({image, geometry, nxsb, live, newBlocks.at(5)}, result, blockers);
 }
 
 bool isRepairableApfsObjectBlock(const QByteArray& block) {
@@ -7483,6 +7716,68 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceCheckpoint(&image, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileInsert(
+    const PartitionApfsImageFileInsertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place file insert remains image-only and is not exposed to user "
+        "actions; raw in-place commit support requires fsck_apfs/diskutil, crash replay, and "
+        "hardware evidence"));
+
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("file-insert-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-insert-commit"),
+                                                &result.blockers);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-insert-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-insert-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-insert-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-insert-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileInsert(&image, cleanFileName, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
