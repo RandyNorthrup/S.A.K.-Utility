@@ -29,6 +29,11 @@ namespace sak {
 namespace {
 
 constexpr uint64_t kDefaultMaxApfsPayloadBytes = 64ULL * 1024ULL * 1024ULL;
+// In-place checkpoint commits operate on a container size A1 already certified
+// (Apple fsck_apfs + kernel mount at 64 MiB / 256 MiB / 1 GiB); the in-place
+// engine is layout-general (computeGeneratedLayout), so the commit source cap
+// is raised to the certified 256 MiB single-CIB tier.
+constexpr uint64_t kApfsInPlaceCommitMaxBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumApfsContainerBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 constexpr qsizetype kMaximumApfsVolumeNameChars = 255;
@@ -1908,16 +1913,42 @@ QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
     return owners;
 }
 
+// Locations of a generated container's chunk-0 allocation structures. The live
+// chunk-info block and its bitmap sit at fixed addresses inside the internal
+// pool regardless of size, but the post-pool free region shifts by
+// ipDelta = 3*(chunk_count+1) - kApfsFormatIpBlockCount (the formula
+// emptyFormatBlocks uses), so the in-place engine works on any container size,
+// not only the 64 MiB envelope. Allocation stays inside chunk 0 (the only chunk
+// with a populated bitmap on a fresh container).
+struct ApfsGeneratedLayout {
+    uint64_t chunkBitmap{0};
+    uint64_t chunkInfo{0};
+    uint64_t seedData{0};
+    uint64_t chunk0Blocks{0};
+};
+
+ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
+    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    const uint64_t ipDelta = 3 * (chunkCount + 1) - kApfsFormatIpBlockCount;
+    return {.chunkBitmap = kApfsFormatChunkBitmapBlock,
+            .chunkInfo = kApfsFormatChunkInfoBlock,
+            .seedData = kApfsFormatSeedFileDataBlock + ipDelta,
+            .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk)};
+}
+
 struct ApfsFreeBlockScan {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
     uint64_t bitmapBlock{0};
     uint64_t startBlock{0};
+    uint64_t maxBlock{0};
     int count{0};
 };
 
 // Scan the raw allocation bitmap for `count` free blocks at or after
-// `startBlock`, returning their addresses in ascending order.
+// `startBlock` (capped at maxBlock, the chunk-0 boundary), returning their
+// addresses in ascending order.
 bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
                             QVector<uint64_t>* freeBlocks,
                             QStringList* blockers) {
@@ -1925,8 +1956,7 @@ bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
     if (!readApfsRepairBlock(scan.image, scan.geometry, scan.bitmapBlock, &bitmap, blockers)) {
         return false;
     }
-    for (uint64_t block = scan.startBlock;
-         block < scan.geometry.blockCount && freeBlocks->size() < scan.count;
+    for (uint64_t block = scan.startBlock; block < scan.maxBlock && freeBlocks->size() < scan.count;
          ++block) {
         const bool used = (bitmap.at(static_cast<qsizetype>(block / 8)) >> (block % 8)) & 1;
         if (!used) {
@@ -2068,50 +2098,48 @@ bool writeApfsFileDataBlocks(QIODevice* image,
     return true;
 }
 
-// Adjust chunk 0's free-block count in the chunk-info block by delta, re-stamped
-// at the new xid. A net-zero allocation (delta 0) leaves the CIB untouched.
-bool adjustCibFreeCount(QIODevice* image,
-                        const ApfsRepairGeometry& geometry,
-                        int64_t delta,
-                        uint64_t newXid,
-                        QStringList* blockers) {
-    if (delta == 0) {
-        return true;
-    }
-    QByteArray cib(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, kApfsFormatChunkInfoBlock, &cib, blockers)) {
-        return false;
-    }
-    const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
-    writeLe32(&cib,
-              freeOffset,
-              static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) + delta));
-    writeLe64(&cib, kApfsObjectXidOffset, newXid);
-    return stampAndWriteApfsBlock(image, geometry, kApfsFormatChunkInfoBlock, &cib, blockers);
-}
-
 struct ApfsFileInsertAllocation {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
+    ApfsGeneratedLayout layout;
     QVector<uint64_t> freed;      // old COW-chain blocks (+ freed data on delete)
     QVector<uint64_t> allocated;  // newly written COW blocks
     int64_t cibFreeDelta{0};      // + when net blocks are freed, - when consumed
     uint64_t newXid{0};
 };
 
+// Adjust chunk 0's free-block count in the chunk-info block by delta, re-stamped
+// at the new xid. A net-zero allocation (delta 0) leaves the CIB untouched.
+bool adjustCibFreeCount(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
+    if (alloc.cibFreeDelta == 0) {
+        return true;
+    }
+    QByteArray cib(alloc.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(alloc.image, alloc.geometry, alloc.layout.chunkInfo, &cib, blockers)) {
+        return false;
+    }
+    const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
+    writeLe32(&cib,
+              freeOffset,
+              static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) +
+                                    alloc.cibFreeDelta));
+    writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
+    return stampAndWriteApfsBlock(
+        alloc.image, alloc.geometry, alloc.layout.chunkInfo, &cib, blockers);
+}
+
 // Swap the allocation bitmap (free the old COW-chain/data blocks, allocate the
 // new ones) and adjust the CIB free count by the net allocation.
 bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray bitmap(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
-            alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, &bitmap, blockers)) {
+            alloc.image, alloc.geometry, alloc.layout.chunkBitmap, &bitmap, blockers)) {
         return false;
     }
     flipChunkBitmapBits(&bitmap, alloc.freed, alloc.allocated);
     return writeApfsRepairBlock(
-               alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, bitmap, blockers) &&
-           adjustCibFreeCount(
-               alloc.image, alloc.geometry, alloc.cibFreeDelta, alloc.newXid, blockers);
+               alloc.image, alloc.geometry, alloc.layout.chunkBitmap, bitmap, blockers) &&
+           adjustCibFreeCount(alloc, blockers);
 }
 
 // The six COW-chain blocks freed by a commit, plus the old extent-ref tree when
@@ -2199,6 +2227,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
         return false;
     }
+    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.fileData.size()),
                                                   blockSize);
     // A file with data also copy-on-writes the extent-ref tree (a seventh chain
@@ -2207,8 +2236,9 @@ bool commitInPlaceFileInsert(QIODevice* image,
     QVector<uint64_t> newBlocks;
     if (!findFreeBlocksInBitmap({image,
                                  geometry,
-                                 kApfsFormatChunkBitmapBlock,
-                                 kApfsFormatSeedFileDataBlock,
+                                 layout.chunkBitmap,
+                                 layout.seedData,
+                                 layout.chunk0Blocks,
                                  static_cast<int>(metaCount + dataBlocks)},
                                 &newBlocks,
                                 blockers)) {
@@ -2242,6 +2272,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
     }
     if (!applyFileInsertAllocation({.image = image,
                                     .geometry = geometry,
+                                    .layout = layout,
                                     .freed = oldChainFreedBlocks(chain, extentRefNew != 0),
                                     .allocated = newBlocks,
                                     .cibFreeDelta = -static_cast<int64_t>(dataBlocks),
@@ -2336,6 +2367,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
             {image, geometry, chain, allFiles, targetName}, &remaining, &target, blockers)) {
         return false;
     }
+    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
                                                     blockSize);
     // Removing a file with data rewrites the extent-ref tree (a seventh chain
@@ -2343,7 +2375,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
     const int metaCount = 6 + static_cast<int>(targetBlocks > 0);
     QVector<uint64_t> newBlocks;
     if (!findFreeBlocksInBitmap(
-            {image, geometry, kApfsFormatChunkBitmapBlock, kApfsFormatSeedFileDataBlock, metaCount},
+            {image, geometry, layout.chunkBitmap, layout.seedData, layout.chunk0Blocks, metaCount},
             &newBlocks,
             blockers)) {
         return false;
@@ -2366,6 +2398,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
     if (!applyFileInsertAllocation(
             {.image = image,
              .geometry = geometry,
+             .layout = layout,
              .freed =
                  deleteFreedBlocks(chain, extentRefNew != 0, target.dataStartBlock, targetBlocks),
              .allocated = newBlocks,
@@ -4485,7 +4518,8 @@ struct ApfsImageSource {
 
 ApfsImageSource validateImageOnlySource(const QString& path,
                                         QLatin1StringView purpose,
-                                        QStringList* blockers) {
+                                        QStringList* blockers,
+                                        uint64_t maxBytes = kDefaultMaxApfsPayloadBytes) {
     ApfsImageSource source{QFileInfo(path), false};
     if (!source.info.exists() || !source.info.isFile()) {
         blockers->append(QStringLiteral("APFS %1 source image is required").arg(purpose));
@@ -4495,7 +4529,7 @@ ApfsImageSource validateImageOnlySource(const QString& path,
         blockers->append(QStringLiteral("APFS %1 source image is empty").arg(purpose));
         return source;
     }
-    if (static_cast<uint64_t>(source.info.size()) > kDefaultMaxApfsPayloadBytes) {
+    if (static_cast<uint64_t>(source.info.size()) > maxBytes) {
         blockers->append(
             QStringLiteral("APFS %1 source image exceeds current image-only certification cap")
                 .arg(purpose));
@@ -8156,7 +8190,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("file-insert-commit"),
-                                                &result.blockers);
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
     if (!source.ok) {
         return result;
     }
@@ -8225,7 +8260,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("file-delete-commit"),
-                                                &result.blockers);
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
     if (!source.ok) {
         return result;
     }
