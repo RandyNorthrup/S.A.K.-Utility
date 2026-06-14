@@ -1,0 +1,33 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-increment2b-inplace-file-insert-data-extent",
+    "milestone": "A2 (A-b): in-place COW checkpoint commit - increment 2b (non-empty file / data extent)",
+    "status": "Passed (unit + host reader round-trip + Apple kernel reads file content + Apple fsck_apfs clean, no warnings). A2 file-insert capability certified for files with content.",
+    "capability": "commitImageOnlyFileInsert now writes a file payload: it allocates data blocks past the COW chain, writes the (zero-padded) payload, emits the j_file_extent record, copy-on-writes the extent-ref tree (a seventh chain block) with a j_phys_ext record per data extent, points the COW'd volume superblock at it, and accounts the net allocation across the volume apfs_fs_alloc_count + the re-emitted spaceman device free count + the chunk-info-block chunk-0 free count.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: writeApfsFileDataBlocks, adjustCibFreeCount, applyFileInsertAllocation, cowExtentRefTree (reuses buildExtentRefTreeBlock), spacemanFreeDelta threaded through reemitCheckpointEphemerals/advanceCheckpoint, walkLiveFsChain extended to read the volume extent-ref tree oid.",
+        "src/tools/sak_apfs_writer_cli.cpp: commit-image-file-insert --payload-file (optional; empty -> zero-length file)."
+    ],
+    "fix_history": [
+        "First non-empty fsck flagged two warnings: apfs_fs_alloc_count expected 5 / actual 6, and overallocation on the data block (0xcf). Root cause: the data block was not registered in the extent-ref tree, from which fsck credits the volume's space.",
+        "Fix: copy-on-write the extent-ref tree with the data extent's j_phys_ext record; re-run fsck -> fully clean."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileInsertCommitAddsReadableFile - inserts a 40-byte file, asserts the reader reports the exact size, the payload lands in the data block past the seven COW chain blocks (block 208), the extent-ref tree block is checksum-valid, and the spaceman device free count drops by one. 115/115 core subtests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T19:20:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; in-place file-insert container with a 62-byte file (xid 3) attached raw as SATA disk0",
+        "method": [
+            "1. format-image (A2NZ, xid 2) -> commit-image-file-insert --file-name hello.txt --payload-file (62 bytes) (xid 3), host-verified (reader size 62; extent-ref phys_ext record).",
+            "2. Attached to the macOS VM. Apple kernel auto-mounted /Volumes/A2NZ read-write; `cat /Volumes/A2NZ/hello.txt` printed the exact file content - apfs.kext read the COW-inserted file's data extent (data block 208).",
+            "3. apfs.kext continued the S.A.K. checkpoint ring (xid 3 -> 5).",
+            "4. diskutil unmount; fsck_apfs -n /dev/disk0 -> no warnings."
+        ],
+        "kernel_data_read": "cat /Volumes/A2NZ/hello.txt -> 'Hello from S.A.K. in-place COW file insert with real content!' (full 62-byte payload read from the data extent)",
+        "apple_fsck_apfs": "Checking ... fsroot tree / extent ref tree / volume object map space / allocated space all consistent (no apfs_fs_alloc_count or overallocation warnings). The volume A2NZ appears to be OK. The container /dev/disk0 appears to be OK.",
+        "evidence_png": "a2nz3-cat.png (kernel reads the content) + a2nz3-fsck.png (clean fsck); a2nz-fsck2.png shows the pre-fix alloc_count + overallocation warnings"
+    },
+    "gates": "clang-format + lizard (CCN<=10, params<=5) + cppcheck clean; commits ad80ed4 (engine) + dd3d1e4 (extent-ref tree), all pre-commit hooks passed, no bypass.",
+    "next": "Chained commits (walk past the first COW for existing files), multi-block files, free-queue crash-safety (defer freeing old chain blocks), arbitrary Apple containers. A-b full flip then needs physical-USB destructive + crash + rollback like A1/H1.",
+    "error": ""
+}
