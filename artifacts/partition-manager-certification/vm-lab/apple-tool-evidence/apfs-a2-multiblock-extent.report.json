@@ -1,0 +1,23 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-inplace-file-insert-multiblock-extent",
+    "milestone": "A2 (A-b): in-place COW file insert - multi-block data extent",
+    "status": "Passed (unit + host content match + Apple kernel md5 match + Apple fsck_apfs clean). Multi-block contiguous file insert certified.",
+    "capability": "commitImageOnlyFileInsert writes a multi-block file as one contiguous data extent: it allocates N contiguous data blocks, writes the payload across them, and records a single j_file_extent (length = N blocks) + single j_phys_ext (block_count = N) record. A fail-closed guard (blocksAreContiguous) rejects fragmented free space (the future multi-extent case).",
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent - inserts a 5000-byte file (two-block extent), asserts the reader size and that both contiguous data blocks (208, 209) hold the full payload.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T20:05:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; in-place file-insert container with a 5000-byte (two-block) file (xid 3) attached raw as SATA disk0",
+        "method": [
+            "1. format-image (A2MB) -> commit-image-file-insert --file-name big.bin --payload-file (5000 random bytes), host md5 9a72661de2c243c9e6fed56aff43e345.",
+            "2. Apple kernel auto-mounted /Volumes/A2MB; `ls` shows big.bin 5000 bytes; diskutil unmount; fsck_apfs -n /dev/disk0 clean.",
+            "3. diskutil mount disk1s1; `md5 /Volumes/A2MB/big.bin` = 9a72661de2c243c9e6fed56aff43e345 - exact match with the host payload (Apple read both data blocks of the extent correctly)."
+        ],
+        "kernel_data_read": "md5 (/Volumes/A2MB/big.bin) = 9a72661de2c243c9e6fed56aff43e345 == host md5sum (byte-for-byte match across the two-block extent)",
+        "apple_fsck_apfs": "fsroot tree / extent ref tree / volume object map space / allocated space all consistent; The volume A2MB appears to be OK; The container /dev/disk0 appears to be OK (no warnings).",
+        "evidence_png": "a2mb-md5b.png (Apple md5 match) + a2mb-fsck.png (clean fsck)"
+    },
+    "gates": "clang-format + lizard + cppcheck clean; commit 1156623 (all pre-commit hooks passed, no bypass).",
+    "error": ""
+}
