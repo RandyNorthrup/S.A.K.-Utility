@@ -1068,6 +1068,103 @@ QByteArray buildEmptyRootTreeBlock(uint32_t blockSize, QStringList* blockers) {
     return buildRootTreeBlock(blockSize, {}, blockers);
 }
 
+struct ApfsFsTreeNode {
+    uint64_t oid{0};
+    QByteArray block;
+};
+
+// Greedily pack the sorted records into leaf-node-sized groups (each group fits
+// a full block with its growing TOC), mirroring a B-tree bulk load.
+QVector<QVector<ApfsBtreeKeyValue>> distributeFsTreeRecordsIntoLeaves(
+    const QVector<ApfsBtreeKeyValue>& records, uint32_t blockSize) {
+    QVector<QVector<ApfsBtreeKeyValue>> leaves;
+    QVector<ApfsBtreeKeyValue> current;
+    qsizetype currentBytes = 0;
+    for (const auto& record : records) {
+        const qsizetype count = current.size() + 1;
+        const qsizetype toc = ((count * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
+        const qsizetype need = kApfsBtreeNodeHeaderBytes + toc + currentBytes + record.key.size() +
+                               record.value.size();
+        if (need > blockSize && !current.isEmpty()) {
+            leaves.append(current);
+            current.clear();
+            currentBytes = 0;
+        }
+        current.append(record);
+        currentBytes += record.key.size() + record.value.size();
+    }
+    if (!current.isEmpty()) {
+        leaves.append(current);
+    }
+    return leaves;
+}
+
+struct ApfsFsTreeBuildInput {
+    uint32_t blockSize{0};
+    QVector<ApfsRootFilePayload> files;
+    QVector<ApfsRootDirectoryPayload> directories;
+    uint64_t firstLeafOid{0};  // consecutive leaf oids (Apple uses nx_next_oid)
+};
+
+QByteArray newFsTreeNode(uint32_t blockSize, uint64_t oid, uint16_t flags, uint16_t level) {
+    QByteArray block = newApfsObjectBlock(
+        blockSize, oid, kApfsFormatXid, kApfsObjectTypeBtree, kApfsObjectSubtypeFsTree);
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, flags);
+    writeLe16(&block, kApfsBtreeNodeLevelOffset, level);
+    return block;
+}
+
+// Build the file-system tree as either a single ROOT|LEAF node or, when the
+// records overflow one node, an internal root (level 1) over N leaf nodes
+// (level 0, no info trailer) - the two-level shape apfs.kext produces. Leaf oids
+// run consecutively from firstLeafOid; the root keeps oid 1028. nodes[0] is the
+// root. Mirrors docs/APFS_A2_MULTI_LEAF_FSTREE_DESIGN.md.
+bool buildFsTreeNodes(const ApfsFsTreeBuildInput& in,
+                      QVector<ApfsFsTreeNode>* nodes,
+                      QStringList* blockers) {
+    const QVector<ApfsBtreeKeyValue> records = buildFsTreeRecords(in.files, in.directories);
+    const qsizetype rootValueEnd = static_cast<qsizetype>(in.blockSize) - kApfsBtreeInfoBytes;
+    QStringList probe;
+    QByteArray single = newFsTreeNode(
+        in.blockSize, kApfsFormatRootTreeOid, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf, 0);
+    if (writeFsTreeNodeBody(&single, records, rootValueEnd, &probe)) {
+        writeFsTreeInfoTrailer(&single, records, in.blockSize, records.size(), 1);
+        stampApfsObjectBlock(&single, blockers);
+        nodes->append({kApfsFormatRootTreeOid, single});
+        return true;
+    }
+    const auto leaves = distributeFsTreeRecordsIntoLeaves(records, in.blockSize);
+    QVector<ApfsBtreeKeyValue> rootRecords;
+    QVector<ApfsFsTreeNode> leafNodes;
+    for (qsizetype index = 0; index < leaves.size(); ++index) {
+        const uint64_t leafOid = in.firstLeafOid + static_cast<uint64_t>(index);
+        QByteArray leaf = newFsTreeNode(in.blockSize, leafOid, kApfsBtreeNodeLeaf, 0);
+        if (!writeFsTreeNodeBody(&leaf, leaves.at(index), in.blockSize, blockers)) {
+            return false;
+        }
+        stampApfsObjectBlock(&leaf, blockers);
+        leafNodes.append({leafOid, leaf});
+        QByteArray childOid(8, '\0');
+        writeLe64(&childOid, 0, leafOid);
+        rootRecords.append({leaves.at(index).first().key, childOid});
+    }
+    QByteArray root = newFsTreeNode(in.blockSize, kApfsFormatRootTreeOid, kApfsBtreeNodeRoot, 1);
+    if (!writeFsTreeNodeBody(&root, rootRecords, rootValueEnd, blockers)) {
+        blockers->append(QStringLiteral("APFS fs-tree needs more than two levels (%1 leaves); deep "
+                                        "trees are not yet supported")
+                             .arg(leaves.size()));
+        return false;
+    }
+    writeFsTreeInfoTrailer(
+        &root, rootRecords, in.blockSize, records.size(), 1 + static_cast<uint64_t>(leaves.size()));
+    stampApfsObjectBlock(&root, blockers);
+    nodes->append({kApfsFormatRootTreeOid, root});
+    for (const auto& leafNode : leafNodes) {
+        nodes->append(leafNode);
+    }
+    return true;
+}
+
 struct ApfsCheckpointPosition {
     uint64_t xid{kApfsFormatXid};
     uint32_t descIndex{2};
@@ -8562,6 +8659,32 @@ PartitionApfsWritePreflight PartitionApfsWriter::validateImageOnlyExecutionEvide
     }
     result.allowed = result.blockers.isEmpty();
     return result;
+}
+
+QVector<QByteArray> PartitionApfsWriter::buildFsTreeNodeBlocks(uint32_t block_size,
+                                                               const QStringList& file_names,
+                                                               uint64_t first_leaf_oid,
+                                                               QStringList* blockers) {
+    QStringList localBlockers;
+    QStringList* sink = blockers != nullptr ? blockers : &localBlockers;
+    QVector<ApfsRootFilePayload> files;
+    files.reserve(file_names.size());
+    for (qsizetype index = 0; index < file_names.size(); ++index) {
+        files.append({.fileName = file_names.at(index),
+                      .parentDirectoryId = kApfsRootDirectoryId,
+                      .fileId = kApfsFirstUserObjectId + static_cast<uint64_t>(index),
+                      .privateId = kApfsFirstUserObjectId + static_cast<uint64_t>(index)});
+    }
+    QVector<ApfsFsTreeNode> nodes;
+    if (!buildFsTreeNodes({block_size, files, {}, first_leaf_oid}, &nodes, sink)) {
+        return {};
+    }
+    QVector<QByteArray> blocks;
+    blocks.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        blocks.append(node.block);
+    }
+    return blocks;
 }
 
 }  // namespace sak

@@ -1651,6 +1651,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
     void apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeOverflow();
+    void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -7016,6 +7017,53 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeO
     }
     QVERIFY(inserted > 0);
     QVERIFY2(sawOverflow, "expected the single-leaf fs-tree to fail closed within 40 inserts");
+}
+
+void PartitionManagerCoreTests::apfsWriter_buildsTwoLevelFsTreeOnOverflow() {
+    QStringList names;
+    for (int index = 0; index < 40; ++index) {
+        names << QStringLiteral("file%1.txt").arg(index);
+    }
+    QStringList blockers;
+    const auto blocks = PartitionApfsWriter::buildFsTreeNodeBlocks(4096, names, 1030, &blockers);
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+    QVERIFY2(blocks.size() > 1, "expected the fs-tree to split into an internal root + leaves");
+
+    const auto le16 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le32 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le64 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+
+    // Every node carries a valid object checksum.
+    for (const auto& block : blocks) {
+        QVERIFY(PartitionApfsWriter::verifyObjectChecksum(block));
+    }
+    // Root: ROOT (0x01, not LEAF), level 1, one record per leaf, oid 1028.
+    const QByteArray& root = blocks.first();
+    QCOMPARE(le16(root, 0x20), static_cast<quint16>(0x0001));
+    QCOMPARE(le16(root, 0x22), static_cast<quint16>(1));
+    QCOMPARE(le32(root, 0x24), static_cast<quint32>(blocks.size() - 1));
+    QCOMPARE(le64(root, 0x08), static_cast<quint64>(1028));
+    // Leaves: LEAF (0x02), level 0, consecutive oids from 1030.
+    QSet<quint64> leafOids;
+    for (int index = 1; index < blocks.size(); ++index) {
+        QCOMPARE(le16(blocks[index], 0x20), static_cast<quint16>(0x0002));
+        QCOMPARE(le16(blocks[index], 0x22), static_cast<quint16>(0));
+        QCOMPARE(le64(blocks[index], 0x08), static_cast<quint64>(1030 + index - 1));
+        leafOids.insert(le64(blocks[index], 0x08));
+    }
+    // Each root record's 8-byte value is a child leaf oid (value offsets are
+    // measured back from the value-area end).
+    const int valueAreaEnd = 4096 - 40;
+    for (int index = 0; index < static_cast<int>(le32(root, 0x24)); ++index) {
+        const int valueOff = le16(root, 0x38 + index * 8 + 4);
+        QVERIFY(leafOids.contains(le64(root, valueAreaEnd - valueOff)));
+    }
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

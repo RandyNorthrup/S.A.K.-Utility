@@ -524,6 +524,15 @@ public:
     [[nodiscard]] static std::optional<uint64_t> computeObjectChecksum(
         const QByteArray& object_bytes);
     [[nodiscard]] static bool stampObjectChecksum(QByteArray* object_bytes);
+    /// @brief Build the file-system B-tree node blocks for @p file_names (empty
+    ///        root files) - a single ROOT|LEAF node, or an internal root over
+    ///        leaf nodes when they overflow (A2 multi-leaf fs-tree). Leaf oids
+    ///        run from @p first_leaf_oid; nodes[0] is the root. Diagnostic entry
+    ///        point for the multi-leaf builder ahead of its commit-path wiring.
+    [[nodiscard]] static QVector<QByteArray> buildFsTreeNodeBlocks(uint32_t block_size,
+                                                                   const QStringList& file_names,
+                                                                   uint64_t first_leaf_oid,
+                                                                   QStringList* blockers);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
     [[nodiscard]] static QStringList enterpriseCertificationRequirements();
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
