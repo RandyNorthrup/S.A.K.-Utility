@@ -2000,6 +2000,18 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     return true;
 }
 
+// A single j_file_extent / j_phys_ext record describes one contiguous run, so
+// the file's data blocks must be contiguous (true for a fresh container's free
+// region; fragmented free space needs the multi-extent engine).
+bool blocksAreContiguous(const QVector<uint64_t>& blocks) {
+    for (qsizetype index = 1; index < blocks.size(); ++index) {
+        if (blocks.at(index) != blocks.at(index - 1) + 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Write the file payload into its newly allocated data blocks (the final block
 // is zero-padded). A zero-length file allocates no data blocks.
 bool writeApfsFileDataBlocks(QIODevice* image,
@@ -2125,6 +2137,12 @@ bool commitInPlaceFileInsert(QIODevice* image,
     const uint64_t newXid = live.xid + 1;
     const uint64_t extentRefNew = newBlocks.value(6);
     const QVector<uint64_t> dataBlockList = newBlocks.mid(metaCount);
+    if (!blocksAreContiguous(dataBlockList)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place file insert: fragmented free space (non-contiguous data extent) is "
+            "unsupported in this increment"));
+        return false;
+    }
     if (!writeApfsFileDataBlocks(image, geometry, dataBlockList, fileData, blockers)) {
         return false;
     }

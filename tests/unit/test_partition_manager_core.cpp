@@ -1646,6 +1646,7 @@ private Q_SLOTS:
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
+    void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6715,6 +6716,49 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
         return le64(spaceman, 0x30 + 0x18);  // sm_dev[MAIN].sm_free_count
     };
     QCOMPARE(deviceFree(readBlock(out2, 15)) + 1ULL, deviceFree(readBlock(base2, 11)));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2mb-base.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = base,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("A2MB"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // A 5000-byte payload spans two 4096-byte blocks -> one two-block extent.
+    QByteArray payload(5000, '\0');
+    for (int i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 37 + 11) & 0xFF);
+    }
+    const QString out = dir.filePath(QStringLiteral("a2mb-out.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = out,
+                                                        .file_name = QStringLiteral("big.bin"),
+                                                        .file_data = payload,
+                                                        .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(payload.size()));
+
+    // Two contiguous data blocks (208, 209) past the seven COW chain blocks hold
+    // the full payload.
+    QFile image(out);
+    QVERIFY(image.open(QIODevice::ReadOnly));
+    image.seek(208 * 4096);
+    const QByteArray storedData = image.read(payload.size());
+    QCOMPARE(storedData, payload);
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {
