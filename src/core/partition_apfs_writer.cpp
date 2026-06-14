@@ -1878,6 +1878,36 @@ bool walkLiveFsChain(QIODevice* image,
     return true;
 }
 
+// Map each owning file id to its data extent's start block by reading the
+// extent-ref tree (the inverse of buildExtentRefTreeBlock), so a chained commit
+// can reproduce the existing files' extents without moving their data.
+QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
+                                               const ApfsRepairGeometry& geometry,
+                                               uint64_t extentRefBlock,
+                                               QStringList* blockers) {
+    QHash<uint64_t, uint64_t> owners;
+    QByteArray node(geometry.blockSize, '\0');
+    if (extentRefBlock == 0 ||
+        !readApfsRepairBlock(image, geometry, extentRefBlock, &node, blockers)) {
+        return owners;
+    }
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype tocLength =
+        std::max<qsizetype>(64, ((nkeys * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    const uint64_t paddrMask = (1ULL << kApfsObjTypeShift) - 1;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+        const uint16_t keyOffset = le16(node, toc);
+        const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        const uint64_t paddr = le64(node, keyAreaStart + keyOffset) & paddrMask;
+        owners.insert(le64(node, valueAreaEnd - valueOffset + 8), paddr);
+    }
+    return owners;
+}
+
 struct ApfsFreeBlockScan {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
@@ -2089,17 +2119,59 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
                               blockers);
 }
 
-// A2 increment 2: insert one file into a generated container with a true
-// in-place copy-on-write checkpoint commit. COW the fs-metadata chain to six
-// newly allocated blocks (root tree -> volume object map -> volume superblock
-// -> container object map) with the new inode+dirent, write the file payload to
-// further newly allocated data blocks, swap the allocation bitmap (free the six
-// old chain blocks, allocate the new ones), adjust the spaceman/CIB free counts
-// by the net data-block allocation, then advance the checkpoint via the shared
-// engine with nx_omap_oid re-pointed at the new container object map.
+struct ApfsFileInsertRequest {
+    QVector<ApfsRootFilePayload> existingFiles;  // {fileName, fileId, data sized for size only}
+    QString fileName;
+    QByteArray fileData;
+};
+
+struct ApfsChainedListInput {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    ApfsLiveFsChain chain;
+    ApfsFileInsertRequest request;
+    uint64_t newDataStart{0};
+};
+
+// Build the full root-file list for the commit: every existing file preserved
+// in place (its data extent recovered from the extent-ref tree so its data is
+// not moved) plus the new file, which is assigned the volume's next object id.
+bool buildChainedFileList(const ApfsChainedListInput& in,
+                          QVector<ApfsRootFilePayload>* files,
+                          QStringList* blockers) {
+    QByteArray volSb(in.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(in.image, in.geometry, in.chain.volSb, &volSb, blockers)) {
+        return false;
+    }
+    const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
+    const QHash<uint64_t, uint64_t> owners =
+        parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
+    for (ApfsRootFilePayload existing : in.request.existingFiles) {
+        existing.parentDirectoryId = kApfsRootDirectoryId;
+        existing.privateId = existing.fileId;
+        existing.dataStartBlock = owners.value(existing.fileId);
+        files->append(existing);
+    }
+    files->append({.fileName = in.request.fileName.trimmed(),
+                   .data = in.request.fileData,
+                   .parentDirectoryId = kApfsRootDirectoryId,
+                   .fileId = newFileId,
+                   .privateId = newFileId,
+                   .dataStartBlock = in.newDataStart});
+    return true;
+}
+
+// A2: insert one file into a generated container with a true in-place
+// copy-on-write checkpoint commit, preserving any files already present. COW
+// the fs-metadata chain (root tree -> volume object map -> volume superblock ->
+// container object map, plus the extent-ref tree when there is data) to newly
+// allocated blocks with the merged record set, write the new file's payload to
+// further newly allocated data blocks (existing files' data stays in place),
+// swap the allocation bitmap, adjust the spaceman/CIB free counts by the net
+// data-block allocation, then advance the checkpoint with nx_omap_oid
+// re-pointed at the new container object map.
 bool commitInPlaceFileInsert(QIODevice* image,
-                             const QString& fileName,
-                             const QByteArray& fileData,
+                             const ApfsFileInsertRequest& request,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     uint32_t blockSize = 0;
@@ -2117,12 +2189,10 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
         return false;
     }
-    const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(fileData.size()),
+    const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.fileData.size()),
                                                   blockSize);
     // A file with data also copy-on-writes the extent-ref tree (a seventh chain
-    // block); an empty file leaves the empty extent-ref tree in place. When
-    // there is no data the seventh slot and data slots are absent, so the
-    // QVector value() lookups below resolve to 0 / empty without branching.
+    // block); an empty new file leaves the existing extent-ref tree in place.
     const int metaCount = 6 + static_cast<int>(dataBlocks > 0);
     QVector<uint64_t> newBlocks;
     if (!findFreeBlocksInBitmap({image,
@@ -2135,7 +2205,6 @@ bool commitInPlaceFileInsert(QIODevice* image,
         return false;
     }
     const uint64_t newXid = live.xid + 1;
-    const uint64_t extentRefNew = newBlocks.value(6);
     const QVector<uint64_t> dataBlockList = newBlocks.mid(metaCount);
     if (!blocksAreContiguous(dataBlockList)) {
         blockers->append(QStringLiteral(
@@ -2143,18 +2212,21 @@ bool commitInPlaceFileInsert(QIODevice* image,
             "unsupported in this increment"));
         return false;
     }
-    if (!writeApfsFileDataBlocks(image, geometry, dataBlockList, fileData, blockers)) {
+    QVector<ApfsRootFilePayload> files;
+    if (!buildChainedFileList(
+            {image, geometry, chain, request, dataBlockList.value(0)}, &files, blockers) ||
+        !writeApfsFileDataBlocks(image, geometry, dataBlockList, request.fileData, blockers)) {
         return false;
     }
-    const QVector<ApfsRootFilePayload> files{{.fileName = fileName.trimmed(),
-                                              .data = fileData,
-                                              .parentDirectoryId = kApfsRootDirectoryId,
-                                              .fileId = kApfsFirstUserObjectId,
-                                              .privateId = kApfsFirstUserObjectId,
-                                              .dataStartBlock = dataBlockList.value(0)}};
-    if (!writeFileInsertCowChain(
-            {image, geometry, newXid, chain, newBlocks.mid(0, 6), files, dataBlocks, extentRefNew},
-            blockers)) {
+    if (!writeFileInsertCowChain({image,
+                                  geometry,
+                                  newXid,
+                                  chain,
+                                  newBlocks.mid(0, 6),
+                                  files,
+                                  dataBlocks,
+                                  newBlocks.value(6)},
+                                 blockers)) {
         return false;
     }
     if (!applyFileInsertAllocation({image, geometry, chain, newBlocks, dataBlocks, newXid},
@@ -2165,6 +2237,37 @@ bool commitInPlaceFileInsert(QIODevice* image,
         {image, geometry, nxsb, live, newBlocks.at(5), -static_cast<int64_t>(dataBlocks)},
         result,
         blockers);
+}
+
+// Enumerate the existing root regular files of a generated container (name +
+// object id + size) so a chained in-place insert preserves them. Fails closed
+// if the new file name already exists.
+bool collectExistingRootFiles(const QString& sourcePath,
+                              const QString& newFileName,
+                              QVector<ApfsRootFilePayload>* existingFiles,
+                              QStringList* blockers) {
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        sourcePath, QStringLiteral("/"), kApfsWriteRootListingMaxEntries);
+    if (!listing.ok) {
+        blockers->append(listing.blockers.value(
+            0, QStringLiteral("APFS file-insert-commit: unable to read existing files")));
+        return false;
+    }
+    for (const auto& entry : listing.entries) {
+        if (!entry.regular_file) {
+            continue;
+        }
+        if (entry.name == newFileName) {
+            blockers->append(
+                QStringLiteral("APFS file-insert-commit: a file named '%1' already exists")
+                    .arg(newFileName));
+            return false;
+        }
+        existingFiles->append({.fileName = entry.name,
+                               .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
+                               .fileId = entry.object_id});
+    }
+    return true;
 }
 
 bool isRepairableApfsObjectBlock(const QByteArray& block) {
@@ -7925,6 +8028,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         return result;
     }
 
+    QVector<ApfsRootFilePayload> existingFiles;
+    if (!collectExistingRootFiles(
+            result.source_image_path, cleanFileName, &existingFiles, &result.blockers)) {
+        return result;
+    }
+
     QFile image;
     if (!openScratchImage(result.written_image_path,
                           QLatin1StringView("file-insert-commit"),
@@ -7935,7 +8044,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceFileInsert(
-            &image, cleanFileName, request.file_data, &commit, &commitBlockers)) {
+            &image, {existingFiles, cleanFileName, request.file_data}, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

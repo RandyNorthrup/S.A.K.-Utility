@@ -1647,6 +1647,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
+    void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6759,6 +6760,70 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExte
     image.seek(208 * 4096);
     const QByteArray storedData = image.read(payload.size());
     QCOMPARE(storedData, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString c0 = dir.filePath(QStringLiteral("cc0.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = c0,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("CC"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // Insert two files with distinct content in two chained in-place commits.
+    const QByteArray firstData = QByteArrayLiteral("FIRST FILE CONTENT aaaa");
+    const QByteArray secondData = QByteArrayLiteral("SECOND FILE different bbbb");
+    const QString c1 = dir.filePath(QStringLiteral("cc1.apfs"));
+    const auto commit1 =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = c0,
+                                                        .written_image_path = c1,
+                                                        .file_name = QStringLiteral("f1.txt"),
+                                                        .file_data = firstData,
+                                                        .options = options});
+    QVERIFY2(commit1.ok, qPrintable(commit1.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit1.new_xid, 3ULL);
+
+    const QString c2 = dir.filePath(QStringLiteral("cc2.apfs"));
+    const auto commit2 =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = c1,
+                                                        .written_image_path = c2,
+                                                        .file_name = QStringLiteral("f2.txt"),
+                                                        .file_data = secondData,
+                                                        .options = options});
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit2.new_xid, 4ULL);
+
+    // Both files are present, and the first file's content survived the second
+    // chained commit (its data extent was preserved in place).
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(c2, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+
+    const auto firstRead =
+        PartitionApfsFileSystemReader::readFileFromImage(c2, QStringLiteral("/f1.txt"), 4096);
+    QVERIFY2(firstRead.ok, qPrintable(firstRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(firstRead.data, firstData);
+    const auto secondRead =
+        PartitionApfsFileSystemReader::readFileFromImage(c2, QStringLiteral("/f2.txt"), 4096);
+    QVERIFY2(secondRead.ok, qPrintable(secondRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(secondRead.data, secondData);
+
+    // Inserting a duplicate name fails closed.
+    const auto duplicate = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = c2,
+         .written_image_path = dir.filePath(QStringLiteral("dup.apfs")),
+         .file_name = QStringLiteral("f1.txt"),
+         .file_data = {},
+         .options = options});
+    QVERIFY(!duplicate.ok);
+    QVERIFY(duplicate.blockers.join(' ').contains(QStringLiteral("already exists")));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {
