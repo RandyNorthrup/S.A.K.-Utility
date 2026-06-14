@@ -1,0 +1,28 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-inplace-file-rename",
+    "milestone": "A2 (A-b): in-place COW file rename",
+    "status": "Passed (unit + host accounting + Apple kernel confirms rename and reads preserved content + Apple fsck_apfs clean). In-place file rename certified; insert+delete+rename mutation set complete.",
+    "capability": "commitImageOnlyFileRename renames one root file with a true in-place copy-on-write checkpoint commit: it rebuilds the COW'd root tree with the renamed dirent + inode while the file keeps its object id and its data extent stays put (extent-ref tree unchanged). Net-zero allocation - file count, next object id, allocated-block count all unchanged. Fails closed on a missing old name or an existing new name.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: commitInPlaceFileRename / buildRenameFileList / ApfsRenameRequest (reuses the signed-delta COW-chain writer with all deltas 0).",
+        "src/tools/sak_apfs_writer_cli.cpp: commit-image-file-rename (--file-name old, --directory-name new)."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileRenameKeepsContentAndObjectId - renames a content file and asserts the reader reads the same content under the new name, the old name is gone, and missing/duplicate renames fail closed. 119/119 core subtests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-15T00:20:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; container with old.txt renamed to new.txt (xid 5) attached raw as SATA disk0",
+        "method": [
+            "1. format-image (RN) -> insert keep.txt -> insert old.txt (content) -> commit-image-file-rename old.txt new.txt. Host parse confirmed file count / next object id / alloc count and the extent-ref record all unchanged (the renamed file id 17 keeps its data block).",
+            "2. Apple kernel auto-mounted /Volumes/RN; `ls` shows keep.txt + new.txt (old.txt gone); `cat new.txt` = 'renamed file keeps content' (the renamed file's data preserved).",
+            "3. diskutil unmount; fsck_apfs -n /dev/disk0 -> no warnings."
+        ],
+        "kernel_result": "ls -> keep.txt new.txt (no old.txt); cat new.txt -> renamed file keeps content",
+        "apple_fsck_apfs": "fsroot tree / extent ref tree / volume object map space / allocated space all consistent; The volume RN appears to be OK; The container /dev/disk0 appears to be OK (no warnings).",
+        "evidence_png": "rn-ls.png (ls after rename) + rn-fsck.png (cat new.txt + clean fsck)"
+    },
+    "gates": "clang-format + lizard (CCN<=10, params<=5) + cppcheck clean; commit 9b04113 (all pre-commit hooks passed, no bypass).",
+    "next": "Crash-safety (designed), multi-leaf fstree, fragmented free space, multi-CIB, arbitrary real-Apple containers.",
+    "error": ""
+}
