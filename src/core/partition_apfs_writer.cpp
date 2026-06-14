@@ -892,48 +892,11 @@ qsizetype btreeRecordsByteSize(const QVector<ApfsBtreeKeyValue>& records) {
     return total;
 }
 
-QByteArray buildRootTreeBlock(uint32_t blockSize,
-                              const QVector<ApfsRootFilePayload>& files,
-                              const QVector<ApfsRootDirectoryPayload>& directories,
-                              QStringList* blockers) {
-    QByteArray block = newApfsObjectBlock(blockSize,
-                                          kApfsFormatRootTreeOid,
-                                          kApfsFormatXid,
-                                          kApfsObjectTypeBtree,
-                                          kApfsObjectSubtypeFsTree);
-    writeLe16(&block, kApfsBtreeNodeFlagsOffset, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf);
-    writeLe16(&block, kApfsBtreeNodeLevelOffset, 0);
-
-    // Base volume entities mirroring newfs_apfs output: the tree-root entity
-    // (oid 1) carries 'root' and 'private-dir' directory entries; the root
-    // directory (oid 2) and private directory (oid 3) carry inodes.
-    QVector<ApfsBtreeKeyValue> records{
-        {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("root")),
-         directoryEntryValue(kApfsRootDirectoryId, kApfsDirTypeDirectory)},
-        {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("private-dir")),
-         directoryEntryValue(kApfsPrivateDirectoryId, kApfsDirTypeDirectory)},
-        {fsKey(kApfsRootDirectoryId, kApfsRecordInode),
-         inodeValue({.parentId = kApfsTreeRootEntityId,
-                     .privateId = kApfsRootDirectoryId,
-                     .mode = kApfsModeDirectory,
-                     .name = QStringLiteral("root"),
-                     .childOrLinkCount = static_cast<int32_t>(files.size() + directories.size())})},
-        {fsKey(kApfsPrivateDirectoryId, kApfsRecordInode),
-         inodeValue({.parentId = kApfsTreeRootEntityId,
-                     .privateId = kApfsPrivateDirectoryId,
-                     .mode = static_cast<uint16_t>(kApfsModeDirectory | 0644),
-                     .name = QStringLiteral("private-dir"),
-                     .childOrLinkCount = 0})}};
-    for (const auto& file : files) {
-        appendRootFileRecords(&records, file);
-    }
-    for (const auto& directory : directories) {
-        appendRootDirectoryRecords(&records, directory);
-    }
+void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
     // File-system B-tree records must be stored in key order (object id, then
     // record type, then key tail) for Apple's binary-search lookups.
-    std::stable_sort(records.begin(),
-                     records.end(),
+    std::stable_sort(records->begin(),
+                     records->end(),
                      [](const ApfsBtreeKeyValue& left, const ApfsBtreeKeyValue& right) {
                          const uint64_t leftHeader = le64(left.key, 0);
                          const uint64_t rightHeader = le64(right.key, 0);
@@ -959,26 +922,61 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
                          }
                          return left.key < right.key;
                      });
+}
 
-    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
-    // Table-of-contents capacity grows in the 64-byte granules Apple's
-    // B-tree code reserves (a fresh fs-tree carries a 64-byte TOC).
+// Sorted file-system record set: the base volume entities (tree-root entity
+// oid 1 dirents, root + private directory inodes) plus one record group per
+// file/directory.
+QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
+    const QVector<ApfsRootFilePayload>& files,
+    const QVector<ApfsRootDirectoryPayload>& directories) {
+    QVector<ApfsBtreeKeyValue> records{
+        {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("root")),
+         directoryEntryValue(kApfsRootDirectoryId, kApfsDirTypeDirectory)},
+        {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("private-dir")),
+         directoryEntryValue(kApfsPrivateDirectoryId, kApfsDirTypeDirectory)},
+        {fsKey(kApfsRootDirectoryId, kApfsRecordInode),
+         inodeValue({.parentId = kApfsTreeRootEntityId,
+                     .privateId = kApfsRootDirectoryId,
+                     .mode = kApfsModeDirectory,
+                     .name = QStringLiteral("root"),
+                     .childOrLinkCount = static_cast<int32_t>(files.size() + directories.size())})},
+        {fsKey(kApfsPrivateDirectoryId, kApfsRecordInode),
+         inodeValue({.parentId = kApfsTreeRootEntityId,
+                     .privateId = kApfsPrivateDirectoryId,
+                     .mode = static_cast<uint16_t>(kApfsModeDirectory | 0644),
+                     .name = QStringLiteral("private-dir"),
+                     .childOrLinkCount = 0})}};
+    for (const auto& file : files) {
+        appendRootFileRecords(&records, file);
+    }
+    for (const auto& directory : directories) {
+        appendRootDirectoryRecords(&records, directory);
+    }
+    sortFsTreeRecords(&records);
+    return records;
+}
+
+// Write the variable-kv body (TOC, keys growing up from the table, values
+// growing down from valueAreaEnd, free-space fields) of a B-tree node. Returns
+// false (with a blocker) if the records would overflow it. valueAreaEnd is
+// blockSize - btree_info on a root node (which carries the info trailer) and
+// blockSize on a non-root leaf.
+bool writeFsTreeNodeBody(QByteArray* block,
+                         const QVector<ApfsBtreeKeyValue>& records,
+                         qsizetype valueAreaEnd,
+                         QStringList* blockers) {
+    writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
     const qsizetype tocLength =
         ((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
-    writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
-    writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
-
+    writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
-    // Fail closed when the records would overflow the single leaf node (keys grow
-    // up, values grow down toward each other): multi-node fs-trees are not yet
-    // supported, and overflowing silently corrupts the node.
     if (btreeRecordsByteSize(records) > valueAreaEnd - keyAreaStart) {
         blockers->append(
-            QStringLiteral("APFS root file-system tree exceeds a single B-tree node (%1 records); "
-                           "multi-node fs-trees are not yet supported")
+            QStringLiteral("APFS file-system B-tree node overflow (%1 records do not fit one node)")
                 .arg(records.size()));
-        return block;
+        return false;
     }
     qsizetype keyCursor = 0;
     qsizetype valueBackCursor = 0;
@@ -986,36 +984,43 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
         const auto& record = records.at(index);
         valueBackCursor += record.value.size();
         const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
-        const qsizetype valueOffset = valueAreaEnd - valueBackCursor;
-        writeLe16(&block, toc, static_cast<uint16_t>(keyCursor));
-        writeLe16(&block,
+        writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
+        writeLe16(block,
                   toc + kApfsBtreeVariableTocKeyLengthOffset,
                   static_cast<uint16_t>(record.key.size()));
-        writeLe16(&block,
+        writeLe16(block,
                   toc + kApfsBtreeVariableTocValueOffset,
                   static_cast<uint16_t>(valueBackCursor));
-        writeLe16(&block,
+        writeLe16(block,
                   toc + kApfsBtreeVariableTocValueLengthOffset,
                   static_cast<uint16_t>(record.value.size()));
-        std::copy(record.key.cbegin(), record.key.cend(), block.begin() + keyAreaStart + keyCursor);
-        std::copy(record.value.cbegin(), record.value.cend(), block.begin() + valueOffset);
+        std::copy(record.key.cbegin(),
+                  record.key.cend(),
+                  block->begin() + keyAreaStart + keyCursor);
+        std::copy(record.value.cbegin(),
+                  record.value.cend(),
+                  block->begin() + valueAreaEnd - valueBackCursor);
         keyCursor += record.key.size();
     }
-
-    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyCursor));
-    writeLe16(&block,
+    writeLe16(block, 0x2C, static_cast<uint16_t>(keyCursor));
+    writeLe16(block,
               0x2E,
               static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyCursor - valueBackCursor));
-    writeLe16(&block, 0x30, 0xFFFF);
-    writeLe16(&block, 0x32, 0);
-    writeLe16(&block, 0x34, 0xFFFF);
-    writeLe16(&block, 0x36, 0);
-    writeBtreeInfo(&block,
-                   {.blockSize = blockSize,
-                    .keyCount = static_cast<uint64_t>(records.size()),
-                    .nodeCount = 1});
-    // Info flags and longest-key/value fields per Apple's fs-trees
-    // (ALLOWS_GHOSTS|KEY_HASHED-style flag word 0x42).
+    writeLe16(block, 0x30, 0xFFFF);
+    writeLe16(block, 0x32, 0);
+    writeLe16(block, 0x34, 0xFFFF);
+    writeLe16(block, 0x36, 0);
+    return true;
+}
+
+// Longest key / value across a record set, for the root node's btree_info.
+void writeFsTreeInfoTrailer(QByteArray* block,
+                            const QVector<ApfsBtreeKeyValue>& records,
+                            uint32_t blockSize,
+                            uint64_t totalKeyCount,
+                            uint64_t totalNodeCount) {
+    writeBtreeInfo(
+        block, {.blockSize = blockSize, .keyCount = totalKeyCount, .nodeCount = totalNodeCount});
     qsizetype longestKey = 0;
     qsizetype longestValue = 0;
     for (const auto& record : records) {
@@ -1023,9 +1028,32 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
         longestValue = std::max(longestValue, record.value.size());
     }
     const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
-    writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'42);
-    writeLe32(&block, infoOffset + 16, static_cast<uint32_t>(longestKey));
-    writeLe32(&block, infoOffset + 20, static_cast<uint32_t>(longestValue));
+    writeLe32(block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'42);
+    writeLe32(block, infoOffset + 16, static_cast<uint32_t>(longestKey));
+    writeLe32(block, infoOffset + 20, static_cast<uint32_t>(longestValue));
+}
+
+QByteArray buildRootTreeBlock(uint32_t blockSize,
+                              const QVector<ApfsRootFilePayload>& files,
+                              const QVector<ApfsRootDirectoryPayload>& directories,
+                              QStringList* blockers) {
+    QByteArray block = newApfsObjectBlock(blockSize,
+                                          kApfsFormatRootTreeOid,
+                                          kApfsFormatXid,
+                                          kApfsObjectTypeBtree,
+                                          kApfsObjectSubtypeFsTree);
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf);
+    writeLe16(&block, kApfsBtreeNodeLevelOffset, 0);
+    const QVector<ApfsBtreeKeyValue> records = buildFsTreeRecords(files, directories);
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    if (!writeFsTreeNodeBody(&block, records, valueAreaEnd, blockers)) {
+        blockers->append(
+            QStringLiteral("APFS root file-system tree exceeds a single B-tree node (%1 records); "
+                           "multi-node fs-trees are not yet supported")
+                .arg(records.size()));
+        return block;
+    }
+    writeFsTreeInfoTrailer(&block, records, blockSize, records.size(), 1);
     stampApfsObjectBlock(&block, blockers);
     return block;
 }
