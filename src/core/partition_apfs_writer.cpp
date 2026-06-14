@@ -856,9 +856,15 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)});
     records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
-    records->append(
-        {fileExtentKey(file.privateId),
-         fileExtentValue(static_cast<uint64_t>(file.data.size()), file.dataStartBlock)});
+    // A zero-length file has a size-0 data stream and no allocated blocks, so it
+    // carries no file-extent record; emitting one produces a zero-length extent
+    // at logical address 0, which fsck_apfs rejects ("invalid zero-length
+    // extent").
+    if (!file.data.isEmpty()) {
+        records->append(
+            {fileExtentKey(file.privateId),
+             fileExtentValue(static_cast<uint64_t>(file.data.size()), file.dataStartBlock)});
+    }
 }
 
 void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
