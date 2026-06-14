@@ -6675,6 +6675,43 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
         QVERIFY2(used(block) == 1,
                  qPrintable(QStringLiteral("new block %1 not allocated").arg(block)));
     }
+
+    // A non-empty file inserts a data extent: the payload is written to a data
+    // block, the reader reads back the exact size, and the spaceman + CIB free
+    // counts drop by the one allocated data block.
+    const QString base2 = dir.filePath(QStringLiteral("a2fi-base2.apfs"));
+    const auto build2 = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = base2,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("A2NZ"),
+         .options = options});
+    QVERIFY2(build2.ok, qPrintable(build2.blockers.join(QStringLiteral("; "))));
+    const QByteArray payload = QByteArrayLiteral("Hello from the in-place COW file insert.");
+    const QString out2 = dir.filePath(QStringLiteral("a2nz-out.apfs"));
+    const auto commit2 =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base2,
+                                                        .written_image_path = out2,
+                                                        .file_name = QStringLiteral("hello.txt"),
+                                                        .file_data = payload,
+                                                        .options = options});
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit2.new_xid, 3ULL);
+
+    const auto listing2 =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out2, QStringLiteral("/"), 20);
+    QVERIFY2(listing2.ok, qPrintable(listing2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing2.entries.size(), 1);
+    QCOMPARE(listing2.entries.first().name, QStringLiteral("hello.txt"));
+    QCOMPARE(listing2.entries.first().size_bytes, static_cast<uint64_t>(payload.size()));
+    // The payload landed in the data block past the six COW chain blocks (207).
+    QCOMPARE(readBlock(out2, 207).left(payload.size()), payload);
+    // One data block consumed: the spaceman free count (block 15) drops by one
+    // versus the unmodified source (block 11).
+    const auto deviceFree = [&le64](const QByteArray& spaceman) {
+        return le64(spaceman, 0x30 + 0x18);  // sm_dev[MAIN].sm_free_count
+    };
+    QCOMPARE(deviceFree(readBlock(out2, 15)) + 1ULL, deviceFree(readBlock(base2, 11)));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

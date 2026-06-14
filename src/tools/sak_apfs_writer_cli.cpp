@@ -1202,6 +1202,7 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
         {.source_image_path = invocation.target_path,
          .written_image_path = invocation.output_image_path,
          .file_name = invocation.file_name,
+         .file_data = invocation.payload,
          .options = imageWriteOptions(invocation.evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -1327,7 +1328,8 @@ std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
                                             const QCommandLineOption& option,
                                             const QString& command,
                                             QString* error) {
-    if (command == QStringLiteral("import-image")) {
+    if (command == QStringLiteral("import-image") ||
+        command == QStringLiteral("commit-image-file-insert")) {
         const QString payloadPath = parser.value(option).trimmed();
         if (payloadPath.isEmpty()) {
             return QByteArray();

@@ -461,6 +461,7 @@ struct PartitionApfsImageFileInsertCommitRequest {
     QString source_image_path;
     QString written_image_path;
     QString file_name;
+    QByteArray file_data;
     PartitionApfsWriteOptions options;
 };
 
