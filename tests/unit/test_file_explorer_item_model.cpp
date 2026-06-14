@@ -54,24 +54,25 @@ class FileExplorerItemModelTests : public QObject {
 private Q_SLOTS:
     void exposesRowsColumnsAndRoles() {
         sak::FileExplorerItemModel model;
-        model.setEntries({directoryEntry(QStringLiteral("Docs")),
-                          fileEntry(QStringLiteral("notes.txt"), 42)});
+        model.setEntries(
+            {directoryEntry(QStringLiteral("Docs")), fileEntry(QStringLiteral("notes.txt"), 42)});
 
         QCOMPARE(model.rowCount(), 2);
         QCOMPARE(model.columnCount(), static_cast<int>(sak::FileExplorerItemModel::ColumnCount));
-        QCOMPARE(model.headerData(sak::FileExplorerItemModel::NameColumn,
-                                  Qt::Horizontal,
-                                  Qt::DisplayRole)
-                     .toString(),
-                 QStringLiteral("Name"));
-        QCOMPARE(model.headerData(sak::FileExplorerItemModel::ModifiedColumn,
-                                  Qt::Horizontal,
-                                  Qt::DisplayRole)
+        QCOMPARE(
+            model
+                .headerData(sak::FileExplorerItemModel::NameColumn, Qt::Horizontal, Qt::DisplayRole)
+                .toString(),
+            QStringLiteral("Name"));
+        QCOMPARE(model
+                     .headerData(sak::FileExplorerItemModel::ModifiedColumn,
+                                 Qt::Horizontal,
+                                 Qt::DisplayRole)
                      .toString(),
                  QStringLiteral("Modified"));
-        QCOMPARE(model.headerData(sak::FileExplorerItemModel::CreatedColumn,
-                                  Qt::Horizontal,
-                                  Qt::DisplayRole)
+        QCOMPARE(model
+                     .headerData(
+                         sak::FileExplorerItemModel::CreatedColumn, Qt::Horizontal, Qt::DisplayRole)
                      .toString(),
                  QStringLiteral("Created"));
 
@@ -86,19 +87,20 @@ private Q_SLOTS:
         QVERIFY(model.data(file, sak::FileExplorerItemModel::EntryCreatedTimeRole)
                     .toDateTime()
                     .isValid());
-        QCOMPARE(model.data(model.index(1, sak::FileExplorerItemModel::ModifiedColumn),
-                            Qt::DisplayRole)
-                     .toString(),
-                 sak::FileExplorerItemModel::timeText(
-                     model.data(file, sak::FileExplorerItemModel::EntryModifiedTimeRole)
-                         .toDateTime()));
+        QCOMPARE(
+            model.data(model.index(1, sak::FileExplorerItemModel::ModifiedColumn), Qt::DisplayRole)
+                .toString(),
+            sak::FileExplorerItemModel::timeText(
+                model.data(file, sak::FileExplorerItemModel::EntryModifiedTimeRole).toDateTime()));
         QCOMPARE(model.data(file, sak::FileExplorerItemModel::EntryRegularFileRole).toBool(), true);
-        QCOMPARE(model.data(model.index(0, sak::FileExplorerItemModel::NameColumn),
-                            sak::FileExplorerItemModel::EntryDirectoryRole)
+        QCOMPARE(model
+                     .data(model.index(0, sak::FileExplorerItemModel::NameColumn),
+                           sak::FileExplorerItemModel::EntryDirectoryRole)
                      .toBool(),
                  true);
-        QCOMPARE(model.data(model.index(0, sak::FileExplorerItemModel::AttributesColumn),
-                            sak::FileExplorerItemModel::EntryAttributeSummaryRole)
+        QCOMPARE(model
+                     .data(model.index(0, sak::FileExplorerItemModel::AttributesColumn),
+                           sak::FileExplorerItemModel::EntryAttributeSummaryRole)
                      .toString(),
                  QStringLiteral("Directory"));
         QCOMPARE(sak::FileExplorerItemModel::attributeSummary(

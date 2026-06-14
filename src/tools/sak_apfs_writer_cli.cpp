@@ -12,16 +12,16 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
-#include <QTemporaryDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QTextStream>
 
-#include <optional>
 #include <limits>
+#include <optional>
 
 namespace {
 
@@ -77,8 +77,8 @@ uint32_t parseBlockSizeOption(const QCommandLineParser& parser,
         return 0;
     }
     if (*parsed > std::numeric_limits<uint32_t>::max()) {
-        *error = QStringLiteral("Option --%1 is outside uint32 range")
-                     .arg(option.names().constFirst());
+        *error =
+            QStringLiteral("Option --%1 is outside uint32 range").arg(option.names().constFirst());
         return 0;
     }
     return static_cast<uint32_t>(*parsed);
@@ -118,16 +118,13 @@ void insertPlan(QJsonObject* report, const sak::PartitionApfsImageMutationPlan& 
     report->insert(QStringLiteral("volume_name"), plan.volume_name);
     report->insert(QStringLiteral("target_container_bytes"),
                    QString::number(plan.target_container_bytes));
-    report->insert(QStringLiteral("block_size_bytes"),
-                   static_cast<int>(plan.block_size_bytes));
-    report->insert(QStringLiteral("execution_blockers"),
-                   toJsonArray(plan.execution_blockers));
+    report->insert(QStringLiteral("block_size_bytes"), static_cast<int>(plan.block_size_bytes));
+    report->insert(QStringLiteral("execution_blockers"), toJsonArray(plan.execution_blockers));
     report->insert(QStringLiteral("post_apply_verification"),
                    toJsonArray(plan.post_apply_verification));
 }
 
-QJsonObject formatReport(const QString& command,
-                         const sak::PartitionApfsImageBuildResult& result) {
+QJsonObject formatReport(const QString& command, const sak::PartitionApfsImageBuildResult& result) {
     QJsonObject report;
     report.insert(QStringLiteral("tool"), QStringLiteral("sak_apfs_writer_cli"));
     report.insert(QStringLiteral("command"), command);
@@ -147,8 +144,7 @@ QJsonObject repairRawReport(const QString& command,
     report.insert(QStringLiteral("command"), command);
     report.insert(QStringLiteral("ok"), result.ok);
     report.insert(QStringLiteral("target_path"), result.target_path);
-    report.insert(QStringLiteral("scanned_blocks"),
-                  QString::number(result.scanned_blocks));
+    report.insert(QStringLiteral("scanned_blocks"), QString::number(result.scanned_blocks));
     report.insert(QStringLiteral("repaired_checksum_blocks"),
                   QString::number(result.repaired_checksum_blocks));
     report.insert(QStringLiteral("blockers"), toJsonArray(result.blockers));
@@ -166,8 +162,7 @@ QJsonObject repairImageReport(const QString& command,
     report.insert(QStringLiteral("source_image_path"), result.source_image_path);
     report.insert(QStringLiteral("repaired_image_path"), result.repaired_image_path);
     report.insert(QStringLiteral("repaired_image_sha256"), result.repaired_image_sha256);
-    report.insert(QStringLiteral("scanned_blocks"),
-                  QString::number(result.scanned_blocks));
+    report.insert(QStringLiteral("scanned_blocks"), QString::number(result.scanned_blocks));
     report.insert(QStringLiteral("repaired_checksum_blocks"),
                   QString::number(result.repaired_checksum_blocks));
     report.insert(QStringLiteral("blockers"), toJsonArray(result.blockers));
@@ -210,8 +205,7 @@ QJsonObject filePatchImageReport(const QString& command,
     report.insert(QStringLiteral("directory_name"), result.directory_name);
     report.insert(QStringLiteral("file_name"), result.file_name);
     report.insert(QStringLiteral("file_bytes"), QString::number(result.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"),
-                  QString::number(result.patch_offset_bytes));
+    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(result.patch_offset_bytes));
     report.insert(QStringLiteral("patch_bytes"), QString::number(result.patch_bytes));
     report.insert(QStringLiteral("patch_sha256"), result.patch_sha256);
     report.insert(QStringLiteral("readback_sha256"), result.readback_sha256);
@@ -234,20 +228,17 @@ QJsonObject fileDeleteImageReport(const QString& command,
     report.insert(QStringLiteral("written_image_sha256"), result.written_image_sha256);
     report.insert(QStringLiteral("directory_name"), result.directory_name);
     report.insert(QStringLiteral("file_name"), result.file_name);
-    report.insert(QStringLiteral("deleted_file_bytes"),
-                  QString::number(result.deleted_file_bytes));
+    report.insert(QStringLiteral("deleted_file_bytes"), QString::number(result.deleted_file_bytes));
     report.insert(QStringLiteral("deleted_file_sha256"), result.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"),
-                  QString::number(result.freed_data_blocks));
+    report.insert(QStringLiteral("freed_data_blocks"), QString::number(result.freed_data_blocks));
     report.insert(QStringLiteral("blockers"), toJsonArray(result.blockers));
     report.insert(QStringLiteral("warnings"), toJsonArray(result.warnings));
     insertPlan(&report, result.plan);
     return report;
 }
 
-QJsonObject directoryImageReport(
-    const QString& command,
-    const sak::PartitionApfsImageDirectoryMutationResult& result) {
+QJsonObject directoryImageReport(const QString& command,
+                                 const sak::PartitionApfsImageDirectoryMutationResult& result) {
     QJsonObject report;
     report.insert(QStringLiteral("tool"), QStringLiteral("sak_apfs_writer_cli"));
     report.insert(QStringLiteral("command"), command);
@@ -291,11 +282,9 @@ QJsonObject fileDeleteRawReport(const QString& command,
     report.insert(QStringLiteral("target_path"), result.target_path);
     report.insert(QStringLiteral("directory_name"), result.directory_name);
     report.insert(QStringLiteral("file_name"), result.file_name);
-    report.insert(QStringLiteral("deleted_file_bytes"),
-                  QString::number(result.deleted_file_bytes));
+    report.insert(QStringLiteral("deleted_file_bytes"), QString::number(result.deleted_file_bytes));
     report.insert(QStringLiteral("deleted_file_sha256"), result.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"),
-                  QString::number(result.freed_data_blocks));
+    report.insert(QStringLiteral("freed_data_blocks"), QString::number(result.freed_data_blocks));
     report.insert(QStringLiteral("blockers"), toJsonArray(result.blockers));
     report.insert(QStringLiteral("warnings"), toJsonArray(result.warnings));
     insertPlan(&report, result.plan);
@@ -312,8 +301,7 @@ QJsonObject filePatchRawReport(const QString& command,
     report.insert(QStringLiteral("directory_name"), result.directory_name);
     report.insert(QStringLiteral("file_name"), result.file_name);
     report.insert(QStringLiteral("file_bytes"), QString::number(result.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"),
-                  QString::number(result.patch_offset_bytes));
+    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(result.patch_offset_bytes));
     report.insert(QStringLiteral("patch_bytes"), QString::number(result.patch_bytes));
     report.insert(QStringLiteral("patch_sha256"), result.patch_sha256);
     report.insert(QStringLiteral("readback_sha256"), result.readback_sha256);
@@ -325,9 +313,8 @@ QJsonObject filePatchRawReport(const QString& command,
     return report;
 }
 
-QJsonObject directoryRawReport(
-    const QString& command,
-    const sak::PartitionApfsRawDirectoryMutationResult& result) {
+QJsonObject directoryRawReport(const QString& command,
+                               const sak::PartitionApfsRawDirectoryMutationResult& result) {
     QJsonObject report;
     report.insert(QStringLiteral("tool"), QStringLiteral("sak_apfs_writer_cli"));
     report.insert(QStringLiteral("command"), command);
@@ -518,11 +505,8 @@ std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLinePars
     QString patchOffsetError;
     const auto patchOffset =
         patchOffsetForCommand(parser, *options.patch_offset, command, &patchOffsetError);
-    return CliMutationInputs{*fileName,
-                             *directoryName,
-                             *payload,
-                             patchOffset.value_or(0),
-                             patchOffsetError};
+    return CliMutationInputs{
+        *fileName, *directoryName, *payload, patchOffset.value_or(0), patchOffsetError};
 }
 
 std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& parser,
@@ -555,65 +539,57 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .payload = mutation->payload,
                          .patch_offset_bytes = mutation->patch_offset,
                          .patch_offset_error = mutation->patch_offset_error,
-                         .evidence_id = evidenceIdForCommand(parser,
-                                                              *options.evidence,
-                                                              *command),
+                         .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw)};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
-    return formatReport(
-        invocation.command,
-        sak::PartitionApfsWriter::buildImageOnlyFormatImage(
-            {.image_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .block_size_bytes = invocation.block_size_bytes,
-             .volume_name = invocation.volume_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return formatReport(invocation.command,
+                        sak::PartitionApfsWriter::buildImageOnlyFormatImage(
+                            {.image_path = invocation.target_path,
+                             .target_container_bytes = invocation.target_size_bytes,
+                             .block_size_bytes = invocation.block_size_bytes,
+                             .volume_name = invocation.volume_name,
+                             .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
-std::optional<QJsonObject> buildRepairImageReport(const CliInvocation& invocation,
-                                                  QString* error) {
+std::optional<QJsonObject> buildRepairImageReport(const CliInvocation& invocation, QString* error) {
     if (invocation.output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for repair-image.");
         return std::nullopt;
     }
-    return repairImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::repairImageOnlyObjectChecksums(
-            {.source_image_path = invocation.target_path,
-             .repaired_image_path = invocation.output_image_path,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return repairImageReport(invocation.command,
+                             sak::PartitionApfsWriter::repairImageOnlyObjectChecksums(
+                                 {.source_image_path = invocation.target_path,
+                                  .repaired_image_path = invocation.output_image_path,
+                                  .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildFormatRawReport(const CliInvocation& invocation) {
-    return formatReport(
-        invocation.command,
-        sak::PartitionApfsWriter::formatExistingContainerTarget(
-            {.image_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .block_size_bytes = invocation.block_size_bytes,
-             .volume_name = invocation.volume_name,
-             .target_wipe_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-            .options = rawWriteOptions(invocation.evidence_id)}));
+    return formatReport(invocation.command,
+                        sak::PartitionApfsWriter::formatExistingContainerTarget(
+                            {.image_path = invocation.target_path,
+                             .target_container_bytes = invocation.target_size_bytes,
+                             .block_size_bytes = invocation.block_size_bytes,
+                             .volume_name = invocation.volume_name,
+                             .target_wipe_confirmed = invocation.confirm_target,
+                             .allow_raw_device_target = invocation.allow_raw_target,
+                             .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
-std::optional<QJsonObject> buildWriteImageReport(const CliInvocation& invocation,
-                                                 QString* error) {
+std::optional<QJsonObject> buildWriteImageReport(const CliInvocation& invocation, QString* error) {
     if (invocation.output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for write-image-root-file.");
         return std::nullopt;
     }
-    return fileWriteImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::writeImageOnlyRootFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .file_name = invocation.file_name,
-             .file_data = invocation.payload,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return fileWriteImageReport(invocation.command,
+                                sak::PartitionApfsWriter::writeImageOnlyRootFile(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .file_name = invocation.file_name,
+                                     .file_data = invocation.payload,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildWriteDirectoryFileImageReport(const CliInvocation& invocation,
@@ -622,19 +598,17 @@ std::optional<QJsonObject> buildWriteDirectoryFileImageReport(const CliInvocatio
         *error = QStringLiteral("--output-image is required for write-image-root-directory-file.");
         return std::nullopt;
     }
-    return fileWriteImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::writeImageOnlyRootDirectoryFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .file_data = invocation.payload,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return fileWriteImageReport(invocation.command,
+                                sak::PartitionApfsWriter::writeImageOnlyRootDirectoryFile(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .directory_name = invocation.directory_name,
+                                     .file_name = invocation.file_name,
+                                     .file_data = invocation.payload,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
-std::optional<QJsonObject> buildPatchImageReport(const CliInvocation& invocation,
-                                                 QString* error) {
+std::optional<QJsonObject> buildPatchImageReport(const CliInvocation& invocation, QString* error) {
     if (invocation.output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for patch-image-root-file.");
         return std::nullopt;
@@ -643,15 +617,14 @@ std::optional<QJsonObject> buildPatchImageReport(const CliInvocation& invocation
         *error = invocation.patch_offset_error;
         return std::nullopt;
     }
-    return filePatchImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::patchImageOnlyRootFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .file_name = invocation.file_name,
-             .patch_offset_bytes = invocation.patch_offset_bytes,
-             .patch_data = invocation.payload,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return filePatchImageReport(invocation.command,
+                                sak::PartitionApfsWriter::patchImageOnlyRootFile(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .file_name = invocation.file_name,
+                                     .patch_offset_bytes = invocation.patch_offset_bytes,
+                                     .patch_data = invocation.payload,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildPatchDirectoryFileImageReport(const CliInvocation& invocation,
@@ -664,31 +637,28 @@ std::optional<QJsonObject> buildPatchDirectoryFileImageReport(const CliInvocatio
         *error = invocation.patch_offset_error;
         return std::nullopt;
     }
-    return filePatchImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .patch_offset_bytes = invocation.patch_offset_bytes,
-             .patch_data = invocation.payload,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return filePatchImageReport(invocation.command,
+                                sak::PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .directory_name = invocation.directory_name,
+                                     .file_name = invocation.file_name,
+                                     .patch_offset_bytes = invocation.patch_offset_bytes,
+                                     .patch_data = invocation.payload,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
-std::optional<QJsonObject> buildDeleteImageReport(const CliInvocation& invocation,
-                                                  QString* error) {
+std::optional<QJsonObject> buildDeleteImageReport(const CliInvocation& invocation, QString* error) {
     if (invocation.output_image_path.isEmpty()) {
         *error = QStringLiteral("--output-image is required for delete-image-root-file.");
         return std::nullopt;
     }
-    return fileDeleteImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteImageOnlyRootFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .file_name = invocation.file_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return fileDeleteImageReport(invocation.command,
+                                 sak::PartitionApfsWriter::deleteImageOnlyRootFile(
+                                     {.source_image_path = invocation.target_path,
+                                      .written_image_path = invocation.output_image_path,
+                                      .file_name = invocation.file_name,
+                                      .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildDeleteDirectoryFileImageReport(const CliInvocation& invocation,
@@ -697,14 +667,13 @@ std::optional<QJsonObject> buildDeleteDirectoryFileImageReport(const CliInvocati
         *error = QStringLiteral("--output-image is required for delete-image-root-directory-file.");
         return std::nullopt;
     }
-    return fileDeleteImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteImageOnlyRootDirectoryFile(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return fileDeleteImageReport(invocation.command,
+                                 sak::PartitionApfsWriter::deleteImageOnlyRootDirectoryFile(
+                                     {.source_image_path = invocation.target_path,
+                                      .written_image_path = invocation.output_image_path,
+                                      .directory_name = invocation.directory_name,
+                                      .file_name = invocation.file_name,
+                                      .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildCreateDirectoryImageReport(const CliInvocation& invocation,
@@ -713,13 +682,12 @@ std::optional<QJsonObject> buildCreateDirectoryImageReport(const CliInvocation& 
         *error = QStringLiteral("--output-image is required for create-image-root-directory.");
         return std::nullopt;
     }
-    return directoryImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::createImageOnlyRootDirectory(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .directory_name = invocation.directory_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return directoryImageReport(invocation.command,
+                                sak::PartitionApfsWriter::createImageOnlyRootDirectory(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .directory_name = invocation.directory_name,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildDeleteDirectoryImageReport(const CliInvocation& invocation,
@@ -728,13 +696,12 @@ std::optional<QJsonObject> buildDeleteDirectoryImageReport(const CliInvocation& 
         *error = QStringLiteral("--output-image is required for delete-image-root-directory.");
         return std::nullopt;
     }
-    return directoryImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteImageOnlyRootDirectory(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .directory_name = invocation.directory_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return directoryImageReport(invocation.command,
+                                sak::PartitionApfsWriter::deleteImageOnlyRootDirectory(
+                                    {.source_image_path = invocation.target_path,
+                                     .written_image_path = invocation.output_image_path,
+                                     .directory_name = invocation.directory_name,
+                                     .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildChangeVolumeLabelImageReport(const CliInvocation& invocation,
@@ -743,65 +710,60 @@ std::optional<QJsonObject> buildChangeVolumeLabelImageReport(const CliInvocation
         *error = QStringLiteral("--output-image is required for change-image-volume-label.");
         return std::nullopt;
     }
-    return volumeLabelImageReport(
-        invocation.command,
-        sak::PartitionApfsWriter::changeImageOnlyVolumeLabel(
-            {.source_image_path = invocation.target_path,
-             .written_image_path = invocation.output_image_path,
-             .volume_name = invocation.volume_name,
-             .options = imageWriteOptions(invocation.evidence_id)}));
+    return volumeLabelImageReport(invocation.command,
+                                  sak::PartitionApfsWriter::changeImageOnlyVolumeLabel(
+                                      {.source_image_path = invocation.target_path,
+                                       .written_image_path = invocation.output_image_path,
+                                       .volume_name = invocation.volume_name,
+                                       .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildWriteRawReport(const CliInvocation& invocation) {
-    return fileWriteRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::writeRawRootFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .file_name = invocation.file_name,
-             .file_data = invocation.payload,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return fileWriteRawReport(invocation.command,
+                              sak::PartitionApfsWriter::writeRawRootFile(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .file_name = invocation.file_name,
+                                   .file_data = invocation.payload,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildWriteDirectoryFileRawReport(const CliInvocation& invocation) {
-    return fileWriteRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::writeRawRootDirectoryFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .file_data = invocation.payload,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return fileWriteRawReport(invocation.command,
+                              sak::PartitionApfsWriter::writeRawRootDirectoryFile(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .directory_name = invocation.directory_name,
+                                   .file_name = invocation.file_name,
+                                   .file_data = invocation.payload,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildDeleteRawReport(const CliInvocation& invocation) {
-    return fileDeleteRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteRawRootFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .file_name = invocation.file_name,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return fileDeleteRawReport(invocation.command,
+                               sak::PartitionApfsWriter::deleteRawRootFile(
+                                   {.target_path = invocation.target_path,
+                                    .target_container_bytes = invocation.target_size_bytes,
+                                    .file_name = invocation.file_name,
+                                    .target_write_confirmed = invocation.confirm_target,
+                                    .allow_raw_device_target = invocation.allow_raw_target,
+                                    .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildDeleteDirectoryFileRawReport(const CliInvocation& invocation) {
-    return fileDeleteRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteRawRootDirectoryFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return fileDeleteRawReport(invocation.command,
+                               sak::PartitionApfsWriter::deleteRawRootDirectoryFile(
+                                   {.target_path = invocation.target_path,
+                                    .target_container_bytes = invocation.target_size_bytes,
+                                    .directory_name = invocation.directory_name,
+                                    .file_name = invocation.file_name,
+                                    .target_write_confirmed = invocation.confirm_target,
+                                    .allow_raw_device_target = invocation.allow_raw_target,
+                                    .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 std::optional<QJsonObject> buildPatchDirectoryFileRawReport(const CliInvocation& invocation,
@@ -810,84 +772,77 @@ std::optional<QJsonObject> buildPatchDirectoryFileRawReport(const CliInvocation&
         *error = invocation.patch_offset_error;
         return std::nullopt;
     }
-    return filePatchRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::patchRawRootDirectoryFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .directory_name = invocation.directory_name,
-             .file_name = invocation.file_name,
-             .patch_offset_bytes = invocation.patch_offset_bytes,
-             .patch_data = invocation.payload,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return filePatchRawReport(invocation.command,
+                              sak::PartitionApfsWriter::patchRawRootDirectoryFile(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .directory_name = invocation.directory_name,
+                                   .file_name = invocation.file_name,
+                                   .patch_offset_bytes = invocation.patch_offset_bytes,
+                                   .patch_data = invocation.payload,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildCreateDirectoryRawReport(const CliInvocation& invocation) {
-    return directoryRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::createRawRootDirectory(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .directory_name = invocation.directory_name,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return directoryRawReport(invocation.command,
+                              sak::PartitionApfsWriter::createRawRootDirectory(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .directory_name = invocation.directory_name,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildDeleteDirectoryRawReport(const CliInvocation& invocation) {
-    return directoryRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::deleteRawRootDirectory(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .directory_name = invocation.directory_name,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return directoryRawReport(invocation.command,
+                              sak::PartitionApfsWriter::deleteRawRootDirectory(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .directory_name = invocation.directory_name,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
-std::optional<QJsonObject> buildPatchRawReport(const CliInvocation& invocation,
-                                               QString* error) {
+std::optional<QJsonObject> buildPatchRawReport(const CliInvocation& invocation, QString* error) {
     if (!invocation.patch_offset_error.isEmpty()) {
         *error = invocation.patch_offset_error;
         return std::nullopt;
     }
-    return filePatchRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::patchRawRootFile(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .file_name = invocation.file_name,
-             .patch_offset_bytes = invocation.patch_offset_bytes,
-             .patch_data = invocation.payload,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return filePatchRawReport(invocation.command,
+                              sak::PartitionApfsWriter::patchRawRootFile(
+                                  {.target_path = invocation.target_path,
+                                   .target_container_bytes = invocation.target_size_bytes,
+                                   .file_name = invocation.file_name,
+                                   .patch_offset_bytes = invocation.patch_offset_bytes,
+                                   .patch_data = invocation.payload,
+                                   .target_write_confirmed = invocation.confirm_target,
+                                   .allow_raw_device_target = invocation.allow_raw_target,
+                                   .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildChangeVolumeLabelRawReport(const CliInvocation& invocation) {
-    return volumeLabelRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::changeRawVolumeLabel(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .volume_name = invocation.volume_name,
-             .target_write_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-             .options = rawWriteOptions(invocation.evidence_id)}));
+    return volumeLabelRawReport(invocation.command,
+                                sak::PartitionApfsWriter::changeRawVolumeLabel(
+                                    {.target_path = invocation.target_path,
+                                     .target_container_bytes = invocation.target_size_bytes,
+                                     .volume_name = invocation.volume_name,
+                                     .target_write_confirmed = invocation.confirm_target,
+                                     .allow_raw_device_target = invocation.allow_raw_target,
+                                     .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 QJsonObject buildRepairRawReport(const CliInvocation& invocation) {
-    return repairRawReport(
-        invocation.command,
-        sak::PartitionApfsWriter::repairRawObjectChecksums(
-            {.target_path = invocation.target_path,
-             .target_container_bytes = invocation.target_size_bytes,
-             .target_repair_confirmed = invocation.confirm_target,
-             .allow_raw_device_target = invocation.allow_raw_target,
-            .options = rawWriteOptions(invocation.evidence_id)}));
+    return repairRawReport(invocation.command,
+                           sak::PartitionApfsWriter::repairRawObjectChecksums(
+                               {.target_path = invocation.target_path,
+                                .target_container_bytes = invocation.target_size_bytes,
+                                .target_repair_confirmed = invocation.confirm_target,
+                                .allow_raw_device_target = invocation.allow_raw_target,
+                                .options = rawWriteOptions(invocation.evidence_id)}));
 }
 
 bool isImageCommand(const QString& command) {
@@ -1047,8 +1002,7 @@ std::optional<QJsonObject> buildImageCommandReport(const CliInvocation& invocati
     return std::nullopt;
 }
 
-std::optional<QJsonObject> buildRawCommandReport(const CliInvocation& invocation,
-                                                 QString* error) {
+std::optional<QJsonObject> buildRawCommandReport(const CliInvocation& invocation, QString* error) {
     if (invocation.command == QStringLiteral("format-raw")) {
         return buildFormatRawReport(invocation);
     }
@@ -1068,8 +1022,45 @@ std::optional<QJsonObject> buildRawCommandReport(const CliInvocation& invocation
     return std::nullopt;
 }
 
-std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocation,
-                                                  QString* error) {
+struct ImportedFile {
+    QString name;
+    QByteArray data;
+};
+
+// Read every flat root file from a foreign source container into `files`.
+bool collectImportSourceFiles(const QString& sourcePath,
+                              QVector<ImportedFile>* files,
+                              QString* volumeName,
+                              QString* error) {
+    const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
+        sourcePath, QStringLiteral("/"), sak::kPartitionApfsDefaultBrowseEntryLimit);
+    if (!listing.ok) {
+        *error = QStringLiteral("Unable to read source container: %1")
+                     .arg(listing.blockers.join(QStringLiteral("; ")));
+        return false;
+    }
+    *volumeName = listing.volume_name;
+    for (const auto& entry : listing.entries) {
+        if (entry.directory) {
+            *error = QStringLiteral(
+                         "Arbitrary import is limited to flat root files; source contains "
+                         "directory '%1'")
+                         .arg(entry.name);
+            return false;
+        }
+        const auto read = sak::PartitionApfsFileSystemReader::readFileFromImage(
+            sourcePath, QStringLiteral("/%1").arg(entry.name), entry.size_bytes);
+        if (!read.ok) {
+            *error = QStringLiteral("Unable to read source file '%1': %2")
+                         .arg(entry.name, read.blockers.join(QStringLiteral("; ")));
+            return false;
+        }
+        files->append({entry.name, read.data});
+    }
+    return true;
+}
+
+std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocation, QString* error) {
     // Arbitrary Apple-media APFS read-modify-write: read every root file from a
     // foreign source container (any block layout the generic reader can walk),
     // then re-emit a freshly certified S.A.K. container carrying those files
@@ -1078,33 +1069,10 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
     // checkpoint-ring surgery.
     const QString sourcePath = invocation.target_path;
     const QString outputPath = invocation.output_image_path;
-    const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
-        sourcePath, QStringLiteral("/"), sak::kPartitionApfsDefaultBrowseEntryLimit);
-    if (!listing.ok) {
-        *error = QStringLiteral("Unable to read source container: %1")
-                     .arg(listing.blockers.join(QStringLiteral("; ")));
-        return std::nullopt;
-    }
-    struct ImportedFile {
-        QString name;
-        QByteArray data;
-    };
     QVector<ImportedFile> files;
-    for (const auto& entry : listing.entries) {
-        if (entry.directory) {
-            *error = QStringLiteral(
-                "Arbitrary import is limited to flat root files; source contains directory '%1'")
-                         .arg(entry.name);
-            return std::nullopt;
-        }
-        const auto read = sak::PartitionApfsFileSystemReader::readFileFromImage(
-            sourcePath, QStringLiteral("/%1").arg(entry.name), entry.size_bytes);
-        if (!read.ok) {
-            *error = QStringLiteral("Unable to read source file '%1': %2")
-                         .arg(entry.name, read.blockers.join(QStringLiteral("; ")));
-            return std::nullopt;
-        }
-        files.append({entry.name, read.data});
+    QString volumeName;
+    if (!collectImportSourceFiles(sourcePath, &files, &volumeName, error)) {
+        return std::nullopt;
     }
     if (!invocation.file_name.trimmed().isEmpty()) {
         files.append({invocation.file_name, invocation.payload});
@@ -1122,7 +1090,7 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
         {.image_path = freshPath,
          .target_container_bytes = invocation.target_size_bytes,
          .block_size_bytes = blockSize,
-         .volume_name = listing.volume_name,
+         .volume_name = volumeName,
          .options = options});
     if (!formatResult.ok) {
         *error = formatResult.blockers.join(QStringLiteral("; "));
@@ -1132,14 +1100,13 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
     QString currentPath = freshPath;
     int stage = 0;
     for (const auto& file : files) {
-        const QString nextPath =
-            scratch.filePath(QStringLiteral("import-%1.apfs").arg(stage++));
-        const auto write = sak::PartitionApfsWriter::writeImageOnlyRootFile(
-            {.source_image_path = currentPath,
-             .written_image_path = nextPath,
-             .file_name = file.name,
-             .file_data = file.data,
-             .options = options});
+        const QString nextPath = scratch.filePath(QStringLiteral("import-%1.apfs").arg(stage++));
+        const auto write =
+            sak::PartitionApfsWriter::writeImageOnlyRootFile({.source_image_path = currentPath,
+                                                              .written_image_path = nextPath,
+                                                              .file_name = file.name,
+                                                              .file_data = file.data,
+                                                              .options = options});
         if (!write.ok) {
             *error = QStringLiteral("Unable to re-emit file '%1': %2")
                          .arg(file.name, write.blockers.join(QStringLiteral("; ")));
@@ -1163,7 +1130,7 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
     report.insert(QStringLiteral("operation"), QStringLiteral("Arbitrary APFS import"));
     report.insert(QStringLiteral("source_image"), sourcePath);
     report.insert(QStringLiteral("output_image"), outputPath);
-    report.insert(QStringLiteral("volume_name"), listing.volume_name);
+    report.insert(QStringLiteral("volume_name"), volumeName);
     report.insert(QStringLiteral("imported_file_count"), static_cast<int>(files.size()));
     return report;
 }
@@ -1223,8 +1190,7 @@ bool isFileWriteCommand(const QString& command) {
 }
 
 bool isFileNameCommand(const QString& command) {
-    return isFileWriteCommand(command) ||
-           command == QStringLiteral("delete-image-root-file") ||
+    return isFileWriteCommand(command) || command == QStringLiteral("delete-image-root-file") ||
            command == QStringLiteral("delete-image-root-directory-file") ||
            command == QStringLiteral("delete-raw-root-directory-file") ||
            command == QStringLiteral("delete-raw-root-file");
@@ -1355,18 +1321,22 @@ int main(int argc, char* argv[]) {
     const QCommandLineOption outputImageOption({QStringLiteral("output-image")},
                                                QStringLiteral("Image repair output path."),
                                                QStringLiteral("path"));
-    const QCommandLineOption fileNameOption({QStringLiteral("file-name")},
-                                            QStringLiteral("Root or child file name for generated APFS writes."),
-                                            QStringLiteral("name"));
-    const QCommandLineOption directoryNameOption({QStringLiteral("directory-name")},
-                                                 QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
-                                                 QStringLiteral("name"));
-    const QCommandLineOption payloadOption({QStringLiteral("payload-file")},
-                                           QStringLiteral("Payload file for generated APFS writes or patches."),
-                                           QStringLiteral("path"));
-    const QCommandLineOption patchOffsetOption({QStringLiteral("patch-offset-bytes")},
-                                               QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
-                                               QStringLiteral("bytes"));
+    const QCommandLineOption fileNameOption(
+        {QStringLiteral("file-name")},
+        QStringLiteral("Root or child file name for generated APFS writes."),
+        QStringLiteral("name"));
+    const QCommandLineOption directoryNameOption(
+        {QStringLiteral("directory-name")},
+        QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
+        QStringLiteral("name"));
+    const QCommandLineOption payloadOption(
+        {QStringLiteral("payload-file")},
+        QStringLiteral("Payload file for generated APFS writes or patches."),
+        QStringLiteral("path"));
+    const QCommandLineOption patchOffsetOption(
+        {QStringLiteral("patch-offset-bytes")},
+        QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
+        QStringLiteral("bytes"));
     const QCommandLineOption outputJsonOption({QStringLiteral("output-json")},
                                               QStringLiteral("Optional report JSON path."),
                                               QStringLiteral("path"));
@@ -1392,25 +1362,32 @@ int main(int argc, char* argv[]) {
                        allowRawOption});
     parser.addPositionalArgument(
         QStringLiteral("command"),
-        QStringLiteral("format-image, repair-image, write-image-root-file, write-image-root-directory-file, patch-image-root-file, patch-image-root-directory-file, delete-image-root-file, delete-image-root-directory-file, create-image-root-directory, delete-image-root-directory, change-image-volume-label, format-raw, write-raw-root-file, write-raw-root-directory-file, patch-raw-root-file, patch-raw-root-directory-file, delete-raw-root-file, delete-raw-root-directory-file, create-raw-root-directory, delete-raw-root-directory, change-raw-volume-label, or repair-raw."));
+        QStringLiteral(
+            "format-image, repair-image, write-image-root-file, write-image-root-directory-file, "
+            "patch-image-root-file, patch-image-root-directory-file, delete-image-root-file, "
+            "delete-image-root-directory-file, create-image-root-directory, "
+            "delete-image-root-directory, change-image-volume-label, format-raw, "
+            "write-raw-root-file, write-raw-root-directory-file, patch-raw-root-file, "
+            "patch-raw-root-directory-file, delete-raw-root-file, delete-raw-root-directory-file, "
+            "create-raw-root-directory, delete-raw-root-directory, change-raw-volume-label, or "
+            "repair-raw."));
     parser.process(app);
 
     QString parseError;
-    const auto invocation = invocationFromParser(
-        parser,
-        {.target = &targetOption,
-         .size = &sizeOption,
-         .block_size = &blockSizeOption,
-         .volume_name = &volumeNameOption,
-         .output_image = &outputImageOption,
-         .file_name = &fileNameOption,
-         .directory_name = &directoryNameOption,
-         .payload = &payloadOption,
-         .patch_offset = &patchOffsetOption,
-         .evidence = &evidenceOption,
-         .confirm = &confirmOption,
-         .allow_raw = &allowRawOption},
-        &parseError);
+    const auto invocation = invocationFromParser(parser,
+                                                 {.target = &targetOption,
+                                                  .size = &sizeOption,
+                                                  .block_size = &blockSizeOption,
+                                                  .volume_name = &volumeNameOption,
+                                                  .output_image = &outputImageOption,
+                                                  .file_name = &fileNameOption,
+                                                  .directory_name = &directoryNameOption,
+                                                  .payload = &payloadOption,
+                                                  .patch_offset = &patchOffsetOption,
+                                                  .evidence = &evidenceOption,
+                                                  .confirm = &confirmOption,
+                                                  .allow_raw = &allowRawOption},
+                                                 &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;
         return kExitInvalidArguments;

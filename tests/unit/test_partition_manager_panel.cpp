@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/partition_manager_panel.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_tool_runner.h"
+#include "sak/partition_manager_panel.h"
 #include "sak/style_constants.h"
 
 #include <QApplication>
@@ -295,8 +295,8 @@ QString comboInventoryText(QDialog* dialog) {
     QStringList comboDescriptions;
     const auto combos = dialog->findChildren<QComboBox*>();
     for (const auto* combo : combos) {
-        comboDescriptions.append(QStringLiteral("%1=[%2]")
-                                     .arg(combo->accessibleName(), comboItemsText(combo)));
+        comboDescriptions.append(
+            QStringLiteral("%1=[%2]").arg(combo->accessibleName(), comboItemsText(combo)));
     }
     return comboDescriptions.join(QStringLiteral("; "));
 }
@@ -313,24 +313,23 @@ QComboBox* findCreateFileSystemCombo(QDialog* dialog) {
 }
 
 QCheckBox* findCreateRawConfirm(QDialog* dialog) {
-    auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
-                                                    QStringLiteral("Confirm ext filesystem format"));
+    auto* confirm =
+        findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem format"));
     if (confirm) {
         return confirm;
     }
-    return findAccessibleWidget<QCheckBox>(dialog,
-                                           QStringLiteral("Confirm raw filesystem format"));
+    return findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm raw filesystem format"));
 }
 
 void inspectCreateFileSystems(QDialog* dialog, CreateDialogInspection* result) {
     auto* fileSystem = findCreateFileSystemCombo(dialog);
-    result->file_system_items =
-        fileSystem ? comboItemsText(fileSystem) : comboInventoryText(dialog);
-    result->has_non_native_file_systems =
-        fileSystem && comboHasItem(fileSystem, QStringLiteral("ext4")) &&
-        comboHasItem(fileSystem, QStringLiteral("HFSX")) &&
-        comboHasItem(fileSystem, QStringLiteral("Linux swap")) &&
-        comboHasItem(fileSystem, QStringLiteral("APFS"));
+    result->file_system_items = fileSystem ? comboItemsText(fileSystem)
+                                           : comboInventoryText(dialog);
+    result->has_non_native_file_systems = fileSystem &&
+                                          comboHasItem(fileSystem, QStringLiteral("ext4")) &&
+                                          comboHasItem(fileSystem, QStringLiteral("HFSX")) &&
+                                          comboHasItem(fileSystem, QStringLiteral("Linux swap")) &&
+                                          comboHasItem(fileSystem, QStringLiteral("APFS"));
 }
 
 void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
@@ -338,8 +337,8 @@ void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
     auto* allocationUnit = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Cluster size"));
     auto* driveLetter = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Drive letter"));
     auto* confirm = findCreateRawConfirm(dialog);
-    auto* swapPageSize =
-        findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Linux swap page size"));
+    auto* swapPageSize = findAccessibleWidget<QComboBox>(dialog,
+                                                         QStringLiteral("Linux swap page size"));
     result->raw_toggle_state =
         QStringLiteral("fileSystem=%1 allocation=%2 drive=%3 confirm=%4 swap=%5")
             .arg(fileSystem != nullptr)
@@ -353,8 +352,8 @@ void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
 
     setComboItem(fileSystem, QStringLiteral("ext4"));
     QApplication::processEvents();
-    result->raw_create_controls_toggle =
-        confirm->isVisible() && !allocationUnit->isEnabled() && !driveLetter->isEnabled();
+    result->raw_create_controls_toggle = confirm->isVisible() && !allocationUnit->isEnabled() &&
+                                         !driveLetter->isEnabled();
     result->raw_toggle_state =
         result->raw_toggle_state +
         QStringLiteral("; confirmVisible=%1 allocationEnabled=%2 driveEnabled=%3")
@@ -363,9 +362,9 @@ void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
             .arg(driveLetter->isEnabled());
     setComboItem(fileSystem, QStringLiteral("Linux swap"));
     QApplication::processEvents();
-    result->swap_create_controls_toggle =
-        swapPageSize->isVisible() && confirm->isVisible() &&
-        confirm->accessibleName() == QStringLiteral("Confirm Linux swap format");
+    result->swap_create_controls_toggle = swapPageSize->isVisible() && confirm->isVisible() &&
+                                          confirm->accessibleName() ==
+                                              QStringLiteral("Confirm Linux swap format");
 }
 
 void inspectCreateHandleControls(QDialog* dialog, CreateDialogInspection* result) {
@@ -649,7 +648,7 @@ void setRawExtVolumeForResize(sak::PartitionInventory* inventory, bool usePartit
     setRawFileSystem(&volume, QStringLiteral("ext4"));
     volume.drive_letter.clear();
     volume.total_bytes = usePartitionReference ? partition.size_bytes
-                                                : inventory->disks[0].partitions[0].size_bytes;
+                                               : inventory->disks[0].partitions[0].size_bytes;
     volume.free_bytes = inventory->disks[0].partitions[0].size_bytes / 2;
 }
 
@@ -703,8 +702,8 @@ void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
         QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
-        const QString metadata =
-            propertyTableValue(properties, QStringLiteral("Read-only metadata"));
+        const QString metadata = propertyTableValue(properties,
+                                                    QStringLiteral("Read-only metadata"));
         QVERIFY(metadata.contains(QStringLiteral("HFS wrapper: Yes")));
         QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("File system")),
@@ -757,7 +756,8 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedNeedl
                  QStringLiteral("Original read-only metadata consistency check"));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
                  QStringLiteral("No sanity warnings"));
-        QVERIFY(propertyTableValue(properties, QStringLiteral("Findings")).contains(expectedNeedle));
+        QVERIFY(
+            propertyTableValue(properties, QStringLiteral("Findings")).contains(expectedNeedle));
         inspected = true;
         dialog->reject();
     });
@@ -770,10 +770,11 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Properties dialog should open");
-        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        auto* properties =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
         QVERIFY2(properties != nullptr, "Properties table should exist");
-        const QString metadata =
-            propertyTableValue(properties, QStringLiteral("File system metadata"));
+        const QString metadata = propertyTableValue(properties,
+                                                    QStringLiteral("File system metadata"));
         QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
         propertiesInspected = true;
         dialog->reject();
@@ -787,14 +788,17 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Inspect filesystem dialog should open");
-        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        auto* properties =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
         QVERIFY2(properties != nullptr, "Inspect filesystem table should exist");
-        const QString metadata = propertyTableValue(properties, QStringLiteral("Read-only metadata"));
+        const QString metadata = propertyTableValue(properties,
+                                                    QStringLiteral("Read-only metadata"));
         QVERIFY(metadata.contains(QStringLiteral("Metadata sanity: XFS")));
         inspectInspected = true;
         dialog->reject();
     });
-    auto* inspectButton = findToolButtonByName(panel, QStringLiteral("Inspect Non-Windows File System"));
+    auto* inspectButton = findToolButtonByName(panel,
+                                               QStringLiteral("Inspect Non-Windows File System"));
     QVERIFY2(inspectButton != nullptr, "Inspect Non-Windows File System action should exist");
     inspectButton->click();
     QVERIFY(inspectInspected);
@@ -826,8 +830,8 @@ void queueExtFormatAndVerify() {
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
         QCOMPARE(fileSystem->currentText(), QStringLiteral("ext4"));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem format"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm ext filesystem format"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -850,8 +854,8 @@ void queueLinuxSwapFormatAndVerify() {
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
         QCOMPARE(fileSystem->currentText(), QStringLiteral("Linux swap"));
-        auto* pageSize =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Linux swap page size"));
+        auto* pageSize = findAccessibleWidget<QComboBox>(dialog,
+                                                         QStringLiteral("Linux swap page size"));
         QVERIFY(pageSize != nullptr);
         QCOMPARE(pageSize->currentText(), QStringLiteral("4096"));
         auto* confirm =
@@ -878,8 +882,8 @@ void queueApfsFormatAndVerify() {
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
         QCOMPARE(fileSystem->currentText(), QStringLiteral("APFS"));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm APFS format"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
+                                                        QStringLiteral("Confirm APFS format"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -902,16 +906,17 @@ void queueExtRepairAndVerify() {
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
         QVERIFY(mode != nullptr);
-        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        const int repairIndex =
+            mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
         QVERIFY(repairIndex >= 0);
         mode->setCurrentIndex(repairIndex);
-        auto* targetPath =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Non-Windows filesystem target path"));
+        auto* targetPath = findAccessibleWidget<QLineEdit>(
+            dialog, QStringLiteral("Non-Windows filesystem target path"));
         QVERIFY(targetPath != nullptr);
         QVERIFY(targetPath->isReadOnly());
         QVERIFY(targetPath->toolTip().contains(QStringLiteral("selected raw partition")));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem repair"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm ext filesystem repair"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -936,15 +941,16 @@ void queueHfsRepairAndVerify() {
         QVERIFY(mode != nullptr);
         QVERIFY(mode->findText(QStringLiteral("Original HFS+ catalog check now")) >= 0);
         QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
-        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        const int repairIndex =
+            mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
         QVERIFY(repairIndex >= 0);
         mode->setCurrentIndex(repairIndex);
-        auto* targetPath =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Non-Windows filesystem target path"));
+        auto* targetPath = findAccessibleWidget<QLineEdit>(
+            dialog, QStringLiteral("Non-Windows filesystem target path"));
         QVERIFY(targetPath != nullptr);
         QVERIFY(targetPath->isReadOnly());
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS+ filesystem repair"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS+ filesystem repair"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -960,12 +966,14 @@ void queueHfsRepairAndVerify() {
 void queueGeneratedApfsRepairAndVerify() {
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
-                     QStringLiteral("APFS"),
-                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-                      QStringLiteral("APFS space manager block: 10"),
-                      QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID 103 root tree OID 104"),
-                      QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(
+        &inventory.disks[0].partitions[0].volume.value(),
+        QStringLiteral("APFS"),
+        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
+         QStringLiteral("APFS space manager block: 10"),
+         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
+                        "103 root tree OID 104"),
+         QStringLiteral("Volume OIDs: 102")});
     panel.setTestInventoryForReview(inventory);
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -978,11 +986,12 @@ void queueGeneratedApfsRepairAndVerify() {
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
         QVERIFY(mode != nullptr);
         QVERIFY(mode->findText(QStringLiteral("Read-only check now")) >= 0);
-        const int repairIndex = mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
+        const int repairIndex =
+            mode->findData(sak::PartitionFileSystemToolRunner::repairOperation());
         QVERIFY(repairIndex >= 0);
         mode->setCurrentIndex(repairIndex);
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm APFS filesystem repair"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm APFS filesystem repair"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -997,12 +1006,14 @@ void queueGeneratedApfsRepairAndVerify() {
 
 sak::PartitionInventory generatedApfsInventoryFixture() {
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
-                     QStringLiteral("APFS"),
-                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-                      QStringLiteral("APFS space manager block: 10"),
-                      QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID 103 root tree OID 104"),
-                      QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(
+        &inventory.disks[0].partitions[0].volume.value(),
+        QStringLiteral("APFS"),
+        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
+         QStringLiteral("APFS space manager block: 10"),
+         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
+                        "103 root tree OID 104"),
+         QStringLiteral("Volume OIDs: 102")});
     return inventory;
 }
 
@@ -1023,8 +1034,8 @@ void queueApfsRootFileMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "APFS generated file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("APFS generated file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("APFS generated file mutation mode"));
         QVERIFY(mode != nullptr);
         QCOMPARE(mode->currentText(), QStringLiteral("Write root file"));
         QVERIFY(comboHasItem(mode, QStringLiteral("Write file in root directory")));
@@ -1034,18 +1045,17 @@ void queueApfsRootFileMutationAndVerify() {
         QVERIFY(comboHasItem(mode, QStringLiteral("Delete empty root directory")));
         QVERIFY(comboHasItem(mode, QStringLiteral("Change volume label")));
         auto* fileName =
-            findAccessibleWidget<QLineEdit>(dialog,
-                                            QStringLiteral("APFS file or directory name"));
+            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS file or directory name"));
         QVERIFY(fileName != nullptr);
         fileName->setText(QStringLiteral("panel-test.txt"));
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("APFS file payload text"));
+        auto* payload = findAccessibleWidget<QTextEdit>(dialog,
+                                                        QStringLiteral("APFS file payload text"));
         QVERIFY(payload != nullptr);
         auto* directoryName =
             findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS root directory name"));
         QVERIFY(directoryName != nullptr);
-        auto* patchOffset =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS root file patch byte offset"));
+        auto* patchOffset = findAccessibleWidget<QLineEdit>(
+            dialog, QStringLiteral("APFS root file patch byte offset"));
         QVERIFY(patchOffset != nullptr);
         mode->setCurrentText(QStringLiteral("Write file in root directory"));
         QVERIFY(directoryName->isVisible());
@@ -1093,8 +1103,8 @@ void queueHfsFileMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         QCOMPARE(mode->currentText(), QStringLiteral("Replace data fork within allocated blocks"));
         auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
@@ -1104,8 +1114,8 @@ void queueHfsFileMutationAndVerify() {
             findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
         QVERIFY(payload != nullptr);
         payload->setPlainText(QStringLiteral("panel hfs payload"));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -1129,8 +1139,8 @@ void queueHfsAllocationGrowthMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int index = mode->findText(QStringLiteral("Grow data fork with free blocks"));
         QVERIFY(index >= 0);
@@ -1142,8 +1152,8 @@ void queueHfsAllocationGrowthMutationAndVerify() {
             findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
         QVERIFY(payload != nullptr);
         payload->setPlainText(QStringLiteral("panel hfs allocation growth payload"));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -1167,8 +1177,8 @@ void queueHfsCreateFileMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int index = mode->findText(QStringLiteral("Create file with data"));
         QVERIFY(index >= 0);
@@ -1181,8 +1191,8 @@ void queueHfsCreateFileMutationAndVerify() {
         QVERIFY(payload != nullptr);
         QVERIFY(payload->isVisible());
         payload->setPlainText(QStringLiteral("panel created file payload"));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
@@ -1209,8 +1219,8 @@ void queueHfsForkAttributeMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int modeIndex = mode->findText(QStringLiteral("Replace fork-backed attribute"));
         QVERIFY2(modeIndex >= 0, "fork-backed attribute mode should exist");
@@ -1224,20 +1234,21 @@ void queueHfsForkAttributeMutationAndVerify() {
         QVERIFY(payload != nullptr);
         QVERIFY(payload->isVisible());
         payload->setPlainText(QStringLiteral("panel fork attribute payload"));
-        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog,
+                                                       QStringLiteral("HFS attribute file ID"));
         QVERIFY(fileId != nullptr);
         QVERIFY(fileId->isVisible());
         fileId->setText(QStringLiteral("17"));
-        auto* attributeName =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
+                                                              QStringLiteral("HFS attribute name"));
         QVERIFY(attributeName != nullptr);
         QVERIFY(attributeName->isVisible());
         attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
         auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
         QVERIFY(preview != nullptr);
         QVERIFY(preview->text().contains(QStringLiteral("fork-backed attribute")));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         QApplication::processEvents();
@@ -1267,8 +1278,8 @@ void queueHfsForkAttributeGrowthMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int modeIndex =
             mode->findText(QStringLiteral("Grow fork-backed attribute with free blocks"));
@@ -1283,20 +1294,21 @@ void queueHfsForkAttributeGrowthMutationAndVerify() {
         QVERIFY(payload != nullptr);
         QVERIFY(payload->isVisible());
         payload->setPlainText(QStringLiteral("panel fork attribute growth payload"));
-        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog,
+                                                       QStringLiteral("HFS attribute file ID"));
         QVERIFY(fileId != nullptr);
         QVERIFY(fileId->isVisible());
         fileId->setText(QStringLiteral("17"));
-        auto* attributeName =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
+                                                              QStringLiteral("HFS attribute name"));
         QVERIFY(attributeName != nullptr);
         QVERIFY(attributeName->isVisible());
         attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
         auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
         QVERIFY(preview != nullptr);
         QVERIFY(preview->text().contains(QStringLiteral("allocation growth")));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         QApplication::processEvents();
@@ -1326,8 +1338,8 @@ void queueHfsRenameMoveMutationAndVerify() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int modeIndex = mode->findText(QStringLiteral("Rename or move catalog entry"));
         QVERIFY2(modeIndex >= 0, "HFS rename/move mode should exist");
@@ -1338,8 +1350,8 @@ void queueHfsRenameMoveMutationAndVerify() {
         QVERIFY(hfsPath->isVisible());
         hfsPath->setText(QStringLiteral("/panel-source.txt"));
 
-        auto* destination =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS destination path"));
+        auto* destination = findAccessibleWidget<QLineEdit>(dialog,
+                                                            QStringLiteral("HFS destination path"));
         QVERIFY(destination != nullptr);
         QVERIFY(destination->isVisible());
         QVERIFY(destination->isEnabled());
@@ -1355,8 +1367,8 @@ void queueHfsRenameMoveMutationAndVerify() {
         QVERIFY(preview != nullptr);
         QVERIFY(preview->text().contains(QStringLiteral("catalog rename/move")));
 
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         QApplication::processEvents();
@@ -1391,21 +1403,22 @@ void queueHfsEmptyFileMutationAndVerify(const QString& modeText,
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
+        auto* mode = findAccessibleWidget<QComboBox>(dialog,
+                                                     QStringLiteral("HFS file mutation mode"));
         QVERIFY(mode != nullptr);
         const int modeIndex = mode->findText(modeText);
         QVERIFY2(modeIndex >= 0, "HFS empty-file mutation mode should exist");
         mode->setCurrentIndex(modeIndex);
 
-        auto* hfsPathInput = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
+        auto* hfsPathInput = findAccessibleWidget<QLineEdit>(dialog,
+                                                             QStringLiteral("HFS file path"));
         QVERIFY(hfsPathInput != nullptr);
         QVERIFY(hfsPathInput->isVisible());
         QVERIFY(hfsPathInput->isEnabled());
         hfsPathInput->setText(hfsPath);
 
-        auto* destination =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS destination path"));
+        auto* destination = findAccessibleWidget<QLineEdit>(dialog,
+                                                            QStringLiteral("HFS destination path"));
         QVERIFY(destination != nullptr);
         QVERIFY(!destination->isVisible());
         QVERIFY(!destination->isEnabled());
@@ -1416,20 +1429,20 @@ void queueHfsEmptyFileMutationAndVerify(const QString& modeText,
         QVERIFY(!payload->isVisible());
         QVERIFY(!payload->isEnabled());
 
-        auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
+        auto* fileId = findAccessibleWidget<QLineEdit>(dialog,
+                                                       QStringLiteral("HFS attribute file ID"));
         QVERIFY(fileId != nullptr);
         QVERIFY(!fileId->isVisible());
-        auto* attributeName =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute name"));
+        auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
+                                                              QStringLiteral("HFS attribute name"));
         QVERIFY(attributeName != nullptr);
         QVERIFY(!attributeName->isVisible());
 
         auto* secureWipe = findAccessibleWidget<QCheckBox>(
             dialog, QStringLiteral("Zero released HFS blocks before delete"));
         QVERIFY(secureWipe != nullptr);
-        const bool secureWipeExpected =
-            modeText == QStringLiteral("Delete file") ||
-            modeText == QStringLiteral("Delete folder tree");
+        const bool secureWipeExpected = modeText == QStringLiteral("Delete file") ||
+                                        modeText == QStringLiteral("Delete folder tree");
         QCOMPARE(secureWipe->isVisible(), secureWipeExpected);
         QCOMPARE(secureWipe->isEnabled(), secureWipeExpected);
         if (secureWipeExpected) {
@@ -1444,8 +1457,8 @@ void queueHfsEmptyFileMutationAndVerify(const QString& modeText,
             QVERIFY(preview->text().contains(QStringLiteral("Released blocks will be zeroed")));
         }
 
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm HFS staged file mutation"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         QApplication::processEvents();
@@ -1476,11 +1489,12 @@ void queueExtResizeAndVerify(bool grow) {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Resize dialog should open");
-        auto* size = findAccessibleWidget<QSpinBox>(dialog, QStringLiteral("Target partition size"));
+        auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                    QStringLiteral("Target partition size"));
         QVERIFY(size != nullptr);
         size->setValue(size->value() + (grow ? 64 : -64));
-        auto* confirm =
-            findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem resize"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm ext filesystem resize"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -1504,8 +1518,8 @@ void queueUnallocatedAllocateAndVerifyResize() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
-        auto* target =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Allocate free space target partition"));
+        auto* target = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("Allocate free space target partition"));
         QVERIFY(target != nullptr);
         QCOMPARE(target->currentIndex(), 0);
         inspected = true;
@@ -1531,12 +1545,12 @@ void queueUnallocatedAllocateAndVerifyMove() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
-        auto* target =
-            findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Allocate free space target partition"));
+        auto* target = findAccessibleWidget<QComboBox>(
+            dialog, QStringLiteral("Allocate free space target partition"));
         QVERIFY(target != nullptr);
         target->setCurrentIndex(1);
-        auto* backup =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Allocate free space to backup directory"));
+        auto* backup = findAccessibleWidget<QLineEdit>(
+            dialog, QStringLiteral("Allocate free space to backup directory"));
         QVERIFY(backup != nullptr);
         backup->setText(backupRoot.path());
         auto* confirm = findAccessibleWidget<QCheckBox>(
@@ -2304,8 +2318,8 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
     auto* fileSystem = table->item(1, 1);
     QVERIFY2(fileSystem != nullptr, "File system cell should exist");
     QVERIFY(fileSystem->toolTip().contains(QStringLiteral("Block size: 4096")));
-    auto* browseButton =
-        findToolButtonByName(&panel, QStringLiteral("Browse Non-Windows File System"));
+    auto* browseButton = findToolButtonByName(&panel,
+                                              QStringLiteral("Browse Non-Windows File System"));
     QVERIFY2(browseButton != nullptr, "Non-native filesystem browse action should exist");
     QVERIFY(browseButton->isEnabled());
     QVERIFY(browseButton->toolTip().contains(QStringLiteral("Browse read-only ext4")));
@@ -2314,10 +2328,11 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         QVERIFY2(dialog != nullptr, "Properties dialog should open");
-        auto* properties = dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
+        auto* properties =
+            dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
         QVERIFY2(properties != nullptr, "Properties table should exist");
-        const QString metadata =
-            propertyTableValue(properties, QStringLiteral("File system metadata"));
+        const QString metadata = propertyTableValue(properties,
+                                                    QStringLiteral("File system metadata"));
         QVERIFY(metadata.contains(QStringLiteral("Block size: 4096")));
         QVERIFY(metadata.contains(QStringLiteral("Volume label: SAK_EXT4")));
         inspected = true;
@@ -2332,12 +2347,12 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
 
 void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNotes() {
     sak::PartitionManagerPanel panel;
-    configureRawMetadataPanel(&panel,
-                              QStringLiteral("XFS"),
-                              {
-        QStringLiteral("Block size: 4096"),
-        QStringLiteral("Data blocks: 32768"),
-        QStringLiteral("Metadata sanity: XFS superblock geometry is internally consistent")});
+    configureRawMetadataPanel(
+        &panel,
+        QStringLiteral("XFS"),
+        {QStringLiteral("Block size: 4096"),
+         QStringLiteral("Data blocks: 32768"),
+         QStringLiteral("Metadata sanity: XFS superblock geometry is internally consistent")});
 
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -2345,8 +2360,8 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
     QVERIFY2(fileSystem != nullptr, "File system cell should exist");
     QVERIFY(fileSystem->toolTip().contains(QStringLiteral("Metadata sanity: XFS")));
 
-    auto* checkButton =
-        findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    auto* checkButton = findToolButtonByName(&panel,
+                                             QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(checkButton != nullptr, "Non-native filesystem check action should exist");
     QVERIFY(checkButton->isEnabled());
     QVERIFY(checkButton->toolTip().contains(QStringLiteral("original read-only")));
@@ -2355,14 +2370,15 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
     verifyXfsPropertiesAndInspect(&panel);
 
     sak::PartitionManagerPanel apfsPanel;
-    configureRawMetadataPanel(&apfsPanel,
-                              QStringLiteral("APFS"),
-                              {
-        QStringLiteral("Block size: 4096"),
-        QStringLiteral("Container blocks: 4096"),
-        QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent")});
-    auto* apfsCheck =
-        findToolButtonByName(&apfsPanel, QStringLiteral("Check Non-Windows File System"));
+    configureRawMetadataPanel(
+        &apfsPanel,
+        QStringLiteral("APFS"),
+        {QStringLiteral("Block size: 4096"),
+         QStringLiteral("Container blocks: 4096"),
+         QStringLiteral(
+             "Metadata sanity: APFS container block geometry is internally consistent")});
+    auto* apfsCheck = findToolButtonByName(&apfsPanel,
+                                           QStringLiteral("Check Non-Windows File System"));
     QVERIFY2(apfsCheck != nullptr, "APFS non-native filesystem check action should exist");
     QVERIFY(apfsCheck->isEnabled());
     QVERIFY(apfsCheck->toolTip().contains(QStringLiteral("original read-only")));
@@ -2385,9 +2401,11 @@ void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts
 
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
-                     QStringLiteral("APFS"),
-                     {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent")});
+    setRawFileSystem(
+        &inventory.disks[0].partitions[0].volume.value(),
+        QStringLiteral("APFS"),
+        {QStringLiteral(
+            "Metadata sanity: APFS container block geometry is internally consistent")});
     panel.setTestInventoryForReview(inventory);
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");

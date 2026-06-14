@@ -48,8 +48,8 @@ struct SearchMatch {
 
 /// @brief Search configuration / options passed to the search worker
 struct SearchConfig {
-    QString root_path;  ///< Directory or file to search
-    QString pattern;    ///< Search pattern (text or regex)
+    QString root_path;                        ///< Directory or file to search
+    QString pattern;                          ///< Search pattern (text or regex)
     FileManagementTarget file_system_target;  ///< Optional raw/image filesystem target
     bool use_file_system_target = false;      ///< Search through FileManagementFileSystemBridge
 

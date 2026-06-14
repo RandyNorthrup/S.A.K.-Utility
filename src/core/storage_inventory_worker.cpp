@@ -194,12 +194,10 @@ void setProbeError(QString* errorMessage, const QString& message) {
     }
 }
 
-QJsonObject elevatedProbePayload(const PartitionDiskInfo& disk,
-                                 const PartitionInfoEx& partition) {
+QJsonObject elevatedProbePayload(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
     QJsonObject payload;
     payload[QStringLiteral("device_path")] = disk.device_path;
-    payload[QStringLiteral("partition_offset_bytes")] =
-        QString::number(partition.offset_bytes);
+    payload[QStringLiteral("partition_offset_bytes")] = QString::number(partition.offset_bytes);
     payload[QStringLiteral("partition_size_bytes")] = QString::number(partition.size_bytes);
     payload[QStringLiteral("max_bytes")] =
         QString::number(PartitionFileSystemDetector::probeReadLimit(partition.size_bytes));
@@ -221,8 +219,7 @@ QString elevationErrorText(error_code code) {
         .arg(QString::fromLatin1(text.data(), static_cast<qsizetype>(text.size())));
 }
 
-std::optional<QByteArray> decodeElevatedProbeBytes(const QJsonObject& data,
-                                                   QString* errorMessage) {
+std::optional<QByteArray> decodeElevatedProbeBytes(const QJsonObject& data, QString* errorMessage) {
     QByteArray bytes =
         QByteArray::fromBase64(data.value(QStringLiteral("bytes_base64")).toString().toLatin1());
     const int expectedBytes =
@@ -287,8 +284,7 @@ void appendRawProbeWarning(PartitionInventory* inventory,
                        "elevated retry: %4")
             .arg(disk.disk_number)
             .arg(partition.partition_number)
-            .arg(normalizedProbeError(localError,
-                                      QStringLiteral("local read did not return data")))
+            .arg(normalizedProbeError(localError, QStringLiteral("local read did not return data")))
             .arg(normalizedProbeError(elevatedError, QStringLiteral("not available"))));
 }
 
@@ -341,8 +337,7 @@ void applyDetectionToPartition(PartitionInfoEx* partition,
     partition->volume = volume;
 }
 
-bool apfsDetectionNeedsSupplementalSpaceManager(
-    const PartitionFileSystemDetection& detection) {
+bool apfsDetectionNeedsSupplementalSpaceManager(const PartitionFileSystemDetection& detection) {
     if (detection.file_system.compare(QStringLiteral("APFS"), Qt::CaseInsensitive) != 0) {
         return false;
     }
@@ -354,15 +349,12 @@ bool apfsDetectionNeedsSupplementalSpaceManager(
     return true;
 }
 
-std::optional<PartitionFileSystemDetection> detectFromLocalDevicePath(
-    const QString& devicePath,
-    uint64_t partitionOffsetBytes,
-    uint64_t partitionSizeBytes) {
+std::optional<PartitionFileSystemDetection> detectFromLocalDevicePath(const QString& devicePath,
+                                                                      uint64_t partitionOffsetBytes,
+                                                                      uint64_t partitionSizeBytes) {
     QString error;
-    auto detection = PartitionFileSystemDetector::detectFromDevicePath(devicePath,
-                                                                       partitionOffsetBytes,
-                                                                       partitionSizeBytes,
-                                                                       &error);
+    auto detection = PartitionFileSystemDetector::detectFromDevicePath(
+        devicePath, partitionOffsetBytes, partitionSizeBytes, &error);
     if (!detection.has_value() || detection->file_system.trimmed().isEmpty()) {
         return std::nullopt;
     }
@@ -377,18 +369,15 @@ std::optional<PartitionFileSystemDetection> supplementedRawFileSystemDetection(
         return detection;
     }
 
-    if (auto supplemented = detectFromLocalDevicePath(disk.device_path,
-                                                      partition.offset_bytes,
-                                                      partition.size_bytes);
+    if (auto supplemented = detectFromLocalDevicePath(
+            disk.device_path, partition.offset_bytes, partition.size_bytes);
         supplemented.has_value()) {
         return supplemented;
     }
 
     const QString partitionPath = partitionDevicePath(disk, partition);
     if (!partitionPath.isEmpty()) {
-        if (auto supplemented = detectFromLocalDevicePath(partitionPath,
-                                                          0,
-                                                          partition.size_bytes);
+        if (auto supplemented = detectFromLocalDevicePath(partitionPath, 0, partition.size_bytes);
             supplemented.has_value()) {
             return supplemented;
         }
@@ -412,8 +401,7 @@ void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
         return;
     }
 
-    const auto detection =
-        PartitionFileSystemDetector::detectBytes(*bytes, partition->size_bytes);
+    const auto detection = PartitionFileSystemDetector::detectBytes(*bytes, partition->size_bytes);
     if (detection && !detection->file_system.trimmed().isEmpty()) {
         const auto supplemented = supplementedRawFileSystemDetection(disk, *partition, *detection);
         applyDetectionToPartition(partition, supplemented.value_or(*detection));
@@ -432,11 +420,8 @@ void applyRawFileSystemDetection(PartitionInventory* inventory) {
             if (!elevatedBroker && needsRawFileSystemDetection(partition)) {
                 elevatedBroker = std::make_unique<ElevationBroker>();
             }
-            applyRawFileSystemDetectionToPartition(disk,
-                                                   &partition,
-                                                   elevatedBroker.get(),
-                                                   &elevatedProbeUnavailable,
-                                                   inventory);
+            applyRawFileSystemDetectionToPartition(
+                disk, &partition, elevatedBroker.get(), &elevatedProbeUnavailable, inventory);
         }
     }
 }

@@ -8,8 +8,8 @@
 
 #include "sak/partition_file_system_tool_runner.h"
 
-#include <QCoreApplication>
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
@@ -34,7 +34,7 @@ constexpr uint64_t kLinuxSwapSupportedPageSizes[] = {kLinuxSwapDefaultPageSize,
                                                      kLinuxSwap16KbPageSize,
                                                      kLinuxSwap64KbPageSize};
 constexpr uint64_t kLinuxSwapMinPages = 2ULL;
-constexpr uint64_t kLinuxSwapMaxPages = 0xFFFF'FFFFULL;
+constexpr uint64_t kLinuxSwapMaxPages = 0xFF'FF'FF'FFULL;
 constexpr qsizetype kLinuxSwapLabelMaxChars = 16;
 constexpr uint64_t kAllocationUnitDefaultBytes = 0;
 constexpr uint64_t kAllocationUnit512Bytes = 512;
@@ -162,8 +162,8 @@ bool isSupportedLinuxSwapPageSize(uint64_t value) {
 }
 
 uint64_t linuxSwapPageSize(const PartitionOperation& operation) {
-    const uint64_t requested =
-        payloadUInt64(operation, QStringLiteral("linux_swap_page_size_bytes"));
+    const uint64_t requested = payloadUInt64(operation,
+                                             QStringLiteral("linux_swap_page_size_bytes"));
     return requested == 0 ? kLinuxSwapDefaultPageSize : requested;
 }
 
@@ -243,8 +243,8 @@ QString rawPartitionTargetPath(const PartitionOperation& operation) {
         return {};
     }
     const QString expected = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-        .arg(operation.target.disk_number)
-        .arg(operation.target.partition_number);
+                                 .arg(operation.target.disk_number)
+                                 .arg(operation.target.partition_number);
     QString payloadPath = payloadString(operation, QStringLiteral("target_path")).trimmed();
     payloadPath.replace('/', '\\');
     if (payloadPath.compare(expected, Qt::CaseInsensitive) != 0) {
@@ -261,8 +261,7 @@ QString rawPartitionTargetPathBlocker(const PartitionOperation& operation) {
         return QStringLiteral("Filesystem tool operation requires a raw partition target path");
     }
     if (rawPartitionTargetPath(operation).isEmpty()) {
-        return QStringLiteral(
-            "Filesystem tool target path must match the selected raw partition");
+        return QStringLiteral("Filesystem tool target path must match the selected raw partition");
     }
     return {};
 }
@@ -279,7 +278,8 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
         return invalidPartitionScript(targetBlocker);
     }
     if (targetPath.trimmed().isEmpty()) {
-        return invalidPartitionScript(QStringLiteral("Linux swap format requires a raw target path"));
+        return invalidPartitionScript(
+            QStringLiteral("Linux swap format requires a raw target path"));
     }
     if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
         return invalidPartitionScript(
@@ -298,15 +298,14 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as Linux swap")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
-                                  QStringLiteral("[uint64]$p.Size"),
-                                  label,
-                                  pageSize);
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
+                                           QStringLiteral("[uint64]$p.Size"),
+                                           label,
+                                           pageSize);
     out.dry_run_script = out.preview + QStringLiteral("\nWrite SWAPSPACE2 v1 header to ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
@@ -338,22 +337,20 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as APFS with S.A.K. APFS writer")
                       .arg(operation.target.disk_number)
                       .arg(operation.target.partition_number);
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        dismountSelectedPartitionVolumeScript() +
-        apfsWriterCliFunctionScript() +
-        QStringLiteral(
-            "$targetPath = %1\n"
-            "$targetSizeBytes = [uint64]$p.Size\n"
-            "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $targetPath "
-            "-SizeBytes $targetSizeBytes -VolumeName %2 -EvidenceId "
-            "'ui.apfs-generated-raw-format'\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
-            .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
-                 PartitionScriptBuilder::quotePowerShell(label));
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n"
+                     "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $targetPath "
+                     "-SizeBytes $targetSizeBytes -VolumeName %2 -EvidenceId "
+                     "'ui.apfs-generated-raw-format'\n"
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
+                          PartitionScriptBuilder::quotePowerShell(label));
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe format-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
@@ -380,28 +377,26 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
     const QString targetPath = rawPartitionTargetPath(operation);
     PartitionScript out;
     out.preview =
-        QStringLiteral("Repair Disk %1 Partition %2 %3 generated metadata checksums with S.A.K. APFS writer")
+        QStringLiteral(
+            "Repair Disk %1 Partition %2 %3 generated metadata checksums with S.A.K. APFS writer")
             .arg(operation.target.disk_number)
             .arg(operation.target.partition_number)
             .arg(fileSystem.toUpper());
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        dismountSelectedPartitionVolumeScript() +
-        apfsWriterCliFunctionScript() +
-        QStringLiteral(
-            "$targetPath = %1\n"
-            "$targetSizeBytes = [uint64]$p.Size\n"
-            "Invoke-SakApfsWriterCli -Command 'repair-raw' -TargetPath $targetPath "
-            "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId "
-            "'ui.apfs-generated-raw-repair'\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
-            .arg(PartitionScriptBuilder::quotePowerShell(targetPath));
-    out.dry_run_script =
-        out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe repair-raw ") +
-        PartitionScriptBuilder::quotePowerShell(targetPath);
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n"
+                     "Invoke-SakApfsWriterCli -Command 'repair-raw' -TargetPath $targetPath "
+                     "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId "
+                     "'ui.apfs-generated-raw-repair'\n"
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     .arg(PartitionScriptBuilder::quotePowerShell(targetPath));
+    out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe repair-raw ") +
+                         PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -830,14 +825,12 @@ QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operat
 
 QString apfsRootMutationDirectoryName(const PartitionOperation& operation) {
     const QString directoryName =
-        payloadString(operation, QString::fromLatin1(kApfsRootDirectoryNamePayload))
-            .trimmed();
+        payloadString(operation, QString::fromLatin1(kApfsRootDirectoryNamePayload)).trimmed();
     if (!directoryName.isEmpty()) {
         return directoryName;
     }
     return apfsRootDirectoryMutation(operation.type)
-               ? payloadString(operation, QString::fromLatin1(kApfsRootFileNamePayload))
-                     .trimmed()
+               ? payloadString(operation, QString::fromLatin1(kApfsRootFileNamePayload)).trimmed()
                : QString();
 }
 
@@ -875,7 +868,8 @@ QString apfsVolumeLabelBlocker(PartitionOperationType type, const QString& label
     }
     if (apfsVolumeLabelInvalid(label)) {
         return QStringLiteral(
-            "APFS volume-label mutation label must fit APFS UTF-8 field and not contain path separators");
+            "APFS volume-label mutation label must fit APFS UTF-8 field and not contain path "
+            "separators");
     }
     return {};
 }
@@ -951,8 +945,7 @@ QString apfsRootFileMutationInvoke(const PartitionOperation& operation,
     }
     if (operation.type == PartitionOperationType::ApfsPatchRootFile ||
         operation.type == PartitionOperationType::ApfsPatchRootDirectoryFile) {
-        invoke += QStringLiteral(" -PatchOffsetBytes %1")
-                      .arg(uintArg(input.patch_offset_bytes));
+        invoke += QStringLiteral(" -PatchOffsetBytes %1").arg(uintArg(input.patch_offset_bytes));
     }
     return invoke + QLatin1Char('\n');
 }
@@ -1016,8 +1009,7 @@ bool populateHfsMutationBaseInput(const PartitionOperation& operation,
 bool populateHfsMutationPathInput(const PartitionOperation& operation,
                                   HfsFileMutationScriptInput* input) {
     if (hfsFileMutationNeedsPath(operation.type)) {
-        input->hfs_path =
-            payloadString(operation, QString::fromLatin1(kHfsPathPayload)).trimmed();
+        input->hfs_path = payloadString(operation, QString::fromLatin1(kHfsPathPayload)).trimmed();
         if (input->hfs_path.isEmpty()) {
             input->blocker = QStringLiteral("HFS+ file mutation requires an HFS path");
             return false;
@@ -1063,11 +1055,12 @@ bool populateHfsMutationAttributeInput(const PartitionOperation& operation,
 
 bool populateHfsMutationSecureWipeInput(const PartitionOperation& operation,
                                         HfsFileMutationScriptInput* input) {
-    const bool requested =
-        payloadBool(operation, QString::fromLatin1(kHfsSecureWipeReleasedBlocksPayload));
+    const bool requested = payloadBool(operation,
+                                       QString::fromLatin1(kHfsSecureWipeReleasedBlocksPayload));
     if (requested && !hfsFileMutationSupportsSecureWipe(operation.type)) {
         input->blocker = QStringLiteral(
-            "HFS+ secure block wipe is supported only for delete-file or delete-folder-tree mutations");
+            "HFS+ secure block wipe is supported only for delete-file or delete-folder-tree "
+            "mutations");
         return false;
     }
     input->secure_wipe_released_blocks = requested;
@@ -1078,10 +1071,10 @@ void populateHfsMutationCommandInput(const PartitionOperation& operation,
                                      HfsFileMutationScriptInput* input) {
     input->command = hfsFileMutationCommand(operation.type);
     input->evidence_id = hfsFileMutationEvidenceId(operation.type);
-    input->allow_journaled =
-        payloadBool(operation, QString::fromLatin1(kHfsAllowJournaledVolumePayload));
-    input->allow_wrapped =
-        payloadBool(operation, QString::fromLatin1(kHfsAllowWrappedVolumePayload));
+    input->allow_journaled = payloadBool(operation,
+                                         QString::fromLatin1(kHfsAllowJournaledVolumePayload));
+    input->allow_wrapped = payloadBool(operation,
+                                       QString::fromLatin1(kHfsAllowWrappedVolumePayload));
 }
 
 HfsFileMutationScriptInput hfsFileMutationScriptInput(const PartitionOperation& operation) {
@@ -1099,15 +1092,14 @@ HfsFileMutationScriptInput hfsFileMutationScriptInput(const PartitionOperation& 
 
 QString hfsFileMutationInvoke(const PartitionOperation& operation,
                               const HfsFileMutationScriptInput& input) {
-    QString invoke = QStringLiteral(
-                         "Invoke-SakHfsWriterCli -Command %1 -ImagePath $stagedImagePath "
-                         "-EvidenceId %2 -AllowJournaled $%3 -AllowWrapped $%4")
-                         .arg(PartitionScriptBuilder::quotePowerShell(input.command),
-                              PartitionScriptBuilder::quotePowerShell(input.evidence_id),
-                              input.allow_journaled ? QStringLiteral("true")
-                                                    : QStringLiteral("false"),
-                              input.allow_wrapped ? QStringLiteral("true")
-                                                  : QStringLiteral("false"));
+    QString invoke =
+        QStringLiteral(
+            "Invoke-SakHfsWriterCli -Command %1 -ImagePath $stagedImagePath "
+            "-EvidenceId %2 -AllowJournaled $%3 -AllowWrapped $%4")
+            .arg(PartitionScriptBuilder::quotePowerShell(input.command),
+                 PartitionScriptBuilder::quotePowerShell(input.evidence_id),
+                 input.allow_journaled ? QStringLiteral("true") : QStringLiteral("false"),
+                 input.allow_wrapped ? QStringLiteral("true") : QStringLiteral("false"));
     if (hfsFileMutationIsAttribute(operation.type)) {
         invoke += QStringLiteral(" -FileId %1 -AttributeName %2")
                       .arg(uintArg(input.file_id),
@@ -1175,103 +1167,106 @@ QString runtimeHfsWriterCliPath() {
 
 QString apfsWriterCliFunctionScript() {
     return QStringLiteral(
-        "function Invoke-SakApfsWriterCli {\n"
-        "  param([string]$Command, [string]$TargetPath, [uint64]$SizeBytes, "
-        "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
-        "[string]$DirectoryName = '', [string]$PayloadFile = '', "
-        "[uint64]$PatchOffsetBytes = 0)\n"
-        "  $cliPath = %1\n"
-        "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
-        "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
-        "  }\n"
-        "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
-        "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
-        "$EvidenceId, '--confirm-target', '--allow-raw-target')\n"
-        "  if ($Command -eq 'format-raw') { $args += @('--volume-name', $VolumeName) }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', "
-        "'delete-raw-root-file', 'write-raw-root-directory-file', "
-        "'delete-raw-root-directory-file')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
-        "required' }\n"
-        "    $args += @('--file-name', $FileName)\n"
-        "  }\n"
-        "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
-        "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
-        "'delete-raw-root-directory-file')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory name is "
-        "required' }\n"
-        "    $args += @('--directory-name', $DirectoryName)\n"
-        "  }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', 'write-raw-root-directory-file')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file payload "
-        "is required' }\n"
-        "    $args += @('--payload-file', $PayloadFile)\n"
-        "  }\n"
-        "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file')) {\n"
-        "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
-        "  }\n"
-        "  Write-Output ('Running S.A.K. APFS writer helper: {0} {1}' -f $cliPath, "
-        "($args -join ' '))\n"
-        "  $output = & $cliPath @args 2>&1\n"
-        "  $exitCode = [int]$LASTEXITCODE\n"
-        "  $output | ForEach-Object { Write-Output $_ }\n"
-        "  if ($exitCode -ne 0) { throw ('APFS writer helper failed with exit code {0}' "
-        "-f $exitCode) }\n"
-        "}\n")
+               "function Invoke-SakApfsWriterCli {\n"
+               "  param([string]$Command, [string]$TargetPath, [uint64]$SizeBytes, "
+               "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
+               "[string]$DirectoryName = '', [string]$PayloadFile = '', "
+               "[uint64]$PatchOffsetBytes = 0)\n"
+               "  $cliPath = %1\n"
+               "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
+               "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
+               "  }\n"
+               "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
+               "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
+               "$EvidenceId, '--confirm-target', '--allow-raw-target')\n"
+               "  if ($Command -eq 'format-raw') { $args += @('--volume-name', $VolumeName) }\n"
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', "
+               "'delete-raw-root-file', 'write-raw-root-directory-file', "
+               "'delete-raw-root-directory-file')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+               "required' }\n"
+               "    $args += @('--file-name', $FileName)\n"
+               "  }\n"
+               "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
+               "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
+               "'delete-raw-root-directory-file')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
+               "name is "
+               "required' }\n"
+               "    $args += @('--directory-name', $DirectoryName)\n"
+               "  }\n"
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', 'write-raw-root-directory-file')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
+               "payload "
+               "is required' }\n"
+               "    $args += @('--payload-file', $PayloadFile)\n"
+               "  }\n"
+               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file')) {\n"
+               "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+               "  }\n"
+               "  Write-Output ('Running S.A.K. APFS writer helper: {0} {1}' -f $cliPath, "
+               "($args -join ' '))\n"
+               "  $output = & $cliPath @args 2>&1\n"
+               "  $exitCode = [int]$LASTEXITCODE\n"
+               "  $output | ForEach-Object { Write-Output $_ }\n"
+               "  if ($exitCode -ne 0) { throw ('APFS writer helper failed with exit code {0}' "
+               "-f $exitCode) }\n"
+               "}\n")
         .arg(PartitionScriptBuilder::quotePowerShell(
             QDir::toNativeSeparators(runtimeApfsWriterCliPath())));
 }
 
 QString hfsWriterCliFunctionScript() {
     return QStringLiteral(
-        "function Invoke-SakHfsWriterCli {\n"
-        "  param([string]$Command, [string]$ImagePath, [string]$HfsPath = '', "
-        "[string]$DestinationHfsPath = '', "
-        "[string]$PayloadFile = '', [uint64]$FileId = 0, [string]$AttributeName = '', "
-        "[string]$EvidenceId, [bool]$AllowJournaled = $false, [bool]$AllowWrapped = $false, "
-        "[bool]$SecureWipeReleasedBlocks = $false)\n"
-        "  $cliPath = %1\n"
-        "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
-        "    throw ('HFS writer helper missing: {0}' -f $cliPath)\n"
-        "  }\n"
-        "  $args = @($Command, '--target', $ImagePath, '--evidence-id', $EvidenceId, "
-        "'--confirm-target')\n"
-        "  if ($Command -in @('replace-inline-attribute-image', "
-        "'replace-fork-attribute-image', 'grow-fork-attribute-image')) {\n"
-        "    if ($FileId -eq 0 -or [string]::IsNullOrWhiteSpace($AttributeName)) { "
-        "throw 'HFS attribute identity is required' }\n"
-        "    $args += @('--file-id', ([string]$FileId), '--attribute-name', $AttributeName)\n"
-        "  } else {\n"
-        "    if ([string]::IsNullOrWhiteSpace($HfsPath)) { throw 'HFS path is required' }\n"
-        "    $args += @('--hfs-path', $HfsPath)\n"
-        "  }\n"
-        "  if ($Command -eq 'rename-catalog-entry-image') {\n"
-        "    if ([string]::IsNullOrWhiteSpace($DestinationHfsPath)) { "
-        "throw 'HFS destination path is required' }\n"
-        "    $args += @('--destination-hfs-path', $DestinationHfsPath)\n"
-        "  }\n"
-        "  if ($Command -notin @('truncate-image', 'truncate-resource-fork-image', "
-        "'create-empty-file-image', 'delete-empty-file-image', "
-        "'delete-file-image', "
-        "'create-empty-folder-image', 'delete-empty-folder-image', "
-        "'delete-folder-tree-image', 'rename-catalog-entry-image')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'HFS payload file is "
-        "required' }\n"
-        "    $args += @('--payload-file', $PayloadFile)\n"
-        "  }\n"
-        "  if ($AllowJournaled) { $args += '--allow-journaled-volume' }\n"
-        "  if ($AllowWrapped) { $args += '--allow-wrapped-volume' }\n"
-        "  if ($SecureWipeReleasedBlocks) { $args += '--secure-wipe-released-blocks' }\n"
-        "  Write-Output ('Running S.A.K. HFS writer helper: {0} {1}' -f $cliPath, "
-        "($args -join ' '))\n"
-        "  $output = & $cliPath @args 2>&1\n"
-        "  $exitCode = [int]$LASTEXITCODE\n"
-        "  $output | ForEach-Object { Write-Output $_ }\n"
-        "  if ($exitCode -ne 0) { throw ('HFS writer helper failed with exit code {0}' "
-        "-f $exitCode) }\n"
-        "}\n")
+               "function Invoke-SakHfsWriterCli {\n"
+               "  param([string]$Command, [string]$ImagePath, [string]$HfsPath = '', "
+               "[string]$DestinationHfsPath = '', "
+               "[string]$PayloadFile = '', [uint64]$FileId = 0, [string]$AttributeName = '', "
+               "[string]$EvidenceId, [bool]$AllowJournaled = $false, [bool]$AllowWrapped = $false, "
+               "[bool]$SecureWipeReleasedBlocks = $false)\n"
+               "  $cliPath = %1\n"
+               "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
+               "    throw ('HFS writer helper missing: {0}' -f $cliPath)\n"
+               "  }\n"
+               "  $args = @($Command, '--target', $ImagePath, '--evidence-id', $EvidenceId, "
+               "'--confirm-target')\n"
+               "  if ($Command -in @('replace-inline-attribute-image', "
+               "'replace-fork-attribute-image', 'grow-fork-attribute-image')) {\n"
+               "    if ($FileId -eq 0 -or [string]::IsNullOrWhiteSpace($AttributeName)) { "
+               "throw 'HFS attribute identity is required' }\n"
+               "    $args += @('--file-id', ([string]$FileId), '--attribute-name', "
+               "$AttributeName)\n"
+               "  } else {\n"
+               "    if ([string]::IsNullOrWhiteSpace($HfsPath)) { throw 'HFS path is required' }\n"
+               "    $args += @('--hfs-path', $HfsPath)\n"
+               "  }\n"
+               "  if ($Command -eq 'rename-catalog-entry-image') {\n"
+               "    if ([string]::IsNullOrWhiteSpace($DestinationHfsPath)) { "
+               "throw 'HFS destination path is required' }\n"
+               "    $args += @('--destination-hfs-path', $DestinationHfsPath)\n"
+               "  }\n"
+               "  if ($Command -notin @('truncate-image', 'truncate-resource-fork-image', "
+               "'create-empty-file-image', 'delete-empty-file-image', "
+               "'delete-file-image', "
+               "'create-empty-folder-image', 'delete-empty-folder-image', "
+               "'delete-folder-tree-image', 'rename-catalog-entry-image')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'HFS payload file is "
+               "required' }\n"
+               "    $args += @('--payload-file', $PayloadFile)\n"
+               "  }\n"
+               "  if ($AllowJournaled) { $args += '--allow-journaled-volume' }\n"
+               "  if ($AllowWrapped) { $args += '--allow-wrapped-volume' }\n"
+               "  if ($SecureWipeReleasedBlocks) { $args += '--secure-wipe-released-blocks' }\n"
+               "  Write-Output ('Running S.A.K. HFS writer helper: {0} {1}' -f $cliPath, "
+               "($args -join ' '))\n"
+               "  $output = & $cliPath @args 2>&1\n"
+               "  $exitCode = [int]$LASTEXITCODE\n"
+               "  $output | ForEach-Object { Write-Output $_ }\n"
+               "  if ($exitCode -ne 0) { throw ('HFS writer helper failed with exit code {0}' "
+               "-f $exitCode) }\n"
+               "}\n")
         .arg(PartitionScriptBuilder::quotePowerShell(
             QDir::toNativeSeparators(runtimeHfsWriterCliPath())));
 }
@@ -1317,10 +1312,12 @@ QString filesystemToolCallScript(const QString& name,
                                  const PartitionFileSystemToolResolution& resolution,
                                  const QStringList& arguments,
                                  const QStringList& acceptedExitCodes) {
-    return QStringLiteral("Invoke-SakFilesystemTool -Name %1 -ToolPath %2 -ExpectedHash %3 "
-                          "-ToolArgs %4 -AcceptedExitCodes @(%5)\n")
+    return QStringLiteral(
+               "Invoke-SakFilesystemTool -Name %1 -ToolPath %2 -ExpectedHash %3 "
+               "-ToolArgs %4 -AcceptedExitCodes @(%5)\n")
         .arg(PartitionScriptBuilder::quotePowerShell(name),
-             PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(resolution.tool_path)),
+             PartitionScriptBuilder::quotePowerShell(
+                 QDir::toNativeSeparators(resolution.tool_path)),
              PartitionScriptBuilder::quotePowerShell(resolution.tool.binary_sha256.toLower()),
              powerShellArrayLiteral(arguments),
              acceptedExitCodes.join(QStringLiteral(", ")));
@@ -1331,10 +1328,12 @@ QString filesystemToolCallScriptWithArgsExpression(
     const PartitionFileSystemToolResolution& resolution,
     const QString& argumentsExpression,
     const QStringList& acceptedExitCodes) {
-    return QStringLiteral("Invoke-SakFilesystemTool -Name %1 -ToolPath %2 -ExpectedHash %3 "
-                          "-ToolArgs %4 -AcceptedExitCodes @(%5)\n")
+    return QStringLiteral(
+               "Invoke-SakFilesystemTool -Name %1 -ToolPath %2 -ExpectedHash %3 "
+               "-ToolArgs %4 -AcceptedExitCodes @(%5)\n")
         .arg(PartitionScriptBuilder::quotePowerShell(name),
-             PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(resolution.tool_path)),
+             PartitionScriptBuilder::quotePowerShell(
+                 QDir::toNativeSeparators(resolution.tool_path)),
              PartitionScriptBuilder::quotePowerShell(resolution.tool.binary_sha256.toLower()),
              argumentsExpression,
              acceptedExitCodes.join(QStringLiteral(", ")));
@@ -1599,12 +1598,10 @@ CreateScriptSpec createScriptSpec(const PartitionOperation& operation) {
 }
 
 QString validateCreateFileSystemSupport(const CreateScriptSpec& spec, bool nonNativeCreate) {
-    if (nonNativeCreate &&
-        !isSupportedNonNativeCreateFormatFileSystem(spec.file_system)) {
+    if (nonNativeCreate && !isSupportedNonNativeCreateFormatFileSystem(spec.file_system)) {
         return QStringLiteral("Unsupported non-Windows create file system");
     }
-    if (!nonNativeCreate &&
-        !PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
+    if (!nonNativeCreate && !PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
         return QStringLiteral("Unsupported file system");
     }
     if (!nonNativeCreate && !isSupportedAllocationUnitSize(spec.allocation_unit)) {
@@ -1656,8 +1653,7 @@ QString validateCreateScriptSpec(const PartitionOperation& operation,
     if (const QString blocker = validateCreatePartitionType(operation, spec); !blocker.isEmpty()) {
         return blocker;
     }
-    if (const QString blocker =
-            validateNonNativeCreatePayload(operation, spec, nonNativeCreate);
+    if (const QString blocker = validateNonNativeCreatePayload(operation, spec, nonNativeCreate);
         !blocker.isEmpty()) {
         return blocker;
     }
@@ -1925,8 +1921,7 @@ struct ExternalFileSystemToolScriptRequest {
     PartitionFileSystemToolCommand command;
 };
 
-PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
-                                        uint64_t targetSize) {
+PartitionScript buildNativeResizeScript(const PartitionOperation& operation, uint64_t targetSize) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
                       .arg(operation.target.disk_number)
@@ -1975,9 +1970,7 @@ ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperatio
     request.accepted_exit_codes = {QStringLiteral("0")};
     request.pre_tool_script = growExtResizePreToolScript(operation, targetSize);
     request.command = PartitionFileSystemToolRunner::buildResizeCommand(
-        fs,
-        targetPath,
-        payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
+        fs, targetPath, payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
     return request;
 }
 
@@ -2013,14 +2006,20 @@ PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
     const QString manifestPath = runtimeFilesystemManifestPath();
     const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
     const auto e2fsck = PartitionFileSystemToolRunner::resolveApprovedTool(
-        manifestPath, toolsRoot, QStringLiteral("e2fsck"),
-        PartitionFileSystemToolRunner::repairOperation(), fs.toLower());
+        manifestPath,
+        toolsRoot,
+        QStringLiteral("e2fsck"),
+        PartitionFileSystemToolRunner::repairOperation(),
+        fs.toLower());
     if (!e2fsck.ok) {
         return invalidPartitionScript(e2fsck.blockers.join(QStringLiteral("; ")));
     }
     const auto resize2fs = PartitionFileSystemToolRunner::resolveApprovedTool(
-        manifestPath, toolsRoot, QStringLiteral("resize2fs"),
-        PartitionFileSystemToolRunner::resizeOperation(), fs.toLower());
+        manifestPath,
+        toolsRoot,
+        QStringLiteral("resize2fs"),
+        PartitionFileSystemToolRunner::resizeOperation(),
+        fs.toLower());
     if (!resize2fs.ok) {
         return invalidPartitionScript(resize2fs.blockers.join(QStringLiteral("; ")));
     }
@@ -2036,32 +2035,26 @@ PartitionScript buildExtShrinkResizeScript(const PartitionOperation& operation,
                  requirePartitionIdentity(operation.target.disk_number,
                                           operation.target.partition_number,
                                           operation.target.size_bytes) +
-                 filesystemToolFunctionScript() +
-                 extShrinkPreToolScript(targetSize) +
-                 filesystemToolCallScript(
-                     QStringLiteral("e2fsck pre-shrink repair"),
-                     e2fsck,
-                     {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
-                     {QStringLiteral("0"), QStringLiteral("1")}) +
-                 filesystemToolCallScript(
-                     QStringLiteral("resize2fs shrink"),
-                     resize2fs,
-                     {QStringLiteral("-p"), targetPath, resizeSizeArg},
-                     {QStringLiteral("0")}) +
+                 filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
+                 filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
+                                          e2fsck,
+                                          {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
+                                          {QStringLiteral("0"), QStringLiteral("1")}) +
+                 filesystemToolCallScript(QStringLiteral("resize2fs shrink"),
+                                          resize2fs,
+                                          {QStringLiteral("-p"), targetPath, resizeSizeArg},
+                                          {QStringLiteral("0")}) +
                  extShrinkPartitionScript(operation) +
-                 filesystemToolCallScript(
-                     QStringLiteral("e2fsck post-shrink read-only check"),
-                     e2fsck,
-                     {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
-                     {QStringLiteral("0")}) +
+                 filesystemToolCallScript(QStringLiteral("e2fsck post-shrink read-only check"),
+                                          e2fsck,
+                                          {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
+                                          {QStringLiteral("0")}) +
                  QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
-    out.dry_run_script = out.preview + QStringLiteral("\n") +
-                         PartitionScriptBuilder::quotePowerShell(
-                             QDir::toNativeSeparators(resize2fs.tool_path)) +
-                         QStringLiteral(" -p ") +
-                         PartitionScriptBuilder::quotePowerShell(targetPath) +
-                         QStringLiteral(" ") +
-                         PartitionScriptBuilder::quotePowerShell(resizeSizeArg);
+    out.dry_run_script =
+        out.preview + QStringLiteral("\n") +
+        PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(resize2fs.tool_path)) +
+        QStringLiteral(" -p ") + PartitionScriptBuilder::quotePowerShell(targetPath) +
+        QStringLiteral(" ") + PartitionScriptBuilder::quotePowerShell(resizeSizeArg);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -2144,7 +2137,8 @@ QString allocateSetupScript(const PartitionOperation& operation,
     return QStringLiteral(
                "$target = $p\n"
                "$source = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
-               "if ([uint64]$source.Size -ne [uint64]%3) { throw 'Donor partition identity mismatch' "
+               "if ([uint64]$source.Size -ne [uint64]%3) { throw 'Donor partition identity "
+               "mismatch' "
                "}\n"
                "if ([uint64]$source.Offset -ne ([uint64]$target.Offset + [uint64]$target.Size)) { "
                "throw 'Donor partition must be directly after target partition' }\n"
@@ -2161,10 +2155,12 @@ QString allocateSetupScript(const PartitionOperation& operation,
                "$targetRoot = if ($targetVolume -and $targetVolume.DriveLetter) { ('{0}:\\' -f "
                "$targetVolume.DriveLetter) } else { '' }\n"
                "if ($backupRootFull.StartsWith($sourceRoot, "
-               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not be "
+               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not "
+               "be "
                "on the donor volume' }\n"
                "if ($targetRoot -and $backupRootFull.StartsWith($targetRoot, "
-               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not be "
+               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not "
+               "be "
                "on the target volume' }\n"
                "if (-not (Test-Path -LiteralPath $backupRootFull -PathType Container)) { throw "
                "'Backup directory does not exist' }\n"
@@ -2194,7 +2190,8 @@ QString allocateExecutionScript(const PartitionOperation& operation,
                "Resize-Partition -DiskNumber %1 -PartitionNumber %3 -Size $targetSizeBytes\n"
                "$newDonor = New-Partition -DiskNumber %1 -Size $donorRemainingBytes -DriveLetter "
                "$sourceDrive\n"
-               "Format-Volume -Partition $newDonor -FileSystem $sourceFileSystem -NewFileSystemLabel "
+               "Format-Volume -Partition $newDonor -FileSystem $sourceFileSystem "
+               "-NewFileSystemLabel "
                "$sourceLabel -Confirm:$false -Force\n"
                "Invoke-SakRobocopy $backupPath $sourceRoot\n"
                "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
@@ -2230,8 +2227,7 @@ ClusterSizePayload clusterSizePayload(const PartitionOperation& operation) {
             .trimmed()
             .toUpper();
     payload.label = payloadString(operation, QStringLiteral("label"), QStringLiteral("Data"));
-    payload.allocation_unit =
-        payloadUInt64(operation, QStringLiteral("allocation_unit_bytes"));
+    payload.allocation_unit = payloadUInt64(operation, QStringLiteral("allocation_unit_bytes"));
     payload.backup_directory =
         payloadString(operation, QStringLiteral("backup_directory")).trimmed();
     return payload;
@@ -2270,10 +2266,12 @@ QString clusterSetupScript(const ClusterSizePayload& payload) {
                "$targetDrive = ('{0}:' -f $drive)\n"
                "$backupRootFull = [System.IO.Path]::GetFullPath($backupRoot)\n"
                "$backupRootDrive = [System.IO.Path]::GetPathRoot($backupRootFull)\n"
-               "if ([string]::IsNullOrWhiteSpace($backupRootDrive)) { throw 'Backup directory must be "
+               "if ([string]::IsNullOrWhiteSpace($backupRootDrive)) { throw 'Backup directory must "
+               "be "
                "on a mounted volume' }\n"
                "if ($backupRootFull.StartsWith($targetRoot, "
-               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not be "
+               "[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Backup directory must not "
+               "be "
                "on the target volume' }\n"
                "if (-not (Test-Path -LiteralPath $backupRootFull -PathType Container)) { throw "
                "'Backup directory does not exist' }\n"
@@ -2390,8 +2388,7 @@ QString hfsVolumeEndianFunctionScript() {
         "function Test-SakPowerOfTwoUInt32 {\n"
         "  param([uint32]$Value)\n"
         "  return $Value -ne 0 -and (($Value -band ($Value - 1)) -eq 0)\n"
-        "}\n"
-    );
+        "}\n");
 }
 
 QString hfsVolumeHeaderStagingFunctionScript() {
@@ -2425,8 +2422,7 @@ QString hfsVolumeHeaderStagingFunctionScript() {
         "  return [pscustomobject]@{ size = [uint64]$stagingBytes; signature = "
         "$signature; block_size = [uint64]$blockSize; total_blocks = "
         "[uint64]$totalBlocks; volume_offset = [uint64]$VolumeOffset }\n"
-        "}\n"
-    );
+        "}\n");
 }
 
 QString hfsVolumeStagingResolverFunctionScript() {
@@ -2588,7 +2584,8 @@ QString hfsRawTargetStagingFunctionScript() {
                "    $source.Dispose()\n"
                "    $target.Dispose()\n"
                "  }\n"
-               "  Write-Output ('Copied raw HFS target into sparse staging image: nonzero_bytes={0}' "
+               "  Write-Output ('Copied raw HFS target into sparse staging image: "
+               "nonzero_bytes={0}' "
                "-f $copiedBytes)\n"
                "}\n")
         .arg(uintArg(kHfsStagedCopyBufferBytes));
@@ -2634,8 +2631,9 @@ QString hfsStagedFunctionsScript() {
 }
 
 QString hfsStagedImagePathScript(const QString& prefix) {
-    return QStringLiteral("$stagedImagePath = Join-Path ([System.IO.Path]::GetTempPath()) "
-                          "('%1-' + [guid]::NewGuid().ToString('N') + '.img')\n")
+    return QStringLiteral(
+               "$stagedImagePath = Join-Path ([System.IO.Path]::GetTempPath()) "
+               "('%1-' + [guid]::NewGuid().ToString('N') + '.img')\n")
         .arg(prefix);
 }
 
@@ -2656,8 +2654,8 @@ PartitionScript buildStagedHfsFormatScript(
         hfsStagedFunctionsScript() +
         QStringLiteral(
             "$targetPath = %1\n"
-            "$targetSizeBytes = [uint64]$p.Size\n") .arg(
-            PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
+            "$targetSizeBytes = [uint64]$p.Size\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
         hfsStagedImagePathScript(QStringLiteral("sak-hfs-format")) +
         QStringLiteral(
             "try {\n"
@@ -2692,11 +2690,10 @@ PartitionScript buildStagedHfsFormatScript(
     return out;
 }
 
-PartitionScript buildStagedHfsRepairScript(
-    const PartitionOperation& operation,
-    const ExternalFileSystemToolScriptRequest& request,
-    const PartitionFileSystemToolResolution& fsckResolution,
-    const QString& rawTargetPath) {
+PartitionScript buildStagedHfsRepairScript(const PartitionOperation& operation,
+                                           const ExternalFileSystemToolScriptRequest& request,
+                                           const PartitionFileSystemToolResolution& fsckResolution,
+                                           const QString& rawTargetPath) {
     PartitionScript out;
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     out.script =
@@ -2749,12 +2746,12 @@ bool isHfsRepairRequest(const ExternalFileSystemToolScriptRequest& request) {
 PartitionFileSystemToolResolution resolveFsckHfsTool(const QString& manifestPath,
                                                      const QString& toolsRoot,
                                                      const QString& fileSystem) {
-    return PartitionFileSystemToolRunner::resolveApprovedTool(manifestPath,
-                                                             toolsRoot,
-                                                             QStringLiteral("fsck_hfs"),
-                                                             PartitionFileSystemToolRunner::
-                                                                 repairOperation(),
-                                                              fileSystem);
+    return PartitionFileSystemToolRunner::resolveApprovedTool(
+        manifestPath,
+        toolsRoot,
+        QStringLiteral("fsck_hfs"),
+        PartitionFileSystemToolRunner::repairOperation(),
+        fileSystem);
 }
 
 struct StagedRawHfsScriptRequest {
@@ -2786,11 +2783,8 @@ std::optional<PartitionScript> maybeBuildStagedRawHfsScript(
     if (!repairResolution.ok) {
         return invalidPartitionScript(repairResolution.blockers.join(QStringLiteral("; ")));
     }
-    return buildStagedHfsFormatScript(*input.operation,
-                                      request,
-                                      *input.resolution,
-                                      repairResolution,
-                                      input.raw_target_path);
+    return buildStagedHfsFormatScript(
+        *input.operation, request, *input.resolution, repairResolution, input.raw_target_path);
 }
 
 struct ExternalToolPostScript {
@@ -2798,10 +2792,9 @@ struct ExternalToolPostScript {
     QStringList blockers;
 };
 
-ExternalToolPostScript hfsPostFormatRepairScript(
-    const ExternalFileSystemToolScriptRequest& request,
-    const QString& manifestPath,
-    const QString& toolsRoot) {
+ExternalToolPostScript hfsPostFormatRepairScript(const ExternalFileSystemToolScriptRequest& request,
+                                                 const QString& manifestPath,
+                                                 const QString& toolsRoot) {
     if (!isHfsFormatRequest(request) || request.command.arguments.isEmpty()) {
         return {};
     }
@@ -2815,25 +2808,28 @@ ExternalToolPostScript hfsPostFormatRepairScript(
     const QStringList repairArguments = {QStringLiteral("-p"),
                                          QStringLiteral("-f"),
                                          request.command.arguments.constLast()};
-    return {.script =
-                QStringLiteral(
-                    "$postToolPath = %1\n"
-                    "$postExpectedHash = %2\n"
-                    "$postActualHash = (Get-FileHash -LiteralPath $postToolPath -Algorithm SHA256).Hash."
-                    "ToLowerInvariant()\n"
-                    "if ($postActualHash -ne $postExpectedHash) { throw 'Filesystem post-format tool hash mismatch' }\n"
-                    "$postToolArgs = %3\n"
-                    "Write-Output ('Running approved post-format filesystem tool: {0} {1}' -f "
-                    "$postToolPath, ($postToolArgs -join ' '))\n"
-                    "& $postToolPath @postToolArgs 2>&1 | ForEach-Object { Write-Output $_ }\n"
-                    "$postToolExitCode = $LASTEXITCODE\n"
-                    "Write-Output ('Post-format filesystem tool exit code: {0}' -f $postToolExitCode)\n"
-                    "if ($postToolExitCode -ne 0) { exit $postToolExitCode }\n")
-                    .arg(PartitionScriptBuilder::quotePowerShell(
-                             QDir::toNativeSeparators(repairResolution.tool_path)),
-                         PartitionScriptBuilder::quotePowerShell(
-                             repairResolution.tool.binary_sha256.toLower()),
-                         powerShellArrayLiteral(repairArguments))};
+    return {
+        .script =
+            QStringLiteral(
+                "$postToolPath = %1\n"
+                "$postExpectedHash = %2\n"
+                "$postActualHash = (Get-FileHash -LiteralPath $postToolPath -Algorithm "
+                "SHA256).Hash."
+                "ToLowerInvariant()\n"
+                "if ($postActualHash -ne $postExpectedHash) { throw 'Filesystem post-format tool "
+                "hash mismatch' }\n"
+                "$postToolArgs = %3\n"
+                "Write-Output ('Running approved post-format filesystem tool: {0} {1}' -f "
+                "$postToolPath, ($postToolArgs -join ' '))\n"
+                "& $postToolPath @postToolArgs 2>&1 | ForEach-Object { Write-Output $_ }\n"
+                "$postToolExitCode = $LASTEXITCODE\n"
+                "Write-Output ('Post-format filesystem tool exit code: {0}' -f $postToolExitCode)\n"
+                "if ($postToolExitCode -ne 0) { exit $postToolExitCode }\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(
+                         QDir::toNativeSeparators(repairResolution.tool_path)),
+                     PartitionScriptBuilder::quotePowerShell(
+                         repairResolution.tool.binary_sha256.toLower()),
+                     powerShellArrayLiteral(repairArguments))};
 }
 
 QString newPartitionCommandScript(const PartitionOperation& operation,
@@ -2876,8 +2872,7 @@ PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
     out.preview = QStringLiteral("Create %1 Linux swap partition on Disk %2")
                       .arg(formatPartitionBytes(spec.size),
                            QString::number(operation.target.disk_number));
-    out.script = commonHeader(out.preview) +
-                 newPartitionCommandScript(operation, spec, QString()) +
+    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
                  linuxSwapFormatBodyScript(QStringLiteral("$rawTargetPath"),
                                            QStringLiteral("[uint64]$p.Size"),
@@ -2885,7 +2880,8 @@ PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
                                            pageSize) +
                  QStringLiteral("$p | ConvertTo-Json -Compress\n");
     out.dry_run_script =
-        out.preview + QStringLiteral("\nCreate partition, derive raw target, write SWAPSPACE2 v1 header");
+        out.preview +
+        QStringLiteral("\nCreate partition, derive raw target, write SWAPSPACE2 v1 header");
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -2896,21 +2892,19 @@ PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
     out.preview = QStringLiteral("Create %1 APFS partition on Disk %2 with S.A.K. APFS writer")
                       .arg(formatPartitionBytes(spec.size),
                            QString::number(operation.target.disk_number));
-    out.script =
-        commonHeader(out.preview) +
-        newPartitionCommandScript(operation, spec, QString()) +
-        refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-        dismountSelectedPartitionVolumeScript() +
-        apfsWriterCliFunctionScript() +
-        QStringLiteral(
-            "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
-            "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
-            "'ui.apfs-generated-raw-create-format'\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
-            "$p | ConvertTo-Json -Compress\n")
-            .arg(PartitionScriptBuilder::quotePowerShell(spec.label));
+    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
+                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
+                     "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
+                     "'ui.apfs-generated-raw-create-format'\n"
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+                     "$p | ConvertTo-Json -Compress\n")
+                     .arg(PartitionScriptBuilder::quotePowerShell(spec.label));
     out.dry_run_script =
-        out.preview + QStringLiteral("\nCreate partition, derive raw target, run APFS writer helper");
+        out.preview +
+        QStringLiteral("\nCreate partition, derive raw target, run APFS writer helper");
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -2925,25 +2919,24 @@ PartitionScript buildCreateExtScript(const PartitionOperation& operation,
                            spec.file_system,
                            QString::number(operation.target.disk_number),
                            command.tool_id);
-    out.script =
-        commonHeader(out.preview) +
-        newPartitionCommandScript(operation, spec, QString()) +
-        refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-        filesystemToolFunctionScript() +
-        QStringLiteral(
-            "$volume = $null\n"
-            "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
-            "if ($volume -and $volume.DriveLetter) {\n"
-            "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-            "}\n") +
-        filesystemToolCallScriptWithArgsExpression(
-            QStringLiteral("mke2fs create format"),
-            resolution,
-            powerShellArrayLiteralWithTrailingExpression(command.arguments,
-                                                         QStringLiteral("$rawTargetPath")),
-            {QStringLiteral("0")}) +
-        QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n"
-                       "$p | ConvertTo-Json -Compress\n");
+    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
+                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
+                 filesystemToolFunctionScript() +
+                 QStringLiteral(
+                     "$volume = $null\n"
+                     "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
+                     "if ($volume -and $volume.DriveLetter) {\n"
+                     "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
+                     "}\n") +
+                 filesystemToolCallScriptWithArgsExpression(
+                     QStringLiteral("mke2fs create format"),
+                     resolution,
+                     powerShellArrayLiteralWithTrailingExpression(command.arguments,
+                                                                  QStringLiteral("$rawTargetPath")),
+                     {QStringLiteral("0")}) +
+                 QStringLiteral(
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+                     "$p | ConvertTo-Json -Compress\n");
     out.dry_run_script = out.preview +
                          QStringLiteral("\nCreate partition, derive raw target, run ") +
                          PartitionScriptBuilder::quotePowerShell(resolution.tool_path);
@@ -2965,10 +2958,8 @@ PartitionScript buildCreateStagedHfsScript(
                            command.tool_id);
     const QStringList formatArgs = command.arguments;
     out.script =
-        commonHeader(out.preview) +
-        newPartitionCommandScript(operation, spec, QString()) +
-        refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-        hfsStagedFunctionsScript() +
+        commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
+        refreshCreatedPartitionAndRawTargetScript(operation, spec) + hfsStagedFunctionsScript() +
         QStringLiteral(
             "$targetPath = $rawTargetPath\n"
             "$targetSizeBytes = [uint64]$p.Size\n") +
@@ -3027,12 +3018,8 @@ PartitionScript buildCreateNonNativeFormatScript(const PartitionOperation& opera
 
     const QString manifestPath = runtimeFilesystemManifestPath();
     const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
-    const auto resolution =
-        PartitionFileSystemToolRunner::resolveApprovedTool(manifestPath,
-                                                           toolsRoot,
-                                                           command.tool_id,
-                                                           command.operation,
-                                                           command.file_system);
+    const auto resolution = PartitionFileSystemToolRunner::resolveApprovedTool(
+        manifestPath, toolsRoot, command.tool_id, command.operation, command.file_system);
     if (!resolution.ok) {
         return invalidPartitionScript(resolution.blockers.join(QStringLiteral("; ")));
     }
@@ -3104,7 +3091,8 @@ void PartitionScriptBuilder::appendCloneAndMaintenanceBuilders(QHash<int, Builde
         builders->insert(static_cast<int>(type), &buildCloneOrImageScript);
     }
     builders->insert(static_cast<int>(PartitionOperationType::RepairBoot), &buildBootRepairScript);
-    builders->insert(static_cast<int>(PartitionOperationType::OptimizeSsd), &buildOptimizeSsdScript);
+    builders->insert(static_cast<int>(PartitionOperationType::OptimizeSsd),
+                     &buildOptimizeSsdScript);
     builders->insert(static_cast<int>(PartitionOperationType::DefragVolume),
                      &buildDefragVolumeScript);
     builders->insert(static_cast<int>(PartitionOperationType::ConvertFileSystem),
@@ -3380,10 +3368,9 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
                 .arg(operation.target.disk_number)
                 .arg(operation.target.partition_number)
                 .arg(fs.toLower(), command.tool_id);
-        request.accepted_exit_codes =
-            command.tool_id == QStringLiteral("e2fsck")
-                ? QStringList{QStringLiteral("0"), QStringLiteral("1")}
-                : QStringList{QStringLiteral("0")};
+        request.accepted_exit_codes = command.tool_id == QStringLiteral("e2fsck")
+                                          ? QStringList{QStringLiteral("0"), QStringLiteral("1")}
+                                          : QStringList{QStringLiteral("0")};
         request.command = command;
         return buildExternalFileSystemToolScript(operation, request);
     }
@@ -3423,24 +3410,22 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                            apfsRootFileMutationDisplayName(input),
                            QString::number(operation.target.disk_number),
                            QString::number(operation.target.partition_number));
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        dismountSelectedPartitionVolumeScript() +
-        apfsWriterCliFunctionScript() +
-        QStringLiteral(
-            "$targetPath = %1\n"
-            "$targetSizeBytes = [uint64]$p.Size\n")
-            .arg(quotePowerShell(rawPartitionTargetPath(operation))) +
-        payloadScript + apfsRootFilePayloadTryPrefix(payloadScript) +
-        apfsRootFileMutationInvoke(operation, input) +
-        apfsRootFileCleanupScript(input.payload_base64) +
-        QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
-    out.dry_run_script =
-        out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + input.command +
-        QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n")
+                     .arg(quotePowerShell(rawPartitionTargetPath(operation))) +
+                 payloadScript + apfsRootFilePayloadTryPrefix(payloadScript) +
+                 apfsRootFileMutationInvoke(operation, input) +
+                 apfsRootFileCleanupScript(input.payload_base64) +
+                 QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+    out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") +
+                         input.command + QStringLiteral(" ") +
+                         quotePowerShell(rawPartitionTargetPath(operation));
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -3470,8 +3455,7 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
         requirePartitionIdentity(operation.target.disk_number,
                                  operation.target.partition_number,
                                  operation.target.size_bytes) +
-        hfsStagedFunctionsScript() +
-        hfsWriterCliFunctionScript() +
+        hfsStagedFunctionsScript() + hfsWriterCliFunctionScript() +
         QStringLiteral(
             "$targetPath = %1\n"
             "$targetPartitionSizeBytes = [uint64]$p.Size\n"
@@ -3496,8 +3480,7 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
             .arg(quotePowerShell(QDir::toNativeSeparators(fsckResolution.tool_path)),
                  quotePowerShell(fsckResolution.tool.binary_sha256.toLower()),
                  quotePowerShell(input.file_system),
-                 input.allow_journaled ? QStringLiteral(" -AllowJournaledIncomplete")
-                                       : QString()) +
+                 input.allow_journaled ? QStringLiteral(" -AllowJournaledIncomplete") : QString()) +
         hfsPayloadCleanupScript(input.payload_base64) +
         QStringLiteral(
             "  Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue\n"
@@ -3512,10 +3495,10 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
 }
 
 PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
-    const PartitionOperation& operation,
-    const ExternalFileSystemToolScriptRequest& request) const {
+    const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request) const {
     if (operation.target.partition_number == 0 || operation.target.size_bytes == 0) {
-        return invalidScript(QStringLiteral("Filesystem tool operation requires a partition identity"));
+        return invalidScript(
+            QStringLiteral("Filesystem tool operation requires a partition identity"));
     }
     if (!request.command.ok()) {
         return invalidScript(request.command.blockers.join(QStringLiteral("; ")));
@@ -3533,8 +3516,7 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
         return invalidScript(resolution.blockers.join(QStringLiteral("; ")));
     }
 
-    const QString rawTargetPath =
-        payloadString(operation, QStringLiteral("target_path")).trimmed();
+    const QString rawTargetPath = payloadString(operation, QStringLiteral("target_path")).trimmed();
     if (const auto hfsScript = maybeBuildStagedRawHfsScript(
             {&operation, &request, manifestPath, toolsRoot, &resolution, rawTargetPath})) {
         return *hfsScript;
@@ -3547,23 +3529,21 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
 
     PartitionScript out;
     out.preview = request.preview;
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        request.pre_tool_script +
-        filesystemToolFunctionScript() +
-        dismountSelectedPartitionVolumeScript() +
-        filesystemToolCallScript(request.command.tool_id,
-                                 resolution,
-                                 request.command.arguments,
-                                 request.accepted_exit_codes) +
-        postTool.script +
-        QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
-    out.dry_run_script =
-        out.preview + QStringLiteral("\n") + quotePowerShell(resolution.tool_path) +
-        QStringLiteral(" ") + request.command.arguments.join(QLatin1Char(' '));
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 request.pre_tool_script + filesystemToolFunctionScript() +
+                 dismountSelectedPartitionVolumeScript() +
+                 filesystemToolCallScript(request.command.tool_id,
+                                          resolution,
+                                          request.command.arguments,
+                                          request.accepted_exit_codes) +
+                 postTool.script +
+                 QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+    out.dry_run_script = out.preview + QStringLiteral("\n") +
+                         quotePowerShell(resolution.tool_path) + QStringLiteral(" ") +
+                         request.command.arguments.join(QLatin1Char(' '));
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }
@@ -3850,14 +3830,12 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
                       .arg(operation.target.disk_number)
                       .arg(payload.source_partition)
                       .arg(operation.target.partition_number);
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
-        robocopyManifestFunctionsScript() +
-        allocateExecutionScript(operation, payload);
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
+                 robocopyManifestFunctionsScript() + allocateExecutionScript(operation, payload);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -4004,14 +3982,12 @@ PartitionScript PartitionScriptBuilder::buildChangeClusterSizeScript(
     out.preview = QStringLiteral("Change %1: cluster size to %2 bytes")
                       .arg(payload.drive.toUpper())
                       .arg(uintArg(payload.allocation_unit));
-    out.script =
-        commonHeader(out.preview) +
-        requirePartitionIdentity(operation.target.disk_number,
-                                 operation.target.partition_number,
-                                 operation.target.size_bytes) +
-        clusterSetupScript(payload) +
-        robocopyManifestFunctionsScript() +
-        clusterExecutionScript();
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 clusterSetupScript(payload) + robocopyManifestFunctionsScript() +
+                 clusterExecutionScript();
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }

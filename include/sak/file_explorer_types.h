@@ -11,8 +11,8 @@
 
 #include <QString>
 #include <QStringList>
-#include <QVector>
 #include <Qt>
+#include <QVector>
 
 #include <cstdint>
 
@@ -95,8 +95,7 @@ struct FileExplorerItemCapabilities {
     QStringList blockers;
 
     [[nodiscard]] static FileExplorerItemCapabilities fromTargetAndEntry(
-        const FileManagementTarget& target,
-        const FileManagementEntry& entry);
+        const FileManagementTarget& target, const FileManagementEntry& entry);
 };
 
 struct FileExplorerViewSettings {

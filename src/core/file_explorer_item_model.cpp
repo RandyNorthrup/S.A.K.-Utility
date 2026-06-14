@@ -5,10 +5,13 @@
 
 #include "sak/layout_constants.h"
 
+#include <QDateTime>
 #include <QFileInfo>
+#include <QHash>
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 namespace sak {
@@ -52,6 +55,29 @@ QString displayText(const FileManagementEntry& entry,
     }
 }
 
+int compareSize(const FileManagementEntry& left, const FileManagementEntry& right) {
+    if (left.size_bytes == right.size_bytes) {
+        return QString::localeAwareCompare(left.name, right.name);
+    }
+    return left.size_bytes < right.size_bytes ? -1 : 1;
+}
+
+int compareDateTime(const QDateTime& left,
+                    const QDateTime& right,
+                    const QString& left_name,
+                    const QString& right_name) {
+    if (left == right) {
+        return QString::localeAwareCompare(left_name, right_name);
+    }
+    if (!left.isValid()) {
+        return 1;
+    }
+    if (!right.isValid()) {
+        return -1;
+    }
+    return left < right ? -1 : 1;
+}
+
 int compareEntries(const FileManagementEntry& left,
                    const FileManagementEntry& right,
                    const int column) {
@@ -61,32 +87,11 @@ int compareEntries(const FileManagementEntry& left,
 
     switch (column) {
     case FileExplorerItemModel::SizeColumn:
-        if (left.size_bytes == right.size_bytes) {
-            return QString::localeAwareCompare(left.name, right.name);
-        }
-        return left.size_bytes < right.size_bytes ? -1 : 1;
+        return compareSize(left, right);
     case FileExplorerItemModel::ModifiedColumn:
-        if (left.modified_time == right.modified_time) {
-            return QString::localeAwareCompare(left.name, right.name);
-        }
-        if (!left.modified_time.isValid()) {
-            return 1;
-        }
-        if (!right.modified_time.isValid()) {
-            return -1;
-        }
-        return left.modified_time < right.modified_time ? -1 : 1;
+        return compareDateTime(left.modified_time, right.modified_time, left.name, right.name);
     case FileExplorerItemModel::CreatedColumn:
-        if (left.created_time == right.created_time) {
-            return QString::localeAwareCompare(left.name, right.name);
-        }
-        if (!left.created_time.isValid()) {
-            return 1;
-        }
-        if (!right.created_time.isValid()) {
-            return -1;
-        }
-        return left.created_time < right.created_time ? -1 : 1;
+        return compareDateTime(left.created_time, right.created_time, left.name, right.name);
     case FileExplorerItemModel::TypeColumn:
         return QString::localeAwareCompare(left.type, right.type);
     case FileExplorerItemModel::IdentifierColumn:
@@ -97,6 +102,38 @@ int compareEntries(const FileManagementEntry& left,
     default:
         return QString::localeAwareCompare(left.name, right.name);
     }
+}
+
+QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
+    using Model = FileExplorerItemModel;
+    using Accessor = QVariant (*)(const FileManagementEntry&);
+    static const QHash<int, Accessor> kAccessors{
+        {Model::EntryPathRole, [](const FileManagementEntry& e) -> QVariant { return e.path; }},
+        {Model::EntryNameRole, [](const FileManagementEntry& e) -> QVariant { return e.name; }},
+        {Model::EntryTypeRole, [](const FileManagementEntry& e) -> QVariant { return e.type; }},
+        {Model::EntrySizeRole,
+         [](const FileManagementEntry& e) -> QVariant {
+             return QVariant::fromValue<qulonglong>(e.size_bytes);
+         }},
+        {Model::EntryIdentifierRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.identifier; }},
+        {Model::EntryDirectoryRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.directory; }},
+        {Model::EntryRegularFileRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.regular_file; }},
+        {Model::EntrySymlinkRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.symlink; }},
+        {Model::EntryLinkTargetRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.link_target; }},
+        {Model::EntryAttributeSummaryRole,
+         [](const FileManagementEntry& e) -> QVariant { return Model::attributeSummary(e); }},
+        {Model::EntryModifiedTimeRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.modified_time; }},
+        {Model::EntryCreatedTimeRole,
+         [](const FileManagementEntry& e) -> QVariant { return e.created_time; }},
+    };
+    const auto accessor = kAccessors.find(role);
+    return accessor != kAccessors.end() ? accessor.value()(entry) : QVariant();
 }
 
 }  // namespace
@@ -125,32 +162,8 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     case Qt::TextAlignmentRole:
         return index.column() == SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
                                             : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
-    case EntryPathRole:
-        return entry.path;
-    case EntryNameRole:
-        return entry.name;
-    case EntryTypeRole:
-        return entry.type;
-    case EntrySizeRole:
-        return QVariant::fromValue<qulonglong>(entry.size_bytes);
-    case EntryIdentifierRole:
-        return entry.identifier;
-    case EntryDirectoryRole:
-        return entry.directory;
-    case EntryRegularFileRole:
-        return entry.regular_file;
-    case EntrySymlinkRole:
-        return entry.symlink;
-    case EntryLinkTargetRole:
-        return entry.link_target;
-    case EntryAttributeSummaryRole:
-        return attributeSummary(entry);
-    case EntryModifiedTimeRole:
-        return entry.modified_time;
-    case EntryCreatedTimeRole:
-        return entry.created_time;
     default:
-        return {};
+        return entryRoleValue(entry, role);
     }
 }
 
@@ -160,27 +173,18 @@ QVariant FileExplorerItemModel::headerData(const int section,
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
         return {};
     }
-
-    switch (section) {
-    case NameColumn:
-        return tr("Name");
-    case TypeColumn:
-        return tr("Type");
-    case SizeColumn:
-        return tr("Size");
-    case ModifiedColumn:
-        return tr("Modified");
-    case CreatedColumn:
-        return tr("Created");
-    case IdentifierColumn:
-        return tr("ID");
-    case AttributesColumn:
-        return tr("Attributes");
-    case PathColumn:
-        return tr("Path");
-    default:
-        return {};
-    }
+    static constexpr auto kHeaders = std::to_array<std::pair<int, const char*>>({
+        {NameColumn, QT_TR_NOOP("Name")},
+        {TypeColumn, QT_TR_NOOP("Type")},
+        {SizeColumn, QT_TR_NOOP("Size")},
+        {ModifiedColumn, QT_TR_NOOP("Modified")},
+        {CreatedColumn, QT_TR_NOOP("Created")},
+        {IdentifierColumn, QT_TR_NOOP("ID")},
+        {AttributesColumn, QT_TR_NOOP("Attributes")},
+        {PathColumn, QT_TR_NOOP("Path")},
+    });
+    const auto it = std::ranges::find(kHeaders, section, &std::pair<int, const char*>::first);
+    return it != kHeaders.end() ? QVariant(tr(it->second)) : QVariant();
 }
 
 Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
@@ -196,13 +200,15 @@ void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
     }
 
     Q_EMIT layoutAboutToBeChanged();
-    std::stable_sort(m_entries.begin(), m_entries.end(), [column, order](const auto& left, const auto& right) {
-        if (left.directory != right.directory) {
-            return left.directory;
-        }
-        const int compared = compareEntries(left, right, column);
-        return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
-    });
+    std::stable_sort(m_entries.begin(),
+                     m_entries.end(),
+                     [column, order](const auto& left, const auto& right) {
+                         if (left.directory != right.directory) {
+                             return left.directory;
+                         }
+                         const int compared = compareEntries(left, right, column);
+                         return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
+                     });
     Q_EMIT layoutChanged();
 }
 
@@ -274,7 +280,8 @@ QString FileExplorerItemModel::sizeText(const uint64_t bytes) {
 }
 
 QString FileExplorerItemModel::timeText(const QDateTime& time) {
-    return time.isValid() ? time.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")) : QString();
+    return time.isValid() ? time.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                          : QString();
 }
 
 }  // namespace sak

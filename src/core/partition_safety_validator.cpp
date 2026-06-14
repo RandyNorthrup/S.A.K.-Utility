@@ -304,9 +304,8 @@ bool isSupportedNonNativeFileSystemToolOperation(const PartitionOperation& opera
         PartitionOperationType::HfsReplaceForkAttribute,
         PartitionOperationType::HfsGrowForkAttribute,
     };
-    return std::find(std::begin(kSupportedTypes),
-                     std::end(kSupportedTypes),
-                     operation.type) != std::end(kSupportedTypes);
+    return std::find(std::begin(kSupportedTypes), std::end(kSupportedTypes), operation.type) !=
+           std::end(kSupportedTypes);
 }
 
 bool isApfsRootFileMutationOperation(PartitionOperationType type) {
@@ -654,12 +653,13 @@ bool nonNativeFileSystemSupportedForOperation(PartitionOperationType type,
     if (isExtFileSystemToken(fileSystem)) {
         return true;
     }
-    const bool createOrFormat =
-        type == PartitionOperationType::Create || type == PartitionOperationType::Format;
+    const bool createOrFormat = type == PartitionOperationType::Create ||
+                                type == PartitionOperationType::Format;
     if (isLinuxSwapFileSystemToken(fileSystem)) {
         return createOrFormat;
     }
-    const bool createFormatOrCheck = createOrFormat || type == PartitionOperationType::CheckFileSystem;
+    const bool createFormatOrCheck = createOrFormat ||
+                                     type == PartitionOperationType::CheckFileSystem;
     const bool apfsRootMutation = isApfsRootFileMutationOperation(type);
     if (apfsRootMutation) {
         return isApfsFileSystemToken(fileSystem);
@@ -723,14 +723,12 @@ bool apfsRootFileMutationMissingFileName(const PartitionOperation& operation) {
     if (operation.type == PartitionOperationType::ApfsChangeVolumeLabel) {
         return false;
     }
-    const QString directoryName =
-        operation.payload.value(QString::fromLatin1(kApfsRootDirectoryNamePayload))
-            .toString()
-            .trimmed();
+    const QString directoryName = operation.payload
+                                      .value(QString::fromLatin1(kApfsRootDirectoryNamePayload))
+                                      .toString()
+                                      .trimmed();
     const QString fileName =
-        operation.payload.value(QString::fromLatin1(kApfsRootFileNamePayload))
-            .toString()
-            .trimmed();
+        operation.payload.value(QString::fromLatin1(kApfsRootFileNamePayload)).toString().trimmed();
     if (apfsRootDirectoryMutation(operation.type)) {
         return directoryName.isEmpty() && fileName.isEmpty();
     }
@@ -754,10 +752,10 @@ bool apfsRootFileMutationMissingPayload(const PartitionOperation& operation) {
     if (!apfsRootFileMutationWritesPayload(operation.type)) {
         return false;
     }
-    const QString payloadBase64 =
-        operation.payload.value(QString::fromLatin1(kApfsRootFilePayloadBase64))
-            .toString()
-            .trimmed();
+    const QString payloadBase64 = operation.payload
+                                      .value(QString::fromLatin1(kApfsRootFilePayloadBase64))
+                                      .toString()
+                                      .trimmed();
     const bool hasText =
         operation.payload.contains(QString::fromLatin1(kApfsRootFilePayloadText)) &&
         !operation.payload.value(QString::fromLatin1(kApfsRootFilePayloadText))
@@ -809,8 +807,7 @@ bool hfsFileMutationMissingConfirmation(const PartitionOperation& operation) {
 }
 
 bool hfsFileMutationMissingPath(const PartitionOperation& operation) {
-    return isHfsFileMutationOperation(operation.type) &&
-           hfsFileMutationNeedsPath(operation.type) &&
+    return isHfsFileMutationOperation(operation.type) && hfsFileMutationNeedsPath(operation.type) &&
            operation.payload.value(QString::fromLatin1(kHfsPathPayload))
                .toString()
                .trimmed()
@@ -831,10 +828,9 @@ bool hfsFileMutationMissingPayload(const PartitionOperation& operation) {
     }
     const QString payloadBase64 =
         operation.payload.value(QString::fromLatin1(kHfsPayloadBase64)).toString().trimmed();
-    const bool hasText = operation.payload.contains(QString::fromLatin1(kHfsPayloadText)) &&
-                         !operation.payload.value(QString::fromLatin1(kHfsPayloadText))
-                              .toString()
-                              .isEmpty();
+    const bool hasText =
+        operation.payload.contains(QString::fromLatin1(kHfsPayloadText)) &&
+        !operation.payload.value(QString::fromLatin1(kHfsPayloadText)).toString().isEmpty();
     return payloadBase64.isEmpty() && !hasText;
 }
 
@@ -1269,12 +1265,11 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                                         const PartitionInfoEx& partition,
                                         const PartitionOperation& operation,
                                         PartitionValidationResult* result) {
-    addBlockerIf(result,
-                 requiresDriveLetter(operation.type) &&
-                     !isNonNativeFileSystemToolOperation(operation) &&
-                     (!partition.volume || partition.volume->drive_letter.isEmpty()),
-                 QStringLiteral(
-                     "Selected operation requires a mounted volume with a drive letter"));
+    addBlockerIf(
+        result,
+        requiresDriveLetter(operation.type) && !isNonNativeFileSystemToolOperation(operation) &&
+            (!partition.volume || partition.volume->drive_letter.isEmpty()),
+        QStringLiteral("Selected operation requires a mounted volume with a drive letter"));
     addBlockerIf(result,
                  operation.type == PartitionOperationType::SetPartitionActive &&
                      disk.partition_style.compare(QStringLiteral("MBR"), Qt::CaseInsensitive) != 0,
@@ -1346,14 +1341,19 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
                  operation.type == PartitionOperationType::Format &&
                      operation.target.partition_number == 0,
                  QStringLiteral("Format requires a partition identity"));
-    addBlockerIf(result,
-                 nonNativeToolUnsupportedOperation(operation),
-                 QStringLiteral(
-                     "Non-Windows filesystem tool support is limited to format, repair, resize, APFS generated root-file/root-directory mutation, and HFS+ staged file mutation"));
-    addBlockerIf(result,
-                 nonNativeToolUnsupportedFileSystem(operation),
-                 QStringLiteral(
-                     "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and APFS generated create/format/repair/root-file/root-directory mutation"));
+    addBlockerIf(
+        result,
+        nonNativeToolUnsupportedOperation(operation),
+        QStringLiteral(
+            "Non-Windows filesystem tool support is limited to format, repair, resize, APFS "
+            "generated root-file/root-directory mutation, and HFS+ staged file mutation"));
+    addBlockerIf(
+        result,
+        nonNativeToolUnsupportedFileSystem(operation),
+        QStringLiteral(
+            "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, "
+            "HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and "
+            "APFS generated create/format/repair/root-file/root-directory mutation"));
     addBlockerIf(result,
                  nonNativeToolMissingTarget(operation),
                  QStringLiteral(
@@ -1373,7 +1373,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
                  QStringLiteral("APFS generated root mutation requires APFS file system"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingTarget(operation),
-                 QStringLiteral("APFS generated root mutation target must match selected raw partition"));
+                 QStringLiteral(
+                     "APFS generated root mutation target must match selected raw partition"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingConfirmation(operation),
                  QStringLiteral("APFS generated root mutation requires destructive confirmation"));
@@ -1392,8 +1393,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
                  QStringLiteral("APFS volume-label mutation requires a label"));
     addBlockerIf(result,
                  apfsVolumeLabelMutationInvalidLabel(operation),
-                 QStringLiteral(
-                     "APFS volume-label mutation label must fit APFS UTF-8 field and not contain path separators"));
+                 QStringLiteral("APFS volume-label mutation label must fit APFS UTF-8 field and "
+                                "not contain path separators"));
     addBlockerIf(result,
                  apfsRootFilePatchMissingOffset(operation),
                  QStringLiteral("APFS root or child-file patch requires a byte offset"));
@@ -1423,8 +1424,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
                  QStringLiteral("HFS+ attribute mutation requires file ID and attribute name"));
     addBlockerIf(result,
                  hfsSecureWipeUnsupported(operation),
-                 QStringLiteral(
-                     "HFS+ secure block wipe is supported only for delete-file or delete-folder-tree mutations"));
+                 QStringLiteral("HFS+ secure block wipe is supported only for delete-file or "
+                                "delete-folder-tree mutations"));
 }
 
 void validateResizeContentBlockers(const PartitionInfoEx& partition,
@@ -1840,21 +1841,25 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
         validateCreateUnallocatedPayload(operation, result);
         addBlockerIf(result,
                      nonNativeToolUnsupportedOperation(operation),
-                     QStringLiteral(
-                         "Non-Windows filesystem tool support is limited to create, format, repair, and resize"));
+                     QStringLiteral("Non-Windows filesystem tool support is limited to create, "
+                                    "format, repair, and resize"));
         addBlockerIf(result,
                      nonNativeToolUnsupportedFileSystem(operation),
                      QStringLiteral(
-                         "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and APFS generated create/format/repair/root-file/root-directory mutation"));
-        addBlockerIf(result,
-                     nonNativeToolMissingConfirmation(operation),
-                     QStringLiteral(
-                         "Non-Windows filesystem tool operation requires destructive confirmation"));
+                         "Non-Windows write support is limited to ext2/ext3/ext4 "
+                         "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
+                         "mutation, Linux swap create/format, and APFS generated "
+                         "create/format/repair/root-file/root-directory mutation"));
+        addBlockerIf(
+            result,
+            nonNativeToolMissingConfirmation(operation),
+            QStringLiteral(
+                "Non-Windows filesystem tool operation requires destructive confirmation"));
         addBlockerIf(result,
                      isApfsFileSystemToken(
                          operation.payload.value(QStringLiteral("file_system")).toString()) &&
-                         disk.partition_style.compare(QStringLiteral("GPT"),
-                                                      Qt::CaseInsensitive) != 0,
+                         disk.partition_style.compare(QStringLiteral("GPT"), Qt::CaseInsensitive) !=
+                             0,
                      QStringLiteral("APFS create requires a GPT disk"));
     }
     if (disk.is_system) {

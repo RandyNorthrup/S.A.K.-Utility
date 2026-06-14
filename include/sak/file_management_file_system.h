@@ -102,19 +102,16 @@ public:
     [[nodiscard]] static QString normalizedFileSystem(const QString& file_system);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
 
-    [[nodiscard]] static FileManagementListResult listDirectory(
-        const FileManagementTarget& target,
-        const QString& path = {},
-        int max_entries = 1000);
+    [[nodiscard]] static FileManagementListResult listDirectory(const FileManagementTarget& target,
+                                                                const QString& path = {},
+                                                                int max_entries = 1000);
     [[nodiscard]] static FileManagementReadResult readFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);
     [[nodiscard]] static FileManagementMutationResult createDirectory(
-        const FileManagementTarget& target,
-        const QString& path);
+        const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteDirectory(
-        const FileManagementTarget& target,
-        const QString& path);
+        const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult writeFile(const FileManagementTarget& target,
                                                                 const QString& path,
                                                                 const QByteArray& data);

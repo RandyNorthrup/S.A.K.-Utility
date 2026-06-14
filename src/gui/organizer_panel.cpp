@@ -31,9 +31,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMessageBox>
-#include <QInputDialog>
 #include <QScrollArea>
 #include <QSet>
 #include <QSignalBlocker>
@@ -193,9 +193,10 @@ void OrganizerPanel::setupUi() {
     m_tabs->addTab(createDuplicateFinderTab(), tr("Duplicate Finder"));
     m_file_explorer_panel = new FileManagementExplorerPanel(this);
     m_tabs->addTab(m_file_explorer_panel, tr("File Explorer"));
-    setAccessible(m_tabs,
-                  tr("File management tools"),
-                  tr("Switch between file organizer, duplicate finder, file explorer, and advanced search"));
+    setAccessible(
+        m_tabs,
+        tr("File management tools"),
+        tr("Switch between file organizer, duplicate finder, file explorer, and advanced search"));
     rootLayout->addWidget(m_tabs, 1);
 
     connect(m_file_explorer_panel,
@@ -501,10 +502,8 @@ QWidget* OrganizerPanel::createOrganizerTab() {
             &QPushButton::clicked,
             this,
             &OrganizerPanel::refreshMountedFileSystemTargets);
-    connect(m_target_scan_button,
-            &QPushButton::clicked,
-            this,
-            &OrganizerPanel::scanFileSystemTargets);
+    connect(
+        m_target_scan_button, &QPushButton::clicked, this, &OrganizerPanel::scanFileSystemTargets);
     connect(m_target_manual_button,
             &QPushButton::clicked,
             this,
@@ -577,8 +576,7 @@ QGroupBox* OrganizerPanel::createScanDirectoriesGroup() {
     auto* target_row = new QHBoxLayout();
     m_dedup_target_combo = new QComboBox(this);
     m_dedup_target_combo->setAccessibleName(tr("Duplicate finder file-system target"));
-    m_dedup_target_combo->setToolTip(
-        tr("Choose a mounted volume or supported raw/image target"));
+    m_dedup_target_combo->setToolTip(tr("Choose a mounted volume or supported raw/image target"));
     target_row->addWidget(m_dedup_target_combo, 1);
     group_layout->addLayout(target_row);
 
@@ -835,10 +833,9 @@ void OrganizerPanel::onPreviewClicked() {
 bool OrganizerPanel::validateOrganizerTarget() {
     const auto target = currentOrganizerTarget();
     if (!target.root_path.isEmpty() && !target.can_organize) {
-        sak::showWarningLogged(
-            this,
-            tr("Organizer Target Blocked"),
-            target.blockers.join(QStringLiteral("\n")));
+        sak::showWarningLogged(this,
+                               tr("Organizer Target Blocked"),
+                               target.blockers.join(QStringLiteral("\n")));
         return false;
     }
 

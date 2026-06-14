@@ -122,6 +122,9 @@ private:
     void showFilePreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void showMetadataPreview(const QString& filePath, const QVector<SearchMatch>& matches);
     void showMetadataDialog(const QString& filePath);
+    void showMetadataTreeDialog(const QString& title, const QMap<QString, QString>& metadata);
+    [[nodiscard]] QMap<QString, QString> collectRemoteMetadata(const QString& filePath) const;
+    [[nodiscard]] QMap<QString, QString> collectLocalMetadata(const QString& filePath) const;
     void highlightMatches();
     void highlightMetadataMatches();
     void navigateToMatch(int matchIndex);

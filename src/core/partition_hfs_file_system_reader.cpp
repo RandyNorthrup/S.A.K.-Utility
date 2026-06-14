@@ -5,6 +5,8 @@
 /// @brief Read-only HFS+/HFSX file browser for Partition Manager.
 
 #include "sak/partition_hfs_file_system_reader.h"
+
+#include "sak/partition_hfs_internal.h"
 #include "sak/partition_raw_device_io.h"
 
 #include <QCryptographicHash>
@@ -21,7 +23,6 @@
 #include <limits>
 #include <optional>
 #include <utility>
-#include "sak/partition_hfs_internal.h"
 
 namespace sak {
 
@@ -37,8 +38,8 @@ PartitionHfsFileReadResult withOpenImage(
     QString openError;
     auto image = openFileOrRawDeviceReadOnly(imagePath, &openError);
     if (!image) {
-        result.blockers.append(QStringLiteral("Unable to open HFS+ image read-only: %1")
-                                   .arg(openError));
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read-only: %1").arg(openError));
         return result;
     }
     return callback(image.get());
@@ -65,12 +66,12 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
 
     const QFileInfo info(safeName);
     const QString base = info.completeBaseName().isEmpty() ? safeName : info.completeBaseName();
-    const QString suffix = info.suffix().isEmpty() ? QString() : QStringLiteral(".%1").arg(info.suffix());
-    for (int index = kFirstExportNameCollisionIndex; index < kMaxExportNameCollisionAttempts; ++index) {
-        candidate = dir.filePath(QStringLiteral("%1_%2_%3%4")
-                                     .arg(base, suffixId)
-                                     .arg(index)
-                                     .arg(suffix));
+    const QString suffix = info.suffix().isEmpty() ? QString()
+                                                   : QStringLiteral(".%1").arg(info.suffix());
+    for (int index = kFirstExportNameCollisionIndex; index < kMaxExportNameCollisionAttempts;
+         ++index) {
+        candidate =
+            dir.filePath(QStringLiteral("%1_%2_%3%4").arg(base, suffixId).arg(index).arg(suffix));
         if (!QFileInfo::exists(candidate)) {
             return candidate;
         }
@@ -121,8 +122,9 @@ public:
 
     PartitionHfsDirectoryExportResult run(const QString& sourcePath,
                                           const QString& outputDirectory) {
-        pending_.append({sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
-                         outputDirectory});
+        pending_.append(
+            {sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
+             outputDirectory});
         while (!pending_.isEmpty()) {
             if (!processFrame(pending_.takeLast())) {
                 break;
@@ -175,7 +177,8 @@ private:
             return exportDirectory(entry, targetPath);
         }
         if (!entry.regular_file) {
-            result_.warnings.append(QStringLiteral("Skipped unsupported HFS+ entry: %1").arg(entry.path));
+            result_.warnings.append(
+                QStringLiteral("Skipped unsupported HFS+ entry: %1").arg(entry.path));
             return true;
         }
         return exportFile(entry, targetDir, safeName, suffixId, targetPath);
@@ -217,8 +220,8 @@ private:
     }
 
     bool exportDataFork(const PartitionHfsFileEntry& entry, const QString& targetPath) {
-        const auto dataFork = PartitionHfsFileSystemReader::readFile(
-            image_, entry.path, options_.max_file_bytes);
+        const auto dataFork =
+            PartitionHfsFileSystemReader::readFile(image_, entry.path, options_.max_file_bytes);
         result_.warnings.append(dataFork.warnings);
         if (!dataFork.ok) {
             result_.blockers.append(dataFork.blockers);
@@ -247,7 +250,8 @@ private:
             uniquePath(targetDir, QStringLiteral("%1.rsrc").arg(safeName), suffixId);
         if (resourcePath.isEmpty()) {
             result_.blockers.append(
-                QStringLiteral("Unable to allocate resource-fork output path for %1").arg(entry.path));
+                QStringLiteral("Unable to allocate resource-fork output path for %1")
+                    .arg(entry.path));
             return false;
         }
         if (!writeExportFile(resourcePath,
@@ -268,7 +272,8 @@ private:
         const bool totalTooLarge = result_.bytes_exported > options_.max_total_bytes ||
                                    entryBytes > options_.max_total_bytes - result_.bytes_exported;
         if (fileTooLarge || totalTooLarge) {
-            result_.blockers.append(QStringLiteral("Export byte cap reached before %1").arg(entryPath));
+            result_.blockers.append(
+                QStringLiteral("Export byte cap reached before %1").arg(entryPath));
             return false;
         }
         return true;
@@ -283,8 +288,8 @@ private:
 
 }  // namespace
 
-PartitionHfsConsistencyCheckResult PartitionHfsFileSystemReader::checkConsistency(
-    QIODevice* device, int max_records) {
+PartitionHfsConsistencyCheckResult PartitionHfsFileSystemReader::checkConsistency(QIODevice* device,
+                                                                                  int max_records) {
     HfsReader reader(device);
     if (!reader.load()) {
         return reader.consistencyFailureResult(
@@ -303,8 +308,8 @@ PartitionHfsConsistencyCheckResult PartitionHfsFileSystemReader::checkConsistenc
     QString openError;
     auto image = openFileOrRawDeviceReadOnly(image_path, &openError);
     if (!image) {
-        result.blockers.append(QStringLiteral("Unable to open HFS+ image read-only: %1")
-                                  .arg(openError));
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read-only: %1").arg(openError));
         return result;
     }
     return checkConsistency(image.get(), max_records);
@@ -368,16 +373,14 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::readResourceForkFromIma
 }
 
 PartitionHfsAttributeReadResult PartitionHfsFileSystemReader::readAttributeValue(
-    QIODevice* device,
-    uint32_t file_id,
-    const QString& attribute_name,
-    uint64_t max_bytes) {
+    QIODevice* device, uint32_t file_id, const QString& attribute_name, uint64_t max_bytes) {
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsAttributeReadResult result;
         result.file_id = file_id;
         result.attribute_name = attribute_name.trimmed();
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
         return result;
     }
     return reader.readAttributeValue(file_id, attribute_name, max_bytes);
@@ -398,8 +401,8 @@ PartitionHfsAttributeReadResult PartitionHfsFileSystemReader::readAttributeValue
     QString openError;
     auto image = openFileOrRawDeviceReadOnly(image_path, &openError);
     if (!image) {
-        result.blockers.append(QStringLiteral("Unable to open HFS+ image read-only: %1")
-                                   .arg(openError));
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read-only: %1").arg(openError));
         return result;
     }
     return readAttributeValue(image.get(), file_id, attribute_name, max_bytes);
@@ -419,8 +422,8 @@ PartitionHfsDirectoryExportResult PartitionHfsFileSystemReader::exportDirectoryF
     QString openError;
     auto image = openFileOrRawDeviceReadOnly(image_path, &openError);
     if (!image) {
-        exportResult.blockers.append(QStringLiteral("Unable to open HFS+ image read-only: %1")
-                                         .arg(openError));
+        exportResult.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read-only: %1").arg(openError));
         return exportResult;
     }
 

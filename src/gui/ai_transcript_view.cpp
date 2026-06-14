@@ -424,11 +424,8 @@ void AiTranscriptView::addTranscriptBody(QVBoxLayout* bubble_layout,
     bubble_layout->addWidget(body_label);
 }
 
-void AiTranscriptView::addTranscriptToggle(QVBoxLayout* bubble_layout,
-                                           QFrame* bubble,
-                                           const Message& message,
-                                           bool user,
-                                           bool long_text) {
+void AiTranscriptView::addTranscriptToggle(
+    QVBoxLayout* bubble_layout, QFrame* bubble, const Message& message, bool user, bool long_text) {
     if (!long_text) {
         return;
     }

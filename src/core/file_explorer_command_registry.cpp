@@ -3,18 +3,33 @@
 
 #include "sak/file_explorer_command_registry.h"
 
+#include <algorithm>
+#include <array>
+#include <optional>
+#include <utility>
+
 namespace sak {
 namespace {
+
+struct MakeCommandFlags {
+    bool destructive = false;
+    bool selection_required = false;
+    bool write_operation = false;
+};
 
 FileExplorerCommand makeCommand(const FileExplorerCommandId id,
                                 const QString& text,
                                 const QString& status_text,
                                 const QString& shortcut = {},
-                                const bool destructive = false,
-                                const bool selection_required = false,
-                                const bool write_operation = false) {
-    return FileExplorerCommand{id, text, text, status_text, shortcut, destructive,
-                               selection_required, write_operation};
+                                const MakeCommandFlags flags = {}) {
+    return FileExplorerCommand{id,
+                               text,
+                               text,
+                               status_text,
+                               shortcut,
+                               flags.destructive,
+                               flags.selection_required,
+                               flags.write_operation};
 }
 
 bool hasSelectedTarget(const FileExplorerCommandContext& context) {
@@ -68,70 +83,219 @@ FileExplorerCommandState enabledState(const FileExplorerCommand& command) {
     return state;
 }
 
+// Build-time availability overrides (tabs / dual pane unavailable in this build).
+std::optional<FileExplorerCommandState> buildAvailabilityState(
+    const FileExplorerCommandId id,
+    const FileExplorerCommandContext& context,
+    const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id == OpenInNewTab && !context.can_create_tabs) {
+        return disabledState(entry, QStringLiteral("Explorer tabs are unavailable in this build."));
+    }
+    if ((id == OpenInSecondPane || id == ToggleDualPane) && !context.can_use_dual_pane) {
+        return disabledState(entry, QStringLiteral("Dual pane is unavailable in this build."));
+    }
+    return std::nullopt;
+}
+
+// Navigation commands resolve from pane history/location independent of selection.
+std::optional<FileExplorerCommandState> navigationOverrideState(
+    const FileExplorerCommandId id,
+    const FileExplorerCommandContext& context,
+    const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    switch (id) {
+    case Back:
+        return context.pane.canGoBack()
+                   ? enabledState(entry)
+                   : disabledState(entry, QStringLiteral("No previous location."));
+    case Forward:
+        return context.pane.canGoForward()
+                   ? enabledState(entry)
+                   : disabledState(entry, QStringLiteral("No next location."));
+    case Up:
+        if (!hasSelectedTarget(context)) {
+            return disabledState(entry, QStringLiteral("No File Explorer target selected."));
+        }
+        return !context.pane.location.atRoot(context.target.local_file_system)
+                   ? enabledState(entry)
+                   : disabledState(entry, QStringLiteral("Already at target root."));
+    case ClearSelection:
+        return context.pane.selection.isEmpty()
+                   ? disabledState(entry, QStringLiteral("No selection to clear."))
+                   : enabledState(entry);
+    default:
+        return std::nullopt;
+    }
+}
+
+bool requiresSingleSelection(const FileExplorerCommandId id) {
+    using enum FileExplorerCommandId;
+    static constexpr auto kSingleSelectionCommands =
+        std::to_array({Open, OpenInNewTab, OpenInSecondPane, Preview, Properties, Rename});
+    return std::ranges::find(kSingleSelectionCommands, id) != kSingleSelectionCommands.end();
+}
+
+// Selection-count requirements for commands that act on selected items.
+std::optional<FileExplorerCommandState> selectionRequirementState(
+    const FileExplorerCommandId id,
+    const FileExplorerCommandContext& context,
+    const FileExplorerCommand& entry) {
+    if (entry.selection_required && context.pane.selection.isEmpty()) {
+        return disabledState(entry, QStringLiteral("Select an item first."));
+    }
+    if (requiresSingleSelection(id) && entry.selection_required &&
+        !context.pane.selection.hasSingleEntry()) {
+        return disabledState(entry, QStringLiteral("Select one item."));
+    }
+    return std::nullopt;
+}
+
+// Target capability requirements (write / browse / read).
+std::optional<FileExplorerCommandState> capabilityState(const FileExplorerCommandId id,
+                                                        const FileExplorerCommandContext& context,
+                                                        const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (entry.write_operation && !context.target.can_write_files) {
+        return disabledState(entry, writeBlocker(context.target));
+    }
+    if (id == Open || id == OpenInNewTab || id == OpenInSecondPane) {
+        if (!context.target.can_browse) {
+            return disabledState(entry, browseBlocker(context.target));
+        }
+    } else if (id == Preview && !context.target.can_read_files) {
+        return disabledState(entry, readBlocker(context.target));
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
     return {
-        makeCommand(FileExplorerCommandId::Open, QStringLiteral("Open"),
-                    QStringLiteral("Open selected item."), QStringLiteral("Enter"), false, true),
-        makeCommand(FileExplorerCommandId::OpenInNewTab, QStringLiteral("Open in New Tab"),
-                    QStringLiteral("Open selected item in a new explorer tab."), {}, false, true),
-        makeCommand(FileExplorerCommandId::OpenInSecondPane, QStringLiteral("Open in Second Pane"),
-                    QStringLiteral("Open selected item in the inactive pane."), {}, false, true),
-        makeCommand(FileExplorerCommandId::Back, QStringLiteral("Back"),
-                    QStringLiteral("Go to previous location."), QStringLiteral("Alt+Left")),
-        makeCommand(FileExplorerCommandId::Forward, QStringLiteral("Forward"),
-                    QStringLiteral("Go to next location."), QStringLiteral("Alt+Right")),
-        makeCommand(FileExplorerCommandId::Up, QStringLiteral("Up"),
-                    QStringLiteral("Go to parent folder."), QStringLiteral("Alt+Up")),
-        makeCommand(FileExplorerCommandId::Home, QStringLiteral("Home"),
-                    QStringLiteral("Go to target root."), QStringLiteral("Alt+Home")),
-        makeCommand(FileExplorerCommandId::Refresh, QStringLiteral("Refresh"),
-                    QStringLiteral("Refresh current folder."), QStringLiteral("F5")),
-        makeCommand(FileExplorerCommandId::CopyPath, QStringLiteral("Copy Path"),
+        makeCommand(FileExplorerCommandId::Open,
+                    QStringLiteral("Open"),
+                    QStringLiteral("Open selected item."),
+                    QStringLiteral("Enter"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::OpenInNewTab,
+                    QStringLiteral("Open in New Tab"),
+                    QStringLiteral("Open selected item in a new explorer tab."),
+                    {},
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::OpenInSecondPane,
+                    QStringLiteral("Open in Second Pane"),
+                    QStringLiteral("Open selected item in the inactive pane."),
+                    {},
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::Back,
+                    QStringLiteral("Back"),
+                    QStringLiteral("Go to previous location."),
+                    QStringLiteral("Alt+Left")),
+        makeCommand(FileExplorerCommandId::Forward,
+                    QStringLiteral("Forward"),
+                    QStringLiteral("Go to next location."),
+                    QStringLiteral("Alt+Right")),
+        makeCommand(FileExplorerCommandId::Up,
+                    QStringLiteral("Up"),
+                    QStringLiteral("Go to parent folder."),
+                    QStringLiteral("Alt+Up")),
+        makeCommand(FileExplorerCommandId::Home,
+                    QStringLiteral("Home"),
+                    QStringLiteral("Go to target root."),
+                    QStringLiteral("Alt+Home")),
+        makeCommand(FileExplorerCommandId::Refresh,
+                    QStringLiteral("Refresh"),
+                    QStringLiteral("Refresh current folder."),
+                    QStringLiteral("F5")),
+        makeCommand(FileExplorerCommandId::CopyPath,
+                    QStringLiteral("Copy Path"),
                     QStringLiteral("Copy current folder path.")),
-        makeCommand(FileExplorerCommandId::CopyItemPath, QStringLiteral("Copy Item Path"),
-                    QStringLiteral("Copy selected item path."), QStringLiteral("Ctrl+Shift+C"), false, true),
-        makeCommand(FileExplorerCommandId::Preview, QStringLiteral("Preview"),
-                    QStringLiteral("Preview selected item."), QStringLiteral("Space"), false, true),
-        makeCommand(FileExplorerCommandId::Properties, QStringLiteral("Properties"),
-                    QStringLiteral("Show selected item properties."), QStringLiteral("Alt+Enter"), false, true),
-        makeCommand(FileExplorerCommandId::SelectAll, QStringLiteral("Select All"),
-                    QStringLiteral("Select every item in the current folder."), QStringLiteral("Ctrl+A")),
-        makeCommand(FileExplorerCommandId::ClearSelection, QStringLiteral("Clear Selection"),
-                    QStringLiteral("Clear current selection."), QStringLiteral("Esc")),
-        makeCommand(FileExplorerCommandId::InvertSelection, QStringLiteral("Invert Selection"),
+        makeCommand(FileExplorerCommandId::CopyItemPath,
+                    QStringLiteral("Copy Item Path"),
+                    QStringLiteral("Copy selected item path."),
+                    QStringLiteral("Ctrl+Shift+C"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::Preview,
+                    QStringLiteral("Preview"),
+                    QStringLiteral("Preview selected item."),
+                    QStringLiteral("Space"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::Properties,
+                    QStringLiteral("Properties"),
+                    QStringLiteral("Show selected item properties."),
+                    QStringLiteral("Alt+Enter"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::SelectAll,
+                    QStringLiteral("Select All"),
+                    QStringLiteral("Select every item in the current folder."),
+                    QStringLiteral("Ctrl+A")),
+        makeCommand(FileExplorerCommandId::ClearSelection,
+                    QStringLiteral("Clear Selection"),
+                    QStringLiteral("Clear current selection."),
+                    QStringLiteral("Esc")),
+        makeCommand(FileExplorerCommandId::InvertSelection,
+                    QStringLiteral("Invert Selection"),
                     QStringLiteral("Invert current folder selection.")),
-        makeCommand(FileExplorerCommandId::NewFolder, QStringLiteral("New Folder"),
+        makeCommand(FileExplorerCommandId::NewFolder,
+                    QStringLiteral("New Folder"),
                     QStringLiteral("Create a folder in the current location."),
-                    QStringLiteral("Ctrl+Shift+N"), false, false, true),
-        makeCommand(FileExplorerCommandId::WriteFile, QStringLiteral("Write File"),
+                    QStringLiteral("Ctrl+Shift+N"),
+                    {.write_operation = true}),
+        makeCommand(FileExplorerCommandId::WriteFile,
+                    QStringLiteral("Write File"),
                     QStringLiteral("Import or write a file into the current location."),
-                    QStringLiteral("Ctrl+V"), false, false, true),
-        makeCommand(FileExplorerCommandId::Rename, QStringLiteral("Rename"),
-                    QStringLiteral("Rename selected item."), QStringLiteral("F2"), false, true, true),
-        makeCommand(FileExplorerCommandId::Delete, QStringLiteral("Delete"),
-                    QStringLiteral("Delete selected item."), QStringLiteral("Delete"), true, true, true),
-        makeCommand(FileExplorerCommandId::ToggleHiddenItems, QStringLiteral("Hidden Items"),
-                    QStringLiteral("Toggle hidden item display."), QStringLiteral("Ctrl+H")),
-        makeCommand(FileExplorerCommandId::ToggleFileExtensions, QStringLiteral("File Extensions"),
+                    QStringLiteral("Ctrl+V"),
+                    {.write_operation = true}),
+        makeCommand(FileExplorerCommandId::Rename,
+                    QStringLiteral("Rename"),
+                    QStringLiteral("Rename selected item."),
+                    QStringLiteral("F2"),
+                    {.selection_required = true, .write_operation = true}),
+        makeCommand(FileExplorerCommandId::Delete,
+                    QStringLiteral("Delete"),
+                    QStringLiteral("Delete selected item."),
+                    QStringLiteral("Delete"),
+                    {.destructive = true, .selection_required = true, .write_operation = true}),
+        makeCommand(FileExplorerCommandId::ToggleHiddenItems,
+                    QStringLiteral("Hidden Items"),
+                    QStringLiteral("Toggle hidden item display."),
+                    QStringLiteral("Ctrl+H")),
+        makeCommand(FileExplorerCommandId::ToggleFileExtensions,
+                    QStringLiteral("File Extensions"),
                     QStringLiteral("Toggle file extension display.")),
-        makeCommand(FileExplorerCommandId::ViewDetails, QStringLiteral("Details"),
-                    QStringLiteral("Switch to details view."), QStringLiteral("Ctrl+Shift+1")),
-        makeCommand(FileExplorerCommandId::ViewList, QStringLiteral("List"),
-                    QStringLiteral("Switch to list view."), QStringLiteral("Ctrl+Shift+2")),
-        makeCommand(FileExplorerCommandId::ViewGrid, QStringLiteral("Grid"),
-                    QStringLiteral("Switch to grid view."), QStringLiteral("Ctrl+Shift+3")),
-        makeCommand(FileExplorerCommandId::ViewCards, QStringLiteral("Cards"),
-                    QStringLiteral("Switch to cards view."), QStringLiteral("Ctrl+Shift+4")),
-        makeCommand(FileExplorerCommandId::ViewColumns, QStringLiteral("Columns"),
-                    QStringLiteral("Switch to columns view."), QStringLiteral("Ctrl+Shift+5")),
-        makeCommand(FileExplorerCommandId::ViewAdaptive, QStringLiteral("Adaptive"),
-                    QStringLiteral("Switch to adaptive icon view."), QStringLiteral("Ctrl+Shift+6")),
-        makeCommand(FileExplorerCommandId::TogglePreviewPane, QStringLiteral("Preview Pane"),
-                    QStringLiteral("Toggle preview and details pane."), QStringLiteral("Ctrl+Alt+I")),
-        makeCommand(FileExplorerCommandId::ToggleDualPane, QStringLiteral("Dual Pane"),
-                    QStringLiteral("Toggle dual-pane explorer layout."), QStringLiteral("Ctrl+Alt+D")),
+        makeCommand(FileExplorerCommandId::ViewDetails,
+                    QStringLiteral("Details"),
+                    QStringLiteral("Switch to details view."),
+                    QStringLiteral("Ctrl+Shift+1")),
+        makeCommand(FileExplorerCommandId::ViewList,
+                    QStringLiteral("List"),
+                    QStringLiteral("Switch to list view."),
+                    QStringLiteral("Ctrl+Shift+2")),
+        makeCommand(FileExplorerCommandId::ViewGrid,
+                    QStringLiteral("Grid"),
+                    QStringLiteral("Switch to grid view."),
+                    QStringLiteral("Ctrl+Shift+3")),
+        makeCommand(FileExplorerCommandId::ViewCards,
+                    QStringLiteral("Cards"),
+                    QStringLiteral("Switch to cards view."),
+                    QStringLiteral("Ctrl+Shift+4")),
+        makeCommand(FileExplorerCommandId::ViewColumns,
+                    QStringLiteral("Columns"),
+                    QStringLiteral("Switch to columns view."),
+                    QStringLiteral("Ctrl+Shift+5")),
+        makeCommand(FileExplorerCommandId::ViewAdaptive,
+                    QStringLiteral("Adaptive"),
+                    QStringLiteral("Switch to adaptive icon view."),
+                    QStringLiteral("Ctrl+Shift+6")),
+        makeCommand(FileExplorerCommandId::TogglePreviewPane,
+                    QStringLiteral("Preview Pane"),
+                    QStringLiteral("Toggle preview and details pane."),
+                    QStringLiteral("Ctrl+Alt+I")),
+        makeCommand(FileExplorerCommandId::ToggleDualPane,
+                    QStringLiteral("Dual Pane"),
+                    QStringLiteral("Toggle dual-pane explorer layout."),
+                    QStringLiteral("Ctrl+Alt+D")),
     };
 }
 
@@ -146,177 +310,61 @@ FileExplorerCommand FileExplorerCommandRegistry::command(const FileExplorerComma
 }
 
 FileExplorerCommandState FileExplorerCommandRegistry::state(
-    const FileExplorerCommandId id,
-    const FileExplorerCommandContext& context) {
+    const FileExplorerCommandId id, const FileExplorerCommandContext& context) {
     const FileExplorerCommand entry = command(id);
-    const bool selected_target = hasSelectedTarget(context);
-    const bool has_selection = !context.pane.selection.isEmpty();
-    const bool has_single_selection = context.pane.selection.hasSingleEntry();
-
-    if (id == FileExplorerCommandId::OpenInNewTab && !context.can_create_tabs) {
-        return disabledState(entry, QStringLiteral("Explorer tabs are unavailable in this build."));
+    if (const auto availability = buildAvailabilityState(id, context, entry)) {
+        return *availability;
     }
-    if ((id == FileExplorerCommandId::OpenInSecondPane ||
-         id == FileExplorerCommandId::ToggleDualPane) &&
-        !context.can_use_dual_pane) {
-        return disabledState(entry, QStringLiteral("Dual pane is unavailable in this build."));
+    if (const auto navigation = navigationOverrideState(id, context, entry)) {
+        return *navigation;
     }
-    switch (id) {
-    case FileExplorerCommandId::Back:
-        return context.pane.canGoBack()
-                   ? enabledState(entry)
-                   : disabledState(entry, QStringLiteral("No previous location."));
-    case FileExplorerCommandId::Forward:
-        return context.pane.canGoForward()
-                   ? enabledState(entry)
-                   : disabledState(entry, QStringLiteral("No next location."));
-    case FileExplorerCommandId::Up:
-        if (!selected_target) {
-            return disabledState(entry, QStringLiteral("No File Explorer target selected."));
-        }
-        return !context.pane.location.atRoot(context.target.local_file_system)
-                   ? enabledState(entry)
-                   : disabledState(entry, QStringLiteral("Already at target root."));
-    case FileExplorerCommandId::ClearSelection:
-        return has_selection ? enabledState(entry)
-                             : disabledState(entry, QStringLiteral("No selection to clear."));
-    default:
-        break;
-    }
-
-    if (!selected_target) {
+    if (!hasSelectedTarget(context)) {
         return disabledState(entry, QStringLiteral("No File Explorer target selected."));
     }
-
-    if (entry.selection_required && !has_selection) {
-        return disabledState(entry, QStringLiteral("Select an item first."));
+    if (const auto selection = selectionRequirementState(id, context, entry)) {
+        return *selection;
     }
-
-    switch (id) {
-    case FileExplorerCommandId::Open:
-    case FileExplorerCommandId::OpenInNewTab:
-    case FileExplorerCommandId::OpenInSecondPane:
-    case FileExplorerCommandId::Preview:
-    case FileExplorerCommandId::Properties:
-    case FileExplorerCommandId::Rename:
-        if (entry.selection_required && !has_single_selection) {
-            return disabledState(entry, QStringLiteral("Select one item."));
-        }
-        break;
-    default:
-        break;
+    if (const auto capability = capabilityState(id, context, entry)) {
+        return *capability;
     }
-
-    if (entry.write_operation && !context.target.can_write_files) {
-        return disabledState(entry, writeBlocker(context.target));
-    }
-
-    switch (id) {
-    case FileExplorerCommandId::Open:
-    case FileExplorerCommandId::OpenInNewTab:
-    case FileExplorerCommandId::OpenInSecondPane:
-        if (!context.target.can_browse) {
-            return disabledState(entry, browseBlocker(context.target));
-        }
-        break;
-    case FileExplorerCommandId::Preview:
-        if (!context.target.can_read_files) {
-            return disabledState(entry, readBlocker(context.target));
-        }
-        break;
-    case FileExplorerCommandId::Home:
-    case FileExplorerCommandId::Refresh:
-    case FileExplorerCommandId::SelectAll:
-    case FileExplorerCommandId::InvertSelection:
-    case FileExplorerCommandId::ToggleHiddenItems:
-    case FileExplorerCommandId::ToggleFileExtensions:
-    case FileExplorerCommandId::ViewDetails:
-    case FileExplorerCommandId::ViewList:
-    case FileExplorerCommandId::ViewGrid:
-    case FileExplorerCommandId::ViewCards:
-    case FileExplorerCommandId::ViewColumns:
-    case FileExplorerCommandId::ViewAdaptive:
-    case FileExplorerCommandId::TogglePreviewPane:
-    case FileExplorerCommandId::CopyPath:
-    case FileExplorerCommandId::CopyItemPath:
-    case FileExplorerCommandId::Properties:
-    case FileExplorerCommandId::NewFolder:
-    case FileExplorerCommandId::WriteFile:
-    case FileExplorerCommandId::Rename:
-    case FileExplorerCommandId::Delete:
-    case FileExplorerCommandId::ToggleDualPane:
-    case FileExplorerCommandId::Back:
-    case FileExplorerCommandId::Forward:
-    case FileExplorerCommandId::Up:
-        break;
-    }
-
     return enabledState(entry);
 }
 
 QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId id) {
-    switch (id) {
-    case FileExplorerCommandId::Open:
-        return QStringLiteral("open");
-    case FileExplorerCommandId::OpenInNewTab:
-        return QStringLiteral("open-new-tab");
-    case FileExplorerCommandId::OpenInSecondPane:
-        return QStringLiteral("open-second-pane");
-    case FileExplorerCommandId::Back:
-        return QStringLiteral("back");
-    case FileExplorerCommandId::Forward:
-        return QStringLiteral("forward");
-    case FileExplorerCommandId::Up:
-        return QStringLiteral("up");
-    case FileExplorerCommandId::Home:
-        return QStringLiteral("home");
-    case FileExplorerCommandId::Refresh:
-        return QStringLiteral("refresh");
-    case FileExplorerCommandId::CopyPath:
-        return QStringLiteral("copy-path");
-    case FileExplorerCommandId::CopyItemPath:
-        return QStringLiteral("copy-item-path");
-    case FileExplorerCommandId::Preview:
-        return QStringLiteral("preview");
-    case FileExplorerCommandId::Properties:
-        return QStringLiteral("properties");
-    case FileExplorerCommandId::SelectAll:
-        return QStringLiteral("select-all");
-    case FileExplorerCommandId::ClearSelection:
-        return QStringLiteral("clear-selection");
-    case FileExplorerCommandId::InvertSelection:
-        return QStringLiteral("invert-selection");
-    case FileExplorerCommandId::NewFolder:
-        return QStringLiteral("new-folder");
-    case FileExplorerCommandId::WriteFile:
-        return QStringLiteral("write-file");
-    case FileExplorerCommandId::Rename:
-        return QStringLiteral("rename");
-    case FileExplorerCommandId::Delete:
-        return QStringLiteral("delete");
-    case FileExplorerCommandId::ToggleHiddenItems:
-        return QStringLiteral("toggle-hidden-items");
-    case FileExplorerCommandId::ToggleFileExtensions:
-        return QStringLiteral("toggle-file-extensions");
-    case FileExplorerCommandId::ViewDetails:
-        return QStringLiteral("view-details");
-    case FileExplorerCommandId::ViewList:
-        return QStringLiteral("view-list");
-    case FileExplorerCommandId::ViewGrid:
-        return QStringLiteral("view-grid");
-    case FileExplorerCommandId::ViewCards:
-        return QStringLiteral("view-cards");
-    case FileExplorerCommandId::ViewColumns:
-        return QStringLiteral("view-columns");
-    case FileExplorerCommandId::ViewAdaptive:
-        return QStringLiteral("view-adaptive");
-    case FileExplorerCommandId::TogglePreviewPane:
-        return QStringLiteral("toggle-preview-pane");
-    case FileExplorerCommandId::ToggleDualPane:
-        return QStringLiteral("toggle-dual-pane");
-    }
-
-    return QStringLiteral("unknown");
+    using Id = FileExplorerCommandId;
+    static constexpr auto kNames = std::to_array<std::pair<Id, const char*>>({
+        {Id::Open, "open"},
+        {Id::OpenInNewTab, "open-new-tab"},
+        {Id::OpenInSecondPane, "open-second-pane"},
+        {Id::Back, "back"},
+        {Id::Forward, "forward"},
+        {Id::Up, "up"},
+        {Id::Home, "home"},
+        {Id::Refresh, "refresh"},
+        {Id::CopyPath, "copy-path"},
+        {Id::CopyItemPath, "copy-item-path"},
+        {Id::Preview, "preview"},
+        {Id::Properties, "properties"},
+        {Id::SelectAll, "select-all"},
+        {Id::ClearSelection, "clear-selection"},
+        {Id::InvertSelection, "invert-selection"},
+        {Id::NewFolder, "new-folder"},
+        {Id::WriteFile, "write-file"},
+        {Id::Rename, "rename"},
+        {Id::Delete, "delete"},
+        {Id::ToggleHiddenItems, "toggle-hidden-items"},
+        {Id::ToggleFileExtensions, "toggle-file-extensions"},
+        {Id::ViewDetails, "view-details"},
+        {Id::ViewList, "view-list"},
+        {Id::ViewGrid, "view-grid"},
+        {Id::ViewCards, "view-cards"},
+        {Id::ViewColumns, "view-columns"},
+        {Id::ViewAdaptive, "view-adaptive"},
+        {Id::TogglePreviewPane, "toggle-preview-pane"},
+        {Id::ToggleDualPane, "toggle-dual-pane"},
+    });
+    const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
+    return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");
 }
 
 }  // namespace sak

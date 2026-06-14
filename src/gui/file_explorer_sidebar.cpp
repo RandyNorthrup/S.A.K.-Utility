@@ -20,7 +20,8 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
     m_target_list = new QListWidget(this);
     m_target_list->setObjectName(QStringLiteral("fileExplorerTargetList"));
     m_target_list->setAccessibleName(tr("File explorer target navigation"));
-    m_target_list->setToolTip(tr("Mounted volumes, scanned partitions, and manual raw/image targets"));
+    m_target_list->setToolTip(
+        tr("Mounted volumes, scanned partitions, and manual raw/image targets"));
     m_target_list->setUniformItemSizes(true);
     m_target_list->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_target_list);

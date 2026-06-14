@@ -131,13 +131,25 @@ private:
     /// @brief Check if a virtual/raw target file should be skipped
     [[nodiscard]] bool shouldSkipTargetFile(const FileManagementEntry& file) const;
 
+    /// @brief Mutable accumulators threaded through a recursive target search.
+    struct TargetBatchState {
+        QVector<SearchMatch> batch_matches;
+        int file_count = 0;
+    };
+
     /// @brief Stream-search a virtual/raw target directory recursively
     bool searchTargetDirectory(const QString& directory_path,
                                const QRegularExpression& regex,
-                               QVector<SearchMatch>& batch_matches,
                                int& total_matches,
                                int& total_files,
-                               int& file_count);
+                               TargetBatchState& batch);
+
+    /// @brief Process one regular-file entry during a recursive target search
+    bool processTargetEntry(const FileManagementEntry& entry,
+                            const QRegularExpression& regex,
+                            int& total_matches,
+                            int& total_files,
+                            TargetBatchState& batch);
 
     /// @brief Search a virtual/raw target file from bytes
     [[nodiscard]] QVector<SearchMatch> searchTargetFile(const FileManagementEntry& file,

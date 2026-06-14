@@ -59,10 +59,10 @@ struct PartitionExtDirectoryExportOptions {
 
 class PartitionExtFileSystemReader {
 public:
-    [[nodiscard]] static PartitionExtFileReadResult listDirectory(QIODevice* device,
-                                                                  const QString& path = {},
-                                                                  int max_entries =
-                                                                      kPartitionExtDefaultBrowseEntryLimit);
+    [[nodiscard]] static PartitionExtFileReadResult listDirectory(
+        QIODevice* device,
+        const QString& path = {},
+        int max_entries = kPartitionExtDefaultBrowseEntryLimit);
     [[nodiscard]] static PartitionExtFileReadResult listDirectoryFromImage(
         const QString& image_path,
         const QString& path = {},

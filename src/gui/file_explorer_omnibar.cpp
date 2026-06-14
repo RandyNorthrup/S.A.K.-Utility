@@ -72,7 +72,8 @@ FileExplorerOmnibar::FileExplorerOmnibar(QWidget* parent) : QWidget(parent) {
 
     m_copy_path_button = new QPushButton(tr("Copy Path"), this);
     m_copy_path_button->setObjectName(QStringLiteral("fileExplorerCopyPathButton"));
-    m_copy_path_button->setIcon(FileExplorerIconRegistry::iconForCommand(FileExplorerCommandId::CopyItemPath));
+    m_copy_path_button->setIcon(
+        FileExplorerIconRegistry::iconForCommand(FileExplorerCommandId::CopyItemPath));
     m_copy_path_button->setAccessibleName(tr("Copy selected explorer path"));
     m_copy_path_button->setStyleSheet(ui::kSecondaryButtonStyle);
     pathRow->addWidget(m_copy_path_button);

@@ -149,12 +149,11 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
     const QString fileSystem = normalizedToken(file_system);
     const QString targetPath = target_path.trimmed();
     if (isExtFileSystem(fileSystem)) {
-        PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kE2fsckToolId),
-                                               .operation = readOnlyCheckOperation(),
-                                               .file_system = fileSystem,
-                                               .arguments = {QStringLiteral("-n"),
-                                                             QStringLiteral("-f"),
-                                                             targetPath}};
+        PartitionFileSystemToolCommand command{
+            .tool_id = QString::fromLatin1(kE2fsckToolId),
+            .operation = readOnlyCheckOperation(),
+            .file_system = fileSystem,
+            .arguments = {QStringLiteral("-n"), QStringLiteral("-f"), targetPath}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -167,12 +166,11 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
         return command;
     }
     if (fileSystem == QString::fromLatin1(kBtrfsFileSystem)) {
-        PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kBtrfsToolId),
-                                               .operation = readOnlyCheckOperation(),
-                                               .file_system = fileSystem,
-                                               .arguments = {QStringLiteral("check"),
-                                                             QStringLiteral("--readonly"),
-                                                             targetPath}};
+        PartitionFileSystemToolCommand command{
+            .tool_id = QString::fromLatin1(kBtrfsToolId),
+            .operation = readOnlyCheckOperation(),
+            .file_system = fileSystem,
+            .arguments = {QStringLiteral("check"), QStringLiteral("--readonly"), targetPath}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -203,11 +201,11 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildFormatCommand
     const QString targetPath = target_path.trimmed();
     if (isHfsFileSystem(fileSystem)) {
         const QString hfsTargetPath = hfsToolTargetPath(targetPath);
-        PartitionFileSystemToolCommand command{
-            .tool_id = QString::fromLatin1(kNewfsHfsToolId),
-            .operation = formatOperation(),
-            .file_system = normalizedHfsToolFileSystem(fileSystem),
-            .arguments = {}};
+        PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kNewfsHfsToolId),
+                                               .operation = formatOperation(),
+                                               .file_system =
+                                                   normalizedHfsToolFileSystem(fileSystem),
+                                               .arguments = {}};
         if (fileSystem == QString::fromLatin1(kHfsxFileSystem)) {
             command.arguments.append(QStringLiteral("-s"));
         }
@@ -231,12 +229,11 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildFormatCommand
                                                             : fileSystem));
     }
 
-    PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kMke2fsToolId),
-                                           .operation = formatOperation(),
-                                           .file_system = fileSystem,
-                                           .arguments = {QStringLiteral("-t"),
-                                                         fileSystem,
-                                                         QStringLiteral("-F")}};
+    PartitionFileSystemToolCommand command{
+        .tool_id = QString::fromLatin1(kMke2fsToolId),
+        .operation = formatOperation(),
+        .file_system = fileSystem,
+        .arguments = {QStringLiteral("-t"), fileSystem, QStringLiteral("-F")}};
     const QString trimmedLabel = label.trimmed();
     if (!trimmedLabel.isEmpty()) {
         command.arguments.append(QStringLiteral("-L"));
@@ -273,12 +270,11 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildRepairCommand
                                                             : fileSystem));
     }
 
-    PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kE2fsckToolId),
-                                           .operation = repairOperation(),
-                                           .file_system = fileSystem,
-                                           .arguments = {QStringLiteral("-p"),
-                                                         QStringLiteral("-f"),
-                                                         targetPath}};
+    PartitionFileSystemToolCommand command{
+        .tool_id = QString::fromLatin1(kE2fsckToolId),
+        .operation = repairOperation(),
+        .file_system = fileSystem,
+        .arguments = {QStringLiteral("-p"), QStringLiteral("-f"), targetPath}};
     appendTargetBlockers(target_path, &command.blockers);
     appendDestructiveConfirmationBlocker(destructive_confirmed, &command.blockers);
     return command;
@@ -337,9 +333,8 @@ PartitionFileSystemToolResolution PartitionFileSystemToolRunner::resolveApproved
             QStringLiteral("Tool '%1' does not approve operation '%2'").arg(tool_id, operation));
     }
     if (!containsToken(tool->file_systems, file_system)) {
-        resolution.blockers.append(
-            QStringLiteral("Tool '%1' does not approve file system '%2'").arg(tool_id,
-                                                                              file_system));
+        resolution.blockers.append(QStringLiteral("Tool '%1' does not approve file system '%2'")
+                                       .arg(tool_id, file_system));
     }
     if (!resolution.blockers.isEmpty()) {
         return resolution;

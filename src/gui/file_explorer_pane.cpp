@@ -60,7 +60,9 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     columnsLayout->setContentsMargins(0, 0, 0, 0);
     columnsLayout->setSpacing(ui::kSpacingSmall);
     m_columns_view = new QListView(m_columns_container);
-    configureListView(m_columns_view, QStringLiteral("fileExplorerColumnsView"), QListView::ListMode);
+    configureListView(m_columns_view,
+                      QStringLiteral("fileExplorerColumnsView"),
+                      QListView::ListMode);
     m_columns_preview_view = new QListView(m_columns_container);
     configureColumnsPreviewView(m_columns_preview_view);
     columnsLayout->addWidget(m_columns_view, 1);
@@ -73,7 +75,8 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     m_status_label->setObjectName(QStringLiteral("fileExplorerStatusLabel"));
     m_status_label->setAccessibleName(tr("Explorer status"));
     m_status_label->setWordWrap(true);
-    m_status_label->setStyleSheet(ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
+    m_status_label->setStyleSheet(
+        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     layout->addWidget(m_status_label);
 
     connect(m_selection_model,
@@ -153,14 +156,14 @@ FileManagementEntry FileExplorerPane::entryAtViewRow(const int row) const {
     if (!hasViewEntry(row)) {
         return {};
     }
-    const QModelIndex proxy_index = m_sort_filter_model->index(row, FileExplorerItemModel::NameColumn);
+    const QModelIndex proxy_index = m_sort_filter_model->index(row,
+                                                               FileExplorerItemModel::NameColumn);
     const QModelIndex source_index = m_sort_filter_model->mapToSource(proxy_index);
     return m_item_model->entryAt(source_index.row());
 }
 
 bool FileExplorerPane::hasViewEntry(const int row) const {
-    return m_sort_filter_model && m_item_model && row >= 0 &&
-           row < m_sort_filter_model->rowCount();
+    return m_sort_filter_model && m_item_model && row >= 0 && row < m_sort_filter_model->rowCount();
 }
 
 FileExplorerViewMode FileExplorerPane::viewMode() const {
@@ -318,33 +321,28 @@ void FileExplorerPane::applyItemSize() {
     }
     if (m_grid_view) {
         m_grid_view->setIconSize(iconSize);
-        m_grid_view->setGridSize(QSize(std::max(kFileExplorerGridMinCellW,
-                                                m_item_size_px + kFileExplorerGridCellExtraW),
-                                       std::max(kFileExplorerGridMinCellH,
-                                                m_item_size_px + kFileExplorerGridCellExtraH)));
+        m_grid_view->setGridSize(QSize(
+            std::max(kFileExplorerGridMinCellW, m_item_size_px + kFileExplorerGridCellExtraW),
+            std::max(kFileExplorerGridMinCellH, m_item_size_px + kFileExplorerGridCellExtraH)));
     }
     if (m_cards_view) {
-        const int cardsIconSize =
-            std::max(kFileExplorerCardsMinIconSize, m_item_size_px / 2);
+        const int cardsIconSize = std::max(kFileExplorerCardsMinIconSize, m_item_size_px / 2);
         m_cards_view->setIconSize(QSize(cardsIconSize, cardsIconSize));
-        m_cards_view->setGridSize(QSize(
-            kFileExplorerCardsCellW,
-            std::max(kFileExplorerCardsMinCellH,
-                     m_item_size_px + kFileExplorerCardsCellExtraH)));
+        m_cards_view->setGridSize(QSize(kFileExplorerCardsCellW,
+                                        std::max(kFileExplorerCardsMinCellH,
+                                                 m_item_size_px + kFileExplorerCardsCellExtraH)));
     }
     if (m_columns_view) {
         m_columns_view->setIconSize(QSize(kFileExplorerListIconSize, kFileExplorerListIconSize));
-        m_columns_view->setGridSize(QSize(
-            std::max(kFileExplorerColumnsMinCellW,
-                     m_item_size_px * kFileExplorerColumnsCellScale),
-            kFileExplorerColumnsCellH));
+        m_columns_view->setGridSize(QSize(std::max(kFileExplorerColumnsMinCellW,
+                                                   m_item_size_px * kFileExplorerColumnsCellScale),
+                                          kFileExplorerColumnsCellH));
     }
     if (m_columns_preview_view) {
         m_columns_preview_view->setIconSize(
             QSize(kFileExplorerListIconSize, kFileExplorerListIconSize));
         m_columns_preview_view->setGridSize(QSize(
-            std::max(kFileExplorerColumnsMinCellW,
-                     m_item_size_px * kFileExplorerColumnsCellScale),
+            std::max(kFileExplorerColumnsMinCellW, m_item_size_px * kFileExplorerColumnsCellScale),
             kFileExplorerColumnsCellH));
     }
 }

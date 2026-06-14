@@ -10,9 +10,9 @@
 #include <QIODevice>
 
 #include <algorithm>
-#include <vector>
 #include <limits>
 #include <utility>
+#include <vector>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -55,8 +55,7 @@ QString win32ErrorMessage(DWORD errorCode) {
 
 class WindowsRawDevice final : public QIODevice {
 public:
-    WindowsRawDevice(QString path, bool writable)
-        : path_(std::move(path)), writable_(writable) {}
+    WindowsRawDevice(QString path, bool writable) : path_(std::move(path)), writable_(writable) {}
 
     ~WindowsRawDevice() override { close(); }
 
@@ -169,9 +168,7 @@ private:
         return prefixBytes == 0 && (maxSize % kRawAlignment) == 0;
     }
 
-    [[nodiscard]] qint64 alignedStart() const {
-        return alignedStartFor(position_);
-    }
+    [[nodiscard]] qint64 alignedStart() const { return alignedStartFor(position_); }
 
     [[nodiscard]] static qint64 alignedStartFor(qint64 position) {
         return (position / kRawAlignment) * kRawAlignment;
@@ -207,8 +204,8 @@ private:
             return 0;
         }
 
-        const qint64 copied =
-            std::min<qint64>(maxSize, static_cast<qint64>(bytesRead) - prefixBytes);
+        const qint64 copied = std::min<qint64>(maxSize,
+                                               static_cast<qint64>(bytesRead) - prefixBytes);
         std::copy_n(scratch.data() + prefixBytes, copied, data);
         position_ += copied;
         return copied;
@@ -300,8 +297,7 @@ bool isWindowsRawDevicePath(const QString& path) {
 #endif
 }
 
-std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path,
-                                                       QString* errorMessage) {
+std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QString* errorMessage) {
     if (path.trimmed().isEmpty()) {
         setError(errorMessage, QStringLiteral("Path is required"));
         return {};

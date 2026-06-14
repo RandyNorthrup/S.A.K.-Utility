@@ -45,14 +45,14 @@ public:
      * @brief Configuration for duplicate finder operation
      */
     struct Config {
-        QVector<QString> scanDirectories;  ///< Directories to scan
+        QVector<QString> scanDirectories;              ///< Directories to scan
         sak::FileManagementTarget file_system_target;  ///< Optional raw/image target
         QVector<QString> virtual_directories;          ///< Directories inside file_system_target
-        qint64 minimum_file_size{0};       ///< Minimum file size to consider (bytes)
-        bool recursive_scan{true};         ///< Scan subdirectories
-        bool parallel_hashing{true};       ///< Use parallel hash calculation
-        int hash_thread_count{0};          ///< Thread count (0 = auto-detect)
-        bool use_file_system_target{false};  ///< Scan via FileManagementFileSystemBridge
+        qint64 minimum_file_size{0};                   ///< Minimum file size to consider (bytes)
+        bool recursive_scan{true};                     ///< Scan subdirectories
+        bool parallel_hashing{true};                   ///< Use parallel hash calculation
+        int hash_thread_count{0};                      ///< Thread count (0 = auto-detect)
+        bool use_file_system_target{false};            ///< Scan via FileManagementFileSystemBridge
     };
 
     /**
@@ -154,9 +154,8 @@ private:
     auto scanFileSystemTarget() -> std::expected<QVector<VirtualFile>, sak::error_code>;
 
     /// @brief Recursively collect virtual file entries from a target directory
-    auto collectVirtualFiles(const QString& directory_path,
-                             QVector<VirtualFile>& files,
-                             int depth) -> std::expected<void, sak::error_code>;
+    auto collectVirtualFiles(const QString& directory_path, QVector<VirtualFile>& files, int depth)
+        -> std::expected<void, sak::error_code>;
 
     /// @brief Hash virtual files using the shared bridge reader
     auto hashVirtualFiles(const QVector<VirtualFile>& files)

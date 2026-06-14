@@ -13,11 +13,11 @@
 #include "sak/message_box_helpers.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_ext_file_system_reader.h"
-#include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
+#include "sak/partition_hfs_file_system_reader.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractButton>
@@ -258,8 +258,7 @@ constexpr const char* kInspectNonNativeFilesystemActionProperty =
     "partitionInspectNonNativeFilesystemAction";
 constexpr const char* kBrowseNonNativeFilesystemActionProperty =
     "partitionBrowseNonNativeFilesystemAction";
-constexpr const char* kApfsRootFileMutationActionProperty =
-    "partitionApfsRootFileMutationAction";
+constexpr const char* kApfsRootFileMutationActionProperty = "partitionApfsRootFileMutationAction";
 constexpr const char* kHfsFileMutationActionProperty = "partitionHfsFileMutationAction";
 constexpr const char* kHfsCatalogCheckOperation = "hfs-catalog-check";
 constexpr const char* kApfsRootFileWriteMode = "write";
@@ -520,11 +519,11 @@ PartitionActionAvailability buttonActionAvailability(const QAbstractButton* butt
     if (!buttonAllowsTarget(button, target)) {
         return {false, QObject::tr("Selected target does not support this action.")};
     }
-    return partitionActionAvailability(partition,
-                                       {button->property(kActionRequiresDriveLetterProperty).toBool(),
-                                        button->property(kActionWindowsNativeFilesystemProperty)
-                                            .toBool(),
-                                        button->property(kActionResizeFilesystemProperty).toBool()});
+    return partitionActionAvailability(
+        partition,
+        {button->property(kActionRequiresDriveLetterProperty).toBool(),
+         button->property(kActionWindowsNativeFilesystemProperty).toBool(),
+         button->property(kActionResizeFilesystemProperty).toBool()});
 }
 
 ContextActionSpec partitionContextActionSpec(const QString& text,
@@ -610,8 +609,8 @@ bool isRepairableNonNativeCheckFilesystem(const QString& fileSystem) {
 }
 
 bool partitionHasProtectedRole(const PartitionInfoEx& partition) {
-    return partition.is_system || partition.is_boot || partition.is_efi ||
-           partition.is_recovery || partition.is_msr;
+    return partition.is_system || partition.is_boot || partition.is_efi || partition.is_recovery ||
+           partition.is_msr;
 }
 
 bool partitionAllowsNonNativeRepair(const PartitionInfoEx& partition) {
@@ -667,8 +666,7 @@ bool hasMetadataSanityEvidence(const QStringList& details) {
 
 bool hasMetadataSanityWarnings(const QStringList& details) {
     return std::any_of(details.cbegin(), details.cend(), [](const QString& detail) {
-        return detail.startsWith(QStringLiteral("Metadata sanity warning:"),
-                                 Qt::CaseInsensitive);
+        return detail.startsWith(QStringLiteral("Metadata sanity warning:"), Qt::CaseInsensitive);
     });
 }
 
@@ -676,8 +674,7 @@ QStringList metadataSanityFindings(const QStringList& details) {
     QStringList findings;
     for (const auto& detail : details) {
         if (detail.startsWith(QStringLiteral("Metadata sanity:"), Qt::CaseInsensitive) ||
-            detail.startsWith(QStringLiteral("Metadata sanity warning:"),
-                              Qt::CaseInsensitive)) {
+            detail.startsWith(QStringLiteral("Metadata sanity warning:"), Qt::CaseInsensitive)) {
             findings.append(detail);
         }
     }
@@ -690,15 +687,16 @@ bool fillInternalMetadataCheckState(NonNativeFilesystemCheckState* state) {
     }
     if (!hasMetadataSanityEvidence(state->metadata_details)) {
         state->reason = QObject::tr(
-            "No captured %1 metadata sanity evidence is available; refresh disk inventory first.")
+                            "No captured %1 metadata sanity evidence is available; refresh disk "
+                            "inventory first.")
                             .arg(state->file_system);
         return true;
     }
     state->enabled = true;
     state->internal_metadata_check = true;
-    state->reason = QObject::tr(
-        "Run original read-only %1 metadata consistency check from captured probe data")
-                        .arg(state->file_system);
+    state->reason =
+        QObject::tr("Run original read-only %1 metadata consistency check from captured probe data")
+            .arg(state->file_system);
     return true;
 }
 
@@ -708,9 +706,10 @@ bool fillHfsConsistencyCheckState(NonNativeFilesystemCheckState* state) {
     }
     state->enabled = true;
     state->hfs_consistency_check = true;
-    state->reason = QObject::tr(
-        "Run original read-only %1 catalog consistency check with attributes B-tree key scan")
-                        .arg(state->file_system);
+    state->reason =
+        QObject::tr(
+            "Run original read-only %1 catalog consistency check with attributes B-tree key scan")
+            .arg(state->file_system);
     return true;
 }
 
@@ -727,9 +726,9 @@ QStringList nonNativeToolBlockers(const PartitionFileSystemCapability& capabilit
     QStringList reasons = blockers;
     reasons.append(capability.blocked_actions);
     if (!capability.required_tools.isEmpty()) {
-        reasons.append(QObject::tr("Required bundled tools: %1")
-                           .arg(PartitionFileSystemRegistry::actionSummary(
-                               capability.required_tools)));
+        reasons.append(
+            QObject::tr("Required bundled tools: %1")
+                .arg(PartitionFileSystemRegistry::actionSummary(capability.required_tools)));
     }
     return reasons;
 }
@@ -740,9 +739,8 @@ NonNativeFilesystemCheckState resolveNonNativeCheckToolState(
     NonNativeFilesystemCheckState state, const PartitionFileSystemCapability& capability) {
     const bool hfsConsistencyAvailable = fillHfsConsistencyCheckState(&state);
 
-    const auto command =
-        PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(state.file_system,
-                                                                 state.target_path);
+    const auto command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(
+        state.file_system, state.target_path);
     if (!command.ok()) {
         if (hfsConsistencyAvailable) {
             return state;
@@ -839,8 +837,7 @@ NonNativeFilesystemCheckState nonNativeFilesystemCheckState(
         return state;
     }
     state.file_system = volume->file_system.trimmed();
-    const auto capability =
-        PartitionFileSystemRegistry::capabilityFor(state.file_system);
+    const auto capability = PartitionFileSystemRegistry::capabilityFor(state.file_system);
     if (!capability.non_native) {
         state.reason =
             QObject::tr("Selected file system uses Windows-native Partition Manager actions.");
@@ -916,7 +913,8 @@ HfsFileMutationState hfsFileMutationState(const std::optional<PartitionTarget>& 
     state.wrapped = detailsContainYes(volume->file_system_details, QStringLiteral("HFS wrapper"));
     state.journaled = detailsContainYes(volume->file_system_details, QStringLiteral("Journaled"));
     state.enabled = true;
-    state.reason = QObject::tr("Queue HFS+ staged file, resource fork, or inline attribute mutation.");
+    state.reason =
+        QObject::tr("Queue HFS+ staged file, resource fork, or inline attribute mutation.");
     return state;
 }
 
@@ -935,8 +933,7 @@ NonNativeFilesystemInspectState nonNativeFilesystemInspectState(const PartitionI
         return state;
     }
     if (partition->volume->file_system_details.isEmpty()) {
-        state.reason =
-            QObject::tr("No read-only raw metadata was captured for this file system.");
+        state.reason = QObject::tr("No read-only raw metadata was captured for this file system.");
         return state;
     }
 
@@ -963,7 +960,8 @@ NonNativeFilesystemBrowseState nonNativeFilesystemBrowseState(
     if (!isExtFilesystem(state.file_system) && !isHfsFilesystem(state.file_system) &&
         !isApfsFilesystem(state.file_system)) {
         state.reason = QObject::tr(
-            "Read-only browsing is currently available for ext2/ext3/ext4, HFS+/HFSX, and APFS only.");
+            "Read-only browsing is currently available for ext2/ext3/ext4, HFS+/HFSX, and APFS "
+            "only.");
         return state;
     }
 
@@ -974,8 +972,7 @@ NonNativeFilesystemBrowseState nonNativeFilesystemBrowseState(
     }
 
     state.enabled = true;
-    state.reason =
-        QObject::tr("Browse read-only %1 directory entries").arg(state.file_system);
+    state.reason = QObject::tr("Browse read-only %1 directory entries").arg(state.file_system);
     return state;
 }
 
@@ -996,9 +993,8 @@ void updateBrowseNonNativeFilesystemButton(QAbstractButton* button,
     const auto state = nonNativeFilesystemBrowseState(target, partition);
     const bool enabled = state.enabled && !operationRunning;
     button->setEnabled(enabled);
-    const QString reason = operationRunning
-                               ? QObject::tr("Partition operation is already running.")
-                               : state.reason;
+    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
+                                            : state.reason;
     button->setToolTip(reason);
     button->setStatusTip(reason);
     button->setAccessibleDescription(reason);
@@ -1021,9 +1017,8 @@ void updateApfsRootFileMutationButton(QAbstractButton* button,
     const auto state = apfsRootFileMutationState(target, partition);
     const bool enabled = state.enabled && !operationRunning;
     button->setEnabled(enabled);
-    const QString reason = operationRunning
-                               ? QObject::tr("Partition operation is already running.")
-                               : state.reason;
+    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
+                                            : state.reason;
     button->setToolTip(reason);
     button->setStatusTip(reason);
     button->setAccessibleDescription(reason);
@@ -1036,9 +1031,8 @@ void updateHfsFileMutationButton(QAbstractButton* button,
     const auto state = hfsFileMutationState(target, partition);
     const bool enabled = state.enabled && !operationRunning;
     button->setEnabled(enabled);
-    const QString reason = operationRunning
-                               ? QObject::tr("Partition operation is already running.")
-                               : state.reason;
+    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
+                                            : state.reason;
     button->setToolTip(reason);
     button->setStatusTip(reason);
     button->setAccessibleDescription(reason);
@@ -1083,11 +1077,10 @@ void updateTargetButtonState(QAbstractButton* button,
     button->setEnabled(enabled);
     const QString defaultTooltip = button->property(kActionDefaultTooltipProperty).toString();
     const bool targetMismatch = !target || !buttonAllowsTarget(button, target);
-    const QString reason = operationRunning
-                               ? QObject::tr("Partition operation is already running.")
-                               : (targetMismatch || availability.reason.isEmpty()
-                                      ? defaultTooltip
-                                      : availability.reason);
+    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
+                                            : (targetMismatch || availability.reason.isEmpty()
+                                                   ? defaultTooltip
+                                                   : availability.reason);
     button->setToolTip(reason);
     button->setStatusTip(reason);
     button->setAccessibleDescription(reason);
@@ -3055,8 +3048,8 @@ struct NonNativeCheckDialogControls {
 };
 
 bool nonNativeCheckRepairMode(const QComboBox* mode) {
-    return mode && mode->currentData().toString() ==
-                       PartitionFileSystemToolRunner::repairOperation();
+    return mode &&
+           mode->currentData().toString() == PartitionFileSystemToolRunner::repairOperation();
 }
 
 bool nonNativeCheckHfsCatalogMode(const QString& mode) {
@@ -3138,8 +3131,9 @@ QString nonNativeRepairFamilyLabel(const QString& fileSystem) {
 
 QString nonNativeRepairConfirmationText(const QString& fileSystem, const QString& toolId) {
     if (isHfsFilesystem(fileSystem)) {
-        return QObject::tr("I understand this will stage a sparse HFS image, run bundled %1, "
-                           "and write repaired metadata back on Apply.")
+        return QObject::tr(
+                   "I understand this will stage a sparse HFS image, run bundled %1, "
+                   "and write repaired metadata back on Apply.")
             .arg(toolId);
     }
     if (isApfsFilesystem(fileSystem)) {
@@ -3152,9 +3146,7 @@ QString nonNativeRepairConfirmationText(const QString& fileSystem, const QString
 }
 
 std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
-    QWidget* parent,
-    const NonNativeFilesystemCheckState& state,
-    const QString& writeTarget) {
+    QWidget* parent, const NonNativeFilesystemCheckState& state, const QString& writeTarget) {
     PartitionOperationDialog dialog(
         QObject::tr("Check Non-Windows File System"),
         state.target_path,
@@ -3172,8 +3164,7 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
     const QString repairFamily = nonNativeRepairFamilyLabel(state.file_system);
     auto* repairConfirm =
         new QCheckBox(nonNativeRepairConfirmationText(state.file_system, repairTool), &dialog);
-    repairConfirm->setAccessibleName(
-        QObject::tr("Confirm %1 filesystem repair").arg(repairFamily));
+    repairConfirm->setAccessibleName(QObject::tr("Confirm %1 filesystem repair").arg(repairFamily));
     dialog.formLayout()->addRow(QObject::tr("Mode:"), mode);
     dialog.formLayout()->addRow(QObject::tr("Target path:"), targetPath);
     dialog.formLayout()->addRow(QString(), repairConfirm);
@@ -3181,9 +3172,16 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
         mode->setToolTip(state.repair_reason);
     }
 
-    const NonNativeCheckDialogControls controls{
-        &dialog, mode, targetPath, repairConfirm, state.target_path, writeTarget, state.file_system};
-    auto updatePreview = [&controls]() { syncNonNativeCheckDialog(controls); };
+    const NonNativeCheckDialogControls controls{&dialog,
+                                                mode,
+                                                targetPath,
+                                                repairConfirm,
+                                                state.target_path,
+                                                writeTarget,
+                                                state.file_system};
+    auto updatePreview = [&controls]() {
+        syncNonNativeCheckDialog(controls);
+    };
     QObject::connect(mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
     QObject::connect(targetPath, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(repairConfirm, &QCheckBox::toggled, &dialog, updatePreview);
@@ -3213,7 +3211,13 @@ struct CreatePartitionWidgets {
     OperationSizePreviewWidget* size_preview{nullptr};
 };
 
-enum class RawFormatKind { None, Ext, Hfs, Swap, Apfs };
+enum class RawFormatKind {
+    None,
+    Ext,
+    Hfs,
+    Swap,
+    Apfs
+};
 
 RawFormatKind rawFormatKindForFileSystem(const QString& fileSystem);
 QString rawFormatConfirmationAccessibleName(RawFormatKind kind);
@@ -3609,8 +3613,8 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
         formatText = QObject::tr(" Format with S.A.K. generated APFS metadata.");
         break;
     case RawFormatKind::None:
-        formatText =
-            QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
+        formatText = QObject::tr(" Format with %1.")
+                         .arg(selectedAllocationUnitText(widgets.allocation_unit));
         break;
     }
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
@@ -3960,11 +3964,13 @@ QString rawFormatConfirmationText(RawFormatKind kind) {
             "I understand this will stage a sparse HFS image with bundled newfs_hfs and write "
             "the resulting metadata to the raw partition.");
     case RawFormatKind::Swap:
-        return QObject::tr("I understand this will overwrite the first swap page with Linux "
-                           "SWAPSPACE2 metadata.");
+        return QObject::tr(
+            "I understand this will overwrite the first swap page with Linux "
+            "SWAPSPACE2 metadata.");
     case RawFormatKind::Apfs:
-        return QObject::tr("I understand this will run the S.A.K. APFS writer helper and "
-                           "overwrite the selected raw partition with generated APFS metadata.");
+        return QObject::tr(
+            "I understand this will run the S.A.K. APFS writer helper and "
+            "overwrite the selected raw partition with generated APFS metadata.");
     case RawFormatKind::None:
         return {};
     }
@@ -3977,7 +3983,8 @@ QString formatPartitionPreviewText(const FormatPartitionWidgets& widgets, RawFor
         return QObject::tr("Format as %1 with bundled mke2fs and label \"%2\".")
             .arg(widgets.file_system->currentText(), widgets.label->text());
     case RawFormatKind::Hfs:
-        return QObject::tr("Format as %1 through sparse staging with bundled newfs_hfs and label \"%2\".")
+        return QObject::tr(
+                   "Format as %1 through sparse staging with bundled newfs_hfs and label \"%2\".")
             .arg(widgets.file_system->currentText(), widgets.label->text());
     case RawFormatKind::Swap:
         return QObject::tr("Format as Linux swap with page size %1 and label \"%2\".")
@@ -4019,11 +4026,10 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
                                    QStringLiteral("APFS"),
                                    QStringLiteral("Linux swap")});
     widgets.file_system->setAccessibleName(QObject::tr("File system"));
-    if (partition.volume &&
-        (isExtFilesystem(partition.volume->file_system) ||
-         isHfsFilesystem(partition.volume->file_system) ||
-         isApfsFilesystem(partition.volume->file_system) ||
-         isLinuxSwapFilesystem(partition.volume->file_system))) {
+    if (partition.volume && (isExtFilesystem(partition.volume->file_system) ||
+                             isHfsFilesystem(partition.volume->file_system) ||
+                             isApfsFilesystem(partition.volume->file_system) ||
+                             isLinuxSwapFilesystem(partition.volume->file_system))) {
         setComboCurrentTextCaseInsensitive(widgets.file_system, partition.volume->file_system);
     }
 
@@ -4066,7 +4072,9 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
 
 void connectFormatPartitionControls(PartitionOperationDialog& dialog,
                                     const FormatPartitionWidgets& widgets) {
-    auto updatePreview = [&dialog, widgets]() { updateFormatPartitionPreview(dialog, widgets); };
+    auto updatePreview = [&dialog, widgets]() {
+        updateFormatPartitionPreview(dialog, widgets);
+    };
     QObject::connect(widgets.file_system, &QComboBox::currentTextChanged, &dialog, updatePreview);
     QObject::connect(
         widgets.allocation_unit, &QComboBox::currentTextChanged, &dialog, updatePreview);
@@ -4086,12 +4094,10 @@ QJsonObject formatPartitionPayload(const FormatPartitionWidgets& widgets,
     payload[QStringLiteral("label")] = widgets.label->text();
     payload[QStringLiteral("full_format")] = widgets.full_format->isChecked();
     if (isExtFilesystem(fileSystem) || isHfsFilesystem(fileSystem) ||
-        isApfsFilesystem(fileSystem) ||
-        isLinuxSwapFilesystem(fileSystem)) {
+        isApfsFilesystem(fileSystem) || isLinuxSwapFilesystem(fileSystem)) {
         payload[QStringLiteral("non_native_file_system_tool")] = true;
         payload[QStringLiteral("target_path")] = nonNativeFilesystemWriteTargetPath(&partition);
-        payload[QStringLiteral("target_wipe_confirmed")] =
-            widgets.raw_format_confirm->isChecked();
+        payload[QStringLiteral("target_wipe_confirmed")] = widgets.raw_format_confirm->isChecked();
     }
     if (isLinuxSwapFilesystem(fileSystem)) {
         payload[QStringLiteral("linux_swap_page_size_bytes")] =
@@ -5306,7 +5312,8 @@ QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
         const uint64_t targetBytes = selectedResizeTargetBytes(widgets);
         if (mode != adjacentResizeMode()) {
             return QObject::tr(
-                "Ext resize supports same-start adjacent resize only. Move and donor rebuild remain blocked "
+                "Ext resize supports same-start adjacent resize only. Move and donor rebuild "
+                "remain blocked "
                 "until destructive VM certification.");
         }
         if (targetBytes < widgets.current_bytes) {
@@ -5396,8 +5403,8 @@ void updateResizeControlState(const ResizePartitionWidgets& widgets, bool moveMo
     widgets.browse_backup->setEnabled(moveMode);
     widgets.confirmation->setEnabled(moveMode);
     widgets.non_native_confirmation->setVisible(widgets.non_native_ext);
-    widgets.non_native_confirmation->setEnabled(widgets.non_native_ext &&
-                                                selectedResizeMode(widgets) == adjacentResizeMode());
+    widgets.non_native_confirmation->setEnabled(
+        widgets.non_native_ext && selectedResizeMode(widgets) == adjacentResizeMode());
     widgets.donor_partition->setEnabled(selectedResizeMode(widgets) == donorResizeMode());
 }
 
@@ -5451,8 +5458,7 @@ void connectResizePartitionControls(PartitionOperationDialog& dialog,
                      [widgets](int value) { widgets.target_size_mb->setValue(value); });
     QObject::connect(widgets.backup_directory, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(widgets.confirmation, &QCheckBox::toggled, &dialog, updatePreview);
-    QObject::connect(
-        widgets.non_native_confirmation, &QCheckBox::toggled, &dialog, updatePreview);
+    QObject::connect(widgets.non_native_confirmation, &QCheckBox::toggled, &dialog, updatePreview);
     connectBackupBrowse(
         dialog,
         {widgets.backup_directory, widgets.browse_backup, widgets.confirmation, nullptr},
@@ -5650,7 +5656,8 @@ QString fileSystemTooltipText(const PartitionVolumeInfo& volume) {
     }
 
     QStringList tooltipParts;
-    const QString source = PartitionFileSystemDetector::sourceDisplayName(volume.file_system_source);
+    const QString source =
+        PartitionFileSystemDetector::sourceDisplayName(volume.file_system_source);
     if (!source.isEmpty()) {
         tooltipParts.append(QObject::tr("Detected by %1").arg(source));
     }
@@ -5675,7 +5682,8 @@ void appendFilesystemInspectionRows(QVector<PropertyRow>* rows,
     addProperty(rows, QObject::tr("Partition"), QString::number(partition.partition_number));
     addProperty(rows, QObject::tr("Raw target path"), rawTargetPath);
     addProperty(rows, QObject::tr("File system"), volume.file_system);
-    const QString source = PartitionFileSystemDetector::sourceDisplayName(volume.file_system_source);
+    const QString source =
+        PartitionFileSystemDetector::sourceDisplayName(volume.file_system_source);
     addProperty(rows, QObject::tr("Detection source"), source);
     addProperty(rows, QObject::tr("Read-only metadata"), volume.file_system_details.join('\n'));
 
@@ -5756,8 +5764,7 @@ void showPropertiesDialog(QWidget* parent, const QString& title, const QVector<P
     dialog.exec();
 }
 
-void showMetadataConsistencyDialog(QWidget* parent,
-                                   const NonNativeFilesystemCheckState& state) {
+void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemCheckState& state) {
     const QStringList findings = metadataSanityFindings(state.metadata_details);
     const bool warning = hasMetadataSanityWarnings(state.metadata_details);
     QVector<PropertyRow> rows;
@@ -5771,9 +5778,7 @@ void showMetadataConsistencyDialog(QWidget* parent,
                 warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
     addProperty(&rows, QObject::tr("Read-only metadata"), state.metadata_details.join('\n'));
-    showPropertiesDialog(parent,
-                         QObject::tr("Check %1 Metadata").arg(state.file_system),
-                         rows);
+    showPropertiesDialog(parent, QObject::tr("Check %1 Metadata").arg(state.file_system), rows);
 }
 
 QString hfsConsistencyResultText(const PartitionHfsConsistencyCheckResult& result) {
@@ -5793,10 +5798,11 @@ PartitionHfsConsistencyCheckResult showHfsConsistencyDialog(
                 QObject::tr("File system"),
                 result.file_system.trimmed().isEmpty() ? state.file_system : result.file_system);
     addProperty(&rows, QObject::tr("Raw target path"), state.target_path);
-    addProperty(&rows,
-                QObject::tr("Check type"),
-                QObject::tr(
-                    "Original read-only HFS+ catalog consistency check with attributes B-tree key scan"));
+    addProperty(
+        &rows,
+        QObject::tr("Check type"),
+        QObject::tr(
+            "Original read-only HFS+ catalog consistency check with attributes B-tree key scan"));
     addProperty(&rows, QObject::tr("Result"), hfsConsistencyResultText(result));
     addProperty(&rows,
                 QObject::tr("Catalog records scanned"),
@@ -5828,9 +5834,7 @@ PartitionHfsConsistencyCheckResult showHfsConsistencyDialog(
     addProperty(&rows, QObject::tr("Findings"), result.details.join('\n'));
     addProperty(&rows, QObject::tr("Warnings"), result.warnings.join('\n'));
     addProperty(&rows, QObject::tr("Blockers"), result.blockers.join('\n'));
-    showPropertiesDialog(parent,
-                         QObject::tr("Check %1 Catalog").arg(state.file_system),
-                         rows);
+    showPropertiesDialog(parent, QObject::tr("Check %1 Catalog").arg(state.file_system), rows);
     return result;
 }
 
@@ -5857,8 +5861,7 @@ std::optional<NonNativeBrowseRequest> showNonNativeBrowseRequestDialog(
     form->addRow(QObject::tr("Path:"), path);
     layout->addLayout(form);
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                         &dialog);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Browse"));
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -5912,18 +5915,16 @@ void extractSelectedExtEntry(QWidget* parent,
         return;
     }
 
-    const QString outputPath =
-        QFileDialog::getSaveFileName(parent,
-                                     QObject::tr("Extract Non-Windows File"),
-                                     QDir::home().filePath(entry.name));
+    const QString outputPath = QFileDialog::getSaveFileName(parent,
+                                                            QObject::tr("Extract Non-Windows File"),
+                                                            QDir::home().filePath(entry.name));
     if (outputPath.trimmed().isEmpty()) {
         return;
     }
 
-    const auto file =
-        PartitionExtFileSystemReader::readFileFromImage(targetPath,
-                                                        entry.path,
-                                                        kExtBrowserExtractMaxBytes);
+    const auto file = PartitionExtFileSystemReader::readFileFromImage(targetPath,
+                                                                      entry.path,
+                                                                      kExtBrowserExtractMaxBytes);
     if (!file.ok) {
         showWarningLogged(parent,
                           QObject::tr("Extract Non-Windows File"),
@@ -5940,13 +5941,9 @@ void extractSelectedExtEntry(QWidget* parent,
     }
 }
 
-void exportExtDirectory(QWidget* parent,
-                        const QString& targetPath,
-                        const QString& extPath) {
-    const QString outputDirectory =
-        QFileDialog::getExistingDirectory(parent,
-                                          QObject::tr("Export ext Directory"),
-                                          QDir::homePath());
+void exportExtDirectory(QWidget* parent, const QString& targetPath, const QString& extPath) {
+    const QString outputDirectory = QFileDialog::getExistingDirectory(
+        parent, QObject::tr("Export ext Directory"), QDir::homePath());
     if (outputDirectory.trimmed().isEmpty()) {
         return;
     }
@@ -5954,10 +5951,8 @@ void exportExtDirectory(QWidget* parent,
     const PartitionExtDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
                                                      kExtBrowserExtractMaxBytes,
                                                      kNonNativeBrowserExportMaxTotalBytes};
-    const auto result = PartitionExtFileSystemReader::exportDirectoryFromImage(targetPath,
-                                                                               extPath,
-                                                                               outputDirectory,
-                                                                               options);
+    const auto result = PartitionExtFileSystemReader::exportDirectoryFromImage(
+        targetPath, extPath, outputDirectory, options);
     if (!result.ok) {
         showWarningLogged(parent,
                           QObject::tr("Export ext Directory"),
@@ -6019,10 +6014,10 @@ void showExtDirectoryListingDialog(QWidget* parent,
     dialog.setMinimumSize(kPropertiesDialogMinWidth, kPropertiesDialogMinHeight);
 
     auto* layout = new QVBoxLayout(&dialog);
-    auto* summary = new QLabel(QObject::tr("Target: %1\nPath: %2")
-                                   .arg(targetPath,
-                                        extPath.isEmpty() ? QStringLiteral("/") : extPath),
-                               &dialog);
+    auto* summary =
+        new QLabel(QObject::tr("Target: %1\nPath: %2")
+                       .arg(targetPath, extPath.isEmpty() ? QStringLiteral("/") : extPath),
+                   &dialog);
     summary->setAccessibleName(QObject::tr("ext browser summary"));
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     layout->addWidget(summary);
@@ -6044,9 +6039,9 @@ void showExtDirectoryListingDialog(QWidget* parent,
     QObject::connect(copyButton, &QPushButton::clicked, [&result]() {
         QApplication::clipboard()->setText(extBrowserClipboardText(result));
     });
-    QObject::connect(table,
-                     &QTableWidget::itemSelectionChanged,
-                     [&]() { updateExtExtractButton(extractButton, table, result); });
+    QObject::connect(table, &QTableWidget::itemSelectionChanged, [&]() {
+        updateExtExtractButton(extractButton, table, result);
+    });
     QObject::connect(extractButton, &QPushButton::clicked, [&]() {
         if (const auto* entry = selectedExtBrowserEntry(table, result)) {
             extractSelectedExtEntry(&dialog, targetPath, *entry);
@@ -6069,10 +6064,10 @@ QString hfsBrowserClipboardText(const PartitionHfsFileReadResult& result) {
     for (const auto& entry : result.entries) {
         lines.append(QStringLiteral("%1\t%2\t%3\t%4\t%5")
                          .arg(entry.path,
-                               entry.type,
-                               QString::number(entry.size_bytes),
-                               QString::number(entry.resource_fork_size_bytes),
-                               QString::number(entry.catalog_id)));
+                              entry.type,
+                              QString::number(entry.size_bytes),
+                              QString::number(entry.resource_fork_size_bytes),
+                              QString::number(entry.catalog_id)));
     }
     return lines.join(QLatin1Char('\n'));
 }
@@ -6096,9 +6091,7 @@ void updateHfsResourceExtractButton(QPushButton* button,
                                     const QTableWidget* table,
                                     const PartitionHfsFileReadResult& result) {
     const auto* entry = selectedHfsBrowserEntry(table, result);
-    button->setEnabled(entry &&
-                       entry->regular_file &&
-                       entry->resource_fork_size_bytes > 0);
+    button->setEnabled(entry && entry->regular_file && entry->resource_fork_size_bytes > 0);
 }
 
 void updateHfsAttributeExtractButton(QPushButton* button,
@@ -6112,8 +6105,7 @@ QString safeHfsAttributeFileName(const QString& fileName, QString attributeName)
     attributeName = attributeName.trimmed();
     static const QRegularExpression unsafeChars(QStringLiteral(R"([<>:"/\\|?*\x00-\x1F])"));
     QString safeAttribute = attributeName.replace(unsafeChars, QStringLiteral("_"));
-    while (safeAttribute.endsWith(QLatin1Char('.')) ||
-           safeAttribute.endsWith(QLatin1Char(' '))) {
+    while (safeAttribute.endsWith(QLatin1Char('.')) || safeAttribute.endsWith(QLatin1Char(' '))) {
         safeAttribute.chop(1);
     }
     if (safeAttribute.isEmpty()) {
@@ -6171,18 +6163,16 @@ void extractSelectedHfsEntry(QWidget* parent,
         return;
     }
 
-    const QString outputPath =
-        QFileDialog::getSaveFileName(parent,
-                                     QObject::tr("Extract Non-Windows File"),
-                                     QDir::home().filePath(entry.name));
+    const QString outputPath = QFileDialog::getSaveFileName(parent,
+                                                            QObject::tr("Extract Non-Windows File"),
+                                                            QDir::home().filePath(entry.name));
     if (outputPath.trimmed().isEmpty()) {
         return;
     }
 
-    const auto file =
-        PartitionHfsFileSystemReader::readFileFromImage(targetPath,
-                                                        entry.path,
-                                                        kExtBrowserExtractMaxBytes);
+    const auto file = PartitionHfsFileSystemReader::readFileFromImage(targetPath,
+                                                                      entry.path,
+                                                                      kExtBrowserExtractMaxBytes);
     writeExtractedHfsFork(parent, outputPath, file);
 }
 
@@ -6197,31 +6187,26 @@ void extractSelectedHfsAttribute(QWidget* parent,
     }
 
     bool accepted = false;
-    const QString attributeName =
-        QInputDialog::getText(parent,
-                              QObject::tr("Extract HFS+ Attribute"),
-                              QObject::tr("Attribute name"),
-                              QLineEdit::Normal,
-                              QStringLiteral("com.apple.FinderInfo"),
-                              &accepted)
-            .trimmed();
+    const QString attributeName = QInputDialog::getText(parent,
+                                                        QObject::tr("Extract HFS+ Attribute"),
+                                                        QObject::tr("Attribute name"),
+                                                        QLineEdit::Normal,
+                                                        QStringLiteral("com.apple.FinderInfo"),
+                                                        &accepted)
+                                      .trimmed();
     if (!accepted || attributeName.isEmpty()) {
         return;
     }
 
-    const QString outputPath =
-        QFileDialog::getSaveFileName(parent,
-                                     QObject::tr("Extract HFS+ Attribute"),
-                                     QDir::home().filePath(
-                                         safeHfsAttributeFileName(entry.name, attributeName)));
+    const QString outputPath = QFileDialog::getSaveFileName(
+        parent,
+        QObject::tr("Extract HFS+ Attribute"),
+        QDir::home().filePath(safeHfsAttributeFileName(entry.name, attributeName)));
     if (outputPath.trimmed().isEmpty()) {
         return;
     }
-    const auto attribute =
-        PartitionHfsFileSystemReader::readAttributeValueFromImage(targetPath,
-                                                                  entry.catalog_id,
-                                                                  attributeName,
-                                                                  kExtBrowserExtractMaxBytes);
+    const auto attribute = PartitionHfsFileSystemReader::readAttributeValueFromImage(
+        targetPath, entry.catalog_id, attributeName, kExtBrowserExtractMaxBytes);
     writeExtractedHfsAttribute(parent, outputPath, attribute);
 }
 
@@ -6235,28 +6220,21 @@ void extractSelectedHfsResourceFork(QWidget* parent,
         return;
     }
 
-    const QString outputPath =
-        QFileDialog::getSaveFileName(parent,
-                                     QObject::tr("Extract HFS+ Resource Fork"),
-                                     QDir::home().filePath(
-                                         QStringLiteral("%1.rsrc").arg(entry.name)));
+    const QString outputPath = QFileDialog::getSaveFileName(
+        parent,
+        QObject::tr("Extract HFS+ Resource Fork"),
+        QDir::home().filePath(QStringLiteral("%1.rsrc").arg(entry.name)));
     if (outputPath.trimmed().isEmpty()) {
         return;
     }
-    const auto file =
-        PartitionHfsFileSystemReader::readResourceForkFromImage(targetPath,
-                                                                entry.path,
-                                                                kExtBrowserExtractMaxBytes);
+    const auto file = PartitionHfsFileSystemReader::readResourceForkFromImage(
+        targetPath, entry.path, kExtBrowserExtractMaxBytes);
     writeExtractedHfsFork(parent, outputPath, file);
 }
 
-void exportHfsDirectory(QWidget* parent,
-                        const QString& targetPath,
-                        const QString& hfsPath) {
-    const QString outputDirectory =
-        QFileDialog::getExistingDirectory(parent,
-                                          QObject::tr("Export HFS+ Directory"),
-                                          QDir::homePath());
+void exportHfsDirectory(QWidget* parent, const QString& targetPath, const QString& hfsPath) {
+    const QString outputDirectory = QFileDialog::getExistingDirectory(
+        parent, QObject::tr("Export HFS+ Directory"), QDir::homePath());
     if (outputDirectory.trimmed().isEmpty()) {
         return;
     }
@@ -6264,23 +6242,22 @@ void exportHfsDirectory(QWidget* parent,
     const PartitionHfsDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
                                                      kExtBrowserExtractMaxBytes,
                                                      kNonNativeBrowserExportMaxTotalBytes};
-    const auto result = PartitionHfsFileSystemReader::exportDirectoryFromImage(targetPath,
-                                                                               hfsPath,
-                                                                               outputDirectory,
-                                                                               options);
+    const auto result = PartitionHfsFileSystemReader::exportDirectoryFromImage(
+        targetPath, hfsPath, outputDirectory, options);
     if (!result.ok) {
         showWarningLogged(parent,
                           QObject::tr("Export HFS+ Directory"),
                           result.blockers.join(QStringLiteral("\n")));
         return;
     }
-    showInformationLogged(parent,
-                          QObject::tr("Export HFS+ Directory"),
-                          QObject::tr("Exported %1 data file(s), %2 resource fork(s), %3 folder(s), %4 bytes.")
-                              .arg(result.files_exported)
-                              .arg(result.resource_forks_exported)
-                              .arg(result.directories_exported)
-                              .arg(result.bytes_exported));
+    showInformationLogged(
+        parent,
+        QObject::tr("Export HFS+ Directory"),
+        QObject::tr("Exported %1 data file(s), %2 resource fork(s), %3 folder(s), %4 bytes.")
+            .arg(result.files_exported)
+            .arg(result.resource_forks_exported)
+            .arg(result.directories_exported)
+            .arg(result.bytes_exported));
 }
 
 void configureNonNativeBrowserTable(QTableWidget* table, const QString& accessibleName) {
@@ -6296,17 +6273,16 @@ void addHfsBrowserSummary(QVBoxLayout* layout,
                           QDialog* dialog,
                           const QString& targetPath,
                           const QString& hfsPath) {
-    auto* summary = new QLabel(QObject::tr("Target: %1\nPath: %2")
-                                   .arg(targetPath,
-                                        hfsPath.isEmpty() ? QStringLiteral("/") : hfsPath),
-                               dialog);
+    auto* summary =
+        new QLabel(QObject::tr("Target: %1\nPath: %2")
+                       .arg(targetPath, hfsPath.isEmpty() ? QStringLiteral("/") : hfsPath),
+                   dialog);
     summary->setAccessibleName(QObject::tr("HFS+ browser summary"));
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     layout->addWidget(summary);
 }
 
-QTableWidget* createHfsBrowserTable(QDialog* dialog,
-                                    const PartitionHfsFileReadResult& result) {
+QTableWidget* createHfsBrowserTable(QDialog* dialog, const PartitionHfsFileReadResult& result) {
     auto* table = new QTableWidget(result.entries.size(), kHfsBrowserColumnCount, dialog);
     table->setObjectName(QStringLiteral("partitionHfsBrowserTable"));
     table->setHorizontalHeaderLabels({QObject::tr("Name"),
@@ -6363,32 +6339,35 @@ QDialogButtonBox* createHfsBrowserButtons(QDialog* dialog,
     QObject::connect(copyButton, &QPushButton::clicked, [resultPtr]() {
         QApplication::clipboard()->setText(hfsBrowserClipboardText(*resultPtr));
     });
-    QObject::connect(table,
-                     &QTableWidget::itemSelectionChanged,
-                     [extractButton, extractResourceButton, extractAttributeButton, table, resultPtr]() {
-                         updateHfsExtractButton(extractButton, table, *resultPtr);
-                         updateHfsResourceExtractButton(extractResourceButton, table, *resultPtr);
-                         updateHfsAttributeExtractButton(extractAttributeButton, table, *resultPtr);
+    QObject::connect(
+        table,
+        &QTableWidget::itemSelectionChanged,
+        [extractButton, extractResourceButton, extractAttributeButton, table, resultPtr]() {
+            updateHfsExtractButton(extractButton, table, *resultPtr);
+            updateHfsResourceExtractButton(extractResourceButton, table, *resultPtr);
+            updateHfsAttributeExtractButton(extractAttributeButton, table, *resultPtr);
+        });
+    QObject::connect(extractButton,
+                     &QPushButton::clicked,
+                     [dialog, table, targetPath, resultPtr]() {
+                         if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
+                             extractSelectedHfsEntry(dialog, targetPath, *entry);
+                         }
                      });
-    QObject::connect(extractButton, &QPushButton::clicked, [dialog, table, targetPath, resultPtr]() {
-        if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
-            extractSelectedHfsEntry(dialog, targetPath, *entry);
-        }
-    });
     QObject::connect(extractResourceButton,
                      &QPushButton::clicked,
                      [dialog, table, targetPath, resultPtr]() {
-        if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
-            extractSelectedHfsResourceFork(dialog, targetPath, *entry);
-        }
-    });
+                         if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
+                             extractSelectedHfsResourceFork(dialog, targetPath, *entry);
+                         }
+                     });
     QObject::connect(extractAttributeButton,
                      &QPushButton::clicked,
                      [dialog, table, targetPath, resultPtr]() {
-        if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
-            extractSelectedHfsAttribute(dialog, targetPath, *entry);
-        }
-    });
+                         if (const auto* entry = selectedHfsBrowserEntry(table, *resultPtr)) {
+                             extractSelectedHfsAttribute(dialog, targetPath, *entry);
+                         }
+                     });
     QObject::connect(exportButton, &QPushButton::clicked, [dialog, targetPath, hfsPath]() {
         exportHfsDirectory(dialog, targetPath, hfsPath);
     });
@@ -6435,9 +6414,8 @@ QString apfsBrowserClipboardText(const PartitionApfsFileReadResult& result) {
     return lines.join(QLatin1Char('\n'));
 }
 
-const PartitionApfsFileEntry* selectedApfsBrowserEntry(
-    const QTableWidget* table,
-    const PartitionApfsFileReadResult& result) {
+const PartitionApfsFileEntry* selectedApfsBrowserEntry(const QTableWidget* table,
+                                                       const PartitionApfsFileReadResult& result) {
     if (!table || table->currentRow() < 0 || table->currentRow() >= result.entries.size()) {
         return nullptr;
     }
@@ -6461,18 +6439,16 @@ void extractSelectedApfsEntry(QWidget* parent,
         return;
     }
 
-    const QString outputPath =
-        QFileDialog::getSaveFileName(parent,
-                                     QObject::tr("Extract Non-Windows File"),
-                                     QDir::home().filePath(entry.name));
+    const QString outputPath = QFileDialog::getSaveFileName(parent,
+                                                            QObject::tr("Extract Non-Windows File"),
+                                                            QDir::home().filePath(entry.name));
     if (outputPath.trimmed().isEmpty()) {
         return;
     }
 
-    const auto file = PartitionApfsFileSystemReader::readFileFromImage(
-        targetPath,
-        entry.path,
-        kExtBrowserExtractMaxBytes);
+    const auto file = PartitionApfsFileSystemReader::readFileFromImage(targetPath,
+                                                                       entry.path,
+                                                                       kExtBrowserExtractMaxBytes);
     if (!file.ok) {
         showWarningLogged(parent,
                           QObject::tr("Extract Non-Windows File"),
@@ -6489,13 +6465,9 @@ void extractSelectedApfsEntry(QWidget* parent,
     }
 }
 
-void exportApfsDirectory(QWidget* parent,
-                         const QString& targetPath,
-                         const QString& apfsPath) {
-    const QString outputDirectory =
-        QFileDialog::getExistingDirectory(parent,
-                                          QObject::tr("Export APFS Directory"),
-                                          QDir::homePath());
+void exportApfsDirectory(QWidget* parent, const QString& targetPath, const QString& apfsPath) {
+    const QString outputDirectory = QFileDialog::getExistingDirectory(
+        parent, QObject::tr("Export APFS Directory"), QDir::homePath());
     if (outputDirectory.trimmed().isEmpty()) {
         return;
     }
@@ -6503,24 +6475,22 @@ void exportApfsDirectory(QWidget* parent,
     const PartitionApfsDirectoryExportOptions options{kNonNativeBrowserExportMaxEntries,
                                                       kExtBrowserExtractMaxBytes,
                                                       kNonNativeBrowserExportMaxTotalBytes};
-    const auto result = PartitionApfsFileSystemReader::exportDirectoryFromImage(targetPath,
-                                                                                apfsPath,
-                                                                                outputDirectory,
-                                                                                options);
+    const auto result = PartitionApfsFileSystemReader::exportDirectoryFromImage(
+        targetPath, apfsPath, outputDirectory, options);
     if (!result.ok) {
         showWarningLogged(parent,
                           QObject::tr("Export APFS Directory"),
                           result.blockers.join(QStringLiteral("\n")));
         return;
     }
-    showInformationLogged(
-        parent,
-        QObject::tr("Export APFS Directory"),
-        QObject::tr("Exported %1 file(s), %2 folder(s), skipped %3 symlink(s), %4 bytes.")
-            .arg(result.files_exported)
-            .arg(result.directories_exported)
-            .arg(result.symlinks_skipped)
-            .arg(result.bytes_exported));
+    showInformationLogged(parent,
+                          QObject::tr("Export APFS Directory"),
+                          QObject::tr(
+                              "Exported %1 file(s), %2 folder(s), skipped %3 symlink(s), %4 bytes.")
+                              .arg(result.files_exported)
+                              .arg(result.directories_exported)
+                              .arg(result.symlinks_skipped)
+                              .arg(result.bytes_exported));
 }
 
 void addApfsBrowserSummary(QVBoxLayout* layout,
@@ -6530,9 +6500,8 @@ void addApfsBrowserSummary(QVBoxLayout* layout,
                            const PartitionApfsFileReadResult& result) {
     QString summaryText = QObject::tr("Target: %1\nVolume: %2\nPath: %3")
                               .arg(targetPath,
-                                   result.volume_name.trimmed().isEmpty()
-                                       ? QStringLiteral("APFS")
-                                       : result.volume_name,
+                                   result.volume_name.trimmed().isEmpty() ? QStringLiteral("APFS")
+                                                                          : result.volume_name,
                                    apfsPath.isEmpty() ? QStringLiteral("/") : apfsPath);
     if (!result.warnings.isEmpty()) {
         summaryText.append(
@@ -6544,8 +6513,7 @@ void addApfsBrowserSummary(QVBoxLayout* layout,
     layout->addWidget(summary);
 }
 
-QTableWidget* createApfsBrowserTable(QDialog* dialog,
-                                     const PartitionApfsFileReadResult& result) {
+QTableWidget* createApfsBrowserTable(QDialog* dialog, const PartitionApfsFileReadResult& result) {
     auto* table = new QTableWidget(result.entries.size(), kApfsBrowserColumnCount, dialog);
     table->setObjectName(QStringLiteral("partitionApfsBrowserTable"));
     table->setHorizontalHeaderLabels({QObject::tr("Name"),
@@ -6595,11 +6563,13 @@ QDialogButtonBox* createApfsBrowserButtons(QDialog* dialog,
                      [extractButton, table, resultPtr]() {
                          updateApfsExtractButton(extractButton, table, *resultPtr);
                      });
-    QObject::connect(extractButton, &QPushButton::clicked, [dialog, table, targetPath, resultPtr]() {
-        if (const auto* entry = selectedApfsBrowserEntry(table, *resultPtr)) {
-            extractSelectedApfsEntry(dialog, targetPath, *entry);
-        }
-    });
+    QObject::connect(extractButton,
+                     &QPushButton::clicked,
+                     [dialog, table, targetPath, resultPtr]() {
+                         if (const auto* entry = selectedApfsBrowserEntry(table, *resultPtr)) {
+                             extractSelectedApfsEntry(dialog, targetPath, *entry);
+                         }
+                     });
     QObject::connect(exportButton, &QPushButton::clicked, [dialog, targetPath, apfsPath]() {
         exportApfsDirectory(dialog, targetPath, apfsPath);
     });
@@ -6640,17 +6610,12 @@ NonNativeBrowseResult browseHfsFileSystem(QWidget* parent,
                                           const NonNativeFilesystemBrowseState& state,
                                           const NonNativeBrowseRequest& request) {
     const auto result = PartitionHfsFileSystemReader::listDirectoryFromImage(
-        request.target_path,
-        request.file_system_path,
-        kPartitionHfsDefaultBrowseEntryLimit);
+        request.target_path, request.file_system_path, kPartitionHfsDefaultBrowseEntryLimit);
     if (!result.ok) {
         return {0, result.blockers};
     }
-    showHfsDirectoryListingDialog(parent,
-                                  nonNativeBrowseTitle(state),
-                                  request.target_path,
-                                  request.file_system_path,
-                                  result);
+    showHfsDirectoryListingDialog(
+        parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
     return {static_cast<int>(result.entries.size()), {}};
 }
 
@@ -6658,17 +6623,12 @@ NonNativeBrowseResult browseApfsFileSystem(QWidget* parent,
                                            const NonNativeFilesystemBrowseState& state,
                                            const NonNativeBrowseRequest& request) {
     const auto result = PartitionApfsFileSystemReader::listDirectoryFromImage(
-        request.target_path,
-        request.file_system_path,
-        kPartitionApfsDefaultBrowseEntryLimit);
+        request.target_path, request.file_system_path, kPartitionApfsDefaultBrowseEntryLimit);
     if (!result.ok) {
         return {0, result.blockers};
     }
-    showApfsDirectoryListingDialog(parent,
-                                   nonNativeBrowseTitle(state),
-                                   request.target_path,
-                                   request.file_system_path,
-                                   result);
+    showApfsDirectoryListingDialog(
+        parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
     return {static_cast<int>(result.entries.size()), {}};
 }
 
@@ -6676,17 +6636,12 @@ NonNativeBrowseResult browseExtFileSystem(QWidget* parent,
                                           const NonNativeFilesystemBrowseState& state,
                                           const NonNativeBrowseRequest& request) {
     const auto result = PartitionExtFileSystemReader::listDirectoryFromImage(
-        request.target_path,
-        request.file_system_path,
-        kPartitionExtDefaultBrowseEntryLimit);
+        request.target_path, request.file_system_path, kPartitionExtDefaultBrowseEntryLimit);
     if (!result.ok) {
         return {0, result.blockers};
     }
-    showExtDirectoryListingDialog(parent,
-                                  nonNativeBrowseTitle(state),
-                                  request.target_path,
-                                  request.file_system_path,
-                                  result);
+    showExtDirectoryListingDialog(
+        parent, nonNativeBrowseTitle(state), request.target_path, request.file_system_path, result);
     return {static_cast<int>(result.entries.size()), {}};
 }
 
@@ -8200,11 +8155,8 @@ QWidget* PartitionManagerPanel::createActionsPane() {
 
     addActionsPaneTitle(layout, pane);
     addActionSpecSection(layout, pane, tr("Wizards"), wizardActionSpecs());
-    addActionSpecSection(layout,
-                         pane,
-                         tr("Partition Operations"),
-                         partitionOperationActionSpecs(),
-                         true);
+    addActionSpecSection(
+        layout, pane, tr("Partition Operations"), partitionOperationActionSpecs(), true);
     addPendingOperationsSection(layout, pane);
     return pane;
 }
@@ -8286,24 +8238,36 @@ PartitionManagerPanel::ActionLinkSpec PartitionManagerPanel::makeActionSpec(
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActionSpecs() const {
-    return {
-        makeActionSpec(tr("Migrate OS to SSD/HDD Wizard"), kIconOsDrive, tr("Queue OS migration plan"),
-                       &PartitionManagerPanel::onMigrateOs, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Copy Partition Wizard"), kIconCopy, tr("Create a partition image"),
-                       &PartitionManagerPanel::onCopyPartitionWizard,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Copy Disk Wizard"), kIconDisk, tr("Queue disk clone plan"),
-                       &PartitionManagerPanel::onCloneDisk, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Partition Recovery Wizard"), kIconRecovery,
-                       tr("Scan and recover lost partitions"),
-                       &PartitionManagerPanel::onPartitionRecoveryWizard,
-                       {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Data Recovery"), kIconRecovery,
-                       tr("Recover files from an image or raw volume/device path"),
-                       &PartitionManagerPanel::onDataRecovery, {actionTargetKindList({kActionTargetAny})}),
-        makeActionSpec(tr("Extend Partition Wizard"), kIconResize, tr("Extend into adjacent free space"),
-                       &PartitionManagerPanel::onExtendPartitionWizard,
-                       {actionTargetKindList({kActionTargetPartition})})};
+    return {makeActionSpec(tr("Migrate OS to SSD/HDD Wizard"),
+                           kIconOsDrive,
+                           tr("Queue OS migration plan"),
+                           &PartitionManagerPanel::onMigrateOs,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Copy Partition Wizard"),
+                           kIconCopy,
+                           tr("Create a partition image"),
+                           &PartitionManagerPanel::onCopyPartitionWizard,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Copy Disk Wizard"),
+                           kIconDisk,
+                           tr("Queue disk clone plan"),
+                           &PartitionManagerPanel::onCloneDisk,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Partition Recovery Wizard"),
+                           kIconRecovery,
+                           tr("Scan and recover lost partitions"),
+                           &PartitionManagerPanel::onPartitionRecoveryWizard,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Data Recovery"),
+                           kIconRecovery,
+                           tr("Recover files from an image or raw volume/device path"),
+                           &PartitionManagerPanel::onDataRecovery,
+                           {actionTargetKindList({kActionTargetAny})}),
+            makeActionSpec(tr("Extend Partition Wizard"),
+                           kIconResize,
+                           tr("Extend into adjacent free space"),
+                           &PartitionManagerPanel::onExtendPartitionWizard,
+                           {actionTargetKindList({kActionTargetPartition})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
@@ -8315,77 +8279,123 @@ PartitionManagerPanel::partitionOperationActionSpecs() const {
     return specs;
 }
 
-QVector<PartitionManagerPanel::ActionLinkSpec>
-PartitionManagerPanel::layoutOperationActionSpecs() const {
-    return {
-        makeActionSpec(tr("Resize/Move Partition"), kIconResize, tr("Resize partition"),
-                       &PartitionManagerPanel::onResizePartition,
-                       {actionTargetKindList({kActionTargetPartition}), false, false, true}),
-        makeActionSpec(tr("Allocate Free Space"), kIconResize,
-                       tr("Back up adjacent donor, extend target, recreate donor, restore, and verify"),
-                       &PartitionManagerPanel::onAllocateFreeSpace,
-                       {actionTargetKindList({kActionTargetPartition, kActionTargetUnallocated})}),
-        makeActionSpec(tr("Merge Partitions"), kIconSplit, tr("Merge adjacent partitions"),
-                       &PartitionManagerPanel::onMergePartitions,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Split Partition"), kIconSplit, tr("Split selected partition"),
-                       &PartitionManagerPanel::onSplitPartition,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Quick Partition"), kIconCreate, tr("Queue custom or equal-size disk layout"),
-                       &PartitionManagerPanel::onQuickPartition, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Create Partition"), kIconCreate, tr("Create partition"),
-                       &PartitionManagerPanel::onCreatePartition,
-                       {actionTargetKindList({kActionTargetUnallocated})}),
-        makeActionSpec(tr("Delete Partition"), kIconDelete, tr("Delete partition"),
-                       &PartitionManagerPanel::onDeletePartition,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Convert MBR/GPT"), kIconConvert, tr("Convert partition table"),
-                       &PartitionManagerPanel::onConvertStyle, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Initialize Disk"), kIconDisk, tr("Initialize empty disk"),
-                       &PartitionManagerPanel::onInitializeDisk, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Delete All Partitions"), kIconDelete, tr("Delete all disk partitions"),
-                       &PartitionManagerPanel::onDeleteAllPartitions,
-                       {actionTargetKindList({kActionTargetDisk})})};
+QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::layoutOperationActionSpecs()
+    const {
+    return {makeActionSpec(tr("Resize/Move Partition"),
+                           kIconResize,
+                           tr("Resize partition"),
+                           &PartitionManagerPanel::onResizePartition,
+                           {actionTargetKindList({kActionTargetPartition}), false, false, true}),
+            makeActionSpec(
+                tr("Allocate Free Space"),
+                kIconResize,
+                tr("Back up adjacent donor, extend target, recreate donor, restore, and verify"),
+                &PartitionManagerPanel::onAllocateFreeSpace,
+                {actionTargetKindList({kActionTargetPartition, kActionTargetUnallocated})}),
+            makeActionSpec(tr("Merge Partitions"),
+                           kIconSplit,
+                           tr("Merge adjacent partitions"),
+                           &PartitionManagerPanel::onMergePartitions,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Split Partition"),
+                           kIconSplit,
+                           tr("Split selected partition"),
+                           &PartitionManagerPanel::onSplitPartition,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Quick Partition"),
+                           kIconCreate,
+                           tr("Queue custom or equal-size disk layout"),
+                           &PartitionManagerPanel::onQuickPartition,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Create Partition"),
+                           kIconCreate,
+                           tr("Create partition"),
+                           &PartitionManagerPanel::onCreatePartition,
+                           {actionTargetKindList({kActionTargetUnallocated})}),
+            makeActionSpec(tr("Delete Partition"),
+                           kIconDelete,
+                           tr("Delete partition"),
+                           &PartitionManagerPanel::onDeletePartition,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Convert MBR/GPT"),
+                           kIconConvert,
+                           tr("Convert partition table"),
+                           &PartitionManagerPanel::onConvertStyle,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Initialize Disk"),
+                           kIconDisk,
+                           tr("Initialize empty disk"),
+                           &PartitionManagerPanel::onInitializeDisk,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Delete All Partitions"),
+                           kIconDelete,
+                           tr("Delete all disk partitions"),
+                           &PartitionManagerPanel::onDeleteAllPartitions,
+                           {actionTargetKindList({kActionTargetDisk})})};
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
 PartitionManagerPanel::filesystemOperationActionSpecs() const {
     return {
-        makeActionSpec(tr("Format Partition"), kIconDisk, tr("Format partition"),
+        makeActionSpec(tr("Format Partition"),
+                       kIconDisk,
+                       tr("Format partition"),
                        &PartitionManagerPanel::onFormatPartition,
                        {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Explore Partition"), kIconProperties, tr("Open in Explorer"),
+        makeActionSpec(tr("Explore Partition"),
+                       kIconProperties,
+                       tr("Open in Explorer"),
                        &PartitionManagerPanel::onExploreSelected,
                        {actionTargetKindList({kActionTargetPartition}), true}),
-        makeActionSpec(tr("Convert File System"), kIconConvert, tr("Convert partition file system"),
+        makeActionSpec(tr("Convert File System"),
+                       kIconConvert,
+                       tr("Convert partition file system"),
                        &PartitionManagerPanel::onConvertFileSystem,
                        {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Change Cluster Size"), kIconProperties,
+        makeActionSpec(tr("Change Cluster Size"),
+                       kIconProperties,
                        tr("Back up, reformat with selected cluster size, restore, and verify"),
                        &PartitionManagerPanel::onChangeClusterSize,
                        {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Change Drive Letter"), kIconProperties, tr("Set drive letter"),
+        makeActionSpec(tr("Change Drive Letter"),
+                       kIconProperties,
+                       tr("Set drive letter"),
                        &PartitionManagerPanel::onSetDriveLetter,
                        {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Change Label"), kIconProperties, tr("Set partition label"),
+        makeActionSpec(tr("Change Label"),
+                       kIconProperties,
+                       tr("Set partition label"),
                        &PartitionManagerPanel::onSetPartitionLabel,
                        {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Check File System"), kIconSurface, tr("Scan file system"),
+        makeActionSpec(tr("Check File System"),
+                       kIconSurface,
+                       tr("Scan file system"),
                        &PartitionManagerPanel::onCheckFileSystem,
                        {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Inspect Non-Windows File System"), kIconProperties,
+        makeActionSpec(tr("Inspect Non-Windows File System"),
+                       kIconProperties,
                        tr("Inspect captured read-only filesystem metadata"),
                        &PartitionManagerPanel::onInspectNonNativeFileSystem,
                        {actionTargetKindList({kActionTargetPartition}), false, false, false, true}),
-        makeActionSpec(tr("Browse Non-Windows File System"), kIconProperties,
-                       tr("List supported non-Windows directory entries without mounting"),
-                       &PartitionManagerPanel::onBrowseNonNativeFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}), false, false, false, false, true}),
-        makeActionSpec(tr("Check Non-Windows File System"), kIconSurface,
+        makeActionSpec(
+            tr("Browse Non-Windows File System"),
+            kIconProperties,
+            tr("List supported non-Windows directory entries without mounting"),
+            &PartitionManagerPanel::onBrowseNonNativeFileSystem,
+            {actionTargetKindList({kActionTargetPartition}), false, false, false, false, true}),
+        makeActionSpec(tr("Check Non-Windows File System"),
+                       kIconSurface,
                        tr("Requires manifest-approved bundled filesystem tools"),
                        &PartitionManagerPanel::onCheckNonNativeFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}), false, false, false, false, false, true}),
-        makeActionSpec(tr("APFS File"), kIconProperties,
+                       {actionTargetKindList({kActionTargetPartition}),
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true}),
+        makeActionSpec(tr("APFS File"),
+                       kIconProperties,
                        tr("Queue generated APFS root-file write, patch, or delete"),
                        &PartitionManagerPanel::onApfsRootFileMutation,
                        {actionTargetKindList({kActionTargetPartition}),
@@ -8396,7 +8406,8 @@ PartitionManagerPanel::filesystemOperationActionSpecs() const {
                         false,
                         false,
                         true}),
-        makeActionSpec(tr("HFS File"), kIconProperties,
+        makeActionSpec(tr("HFS File"),
+                       kIconProperties,
                        tr("Queue staged HFS+ file, resource fork, or inline attribute mutation"),
                        &PartitionManagerPanel::onHfsFileMutation,
                        {actionTargetKindList({kActionTargetPartition}),
@@ -8412,64 +8423,91 @@ PartitionManagerPanel::filesystemOperationActionSpecs() const {
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
 PartitionManagerPanel::maintenanceOperationActionSpecs() const {
-    return {
-        makeActionSpec(tr("Partition Alignment"), kIconAlign, tr("Run SSD optimization"),
-                       &PartitionManagerPanel::onOptimizeSsd,
-                       {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
-        makeActionSpec(tr("Wipe Partition"), kIconWipe, tr("Wipe selected target"),
-                       &PartitionManagerPanel::onWipeSelected,
-                       {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
-        makeActionSpec(tr("Surface Test"), kIconSurface, tr("Run read-only surface test"),
-                       &PartitionManagerPanel::onSurfaceTest, {actionTargetKindList({kActionTargetAny})}),
-        makeActionSpec(tr("Disk Benchmark"), kIconSurface, tr("Open Benchmark and Diagnostics"),
-                       &PartitionManagerPanel::onOpenDiskBenchmark, {actionTargetKindList({kActionTargetAny})}),
-        makeActionSpec(tr("Space Analyzer"), kIconSurface,
-                       tr("Analyze tree, file, and file-type usage"),
-                       &PartitionManagerPanel::onSpaceAnalyzer,
-                       {actionTargetKindList({kActionTargetPartition}), true}),
-        makeActionSpec(tr("Disk Defrag"), kIconAlign,
-                       tr("Review defrag/ReTrim commands and open Windows Optimize Drives"),
-                       &PartitionManagerPanel::onOpenOptimizeDrives,
-                       {actionTargetKindList({kActionTargetDisk, kActionTargetPartition}), true}),
-        makeActionSpec(tr("SSD Secure Erase"), kIconWipe,
-                       tr("Queue SSD/NVMe ReTrim plus clear-level wipe"),
-                       &PartitionManagerPanel::onSsdSecureErase, {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Manage BitLocker"), kIconProperties,
-                       tr("Review BitLocker status and open Windows management"),
-                       &PartitionManagerPanel::onManageBitLocker,
-                       {actionTargetKindList({kActionTargetPartition}), true}),
-        makeActionSpec(tr("Make Bootable Media"), kIconOsDrive, tr("Open Image Flasher"),
-                       &PartitionManagerPanel::onOpenBootableMedia,
-                       {actionTargetKindList({kActionTargetAny})})};
+    return {makeActionSpec(tr("Partition Alignment"),
+                           kIconAlign,
+                           tr("Run SSD optimization"),
+                           &PartitionManagerPanel::onOptimizeSsd,
+                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+            makeActionSpec(tr("Wipe Partition"),
+                           kIconWipe,
+                           tr("Wipe selected target"),
+                           &PartitionManagerPanel::onWipeSelected,
+                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+            makeActionSpec(tr("Surface Test"),
+                           kIconSurface,
+                           tr("Run read-only surface test"),
+                           &PartitionManagerPanel::onSurfaceTest,
+                           {actionTargetKindList({kActionTargetAny})}),
+            makeActionSpec(tr("Disk Benchmark"),
+                           kIconSurface,
+                           tr("Open Benchmark and Diagnostics"),
+                           &PartitionManagerPanel::onOpenDiskBenchmark,
+                           {actionTargetKindList({kActionTargetAny})}),
+            makeActionSpec(tr("Space Analyzer"),
+                           kIconSurface,
+                           tr("Analyze tree, file, and file-type usage"),
+                           &PartitionManagerPanel::onSpaceAnalyzer,
+                           {actionTargetKindList({kActionTargetPartition}), true}),
+            makeActionSpec(tr("Disk Defrag"),
+                           kIconAlign,
+                           tr("Review defrag/ReTrim commands and open Windows Optimize Drives"),
+                           &PartitionManagerPanel::onOpenOptimizeDrives,
+                           {actionTargetKindList({kActionTargetDisk, kActionTargetPartition}),
+                            true}),
+            makeActionSpec(tr("SSD Secure Erase"),
+                           kIconWipe,
+                           tr("Queue SSD/NVMe ReTrim plus clear-level wipe"),
+                           &PartitionManagerPanel::onSsdSecureErase,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Manage BitLocker"),
+                           kIconProperties,
+                           tr("Review BitLocker status and open Windows management"),
+                           &PartitionManagerPanel::onManageBitLocker,
+                           {actionTargetKindList({kActionTargetPartition}), true}),
+            makeActionSpec(tr("Make Bootable Media"),
+                           kIconOsDrive,
+                           tr("Open Image Flasher"),
+                           &PartitionManagerPanel::onOpenBootableMedia,
+                           {actionTargetKindList({kActionTargetAny})})};
 }
 
-QVector<PartitionManagerPanel::ActionLinkSpec>
-PartitionManagerPanel::advancedOperationActionSpecs() const {
-    return {
-        makeActionSpec(tr("Hide/Unhide Partition"), kIconProperties, tr("Toggle hidden flag"),
-                       &PartitionManagerPanel::onSetPartitionHidden,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Set Active/Inactive"), kIconProperties, tr("Toggle MBR active flag"),
-                       &PartitionManagerPanel::onSetPartitionActive,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Change Partition Type ID"), kIconProperties, tr("Set partition type ID"),
-                       &PartitionManagerPanel::onSetPartitionTypeId,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Convert Primary/Logical"), kIconConvert,
-                       tr("Back up, rebuild MBR primary/logical layout, restore, and verify"),
-                       &PartitionManagerPanel::onConvertPrimaryLogical,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Change Serial Number"), kIconProperties,
-                       tr("Back up, reformat to regenerate volume serial, restore, and verify"),
-                       &PartitionManagerPanel::onChangeVolumeSerialNumber,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Convert Dynamic Disk to Basic"), kIconConvert,
-                       tr("Back up dynamic volume, convert disk to basic, restore, and verify"),
-                       &PartitionManagerPanel::onConvertDynamicDiskToBasic,
-                       {actionTargetKindList({kActionTargetDisk})}),
-        makeActionSpec(tr("Properties"), kIconProperties, tr("Show selected properties"),
-                       &PartitionManagerPanel::onShowProperties,
-                       {actionTargetKindList({kActionTargetAny})})};
+QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOperationActionSpecs()
+    const {
+    return {makeActionSpec(tr("Hide/Unhide Partition"),
+                           kIconProperties,
+                           tr("Toggle hidden flag"),
+                           &PartitionManagerPanel::onSetPartitionHidden,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Set Active/Inactive"),
+                           kIconProperties,
+                           tr("Toggle MBR active flag"),
+                           &PartitionManagerPanel::onSetPartitionActive,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Change Partition Type ID"),
+                           kIconProperties,
+                           tr("Set partition type ID"),
+                           &PartitionManagerPanel::onSetPartitionTypeId,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Convert Primary/Logical"),
+                           kIconConvert,
+                           tr("Back up, rebuild MBR primary/logical layout, restore, and verify"),
+                           &PartitionManagerPanel::onConvertPrimaryLogical,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Change Serial Number"),
+                           kIconProperties,
+                           tr("Back up, reformat to regenerate volume serial, restore, and verify"),
+                           &PartitionManagerPanel::onChangeVolumeSerialNumber,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Convert Dynamic Disk to Basic"),
+                           kIconConvert,
+                           tr("Back up dynamic volume, convert disk to basic, restore, and verify"),
+                           &PartitionManagerPanel::onConvertDynamicDiskToBasic,
+                           {actionTargetKindList({kActionTargetDisk})}),
+            makeActionSpec(tr("Properties"),
+                           kIconProperties,
+                           tr("Show selected properties"),
+                           &PartitionManagerPanel::onShowProperties,
+                           {actionTargetKindList({kActionTargetAny})})};
 }
 
 QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
@@ -8860,22 +8898,22 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
                                 .arg(partition.volume ? partition.volume->file_system
                                                       : partition.type_name,
                                      formatPartitionBytes(partition.size_bytes));
-    auto* segment = new PartitionSegmentWidget(
-        {label,
-         tooltip,
-         partitionColorRole(disk, partition),
-         partitionColor(disk, partition),
-         usedPercent(partition),
-         targetMatchesPartition(selected, disk, partition),
-         [this, segmentTarget]() { selectTargetInTable(segmentTarget); }},
-        m_diskMapContainer);
+    auto* segment = new PartitionSegmentWidget({label,
+                                                tooltip,
+                                                partitionColorRole(disk, partition),
+                                                partitionColor(disk, partition),
+                                                usedPercent(partition),
+                                                targetMatchesPartition(selected, disk, partition),
+                                                [this, segmentTarget]() {
+                                                    selectTargetInTable(segmentTarget);
+                                                }},
+                                               m_diskMapContainer);
     attachDiskMapContextMenu(segment, segmentTarget);
     return segment;
 }
 
 QWidget* PartitionManagerPanel::createUnallocatedSegment(
-    const UnallocatedRegion& region,
-    const std::optional<PartitionTarget>& selected) {
+    const UnallocatedRegion& region, const std::optional<PartitionTarget>& selected) {
     PartitionTarget segmentTarget;
     segmentTarget.kind = PartitionTargetKind::Unallocated;
     segmentTarget.disk_number = region.disk_number;
@@ -9325,27 +9363,25 @@ void PartitionManagerPanel::addPartitionContextMenuActions(QMenu& menu, bool has
 
 void PartitionManagerPanel::addPartitionLayoutContextMenuActions(QMenu& menu,
                                                                  const PartitionInfoEx* partition) {
-    addContextMenuAction(menu,
-                         this,
-                         partitionContextActionSpec(
-                             tr("Explore"), kIconProperties, partition, driveLetterPolicy()),
-                         [this]() { onExploreSelected(); });
+    addContextMenuAction(
+        menu,
+        this,
+        partitionContextActionSpec(tr("Explore"), kIconProperties, partition, driveLetterPolicy()),
+        [this]() { onExploreSelected(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Resize/Move Partition"),
                                                     kIconResize,
                                                     partition,
                                                     resizeFilesystemPolicy()),
-                         [this]() {
-        onResizePartition();
-    });
+                         [this]() { onResizePartition(); });
     addContextMenuAction(menu,
                          this,
-                         partitionContextActionSpec(
-                             tr("Extend Partition"), kIconResize, partition, resizeFilesystemPolicy()),
-                         [this]() {
-        onResizePartition();
-    });
+                         partitionContextActionSpec(tr("Extend Partition"),
+                                                    kIconResize,
+                                                    partition,
+                                                    resizeFilesystemPolicy()),
+                         [this]() { onResizePartition(); });
     addContextMenuAction(menu, this, {tr("Allocate Free Space"), kIconResize}, [this]() {
         onAllocateFreeSpace();
     });
@@ -9385,18 +9421,14 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                          this,
                          partitionContextActionSpec(
                              tr("Change Label"), kIconProperties, partition, windowsNativePolicy()),
-                         [this]() {
-        onSetPartitionLabel();
-    });
+                         [this]() { onSetPartitionLabel(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Convert File System"),
                                                     kIconConvert,
                                                     partition,
                                                     windowsNativePolicy()),
-                         [this]() {
-        onConvertFileSystem();
-    });
+                         [this]() { onConvertFileSystem(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Change Cluster Size"),
@@ -9406,11 +9438,11 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                          [this]() { onChangeClusterSize(); });
     addContextMenuAction(menu,
                          this,
-                         partitionContextActionSpec(
-                             tr("Check File System"), kIconSurface, partition, windowsNativePolicy()),
-                         [this]() {
-        onCheckFileSystem();
-    });
+                         partitionContextActionSpec(tr("Check File System"),
+                                                    kIconSurface,
+                                                    partition,
+                                                    windowsNativePolicy()),
+                         [this]() { onCheckFileSystem(); });
     const auto nonNativeInspect = nonNativeFilesystemInspectState(selectedPartition());
     addContextMenuAction(menu,
                          this,
@@ -9419,8 +9451,8 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                           nonNativeInspect.enabled,
                           nonNativeInspect.reason},
                          [this]() { onInspectNonNativeFileSystem(); });
-    const auto nonNativeBrowse =
-        nonNativeFilesystemBrowseState(selectedTarget(), selectedPartition());
+    const auto nonNativeBrowse = nonNativeFilesystemBrowseState(selectedTarget(),
+                                                                selectedPartition());
     addContextMenuAction(menu,
                          this,
                          {tr("Browse Non-Windows File System"),
@@ -9428,7 +9460,8 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                           nonNativeBrowse.enabled,
                           nonNativeBrowse.reason},
                          [this]() { onBrowseNonNativeFileSystem(); });
-    const auto nonNativeCheck = nonNativeFilesystemCheckState(selectedTarget(), selectedPartition());
+    const auto nonNativeCheck = nonNativeFilesystemCheckState(selectedTarget(),
+                                                              selectedPartition());
     addContextMenuAction(menu,
                          this,
                          {tr("Check Non-Windows File System"),
@@ -9437,20 +9470,15 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                           nonNativeCheck.reason},
                          [this]() { onCheckNonNativeFileSystem(); });
     const auto apfsMutation = apfsRootFileMutationState(selectedTarget(), selectedPartition());
-    addContextMenuAction(menu,
-                         this,
-                         {tr("APFS File"),
-                          kIconProperties,
-                          apfsMutation.enabled,
-                          apfsMutation.reason},
-                         [this]() { onApfsRootFileMutation(); });
+    addContextMenuAction(
+        menu,
+        this,
+        {tr("APFS File"), kIconProperties, apfsMutation.enabled, apfsMutation.reason},
+        [this]() { onApfsRootFileMutation(); });
     const auto hfsMutation = hfsFileMutationState(selectedTarget(), selectedPartition());
     addContextMenuAction(menu,
                          this,
-                         {tr("HFS File"),
-                          kIconProperties,
-                          hfsMutation.enabled,
-                          hfsMutation.reason},
+                         {tr("HFS File"), kIconProperties, hfsMutation.enabled, hfsMutation.reason},
                          [this]() { onHfsFileMutation(); });
 }
 
@@ -9478,11 +9506,11 @@ void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
     });
     addContextMenuAction(menu,
                          this,
-                         partitionContextActionSpec(
-                             tr("Manage BitLocker"), kIconProperties, partition, driveLetterPolicy()),
-                         [this]() {
-        onManageBitLocker();
-    });
+                         partitionContextActionSpec(tr("Manage BitLocker"),
+                                                    kIconProperties,
+                                                    partition,
+                                                    driveLetterPolicy()),
+                         [this]() { onManageBitLocker(); });
 }
 
 void PartitionManagerPanel::addPartitionAdvancedContextMenuActions(QMenu& menu) {
@@ -9700,8 +9728,8 @@ void PartitionManagerPanel::onExploreSelected() {
 }
 
 void PartitionManagerPanel::onCheckFileSystem() {
-    const auto availability =
-        partitionActionAvailability(selectedPartition(), windowsNativePolicy());
+    const auto availability = partitionActionAvailability(selectedPartition(),
+                                                          windowsNativePolicy());
     if (!availability.enabled) {
         showWarningLogged(this, tr("Check File System"), availability.reason);
         return;
@@ -9986,7 +10014,8 @@ bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widget
                            type == PartitionOperationType::ApfsPatchRootDirectoryFile;
     const bool directoryFileMode = apfsMutationIsDirectoryFile(type);
     const bool hasPayload = !needsPayload || !widgets.payload->toPlainText().isEmpty();
-    const bool hasOffset = !patchMode || parsedPatchOffset(widgets.patch_offset->text()).has_value();
+    const bool hasOffset = !patchMode ||
+                           parsedPatchOffset(widgets.patch_offset->text()).has_value();
     const bool hasDirectory = !directoryFileMode || !directoryName.isEmpty();
     return !entryName.isEmpty() && hasDirectory && hasPayload && hasOffset &&
            widgets.confirm->isChecked();
@@ -10002,16 +10031,16 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
     widgets.dialog->setAcceptEnabled(
         apfsMutationDialogCanAccept(widgets, type, directoryName, entryName));
     widgets.dialog->setPreviewText(apfsMutationPreview(
-        type,
-        previewName.isEmpty() ? apfsMutationFallbackName(type) : previewName));
+        type, previewName.isEmpty() ? apfsMutationFallbackName(type) : previewName));
 }
 
 std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     QWidget* parent, const ApfsRootFileMutationState& state) {
-    PartitionOperationDialog dialog(QObject::tr("APFS Generated File"),
-                                    state.target_path,
-                                    QObject::tr("Queue a S.A.K. generated APFS file or directory mutation."),
-                                    parent);
+    PartitionOperationDialog dialog(
+        QObject::tr("APFS Generated File"),
+        state.target_path,
+        QObject::tr("Queue a S.A.K. generated APFS file or directory mutation."),
+        parent);
     auto* mode = new QComboBox(&dialog);
     mode->setAccessibleName(QObject::tr("APFS generated file mutation mode"));
     mode->addItem(QObject::tr("Write root file"), QString::fromLatin1(kApfsRootFileWriteMode));
@@ -10054,7 +10083,9 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
 
     const ApfsRootFileMutationDialogWidgets widgets{
         &dialog, mode, directoryName, fileName, payload, patchOffset, confirm};
-    auto updatePreview = [&widgets]() { syncApfsRootFileMutationDialog(widgets); };
+    auto updatePreview = [&widgets]() {
+        syncApfsRootFileMutationDialog(widgets);
+    };
     QObject::connect(mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
     QObject::connect(directoryName, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(fileName, &QLineEdit::textChanged, &dialog, updatePreview);
@@ -10216,7 +10247,8 @@ QString hfsMutationPreviewTemplate(PartitionOperationType type) {
         {static_cast<int>(PartitionOperationType::HfsReplaceResourceFork),
          QObject::tr("Queue HFS+ allocated-block resource-fork replacement for %1.")},
         {static_cast<int>(PartitionOperationType::HfsGrowResourceFork),
-         QObject::tr("Queue HFS+ resource-fork replacement with bounded allocation growth for %1.")},
+         QObject::tr(
+             "Queue HFS+ resource-fork replacement with bounded allocation growth for %1.")},
         {static_cast<int>(PartitionOperationType::HfsTruncateResourceFork),
          QObject::tr("Queue HFS+ resource-fork truncate for %1.")},
         {static_cast<int>(PartitionOperationType::HfsCreateEmptyFile),
@@ -10331,15 +10363,13 @@ void syncHfsFileMutationDialog(const HfsFileMutationDialogWidgets& widgets) {
     setHfsMutationFieldActive(widgets.attribute_name, attributeMode);
     setHfsMutationFieldActive(widgets.secure_wipe, secureWipeMode);
 
-    widgets.dialog->setAcceptEnabled(
-        hfsMutationDialogReady(
-            widgets, needsPath, needsPayload, needsDestinationPath, attributeMode));
-    widgets.dialog->setPreviewText(
-        hfsMutationDialogPreviewText(widgets, type, secureWipeMode));
+    widgets.dialog->setAcceptEnabled(hfsMutationDialogReady(
+        widgets, needsPath, needsPayload, needsDestinationPath, attributeMode));
+    widgets.dialog->setPreviewText(hfsMutationDialogPreviewText(widgets, type, secureWipeMode));
 }
 
-std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(
-    QWidget* parent, const HfsFileMutationState& state) {
+std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
+                                                                const HfsFileMutationState& state) {
     PartitionOperationDialog dialog(QObject::tr("HFS File"),
                                     state.target_path,
                                     QObject::tr("Queue a staged HFS+ file mutation."),
@@ -10359,20 +10389,15 @@ std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(
                   QString::fromLatin1(kHfsGrowResourceForkMode));
     mode->addItem(QObject::tr("Truncate resource fork"),
                   QString::fromLatin1(kHfsTruncateResourceForkMode));
-    mode->addItem(QObject::tr("Create empty file"),
-                  QString::fromLatin1(kHfsCreateEmptyFileMode));
-    mode->addItem(QObject::tr("Create file with data"),
-                  QString::fromLatin1(kHfsCreateFileMode));
-    mode->addItem(QObject::tr("Delete empty file"),
-                  QString::fromLatin1(kHfsDeleteEmptyFileMode));
-    mode->addItem(QObject::tr("Delete file"),
-                  QString::fromLatin1(kHfsDeleteFileMode));
+    mode->addItem(QObject::tr("Create empty file"), QString::fromLatin1(kHfsCreateEmptyFileMode));
+    mode->addItem(QObject::tr("Create file with data"), QString::fromLatin1(kHfsCreateFileMode));
+    mode->addItem(QObject::tr("Delete empty file"), QString::fromLatin1(kHfsDeleteEmptyFileMode));
+    mode->addItem(QObject::tr("Delete file"), QString::fromLatin1(kHfsDeleteFileMode));
     mode->addItem(QObject::tr("Create empty folder"),
                   QString::fromLatin1(kHfsCreateEmptyFolderMode));
     mode->addItem(QObject::tr("Delete empty folder"),
                   QString::fromLatin1(kHfsDeleteEmptyFolderMode));
-    mode->addItem(QObject::tr("Delete folder tree"),
-                  QString::fromLatin1(kHfsDeleteFolderTreeMode));
+    mode->addItem(QObject::tr("Delete folder tree"), QString::fromLatin1(kHfsDeleteFolderTreeMode));
     mode->addItem(QObject::tr("Rename or move catalog entry"),
                   QString::fromLatin1(kHfsRenameMoveCatalogEntryMode));
     mode->addItem(QObject::tr("Replace inline attribute"),
@@ -10400,8 +10425,8 @@ std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(
     auto* allowWrapped = new QCheckBox(QObject::tr("Allow classic HFS wrapper"), &dialog);
     allowWrapped->setAccessibleName(QObject::tr("Allow classic HFS wrapper"));
     allowWrapped->setChecked(state.wrapped);
-    auto* secureWipe =
-        new QCheckBox(QObject::tr("Zero released file blocks before delete"), &dialog);
+    auto* secureWipe = new QCheckBox(QObject::tr("Zero released file blocks before delete"),
+                                     &dialog);
     secureWipe->setAccessibleName(QObject::tr("Zero released HFS blocks before delete"));
     auto* confirm = new QCheckBox(
         QObject::tr("I understand this stages the selected raw HFS+ partition, mutates the staged "
@@ -10431,7 +10456,9 @@ std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(
                                                allowWrapped,
                                                secureWipe,
                                                confirm};
-    auto updatePreview = [&widgets]() { syncHfsFileMutationDialog(widgets); };
+    auto updatePreview = [&widgets]() {
+        syncHfsFileMutationDialog(widgets);
+    };
     QObject::connect(mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
     QObject::connect(hfsPath, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(destinationHfsPath, &QLineEdit::textChanged, &dialog, updatePreview);
@@ -11259,8 +11286,8 @@ void PartitionManagerPanel::onConvertStyle() {
 }
 
 void PartitionManagerPanel::onConvertFileSystem() {
-    const auto availability =
-        partitionActionAvailability(selectedPartition(), windowsNativePolicy());
+    const auto availability = partitionActionAvailability(selectedPartition(),
+                                                          windowsNativePolicy());
     if (!availability.enabled) {
         showWarningLogged(this, tr("Convert File System"), availability.reason);
         return;

@@ -72,15 +72,15 @@ constexpr qsizetype kHfsWrapperEmbeddedExtentCountOffset = 0x80;
 constexpr uint64_t kHfsWrapperSectorBytes = 512;
 constexpr uint16_t kHfsPlusVersion = 4;
 constexpr uint16_t kHfsXMinimumVersion = 5;
-constexpr uint32_t kHfsVolumeJournaledMask = 0x00002000;
+constexpr uint32_t kHfsVolumeJournaledMask = 0x00'00'20'00;
 constexpr qsizetype kHfsVolumeJournalInfoBlockOffset = 12;
-constexpr uint32_t kHfsJournalInFsMask = 0x00000001;
-constexpr uint32_t kHfsJournalOnOtherDeviceMask = 0x00000002;
-constexpr uint32_t kHfsJournalNeedInitMask = 0x00000004;
+constexpr uint32_t kHfsJournalInFsMask = 0x00'00'00'01;
+constexpr uint32_t kHfsJournalOnOtherDeviceMask = 0x00'00'00'02;
+constexpr uint32_t kHfsJournalNeedInitMask = 0x00'00'00'04;
 constexpr qsizetype kHfsJournalInfoOffsetField = 36;
 constexpr qsizetype kHfsJournalInfoSizeField = 44;
-constexpr uint32_t kHfsJournalHeaderMagic = 0x4a4e4c78;  // 'JNLx'
-constexpr uint32_t kHfsJournalEndianMagic = 0x12345678;
+constexpr uint32_t kHfsJournalHeaderMagic = 0x4a'4e'4c'78;  // 'JNLx'
+constexpr uint32_t kHfsJournalEndianMagic = 0x12'34'56'78;
 constexpr qsizetype kHfsJournalHeaderBytes = 44;
 constexpr qsizetype kHfsJournalHeaderStartField = 8;
 constexpr qsizetype kHfsJournalHeaderEndField = 16;
@@ -98,7 +98,7 @@ constexpr qsizetype kHfsJournalBlockInfoSizeField = 8;
 constexpr uint64_t kHfsJournalSectorBytes = 512;
 constexpr int kHfsJournalMaxTransactions = 4096;
 constexpr int kHfsJournalMaxBlocksPerTransaction = 8192;
-constexpr uint32_t kHfsVolumeInconsistentMask = 0x00004000;
+constexpr uint32_t kHfsVolumeInconsistentMask = 0x00'00'40'00;
 constexpr uint32_t kHfsRootFolderId = 2;
 constexpr uint32_t kHfsRootParentId = 1;
 constexpr uint32_t kHfsExtentsFileId = 3;
@@ -116,8 +116,8 @@ constexpr qsizetype kHfsCatalogFolderValenceOffset = 4;
 constexpr qsizetype kHfsCatalogRecordIdOffset = 8;
 constexpr qsizetype kHfsCatalogFileDataForkOffset = 88;
 constexpr qsizetype kHfsForkDataBytes = kHfsForkExtentsOffset + kHfsExtentBytes * kHfsExtentCount;
-constexpr qsizetype kHfsCatalogFileResourceForkOffset =
-    kHfsCatalogFileDataForkOffset + kHfsForkDataBytes;
+constexpr qsizetype kHfsCatalogFileResourceForkOffset = kHfsCatalogFileDataForkOffset +
+                                                        kHfsForkDataBytes;
 constexpr qsizetype kHfsCatalogFolderRecordBytes = 88;
 constexpr qsizetype kHfsCatalogFileRecordBytes = 248;
 constexpr qsizetype kHfsCatalogMinimumKeyBytes = 6;
@@ -128,8 +128,8 @@ constexpr qsizetype kHfsCatalogKeyNameOffset = 8;
 constexpr qsizetype kHfsCatalogThreadParentIdOffset = 4;
 constexpr qsizetype kHfsCatalogThreadNameLengthOffset = 8;
 constexpr qsizetype kHfsCatalogThreadNameOffset = 10;
-constexpr qsizetype kHfsCatalogThreadRecordBytes =
-    kHfsCatalogThreadNameOffset + kHfsMaximumNameChars * kUint16Size;
+constexpr qsizetype kHfsCatalogThreadRecordBytes = kHfsCatalogThreadNameOffset +
+                                                   kHfsMaximumNameChars * kUint16Size;
 constexpr qsizetype kHfsExtentsKeyLength = 10;
 constexpr qsizetype kHfsExtentsKeyForkTypeOffset = 2;
 constexpr qsizetype kHfsExtentsKeyFileIdOffset = 4;
@@ -143,12 +143,10 @@ constexpr qsizetype kHfsAttributeKeyNameLengthOffset = 12;
 constexpr qsizetype kHfsAttributeKeyNameOffset = 14;
 constexpr qsizetype kHfsAttributeRecordTypeBytes = 4;
 constexpr qsizetype kHfsAttributeInlineReservedBytes = 8;
-constexpr qsizetype kHfsAttributeInlineSizeOffset =
-    kHfsAttributeRecordTypeBytes + kHfsAttributeInlineReservedBytes;
-constexpr qsizetype kHfsAttributeInlineDataOffset =
-    kHfsAttributeInlineSizeOffset + kUint32Size;
-constexpr qsizetype kHfsAttributeForkDataOffset =
-    kHfsAttributeRecordTypeBytes + kUint32Size;
+constexpr qsizetype kHfsAttributeInlineSizeOffset = kHfsAttributeRecordTypeBytes +
+                                                    kHfsAttributeInlineReservedBytes;
+constexpr qsizetype kHfsAttributeInlineDataOffset = kHfsAttributeInlineSizeOffset + kUint32Size;
+constexpr qsizetype kHfsAttributeForkDataOffset = kHfsAttributeRecordTypeBytes + kUint32Size;
 constexpr uint32_t kHfsAttributeInlineDataRecord = 0x10;
 constexpr uint32_t kHfsAttributeForkDataRecord = 0x20;
 constexpr uint32_t kHfsAttributeExtentsRecord = 0x30;
@@ -178,8 +176,8 @@ constexpr qsizetype kBTreeHeaderAttributesOffset = 38;
 constexpr qsizetype kBTreeHeaderMinimumReadBytes = 64;
 constexpr int kBTreeHeaderNodeRecordCount = 3;
 constexpr int kBTreeHeaderMapRecordIndex = 2;
-constexpr uint32_t kBTreeBigKeysMask = 0x00000002;
-constexpr uint32_t kBTreeVariableIndexKeysMask = 0x00000004;
+constexpr uint32_t kBTreeBigKeysMask = 0x00'00'00'02;
+constexpr uint32_t kBTreeVariableIndexKeysMask = 0x00'00'00'04;
 constexpr int kHfsRootLeafSplitNodesNeeded = 3;
 constexpr int kHfsRootLeafSplitFreeNodeDelta = -2;
 constexpr uint8_t kHfsLeafNodeHeight = 1;
@@ -190,7 +188,7 @@ constexpr uint32_t kMinimumHfsBlockSize = 512;
 constexpr uint32_t kMaximumHfsBlockSize = 128U * 1024U * 1024U;
 constexpr uint32_t kMinimumHfsBTreeNodeSize = 512;
 constexpr uint32_t kMinimumHfsCatalogNodeSize = 4096;
-constexpr uint32_t kMaximumHfsCatalogNodeSize = 32768;
+constexpr uint32_t kMaximumHfsCatalogNodeSize = 32'768;
 constexpr uint64_t kMaxForkReadBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kDefaultPathResolveEntryLimit = 100'000;
 constexpr int kMaxCatalogLeafNodesToScan = 200'000;
@@ -262,13 +260,9 @@ struct HfsCatalogRecord {
     HfsForkData data_fork;
     HfsForkData resource_fork;
 
-    [[nodiscard]] bool directory() const noexcept {
-        return record_type == kHfsCatalogFolderRecord;
-    }
+    [[nodiscard]] bool directory() const noexcept { return record_type == kHfsCatalogFolderRecord; }
 
-    [[nodiscard]] bool regularFile() const noexcept {
-        return record_type == kHfsCatalogFileRecord;
-    }
+    [[nodiscard]] bool regularFile() const noexcept { return record_type == kHfsCatalogFileRecord; }
 };
 
 struct HfsRawCatalogRecord {
@@ -468,7 +462,8 @@ uint64_t extentCoverageBytes(const HfsForkData& fork, uint32_t blockSize) {
 QStringList hfsPathParts(const QString& input, QStringList* blockers) {
     const QString path = input.trimmed().isEmpty() ? QStringLiteral("/") : input.trimmed();
     if (path.contains(QChar::Null) || path.contains(QLatin1Char('\\'))) {
-        blockers->append(QStringLiteral("HFS+ path contains unsupported control or backslash text"));
+        blockers->append(
+            QStringLiteral("HFS+ path contains unsupported control or backslash text"));
         return {};
     }
 
@@ -500,25 +495,21 @@ QString typeNameForRecord(uint16_t recordType) {
     if (recordType == kHfsCatalogFileRecord) {
         return QStringLiteral("File");
     }
-    if (recordType == kHfsCatalogFolderThreadRecord ||
-        recordType == kHfsCatalogFileThreadRecord) {
+    if (recordType == kHfsCatalogFolderThreadRecord || recordType == kHfsCatalogFileThreadRecord) {
         return QStringLiteral("Thread");
     }
     return QStringLiteral("Other");
 }
 
 QByteArray hfsCatalogKeyBytes(uint32_t parentId, const QString& name) {
-    const uint16_t keyLength =
-        static_cast<uint16_t>(kHfsCatalogMinimumKeyBytes +
-                              static_cast<qsizetype>(name.size()) * kUint16Size);
+    const uint16_t keyLength = static_cast<uint16_t>(
+        kHfsCatalogMinimumKeyBytes + static_cast<qsizetype>(name.size()) * kUint16Size);
     QByteArray key(kUint16Size + keyLength, '\0');
     writeBe16(&key, 0, keyLength);
     writeBe32(&key, kHfsCatalogKeyParentIdOffset, parentId);
     writeBe16(&key, kHfsCatalogKeyNameLengthOffset, static_cast<uint16_t>(name.size()));
     for (qsizetype index = 0; index < name.size(); ++index) {
-        writeBe16(&key,
-                  kHfsCatalogKeyNameOffset + index * kUint16Size,
-                  name.at(index).unicode());
+        writeBe16(&key, kHfsCatalogKeyNameOffset + index * kUint16Size, name.at(index).unicode());
     }
     return key;
 }
@@ -539,9 +530,7 @@ QByteArray hfsForkDataRecordBytes(const HfsForkData& fork) {
     for (int index = 0; index < count; ++index) {
         const qsizetype offset = kHfsForkExtentsOffset + index * kHfsExtentBytes;
         writeBe32(&bytes, offset + kHfsExtentStartBlockOffset, fork.extents.at(index).start_block);
-        writeBe32(&bytes,
-                  offset + kHfsExtentBlockCountOffset,
-                  fork.extents.at(index).block_count);
+        writeBe32(&bytes, offset + kHfsExtentBlockCountOffset, fork.extents.at(index).block_count);
     }
     return bytes;
 }
@@ -595,7 +584,7 @@ QByteArray hfsCatalogRecordBytes(uint32_t parentId,
 // ---- HFS+ decmpfs (AppleFSCompression) codec: types 3 (inline zlib/raw) and
 // ---- 4 (resource-fork chunked zlib). Layout follows Apple's on-disk format as
 // ---- documented by the open-source afsctool implementation.
-constexpr uint32_t kHfsDecmpfsMagic = 0x636D7066;  // 'cmpf', stored little-endian
+constexpr uint32_t kHfsDecmpfsMagic = 0x63'6D'70'66;  // 'cmpf', stored little-endian
 constexpr uint32_t kHfsDecmpfsTypeZlibInline = 3;
 constexpr uint32_t kHfsDecmpfsTypeZlibResource = 4;
 constexpr uint32_t kHfsDecmpfsTypeLzvnInline = 7;
@@ -625,7 +614,7 @@ constexpr qsizetype kHfsDecmpfsTrailerMagic4Offset = 38;
 constexpr uint16_t kHfsDecmpfsTrailerMagic1 = 0x1C;
 constexpr uint16_t kHfsDecmpfsTrailerMagic2 = 0x32;
 constexpr uint32_t kHfsDecmpfsTrailerMagic3 = 0x0A;
-constexpr uint64_t kHfsDecmpfsTrailerMagic4 = 0xFFFF0100ULL;
+constexpr uint64_t kHfsDecmpfsTrailerMagic4 = 0xFF'FF'01'00ULL;
 constexpr uint32_t kHfsDecmpfsMaxChunkCount = 0x10000;
 constexpr uint8_t kHfsDecmpfsRawChunkMarker = 0xFF;
 constexpr uint64_t kHfsDecmpfsMaxSupportedBytes = (1ULL << 31) - 1;
@@ -683,9 +672,8 @@ std::optional<HfsDecmpfsHeader> parseDecmpfsHeader(const QByteArray& attribute) 
     if (attribute.size() < kHfsDecmpfsHeaderBytes || le32(attribute, 0) != kHfsDecmpfsMagic) {
         return std::nullopt;
     }
-    return HfsDecmpfsHeader{
-        .compression_type = le32(attribute, kHfsDecmpfsTypeOffset),
-        .uncompressed_size = le64(attribute, kHfsDecmpfsSizeOffset)};
+    return HfsDecmpfsHeader{.compression_type = le32(attribute, kHfsDecmpfsTypeOffset),
+                            .uncompressed_size = le64(attribute, kHfsDecmpfsSizeOffset)};
 }
 
 QByteArray decmpfsHeaderBytes(uint32_t compressionType, uint64_t uncompressedSize) {
@@ -860,18 +848,18 @@ QByteArray decmpfsResourceTrailerBytes() {
 
 QByteArray buildDecmpfsResourceFork(const QByteArray& data) {
     const int chunkCount =
-        std::max(1, static_cast<int>((static_cast<uint64_t>(data.size()) +
-                                      kHfsDecmpfsChunkBytes - 1) / kHfsDecmpfsChunkBytes));
+        std::max(1,
+                 static_cast<int>((static_cast<uint64_t>(data.size()) + kHfsDecmpfsChunkBytes - 1) /
+                                  kHfsDecmpfsChunkBytes));
     QVector<QByteArray> chunks;
     chunks.reserve(chunkCount);
     for (int index = 0; index < chunkCount; ++index) {
-        chunks.append(encodeDecmpfsChunk(
-            data.mid(static_cast<qsizetype>(index) * kHfsDecmpfsChunkBytes,
-                     kHfsDecmpfsChunkBytes)));
+        chunks.append(encodeDecmpfsChunk(data.mid(
+            static_cast<qsizetype>(index) * kHfsDecmpfsChunkBytes, kHfsDecmpfsChunkBytes)));
     }
 
-    const qsizetype tableBytes =
-        kUint32Size + static_cast<qsizetype>(chunkCount) * kHfsDecmpfsChunkEntryBytes;
+    const qsizetype tableBytes = kUint32Size +
+                                 static_cast<qsizetype>(chunkCount) * kHfsDecmpfsChunkEntryBytes;
     qsizetype chunkAreaBytes = 0;
     for (const auto& chunk : chunks) {
         chunkAreaBytes += chunk.size();
@@ -896,9 +884,7 @@ QByteArray buildDecmpfsResourceFork(const QByteArray& data) {
         const qsizetype entryOffset = kHfsDecmpfsResourceTableOffset + kUint32Size +
                                       static_cast<qsizetype>(index) * kHfsDecmpfsChunkEntryBytes;
         writeLe32(&fork, entryOffset, static_cast<uint32_t>(chunkCursor));
-        writeLe32(&fork,
-                  entryOffset + kUint32Size,
-                  static_cast<uint32_t>(chunks.at(index).size()));
+        writeLe32(&fork, entryOffset + kUint32Size, static_cast<uint32_t>(chunks.at(index).size()));
         std::copy(chunks.at(index).cbegin(),
                   chunks.at(index).cend(),
                   fork.begin() + kHfsDecmpfsResourceTableOffset + chunkCursor);
@@ -920,15 +906,16 @@ void setDecmpfsDecodeError(QString* error, const QString& message) {
 // size and chunk i occupies [offset[i], offset[i + 1]).
 QByteArray buildDecmpfsChunkedResourceFork(uint32_t compressionType, const QByteArray& data) {
     const int chunkCount =
-        std::max(1, static_cast<int>((static_cast<uint64_t>(data.size()) +
-                                      kHfsDecmpfsChunkBytes - 1) / kHfsDecmpfsChunkBytes));
+        std::max(1,
+                 static_cast<int>((static_cast<uint64_t>(data.size()) + kHfsDecmpfsChunkBytes - 1) /
+                                  kHfsDecmpfsChunkBytes));
     QVector<QByteArray> chunks;
     chunks.reserve(chunkCount);
     for (int index = 0; index < chunkCount; ++index) {
-        chunks.append(encodeDecmpfsCodecChunk(
-            compressionType,
-            data.mid(static_cast<qsizetype>(index) * kHfsDecmpfsChunkBytes,
-                     kHfsDecmpfsChunkBytes)));
+        chunks.append(
+            encodeDecmpfsCodecChunk(compressionType,
+                                    data.mid(static_cast<qsizetype>(index) * kHfsDecmpfsChunkBytes,
+                                             kHfsDecmpfsChunkBytes)));
     }
     const qsizetype tableBytes = static_cast<qsizetype>(chunkCount + 1) * kUint32Size;
     qsizetype total = tableBytes;
@@ -959,10 +946,9 @@ std::optional<uint32_t> chunkedResourceForkChunkCount(const QByteArray& fork,
     const uint64_t expectedChunks = std::max<uint64_t>(
         1, (uncompressedSize + kHfsDecmpfsChunkBytes - 1) / kHfsDecmpfsChunkBytes);
     const uint32_t chunkCount = tableBytes / kUint32Size - 1;
-    if (tableBytes % kUint32Size != 0 ||
-        tableBytes < kHfsDecmpfsChunkTableMinimumBytes ||
-        static_cast<qsizetype>(tableBytes) > fork.size() ||
-        chunkCount > kHfsDecmpfsMaxChunkCount || chunkCount != expectedChunks) {
+    if (tableBytes % kUint32Size != 0 || tableBytes < kHfsDecmpfsChunkTableMinimumBytes ||
+        static_cast<qsizetype>(tableBytes) > fork.size() || chunkCount > kHfsDecmpfsMaxChunkCount ||
+        chunkCount != expectedChunks) {
         setDecmpfsDecodeError(error,
                               QStringLiteral("decmpfs resource fork offset table is invalid"));
         return std::nullopt;
@@ -974,8 +960,7 @@ std::optional<QByteArray> decodeDecmpfsChunkedResourceFork(uint32_t compressionT
                                                            const QByteArray& fork,
                                                            uint64_t uncompressedSize,
                                                            QString* error) {
-    const auto chunkCountChecked =
-        chunkedResourceForkChunkCount(fork, uncompressedSize, error);
+    const auto chunkCountChecked = chunkedResourceForkChunkCount(fork, uncompressedSize, error);
     if (!chunkCountChecked.has_value()) {
         return std::nullopt;
     }
@@ -993,10 +978,10 @@ std::optional<QByteArray> decodeDecmpfsChunkedResourceFork(uint32_t compressionT
         }
         const uint32_t expectedBytes =
             static_cast<uint32_t>(std::min<uint64_t>(remaining, kHfsDecmpfsChunkBytes));
-        const auto chunk = decodeDecmpfsCodecChunk(
-            compressionType,
-            fork.mid(static_cast<qsizetype>(start), static_cast<qsizetype>(end - start)),
-            expectedBytes);
+        const auto chunk = decodeDecmpfsCodecChunk(compressionType,
+                                                   fork.mid(static_cast<qsizetype>(start),
+                                                            static_cast<qsizetype>(end - start)),
+                                                   expectedBytes);
         if (!chunk.has_value()) {
             setDecmpfsDecodeError(
                 error, QStringLiteral("decmpfs resource fork chunk failed to decompress"));
@@ -1021,8 +1006,7 @@ std::optional<QByteArray> decodeDecmpfsResourceChunkAt(const QByteArray& fork,
                                   static_cast<qsizetype>(index) * kHfsDecmpfsChunkEntryBytes;
     const uint32_t chunkOffset = le32(fork, entryOffset);
     const uint32_t chunkSize = le32(fork, entryOffset + kUint32Size);
-    const qsizetype absolute =
-        kHfsDecmpfsResourceTableOffset + static_cast<qsizetype>(chunkOffset);
+    const qsizetype absolute = kHfsDecmpfsResourceTableOffset + static_cast<qsizetype>(chunkOffset);
     if (chunkSize == 0 || !hasBytes(fork, absolute, static_cast<qsizetype>(chunkSize))) {
         setDecmpfsDecodeError(error,
                               QStringLiteral("decmpfs resource fork chunk entry is out of range"));
@@ -1030,8 +1014,8 @@ std::optional<QByteArray> decodeDecmpfsResourceChunkAt(const QByteArray& fork,
     }
     const uint32_t expectedBytes =
         static_cast<uint32_t>(std::min<uint64_t>(remaining, kHfsDecmpfsChunkBytes));
-    const auto chunk = decodeDecmpfsChunk(
-        fork.mid(absolute, static_cast<qsizetype>(chunkSize)), expectedBytes);
+    const auto chunk = decodeDecmpfsChunk(fork.mid(absolute, static_cast<qsizetype>(chunkSize)),
+                                          expectedBytes);
     if (!chunk.has_value()) {
         setDecmpfsDecodeError(error,
                               QStringLiteral("decmpfs resource fork chunk failed to decompress"));
@@ -1052,11 +1036,12 @@ std::optional<QByteArray> decodeDecmpfsResourceFork(const QByteArray& fork,
         return std::nullopt;
     }
     const uint32_t chunkCount = le32(fork, kHfsDecmpfsResourceTableOffset);
-    const uint64_t expectedChunks =
-        (uncompressedSize + kHfsDecmpfsChunkBytes - 1) / kHfsDecmpfsChunkBytes;
+    const uint64_t expectedChunks = (uncompressedSize + kHfsDecmpfsChunkBytes - 1) /
+                                    kHfsDecmpfsChunkBytes;
     if (chunkCount == 0 || chunkCount > kHfsDecmpfsMaxChunkCount ||
         (uncompressedSize > 0 && chunkCount != expectedChunks)) {
-        setDecmpfsDecodeError(error, QStringLiteral("decmpfs resource fork chunk table is invalid"));
+        setDecmpfsDecodeError(error,
+                              QStringLiteral("decmpfs resource fork chunk table is invalid"));
         return std::nullopt;
     }
     QByteArray output;
@@ -1068,8 +1053,7 @@ std::optional<QByteArray> decodeDecmpfsResourceFork(const QByteArray& fork,
             return std::nullopt;
         }
         output.append(*chunk);
-        remaining -= static_cast<uint32_t>(
-            std::min<uint64_t>(remaining, kHfsDecmpfsChunkBytes));
+        remaining -= static_cast<uint32_t>(std::min<uint64_t>(remaining, kHfsDecmpfsChunkBytes));
     }
     if (remaining != 0) {
         setDecmpfsDecodeError(error,
@@ -1186,8 +1170,7 @@ public:
     [[nodiscard]] QStringList blockers() const { return m_blockers; }
     [[nodiscard]] QStringList warnings() const { return m_warnings; }
 
-    [[nodiscard]] PartitionHfsFileReadResult listDirectory(const QString& path,
-                                                           int maxEntries) {
+    [[nodiscard]] PartitionHfsFileReadResult listDirectory(const QString& path, int maxEntries) {
         PartitionHfsFileReadResult result = baseResult();
         const auto folderId = resolveFolderPath(path);
         if (!folderId.has_value()) {
@@ -1220,9 +1203,7 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult overwriteFileSameSize(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1247,8 +1228,8 @@ public:
             return result;
         }
         result.before_sha256 = sha256Hex(*before);
-        const auto chunks = writeForkBytes(
-            record->data_fork, record->catalog_id, kHfsDataForkType, 0, data);
+        const auto chunks =
+            writeForkBytes(record->data_fork, record->catalog_id, kHfsDataForkType, 0, data);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -1274,54 +1255,39 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceFileWithinAllocatedBlocks(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
         return replaceCatalogForkWithinAllocatedBlocks(path, data, options, HfsForkSelector::Data);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceResourceForkWithinAllocatedBlocks(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
-        return replaceCatalogForkWithinAllocatedBlocks(path,
-                                                       data,
-                                                       options,
-                                                       HfsForkSelector::Resource);
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
+        return replaceCatalogForkWithinAllocatedBlocks(
+            path, data, options, HfsForkSelector::Resource);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceFileWithAllocationGrowth(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
         return replaceCatalogForkWithAllocationGrowth(path, data, options, HfsForkSelector::Data);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceResourceForkWithAllocationGrowth(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
-        return replaceCatalogForkWithAllocationGrowth(path,
-                                                      data,
-                                                      options,
-                                                      HfsForkSelector::Resource);
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
+        return replaceCatalogForkWithAllocationGrowth(
+            path, data, options, HfsForkSelector::Resource);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult truncateFileWithinAllocatedBlocks(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         return truncateCatalogForkWithinAllocatedBlocks(path, options, HfsForkSelector::Data);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult truncateResourceForkWithinAllocatedBlocks(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         return truncateCatalogForkWithinAllocatedBlocks(path, options, HfsForkSelector::Resource);
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult createEmptyFile(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1337,20 +1303,19 @@ public:
         }
         result.catalog_id = plan->file_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    kHfsEmptyFileCreateFileCountDelta,
-                                    0,
-                                    plan->file_id + 1},
-            &result.blockers);
+        const auto chunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             kHfsEmptyFileCreateFileCountDelta,
+                                                             0,
+                                                             plan->file_id + 1},
+                                     &result.blockers);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
-        if (!appendEmptyFileCreateReadBack(plan->target.path,
-                                           plan->mutation.insert_node_number,
-                                           &result)) {
+        if (!appendEmptyFileCreateReadBack(
+                plan->target.path, plan->mutation.insert_node_number, &result)) {
             return result;
         }
         result.chunks_written = *chunks;
@@ -1363,9 +1328,7 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult createFileWithData(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1399,8 +1362,8 @@ public:
         result.warnings.append(m_warnings);
         result.warnings.append(
             plan->extents_mutation.has_value()
-                ? QStringLiteral(
-                      "HFS+ file created with %1 allocated data-fork block(s) and %2 extents-overflow record(s)")
+                ? QStringLiteral("HFS+ file created with %1 allocated data-fork block(s) and %2 "
+                                 "extents-overflow record(s)")
                       .arg(plan->allocated_blocks)
                       .arg(plan->overflow_records.size())
                 : QStringLiteral("HFS+ file created with %1 allocated data-fork block(s)")
@@ -1411,8 +1374,7 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult deleteEmptyFile(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1428,34 +1390,32 @@ public:
         }
         result.catalog_id = plan->record.catalog_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    kHfsEmptyFileDeleteFileCountDelta,
-                                    0,
-                                    m_volume.next_catalog_id},
-            &result.blockers);
+        const auto chunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             kHfsEmptyFileDeleteFileCountDelta,
+                                                             0,
+                                                             m_volume.next_catalog_id},
+                                     &result.blockers);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
-        if (!appendEmptyFileDeleteReadBack(plan->record,
-                                           plan->mutation.insert_node_number,
-                                           &result)) {
+        if (!appendEmptyFileDeleteReadBack(
+                plan->record, plan->mutation.insert_node_number, &result)) {
             return result;
         }
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(QStringLiteral(
-            "HFS+ empty file deleted without changing allocation bitmap blocks"));
+        result.warnings.append(
+            QStringLiteral("HFS+ empty file deleted without changing allocation bitmap blocks"));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult deleteFileAndReleaseAllocatedBlocks(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1465,7 +1425,8 @@ public:
             return result;
         }
 
-        const auto plan = prepareAllocatedFileDelete(path, options, &result.blockers, &result.warnings);
+        const auto plan =
+            prepareAllocatedFileDelete(path, options, &result.blockers, &result.warnings);
         if (!plan.has_value()) {
             return result;
         }
@@ -1478,13 +1439,13 @@ public:
         if (!wipeChunks.has_value()) {
             return result;
         }
-        const auto catalogChunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    kHfsEmptyFileDeleteFileCountDelta,
-                                    0,
-                                    m_volume.next_catalog_id},
-            &result.blockers);
+        const auto catalogChunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             kHfsEmptyFileDeleteFileCountDelta,
+                                                             0,
+                                                             m_volume.next_catalog_id},
+                                     &result.blockers);
         if (!catalogChunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -1501,36 +1462,33 @@ public:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto freeBlockChunks = writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
-                                                              m_volume.free_blocks,
-                                                              static_cast<int>(plan->released_blocks),
-                                                              &result.blockers);
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     static_cast<int>(plan->released_blocks),
+                                     &result.blockers);
         if (!freeBlockChunks.has_value()) {
             return result;
         }
-        if (!appendAllocatedFileDeleteReadBack(plan->record,
-                                               plan->mutation.insert_node_number,
-                                               plan->released_blocks,
-                                               &result)) {
+        if (!appendAllocatedFileDeleteReadBack(
+                plan->record, plan->mutation.insert_node_number, plan->released_blocks, &result)) {
             return result;
         }
-        result.chunks_written =
-            *wipeChunks + *catalogChunks + *extentsChunks + *bitmapChunks + *freeBlockChunks;
+        result.chunks_written = *wipeChunks + *catalogChunks + *extentsChunks + *bitmapChunks +
+                                *freeBlockChunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(
-            options.secure_wipe_deleted_blocks
-                ? QStringLiteral(
-                      "HFS+ file deleted after zeroing released allocated blocks with read-back verification")
-                : QStringLiteral(
-                      "HFS+ file deleted and allocated blocks released without secure block wiping"));
+        result.warnings.append(options.secure_wipe_deleted_blocks
+                                   ? QStringLiteral("HFS+ file deleted after zeroing released "
+                                                    "allocated blocks with read-back verification")
+                                   : QStringLiteral("HFS+ file deleted and allocated blocks "
+                                                    "released without secure block wiping"));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult deleteFolderTreeAndReleaseAllocatedBlocks(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1540,7 +1498,8 @@ public:
             return result;
         }
 
-        const auto plan = prepareFolderTreeDelete(path, options, &result.blockers, &result.warnings);
+        const auto plan =
+            prepareFolderTreeDelete(path, options, &result.blockers, &result.warnings);
         if (!plan.has_value()) {
             return result;
         }
@@ -1553,20 +1512,21 @@ public:
         if (!wipeChunks.has_value()) {
             return result;
         }
-        const auto catalogChunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    -plan->removed_files,
-                                    -plan->removed_folders,
-                                    m_volume.next_catalog_id},
-            &result.blockers);
+        const auto catalogChunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             -plan->removed_files,
+                                                             -plan->removed_folders,
+                                                             m_volume.next_catalog_id},
+                                     &result.blockers);
         if (!catalogChunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
         const auto extentsChunks = applyDeleteExtentsMutationStep(
             plan->extents_mutation,
-            QStringLiteral("HFS+ extents-overflow records for deleted folder-tree files were removed"),
+            QStringLiteral(
+                "HFS+ extents-overflow records for deleted folder-tree files were removed"),
             &result);
         if (!extentsChunks.has_value()) {
             return result;
@@ -1576,22 +1536,20 @@ public:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto freeBlockChunks =
-            writeReleasedFreeBlockCounter(plan->released_blocks, &result.blockers);
+        const auto freeBlockChunks = writeReleasedFreeBlockCounter(plan->released_blocks,
+                                                                   &result.blockers);
         if (!freeBlockChunks.has_value()) {
             return result;
         }
-        if (!appendFolderTreeDeleteReadBack(plan->record,
-                                            plan->mutation.insert_node_number,
-                                            plan->released_blocks,
-                                            &result)) {
+        if (!appendFolderTreeDeleteReadBack(
+                plan->record, plan->mutation.insert_node_number, plan->released_blocks, &result)) {
             return result;
         }
-        result.chunks_written =
-            *wipeChunks + *catalogChunks + *extentsChunks + *bitmapChunks + *freeBlockChunks;
+        result.chunks_written = *wipeChunks + *catalogChunks + *extentsChunks + *bitmapChunks +
+                                *freeBlockChunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(folderTreeDeleteWarning(options.secure_wipe_deleted_blocks,
-                                                       plan->released_blocks));
+        result.warnings.append(
+            folderTreeDeleteWarning(options.secure_wipe_deleted_blocks, plan->released_blocks));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
@@ -1610,8 +1568,8 @@ public:
             return result;
         }
 
-        const auto plan =
-            prepareCatalogRenameMove(sourcePath, destinationPath, &result.blockers, &result.warnings);
+        const auto plan = prepareCatalogRenameMove(
+            sourcePath, destinationPath, &result.blockers, &result.warnings);
         if (!plan.has_value()) {
             return result;
         }
@@ -1619,10 +1577,8 @@ public:
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
         const auto chunks = applyCatalogTreeMutation(
             plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    0,
-                                    0,
-                                    m_volume.next_catalog_id},
+            HfsCatalogCounterUpdate{
+                plan->mutation.leaf_record_delta, 0, 0, m_volume.next_catalog_id},
             &result.blockers);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
@@ -1643,8 +1599,7 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult createEmptyFolder(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1660,20 +1615,19 @@ public:
         }
         result.catalog_id = plan->file_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    0,
-                                    kHfsEmptyFolderCreateFolderCountDelta,
-                                    plan->file_id + 1},
-            &result.blockers);
+        const auto chunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             0,
+                                                             kHfsEmptyFolderCreateFolderCountDelta,
+                                                             plan->file_id + 1},
+                                     &result.blockers);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
-        if (!appendEmptyFolderCreateReadBack(plan->target.path,
-                                             plan->mutation.insert_node_number,
-                                             &result)) {
+        if (!appendEmptyFolderCreateReadBack(
+                plan->target.path, plan->mutation.insert_node_number, &result)) {
             return result;
         }
         result.chunks_written = *chunks;
@@ -1686,8 +1640,7 @@ public:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult deleteEmptyFolder(
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
@@ -1703,26 +1656,25 @@ public:
         }
         result.catalog_id = plan->record.catalog_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = applyCatalogTreeMutation(
-            plan->mutation,
-            HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
-                                    0,
-                                    kHfsEmptyFolderDeleteFolderCountDelta,
-                                    m_volume.next_catalog_id},
-            &result.blockers);
+        const auto chunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             0,
+                                                             kHfsEmptyFolderDeleteFolderCountDelta,
+                                                             m_volume.next_catalog_id},
+                                     &result.blockers);
         if (!chunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
-        if (!appendEmptyFileDeleteReadBack(plan->record,
-                                           plan->mutation.insert_node_number,
-                                           &result)) {
+        if (!appendEmptyFileDeleteReadBack(
+                plan->record, plan->mutation.insert_node_number, &result)) {
             return result;
         }
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(QStringLiteral(
-            "HFS+ empty folder deleted without changing allocation bitmap blocks"));
+        result.warnings.append(
+            QStringLiteral("HFS+ empty folder deleted without changing allocation bitmap blocks"));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
@@ -1744,7 +1696,8 @@ public:
         }
         const auto record = findReadableAttribute(*attributes, fileId, name);
         if (!record.has_value()) {
-            result.blockers.append(QStringLiteral("HFS+ attribute was not found or is not readable"));
+            result.blockers.append(
+                QStringLiteral("HFS+ attribute was not found or is not readable"));
             result.blockers.append(m_blockers);
             return result;
         }
@@ -1803,8 +1756,8 @@ public:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto zeroChunks =
-            zeroInlineAttributeTail(*record, static_cast<uint64_t>(data.size()));
+        const auto zeroChunks = zeroInlineAttributeTail(*record,
+                                                        static_cast<uint64_t>(data.size()));
         if (!zeroChunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -1813,8 +1766,8 @@ public:
         const auto readBack =
             readAttributeValue(result.file_id, result.attribute_name, options.max_write_bytes);
         if (!readBack.ok || readBack.data != data) {
-            result.blockers.append(QStringLiteral(
-                "HFS+ inline attribute write read-back verification failed"));
+            result.blockers.append(
+                QStringLiteral("HFS+ inline attribute write read-back verification failed"));
             result.blockers.append(readBack.blockers);
             result.blockers.append(m_blockers);
             return result;
@@ -1846,12 +1799,11 @@ public:
             return result;
         }
 
-        const auto selection = prepareForkAttributeWriteSelection(
-            fileId, name, data, options, &result);
-        return selection.has_value()
-                   ? replaceForkAttributeValueFromSelection(
-                         *selection, data, options, std::move(result))
-                   : result;
+        const auto selection =
+            prepareForkAttributeWriteSelection(fileId, name, data, options, &result);
+        return selection.has_value() ? replaceForkAttributeValueFromSelection(
+                                           *selection, data, options, std::move(result))
+                                     : result;
     }
 
     [[nodiscard]] std::optional<HfsForkAttributeWriteSelection> prepareForkAttributeWriteSelection(
@@ -1900,10 +1852,9 @@ public:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto zeroChunks =
-            zeroForkAttributeTail(selection.record,
-                                  selection.all_records,
-                                  static_cast<uint64_t>(data.size()));
+        const auto zeroChunks = zeroForkAttributeTail(selection.record,
+                                                      selection.all_records,
+                                                      static_cast<uint64_t>(data.size()));
         if (!zeroChunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -1918,8 +1869,8 @@ public:
         const auto readBack =
             readAttributeValue(result.file_id, result.attribute_name, options.max_write_bytes);
         if (!readBack.ok || readBack.storage != QStringLiteral("fork") || readBack.data != data) {
-            result.blockers.append(QStringLiteral(
-                "HFS+ fork attribute write read-back verification failed"));
+            result.blockers.append(
+                QStringLiteral("HFS+ fork attribute write read-back verification failed"));
             result.blockers.append(readBack.blockers);
             result.blockers.append(m_blockers);
             return result;
@@ -2152,11 +2103,11 @@ private:
         QStringList* blockers{nullptr};
     };
 
-    [[nodiscard]] PartitionHfsAttributeWriteResult replaceForkAttributeValueWithAllocationGrowthImpl(
-        uint32_t fileId,
-        const QString& name,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+    [[nodiscard]] PartitionHfsAttributeWriteResult
+    replaceForkAttributeValueWithAllocationGrowthImpl(uint32_t fileId,
+                                                      const QString& name,
+                                                      const QByteArray& data,
+                                                      const PartitionHfsFileWriteOptions& options) {
         PartitionHfsAttributeWriteResult result;
         result.file_system = m_volume.file_system;
         result.file_id = fileId;
@@ -2168,7 +2119,8 @@ private:
             return result;
         }
 
-        const auto plan = prepareForkAttributeAllocationGrowth(fileId, name, data, options, &result);
+        const auto plan =
+            prepareForkAttributeAllocationGrowth(fileId, name, data, options, &result);
         if (!plan.has_value()) {
             return result;
         }
@@ -2181,8 +2133,8 @@ private:
         result.before_sha256 = sha256Hex(*before);
 
         const HfsAttributeRecord grownRecord = grownAttributeRecord(plan->record, plan->new_fork);
-        const auto chunksWritten =
-            writeForkAttributeAllocationGrowth(grownRecord, plan->all_records, data, *plan, &result.blockers);
+        const auto chunksWritten = writeForkAttributeAllocationGrowth(
+            grownRecord, plan->all_records, data, *plan, &result.blockers);
         if (!chunksWritten.has_value()) {
             return result;
         }
@@ -2203,8 +2155,8 @@ private:
         result.bytes_written = static_cast<uint64_t>(data.size());
         result.chunks_written = *chunksWritten;
         result.warnings = m_warnings;
-        result.warnings.append(QStringLiteral(
-            "HFS+ fork attribute grew by allocating %1 new block(s) inside initial extent records")
+        result.warnings.append(QStringLiteral("HFS+ fork attribute grew by allocating %1 new "
+                                              "block(s) inside initial extent records")
                                    .arg(plan->allocated_blocks));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
@@ -2235,15 +2187,16 @@ private:
             return std::nullopt;
         }
 
-        const auto oldExtents =
-            initialForkExtentsForAllocatedBlocks(record->fork_data, QStringLiteral("fork attribute"), &result->blockers);
+        const auto oldExtents = initialForkExtentsForAllocatedBlocks(
+            record->fork_data, QStringLiteral("fork attribute"), &result->blockers);
         const auto requiredBlocks = requiredAllocationBlocksForBytes(data, &result->blockers);
         if (!oldExtents.has_value() || !requiredBlocks.has_value()) {
             return std::nullopt;
         }
         const uint32_t newBlocks = *requiredBlocks - record->fork_data.total_blocks;
-        const auto newExtents =
-            findFreeAllocationExtents(newBlocks, QStringLiteral("fork attribute"), &result->blockers);
+        const auto newExtents = findFreeAllocationExtents(newBlocks,
+                                                          QStringLiteral("fork attribute"),
+                                                          &result->blockers);
         if (!newExtents.has_value()) {
             return std::nullopt;
         }
@@ -2269,12 +2222,11 @@ private:
             .allocated_bytes = static_cast<uint64_t>(newBlocks) * m_volume.block_size};
     }
 
-    void appendForkAttributeAllocationGrowthBlockers(
-        const HfsAttributeRecord& record,
-        const QVector<HfsAttributeRecord>& allRecords,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options,
-        QStringList* blockers) {
+    void appendForkAttributeAllocationGrowthBlockers(const HfsAttributeRecord& record,
+                                                     const QVector<HfsAttributeRecord>& allRecords,
+                                                     const QByteArray& data,
+                                                     const PartitionHfsFileWriteOptions& options,
+                                                     QStringList* blockers) {
         appendForkAttributeTypeBlockers(record, options, blockers);
         if (!blockers->isEmpty()) {
             return;
@@ -2292,8 +2244,8 @@ private:
                                                const PartitionHfsFileWriteOptions& options,
                                                QStringList* blockers) const {
         if (record.fork_logical_size > options.max_write_bytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ fork attribute existing value exceeds configured write cap"));
+            blockers->append(
+                QStringLiteral("HFS+ fork attribute existing value exceeds configured write cap"));
         }
         const auto requiredBlocks = requiredAllocationBlocksForBytes(data, blockers);
         if (!requiredBlocks.has_value()) {
@@ -2313,11 +2265,12 @@ private:
                                               const QVector<HfsAttributeRecord>& allRecords,
                                               QStringList* blockers) {
         if (record.fork_data.total_blocks > 0 && record.fork_data.extents.isEmpty()) {
-            blockers->append(QStringLiteral("HFS+ existing fork attribute extents are not available"));
+            blockers->append(
+                QStringLiteral("HFS+ existing fork attribute extents are not available"));
             return;
         }
-        const auto oldExtents =
-            initialForkExtentsForAllocatedBlocks(record.fork_data, QStringLiteral("fork attribute"), blockers);
+        const auto oldExtents = initialForkExtentsForAllocatedBlocks(
+            record.fork_data, QStringLiteral("fork attribute"), blockers);
         if (!oldExtents.has_value()) {
             return;
         }
@@ -2367,11 +2320,11 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        const auto freeBlockChunks = writeVolumeHeaderCounter(
-            kHfsFreeBlocksOffset,
-            m_volume.free_blocks,
-            -static_cast<int>(plan.allocated_blocks),
-            blockers);
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     -static_cast<int>(plan.allocated_blocks),
+                                     blockers);
         if (!freeBlockChunks.has_value()) {
             return std::nullopt;
         }
@@ -2393,18 +2346,19 @@ private:
         const uint64_t slackBytes = *allocatedBytes - logicalSize;
         if (slackBytes > m_volume.block_size ||
             slackBytes > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
-            m_blockers.append(QStringLiteral("HFS+ fork attribute allocation slack zeroing is too large"));
+            m_blockers.append(
+                QStringLiteral("HFS+ fork attribute allocation slack zeroing is too large"));
             return std::nullopt;
         }
         const QByteArray zeros(static_cast<qsizetype>(slackBytes), '\0');
         return writeAttributeForkBytesWithinAllocated(record, allRecords, logicalSize, zeros);
     }
 
-    [[nodiscard]] std::optional<int> updateForkAttributeForkData(
-        const HfsAttributeRecord& record,
-        const HfsForkData& fork) {
+    [[nodiscard]] std::optional<int> updateForkAttributeForkData(const HfsAttributeRecord& record,
+                                                                 const HfsForkData& fork) {
         uint64_t forkBaseOffset = 0;
-        if (!checkedAdd(record.attribute_data_offset, kHfsAttributeForkDataOffset, &forkBaseOffset)) {
+        if (!checkedAdd(
+                record.attribute_data_offset, kHfsAttributeForkDataOffset, &forkBaseOffset)) {
             m_blockers.append(QStringLiteral("HFS+ fork attribute data offset overflow"));
             return std::nullopt;
         }
@@ -2512,8 +2466,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsCatalogMutationTarget> catalogMutationTarget(
-        const QString& path,
-        QStringList* blockers) const {
+        const QString& path, QStringList* blockers) const {
         QStringList pathBlockers;
         const QStringList parts = hfsPathParts(path, &pathBlockers);
         blockers->append(pathBlockers);
@@ -2525,11 +2478,8 @@ private:
             return std::nullopt;
         }
         const QString name = parts.last().trimmed();
-        if (name.isEmpty() ||
-            name.size() > kHfsMaximumNameChars ||
-            name.contains(QChar::Null) ||
-            name.contains(QLatin1Char('/')) ||
-            name.contains(QLatin1Char(':'))) {
+        if (name.isEmpty() || name.size() > kHfsMaximumNameChars || name.contains(QChar::Null) ||
+            name.contains(QLatin1Char('/')) || name.contains(QLatin1Char(':'))) {
             blockers->append(QStringLiteral("Unsupported HFS+ file name"));
             return std::nullopt;
         }
@@ -2537,10 +2487,10 @@ private:
             parts.size() == 1
                 ? QStringLiteral("/")
                 : QStringLiteral("/%1").arg(parts.mid(0, parts.size() - 1).join(QLatin1Char('/')));
-        return HfsCatalogMutationTarget{
-            .path = QStringLiteral("/%1").arg(parts.join(QLatin1Char('/'))),
-            .parent_path = parentPath,
-            .name = name};
+        return HfsCatalogMutationTarget{.path =
+                                            QStringLiteral("/%1").arg(parts.join(QLatin1Char('/'))),
+                                        .parent_path = parentPath,
+                                        .name = name};
     }
 
     struct HfsCatalogCreateContext {
@@ -2551,8 +2501,7 @@ private:
     };
 
     [[nodiscard]] std::optional<HfsCatalogCreateContext> prepareCatalogCreateContext(
-        const QString& path,
-        QStringList* blockers) {
+        const QString& path, QStringList* blockers) {
         const auto target = catalogMutationTarget(path, blockers);
         if (!target.has_value()) {
             return std::nullopt;
@@ -2565,8 +2514,7 @@ private:
         if (!model.has_value()) {
             return std::nullopt;
         }
-        const uint32_t newId =
-            nextSafeCatalogId(flattenedCatalogModelRecords(*model), blockers);
+        const uint32_t newId = nextSafeCatalogId(flattenedCatalogModelRecords(*model), blockers);
         if (!blockers->isEmpty()) {
             return std::nullopt;
         }
@@ -2574,9 +2522,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsEmptyFileCreatePlan> prepareEmptyFileCreate(
-        const QString& path,
-        QStringList* blockers,
-        QStringList* warnings) {
+        const QString& path, QStringList* blockers, QStringList* warnings) {
         auto context = prepareCatalogCreateContext(path, blockers);
         if (!context.has_value()) {
             return std::nullopt;
@@ -2587,19 +2533,17 @@ private:
         edit.valence_updates.append({context->parent_id, 1});
         edit.read_back_parent_id = context->parent_id;
         edit.read_back_name = context->target.name;
-        const auto mutation =
-            finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
+        const auto mutation = finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
         if (!mutation.has_value()) {
             return std::nullopt;
         }
         return HfsEmptyFileCreatePlan{context->target, *mutation, context->new_id};
     }
 
-    [[nodiscard]] std::optional<HfsFileCreatePlan> prepareFileCreate(
-        const QString& path,
-        const QByteArray& data,
-        QStringList* blockers,
-        QStringList* warnings) {
+    [[nodiscard]] std::optional<HfsFileCreatePlan> prepareFileCreate(const QString& path,
+                                                                     const QByteArray& data,
+                                                                     QStringList* blockers,
+                                                                     QStringList* warnings) {
         const auto allocation = prepareFileCreateAllocation(data, blockers);
         if (!allocation.has_value()) {
             return std::nullopt;
@@ -2617,8 +2561,7 @@ private:
         edit.valence_updates.append({context->parent_id, 1});
         edit.read_back_parent_id = context->parent_id;
         edit.read_back_name = context->target.name;
-        const auto mutation =
-            finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
+        const auto mutation = finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
         if (!mutation.has_value()) {
             return std::nullopt;
         }
@@ -2630,8 +2573,9 @@ private:
         plan.file_id = context->new_id;
         plan.allocated_blocks = allocation->allocated_blocks;
         if (plan.data_fork.extents.size() > kHfsExtentCount) {
-            plan.overflow_records = overflowRecordsForCombinedExtents(
-                plan.data_fork.extents, plan.file_id, kHfsDataForkType);
+            plan.overflow_records = overflowRecordsForCombinedExtents(plan.data_fork.extents,
+                                                                      plan.file_id,
+                                                                      kHfsDataForkType);
             const auto extentsMutation =
                 prepareExtentsTreeMutation({}, plan.overflow_records, blockers);
             if (!extentsMutation.has_value()) {
@@ -2643,8 +2587,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsFileCreateAllocationPlan> prepareFileCreateAllocation(
-        const QByteArray& data,
-        QStringList* blockers) {
+        const QByteArray& data, QStringList* blockers) {
         appendAllocationForkGrowthBlockers(blockers);
         const auto requiredBlocks = requiredAllocationBlocksForBytes(data, blockers);
         if (!requiredBlocks.has_value()) {
@@ -2672,10 +2615,9 @@ private:
         return plan;
     }
 
-    [[nodiscard]] std::optional<int> writeCreatedFileDataAndMetadata(
-        const HfsFileCreatePlan& plan,
-        const QByteArray& data,
-        QStringList* blockers) {
+    [[nodiscard]] std::optional<int> writeCreatedFileDataAndMetadata(const HfsFileCreatePlan& plan,
+                                                                     const QByteArray& data,
+                                                                     QStringList* blockers) {
         const auto dataChunks =
             writeForkBytesWithinAllocated(plan.data_fork, plan.file_id, kHfsDataForkType, 0, data);
         if (!dataChunks.has_value()) {
@@ -2701,21 +2643,22 @@ private:
             }
             extentsChunks = *treeChunks;
         }
-        const auto catalogChunks = applyCatalogTreeMutation(
-            plan.mutation,
-            HfsCatalogCounterUpdate{plan.mutation.leaf_record_delta,
-                                    kHfsEmptyFileCreateFileCountDelta,
-                                    0,
-                                    plan.file_id + 1},
-            blockers);
+        const auto catalogChunks =
+            applyCatalogTreeMutation(plan.mutation,
+                                     HfsCatalogCounterUpdate{plan.mutation.leaf_record_delta,
+                                                             kHfsEmptyFileCreateFileCountDelta,
+                                                             0,
+                                                             plan.file_id + 1},
+                                     blockers);
         if (!catalogChunks.has_value()) {
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        const auto freeBlockChunks = writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
-                                                             m_volume.free_blocks,
-                                                             -static_cast<int>(plan.allocated_blocks),
-                                                             blockers);
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     -static_cast<int>(plan.allocated_blocks),
+                                     blockers);
         if (!freeBlockChunks.has_value()) {
             return std::nullopt;
         }
@@ -2723,11 +2666,10 @@ private:
                *freeBlockChunks;
     }
 
-    [[nodiscard]] std::optional<QByteArray> readBackCreatedFileData(
-        const HfsFileCreatePlan& plan,
-        const QByteArray& data,
-        uint64_t maxBytes,
-        QStringList* blockers) {
+    [[nodiscard]] std::optional<QByteArray> readBackCreatedFileData(const HfsFileCreatePlan& plan,
+                                                                    const QByteArray& data,
+                                                                    uint64_t maxBytes,
+                                                                    QStringList* blockers) {
         const auto readBack = readFile(plan.target.path, maxBytes);
         if (readBack.ok && readBack.data == data) {
             return readBack.data;
@@ -2739,8 +2681,7 @@ private:
     }
 
     [[nodiscard]] std::optional<uint32_t> resolveEmptyFileCreateParent(
-        const HfsCatalogMutationTarget& target,
-        QStringList* blockers) {
+        const HfsCatalogMutationTarget& target, QStringList* blockers) {
         const auto parentId = resolveFolderPath(target.parent_path);
         if (!parentId.has_value()) {
             blockers->append(m_blockers);
@@ -2771,9 +2712,8 @@ private:
             .name = QString(),
             .record_type = kHfsCatalogFileThreadRecord,
             .catalog_id = 0,
-            .bytes = hfsCatalogRecordBytes(fileId,
-                                           QString(),
-                                           hfsCatalogFileThreadRecord(parentId, name))});
+            .bytes = hfsCatalogRecordBytes(
+                fileId, QString(), hfsCatalogFileThreadRecord(parentId, name))});
     }
 
     void appendEmptyFileCatalogRecords(QVector<HfsRawCatalogRecord>* records,
@@ -2791,9 +2731,8 @@ private:
             .name = QString(),
             .record_type = kHfsCatalogFileThreadRecord,
             .catalog_id = 0,
-            .bytes = hfsCatalogRecordBytes(fileId,
-                                           QString(),
-                                           hfsCatalogFileThreadRecord(parentId, name))});
+            .bytes = hfsCatalogRecordBytes(
+                fileId, QString(), hfsCatalogFileThreadRecord(parentId, name))});
     }
 
     bool appendEmptyFileCreateReadBack(const QString& path,
@@ -2810,9 +2749,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsEmptyFolderCreatePlan> prepareEmptyFolderCreate(
-        const QString& path,
-        QStringList* blockers,
-        QStringList* warnings) {
+        const QString& path, QStringList* blockers, QStringList* warnings) {
         auto context = prepareCatalogCreateContext(path, blockers);
         if (!context.has_value()) {
             return std::nullopt;
@@ -2823,8 +2760,7 @@ private:
         edit.valence_updates.append({context->parent_id, 1});
         edit.read_back_parent_id = context->parent_id;
         edit.read_back_name = context->target.name;
-        const auto mutation =
-            finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
+        const auto mutation = finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
         if (!mutation.has_value()) {
             return std::nullopt;
         }
@@ -2840,16 +2776,14 @@ private:
             .name = name,
             .record_type = kHfsCatalogFolderRecord,
             .catalog_id = folderId,
-            .bytes =
-                hfsCatalogRecordBytes(parentId, name, hfsCatalogEmptyFolderRecord(folderId))});
+            .bytes = hfsCatalogRecordBytes(parentId, name, hfsCatalogEmptyFolderRecord(folderId))});
         records->append(HfsRawCatalogRecord{
             .parent_id = folderId,
             .name = QString(),
             .record_type = kHfsCatalogFolderThreadRecord,
             .catalog_id = 0,
-            .bytes = hfsCatalogRecordBytes(folderId,
-                                           QString(),
-                                           hfsCatalogFolderThreadRecord(parentId, name))});
+            .bytes = hfsCatalogRecordBytes(
+                folderId, QString(), hfsCatalogFolderThreadRecord(parentId, name))});
     }
 
     bool appendEmptyFolderCreateReadBack(const QString& path,
@@ -2956,9 +2890,8 @@ private:
             return std::nullopt;
         }
         std::optional<HfsExtentsTreeMutation> extentsMutation;
-        if (!prepareOverflowRemovalMutation(overflowRemovalsForFile(record->catalog_id),
-                                            &extentsMutation,
-                                            blockers)) {
+        if (!prepareOverflowRemovalMutation(
+                overflowRemovalsForFile(record->catalog_id), &extentsMutation, blockers)) {
             return std::nullopt;
         }
         return HfsAllocatedFileDeletePlan{*record,
@@ -3012,8 +2945,7 @@ private:
         return removals;
     }
 
-    [[nodiscard]] QVector<QPair<uint32_t, uint8_t>> overflowRemovalsForFile(
-        uint32_t fileId) const {
+    [[nodiscard]] QVector<QPair<uint32_t, uint8_t>> overflowRemovalsForFile(uint32_t fileId) const {
         bool hasData = false;
         bool hasResource = false;
         for (const auto& record : m_overflow_extents) {
@@ -3037,9 +2969,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsEmptyFolderDeletePlan> prepareEmptyFolderDelete(
-        const QString& path,
-        QStringList* blockers,
-        QStringList* warnings) {
+        const QString& path, QStringList* blockers, QStringList* warnings) {
         const auto record = resolveCatalogPath(path);
         if (!record.has_value()) {
             blockers->append(m_blockers);
@@ -3077,10 +3007,9 @@ private:
         if (!model.has_value()) {
             return std::nullopt;
         }
-        const HfsCatalogLeafMutation flattened{
-            .node_number = 0,
-            .node = QByteArray(),
-            .records = flattenedCatalogModelRecords(*model)};
+        const HfsCatalogLeafMutation flattened{.node_number = 0,
+                                               .node = QByteArray(),
+                                               .records = flattenedCatalogModelRecords(*model)};
         const auto selection =
             folderTreeDeleteSelection(*record, flattened, options, blockers, warnings);
         if (!selection.has_value()) {
@@ -3100,9 +3029,8 @@ private:
             return std::nullopt;
         }
         std::optional<HfsExtentsTreeMutation> extentsMutation;
-        if (!prepareOverflowRemovalMutation(folderTreeOverflowRemovals(selection->records),
-                                            &extentsMutation,
-                                            blockers)) {
+        if (!prepareOverflowRemovalMutation(
+                folderTreeOverflowRemovals(selection->records), &extentsMutation, blockers)) {
             return std::nullopt;
         }
         return HfsFolderTreeDeletePlan{*record,
@@ -3118,9 +3046,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsCatalogRenameMoveResolved> resolveCatalogRenameMoveTargets(
-        const QString& sourcePath,
-        const QString& destinationPath,
-        QStringList* blockers) {
+        const QString& sourcePath, const QString& destinationPath, QStringList* blockers) {
         const auto sourceRecord = resolveCatalogPath(sourcePath);
         if (!sourceRecord.has_value()) {
             blockers->append(m_blockers);
@@ -3144,7 +3070,8 @@ private:
                              *destinationParentId,
                              destination->name,
                              m_catalog.key_compare_type)) {
-            blockers->append(QStringLiteral("HFS+ rename/move destination must change the catalog key"));
+            blockers->append(
+                QStringLiteral("HFS+ rename/move destination must change the catalog key"));
             return std::nullopt;
         }
         if (findChild(*destinationParentId, destination->name).has_value()) {
@@ -3162,8 +3089,10 @@ private:
         if (!source.directory()) {
             return true;
         }
-        if (catalogParentChainContains(leaf.records, destinationParentId, source.catalog_id, blockers)) {
-            blockers->append(QStringLiteral("HFS+ folder cannot be moved into itself or a descendant"));
+        if (catalogParentChainContains(
+                leaf.records, destinationParentId, source.catalog_id, blockers)) {
+            blockers->append(
+                QStringLiteral("HFS+ folder cannot be moved into itself or a descendant"));
             return false;
         }
         return true;
@@ -3174,7 +3103,8 @@ private:
         const QString& destinationPath,
         QStringList* blockers,
         QStringList* warnings) {
-        const auto resolved = resolveCatalogRenameMoveTargets(sourcePath, destinationPath, blockers);
+        const auto resolved =
+            resolveCatalogRenameMoveTargets(sourcePath, destinationPath, blockers);
         if (!resolved.has_value()) {
             return std::nullopt;
         }
@@ -3182,18 +3112,16 @@ private:
         if (!model.has_value()) {
             return std::nullopt;
         }
-        const HfsCatalogLeafMutation flattened{
-            .node_number = 0,
-            .node = QByteArray(),
-            .records = flattenedCatalogModelRecords(*model)};
+        const HfsCatalogLeafMutation flattened{.node_number = 0,
+                                               .node = QByteArray(),
+                                               .records = flattenedCatalogModelRecords(*model)};
         if (!catalogRenameMoveLeafIsSafe(
                 resolved->source_record, resolved->destination_parent_id, flattened, blockers)) {
             return std::nullopt;
         }
 
         const auto& source = resolved->source_record;
-        const int sourceLeaf =
-            catalogModelLeafContainingKey(*model, source.parent_id, source.name);
+        const int sourceLeaf = catalogModelLeafContainingKey(*model, source.parent_id, source.name);
         const int threadLeaf = catalogModelLeafContainingKey(*model, source.catalog_id, QString());
         if (sourceLeaf < 0 || threadLeaf < 0) {
             blockers->append(
@@ -3212,24 +3140,24 @@ private:
 
         HfsCatalogTreeEdit edit;
         edit.removals.append({source.parent_id, source.name});
-        edit.insertions.append(HfsRawCatalogRecord{
-            .parent_id = resolved->destination_parent_id,
-            .name = resolved->destination.name,
-            .record_type = source.record_type,
-            .catalog_id = source.catalog_id,
-            .bytes = hfsCatalogRecordBytes(
-                resolved->destination_parent_id, resolved->destination.name, *mainPayload)});
+        edit.insertions.append(
+            HfsRawCatalogRecord{.parent_id = resolved->destination_parent_id,
+                                .name = resolved->destination.name,
+                                .record_type = source.record_type,
+                                .catalog_id = source.catalog_id,
+                                .bytes = hfsCatalogRecordBytes(resolved->destination_parent_id,
+                                                               resolved->destination.name,
+                                                               *mainPayload)});
         edit.replacements.append(HfsRawCatalogRecord{
             .parent_id = source.catalog_id,
             .name = QString(),
             .record_type = threadType,
             .catalog_id = 0,
-            .bytes = hfsCatalogRecordBytes(
-                source.catalog_id,
-                QString(),
-                hfsCatalogThreadRecord(threadType,
-                                       resolved->destination_parent_id,
-                                       resolved->destination.name))});
+            .bytes = hfsCatalogRecordBytes(source.catalog_id,
+                                           QString(),
+                                           hfsCatalogThreadRecord(threadType,
+                                                                  resolved->destination_parent_id,
+                                                                  resolved->destination.name))});
         if (source.parent_id != resolved->destination_parent_id) {
             edit.valence_updates.append({source.parent_id, -1});
             edit.valence_updates.append({resolved->destination_parent_id, 1});
@@ -3248,10 +3176,9 @@ private:
                                             resolved->destination_parent_id};
     }
 
-    [[nodiscard]] std::optional<QByteArray> catalogRecordPayload(
-        const HfsRawCatalogRecord& raw,
-        uint16_t recordType,
-        QStringList* blockers) const {
+    [[nodiscard]] std::optional<QByteArray> catalogRecordPayload(const HfsRawCatalogRecord& raw,
+                                                                 uint16_t recordType,
+                                                                 QStringList* blockers) const {
         const qsizetype payloadSize = recordType == kHfsCatalogFileRecord
                                           ? kHfsCatalogFileRecordBytes
                                           : kHfsCatalogFolderRecordBytes;
@@ -3292,9 +3219,10 @@ private:
         return current == searchedAncestorId;
     }
 
-    [[nodiscard]] std::optional<uint32_t> threadParentId(const QVector<HfsRawCatalogRecord>& records,
-                                                         uint32_t catalogId,
-                                                         QStringList* blockers) const {
+    [[nodiscard]] std::optional<uint32_t> threadParentId(
+        const QVector<HfsRawCatalogRecord>& records,
+        uint32_t catalogId,
+        QStringList* blockers) const {
         const int index = findRawCatalogRecord(records, catalogId, QString());
         if (index < 0) {
             blockers->append(QStringLiteral("HFS+ folder thread record was not found"));
@@ -3319,8 +3247,7 @@ private:
                                          const HfsCatalogRenameMovePlan& plan,
                                          PartitionHfsFileWriteResult* result) {
         const auto renamed = resolveCatalogPath(plan.destination.path);
-        if (!renamed.has_value() ||
-            renamed->catalog_id != plan.source_record.catalog_id ||
+        if (!renamed.has_value() || renamed->catalog_id != plan.source_record.catalog_id ||
             renamed->record_type != plan.source_record.record_type) {
             result->blockers.append(QStringLiteral("HFS+ rename/move read-back failed"));
             result->blockers.append(m_blockers);
@@ -3346,21 +3273,22 @@ private:
         if (!releasedBytes.has_value()) {
             return std::nullopt;
         }
-        if (releasedBlocks > 0 &&
-            !releasedBlocksWithinCap(*releasedBytes, options, blockers)) {
+        if (releasedBlocks > 0 && !releasedBlocksWithinCap(*releasedBytes, options, blockers)) {
             return std::nullopt;
         }
-        const auto allocationBytes =
-            selection.released_extents.isEmpty()
-                ? std::optional<QVector<HfsAllocationBitmapByte>>(QVector<HfsAllocationBitmapByte>())
-                : prepareAllocationBitmapClear(selection.released_extents, blockers);
+        const auto allocationBytes = selection.released_extents.isEmpty()
+                                         ? std::optional<QVector<HfsAllocationBitmapByte>>(
+                                               QVector<HfsAllocationBitmapByte>())
+                                         : prepareAllocationBitmapClear(selection.released_extents,
+                                                                        blockers);
         if (!allocationBytes.has_value()) {
             return std::nullopt;
         }
         return HfsFolderTreeReleasePlan{*allocationBytes, releasedBlocks, *releasedBytes};
     }
 
-    void appendDeleteFolderTreeBlockers(const HfsCatalogRecord& record, QStringList* blockers) const {
+    void appendDeleteFolderTreeBlockers(const HfsCatalogRecord& record,
+                                        QStringList* blockers) const {
         if (record.catalog_id == kHfsRootFolderId) {
             blockers->append(QStringLiteral("HFS+ root folder tree delete is blocked"));
             return;
@@ -3388,16 +3316,15 @@ private:
 
         QSet<uint32_t> folderIds;
         folderIds.insert(root.catalog_id);
-        if (!appendDescendantFolderTreeRecords(
-                HfsFolderTreeSelectionContext{leaf, options, &folderIds, &selection, blockers, warnings})) {
+        if (!appendDescendantFolderTreeRecords(HfsFolderTreeSelectionContext{
+                leaf, options, &folderIds, &selection, blockers, warnings})) {
             return std::nullopt;
         }
         if (!releaseExtentsAreSafe(selection.released_extents, blockers)) {
             return std::nullopt;
         }
-        selection.removed_records = countRemovedFolderTreeRecords(leaf.records,
-                                                                  selection.keys_to_remove,
-                                                                  warnings);
+        selection.removed_records =
+            countRemovedFolderTreeRecords(leaf.records, selection.keys_to_remove, warnings);
         if (selection.removed_records <= 0) {
             blockers->append(QStringLiteral("HFS+ folder tree delete found no catalog records"));
             return std::nullopt;
@@ -3413,16 +3340,16 @@ private:
             for (const auto& raw : context.leaf.records) {
                 if (!catalogRecordTypeIsPayload(raw.record_type) ||
                     !context.folder_ids->contains(raw.parent_id) ||
-                    context.selection->keys_to_remove.contains(catalogKeyToken(raw.parent_id, raw.name))) {
+                    context.selection->keys_to_remove.contains(
+                        catalogKeyToken(raw.parent_id, raw.name))) {
                     continue;
                 }
                 const auto record = catalogRecordFromRaw(raw, context.blockers);
-                if (!record.has_value() ||
-                    !appendFolderTreeRecord(*record,
-                                            context.options,
-                                            context.folder_ids,
-                                            context.selection,
-                                            context.blockers)) {
+                if (!record.has_value() || !appendFolderTreeRecord(*record,
+                                                                   context.options,
+                                                                   context.folder_ids,
+                                                                   context.selection,
+                                                                   context.blockers)) {
                     return false;
                 }
                 changed = true;
@@ -3447,7 +3374,8 @@ private:
             return blockers->isEmpty();
         }
         if (!record.regularFile()) {
-            blockers->append(QStringLiteral("HFS+ folder tree delete found unsupported catalog record"));
+            blockers->append(
+                QStringLiteral("HFS+ folder tree delete found unsupported catalog record"));
             return false;
         }
         ++selection->removed_files;
@@ -3483,10 +3411,9 @@ private:
         Q_UNUSED(warnings);
     }
 
-    [[nodiscard]] int countRemovedFolderTreeRecords(
-        const QVector<HfsRawCatalogRecord>& records,
-        const QSet<QString>& keysToRemove,
-        QStringList* warnings) const {
+    [[nodiscard]] int countRemovedFolderTreeRecords(const QVector<HfsRawCatalogRecord>& records,
+                                                    const QSet<QString>& keysToRemove,
+                                                    QStringList* warnings) const {
         int removed = 0;
         for (const auto& raw : records) {
             if (keysToRemove.contains(catalogKeyToken(raw.parent_id, raw.name))) {
@@ -3494,7 +3421,8 @@ private:
             }
         }
         if (removed < keysToRemove.size()) {
-            warnings->append(QStringLiteral("HFS+ folder tree delete did not find every thread record"));
+            warnings->append(
+                QStringLiteral("HFS+ folder tree delete did not find every thread record"));
         }
         return removed;
     }
@@ -3513,7 +3441,8 @@ private:
         if (!children.has_value()) {
             blockers->append(QStringLiteral("HFS+ folder children could not be verified"));
         } else if (!children->isEmpty()) {
-            blockers->append(QStringLiteral("HFS+ folder delete currently supports only empty folders"));
+            blockers->append(
+                QStringLiteral("HFS+ folder delete currently supports only empty folders"));
         }
     }
 
@@ -3538,8 +3467,7 @@ private:
             return false;
         }
         const auto header = readVolumeHeaderAt(m_volume.volume_offset);
-        if (!header.has_value() ||
-            be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
+        if (!header.has_value() || be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
             m_volume.free_blocks < releasedBlocks) {
             result->blockers.append(QStringLiteral("HFS+ free-block counter read-back failed"));
             result->blockers.append(m_blockers);
@@ -3561,10 +3489,10 @@ private:
             return appendCatalogLeafAfterHash(leafNode, result);
         }
         const auto header = readVolumeHeaderAt(m_volume.volume_offset);
-        if (!header.has_value() ||
-            be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
+        if (!header.has_value() || be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
             m_volume.free_blocks < releasedBlocks) {
-            result->blockers.append(QStringLiteral("HFS+ folder tree free-block counter read-back failed"));
+            result->blockers.append(
+                QStringLiteral("HFS+ folder tree free-block counter read-back failed"));
             result->blockers.append(m_blockers);
             return false;
         }
@@ -3597,14 +3525,10 @@ private:
     }
 
     [[nodiscard]] bool recordHasNoAllocatedForks(const HfsCatalogRecord& record) const {
-        return record.data_size == 0 &&
-               record.resource_size == 0 &&
-               record.data_fork.logical_size == 0 &&
-               record.resource_fork.logical_size == 0 &&
-               record.data_fork.total_blocks == 0 &&
-               record.resource_fork.total_blocks == 0 &&
-               record.data_fork.extents.isEmpty() &&
-               record.resource_fork.extents.isEmpty();
+        return record.data_size == 0 && record.resource_size == 0 &&
+               record.data_fork.logical_size == 0 && record.resource_fork.logical_size == 0 &&
+               record.data_fork.total_blocks == 0 && record.resource_fork.total_blocks == 0 &&
+               record.data_fork.extents.isEmpty() && record.resource_fork.extents.isEmpty();
     }
 
     void appendDeleteAllocatedFileBlockers(const HfsCatalogRecord& record,
@@ -3627,19 +3551,16 @@ private:
         if (m_volume.allocation_fork.logical_size == 0 ||
             m_volume.allocation_fork.total_blocks == 0 ||
             m_volume.allocation_fork.extents.isEmpty()) {
-            blockers->append(QStringLiteral("HFS+ allocation bitmap fork is required for allocated-file delete"));
+            blockers->append(QStringLiteral(
+                "HFS+ allocation bitmap fork is required for allocated-file delete"));
         }
     }
 
     [[nodiscard]] std::optional<QVector<HfsExtent>> releasableFileExtents(
-        const HfsCatalogRecord& record,
-        QStringList* blockers) const {
+        const HfsCatalogRecord& record, QStringList* blockers) const {
         QVector<HfsExtent> extents;
-        if (!appendReleasableForkExtents(record.data_fork,
-                                         record.catalog_id,
-                                         kHfsDataForkType,
-                                         &extents,
-                                         blockers) ||
+        if (!appendReleasableForkExtents(
+                record.data_fork, record.catalog_id, kHfsDataForkType, &extents, blockers) ||
             !appendReleasableForkExtents(record.resource_fork,
                                          record.catalog_id,
                                          kHfsResourceForkType,
@@ -3648,7 +3569,8 @@ private:
             return std::nullopt;
         }
         if (extents.isEmpty()) {
-            blockers->append(QStringLiteral("HFS+ allocated-file delete found no allocated extents"));
+            blockers->append(
+                QStringLiteral("HFS+ allocated-file delete found no allocated extents"));
             return std::nullopt;
         }
         if (!releaseExtentsAreSafe(extents, blockers)) {
@@ -3674,20 +3596,12 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsExtent>> materializedForkExtents(
-        const HfsForkData& fork,
-        uint32_t fileId,
-        uint8_t forkType,
-        QStringList* blockers) const {
+        const HfsForkData& fork, uint32_t fileId, uint8_t forkType, QStringList* blockers) const {
         QVector<HfsExtent> extents;
         uint32_t coveredBlocks = appendInitialForkExtents(fork, &extents);
         if (coveredBlocks < fork.total_blocks &&
-            !appendOverflowForkExtents(
-                HfsOverflowForkExtentAppendContext{fork,
-                                                   fileId,
-                                                   forkType,
-                                                   coveredBlocks,
-                                                   &extents,
-                                                   blockers})) {
+            !appendOverflowForkExtents(HfsOverflowForkExtentAppendContext{
+                fork, fileId, forkType, coveredBlocks, &extents, blockers})) {
             return std::nullopt;
         }
         if (extentBlockSum(extents) != fork.total_blocks) {
@@ -3704,8 +3618,8 @@ private:
             if (coveredBlocks >= fork.total_blocks || extent.block_count == 0) {
                 continue;
             }
-            const uint32_t blockCount = std::min<uint32_t>(
-                extent.block_count, fork.total_blocks - coveredBlocks);
+            const uint32_t blockCount = std::min<uint32_t>(extent.block_count,
+                                                           fork.total_blocks - coveredBlocks);
             extents->append(HfsExtent{extent.start_block, blockCount});
             coveredBlocks += blockCount;
         }
@@ -3715,8 +3629,8 @@ private:
     [[nodiscard]] bool appendOverflowForkExtents(
         const HfsOverflowForkExtentAppendContext& context) const {
         if (m_overflow_extents.isEmpty()) {
-            context.blockers->append(QStringLiteral(
-                "HFS+ overflow extents are required for allocated-file delete"));
+            context.blockers->append(
+                QStringLiteral("HFS+ overflow extents are required for allocated-file delete"));
             return false;
         }
         uint32_t cursor = context.covered_blocks;
@@ -3728,23 +3642,22 @@ private:
                 if (cursor >= context.fork.total_blocks || extent.block_count == 0) {
                     continue;
                 }
-                const uint32_t blockCount = std::min<uint32_t>(
-                    extent.block_count, context.fork.total_blocks - cursor);
+                const uint32_t blockCount = std::min<uint32_t>(extent.block_count,
+                                                               context.fork.total_blocks - cursor);
                 context.extents->append(HfsExtent{extent.start_block, blockCount});
                 cursor += blockCount;
             }
         }
         if (cursor != context.fork.total_blocks) {
-            context.blockers->append(QStringLiteral(
-                "HFS+ allocated-file delete cannot materialize overflow extents"));
+            context.blockers->append(
+                QStringLiteral("HFS+ allocated-file delete cannot materialize overflow extents"));
             return false;
         }
         return true;
     }
 
     [[nodiscard]] QVector<HfsOverflowExtentRecord> sortedOverflowExtentsFor(
-        uint32_t fileId,
-        uint8_t forkType) const {
+        uint32_t fileId, uint8_t forkType) const {
         QVector<HfsOverflowExtentRecord> records;
         for (const auto& record : m_overflow_extents) {
             if (record.file_id == fileId && record.fork_type == forkType) {
@@ -3762,9 +3675,8 @@ private:
         for (const auto& extent : extents) {
             blocks += extent.block_count;
         }
-        return blocks > std::numeric_limits<uint32_t>::max()
-                   ? std::numeric_limits<uint32_t>::max()
-                   : static_cast<uint32_t>(blocks);
+        return blocks > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
+                                                             : static_cast<uint32_t>(blocks);
     }
 
     [[nodiscard]] std::optional<uint64_t> bytesForReleasedBlocks(uint32_t blocks,
@@ -3785,11 +3697,14 @@ private:
             return false;
         }
         if (releasedBytes / m_volume.block_size >
-            static_cast<uint64_t>(m_volume.total_blocks - std::min(m_volume.free_blocks, m_volume.total_blocks))) {
-            blockers->append(QStringLiteral("HFS+ free-block counter cannot accept released blocks"));
+            static_cast<uint64_t>(m_volume.total_blocks -
+                                  std::min(m_volume.free_blocks, m_volume.total_blocks))) {
+            blockers->append(
+                QStringLiteral("HFS+ free-block counter cannot accept released blocks"));
             return false;
         }
-        if (releasedBytes / m_volume.block_size > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        if (releasedBytes / m_volume.block_size >
+            static_cast<uint64_t>(std::numeric_limits<int>::max())) {
             blockers->append(QStringLiteral("HFS+ allocated-file delete releases too many blocks"));
             return false;
         }
@@ -3843,8 +3758,8 @@ private:
                                                     QStringList* blockers) const {
         for (int earlier = 0; earlier < index; ++earlier) {
             if (extentsOverlap(extents.at(earlier), extents.at(index))) {
-                blockers->append(QStringLiteral(
-                    "HFS+ allocated-file delete refuses overlapping file extents"));
+                blockers->append(
+                    QStringLiteral("HFS+ allocated-file delete refuses overlapping file extents"));
                 return true;
             }
         }
@@ -3858,8 +3773,7 @@ private:
                extentOverlapsFork(extent, m_volume.attributes_fork);
     }
 
-    [[nodiscard]] bool extentOverlapsFork(const HfsExtent& extent,
-                                          const HfsForkData& fork) const {
+    [[nodiscard]] bool extentOverlapsFork(const HfsExtent& extent, const HfsForkData& fork) const {
         for (const auto& forkExtent : fork.extents) {
             if (extentsOverlap(extent, forkExtent)) {
                 return true;
@@ -3871,15 +3785,12 @@ private:
     [[nodiscard]] static bool extentsOverlap(const HfsExtent& left, const HfsExtent& right) {
         const uint64_t leftEnd = static_cast<uint64_t>(left.start_block) + left.block_count;
         const uint64_t rightEnd = static_cast<uint64_t>(right.start_block) + right.block_count;
-        return left.block_count != 0 &&
-               right.block_count != 0 &&
-               left.start_block < rightEnd &&
+        return left.block_count != 0 && right.block_count != 0 && left.start_block < rightEnd &&
                right.start_block < leftEnd;
     }
 
     [[nodiscard]] std::optional<int> wipeReleasedExtentsWithReadBack(
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) {
+        const QVector<HfsExtent>& extents, QStringList* blockers) {
         int chunks = 0;
         for (const auto& extent : extents) {
             const auto extentChunks = wipeReleasedExtentWithReadBack(extent, blockers);
@@ -3892,9 +3803,7 @@ private:
     }
 
     [[nodiscard]] std::optional<int> wipeReleasedExtentsIfRequested(
-        bool secureWipe,
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) {
+        bool secureWipe, const QVector<HfsExtent>& extents, QStringList* blockers) {
         if (!secureWipe) {
             return 0;
         }
@@ -3906,24 +3815,22 @@ private:
         if (releasedBlocks == 0) {
             return 0;
         }
-        return writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
-                                        m_volume.free_blocks,
-                                        static_cast<int>(releasedBlocks),
-                                        blockers);
+        return writeVolumeHeaderCounter(
+            kHfsFreeBlocksOffset, m_volume.free_blocks, static_cast<int>(releasedBlocks), blockers);
     }
 
     [[nodiscard]] static QString folderTreeDeleteWarning(bool secureWipe, uint64_t releasedBlocks) {
         if (secureWipe && releasedBlocks > 0) {
             return QStringLiteral(
-                "HFS+ folder tree deleted after zeroing released file blocks with read-back verification");
+                "HFS+ folder tree deleted after zeroing released file blocks with read-back "
+                "verification");
         }
         return QStringLiteral(
             "HFS+ folder tree deleted; allocated file blocks released without secure block wiping");
     }
 
-    [[nodiscard]] std::optional<int> wipeReleasedExtentWithReadBack(
-        const HfsExtent& extent,
-        QStringList* blockers) {
+    [[nodiscard]] std::optional<int> wipeReleasedExtentWithReadBack(const HfsExtent& extent,
+                                                                    QStringList* blockers) {
         uint64_t remaining = 0;
         if (!checkedMul(extent.block_count, m_volume.block_size, &remaining)) {
             blockers->append(QStringLiteral("HFS+ secure delete byte count overflow"));
@@ -3957,8 +3864,7 @@ private:
     }
 
     [[nodiscard]] std::optional<uint64_t> deviceOffsetForReleasedExtentCursor(
-        const HfsExtent& extent,
-        uint64_t cursor) {
+        const HfsExtent& extent, uint64_t cursor) {
         const uint64_t blockDelta = cursor / m_volume.block_size;
         const uint64_t withinBlock = cursor % m_volume.block_size;
         uint64_t block = 0;
@@ -3970,8 +3876,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsAllocationBitmapByte>> prepareAllocationBitmapClear(
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) {
+        const QVector<HfsExtent>& extents, QStringList* blockers) {
         const auto bytes = loadAllocationBitmapBytes(extents, blockers);
         if (!bytes.has_value()) {
             return std::nullopt;
@@ -3984,8 +3889,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsAllocationBitmapByte>> loadAllocationBitmapBytes(
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) {
+        const QVector<HfsExtent>& extents, QStringList* blockers) {
         const auto offsets = allocationBitmapByteOffsets(extents, blockers);
         if (!offsets.has_value()) {
             return std::nullopt;
@@ -3993,27 +3897,21 @@ private:
         QVector<HfsAllocationBitmapByte> bytes;
         bytes.reserve(offsets->size());
         for (uint64_t offset : *offsets) {
-            const auto byte = readForkBytes(m_volume.allocation_fork,
-                                            kHfsAllocationFileId,
-                                            kHfsDataForkType,
-                                            offset,
-                                            1);
+            const auto byte = readForkBytes(
+                m_volume.allocation_fork, kHfsAllocationFileId, kHfsDataForkType, offset, 1);
             if (!byte.has_value() || byte->size() != 1) {
                 blockers->append(QStringLiteral("Unable to read HFS+ allocation bitmap byte"));
                 blockers->append(m_blockers);
                 return std::nullopt;
             }
             bytes.append(HfsAllocationBitmapByte{
-                offset,
-                static_cast<quint8>(byte->at(0)),
-                static_cast<quint8>(byte->at(0))});
+                offset, static_cast<quint8>(byte->at(0)), static_cast<quint8>(byte->at(0))});
         }
         return bytes;
     }
 
     [[nodiscard]] std::optional<QVector<uint64_t>> allocationBitmapByteOffsets(
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) const {
+        const QVector<HfsExtent>& extents, QStringList* blockers) const {
         QVector<uint64_t> offsets;
         for (const auto& extent : extents) {
             if (!appendAllocationBitmapByteOffsets(extent, &offsets, blockers)) {
@@ -4032,7 +3930,8 @@ private:
             const uint64_t allocationBlock = static_cast<uint64_t>(extent.start_block) + block;
             const uint64_t byteOffset = allocationBlock / 8U;
             if (byteOffset >= m_volume.allocation_fork.logical_size) {
-                blockers->append(QStringLiteral("HFS+ allocation bitmap does not cover file extent"));
+                blockers->append(
+                    QStringLiteral("HFS+ allocation bitmap does not cover file extent"));
                 return false;
             }
             offsets->append(byteOffset);
@@ -4040,10 +3939,9 @@ private:
         return true;
     }
 
-    [[nodiscard]] bool clearAllocationBits(
-        const QVector<HfsExtent>& extents,
-        QVector<HfsAllocationBitmapByte>* bytes,
-        QStringList* blockers) const {
+    [[nodiscard]] bool clearAllocationBits(const QVector<HfsExtent>& extents,
+                                           QVector<HfsAllocationBitmapByte>* bytes,
+                                           QStringList* blockers) const {
         for (const auto& extent : extents) {
             if (!clearAllocationExtentBits(extent, bytes, blockers)) {
                 return false;
@@ -4052,10 +3950,9 @@ private:
         return true;
     }
 
-    [[nodiscard]] bool clearAllocationExtentBits(
-        const HfsExtent& extent,
-        QVector<HfsAllocationBitmapByte>* bytes,
-        QStringList* blockers) const {
+    [[nodiscard]] bool clearAllocationExtentBits(const HfsExtent& extent,
+                                                 QVector<HfsAllocationBitmapByte>* bytes,
+                                                 QStringList* blockers) const {
         for (uint32_t block = 0; block < extent.block_count; ++block) {
             const uint64_t allocationBlock = static_cast<uint64_t>(extent.start_block) + block;
             if (!clearAllocationBlockBit(allocationBlock, bytes, blockers)) {
@@ -4076,7 +3973,8 @@ private:
             return false;
         }
         if ((byte->updated_value & mask) == 0) {
-            blockers->append(QStringLiteral("HFS+ allocation bitmap did not mark file block allocated"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation bitmap did not mark file block allocated"));
             return false;
         }
         byte->updated_value = static_cast<quint8>(byte->updated_value & ~mask);
@@ -4084,14 +3982,13 @@ private:
     }
 
     [[nodiscard]] HfsAllocationBitmapByte* allocationBitmapByte(
-        QVector<HfsAllocationBitmapByte>* bytes,
-        uint64_t byteOffset) const {
+        QVector<HfsAllocationBitmapByte>* bytes, uint64_t byteOffset) const {
         auto it = std::lower_bound(bytes->begin(),
                                    bytes->end(),
                                    byteOffset,
                                    [](const HfsAllocationBitmapByte& byte, uint64_t offset) {
-            return byte.fork_offset < offset;
-        });
+                                       return byte.fork_offset < offset;
+                                   });
         return it != bytes->end() && it->fork_offset == byteOffset ? &(*it) : nullptr;
     }
 
@@ -4134,8 +4031,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsRawCatalogRecord>> rawCatalogRecordsFromLeaf(
-        const QByteArray& node,
-        uint32_t nodeNumber) {
+        const QByteArray& node, uint32_t nodeNumber) {
         const uint16_t numRecords = be16(node, kBTreeNumRecordsOffset);
         const auto offsets = recordOffsets(node, numRecords);
         if (!offsets.has_value()) {
@@ -4155,19 +4051,17 @@ private:
                 m_blockers.append(QStringLiteral("Invalid HFS+ catalog record"));
                 return std::nullopt;
             }
-            records.append(HfsRawCatalogRecord{
-                .parent_id = parsed->parent_id,
-                .name = parsed->name,
-                .record_type = parsed->record_type,
-                .catalog_id = parsed->catalog_id,
-                .bytes = node.mid(start, end - start)});
+            records.append(HfsRawCatalogRecord{.parent_id = parsed->parent_id,
+                                               .name = parsed->name,
+                                               .record_type = parsed->record_type,
+                                               .catalog_id = parsed->catalog_id,
+                                               .bytes = node.mid(start, end - start)});
         }
         return records;
     }
 
     [[nodiscard]] std::optional<HfsCatalogRecord> catalogRecordFromRaw(
-        const HfsRawCatalogRecord& raw,
-        QStringList* blockers) const {
+        const HfsRawCatalogRecord& raw, QStringList* blockers) const {
         if (raw.bytes.size() < kUint16Size) {
             blockers->append(QStringLiteral("Invalid HFS+ raw catalog record"));
             return std::nullopt;
@@ -4178,12 +4072,11 @@ private:
             blockers->append(QStringLiteral("Invalid HFS+ raw catalog record payload"));
             return std::nullopt;
         }
-        const auto parsed =
-            parseCatalogDataRecord(raw.bytes,
-                                   HfsCatalogKeyInfo{.parent_id = raw.parent_id,
-                                                     .name = raw.name,
-                                                     .data_offset = dataOffset,
-                                                     .catalog_data_offset = 0});
+        const auto parsed = parseCatalogDataRecord(raw.bytes,
+                                                   HfsCatalogKeyInfo{.parent_id = raw.parent_id,
+                                                                     .name = raw.name,
+                                                                     .data_offset = dataOffset,
+                                                                     .catalog_data_offset = 0});
         if (!parsed.has_value()) {
             blockers->append(QStringLiteral("Unsupported HFS+ catalog record in folder tree"));
             return std::nullopt;
@@ -4200,11 +4093,8 @@ private:
                                            const QString& name) const {
         for (int index = 0; index < records.size(); ++index) {
             const auto& record = records.at(index);
-            if (catalogKeysEqual(record.parent_id,
-                                 record.name,
-                                 parentId,
-                                 name,
-                                 m_catalog.key_compare_type)) {
+            if (catalogKeysEqual(
+                    record.parent_id, record.name, parentId, name, m_catalog.key_compare_type)) {
                 return index;
             }
         }
@@ -4219,15 +4109,15 @@ private:
             return;
         }
         for (auto& record : *records) {
-            if (record.record_type != kHfsCatalogFolderRecord ||
-                record.catalog_id != parentId) {
+            if (record.record_type != kHfsCatalogFolderRecord || record.catalog_id != parentId) {
                 continue;
             }
             const uint16_t keyLength = be16(record.bytes, 0);
             const qsizetype dataOffset = kUint16Size + keyLength;
             const qsizetype valenceOffset = dataOffset + kHfsCatalogFolderValenceOffset;
             if (!hasBytes(record.bytes, valenceOffset, kUint32Size)) {
-                warnings->append(QStringLiteral("HFS+ parent folder valence field was unavailable"));
+                warnings->append(
+                    QStringLiteral("HFS+ parent folder valence field was unavailable"));
                 return;
             }
             const uint32_t oldValence = be32(record.bytes, valenceOffset);
@@ -4238,7 +4128,8 @@ private:
             writeBe32(&record.bytes, valenceOffset, newValence);
             return;
         }
-        warnings->append(QStringLiteral("HFS+ parent folder record was not present for valence update"));
+        warnings->append(
+            QStringLiteral("HFS+ parent folder record was not present for valence update"));
     }
 
     [[nodiscard]] uint32_t nextSafeCatalogId(const QVector<HfsRawCatalogRecord>& records,
@@ -4247,8 +4138,8 @@ private:
         for (const auto& record : records) {
             maxCatalogId = std::max(maxCatalogId, record.catalog_id);
         }
-        uint32_t nextId =
-            std::max(m_volume.next_catalog_id, std::max(kHfsMinimumUserCatalogId, maxCatalogId + 1));
+        uint32_t nextId = std::max(m_volume.next_catalog_id,
+                                   std::max(kHfsMinimumUserCatalogId, maxCatalogId + 1));
         if (nextId <= maxCatalogId || nextId == 0 ||
             nextId == std::numeric_limits<uint32_t>::max()) {
             blockers->append(QStringLiteral("HFS+ next catalog ID is unavailable"));
@@ -4261,18 +4152,16 @@ private:
         std::sort(records->begin(),
                   records->end(),
                   [&](const HfsRawCatalogRecord& left, const HfsRawCatalogRecord& right) {
-            return compareCatalogKeys(left.parent_id,
-                                      left.name,
-                                      right.parent_id,
-                                      right.name,
-                                      m_catalog.key_compare_type) < 0;
-        });
+                      return compareCatalogKeys(left.parent_id,
+                                                left.name,
+                                                right.parent_id,
+                                                right.name,
+                                                m_catalog.key_compare_type) < 0;
+                  });
     }
 
     [[nodiscard]] std::optional<HfsBTreeHeaderNodeContext> parseBTreeHeaderNodeForMutation(
-        const QByteArray& node,
-        const QString& label,
-        QStringList* blockers) {
+        const QByteArray& node, const QString& label, QStringList* blockers) {
         if (static_cast<int8_t>(node.at(kBTreeKindOffset)) != kBTreeHeaderNode) {
             blockers->append(QStringLiteral("HFS+ %1 header node is invalid").arg(label));
             return std::nullopt;
@@ -4320,8 +4209,8 @@ private:
 
     [[nodiscard]] static bool headerMapBitSet(const HfsBTreeHeaderNodeContext& header,
                                               uint32_t nodeNumber) {
-        const qsizetype byteOffset =
-            header.map_offset + static_cast<qsizetype>(nodeNumber / kBitsPerByte);
+        const qsizetype byteOffset = header.map_offset +
+                                     static_cast<qsizetype>(nodeNumber / kBitsPerByte);
         if (byteOffset >= header.map_end) {
             return false;
         }
@@ -4333,15 +4222,15 @@ private:
     static void writeHeaderMapBit(HfsBTreeHeaderNodeContext* header,
                                   uint32_t nodeNumber,
                                   bool set) {
-        const qsizetype byteOffset =
-            header->map_offset + static_cast<qsizetype>(nodeNumber / kBitsPerByte);
+        const qsizetype byteOffset = header->map_offset +
+                                     static_cast<qsizetype>(nodeNumber / kBitsPerByte);
         if (byteOffset >= header->map_end) {
             return;
         }
         const auto value = static_cast<quint8>(header->node.at(byteOffset));
         const auto mask = static_cast<quint8>(0x80U >> (nodeNumber % kBitsPerByte));
-        header->node[byteOffset] =
-            static_cast<char>(set ? (value | mask) : (value & static_cast<quint8>(~mask)));
+        header->node[byteOffset] = static_cast<char>(set ? (value | mask)
+                                                         : (value & static_cast<quint8>(~mask)));
     }
 
     struct HfsBTreeNodeAllocationRequest {
@@ -4353,28 +4242,28 @@ private:
     };
 
     [[nodiscard]] std::optional<QVector<uint32_t>> allocateBTreeNodesFromHeaderMap(
-        const HfsBTreeNodeAllocationRequest& request,
-        QStringList* blockers) const {
+        const HfsBTreeNodeAllocationRequest& request, QStringList* blockers) const {
         const HfsBTreeHeaderNodeContext& header = *request.header;
         const HfsBTreeHeader& tree = *request.tree;
-        const uint64_t mapCapacityBits =
-            static_cast<uint64_t>(header.map_end - header.map_offset) * kBitsPerByte;
+        const uint64_t mapCapacityBits = static_cast<uint64_t>(header.map_end - header.map_offset) *
+                                         kBitsPerByte;
         if (static_cast<uint64_t>(tree.total_nodes) > mapCapacityBits) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 B-tree node map spans multiple map nodes; split is blocked")
-                                 .arg(request.label));
+            blockers->append(
+                QStringLiteral("HFS+ %1 B-tree node map spans multiple map nodes; split is blocked")
+                    .arg(request.label));
             return std::nullopt;
         }
         if (tree.free_nodes < static_cast<uint32_t>(request.count)) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 B-tree does not have enough free nodes for a split").arg(request.label));
+            blockers->append(
+                QStringLiteral("HFS+ %1 B-tree does not have enough free nodes for a split")
+                    .arg(request.label));
             return std::nullopt;
         }
         for (uint32_t nodeNumber : request.must_be_allocated) {
             if (!headerMapBitSet(header, nodeNumber)) {
-                blockers->append(QStringLiteral(
-                    "HFS+ %1 B-tree node map is inconsistent with allocated nodes")
-                                     .arg(request.label));
+                blockers->append(
+                    QStringLiteral("HFS+ %1 B-tree node map is inconsistent with allocated nodes")
+                        .arg(request.label));
                 return std::nullopt;
             }
         }
@@ -4388,15 +4277,16 @@ private:
             }
         }
         if (allocated.size() < request.count) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 B-tree node map is inconsistent with the free-node counter")
-                                 .arg(request.label));
+            blockers->append(
+                QStringLiteral("HFS+ %1 B-tree node map is inconsistent with the free-node counter")
+                    .arg(request.label));
             return std::nullopt;
         }
         return allocated;
     }
 
-    [[nodiscard]] static std::optional<QByteArray> rawRecordKeyBytes(const QByteArray& recordBytes) {
+    [[nodiscard]] static std::optional<QByteArray> rawRecordKeyBytes(
+        const QByteArray& recordBytes) {
         const uint16_t keyLength = be16(recordBytes, 0);
         const qsizetype total = kUint16Size + keyLength;
         if (keyLength == 0 || !hasBytes(recordBytes, 0, total)) {
@@ -4458,10 +4348,10 @@ private:
     }
 
     [[nodiscard]] std::optional<int> catalogRootLeafSplitIndex(
-        const QVector<HfsRawCatalogRecord>& records,
-        QStringList* blockers) const {
+        const QVector<HfsRawCatalogRecord>& records, QStringList* blockers) const {
         if (records.size() < kHfsRootLeafSplitMinimumRecords) {
-            blockers->append(QStringLiteral("HFS+ catalog root-leaf split needs at least two records"));
+            blockers->append(
+                QStringLiteral("HFS+ catalog root-leaf split needs at least two records"));
             return std::nullopt;
         }
         qsizetype total = 0;
@@ -4497,8 +4387,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<QPair<QByteArray, uint32_t>>> parseCatalogIndexEntries(
-        const QByteArray& node,
-        QStringList* blockers) {
+        const QByteArray& node, QStringList* blockers) {
         const uint16_t numRecords = be16(node, kBTreeNumRecordsOffset);
         const auto offsets = recordOffsets(node, numRecords);
         if (!offsets.has_value()) {
@@ -4547,8 +4436,7 @@ private:
                 "HFS+ catalog B-tree node map is inconsistent with allocated nodes"));
             return false;
         }
-        model->leaves.append(
-            HfsCatalogWorkingLeaf{.node_number = nodeNumber, .records = *records});
+        model->leaves.append(HfsCatalogWorkingLeaf{.node_number = nodeNumber, .records = *records});
         return true;
     }
 
@@ -4610,16 +4498,15 @@ private:
         model->old_index_nodes.append(nodeNumber);
         for (const auto& entry : *entries) {
             if (model->leaves.size() > kHfsMaxMutationLeaves) {
-                blockers->append(QStringLiteral(
-                    "HFS+ catalog mutation supports at most %1 leaf nodes")
-                                     .arg(kHfsMaxMutationLeaves));
+                blockers->append(
+                    QStringLiteral("HFS+ catalog mutation supports at most %1 leaf nodes")
+                        .arg(kHfsMaxMutationLeaves));
                 return false;
             }
             const bool childOk =
                 expectedHeight == kHfsRootIndexNodeHeight
                     ? loadCatalogModelLeaf(entry.second, model, blockers)
-                    : loadCatalogModelIndexLevel(
-                          entry.second, expectedHeight - 1, model, blockers);
+                    : loadCatalogModelIndexLevel(entry.second, expectedHeight - 1, model, blockers);
             if (!childOk) {
                 return false;
             }
@@ -4630,9 +4517,9 @@ private:
     [[nodiscard]] std::optional<HfsCatalogTreeModel> loadCatalogTreeForMutation(
         QStringList* blockers) {
         if (m_catalog.tree_depth == 0 || m_catalog.tree_depth > kHfsMaxMutationTreeDepth) {
-            blockers->append(QStringLiteral(
-                "HFS+ catalog mutation supports B-trees up to %1 levels deep")
-                                 .arg(kHfsMaxMutationTreeDepth));
+            blockers->append(
+                QStringLiteral("HFS+ catalog mutation supports B-trees up to %1 levels deep")
+                    .arg(kHfsMaxMutationTreeDepth));
             return std::nullopt;
         }
         auto header = loadCatalogHeaderNodeForMutation(blockers);
@@ -4651,8 +4538,7 @@ private:
         return model;
     }
 
-    [[nodiscard]] bool loadCatalogModelLevels(HfsCatalogTreeModel* model,
-                                              QStringList* blockers) {
+    [[nodiscard]] bool loadCatalogModelLevels(HfsCatalogTreeModel* model, QStringList* blockers) {
         if (m_catalog.tree_depth == 1) {
             if (m_catalog.root_node != m_catalog.first_leaf_node ||
                 m_catalog.first_leaf_node != m_catalog.last_leaf_node) {
@@ -4661,10 +4547,8 @@ private:
             }
             return loadCatalogModelLeaf(m_catalog.root_node, model, blockers);
         }
-        if (!loadCatalogModelIndexLevel(m_catalog.root_node,
-                                        static_cast<uint8_t>(m_catalog.tree_depth),
-                                        model,
-                                        blockers)) {
+        if (!loadCatalogModelIndexLevel(
+                m_catalog.root_node, static_cast<uint8_t>(m_catalog.tree_depth), model, blockers)) {
             return false;
         }
         if (model->leaves.isEmpty() || model->leaves.size() > kHfsMaxMutationLeaves ||
@@ -4726,7 +4610,7 @@ private:
                                              const HfsCatalogKeyRemoval& removal,
                                              int* removedCount,
                                              QStringList* warnings,
-                                             QStringList* blockers) {
+                                             QStringList* blockers) const {
         const int leafIndex =
             catalogModelLeafContainingKey(*model, removal.parent_id, removal.name);
         if (leafIndex < 0) {
@@ -4747,14 +4631,14 @@ private:
 
     [[nodiscard]] bool applyCatalogModelValence(HfsCatalogTreeModel* model,
                                                 const HfsCatalogValenceUpdate& update,
-                                                QStringList* warnings) {
+                                                QStringList* warnings) const {
         for (auto& leaf : model->leaves) {
-            for (auto& record : leaf.records) {
+            for (const auto& record : leaf.records) {
                 if (record.record_type == kHfsCatalogFolderRecord &&
                     record.catalog_id == update.folder_id) {
                     QStringList localWarnings;
-                    updateParentFolderValence(&leaf.records, update.folder_id, update.delta,
-                                              &localWarnings);
+                    updateParentFolderValence(
+                        &leaf.records, update.folder_id, update.delta, &localWarnings);
                     warnings->append(localWarnings);
                     leaf.dirty = true;
                     return true;
@@ -4786,8 +4670,8 @@ private:
         const QVector<HfsRawCatalogRecord>& replacements,
         QStringList* blockers) const {
         for (const auto& replacement : replacements) {
-            const int leafIndex = catalogModelLeafContainingKey(
-                *model, replacement.parent_id, replacement.name);
+            const int leafIndex =
+                catalogModelLeafContainingKey(*model, replacement.parent_id, replacement.name);
             if (leafIndex < 0) {
                 blockers->append(QStringLiteral("HFS+ catalog record for update was not found"));
                 return false;
@@ -4801,10 +4685,9 @@ private:
         return true;
     }
 
-    [[nodiscard]] bool applyCatalogModelInsertions(
-        HfsCatalogTreeModel* model,
-        const QVector<HfsRawCatalogRecord>& insertions,
-        QStringList* blockers) const {
+    [[nodiscard]] bool applyCatalogModelInsertions(HfsCatalogTreeModel* model,
+                                                   const QVector<HfsRawCatalogRecord>& insertions,
+                                                   QStringList* blockers) const {
         for (const auto& insertion : insertions) {
             if (catalogModelLeafContainingKey(*model, insertion.parent_id, insertion.name) >= 0) {
                 blockers->append(QStringLiteral("HFS+ catalog entry already exists"));
@@ -4824,7 +4707,7 @@ private:
                                                const HfsCatalogTreeEdit& edit,
                                                int* removedCount,
                                                QStringList* warnings,
-                                               QStringList* blockers) {
+                                               QStringList* blockers) const {
         for (const auto& removal : edit.removals) {
             if (!removeCatalogModelKey(model,
                                        {removal.first, removal.second, true},
@@ -4856,10 +4739,10 @@ private:
     }
 
     [[nodiscard]] std::optional<uint32_t> allocateCatalogModelNode(HfsCatalogTreeModel* model,
-                                                                   QStringList* blockers) {
+                                                                   QStringList* blockers) const {
         if (model->working_free_nodes < 1) {
-            blockers->append(QStringLiteral(
-                "HFS+ catalog B-tree does not have enough free nodes for a split"));
+            blockers->append(
+                QStringLiteral("HFS+ catalog B-tree does not have enough free nodes for a split"));
             return std::nullopt;
         }
         for (uint32_t nodeNumber = 1; nodeNumber < m_catalog.total_nodes; ++nodeNumber) {
@@ -4922,8 +4805,7 @@ private:
         right.records = leaf.records.mid(*splitIndex);
         right.dirty = true;
         right.is_new = true;
-        (*model).leaves[leafIndex].records =
-            (*model).leaves[leafIndex].records.mid(0, *splitIndex);
+        (*model).leaves[leafIndex].records = (*model).leaves[leafIndex].records.mid(0, *splitIndex);
         (*model).leaves[leafIndex].dirty = true;
         model->leaves.insert(leafIndex + 1, right);
         return true;
@@ -4959,8 +4841,8 @@ private:
             model->leaves.removeAt(index);
         }
         if (model->leaves.size() > kHfsMaxMutationLeaves) {
-            blockers->append(QStringLiteral(
-                "HFS+ catalog mutation supports at most %1 leaf nodes").arg(kHfsMaxMutationLeaves));
+            blockers->append(QStringLiteral("HFS+ catalog mutation supports at most %1 leaf nodes")
+                                 .arg(kHfsMaxMutationLeaves));
             return false;
         }
         return true;
@@ -4973,13 +4855,12 @@ private:
 
     [[nodiscard]] bool emitCatalogLeafWrites(HfsCatalogTreeModel* model,
                                              HfsCatalogTreeMutation* mutation,
-                                             QStringList* blockers) {
+                                             QStringList* blockers) const {
         for (int index = 0; index < model->leaves.size(); ++index) {
             auto& leaf = (*model).leaves[index];
             const uint32_t forward =
                 index + 1 < model->leaves.size() ? model->leaves.at(index + 1).node_number : 0;
-            const uint32_t backward =
-                index > 0 ? model->leaves.at(index - 1).node_number : 0;
+            const uint32_t backward = index > 0 ? model->leaves.at(index - 1).node_number : 0;
             const auto bytes = buildCatalogLeafNodeBytes(forward, backward, leaf.records);
             if (!bytes.has_value()) {
                 blockers->append(QStringLiteral("HFS+ catalog leaf rebuild failed"));
@@ -5004,7 +4885,7 @@ private:
         const QVector<QPair<QByteArray, uint32_t>>& entries,
         uint8_t height,
         HfsCatalogTreeMutation* mutation,
-        QStringList* blockers) {
+        QStringList* blockers) const {
         QVector<QPair<QByteArray, uint32_t>> parents;
         QVector<HfsBTreeNodeWrite> levelWrites;
         int cursor = 0;
@@ -5015,8 +4896,7 @@ private:
             int count = 0;
             while (cursor + count < entries.size()) {
                 const auto& entry = entries.at(cursor + count);
-                const qsizetype entryBytes =
-                    entry.first.size() + kUint32Size + kUint16Size;
+                const qsizetype entryBytes = entry.first.size() + kUint32Size + kUint16Size;
                 if (count > 0 && usedBytes + entryBytes > m_catalog.node_size) {
                     break;
                 }
@@ -5051,9 +4931,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsCatalogTreeShape> emitCatalogIndexLevels(
-        HfsCatalogTreeModel* model,
-        HfsCatalogTreeMutation* mutation,
-        QStringList* blockers) {
+        HfsCatalogTreeModel* model, HfsCatalogTreeMutation* mutation, QStringList* blockers) const {
         if ((m_catalog.attributes_mask & kBTreeBigKeysMask) == 0 ||
             (m_catalog.attributes_mask & kBTreeVariableIndexKeysMask) == 0) {
             blockers->append(QStringLiteral(
@@ -5073,13 +4951,12 @@ private:
         uint8_t height = kHfsRootIndexNodeHeight;
         while (true) {
             if (height > kHfsMaxMutationTreeDepth) {
-                blockers->append(QStringLiteral(
-                    "HFS+ catalog mutation supports B-trees up to %1 levels deep")
-                                     .arg(kHfsMaxMutationTreeDepth));
+                blockers->append(
+                    QStringLiteral("HFS+ catalog mutation supports B-trees up to %1 levels deep")
+                        .arg(kHfsMaxMutationTreeDepth));
                 return std::nullopt;
             }
-            const auto parents =
-                emitCatalogIndexLevel(model, entries, height, mutation, blockers);
+            const auto parents = emitCatalogIndexLevel(model, entries, height, mutation, blockers);
             if (!parents.has_value()) {
                 return std::nullopt;
             }
@@ -5102,9 +4979,13 @@ private:
                 : m_catalog.leaf_records + static_cast<uint32_t>(mutation->leaf_record_delta);
         HfsBTreeHeaderNodeContext updatedHeader = model.header;
         const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        writeBe16(&updatedHeader.node, headerRecord + kBTreeHeaderTreeDepthOffset, shape.tree_depth);
+        writeBe16(&updatedHeader.node,
+                  headerRecord + kBTreeHeaderTreeDepthOffset,
+                  shape.tree_depth);
         writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderRootNodeOffset, shape.root_node);
-        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderLeafRecordsOffset, newLeafRecords);
+        writeBe32(&updatedHeader.node,
+                  headerRecord + kBTreeHeaderLeafRecordsOffset,
+                  newLeafRecords);
         writeBe32(&updatedHeader.node,
                   headerRecord + kBTreeHeaderFirstLeafNodeOffset,
                   model.leaves.first().node_number);
@@ -5157,11 +5038,10 @@ private:
         }
         composeCatalogTreeHeader(*model, shape, &mutation);
 
-        const int readBackLeaf = edit.read_back_name.isEmpty() && edit.read_back_parent_id == 0
-                                     ? 0
-                                     : catalogModelLeafForKey(*model,
-                                                              edit.read_back_parent_id,
-                                                              edit.read_back_name);
+        const int readBackLeaf =
+            edit.read_back_name.isEmpty() && edit.read_back_parent_id == 0
+                ? 0
+                : catalogModelLeafForKey(*model, edit.read_back_parent_id, edit.read_back_name);
         mutation.insert_node_number = model->leaves.at(readBackLeaf).node_number;
         return mutation;
     }
@@ -5171,8 +5051,8 @@ private:
         if (edit.read_back_name.isEmpty() && edit.read_back_parent_id == 0) {
             return 0;
         }
-        const int containing = catalogModelLeafContainingKey(
-            model, edit.read_back_parent_id, edit.read_back_name);
+        const int containing =
+            catalogModelLeafContainingKey(model, edit.read_back_parent_id, edit.read_back_name);
         if (containing >= 0) {
             return containing;
         }
@@ -5213,9 +5093,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsCatalogTreeMutation> prepareCatalogTreeMutation(
-        const HfsCatalogTreeEdit& edit,
-        QStringList* blockers,
-        QStringList* warnings) {
+        const HfsCatalogTreeEdit& edit, QStringList* blockers, QStringList* warnings) {
         auto model = loadCatalogTreeForMutation(blockers);
         if (!model.has_value()) {
             return std::nullopt;
@@ -5267,8 +5145,7 @@ private:
     }
 
     [[nodiscard]] std::optional<int> applyCatalogVolumeCounters(
-        const HfsCatalogCounterUpdate& update,
-        QStringList* blockers) {
+        const HfsCatalogCounterUpdate& update, QStringList* blockers) {
         int chunks = 0;
         const auto fileCountChunks = writeVolumeHeaderCounter(
             kHfsFileCountOffset, m_volume.file_count, update.file_count_delta, blockers);
@@ -5285,8 +5162,8 @@ private:
             chunks += *folderCountChunks;
         }
         if (update.next_catalog_id != m_volume.next_catalog_id) {
-            const auto nextIdChunks =
-                writeVolumeHeaderU32(kHfsNextCatalogIdOffset, update.next_catalog_id);
+            const auto nextIdChunks = writeVolumeHeaderU32(kHfsNextCatalogIdOffset,
+                                                           update.next_catalog_id);
             if (!nextIdChunks.has_value()) {
                 blockers->append(m_blockers);
                 return std::nullopt;
@@ -5326,9 +5203,11 @@ private:
         const int count = std::min<int>(static_cast<int>(record.extents.size()), kHfsExtentCount);
         for (int index = 0; index < count; ++index) {
             const qsizetype offset = index * kHfsExtentBytes;
-            writeBe32(&payload, offset + kHfsExtentStartBlockOffset,
+            writeBe32(&payload,
+                      offset + kHfsExtentStartBlockOffset,
                       record.extents.at(index).start_block);
-            writeBe32(&payload, offset + kHfsExtentBlockCountOffset,
+            writeBe32(&payload,
+                      offset + kHfsExtentBlockCountOffset,
                       record.extents.at(index).block_count);
         }
         bytes.append(payload);
@@ -5349,8 +5228,8 @@ private:
         offsets.reserve(records.size());
         qsizetype cursor = kBTreeNodeDescriptorBytes;
         for (const auto& record : records) {
-            if (!appendCatalogRecordToNode(&node, overflowExtentRecordBytes(record),
-                                           &offsets, &cursor)) {
+            if (!appendCatalogRecordToNode(
+                    &node, overflowExtentRecordBytes(record), &offsets, &cursor)) {
                 return std::nullopt;
             }
         }
@@ -5387,8 +5266,9 @@ private:
             }
             const auto record = parseOverflowExtentRecord(*node, start, end);
             if (!record.has_value()) {
-                blockers->append(QStringLiteral(
-                    "HFS+ extents overflow mutation requires only supported data/resource records"));
+                blockers->append(
+                    QStringLiteral("HFS+ extents overflow mutation requires only supported "
+                                   "data/resource records"));
                 return std::nullopt;
             }
             records.append(*record);
@@ -5403,11 +5283,11 @@ private:
             return false;
         }
         if (!treeIsEmpty &&
-            (m_extents.tree_depth != 1 ||
-             m_extents.first_leaf_node != m_extents.last_leaf_node ||
+            (m_extents.tree_depth != 1 || m_extents.first_leaf_node != m_extents.last_leaf_node ||
              m_extents.root_node != m_extents.first_leaf_node)) {
-            blockers->append(QStringLiteral(
-                "HFS+ extents overflow mutation currently requires an empty or single-leaf B-tree"));
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow mutation currently requires an empty or "
+                               "single-leaf B-tree"));
             return false;
         }
         return true;
@@ -5421,21 +5301,23 @@ private:
             records->erase(std::remove_if(records->begin(),
                                           records->end(),
                                           [&removal](const HfsOverflowExtentRecord& record) {
-                return record.file_id == removal.first && record.fork_type == removal.second;
-            }), records->end());
+                                              return record.file_id == removal.first &&
+                                                     record.fork_type == removal.second;
+                                          }),
+                           records->end());
         }
         for (const auto& insertion : insertions) {
-            if (insertion.extents.isEmpty() ||
-                insertion.extents.size() > kHfsExtentCount ||
+            if (insertion.extents.isEmpty() || insertion.extents.size() > kHfsExtentCount ||
                 (insertion.fork_type != kHfsDataForkType &&
                  insertion.fork_type != kHfsResourceForkType)) {
-                blockers->append(QStringLiteral("HFS+ extents overflow insertion record is invalid"));
+                blockers->append(
+                    QStringLiteral("HFS+ extents overflow insertion record is invalid"));
                 return false;
             }
             for (const auto& existing : *records) {
                 if (compareOverflowExtentKeys(existing, insertion) == 0) {
-                    blockers->append(QStringLiteral(
-                        "HFS+ extents overflow insertion key already exists"));
+                    blockers->append(
+                        QStringLiteral("HFS+ extents overflow insertion key already exists"));
                     return false;
                 }
             }
@@ -5444,8 +5326,8 @@ private:
         std::sort(records->begin(),
                   records->end(),
                   [](const HfsOverflowExtentRecord& left, const HfsOverflowExtentRecord& right) {
-            return compareOverflowExtentKeys(left, right) < 0;
-        });
+                      return compareOverflowExtentKeys(left, right) < 0;
+                  });
         return true;
     }
 
@@ -5460,8 +5342,8 @@ private:
 
         QVector<HfsOverflowExtentRecord> records;
         if (!treeIsEmpty) {
-            const auto existing =
-                loadSingleExtentsLeafRecordsForMutation(m_extents.first_leaf_node, blockers);
+            const auto existing = loadSingleExtentsLeafRecordsForMutation(m_extents.first_leaf_node,
+                                                                          blockers);
             if (!existing.has_value()) {
                 return std::nullopt;
             }
@@ -5509,12 +5391,13 @@ private:
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset, 0);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, 0);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, 0);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFreeNodesOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderFreeNodesOffset,
                   m_extents.free_nodes + 1);
         writeHeaderMapBit(&updated, m_extents.first_leaf_node, false);
         mutation.free_tree = true;
-        mutation.post_commit_writes.append(HfsBTreeNodeWrite{
-            m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
+        mutation.post_commit_writes.append(
+            HfsBTreeNodeWrite{m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
         mutation.header_node = updated.node;
         mutation.updated_header.tree_depth = 0;
         mutation.updated_header.root_node = 0;
@@ -5528,33 +5411,35 @@ private:
     [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildExtentsTreeMaterialize(
         const HfsBTreeHeaderNodeContext& header,
         HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        const auto allocated = allocateBTreeNodesFromHeaderMap(
-            {.header = &header,
-             .tree = &m_extents,
-             .must_be_allocated = {0},
-             .count = 1,
-             .label = QStringLiteral("extents overflow")},
-            blockers);
+        QStringList* blockers) const {
+        const auto allocated =
+            allocateBTreeNodesFromHeaderMap({.header = &header,
+                                             .tree = &m_extents,
+                                             .must_be_allocated = {0},
+                                             .count = 1,
+                                             .label = QStringLiteral("extents overflow")},
+                                            blockers);
         if (!allocated.has_value()) {
             return std::nullopt;
         }
         const uint32_t leafNode = allocated->first();
         const auto leafBytes = buildExtentsLeafNodeBytes(0, 0, mutation.final_records);
         if (!leafBytes.has_value()) {
-            blockers->append(QStringLiteral(
-                "HFS+ extents overflow records do not fit a single new leaf node"));
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow records do not fit a single new leaf node"));
             return std::nullopt;
         }
         HfsBTreeHeaderNodeContext updated = header;
         const qsizetype headerRecord = kBTreeHeaderRecordOffset;
         writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 1);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderLeafRecordsOffset,
                   static_cast<uint32_t>(mutation.final_records.size()));
         writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leafNode);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFreeNodesOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderFreeNodesOffset,
                   m_extents.free_nodes - 1);
         writeHeaderMapBit(&updated, leafNode, true);
         mutation.materialize = true;
@@ -5562,8 +5447,7 @@ private:
         mutation.header_node = updated.node;
         mutation.updated_header.tree_depth = 1;
         mutation.updated_header.root_node = leafNode;
-        mutation.updated_header.leaf_records =
-            static_cast<uint32_t>(mutation.final_records.size());
+        mutation.updated_header.leaf_records = static_cast<uint32_t>(mutation.final_records.size());
         mutation.updated_header.first_leaf_node = leafNode;
         mutation.updated_header.last_leaf_node = leafNode;
         mutation.updated_header.free_nodes = m_extents.free_nodes - 1;
@@ -5578,10 +5462,10 @@ private:
         if (singleLeaf.has_value()) {
             HfsBTreeHeaderNodeContext updated = header;
             const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-            writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset,
+            writeBe32(&updated.node,
+                      headerRecord + kBTreeHeaderLeafRecordsOffset,
                       static_cast<uint32_t>(mutation.final_records.size()));
-            mutation.leaf_rewrite =
-                HfsBTreeNodeWrite{m_extents.first_leaf_node, *singleLeaf};
+            mutation.leaf_rewrite = HfsBTreeNodeWrite{m_extents.first_leaf_node, *singleLeaf};
             mutation.header_node = updated.node;
             mutation.updated_header.leaf_records =
                 static_cast<uint32_t>(mutation.final_records.size());
@@ -5594,13 +5478,13 @@ private:
         const HfsBTreeHeaderNodeContext& header,
         HfsExtentsTreeMutation mutation,
         QStringList* blockers) {
-        const auto allocated = allocateBTreeNodesFromHeaderMap(
-            {.header = &header,
-             .tree = &m_extents,
-             .must_be_allocated = {0, m_extents.first_leaf_node},
-             .count = kHfsRootLeafSplitNodesNeeded,
-             .label = QStringLiteral("extents overflow")},
-            blockers);
+        const auto allocated =
+            allocateBTreeNodesFromHeaderMap({.header = &header,
+                                             .tree = &m_extents,
+                                             .must_be_allocated = {0, m_extents.first_leaf_node},
+                                             .count = kHfsRootLeafSplitNodesNeeded,
+                                             .label = QStringLiteral("extents overflow")},
+                                            blockers);
         if (!allocated.has_value()) {
             return std::nullopt;
         }
@@ -5610,12 +5494,12 @@ private:
         const int splitIndex =
             std::max(1, static_cast<int>(mutation.final_records.size()) / kHfsRootLeafSplitHalves);
         if (splitIndex >= mutation.final_records.size()) {
-            blockers->append(QStringLiteral(
-                "HFS+ extents overflow root-leaf split needs at least two records"));
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow root-leaf split needs at least two records"));
             return std::nullopt;
         }
-        const QVector<HfsOverflowExtentRecord> leftRecords =
-            mutation.final_records.mid(0, splitIndex);
+        const QVector<HfsOverflowExtentRecord> leftRecords = mutation.final_records.mid(0,
+                                                                                        splitIndex);
         const QVector<HfsOverflowExtentRecord> rightRecords =
             mutation.final_records.mid(splitIndex);
         const auto leftBytes = buildExtentsLeafNodeBytes(rightNode, 0, leftRecords);
@@ -5625,13 +5509,13 @@ private:
                 "HFS+ extents overflow root-leaf split could not fit records into two leaf nodes"));
             return std::nullopt;
         }
-        const auto indexBytes = buildIndexNodeBytes(
-            m_extents.node_size,
-            {{overflowExtentKeyBytes(leftRecords.first()), leftNode},
-             {overflowExtentKeyBytes(rightRecords.first()), rightNode}},
-            kHfsRootIndexNodeHeight,
-            QStringLiteral("extents overflow"),
-            blockers);
+        const auto indexBytes =
+            buildIndexNodeBytes(m_extents.node_size,
+                                {{overflowExtentKeyBytes(leftRecords.first()), leftNode},
+                                 {overflowExtentKeyBytes(rightRecords.first()), rightNode}},
+                                kHfsRootIndexNodeHeight,
+                                QStringLiteral("extents overflow"),
+                                blockers);
         if (!indexBytes.has_value()) {
             return std::nullopt;
         }
@@ -5642,10 +5526,12 @@ private:
             m_extents.free_nodes -
             std::min<uint32_t>(m_extents.free_nodes,
                                static_cast<uint32_t>(-kHfsRootLeafSplitFreeNodeDelta));
-        writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset,
+        writeBe16(&updated.node,
+                  headerRecord + kBTreeHeaderTreeDepthOffset,
                   kHfsRootLeafSplitTreeDepth);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, indexNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderLeafRecordsOffset,
                   static_cast<uint32_t>(mutation.final_records.size()));
         writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leftNode);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, rightNode);
@@ -5659,13 +5545,12 @@ private:
         mutation.node_writes.append(HfsBTreeNodeWrite{leftNode, *leftBytes});
         mutation.node_writes.append(HfsBTreeNodeWrite{rightNode, *rightBytes});
         mutation.node_writes.append(HfsBTreeNodeWrite{indexNode, *indexBytes});
-        mutation.post_commit_writes.append(HfsBTreeNodeWrite{
-            m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
+        mutation.post_commit_writes.append(
+            HfsBTreeNodeWrite{m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
         mutation.header_node = updated.node;
         mutation.updated_header.tree_depth = kHfsRootLeafSplitTreeDepth;
         mutation.updated_header.root_node = indexNode;
-        mutation.updated_header.leaf_records =
-            static_cast<uint32_t>(mutation.final_records.size());
+        mutation.updated_header.leaf_records = static_cast<uint32_t>(mutation.final_records.size());
         mutation.updated_header.first_leaf_node = leftNode;
         mutation.updated_header.last_leaf_node = rightNode;
         mutation.updated_header.free_nodes = newFreeNodes;
@@ -5691,8 +5576,8 @@ private:
     }
 
     [[nodiscard]] static QByteArray attributeKeyBytes(uint32_t fileId, const QString& name) {
-        const auto keyLength = static_cast<uint16_t>(
-            kHfsAttributeKeyNameOffset - kUint16Size + name.size() * kUint16Size);
+        const auto keyLength = static_cast<uint16_t>(kHfsAttributeKeyNameOffset - kUint16Size +
+                                                     name.size() * kUint16Size);
         QByteArray key(kUint16Size + keyLength, '\0');
         writeBe16(&key, 0, keyLength);
         writeBe32(&key, kHfsAttributeKeyFileIdOffset, fileId);
@@ -5724,8 +5609,7 @@ private:
     [[nodiscard]] std::optional<QByteArray> readAttributesNode(const HfsBTreeHeader& tree,
                                                                uint32_t nodeNumber) {
         uint64_t offset = 0;
-        if (nodeNumber >= tree.total_nodes ||
-            !checkedMul(nodeNumber, tree.node_size, &offset)) {
+        if (nodeNumber >= tree.total_nodes || !checkedMul(nodeNumber, tree.node_size, &offset)) {
             m_blockers.append(QStringLiteral("HFS+ attributes node is out of range"));
             return std::nullopt;
         }
@@ -5744,17 +5628,12 @@ private:
             m_blockers.append(QStringLiteral("HFS+ attributes node offset overflow"));
             return std::nullopt;
         }
-        return writeForkBytes(m_volume.attributes_fork,
-                              kHfsAttributesFileId,
-                              kHfsDataForkType,
-                              offset,
-                              node);
+        return writeForkBytes(
+            m_volume.attributes_fork, kHfsAttributesFileId, kHfsDataForkType, offset, node);
     }
 
     [[nodiscard]] std::optional<QVector<HfsAttributeRawRecord>> loadSingleAttributesLeafRecords(
-        const HfsBTreeHeader& tree,
-        uint32_t nodeNumber,
-        QStringList* blockers) {
+        const HfsBTreeHeader& tree, uint32_t nodeNumber, QStringList* blockers) {
         const auto node = readAttributesNode(tree, nodeNumber);
         if (!node.has_value()) {
             blockers->append(m_blockers);
@@ -5778,8 +5657,7 @@ private:
             const qsizetype end = recordEnd(*node, *offsets, index);
             const uint16_t keyLength = be16(*node, start);
             const uint16_t nameLength = be16(*node, start + kHfsAttributeKeyNameLengthOffset);
-            if (end <= start ||
-                keyLength < kHfsAttributeMinimumKeyBytes ||
+            if (end <= start || keyLength < kHfsAttributeMinimumKeyBytes ||
                 !hasBytes(*node,
                           start + kHfsAttributeKeyNameOffset,
                           static_cast<qsizetype>(nameLength) * kUint16Size)) {
@@ -5793,10 +5671,10 @@ private:
                                        start + kHfsAttributeKeyNameOffset +
                                            static_cast<qsizetype>(charIndex) * kUint16Size)));
             }
-            records.append(HfsAttributeRawRecord{
-                .file_id = be32(*node, start + kHfsAttributeKeyFileIdOffset),
-                .name = name,
-                .bytes = node->mid(start, end - start)});
+            records.append(
+                HfsAttributeRawRecord{.file_id = be32(*node, start + kHfsAttributeKeyFileIdOffset),
+                                      .name = name,
+                                      .bytes = node->mid(start, end - start)});
         }
         return records;
     }
@@ -5825,8 +5703,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsBTreeHeaderNodeContext> loadAttributesHeaderNodeForMutation(
-        const HfsBTreeHeader& tree,
-        QStringList* blockers) {
+        const HfsBTreeHeader& tree, QStringList* blockers) {
         const auto node = readAttributesNode(tree, 0);
         if (!node.has_value()) {
             blockers->append(m_blockers);
@@ -5860,22 +5737,20 @@ private:
         std::sort(records.begin(),
                   records.end(),
                   [](const HfsAttributeRawRecord& left, const HfsAttributeRawRecord& right) {
-            return compareAttributeRawKeys(left.file_id, left.name, right.file_id, right.name) < 0;
-        });
+                      return compareAttributeRawKeys(
+                                 left.file_id, left.name, right.file_id, right.name) < 0;
+                  });
         return records;
     }
 
     [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesTreeInsert(
-        const HfsBTreeHeader& tree,
-        const HfsAttributeRawRecord& insertion,
-        QStringList* blockers) {
+        const HfsBTreeHeader& tree, const HfsAttributeRawRecord& insertion, QStringList* blockers) {
         const bool treeIsEmpty = tree.leaf_records == 0 || tree.first_leaf_node == 0;
-        if (!treeIsEmpty &&
-            (tree.tree_depth != 1 ||
-             tree.first_leaf_node != tree.last_leaf_node ||
-             tree.root_node != tree.first_leaf_node)) {
-            blockers->append(QStringLiteral(
-                "HFS+ attribute create currently requires an empty or single-leaf attributes B-tree"));
+        if (!treeIsEmpty && (tree.tree_depth != 1 || tree.first_leaf_node != tree.last_leaf_node ||
+                             tree.root_node != tree.first_leaf_node)) {
+            blockers->append(
+                QStringLiteral("HFS+ attribute create currently requires an empty or single-leaf "
+                               "attributes B-tree"));
             return std::nullopt;
         }
         const auto collected =
@@ -5893,12 +5768,11 @@ private:
         mutation.updated_header = tree;
 
         if (treeIsEmpty) {
-            return buildAttributesTreeMaterialize(tree, *header, records, std::move(mutation),
-                                                  blockers);
+            return buildAttributesTreeMaterialize(
+                tree, *header, records, std::move(mutation), blockers);
         }
 
-        const auto singleLeaf =
-            buildAttributesLeafNodeBytes(tree, 0, 0, records);
+        const auto singleLeaf = buildAttributesLeafNodeBytes(tree, 0, 0, records);
         if (singleLeaf.has_value()) {
             HfsBTreeHeaderNodeContext updated = *header;
             writeBe32(&updated.node,
@@ -5909,8 +5783,8 @@ private:
             mutation.updated_header.leaf_records = static_cast<uint32_t>(records.size());
             return mutation;
         }
-        return buildAttributesTreeRootLeafSplit(tree, *header, records, std::move(mutation),
-                                                blockers);
+        return buildAttributesTreeRootLeafSplit(
+            tree, *header, records, std::move(mutation), blockers);
     }
 
     [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildAttributesTreeMaterialize(
@@ -5918,29 +5792,30 @@ private:
         const HfsBTreeHeaderNodeContext& header,
         const QVector<HfsAttributeRawRecord>& records,
         HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        const auto allocated = allocateBTreeNodesFromHeaderMap(
-            {.header = &header,
-             .tree = &tree,
-             .must_be_allocated = {0},
-             .count = 1,
-             .label = QStringLiteral("attributes")},
-            blockers);
+        QStringList* blockers) const {
+        const auto allocated =
+            allocateBTreeNodesFromHeaderMap({.header = &header,
+                                             .tree = &tree,
+                                             .must_be_allocated = {0},
+                                             .count = 1,
+                                             .label = QStringLiteral("attributes")},
+                                            blockers);
         if (!allocated.has_value()) {
             return std::nullopt;
         }
         const uint32_t leafNode = allocated->first();
         const auto leafBytes = buildAttributesLeafNodeBytes(tree, 0, 0, records);
         if (!leafBytes.has_value()) {
-            blockers->append(QStringLiteral(
-                "HFS+ attribute records do not fit a single new leaf node"));
+            blockers->append(
+                QStringLiteral("HFS+ attribute records do not fit a single new leaf node"));
             return std::nullopt;
         }
         HfsBTreeHeaderNodeContext updated = header;
         const qsizetype headerRecord = kBTreeHeaderRecordOffset;
         writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 1);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderLeafRecordsOffset,
                   static_cast<uint32_t>(records.size()));
         writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leafNode);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, leafNode);
@@ -5971,20 +5846,21 @@ private:
             return std::nullopt;
         }
         HfsBTreeHeaderNodeContext working = header;
-        const auto allocated = allocateBTreeNodesFromHeaderMap(
-            {.header = &working,
-             .tree = &tree,
-             .must_be_allocated = {0, tree.first_leaf_node},
-             .count = kHfsRootLeafSplitNodesNeeded,
-             .label = QStringLiteral("attributes")},
-            blockers);
+        const auto allocated =
+            allocateBTreeNodesFromHeaderMap({.header = &working,
+                                             .tree = &tree,
+                                             .must_be_allocated = {0, tree.first_leaf_node},
+                                             .count = kHfsRootLeafSplitNodesNeeded,
+                                             .label = QStringLiteral("attributes")},
+                                            blockers);
         if (!allocated.has_value()) {
             return std::nullopt;
         }
         const uint32_t leftNode = allocated->at(kHfsSplitLeftNodeSlot);
         const uint32_t rightNode = allocated->at(kHfsSplitRightNodeSlot);
         const uint32_t indexNode = allocated->at(kHfsSplitIndexNodeSlot);
-        const int splitIndex = std::max(1, static_cast<int>(records.size()) / kHfsRootLeafSplitHalves);
+        const int splitIndex = std::max(1,
+                                        static_cast<int>(records.size()) / kHfsRootLeafSplitHalves);
         const QVector<HfsAttributeRawRecord> leftRecords = records.mid(0, splitIndex);
         const QVector<HfsAttributeRawRecord> rightRecords = records.mid(splitIndex);
         const auto leftBytes = buildAttributesLeafNodeBytes(tree, rightNode, 0, leftRecords);
@@ -6010,10 +5886,12 @@ private:
         }
         HfsBTreeHeaderNodeContext updated = working;
         const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset,
+        writeBe16(&updated.node,
+                  headerRecord + kBTreeHeaderTreeDepthOffset,
                   kHfsRootLeafSplitTreeDepth);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, indexNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset,
+        writeBe32(&updated.node,
+                  headerRecord + kBTreeHeaderLeafRecordsOffset,
                   static_cast<uint32_t>(records.size()));
         writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leftNode);
         writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, rightNode);
@@ -6040,8 +5918,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsRawCatalogRecord> findCatalogModelFileOrFolderRecord(
-        const HfsCatalogTreeModel& model,
-        uint32_t fileId) const {
+        const HfsCatalogTreeModel& model, uint32_t fileId) const {
         for (const auto& leaf : model.leaves) {
             for (const auto& record : leaf.records) {
                 if (record.catalog_id == fileId &&
@@ -6064,8 +5941,7 @@ private:
         }
         const auto record = findCatalogModelFileOrFolderRecord(*model, fileId);
         if (!record.has_value()) {
-            blockers->append(
-                QStringLiteral("HFS+ catalog ID for attribute create was not found"));
+            blockers->append(QStringLiteral("HFS+ catalog ID for attribute create was not found"));
             return std::nullopt;
         }
         const uint16_t keyLength = be16(record->bytes, 0);
@@ -6091,19 +5967,17 @@ private:
         if (!mutation.has_value()) {
             return std::nullopt;
         }
-        return applyCatalogTreeMutation(
-            *mutation,
-            HfsCatalogCounterUpdate{0, 0, 0, m_volume.next_catalog_id},
-            blockers);
+        return applyCatalogTreeMutation(*mutation,
+                                        HfsCatalogCounterUpdate{0, 0, 0, m_volume.next_catalog_id},
+                                        blockers);
     }
 
     [[nodiscard]] std::optional<int> applyAttributesTreeMutation(
-        const HfsBTreeHeader& tree,
-        const HfsExtentsTreeMutation& mutation,
-        QStringList* blockers) {
+        const HfsBTreeHeader& tree, const HfsExtentsTreeMutation& mutation, QStringList* blockers) {
         int chunks = 0;
         for (const auto& nodeWrite : mutation.node_writes) {
-            const auto nodeChunks = writeAttributesNode(tree, nodeWrite.node_number, nodeWrite.bytes);
+            const auto nodeChunks =
+                writeAttributesNode(tree, nodeWrite.node_number, nodeWrite.bytes);
             if (!nodeChunks.has_value()) {
                 blockers->append(m_blockers);
                 return std::nullopt;
@@ -6111,8 +5985,9 @@ private:
             chunks += *nodeChunks;
         }
         if (mutation.leaf_rewrite.has_value()) {
-            const auto leafChunks = writeAttributesNode(
-                tree, mutation.leaf_rewrite->node_number, mutation.leaf_rewrite->bytes);
+            const auto leafChunks = writeAttributesNode(tree,
+                                                        mutation.leaf_rewrite->node_number,
+                                                        mutation.leaf_rewrite->bytes);
             if (!leafChunks.has_value()) {
                 blockers->append(m_blockers);
                 return std::nullopt;
@@ -6151,8 +6026,8 @@ private:
         }
         if (m_volume.attributes_fork.logical_size == 0 ||
             m_volume.attributes_fork.extents.isEmpty()) {
-            blockers->append(QStringLiteral(
-                "HFS+ volume has no attributes B-tree for attribute create"));
+            blockers->append(
+                QStringLiteral("HFS+ volume has no attributes B-tree for attribute create"));
         }
     }
 
@@ -6164,13 +6039,12 @@ private:
         const auto flattened = flattenedCatalogModelRecords(*catalogModel);
         const bool targetExists = std::any_of(
             flattened.cbegin(), flattened.cend(), [fileId](const HfsRawCatalogRecord& record) {
-            return record.catalog_id == fileId &&
-                   (record.record_type == kHfsCatalogFileRecord ||
-                    record.record_type == kHfsCatalogFolderRecord);
-        });
+                return record.catalog_id == fileId &&
+                       (record.record_type == kHfsCatalogFileRecord ||
+                        record.record_type == kHfsCatalogFolderRecord);
+            });
         if (!targetExists) {
-            blockers->append(
-                QStringLiteral("HFS+ catalog ID for attribute create was not found"));
+            blockers->append(QStringLiteral("HFS+ catalog ID for attribute create was not found"));
         }
         return targetExists;
     }
@@ -6232,9 +6106,7 @@ private:
                                      PartitionHfsAttributeWriteResult* result) {
         const auto readBack =
             readAttributeValue(result->file_id, result->attribute_name, options.max_write_bytes);
-        if (!readBack.ok ||
-            readBack.storage != QStringLiteral("inline") ||
-            readBack.data != data) {
+        if (!readBack.ok || readBack.storage != QStringLiteral("inline") || readBack.data != data) {
             result->blockers.append(
                 QStringLiteral("HFS+ attribute create read-back verification failed"));
             result->blockers.append(readBack.blockers);
@@ -6248,10 +6120,9 @@ private:
         result->warnings.append(
             mutation.materialize
                 ? QStringLiteral("HFS+ inline attribute created in a new attributes B-tree leaf")
-                : mutation.split
-                      ? QStringLiteral(
-                            "HFS+ inline attribute created with an attributes root-leaf split")
-                      : QStringLiteral("HFS+ inline attribute created"));
+            : mutation.split
+                ? QStringLiteral("HFS+ inline attribute created with an attributes root-leaf split")
+                : QStringLiteral("HFS+ inline attribute created"));
         syncAlternateVolumeHeader(result);
         result->ok = result->blockers.isEmpty();
     }
@@ -6290,8 +6161,9 @@ private:
             blockers->append(QStringLiteral("HFS+ volume does not have enough free blocks"));
             return std::nullopt;
         }
-        const auto extents = findFreeAllocationExtents(
-            *requiredBlocks, QStringLiteral("created attribute fork"), blockers);
+        const auto extents = findFreeAllocationExtents(*requiredBlocks,
+                                                       QStringLiteral("created attribute fork"),
+                                                       blockers);
         if (!extents.has_value()) {
             return std::nullopt;
         }
@@ -6333,8 +6205,8 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        const auto slackChunks = zeroForkAllocationSlack(
-            plan.fork, kHfsAttributesFileId, kHfsDataForkType, data.size());
+        const auto slackChunks =
+            zeroForkAllocationSlack(plan.fork, kHfsAttributesFileId, kHfsDataForkType, data.size());
         if (!slackChunks.has_value()) {
             blockers->append(m_blockers);
             return std::nullopt;
@@ -6412,20 +6284,19 @@ public:
         result.bytes_written = static_cast<uint64_t>(data.size());
         result.chunks_written = *chunks + *flagChunks;
         result.warnings = m_warnings;
-        result.warnings.append(QStringLiteral(
-            "HFS+ fork-backed attribute created with %1 allocated blocks")
-                                   .arg(plan->allocated_blocks));
+        result.warnings.append(
+            QStringLiteral("HFS+ fork-backed attribute created with %1 allocated blocks")
+                .arg(plan->allocated_blocks));
         syncAlternateVolumeHeader(&result);
         result.ok = result.blockers.isEmpty();
         return result;
     }
 
 private:
-    [[nodiscard]] bool verifyAttributeCreateReadBack(
-        const QString& expectedStorage,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options,
-        PartitionHfsAttributeWriteResult* result) {
+    [[nodiscard]] bool verifyAttributeCreateReadBack(const QString& expectedStorage,
+                                                     const QByteArray& data,
+                                                     const PartitionHfsFileWriteOptions& options,
+                                                     PartitionHfsAttributeWriteResult* result) {
         const auto readBack =
             readAttributeValue(result->file_id, result->attribute_name, options.max_write_bytes);
         if (!readBack.ok || readBack.storage != expectedStorage || readBack.data != data) {
@@ -6440,7 +6311,6 @@ private:
     }
 
 public:
-
 private:
     struct HfsAttributeDeleteSelection {
         QVector<HfsAttributeRawRecord> remaining;
@@ -6484,8 +6354,7 @@ private:
         if (recordType == kHfsAttributeForkDataRecord) {
             const qsizetype forkOffset = typeOffset + kHfsAttributeForkDataOffset;
             if (!hasBytes(selection->removed_bytes, forkOffset, kHfsForkDataBytes)) {
-                blockers->append(
-                    QStringLiteral("HFS+ attribute fork data for delete is invalid"));
+                blockers->append(QStringLiteral("HFS+ attribute fork data for delete is invalid"));
                 return false;
             }
             selection->fork_backed = true;
@@ -6501,14 +6370,9 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsAttributeDeleteSelection> selectAttributeForDelete(
-        const HfsBTreeHeader& tree,
-        uint32_t fileId,
-        const QString& name,
-        QStringList* blockers) {
-        if (tree.leaf_records == 0 || tree.first_leaf_node == 0 ||
-            tree.tree_depth != 1 ||
-            tree.first_leaf_node != tree.last_leaf_node ||
-            tree.root_node != tree.first_leaf_node) {
+        const HfsBTreeHeader& tree, uint32_t fileId, const QString& name, QStringList* blockers) {
+        if (tree.leaf_records == 0 || tree.first_leaf_node == 0 || tree.tree_depth != 1 ||
+            tree.first_leaf_node != tree.last_leaf_node || tree.root_node != tree.first_leaf_node) {
             blockers->append(QStringLiteral(
                 "HFS+ attribute delete currently requires a single-leaf attributes B-tree"));
             return std::nullopt;
@@ -6579,9 +6443,7 @@ private:
 
 public:
     [[nodiscard]] PartitionHfsAttributeWriteResult deleteAttributeValue(
-        uint32_t fileId,
-        const QString& name,
-        const PartitionHfsFileWriteOptions& options) {
+        uint32_t fileId, const QString& name, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsAttributeWriteResult result;
         result.file_system = m_volume.file_system;
         result.file_id = fileId;
@@ -6607,8 +6469,8 @@ public:
         }
         std::optional<QVector<HfsAllocationBitmapByte>> releaseBytes;
         if (selection->fork_backed) {
-            releaseBytes =
-                prepareAllocationBitmapClear(selection->removed_fork.extents, &result.blockers);
+            releaseBytes = prepareAllocationBitmapClear(selection->removed_fork.extents,
+                                                        &result.blockers);
             if (!releaseBytes.has_value()) {
                 return result;
             }
@@ -6622,10 +6484,8 @@ public:
         if (!releaseChunks.has_value()) {
             return result;
         }
-        finishAttributeDeleteResult(*selection,
-                                    mutation->free_tree,
-                                    *chunks + *releaseChunks,
-                                    &result);
+        finishAttributeDeleteResult(
+            *selection, mutation->free_tree, *chunks + *releaseChunks, &result);
         return result;
     }
 
@@ -6666,11 +6526,11 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        const auto freeBlockChunks = writeVolumeHeaderCounter(
-            kHfsFreeBlocksOffset,
-            m_volume.free_blocks,
-            static_cast<int>(selection.removed_fork.total_blocks),
-            blockers);
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     static_cast<int>(selection.removed_fork.total_blocks),
+                                     blockers);
         if (!freeBlockChunks.has_value()) {
             return std::nullopt;
         }
@@ -6703,22 +6563,19 @@ private:
         result->warnings = m_warnings;
         result->warnings.append(
             treeFreed
-                ? QStringLiteral(
-                      "HFS+ attribute deleted; empty attributes B-tree leaf was freed")
+                ? QStringLiteral("HFS+ attribute deleted; empty attributes B-tree leaf was freed")
                 : QStringLiteral("HFS+ attribute deleted"));
         if (selection.fork_backed) {
-            result->warnings.append(QStringLiteral(
-                "HFS+ attribute fork released %1 allocation blocks")
-                                        .arg(selection.removed_fork.total_blocks));
+            result->warnings.append(
+                QStringLiteral("HFS+ attribute fork released %1 allocation blocks")
+                    .arg(selection.removed_fork.total_blocks));
         }
         syncAlternateVolumeHeader(result);
         result->ok = result->blockers.isEmpty();
     }
 
 public:
-
 private:
-
 private:
     // ---- HFS+ journal replay (little-endian journals, in-filesystem only) ----
 
@@ -6760,8 +6617,8 @@ private:
         while (remaining > 0) {
             const uint64_t available = region.size - cursor;
             const uint64_t take = std::min(remaining, available);
-            const auto bytes =
-                readAt(m_volume.volume_offset + region.journal_offset + cursor, take);
+            const auto bytes = readAt(m_volume.volume_offset + region.journal_offset + cursor,
+                                      take);
             if (!bytes.has_value()) {
                 return std::nullopt;
             }
@@ -6793,8 +6650,7 @@ private:
         }
         const uint32_t jibBlock = be32(*volumeHeader, kHfsVolumeJournalInfoBlockOffset);
         uint64_t jibOffset = 0;
-        if (jibBlock == 0 ||
-            !checkedMul(jibBlock, m_volume.block_size, &jibOffset)) {
+        if (jibBlock == 0 || !checkedMul(jibBlock, m_volume.block_size, &jibOffset)) {
             blockers->append(QStringLiteral("HFS+ journal info block is unavailable"));
             return std::nullopt;
         }
@@ -6808,13 +6664,11 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsJournalState> journalStateFromInfoBlock(
-        const QByteArray& jib,
-        QStringList* blockers) {
+        const QByteArray& jib, QStringList* blockers) const {
         const uint32_t flags = be32(jib, 0);
-        if ((flags & kHfsJournalInFsMask) == 0 ||
-            (flags & kHfsJournalOnOtherDeviceMask) != 0) {
-            blockers->append(QStringLiteral(
-                "HFS+ journal replay requires an in-filesystem journal"));
+        if ((flags & kHfsJournalInFsMask) == 0 || (flags & kHfsJournalOnOtherDeviceMask) != 0) {
+            blockers->append(
+                QStringLiteral("HFS+ journal replay requires an in-filesystem journal"));
             return std::nullopt;
         }
         HfsJournalState state;
@@ -6829,8 +6683,7 @@ private:
         uint64_t journalEnd = 0;
         if (!checkedMul(m_volume.total_blocks, m_volume.block_size, &totalBytes) ||
             !checkedAdd(state.region.journal_offset, state.region.size, &journalEnd) ||
-            state.region.size < kHfsJournalHeaderBytes ||
-            journalEnd > totalBytes) {
+            state.region.size < kHfsJournalHeaderBytes || journalEnd > totalBytes) {
             blockers->append(QStringLiteral("HFS+ journal location is invalid"));
             return std::nullopt;
         }
@@ -6838,9 +6691,8 @@ private:
     }
 
     [[nodiscard]] bool parseJournalHeaderState(HfsJournalState* state, QStringList* blockers) {
-        const auto header =
-            readAt(m_volume.volume_offset + state->region.journal_offset,
-                   kHfsJournalHeaderBytes);
+        const auto header = readAt(m_volume.volume_offset + state->region.journal_offset,
+                                   kHfsJournalHeaderBytes);
         if (!header.has_value()) {
             blockers->append(m_blockers);
             return false;
@@ -6850,8 +6702,8 @@ private:
             return false;
         }
         if (le32(*header, kUint32Size) != kHfsJournalEndianMagic) {
-            blockers->append(QStringLiteral(
-                "HFS+ big-endian journals are not supported for replay"));
+            blockers->append(
+                QStringLiteral("HFS+ big-endian journals are not supported for replay"));
             return false;
         }
         QByteArray checksumInput = *header;
@@ -6907,9 +6759,7 @@ private:
     };
 
     [[nodiscard]] std::optional<QByteArray> readJournalTransactionHeader(
-        const HfsJournalState& state,
-        uint64_t position,
-        QStringList* blockers) {
+        const HfsJournalState& state, uint64_t position, QStringList* blockers) {
         const auto blhdr = readJournalCircular(state.region, position, state.blhdr_size);
         if (!blhdr.has_value()) {
             blockers->append(m_blockers);
@@ -6917,8 +6767,7 @@ private:
         }
         QByteArray checksumInput = blhdr->left(kHfsJournalBlhdrChecksumBytes);
         writeLe32(&checksumInput, kHfsJournalBlhdrChecksumField, 0);
-        if (hfsJournalChecksum(checksumInput) !=
-            le32(*blhdr, kHfsJournalBlhdrChecksumField)) {
+        if (hfsJournalChecksum(checksumInput) != le32(*blhdr, kHfsJournalBlhdrChecksumField)) {
             blockers->append(QStringLiteral("HFS+ journal transaction checksum is invalid"));
             return std::nullopt;
         }
@@ -6928,8 +6777,7 @@ private:
             (static_cast<qsizetype>(state.blhdr_size) - kHfsJournalBlockInfoOffset) /
             kHfsJournalBlockInfoBytes;
         if (numBlocks == 0 || numBlocks > infoCapacity ||
-            numBlocks > kHfsJournalMaxBlocksPerTransaction ||
-            bytesUsed < state.blhdr_size) {
+            numBlocks > kHfsJournalMaxBlocksPerTransaction || bytesUsed < state.blhdr_size) {
             blockers->append(QStringLiteral("HFS+ journal transaction header is invalid"));
             return std::nullopt;
         }
@@ -6945,14 +6793,14 @@ private:
         if (!checkedMul(blockNumber, kHfsJournalSectorBytes, &destination) ||
             !checkedAdd(destination, static_cast<uint64_t>(data.size()), &destinationEnd) ||
             destinationEnd > progress->volume_bytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ journal transaction targets blocks outside the volume"));
+            blockers->append(
+                QStringLiteral("HFS+ journal transaction targets blocks outside the volume"));
             return false;
         }
         progress->written += static_cast<uint64_t>(data.size());
         if (progress->written > progress->max_write_bytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ journal replay exceeds the configured write cap"));
+            blockers->append(
+                QStringLiteral("HFS+ journal replay exceeds the configured write cap"));
             return false;
         }
         if (!writeAt(m_volume.volume_offset + destination,
@@ -6970,11 +6818,9 @@ private:
                                                 HfsJournalReplayProgress* progress,
                                                 QStringList* blockers) {
         const uint16_t numBlocks = le16(blhdr, kHfsJournalBlhdrNumBlocksField);
-        uint64_t dataPosition =
-            journalAdvance(state.region, progress->position, state.blhdr_size);
+        uint64_t dataPosition = journalAdvance(state.region, progress->position, state.blhdr_size);
         for (uint16_t index = 1; index < numBlocks; ++index) {
-            const qsizetype info =
-                kHfsJournalBlockInfoOffset + index * kHfsJournalBlockInfoBytes;
+            const qsizetype info = kHfsJournalBlockInfoOffset + index * kHfsJournalBlockInfoBytes;
             const uint64_t blockNumber = le64(blhdr, info);
             const uint32_t blockSize = le32(blhdr, info + kHfsJournalBlockInfoSizeField);
             if (blockSize == 0) {
@@ -6993,15 +6839,14 @@ private:
                 return false;
             }
         }
-        progress->position = journalAdvance(
-            state.region, progress->position, le32(blhdr, kHfsJournalBlhdrBytesUsedField));
+        progress->position = journalAdvance(state.region,
+                                            progress->position,
+                                            le32(blhdr, kHfsJournalBlhdrBytesUsedField));
         return true;
     }
 
     [[nodiscard]] std::optional<QPair<int, int>> replayJournalTransactions(
-        const HfsJournalState& state,
-        uint64_t maxWriteBytes,
-        QStringList* blockers) {
+        const HfsJournalState& state, uint64_t maxWriteBytes, QStringList* blockers) {
         HfsJournalReplayProgress progress;
         progress.position = state.start;
         progress.max_write_bytes = maxWriteBytes;
@@ -7015,8 +6860,7 @@ private:
                 blockers->append(QStringLiteral("HFS+ journal transaction limit exceeded"));
                 return std::nullopt;
             }
-            const auto blhdr =
-                readJournalTransactionHeader(state, progress.position, blockers);
+            const auto blhdr = readJournalTransactionHeader(state, progress.position, blockers);
             if (!blhdr.has_value()) {
                 return std::nullopt;
             }
@@ -7030,8 +6874,7 @@ private:
     [[nodiscard]] bool writeCleanJournalHeader(const HfsJournalState& state,
                                                QStringList* blockers) {
         QByteArray updatedHeader = state.header;
-        qToLittleEndian<quint64>(state.end,
-                                 updatedHeader.data() + kHfsJournalHeaderStartField);
+        qToLittleEndian<quint64>(state.end, updatedHeader.data() + kHfsJournalHeaderStartField);
         writeLe32(&updatedHeader, kHfsJournalHeaderChecksumField, 0);
         writeLe32(&updatedHeader,
                   kHfsJournalHeaderChecksumField,
@@ -7044,11 +6887,9 @@ private:
         }
         const auto verify = readAt(m_volume.volume_offset + state.region.journal_offset,
                                    kHfsJournalHeaderBytes);
-        if (!verify.has_value() ||
-            le64(*verify, kHfsJournalHeaderStartField) !=
-                le64(*verify, kHfsJournalHeaderEndField)) {
-            blockers->append(
-                QStringLiteral("HFS+ journal replay read-back verification failed"));
+        if (!verify.has_value() || le64(*verify, kHfsJournalHeaderStartField) !=
+                                       le64(*verify, kHfsJournalHeaderEndField)) {
+            blockers->append(QStringLiteral("HFS+ journal replay read-back verification failed"));
             return false;
         }
         return true;
@@ -7078,8 +6919,8 @@ public:
             return result;
         }
         if (state->needs_init) {
-            result.warnings.append(QStringLiteral(
-                "HFS+ journal awaits initialization; nothing to replay"));
+            result.warnings.append(
+                QStringLiteral("HFS+ journal awaits initialization; nothing to replay"));
             result.ok = true;
             return result;
         }
@@ -7100,8 +6941,7 @@ public:
             return result;
         }
         result.chunks_written = replayed->second + 1;
-        result.warnings.append(QStringLiteral(
-            "HFS+ journal replayed: %1 transactions, %2 blocks")
+        result.warnings.append(QStringLiteral("HFS+ journal replayed: %1 transactions, %2 blocks")
                                    .arg(replayed->first)
                                    .arg(replayed->second));
         syncAlternateVolumeHeader(&result);
@@ -7110,23 +6950,18 @@ public:
     }
 
 private:
-    [[nodiscard]] std::optional<int> writeExtentsNode(uint32_t nodeNumber,
-                                                      const QByteArray& node) {
+    [[nodiscard]] std::optional<int> writeExtentsNode(uint32_t nodeNumber, const QByteArray& node) {
         uint64_t offset = 0;
         if (!checkedMul(nodeNumber, m_extents.node_size, &offset)) {
             m_blockers.append(QStringLiteral("HFS+ extents overflow node offset overflow"));
             return std::nullopt;
         }
-        return writeForkBytes(m_volume.extents_fork,
-                              kHfsExtentsFileId,
-                              kHfsDataForkType,
-                              offset,
-                              node);
+        return writeForkBytes(
+            m_volume.extents_fork, kHfsExtentsFileId, kHfsDataForkType, offset, node);
     }
 
     [[nodiscard]] std::optional<int> applyExtentsTreeMutation(
-        const HfsExtentsTreeMutation& mutation,
-        QStringList* blockers) {
+        const HfsExtentsTreeMutation& mutation, QStringList* blockers) {
         int chunks = 0;
         for (const auto& nodeWrite : mutation.node_writes) {
             const auto nodeChunks = writeExtentsNode(nodeWrite.node_number, nodeWrite.bytes);
@@ -7168,8 +7003,8 @@ private:
 
     template <typename ResultType>
     void syncAlternateVolumeHeader(ResultType* result) {
-        const auto primary =
-            readAt(m_volume.volume_offset + kHfsVolumeHeaderOffset, kHfsVolumeHeaderSize);
+        const auto primary = readAt(m_volume.volume_offset + kHfsVolumeHeaderOffset,
+                                    kHfsVolumeHeaderSize);
         uint64_t totalBytes = 0;
         if (!primary.has_value() ||
             !checkedMul(m_volume.total_blocks, m_volume.block_size, &totalBytes) ||
@@ -7178,11 +7013,10 @@ private:
                 QStringLiteral("HFS+ alternate volume header synchronization failed"));
             return;
         }
-        const uint64_t alternateOffset =
-            m_volume.volume_offset + totalBytes - kHfsVolumeHeaderOffset;
-        if (!writeAt(alternateOffset,
-                     primary->constData(),
-                     static_cast<uint64_t>(primary->size()))) {
+        const uint64_t alternateOffset = m_volume.volume_offset + totalBytes -
+                                         kHfsVolumeHeaderOffset;
+        if (!writeAt(
+                alternateOffset, primary->constData(), static_cast<uint64_t>(primary->size()))) {
             result->warnings.append(
                 QStringLiteral("HFS+ alternate volume header synchronization failed"));
             return;
@@ -7195,15 +7029,14 @@ private:
                                                               uint32_t current,
                                                               int delta,
                                                               QStringList* blockers) {
-        if (delta > 0 && static_cast<uint32_t>(delta) >
-                             std::numeric_limits<uint32_t>::max() - current) {
+        if (delta > 0 &&
+            static_cast<uint32_t>(delta) > std::numeric_limits<uint32_t>::max() - current) {
             blockers->append(QStringLiteral("HFS+ volume header counter overflow"));
             return std::nullopt;
         }
         const uint32_t updated =
-            delta < 0
-                ? current - std::min<uint32_t>(current, static_cast<uint32_t>(-delta))
-                : current + static_cast<uint32_t>(delta);
+            delta < 0 ? current - std::min<uint32_t>(current, static_cast<uint32_t>(-delta))
+                      : current + static_cast<uint32_t>(delta);
         const auto chunks = writeVolumeHeaderU32(offset, updated);
         if (!chunks.has_value()) {
             blockers->append(m_blockers);
@@ -7219,15 +7052,11 @@ private:
             m_blockers.append(QStringLiteral("HFS+ catalog node offset overflow"));
             return std::nullopt;
         }
-        return writeForkBytes(m_volume.catalog_fork,
-                              kHfsCatalogFileId,
-                              kHfsDataForkType,
-                              offset,
-                              node);
+        return writeForkBytes(
+            m_volume.catalog_fork, kHfsCatalogFileId, kHfsDataForkType, offset, node);
     }
 
-    [[nodiscard]] std::optional<int> writeVolumeHeaderU32(qsizetype fieldOffset,
-                                                          uint32_t value) {
+    [[nodiscard]] std::optional<int> writeVolumeHeaderU32(qsizetype fieldOffset, uint32_t value) {
         uint64_t headerOffset = 0;
         if (!checkedAdd(m_volume.volume_offset, kHfsVolumeHeaderOffset, &headerOffset) ||
             !checkedAdd(headerOffset, static_cast<uint64_t>(fieldOffset), &headerOffset)) {
@@ -7251,7 +7080,9 @@ private:
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceCatalogForkWithinAllocatedBlocks(
-        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options,
+        const QString& path,
+        const QByteArray& data,
+        const PartitionHfsFileWriteOptions& options,
         HfsForkSelector selector) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
@@ -7286,7 +7117,8 @@ private:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto zeroChunks = zeroStaleTail(*record, selector, static_cast<uint64_t>(data.size()));
+        const auto zeroChunks =
+            zeroStaleTail(*record, selector, static_cast<uint64_t>(data.size()));
         if (!zeroChunks.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -7300,14 +7132,15 @@ private:
 
         HfsForkData resizedFork = fork;
         resizedFork.logical_size = static_cast<uint64_t>(data.size());
-        const auto after = readForkBytes(
-            resizedFork, record->catalog_id, forkType, 0, resizedFork.logical_size);
+        const auto after =
+            readForkBytes(resizedFork, record->catalog_id, forkType, 0, resizedFork.logical_size);
         if (!after.has_value()) {
             result.blockers.append(m_blockers);
             return result;
         }
         if (*after != data) {
-            result.blockers.append(QStringLiteral("HFS+ resize write read-back verification failed"));
+            result.blockers.append(
+                QStringLiteral("HFS+ resize write read-back verification failed"));
             result.blockers.append(m_blockers);
             return result;
         }
@@ -7337,7 +7170,8 @@ private:
             return result;
         }
         result.catalog_id = record->catalog_id;
-        const auto plan = prepareForkAllocationGrowth(*record, data, options, selector, &result.blockers);
+        const auto plan =
+            prepareForkAllocationGrowth(*record, data, options, selector, &result.blockers);
         if (!plan.has_value()) {
             result.blockers.append(m_blockers);
             return result;
@@ -7355,7 +7189,8 @@ private:
             return result;
         }
 
-        const auto after = readBackForkAllocationGrowth(*record, selector, data, *plan, &result.blockers);
+        const auto after =
+            readBackForkAllocationGrowth(*record, selector, data, *plan, &result.blockers);
         if (!after.has_value()) {
             return result;
         }
@@ -7369,8 +7204,8 @@ private:
         result.warnings = m_warnings;
         result.warnings.append(
             plan->extents_mutation.has_value()
-                ? QStringLiteral(
-                      "HFS+ %1 grew by allocating %2 new block(s) with %3 extents-overflow record(s)")
+                ? QStringLiteral("HFS+ %1 grew by allocating %2 new block(s) with %3 "
+                                 "extents-overflow record(s)")
                       .arg(hfsForkLabel(selector))
                       .arg(plan->allocated_blocks)
                       .arg(plan->overflow_records.size())
@@ -7383,10 +7218,9 @@ private:
         return result;
     }
 
-    [[nodiscard]] std::optional<QByteArray> readCatalogForkBytes(
-        const HfsCatalogRecord& record,
-        HfsForkSelector selector,
-        QStringList* blockers) {
+    [[nodiscard]] std::optional<QByteArray> readCatalogForkBytes(const HfsCatalogRecord& record,
+                                                                 HfsForkSelector selector,
+                                                                 QStringList* blockers) {
         const auto& fork = catalogForkFor(record, selector);
         const uint8_t forkType = catalogForkType(selector);
         const uint64_t size = catalogForkSize(record, selector);
@@ -7435,11 +7269,11 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        const auto freeBlockChunks = writeVolumeHeaderCounter(
-            kHfsFreeBlocksOffset,
-            m_volume.free_blocks,
-            -static_cast<int>(plan.allocated_blocks),
-            blockers);
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     -static_cast<int>(plan.allocated_blocks),
+                                     blockers);
         if (!freeBlockChunks.has_value()) {
             return std::nullopt;
         }
@@ -7454,14 +7288,15 @@ private:
         const HfsForkAllocationGrowthPlan& plan,
         QStringList* blockers) {
         const uint8_t forkType = catalogForkType(selector);
-        const auto after =
-            readForkBytes(plan.new_fork, record.catalog_id, forkType, 0, plan.new_fork.logical_size);
+        const auto after = readForkBytes(
+            plan.new_fork, record.catalog_id, forkType, 0, plan.new_fork.logical_size);
         if (!after.has_value()) {
             blockers->append(m_blockers);
             return std::nullopt;
         }
         if (*after != expected) {
-            blockers->append(QStringLiteral("HFS+ allocation-growth read-back verification failed"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation-growth read-back verification failed"));
             blockers->append(m_blockers);
             return std::nullopt;
         }
@@ -7483,11 +7318,8 @@ private:
             return result;
         }
         result.catalog_id = record->catalog_id;
-        appendWriterResizeRecordBlockers(*record,
-                                         QByteArray(),
-                                         options,
-                                         selector,
-                                         &result.blockers);
+        appendWriterResizeRecordBlockers(
+            *record, QByteArray(), options, selector, &result.blockers);
         if (!result.blockers.isEmpty()) {
             result.blockers.append(m_blockers);
             return result;
@@ -7515,8 +7347,7 @@ private:
 
         HfsForkData truncatedFork = fork;
         truncatedFork.logical_size = 0;
-        const auto after = readForkBytes(
-            truncatedFork, record->catalog_id, forkType, 0, 0);
+        const auto after = readForkBytes(truncatedFork, record->catalog_id, forkType, 0, 0);
         if (!after.has_value() || !after->isEmpty()) {
             result.blockers.append(QStringLiteral("HFS+ truncate read-back verification failed"));
             result.blockers.append(m_blockers);
@@ -7525,9 +7356,9 @@ private:
         result.after_sha256 = sha256Hex(*after);
         result.chunks_written = *zeroChunks + *metadataChunks;
         result.warnings = m_warnings;
-        result.warnings.append(QStringLiteral(
-            "HFS+ %1 truncated to zero bytes inside already allocated blocks")
-                                   .arg(hfsForkLabel(selector)));
+        result.warnings.append(
+            QStringLiteral("HFS+ %1 truncated to zero bytes inside already allocated blocks")
+                .arg(hfsForkLabel(selector)));
         result.ok = result.blockers.isEmpty();
         return result;
     }
@@ -7553,8 +7384,7 @@ private:
         if (trimmed.isEmpty()) {
             blockers->append(QStringLiteral("HFS+ attribute name is required"));
         }
-        if (trimmed.size() > kHfsMaximumAttributeNameChars ||
-            trimmed.contains(QChar::Null)) {
+        if (trimmed.size() > kHfsMaximumAttributeNameChars || trimmed.contains(QChar::Null)) {
             blockers->append(QStringLiteral("Unsupported HFS+ attribute name"));
         }
         if (maxBytes == 0 || maxBytes > kMaxForkReadBytes) {
@@ -7570,7 +7400,8 @@ private:
         appendAttributeReadRequestBlockers(fileId, name, options.max_write_bytes, blockers);
         if (static_cast<uint64_t>(data.size()) > options.max_write_bytes ||
             options.max_write_bytes == 0) {
-            blockers->append(QStringLiteral("HFS+ attribute write payload exceeds configured write cap"));
+            blockers->append(
+                QStringLiteral("HFS+ attribute write payload exceeds configured write cap"));
         }
     }
 
@@ -7594,7 +7425,8 @@ private:
         }
         if (header->uncompressed_size > maxBytes) {
             blockers->append(
-                QStringLiteral("Selected HFS+ compressed file is larger than the read cap (%1 > %2 bytes)")
+                QStringLiteral(
+                    "Selected HFS+ compressed file is larger than the read cap (%1 > %2 bytes)")
                     .arg(header->uncompressed_size)
                     .arg(maxBytes));
             return std::nullopt;
@@ -7621,10 +7453,10 @@ private:
                 QStringLiteral("HFS+ decmpfs inline payload failed to decompress"));
             return std::nullopt;
         }
-        result->warnings.append(QStringLiteral(
-            "HFS+ decmpfs type-%1 compressed file was decompressed (%2 bytes)")
-                                    .arg(header.compression_type)
-                                    .arg(header.uncompressed_size));
+        result->warnings.append(
+            QStringLiteral("HFS+ decmpfs type-%1 compressed file was decompressed (%2 bytes)")
+                .arg(header.compression_type)
+                .arg(header.uncompressed_size));
         return decoded;
     }
 
@@ -7640,19 +7472,17 @@ private:
         QString decodeError;
         const auto decoded =
             decmpfsTypeUsesChunkedOffsetTable(header.compression_type)
-                ? decodeDecmpfsChunkedResourceFork(header.compression_type,
-                                                   *fork,
-                                                   header.uncompressed_size,
-                                                   &decodeError)
+                ? decodeDecmpfsChunkedResourceFork(
+                      header.compression_type, *fork, header.uncompressed_size, &decodeError)
                 : decodeDecmpfsResourceFork(*fork, header.uncompressed_size, &decodeError);
         if (!decoded.has_value()) {
             result->blockers.append(QStringLiteral("HFS+ %1").arg(decodeError));
             return std::nullopt;
         }
-        result->warnings.append(QStringLiteral(
-            "HFS+ decmpfs type-%1 compressed file was decompressed (%2 bytes)")
-                                    .arg(header.compression_type)
-                                    .arg(header.uncompressed_size));
+        result->warnings.append(
+            QStringLiteral("HFS+ decmpfs type-%1 compressed file was decompressed (%2 bytes)")
+                .arg(header.compression_type)
+                .arg(header.uncompressed_size));
         return decoded;
     }
 
@@ -7660,8 +7490,7 @@ private:
                                                       HfsForkSelector selector,
                                                       uint64_t maxBytes,
                                                       PartitionHfsFileReadResult* result) {
-        if (selector != HfsForkSelector::Data ||
-            record.data_size != 0 ||
+        if (selector != HfsForkSelector::Data || record.data_size != 0 ||
             record.data_fork.total_blocks != 0) {
             return false;
         }
@@ -7680,9 +7509,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QByteArray> tryReadCompressedFile(
-        const HfsCatalogRecord& record,
-        uint64_t maxBytes,
-        PartitionHfsFileReadResult* result) {
+        const HfsCatalogRecord& record, uint64_t maxBytes, PartitionHfsFileReadResult* result) {
         if (!fileHasAttribute(record.catalog_id, QLatin1String(kHfsDecmpfsAttributeName))) {
             return std::nullopt;
         }
@@ -7702,23 +7529,20 @@ private:
             header->compression_type == kHfsDecmpfsTypeLzfseResource) {
             return decodeCompressedResourceFile(record, *header, result);
         }
-        result->blockers.append(
-            QStringLiteral("HFS+ decmpfs compression type %1 is not supported")
-                .arg(header->compression_type));
+        result->blockers.append(QStringLiteral("HFS+ decmpfs compression type %1 is not supported")
+                                    .arg(header->compression_type));
         return std::nullopt;
     }
 
     [[nodiscard]] std::optional<HfsCatalogRecord> resolveCompressedReplaceTarget(
-        const QString& path,
-        PartitionHfsFileWriteResult* result) {
+        const QString& path, PartitionHfsFileWriteResult* result) {
         const auto record = resolveCatalogPath(path);
         if (!record.has_value()) {
             result->blockers.append(m_blockers);
             return std::nullopt;
         }
         result->catalog_id = record->catalog_id;
-        if (!record->regularFile() ||
-            record->data_size != 0 ||
+        if (!record->regularFile() || record->data_size != 0 ||
             record->data_fork.total_blocks != 0) {
             result->blockers.append(QStringLiteral(
                 "HFS+ compressed-file replacement requires a decmpfs-compressed file"));
@@ -7750,8 +7574,8 @@ private:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options,
         QStringList* blockers) {
-        QByteArray newAttribute =
-            decmpfsHeaderBytes(compressionType, static_cast<uint64_t>(data.size()));
+        QByteArray newAttribute = decmpfsHeaderBytes(compressionType,
+                                                     static_cast<uint64_t>(data.size()));
         newAttribute.append(encodeDecmpfsCodecChunk(compressionType, data));
         const auto attrWrite = replaceInlineAttributeValue(
             record.catalog_id, QLatin1String(kHfsDecmpfsAttributeName), newAttribute, options);
@@ -7767,14 +7591,13 @@ private:
         const HfsCompressedReplaceRequest& request,
         QStringList* blockers) {
         const QByteArray& data = *request.data;
-        const QByteArray forkBytes =
-            decmpfsTypeUsesChunkedOffsetTable(compressionType)
-                ? buildDecmpfsChunkedResourceFork(compressionType, data)
-                : buildDecmpfsResourceFork(data);
+        const QByteArray forkBytes = decmpfsTypeUsesChunkedOffsetTable(compressionType)
+                                         ? buildDecmpfsChunkedResourceFork(compressionType, data)
+                                         : buildDecmpfsResourceFork(data);
         const auto allocatedBytes = forkAllocatedBytes(request.record->resource_fork);
         if (!allocatedBytes.has_value()) {
-            blockers->append(QStringLiteral(
-                "HFS+ compressed resource fork allocation is unavailable"));
+            blockers->append(
+                QStringLiteral("HFS+ compressed resource fork allocation is unavailable"));
             return std::nullopt;
         }
         const auto forkWrite =
@@ -7787,8 +7610,8 @@ private:
             blockers->append(forkWrite.blockers);
             return std::nullopt;
         }
-        const QByteArray newAttribute =
-            decmpfsHeaderBytes(compressionType, static_cast<uint64_t>(data.size()));
+        const QByteArray newAttribute = decmpfsHeaderBytes(compressionType,
+                                                           static_cast<uint64_t>(data.size()));
         const auto attrWrite = replaceInlineAttributeValue(request.record->catalog_id,
                                                            QLatin1String(kHfsDecmpfsAttributeName),
                                                            newAttribute,
@@ -7822,17 +7645,16 @@ private:
 
 public:
     [[nodiscard]] PartitionHfsFileWriteResult replaceCompressedFileContent(
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options) {
+        const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
         result.evidence_id = options.evidence_id;
         appendWriterOptionBlockers(data, options, &result.blockers);
         if (!options.allow_compressed_file_mutation) {
-            result.blockers.append(QStringLiteral(
-                "HFS+ compressed-file replacement requires explicit compressed-file mutation opt-in"));
+            result.blockers.append(
+                QStringLiteral("HFS+ compressed-file replacement requires explicit compressed-file "
+                               "mutation opt-in"));
         }
         if (static_cast<uint64_t>(data.size()) > kHfsDecmpfsMaxSupportedBytes) {
             result.blockers.append(QStringLiteral("HFS+ decmpfs payload exceeds supported size"));
@@ -7858,13 +7680,13 @@ public:
             return result;
         }
 
-        const auto readBack = readCatalogFileFork(result.path,
-                                                  std::max<uint64_t>(options.max_write_bytes,
-                                                                     static_cast<uint64_t>(data.size())),
-                                                  HfsForkSelector::Data);
+        const auto readBack = readCatalogFileFork(
+            result.path,
+            std::max<uint64_t>(options.max_write_bytes, static_cast<uint64_t>(data.size())),
+            HfsForkSelector::Data);
         if (!readBack.ok || readBack.data != data) {
-            result.blockers.append(QStringLiteral(
-                "HFS+ compressed-file replacement read-back verification failed"));
+            result.blockers.append(
+                QStringLiteral("HFS+ compressed-file replacement read-back verification failed"));
             result.blockers.append(readBack.blockers);
             result.blockers.append(m_blockers);
             return result;
@@ -7873,8 +7695,8 @@ public:
         result.bytes_written = static_cast<uint64_t>(data.size());
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
-        result.warnings.append(QStringLiteral(
-            "HFS+ decmpfs type-%1 compressed file content was replaced with read-back decompression proof")
+        result.warnings.append(QStringLiteral("HFS+ decmpfs type-%1 compressed file content was "
+                                              "replaced with read-back decompression proof")
                                    .arg(header->compression_type));
         result.ok = result.blockers.isEmpty();
         return result;
@@ -7979,8 +7801,8 @@ private:
                                     QStringList* blockers) const {
         if ((m_volume.attributes & kHfsVolumeJournaledMask) != 0 &&
             !options.allow_journaled_volume) {
-            blockers->append(QStringLiteral(
-                "HFS+ journaled volume write requires explicit journal override"));
+            blockers->append(
+                QStringLiteral("HFS+ journaled volume write requires explicit journal override"));
         }
         if ((m_volume.attributes & kHfsVolumeInconsistentMask) != 0) {
             blockers->append(QStringLiteral("HFS+ inconsistent volume writes are blocked"));
@@ -8032,12 +7854,10 @@ private:
                 "HFS+ arbitrary write currently requires exact same-size data-fork replacement"));
         }
         if (record.data_fork.logical_size != record.data_size ||
-            record.data_fork.logical_size == 0 ||
-            record.data_fork.extents.isEmpty()) {
+            record.data_fork.logical_size == 0 || record.data_fork.extents.isEmpty()) {
             blockers->append(QStringLiteral("HFS+ data fork is not writable in-place"));
         }
-        if (!forkCoveredByInitialExtents(record.data_fork) &&
-            m_overflow_extents.isEmpty()) {
+        if (!forkCoveredByInitialExtents(record.data_fork) && m_overflow_extents.isEmpty()) {
             blockers->append(QStringLiteral("HFS+ overflow extents are required for this file"));
         }
         if (!options.allow_compressed_file_mutation &&
@@ -8061,21 +7881,21 @@ private:
         const QString forkLabel = hfsForkLabel(selector);
         const auto allocatedBytes = forkAllocatedBytes(fork);
         if (!allocatedBytes.has_value() || *allocatedBytes == 0) {
-            blockers->append(QStringLiteral("HFS+ %1 allocation is not writable")
-                                 .arg(forkLabel));
+            blockers->append(QStringLiteral("HFS+ %1 allocation is not writable").arg(forkLabel));
             return;
         }
         if (payloadBytes > *allocatedBytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 allocated-block replacement cannot grow beyond existing allocation")
-                                 .arg(forkLabel));
+            blockers->append(
+                QStringLiteral(
+                    "HFS+ %1 allocated-block replacement cannot grow beyond existing allocation")
+                    .arg(forkLabel));
         }
         if (record.catalog_data_offset == 0) {
             blockers->append(QStringLiteral("HFS+ catalog file record location is unavailable"));
         }
         if (payloadBytes < forkSize && forkSize - payloadBytes > options.max_write_bytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ stale-tail zeroing exceeds configured write cap"));
+            blockers->append(
+                QStringLiteral("HFS+ stale-tail zeroing exceeds configured write cap"));
         }
     }
 
@@ -8102,15 +7922,13 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsExtent>> writableForkExtentsForGrowth(
-        const HfsCatalogRecord& record,
-        HfsForkSelector selector,
-        QStringList* blockers) const {
+        const HfsCatalogRecord& record, HfsForkSelector selector, QStringList* blockers) const {
         const auto& fork = catalogForkFor(record, selector);
         if (fork.total_blocks == 0) {
             return QVector<HfsExtent>();
         }
-        const auto materialized = materializedForkExtents(
-            fork, record.catalog_id, catalogForkType(selector), blockers);
+        const auto materialized =
+            materializedForkExtents(fork, record.catalog_id, catalogForkType(selector), blockers);
         if (!materialized.has_value()) {
             return std::nullopt;
         }
@@ -8123,20 +7941,17 @@ private:
     }
 
     [[nodiscard]] static QVector<HfsOverflowExtentRecord> overflowRecordsForCombinedExtents(
-        const QVector<HfsExtent>& combinedExtents,
-        uint32_t fileId,
-        uint8_t forkType) {
+        const QVector<HfsExtent>& combinedExtents, uint32_t fileId, uint8_t forkType) {
         QVector<HfsOverflowExtentRecord> records;
         uint32_t coveredBlocks = 0;
         for (int index = 0; index < combinedExtents.size(); ++index) {
             if (index >= kHfsExtentCount) {
                 const int groupOffset = (index - kHfsExtentCount) % kHfsExtentCount;
                 if (groupOffset == 0) {
-                    records.append(HfsOverflowExtentRecord{
-                        .fork_type = forkType,
-                        .file_id = fileId,
-                        .start_block = coveredBlocks,
-                        .extents = {}});
+                    records.append(HfsOverflowExtentRecord{.fork_type = forkType,
+                                                           .file_id = fileId,
+                                                           .start_block = coveredBlocks,
+                                                           .extents = {}});
                 }
                 records.last().extents.append(combinedExtents.at(index));
             }
@@ -8162,7 +7977,8 @@ private:
         }
         const uint32_t oldBlocks = catalogForkFor(record, selector).total_blocks;
         const uint32_t newBlocks = *requiredBlocks - oldBlocks;
-        const auto newExtents = findFreeAllocationExtents(newBlocks, hfsForkLabel(selector), blockers);
+        const auto newExtents =
+            findFreeAllocationExtents(newBlocks, hfsForkLabel(selector), blockers);
         if (!newExtents.has_value()) {
             return std::nullopt;
         }
@@ -8184,8 +8000,9 @@ private:
             .overflow_records = {},
             .extents_mutation = std::nullopt};
         if (combinedExtents.size() > kHfsExtentCount) {
-            plan.overflow_records = overflowRecordsForCombinedExtents(
-                combinedExtents, record.catalog_id, catalogForkType(selector));
+            plan.overflow_records = overflowRecordsForCombinedExtents(combinedExtents,
+                                                                      record.catalog_id,
+                                                                      catalogForkType(selector));
             const QVector<QPair<uint32_t, uint8_t>> removals{
                 {record.catalog_id, catalogForkType(selector)}};
             const auto mutation =
@@ -8198,12 +8015,11 @@ private:
         return plan;
     }
 
-    void appendWriterAllocationGrowthRecordBlockers(
-        const HfsCatalogRecord& record,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options,
-        HfsForkSelector selector,
-        QStringList* blockers) {
+    void appendWriterAllocationGrowthRecordBlockers(const HfsCatalogRecord& record,
+                                                    const QByteArray& data,
+                                                    const PartitionHfsFileWriteOptions& options,
+                                                    HfsForkSelector selector,
+                                                    QStringList* blockers) {
         if (!record.regularFile()) {
             blockers->append(QStringLiteral("Selected HFS+ path is not a regular file"));
             return;
@@ -8218,19 +8034,18 @@ private:
         appendCompressedFileGrowthBlocker(record, options, blockers);
     }
 
-    void appendRequiredAllocationGrowthBlockers(
-        const HfsForkData& fork,
-        const QByteArray& data,
-        HfsForkSelector selector,
-        QStringList* blockers) const {
+    void appendRequiredAllocationGrowthBlockers(const HfsForkData& fork,
+                                                const QByteArray& data,
+                                                HfsForkSelector selector,
+                                                QStringList* blockers) const {
         const auto requiredBlocks = requiredAllocationBlocksForBytes(data, blockers);
         if (!requiredBlocks.has_value()) {
             return;
         }
         if (*requiredBlocks <= fork.total_blocks) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 replacement does not require allocation growth")
-                                 .arg(hfsForkLabel(selector)));
+            blockers->append(
+                QStringLiteral("HFS+ %1 replacement does not require allocation growth")
+                    .arg(hfsForkLabel(selector)));
             return;
         }
         if (*requiredBlocks - fork.total_blocks > m_volume.free_blocks) {
@@ -8260,14 +8075,13 @@ private:
         if (m_volume.allocation_fork.logical_size == 0 ||
             m_volume.allocation_fork.total_blocks == 0 ||
             m_volume.allocation_fork.extents.isEmpty()) {
-            blockers->append(QStringLiteral(
-                "HFS+ allocation bitmap fork is required for allocation growth"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation bitmap fork is required for allocation growth"));
         }
     }
 
     [[nodiscard]] std::optional<uint32_t> requiredAllocationBlocksForBytes(
-        const QByteArray& data,
-        QStringList* blockers) const {
+        const QByteArray& data, QStringList* blockers) const {
         uint64_t rounded = 0;
         if (m_volume.block_size == 0 ||
             !checkedAdd(static_cast<uint64_t>(data.size()), m_volume.block_size - 1, &rounded)) {
@@ -8283,9 +8097,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsExtent>> initialForkExtentsForAllocatedBlocks(
-        const HfsForkData& fork,
-        const QString& label,
-        QStringList* blockers) const {
+        const HfsForkData& fork, const QString& label, QStringList* blockers) const {
         QVector<HfsExtent> extents;
         if (fork.total_blocks == 0) {
             return extents;
@@ -8295,8 +8107,7 @@ private:
             if (covered >= fork.total_blocks || extent.block_count == 0) {
                 continue;
             }
-            const uint32_t blockCount =
-                std::min(extent.block_count, fork.total_blocks - covered);
+            const uint32_t blockCount = std::min(extent.block_count, fork.total_blocks - covered);
             HfsExtent trimmed{extent.start_block, blockCount};
             if (!forkExtentLooksWritable(trimmed, label, blockers)) {
                 return std::nullopt;
@@ -8305,8 +8116,8 @@ private:
             covered += blockCount;
         }
         if (covered != fork.total_blocks) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 allocation growth requires existing allocation in initial extent records")
+            blockers->append(QStringLiteral("HFS+ %1 allocation growth requires existing "
+                                            "allocation in initial extent records")
                                  .arg(label));
             return std::nullopt;
         }
@@ -8324,24 +8135,24 @@ private:
             return false;
         }
         if (extent.start_block == 0) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 allocation growth blocks extents that include allocation block 0")
-                                 .arg(label));
+            blockers->append(
+                QStringLiteral(
+                    "HFS+ %1 allocation growth blocks extents that include allocation block 0")
+                    .arg(label));
             return false;
         }
         if (extentOverlapsMetadata(extent)) {
-            blockers->append(QStringLiteral(
-                "HFS+ %1 allocation growth refuses extents that overlap metadata forks")
-                                 .arg(label));
+            blockers->append(
+                QStringLiteral(
+                    "HFS+ %1 allocation growth refuses extents that overlap metadata forks")
+                    .arg(label));
             return false;
         }
         return true;
     }
 
     [[nodiscard]] std::optional<QVector<HfsExtent>> findFreeAllocationExtents(
-        uint32_t blocksNeeded,
-        const QString& label,
-        QStringList* blockers) {
+        uint32_t blocksNeeded, const QString& label, QStringList* blockers) {
         HfsFreeExtentScanState scan{
             .blocks_needed = blocksNeeded,
             .found_blocks = 0,
@@ -8349,11 +8160,11 @@ private:
             .blockers = blockers,
         };
         uint64_t bitmapOffset = 0;
-        const uint64_t bitmapBytes = std::min<uint64_t>(
-            m_volume.allocation_fork.logical_size, (m_volume.total_blocks + 7ULL) / 8ULL);
+        const uint64_t bitmapBytes = std::min<uint64_t>(m_volume.allocation_fork.logical_size,
+                                                        (m_volume.total_blocks + 7ULL) / 8ULL);
         while (bitmapOffset < bitmapBytes && scan.found_blocks < scan.blocks_needed) {
-            const uint64_t chunkSize =
-                std::min<uint64_t>(kHfsAllocationBitmapScanChunkBytes, bitmapBytes - bitmapOffset);
+            const uint64_t chunkSize = std::min<uint64_t>(kHfsAllocationBitmapScanChunkBytes,
+                                                          bitmapBytes - bitmapOffset);
             const auto bytes = readForkBytes(m_volume.allocation_fork,
                                              kHfsAllocationFileId,
                                              kHfsDataForkType,
@@ -8371,7 +8182,8 @@ private:
             bitmapOffset += chunkSize;
         }
         if (scan.found_blocks != scan.blocks_needed) {
-            blockers->append(QStringLiteral("HFS+ allocation bitmap does not contain enough free blocks"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation bitmap does not contain enough free blocks"));
             return std::nullopt;
         }
         return scan.extents;
@@ -8386,7 +8198,8 @@ private:
              ++byteIndex) {
             const auto value = static_cast<quint8>(bytes.at(byteIndex));
             const uint64_t byteBlockBase = (bitmapOffset + static_cast<uint64_t>(byteIndex)) * 8ULL;
-            for (uint32_t bit = 0; bit < kBitsPerByte && scan->found_blocks < scan->blocks_needed; ++bit) {
+            for (uint32_t bit = 0; bit < kBitsPerByte && scan->found_blocks < scan->blocks_needed;
+                 ++bit) {
                 const uint64_t block = byteBlockBase + bit;
                 if (block >= m_volume.total_blocks) {
                     return;
@@ -8428,8 +8241,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QVector<HfsAllocationBitmapByte>> prepareAllocationBitmapSet(
-        const QVector<HfsExtent>& extents,
-        QStringList* blockers) {
+        const QVector<HfsExtent>& extents, QStringList* blockers) {
         const auto bytes = loadAllocationBitmapBytes(extents, blockers);
         if (!bytes.has_value()) {
             return std::nullopt;
@@ -8495,8 +8307,8 @@ private:
         return std::any_of(attributes->parsed_records.cbegin(),
                            attributes->parsed_records.cend(),
                            [&](const HfsAttributeRecord& record) {
-            return record.file_id == fileId && record.name == name;
-        });
+                               return record.file_id == fileId && record.name == name;
+                           });
     }
 
     [[nodiscard]] bool fileHasAnyAttribute(uint32_t fileId) {
@@ -8512,8 +8324,8 @@ private:
         return std::any_of(attributes->parsed_records.cbegin(),
                            attributes->parsed_records.cend(),
                            [fileId](const HfsAttributeRecord& record) {
-            return record.file_id == fileId;
-        });
+                               return record.file_id == fileId;
+                           });
     }
 
     [[nodiscard]] std::optional<int> writeForkBytes(const HfsForkData& fork,
@@ -8532,8 +8344,8 @@ private:
         qsizetype dataOffset = 0;
         while (remaining > 0) {
             const uint64_t withinBlock = cursor % m_volume.block_size;
-            const uint64_t chunkSize =
-                std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+            const uint64_t chunkSize = std::min<uint64_t>(remaining,
+                                                          m_volume.block_size - withinBlock);
             const auto deviceOffset =
                 deviceOffsetForForkCursor(fork, fileId, forkType, cursor, withinBlock);
             if (!deviceOffset.has_value() ||
@@ -8548,12 +8360,11 @@ private:
         return chunks;
     }
 
-    [[nodiscard]] std::optional<int> writeForkBytesWithinAllocated(
-        const HfsForkData& fork,
-        uint32_t fileId,
-        uint8_t forkType,
-        uint64_t offset,
-        const QByteArray& data) {
+    [[nodiscard]] std::optional<int> writeForkBytesWithinAllocated(const HfsForkData& fork,
+                                                                   uint32_t fileId,
+                                                                   uint8_t forkType,
+                                                                   uint64_t offset,
+                                                                   const QByteArray& data) {
         if (!forkWriteRequestFitsAllocation(fork, offset, static_cast<uint64_t>(data.size()))) {
             m_blockers.append(QStringLiteral("Requested HFS+ fork write exceeds allocation"));
             return std::nullopt;
@@ -8565,8 +8376,8 @@ private:
         qsizetype dataOffset = 0;
         while (remaining > 0) {
             const uint64_t withinBlock = cursor % m_volume.block_size;
-            const uint64_t chunkSize =
-                std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+            const uint64_t chunkSize = std::min<uint64_t>(remaining,
+                                                          m_volume.block_size - withinBlock);
             const auto deviceOffset =
                 deviceOffsetForForkCursor(fork, fileId, forkType, cursor, withinBlock);
             if (!deviceOffset.has_value() ||
@@ -8602,9 +8413,7 @@ private:
     }
 
     [[nodiscard]] std::optional<int> updateCatalogFileForkLogicalSize(
-        const HfsCatalogRecord& record,
-        HfsForkSelector selector,
-        uint64_t newSize) {
+        const HfsCatalogRecord& record, HfsForkSelector selector, uint64_t newSize) {
         uint64_t sizeFieldOffset = 0;
         if (!checkedAdd(record.catalog_data_offset,
                         catalogForkRecordOffset(selector) + kHfsForkLogicalSizeOffset,
@@ -8619,14 +8428,12 @@ private:
                               be64Bytes(newSize));
     }
 
-    [[nodiscard]] std::optional<int> updateCatalogFileForkData(
-        const HfsCatalogRecord& record,
-        HfsForkSelector selector,
-        const HfsForkData& fork) {
+    [[nodiscard]] std::optional<int> updateCatalogFileForkData(const HfsCatalogRecord& record,
+                                                               HfsForkSelector selector,
+                                                               const HfsForkData& fork) {
         uint64_t forkBaseOffset = 0;
-        if (!checkedAdd(record.catalog_data_offset,
-                        catalogForkRecordOffset(selector),
-                        &forkBaseOffset)) {
+        if (!checkedAdd(
+                record.catalog_data_offset, catalogForkRecordOffset(selector), &forkBaseOffset)) {
             m_blockers.append(QStringLiteral("HFS+ catalog fork-data offset overflow"));
             return std::nullopt;
         }
@@ -8697,10 +8504,10 @@ private:
     bool appendForkGrowthCounterReadBack(uint32_t allocatedBlocks,
                                          PartitionHfsFileWriteResult* result) {
         const auto header = readVolumeHeaderAt(m_volume.volume_offset);
-        if (!header.has_value() ||
-            be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
+        if (!header.has_value() || be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
             m_volume.free_blocks + allocatedBlocks > m_volume.total_blocks) {
-            result->blockers.append(QStringLiteral("HFS+ allocation-growth free-block counter read-back failed"));
+            result->blockers.append(
+                QStringLiteral("HFS+ allocation-growth free-block counter read-back failed"));
             result->blockers.append(m_blockers);
             return false;
         }
@@ -8710,10 +8517,10 @@ private:
     bool appendForkGrowthCounterReadBack(uint32_t allocatedBlocks,
                                          PartitionHfsAttributeWriteResult* result) {
         const auto header = readVolumeHeaderAt(m_volume.volume_offset);
-        if (!header.has_value() ||
-            be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
+        if (!header.has_value() || be32(*header, kHfsFreeBlocksOffset) != m_volume.free_blocks ||
             m_volume.free_blocks + allocatedBlocks > m_volume.total_blocks) {
-            result->blockers.append(QStringLiteral("HFS+ allocation-growth free-block counter read-back failed"));
+            result->blockers.append(
+                QStringLiteral("HFS+ allocation-growth free-block counter read-back failed"));
             result->blockers.append(m_blockers);
             return false;
         }
@@ -8727,9 +8534,10 @@ private:
             return false;
         }
         if (!m_device->seek(static_cast<qint64>(offset))) {
-            m_blockers.append(QStringLiteral("Unable to seek HFS+ fork data for write at byte %1: %2")
-                                  .arg(offset)
-                                  .arg(m_device->errorString()));
+            m_blockers.append(
+                QStringLiteral("Unable to seek HFS+ fork data for write at byte %1: %2")
+                    .arg(offset)
+                    .arg(m_device->errorString()));
             return false;
         }
         const qint64 written = m_device->write(data, static_cast<qint64>(length));
@@ -8783,10 +8591,8 @@ private:
         if (!wrapperHeaderLooksLikeHfsPlus(mdb)) {
             return std::nullopt;
         }
-        const uint32_t allocationBlockSize =
-            be32(mdb, kHfsWrapperAllocationBlockSizeOffset);
-        const uint16_t allocationStartSector =
-            be16(mdb, kHfsWrapperAllocationBlockStartOffset);
+        const uint32_t allocationBlockSize = be32(mdb, kHfsWrapperAllocationBlockSizeOffset);
+        const uint16_t allocationStartSector = be16(mdb, kHfsWrapperAllocationBlockStartOffset);
         const uint16_t extentStartBlock = be16(mdb, kHfsWrapperEmbeddedExtentStartOffset);
         const uint16_t extentBlockCount = be16(mdb, kHfsWrapperEmbeddedExtentCountOffset);
         if (!wrapperGeometryLooksValid(allocationBlockSize, extentBlockCount)) {
@@ -8802,8 +8608,7 @@ private:
 
     [[nodiscard]] bool wrapperGeometryLooksValid(uint32_t allocationBlockSize,
                                                  uint16_t extentBlockCount) const {
-        return extentBlockCount != 0 &&
-               allocationBlockSize >= kMinimumHfsBlockSize &&
+        return extentBlockCount != 0 && allocationBlockSize >= kMinimumHfsBlockSize &&
                isPowerOfTwo(allocationBlockSize);
     }
 
@@ -8864,8 +8669,7 @@ private:
         fork.logical_size = be64(bytes, offset + kHfsForkLogicalSizeOffset);
         fork.total_blocks = be32(bytes, offset + kHfsForkTotalBlocksOffset);
         for (int index = 0; index < kHfsExtentCount; ++index) {
-            const qsizetype extentOffset =
-                offset + kHfsForkExtentsOffset + index * kHfsExtentBytes;
+            const qsizetype extentOffset = offset + kHfsForkExtentsOffset + index * kHfsExtentBytes;
             const uint32_t start = be32(bytes, extentOffset + kHfsExtentStartBlockOffset);
             const uint32_t count = be32(bytes, extentOffset + kHfsExtentBlockCountOffset);
             if (count == 0) {
@@ -8884,22 +8688,18 @@ private:
 
     void appendVolumeGeometryBlockers() {
         if (m_volume.block_size < kMinimumHfsBlockSize ||
-            m_volume.block_size > kMaximumHfsBlockSize ||
-            !isPowerOfTwo(m_volume.block_size) ||
-            m_volume.total_blocks == 0 ||
-            m_volume.free_blocks > m_volume.total_blocks) {
+            m_volume.block_size > kMaximumHfsBlockSize || !isPowerOfTwo(m_volume.block_size) ||
+            m_volume.total_blocks == 0 || m_volume.free_blocks > m_volume.total_blocks) {
             m_blockers.append(QStringLiteral("Unsupported HFS+ volume geometry"));
         }
     }
 
     void appendCatalogForkBlockers() {
-        if (m_volume.catalog_fork.logical_size == 0 ||
-            m_volume.catalog_fork.extents.isEmpty()) {
+        if (m_volume.catalog_fork.logical_size == 0 || m_volume.catalog_fork.extents.isEmpty()) {
             m_blockers.append(QStringLiteral("HFS+ catalog fork is not available"));
         }
         if (forkNeedsOverflow(m_volume.catalog_fork) &&
-            (m_volume.extents_fork.logical_size == 0 ||
-             m_volume.extents_fork.extents.isEmpty())) {
+            (m_volume.extents_fork.logical_size == 0 || m_volume.extents_fork.extents.isEmpty())) {
             m_blockers.append(QStringLiteral(
                 "HFS+ catalog overflow extents require a readable extents overflow file"));
         }
@@ -8912,8 +8712,8 @@ private:
 
     void appendVolumeWarnings() {
         if ((m_volume.attributes & kHfsVolumeJournaledMask) != 0) {
-            m_warnings.append(QStringLiteral(
-                "HFS+ journal replay is not performed in read-only browser mode"));
+            m_warnings.append(
+                QStringLiteral("HFS+ journal replay is not performed in read-only browser mode"));
         }
         if ((m_volume.attributes & kHfsVolumeInconsistentMask) != 0) {
             m_warnings.append(QStringLiteral("HFS+ volume is marked inconsistent"));
@@ -8932,8 +8732,7 @@ private:
     }
 
     void loadExtentsOverflowRecords() {
-        if (m_volume.extents_fork.logical_size == 0 ||
-            m_volume.extents_fork.extents.isEmpty()) {
+        if (m_volume.extents_fork.logical_size == 0 || m_volume.extents_fork.extents.isEmpty()) {
             return;
         }
 
@@ -9051,9 +8850,7 @@ private:
     }
 
     [[nodiscard]] bool extentsHeaderGeometryInvalid() const {
-        return m_extents.total_nodes == 0 ||
-               extentsLeafRangeInvalid() ||
-               extentsRootNodeInvalid();
+        return m_extents.total_nodes == 0 || extentsLeafRangeInvalid() || extentsRootNodeInvalid();
     }
 
     [[nodiscard]] bool extentsLeafRangeInvalid() const {
@@ -9072,8 +8869,7 @@ private:
     }
 
     [[nodiscard]] std::optional<QByteArray> readAt(uint64_t offset, qsizetype length) {
-        if (length < 0 ||
-            offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
+        if (length < 0 || offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max())) {
             return std::nullopt;
         }
         if (!m_device->seek(static_cast<qint64>(offset))) {
@@ -9112,10 +8908,9 @@ private:
         return output;
     }
 
-    [[nodiscard]] std::optional<QByteArray> readForkBytesInitialExtents(
-        const HfsForkData& fork,
-        uint64_t offset,
-        uint64_t length) {
+    [[nodiscard]] std::optional<QByteArray> readForkBytesInitialExtents(const HfsForkData& fork,
+                                                                        uint64_t offset,
+                                                                        uint64_t length) {
         if (!forkReadRequestIsValid(fork, offset, length)) {
             m_blockers.append(QStringLiteral("Requested HFS+ fork read is out of range"));
             return std::nullopt;
@@ -9142,19 +8937,16 @@ private:
                                               uint64_t length) const {
         return length <= kMaxForkReadBytes &&
                length <= static_cast<uint64_t>(std::numeric_limits<qsizetype>::max()) &&
-               offset <= fork.logical_size &&
-               length <= fork.logical_size - offset;
+               offset <= fork.logical_size && length <= fork.logical_size - offset;
     }
 
     [[nodiscard]] bool forkWriteRequestFitsAllocation(const HfsForkData& fork,
                                                       uint64_t offset,
                                                       uint64_t length) const {
         const auto allocatedBytes = forkAllocatedBytes(fork);
-        return allocatedBytes.has_value() &&
-               length <= kMaxForkReadBytes &&
+        return allocatedBytes.has_value() && length <= kMaxForkReadBytes &&
                length <= static_cast<uint64_t>(std::numeric_limits<qsizetype>::max()) &&
-               offset <= *allocatedBytes &&
-               length <= *allocatedBytes - offset;
+               offset <= *allocatedBytes && length <= *allocatedBytes - offset;
     }
 
     [[nodiscard]] std::optional<uint64_t> forkAllocatedBytes(const HfsForkData& fork) const {
@@ -9171,8 +8963,7 @@ private:
                                                                 uint64_t cursor,
                                                                 uint64_t remaining) {
         const uint64_t withinBlock = cursor % m_volume.block_size;
-        const uint64_t chunkSize =
-            std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+        const uint64_t chunkSize = std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
         const auto deviceOffset =
             deviceOffsetForForkCursor(fork, fileId, forkType, cursor, withinBlock);
         if (!deviceOffset.has_value()) {
@@ -9187,14 +8978,10 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsForkReadChunk> readForkChunkInitialExtents(
-        const HfsForkData& fork,
-        uint64_t cursor,
-        uint64_t remaining) {
+        const HfsForkData& fork, uint64_t cursor, uint64_t remaining) {
         const uint64_t withinBlock = cursor % m_volume.block_size;
-        const uint64_t chunkSize =
-            std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
-        const auto deviceOffset =
-            deviceOffsetForInitialForkCursor(fork, cursor, withinBlock);
+        const uint64_t chunkSize = std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+        const auto deviceOffset = deviceOffsetForInitialForkCursor(fork, cursor, withinBlock);
         if (!deviceOffset.has_value()) {
             return std::nullopt;
         }
@@ -9206,12 +8993,11 @@ private:
         return HfsForkReadChunk{.bytes = *bytes, .size = chunkSize};
     }
 
-    [[nodiscard]] std::optional<uint64_t> deviceOffsetForForkCursor(
-        const HfsForkData& fork,
-        uint32_t fileId,
-        uint8_t forkType,
-        uint64_t cursor,
-        uint64_t withinBlock) {
+    [[nodiscard]] std::optional<uint64_t> deviceOffsetForForkCursor(const HfsForkData& fork,
+                                                                    uint32_t fileId,
+                                                                    uint8_t forkType,
+                                                                    uint64_t cursor,
+                                                                    uint64_t withinBlock) {
         const auto block = physicalBlockForForkOffset(fork, fileId, forkType, cursor);
         if (!block.has_value()) {
             return std::nullopt;
@@ -9219,15 +9005,14 @@ private:
         return deviceOffsetForPhysicalBlock(*block, withinBlock);
     }
 
-    [[nodiscard]] std::optional<uint64_t> deviceOffsetForInitialForkCursor(
-        const HfsForkData& fork,
-        uint64_t cursor,
-        uint64_t withinBlock) {
+    [[nodiscard]] std::optional<uint64_t> deviceOffsetForInitialForkCursor(const HfsForkData& fork,
+                                                                           uint64_t cursor,
+                                                                           uint64_t withinBlock) {
         const uint64_t logicalBlock = cursor / m_volume.block_size;
         const auto block = physicalBlockInExtents(fork.extents, 0, logicalBlock);
         if (!block.has_value()) {
-            m_blockers.append(QStringLiteral(
-                "HFS+ initial extents do not cover requested fork read"));
+            m_blockers.append(
+                QStringLiteral("HFS+ initial extents do not cover requested fork read"));
             return std::nullopt;
         }
         return deviceOffsetForPhysicalBlock(*block, withinBlock);
@@ -9255,8 +9040,7 @@ private:
         if (initialBlock.has_value()) {
             return initialBlock;
         }
-        const auto overflowBlock =
-            physicalBlockFromOverflowExtents(fileId, forkType, logicalBlock);
+        const auto overflowBlock = physicalBlockFromOverflowExtents(fileId, forkType, logicalBlock);
         if (overflowBlock.has_value()) {
             return overflowBlock;
         }
@@ -9264,18 +9048,16 @@ private:
         return std::nullopt;
     }
 
-    [[nodiscard]] std::optional<uint64_t> physicalBlockInExtents(
-        const QVector<HfsExtent>& extents,
-        uint64_t logicalBase,
-        uint64_t logicalBlock) const {
+    [[nodiscard]] std::optional<uint64_t> physicalBlockInExtents(const QVector<HfsExtent>& extents,
+                                                                 uint64_t logicalBase,
+                                                                 uint64_t logicalBlock) const {
         for (const auto& extent : extents) {
             uint64_t extentEnd = 0;
             if (!checkedAdd(logicalBase, extent.block_count, &extentEnd)) {
                 return std::nullopt;
             }
             if (logicalBlock >= logicalBase && logicalBlock < extentEnd) {
-                return static_cast<uint64_t>(extent.start_block) +
-                       (logicalBlock - logicalBase);
+                return static_cast<uint64_t>(extent.start_block) + (logicalBlock - logicalBase);
             }
             logicalBase = extentEnd;
         }
@@ -9283,13 +9065,10 @@ private:
     }
 
     [[nodiscard]] std::optional<uint64_t> physicalBlockFromOverflowExtents(
-        uint32_t fileId,
-        uint8_t forkType,
-        uint64_t logicalBlock) const {
+        uint32_t fileId, uint8_t forkType, uint64_t logicalBlock) const {
         const HfsOverflowExtentRecord* best = nullptr;
         for (const auto& record : m_overflow_extents) {
-            if (record.file_id != fileId ||
-                record.fork_type != forkType ||
+            if (record.file_id != fileId || record.fork_type != forkType ||
                 record.start_block > logicalBlock) {
                 continue;
             }
@@ -9339,8 +9118,7 @@ private:
             m_blockers.append(QStringLiteral("HFS+ catalog scan limit reached"));
             return std::nullopt;
         }
-        return m_blockers.isEmpty() ? std::optional<HfsCatalogScanSummary>(summary)
-                                    : std::nullopt;
+        return m_blockers.isEmpty() ? std::optional<HfsCatalogScanSummary>(summary) : std::nullopt;
     }
 
     [[nodiscard]] bool scanCatalogLeafNode(const QByteArray& node,
@@ -9373,7 +9151,7 @@ private:
                                          uint32_t nodeNumber,
                                          const QVector<qsizetype>& offsets,
                                          int index,
-                                         HfsCatalogScanSummary* summary) {
+                                         HfsCatalogScanSummary* summary) const {
         const qsizetype start = offsets.at(index);
         const qsizetype end = recordEnd(node, offsets, index);
         if (end <= start || end > node.size()) {
@@ -9426,11 +9204,11 @@ private:
         details->append(QStringLiteral("Total blocks: %1").arg(m_volume.total_blocks));
         details->append(QStringLiteral("Free blocks: %1").arg(m_volume.free_blocks));
         details->append(QStringLiteral("Catalog node size: %1").arg(m_catalog.node_size));
-        details->append(QStringLiteral("Catalog leaf records expected: %1")
-                            .arg(m_catalog.leaf_records));
+        details->append(
+            QStringLiteral("Catalog leaf records expected: %1").arg(m_catalog.leaf_records));
         details->append(QStringLiteral("Catalog records scanned: %1").arg(summary.records));
-        details->append(QStringLiteral("Invalid catalog records skipped: %1")
-                            .arg(summary.invalid_records));
+        details->append(
+            QStringLiteral("Invalid catalog records skipped: %1").arg(summary.invalid_records));
         details->append(QStringLiteral("Catalog leaf nodes scanned: %1").arg(summary.leaf_nodes));
         details->append(QStringLiteral("Directories: %1").arg(summary.directories));
         details->append(QStringLiteral("Files: %1").arg(summary.files));
@@ -9455,11 +9233,8 @@ private:
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
             const auto node = readAttributeNode(attributes, nodeNumber);
             if (!node.has_value() ||
-                !scanAttributeLeafNode(*node,
-                                       attributes.node_size,
-                                       nodeNumber,
-                                       maxRecords,
-                                       &summary)) {
+                !scanAttributeLeafNode(
+                    *node, attributes.node_size, nodeNumber, maxRecords, &summary)) {
                 return std::nullopt;
             }
             nodeNumber = be32(*node, 0);
@@ -9507,9 +9282,8 @@ private:
         return true;
     }
 
-    [[nodiscard]] std::optional<QByteArray> readAttributeNode(
-        const HfsBTreeHeader& attributes,
-        uint32_t nodeNumber) {
+    [[nodiscard]] std::optional<QByteArray> readAttributeNode(const HfsBTreeHeader& attributes,
+                                                              uint32_t nodeNumber) {
         if (nodeNumber >= attributes.total_nodes) {
             m_blockers.append(QStringLiteral("HFS+ attributes node is out of range"));
             return std::nullopt;
@@ -9546,11 +9320,10 @@ private:
                 m_blockers.append(QStringLiteral("HFS+ attributes consistency record cap reached"));
                 return false;
             }
-            const HfsAttributeLeafContext context{
-                .node = node,
-                .offsets = *offsets,
-                .node_size = nodeSize,
-                .node_number = nodeNumber};
+            const HfsAttributeLeafContext context{.node = node,
+                                                  .offsets = *offsets,
+                                                  .node_size = nodeSize,
+                                                  .node_number = nodeNumber};
             scanAttributeRecord(context, index, summary);
             if (!m_blockers.isEmpty()) {
                 return false;
@@ -9568,12 +9341,12 @@ private:
             m_blockers.append(QStringLiteral("Invalid HFS+ attributes record length"));
             return;
         }
-        const auto record = parseAttributeRecord(
-            context.node,
-            HfsAttributeRecordBounds{.offset = start,
-                                     .end = end,
-                                     .node_size = context.node_size,
-                                     .node_number = context.node_number});
+        const auto record =
+            parseAttributeRecord(context.node,
+                                 HfsAttributeRecordBounds{.offset = start,
+                                                          .end = end,
+                                                          .node_size = context.node_size,
+                                                          .node_number = context.node_number});
         ++summary->records;
         if (!record.has_value()) {
             ++summary->other_records;
@@ -9586,8 +9359,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsAttributeRecord> parseAttributeRecord(
-        const QByteArray& node,
-        const HfsAttributeRecordBounds& bounds) const {
+        const QByteArray& node, const HfsAttributeRecordBounds& bounds) const {
         const auto key = parseAttributeKey(node, bounds.offset, bounds.end);
         if (!key.has_value()) {
             return std::nullopt;
@@ -9605,16 +9377,14 @@ private:
         return record;
     }
 
-    [[nodiscard]] std::optional<HfsAttributeKeyInfo> parseAttributeKey(
-        const QByteArray& node,
-        qsizetype offset,
-        qsizetype end) const {
+    [[nodiscard]] std::optional<HfsAttributeKeyInfo> parseAttributeKey(const QByteArray& node,
+                                                                       qsizetype offset,
+                                                                       qsizetype end) const {
         if (!hasBytes(node, offset, kUint16Size)) {
             return std::nullopt;
         }
         const uint16_t keyLength = be16(node, offset);
-        if (keyLength < kHfsAttributeMinimumKeyBytes ||
-            keyLength > kHfsAttributeMaximumKeyBytes ||
+        if (keyLength < kHfsAttributeMinimumKeyBytes || keyLength > kHfsAttributeMaximumKeyBytes ||
             !hasBytes(node, offset, kUint16Size + keyLength)) {
             return std::nullopt;
         }
@@ -9647,8 +9417,7 @@ private:
                                            qsizetype dataOffset,
                                            uint64_t* output) const {
         uint64_t nodeBase = 0;
-        return dataOffset >= 0 &&
-               checkedMul(bounds.node_number, bounds.node_size, &nodeBase) &&
+        return dataOffset >= 0 && checkedMul(bounds.node_number, bounds.node_size, &nodeBase) &&
                checkedAdd(nodeBase, static_cast<uint64_t>(dataOffset), output);
     }
 
@@ -9724,8 +9493,7 @@ private:
         return parseExtents(node, offset).size();
     }
 
-    [[nodiscard]] QVector<HfsExtent> parseExtents(const QByteArray& node,
-                                                  qsizetype offset) const {
+    [[nodiscard]] QVector<HfsExtent> parseExtents(const QByteArray& node, qsizetype offset) const {
         QVector<HfsExtent> extents;
         for (int index = 0; index < kHfsExtentCount; ++index) {
             const qsizetype extentOffset = offset + index * kHfsExtentBytes;
@@ -9832,9 +9600,9 @@ private:
 
     void appendAttributeDetails(const HfsAttributeScanSummary& summary,
                                 QStringList* details) const {
-        details->append(QStringLiteral("Attributes file: %1")
-                            .arg(summary.present ? QStringLiteral("present")
-                                                 : QStringLiteral("not present")));
+        details->append(
+            QStringLiteral("Attributes file: %1")
+                .arg(summary.present ? QStringLiteral("present") : QStringLiteral("not present")));
         if (!summary.present) {
             return;
         }
@@ -9845,7 +9613,8 @@ private:
         details->append(QStringLiteral("Extent attribute records: %1").arg(summary.extent_records));
         details->append(QStringLiteral("Other attribute records: %1").arg(summary.other_records));
         if (!summary.names.isEmpty()) {
-            details->append(QStringLiteral("Attribute names: %1").arg(summary.names.join(QStringLiteral(", "))));
+            details->append(QStringLiteral("Attribute names: %1")
+                                .arg(summary.names.join(QStringLiteral(", "))));
         }
         if (!summary.metadata.isEmpty()) {
             details->append(QStringLiteral("Attribute metadata: %1")
@@ -9854,13 +9623,10 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsAttributeRecord> findReadableAttribute(
-        const HfsAttributeScanSummary& summary,
-        uint32_t fileId,
-        const QString& name) const {
+        const HfsAttributeScanSummary& summary, uint32_t fileId, const QString& name) const {
         const QString trimmed = name.trimmed();
         for (const auto& record : summary.parsed_records) {
-            if (record.file_id == fileId &&
-                record.name == trimmed &&
+            if (record.file_id == fileId && record.name == trimmed &&
                 (record.record_type == kHfsAttributeInlineDataRecord ||
                  record.record_type == kHfsAttributeForkDataRecord)) {
                 return record;
@@ -9870,9 +9636,7 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsAttributeRecord> findAttributeByIdAndName(
-        const HfsAttributeScanSummary& summary,
-        uint32_t fileId,
-        const QString& name) const {
+        const HfsAttributeScanSummary& summary, uint32_t fileId, const QString& name) const {
         for (const auto& record : summary.parsed_records) {
             if (record.file_id == fileId && record.name == name) {
                 return record;
@@ -9885,11 +9649,10 @@ private:
                                              const QByteArray& data,
                                              const PartitionHfsFileWriteOptions& options,
                                              QStringList* blockers) const {
-        if (record.record_type != kHfsAttributeInlineDataRecord ||
-            !record.payload_complete ||
+        if (record.record_type != kHfsAttributeInlineDataRecord || !record.payload_complete ||
             !record.has_inline_data) {
-            blockers->append(QStringLiteral(
-                "Only complete inline HFS+ attribute records are writable"));
+            blockers->append(
+                QStringLiteral("Only complete inline HFS+ attribute records are writable"));
             return;
         }
         if (!options.allow_compressed_file_mutation &&
@@ -9902,7 +9665,8 @@ private:
                 "HFS+ inline attribute replacement exceeds existing record capacity"));
         }
         if (record.inline_size_offset == 0 || record.inline_data_offset == 0) {
-            blockers->append(QStringLiteral("HFS+ inline attribute record location is unavailable"));
+            blockers->append(
+                QStringLiteral("HFS+ inline attribute record location is unavailable"));
         }
     }
 
@@ -9913,7 +9677,8 @@ private:
         }
         const uint64_t staleBytes = record.inline_size - newSize;
         if (staleBytes > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
-            m_blockers.append(QStringLiteral("HFS+ inline attribute stale-tail zeroing is too large"));
+            m_blockers.append(
+                QStringLiteral("HFS+ inline attribute stale-tail zeroing is too large"));
             return std::nullopt;
         }
         const QByteArray zeros(static_cast<qsizetype>(staleBytes), '\0');
@@ -9934,19 +9699,18 @@ private:
             return;
         }
         appendForkAttributeSizeBlockers(record, data, options, blockers);
-        const uint64_t bytesToCover =
-            std::max(static_cast<uint64_t>(data.size()), record.fork_logical_size);
+        const uint64_t bytesToCover = std::max(static_cast<uint64_t>(data.size()),
+                                               record.fork_logical_size);
         appendAttributeForkPhysicalMapBlockers(record, allRecords, bytesToCover, blockers);
     }
 
     void appendForkAttributeTypeBlockers(const HfsAttributeRecord& record,
                                          const PartitionHfsFileWriteOptions& options,
                                          QStringList* blockers) const {
-        if (record.record_type != kHfsAttributeForkDataRecord ||
-            !record.payload_complete ||
+        if (record.record_type != kHfsAttributeForkDataRecord || !record.payload_complete ||
             !record.has_fork_data) {
-            blockers->append(QStringLiteral(
-                "Only complete fork-backed HFS+ attribute records are writable"));
+            blockers->append(
+                QStringLiteral("Only complete fork-backed HFS+ attribute records are writable"));
             return;
         }
         if (!options.allow_compressed_file_mutation &&
@@ -9973,8 +9737,8 @@ private:
             blockers->append(QStringLiteral("HFS+ fork attribute record location is unavailable"));
         }
         if (record.fork_logical_size > options.max_write_bytes) {
-            blockers->append(QStringLiteral(
-                "HFS+ fork attribute existing value exceeds configured write cap"));
+            blockers->append(
+                QStringLiteral("HFS+ fork attribute existing value exceeds configured write cap"));
         }
         if (payloadBytes < record.fork_logical_size &&
             record.fork_logical_size - payloadBytes > options.max_write_bytes) {
@@ -10013,9 +9777,7 @@ private:
         const HfsAttributeRecord& record,
         const QVector<HfsAttributeRecord>& allRecords,
         uint64_t logicalBlock) const {
-        const auto initialBlock = physicalBlockInExtents(record.fork_data.extents,
-                                                         0,
-                                                         logicalBlock);
+        const auto initialBlock = physicalBlockInExtents(record.fork_data.extents, 0, logicalBlock);
         if (initialBlock.has_value()) {
             return initialBlock;
         }
@@ -10038,26 +9800,23 @@ private:
             return false;
         }
         if (seenBlocks->contains(physicalBlock)) {
-            blockers->append(QStringLiteral(
-                "HFS+ fork attribute write refuses overlapping attribute extents"));
+            blockers->append(
+                QStringLiteral("HFS+ fork attribute write refuses overlapping attribute extents"));
             return false;
         }
         seenBlocks->insert(physicalBlock);
         return allocationBlockIsMarked(physicalBlock, blockers);
     }
 
-    [[nodiscard]] bool allocationBlockIsMarked(uint64_t physicalBlock,
-                                               QStringList* blockers) {
+    [[nodiscard]] bool allocationBlockIsMarked(uint64_t physicalBlock, QStringList* blockers) {
         const uint64_t byteOffset = physicalBlock / 8U;
         if (byteOffset >= m_volume.allocation_fork.logical_size) {
-            blockers->append(QStringLiteral("HFS+ allocation bitmap does not cover attribute extent"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation bitmap does not cover attribute extent"));
             return false;
         }
-        const auto byte = readForkBytes(m_volume.allocation_fork,
-                                        kHfsAllocationFileId,
-                                        kHfsDataForkType,
-                                        byteOffset,
-                                        1);
+        const auto byte = readForkBytes(
+            m_volume.allocation_fork, kHfsAllocationFileId, kHfsDataForkType, byteOffset, 1);
         if (!byte.has_value() || byte->size() != 1) {
             blockers->append(QStringLiteral("Unable to read HFS+ allocation bitmap byte"));
             blockers->append(m_blockers);
@@ -10065,8 +9824,8 @@ private:
         }
         const quint8 mask = static_cast<quint8>(0x80U >> (physicalBlock % 8U));
         if ((static_cast<quint8>(byte->at(0)) & mask) == 0) {
-            blockers->append(QStringLiteral(
-                "HFS+ allocation bitmap did not mark attribute block allocated"));
+            blockers->append(
+                QStringLiteral("HFS+ allocation bitmap did not mark attribute block allocated"));
             return false;
         }
         return true;
@@ -10089,8 +9848,8 @@ private:
         qsizetype dataOffset = 0;
         while (remaining > 0) {
             const uint64_t withinBlock = cursor % m_volume.block_size;
-            const uint64_t chunkSize =
-                std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+            const uint64_t chunkSize = std::min<uint64_t>(remaining,
+                                                          m_volume.block_size - withinBlock);
             const auto deviceOffset =
                 deviceOffsetForAttributeForkCursor(record, allRecords, cursor, withinBlock);
             if (!deviceOffset.has_value() ||
@@ -10114,7 +9873,8 @@ private:
         }
         const uint64_t staleBytes = record.fork_logical_size - newSize;
         if (staleBytes > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
-            m_blockers.append(QStringLiteral("HFS+ fork attribute stale-tail zeroing is too large"));
+            m_blockers.append(
+                QStringLiteral("HFS+ fork attribute stale-tail zeroing is too large"));
             return std::nullopt;
         }
         const QByteArray zeros(static_cast<qsizetype>(staleBytes), '\0');
@@ -10122,8 +9882,7 @@ private:
     }
 
     [[nodiscard]] std::optional<int> updateForkAttributeLogicalSize(
-        const HfsAttributeRecord& record,
-        uint64_t newSize) {
+        const HfsAttributeRecord& record, uint64_t newSize) {
         uint64_t sizeFieldOffset = 0;
         if (!checkedAdd(record.attribute_data_offset,
                         kHfsAttributeForkDataOffset + kHfsForkLogicalSizeOffset,
@@ -10165,7 +9924,8 @@ private:
         }
         if (record.inline_size > maxBytes) {
             result.blockers.append(
-                QStringLiteral("Selected HFS+ attribute is larger than the read cap (%1 > %2 bytes)")
+                QStringLiteral(
+                    "Selected HFS+ attribute is larger than the read cap (%1 > %2 bytes)")
                     .arg(record.inline_size)
                     .arg(maxBytes));
             return result;
@@ -10189,7 +9949,8 @@ private:
         }
         if (record.fork_logical_size > maxBytes) {
             result.blockers.append(
-                QStringLiteral("Selected HFS+ attribute is larger than the read cap (%1 > %2 bytes)")
+                QStringLiteral(
+                    "Selected HFS+ attribute is larger than the read cap (%1 > %2 bytes)")
                     .arg(record.fork_logical_size)
                     .arg(maxBytes));
             return result;
@@ -10239,8 +10000,7 @@ private:
         uint64_t cursor,
         uint64_t remaining) {
         const uint64_t withinBlock = cursor % m_volume.block_size;
-        const uint64_t chunkSize =
-            std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
+        const uint64_t chunkSize = std::min<uint64_t>(remaining, m_volume.block_size - withinBlock);
         const auto deviceOffset =
             deviceOffsetForAttributeForkCursor(record, allRecords, cursor, withinBlock);
         if (!deviceOffset.has_value()) {
@@ -10271,9 +10031,7 @@ private:
         const QVector<HfsAttributeRecord>& allRecords,
         uint64_t offset) {
         const uint64_t logicalBlock = offset / m_volume.block_size;
-        const auto initialBlock = physicalBlockInExtents(record.fork_data.extents,
-                                                         0,
-                                                         logicalBlock);
+        const auto initialBlock = physicalBlockInExtents(record.fork_data.extents, 0, logicalBlock);
         if (initialBlock.has_value()) {
             return initialBlock;
         }
@@ -10292,10 +10050,8 @@ private:
         uint64_t logicalBlock) const {
         const HfsAttributeRecord* best = nullptr;
         for (const auto& record : allRecords) {
-            if (record.record_type != kHfsAttributeExtentsRecord ||
-                !record.has_extent_data ||
-                record.file_id != owner.file_id ||
-                record.name != owner.name ||
+            if (record.record_type != kHfsAttributeExtentsRecord || !record.has_extent_data ||
+                record.file_id != owner.file_id || record.name != owner.name ||
                 record.start_block > logicalBlock) {
                 continue;
             }
@@ -10325,8 +10081,7 @@ private:
     [[nodiscard]] std::optional<QVector<qsizetype>> recordOffsets(const QByteArray& node,
                                                                   uint16_t numRecords) {
         const qsizetype nodeSize = node.size();
-        if (numRecords == 0 ||
-            nodeSize < kBTreeNodeDescriptorBytes + (numRecords * kUint16Size)) {
+        if (numRecords == 0 || nodeSize < kBTreeNodeDescriptorBytes + (numRecords * kUint16Size)) {
             return QVector<qsizetype>();
         }
 
@@ -10354,8 +10109,7 @@ private:
         if (index + 1 < offsets.size()) {
             return offsets.at(index + 1);
         }
-        const qsizetype offsetTableStart =
-            node.size() - ((offsets.size() + 1) * kUint16Size);
+        const qsizetype offsetTableStart = node.size() - ((offsets.size() + 1) * kUint16Size);
         const uint16_t freeOffset = be16(node, offsetTableStart);
         if (freeOffset > offsets.at(index) && freeOffset <= offsetTableStart) {
             return freeOffset;
@@ -10384,12 +10138,9 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsOverflowExtentRecord> parseOverflowExtentRecord(
-        const QByteArray& node,
-        qsizetype offset,
-        qsizetype end) const {
+        const QByteArray& node, qsizetype offset, qsizetype end) const {
         const uint16_t keyLength = be16(node, offset);
-        if (keyLength != kHfsExtentsKeyLength ||
-            !hasBytes(node, offset, kUint16Size + keyLength)) {
+        if (keyLength != kHfsExtentsKeyLength || !hasBytes(node, offset, kUint16Size + keyLength)) {
             return std::nullopt;
         }
 
@@ -10409,10 +10160,8 @@ private:
         record.start_block = be32(node, offset + kHfsExtentsKeyStartBlockOffset);
         for (int index = 0; index < kHfsExtentCount; ++index) {
             const qsizetype extentOffset = dataOffset + index * kHfsExtentBytes;
-            const uint32_t start =
-                be32(node, extentOffset + kHfsExtentStartBlockOffset);
-            const uint32_t count =
-                be32(node, extentOffset + kHfsExtentBlockCountOffset);
+            const uint32_t start = be32(node, extentOffset + kHfsExtentStartBlockOffset);
+            const uint32_t count = be32(node, extentOffset + kHfsExtentBlockCountOffset);
             if (count == 0) {
                 continue;
             }
@@ -10464,8 +10213,7 @@ private:
                                                                    qsizetype end,
                                                                    uint32_t nodeNumber) const {
         const uint16_t keyLength = be16(node, offset);
-        if (keyLength < kHfsCatalogMinimumKeyBytes ||
-            keyLength > kHfsCatalogMaximumKeyBytes ||
+        if (keyLength < kHfsCatalogMinimumKeyBytes || keyLength > kHfsCatalogMaximumKeyBytes ||
             !hasBytes(node, offset, kUint16Size + keyLength)) {
             return std::nullopt;
         }
@@ -10484,16 +10232,14 @@ private:
             !checkedAdd(nodeBase, static_cast<uint64_t>(dataOffset), &catalogDataOffset)) {
             return std::nullopt;
         }
-        return HfsCatalogKeyInfo{
-            .parent_id = be32(node, offset + kHfsCatalogKeyParentIdOffset),
-            .name = *name,
-            .data_offset = dataOffset,
-            .catalog_data_offset = catalogDataOffset};
+        return HfsCatalogKeyInfo{.parent_id = be32(node, offset + kHfsCatalogKeyParentIdOffset),
+                                 .name = *name,
+                                 .data_offset = dataOffset,
+                                 .catalog_data_offset = catalogDataOffset};
     }
 
     [[nodiscard]] std::optional<HfsCatalogRecord> parseCatalogDataRecord(
-        const QByteArray& node,
-        const HfsCatalogKeyInfo& key) const {
+        const QByteArray& node, const HfsCatalogKeyInfo& key) const {
         HfsCatalogRecord record;
         record.parent_id = key.parent_id;
         record.name = key.name;
@@ -10512,8 +10258,8 @@ private:
         record.catalog_id = be32(node, key.data_offset + kHfsCatalogRecordIdOffset);
         if (record.regularFile()) {
             const qsizetype dataForkOffset = key.data_offset + kHfsCatalogFileDataForkOffset;
-            const qsizetype resourceForkOffset =
-                key.data_offset + kHfsCatalogFileResourceForkOffset;
+            const qsizetype resourceForkOffset = key.data_offset +
+                                                 kHfsCatalogFileResourceForkOffset;
             if (!hasBytes(node, dataForkOffset, kHfsForkDataBytes) ||
                 !hasBytes(node, resourceForkOffset, kHfsForkDataBytes)) {
                 return std::nullopt;
@@ -10578,8 +10324,7 @@ private:
                 return;
             }
             const auto record = parseCatalogRecord(node, start, end, nodeNumber);
-            if (!record.has_value() ||
-                record->record_type == kHfsCatalogFolderThreadRecord ||
+            if (!record.has_value() || record->record_type == kHfsCatalogFolderThreadRecord ||
                 record->record_type == kHfsCatalogFileThreadRecord) {
                 continue;
             }

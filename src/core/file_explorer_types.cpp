@@ -8,6 +8,60 @@
 #include <algorithm>
 
 namespace sak {
+namespace {
+
+QString remoteParentPath(const QString& normalized_path) {
+    if (normalized_path == QStringLiteral("/")) {
+        return QStringLiteral("/");
+    }
+    const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
+    if (separator <= 0) {
+        return QStringLiteral("/");
+    }
+    return normalized_path.left(separator);
+}
+
+QString localParentPath(const QString& normalized_path) {
+    QDir directory(normalized_path);
+    if (directory.isRoot()) {
+        return normalized_path;
+    }
+    if (directory.cdUp()) {
+        return QDir::fromNativeSeparators(QDir::cleanPath(directory.absolutePath()));
+    }
+    const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
+    if (separator < 0) {
+        return QString();
+    }
+    if (separator == 2 && normalized_path.size() >= 3 &&
+        normalized_path.at(1) == QLatin1Char(':')) {
+        return normalized_path.left(3);
+    }
+    return separator == 0 ? QStringLiteral("/") : normalized_path.left(separator);
+}
+
+void appendCapabilityBlockers(FileExplorerItemCapabilities& capabilities,
+                              const FileManagementTarget& target,
+                              const FileManagementEntry& entry) {
+    if (!target.can_browse) {
+        capabilities.blockers.append(QStringLiteral("Selected target cannot browse files."));
+    }
+    if (entry.regular_file && !target.can_read_files) {
+        capabilities.blockers.append(QStringLiteral("Selected target cannot read files."));
+    }
+    if ((!capabilities.can_rename || !capabilities.can_delete) && !target.can_write_files) {
+        const QString write_blocker = target.blockers.join(QStringLiteral("; "));
+        capabilities.blockers.append(
+            write_blocker.isEmpty() ? QStringLiteral("Selected target does not allow file writes.")
+                                    : write_blocker);
+    }
+    if (entry.path.trimmed().isEmpty()) {
+        capabilities.blockers.append(QStringLiteral("Selected item has no stable path."));
+    }
+    capabilities.blockers.removeDuplicates();
+}
+
+}  // namespace
 
 bool FileExplorerTargetId::isEmpty() const {
     return value.trimmed().isEmpty();
@@ -71,36 +125,7 @@ QString FileExplorerLocation::parentPath(const QString& path, const bool local_f
     if (normalized_path.isEmpty()) {
         return QString();
     }
-
-    if (!local_file_system) {
-        if (normalized_path == QStringLiteral("/")) {
-            return QStringLiteral("/");
-        }
-
-        const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
-        if (separator <= 0) {
-            return QStringLiteral("/");
-        }
-        return normalized_path.left(separator);
-    }
-
-    QDir directory(normalized_path);
-    if (directory.isRoot()) {
-        return normalized_path;
-    }
-
-    if (directory.cdUp()) {
-        return QDir::fromNativeSeparators(QDir::cleanPath(directory.absolutePath()));
-    }
-
-    const int separator = normalized_path.lastIndexOf(QLatin1Char('/'));
-    if (separator < 0) {
-        return QString();
-    }
-    if (separator == 2 && normalized_path.size() >= 3 && normalized_path.at(1) == QLatin1Char(':')) {
-        return normalized_path.left(3);
-    }
-    return separator == 0 ? QStringLiteral("/") : normalized_path.left(separator);
+    return local_file_system ? localParentPath(normalized_path) : remoteParentPath(normalized_path);
 }
 
 void FileExplorerSelection::clear() {
@@ -151,31 +176,14 @@ QStringList FileExplorerSelection::paths() const {
 }
 
 FileExplorerItemCapabilities FileExplorerItemCapabilities::fromTargetAndEntry(
-    const FileManagementTarget& target,
-    const FileManagementEntry& entry) {
+    const FileManagementTarget& target, const FileManagementEntry& entry) {
     FileExplorerItemCapabilities capabilities;
     capabilities.can_open = target.can_browse;
     capabilities.can_preview = target.can_read_files && entry.regular_file;
     capabilities.can_copy_path = !entry.path.trimmed().isEmpty();
     capabilities.can_rename = target.can_write_files && !entry.path.trimmed().isEmpty();
     capabilities.can_delete = target.can_write_files && !entry.path.trimmed().isEmpty();
-
-    if (!target.can_browse) {
-        capabilities.blockers.append(QStringLiteral("Selected target cannot browse files."));
-    }
-    if (entry.regular_file && !target.can_read_files) {
-        capabilities.blockers.append(QStringLiteral("Selected target cannot read files."));
-    }
-    if ((!capabilities.can_rename || !capabilities.can_delete) && !target.can_write_files) {
-        const QString write_blocker = target.blockers.join(QStringLiteral("; "));
-        capabilities.blockers.append(write_blocker.isEmpty()
-                                         ? QStringLiteral("Selected target does not allow file writes.")
-                                         : write_blocker);
-    }
-    if (entry.path.trimmed().isEmpty()) {
-        capabilities.blockers.append(QStringLiteral("Selected item has no stable path."));
-    }
-    capabilities.blockers.removeDuplicates();
+    appendCapabilityBlockers(capabilities, target, entry);
     return capabilities;
 }
 
@@ -231,7 +239,8 @@ bool FileExplorerPaneState::goForward() {
 
 bool FileExplorerPaneState::goUp(const bool local_file_system) {
     const QString parent = FileExplorerLocation::parentPath(location.path, local_file_system);
-    if (parent.isEmpty() || parent == FileExplorerLocation::normalizePath(location.path, local_file_system)) {
+    if (parent.isEmpty() ||
+        parent == FileExplorerLocation::normalizePath(location.path, local_file_system)) {
         return false;
     }
 

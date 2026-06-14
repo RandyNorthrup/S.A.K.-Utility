@@ -146,8 +146,10 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
          }},
         {QStringLiteral("delete-folder-tree-image"),
          [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocksFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+             return sak::PartitionHfsFileSystemWriter::
+                 deleteFolderTreeAndReleaseAllocatedBlocksFromImage(invocation.target_image_path,
+                                                                    invocation.hfs_path,
+                                                                    writeOptions(invocation));
          }},
         {QStringLiteral("rename-catalog-entry-image"),
          [](const CliInvocation& invocation) {
@@ -214,8 +216,10 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
          }},
         {QStringLiteral("truncate-resource-fork-image"),
          [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::truncateResourceForkWithinAllocatedBlocksFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+             return sak::PartitionHfsFileSystemWriter::
+                 truncateResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
+                                                                    invocation.hfs_path,
+                                                                    writeOptions(invocation));
          }},
         {QStringLiteral("truncate-image"),
          [](const CliInvocation& invocation) {
@@ -224,19 +228,19 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
          }},
         {QStringLiteral("replace-resource-fork-image"),
          [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replaceResourceForkWithinAllocatedBlocksFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
+             return sak::PartitionHfsFileSystemWriter::
+                 replaceResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
+                                                                   invocation.hfs_path,
+                                                                   invocation.payload,
+                                                                   writeOptions(invocation));
          }},
         {QStringLiteral("grow-resource-fork-image"),
          [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowthFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
+             return sak::PartitionHfsFileSystemWriter::
+                 replaceResourceForkWithAllocationGrowthFromImage(invocation.target_image_path,
+                                                                  invocation.hfs_path,
+                                                                  invocation.payload,
+                                                                  writeOptions(invocation));
          }},
         {QStringLiteral("grow-image"),
          [](const CliInvocation& invocation) {
@@ -262,8 +266,7 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
                  invocation.payload,
                  writeOptions(invocation));
          }},
-        {QStringLiteral("overwrite-image"),
-         [](const CliInvocation& invocation) {
+        {QStringLiteral("overwrite-image"), [](const CliInvocation& invocation) {
              return sak::PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
                  invocation.target_image_path,
                  invocation.hfs_path,
@@ -304,19 +307,19 @@ QJsonObject fileWriteReport(const CliInvocation& invocation) {
 QJsonObject attributeWriteReport(const CliInvocation& invocation) {
     sak::PartitionHfsAttributeWriteResult result;
     if (invocation.command == QStringLiteral("grow-fork-attribute-image")) {
-        result = sak::PartitionHfsFileSystemWriter::replaceForkAttributeValueWithAllocationGrowthFromImage(
-            invocation.target_image_path,
-            invocation.file_id,
-            invocation.attribute_name,
-            invocation.payload,
-            writeOptions(invocation));
+        result = sak::PartitionHfsFileSystemWriter::
+            replaceForkAttributeValueWithAllocationGrowthFromImage(invocation.target_image_path,
+                                                                   invocation.file_id,
+                                                                   invocation.attribute_name,
+                                                                   invocation.payload,
+                                                                   writeOptions(invocation));
     } else if (invocation.command == QStringLiteral("replace-fork-attribute-image")) {
-        result = sak::PartitionHfsFileSystemWriter::replaceForkAttributeValueWithinAllocatedBlocksFromImage(
-            invocation.target_image_path,
-            invocation.file_id,
-            invocation.attribute_name,
-            invocation.payload,
-            writeOptions(invocation));
+        result = sak::PartitionHfsFileSystemWriter::
+            replaceForkAttributeValueWithinAllocatedBlocksFromImage(invocation.target_image_path,
+                                                                    invocation.file_id,
+                                                                    invocation.attribute_name,
+                                                                    invocation.payload,
+                                                                    writeOptions(invocation));
     } else if (invocation.command == QStringLiteral("create-inline-attribute-image")) {
         result = sak::PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
             invocation.target_image_path,
@@ -397,10 +400,8 @@ bool isNoPayloadFileCommand(const QString& command) {
         QStringLiteral("delete-empty-folder-image"),
         QStringLiteral("delete-folder-tree-image"),
     };
-    return isTruncateCommand(command) ||
-           kNoPayloadCommands.contains(command) ||
-           isJournalCommand(command) ||
-           isRenameMoveCommand(command);
+    return isTruncateCommand(command) || kNoPayloadCommands.contains(command) ||
+           isJournalCommand(command) || isRenameMoveCommand(command);
 }
 
 bool isSupportedCommand(const QString& command) {
@@ -411,8 +412,7 @@ bool isSupportedCommand(const QString& command) {
            command == QStringLiteral("replace-compressed-image") ||
            command == QStringLiteral("grow-image") ||
            command == QStringLiteral("grow-resource-fork-image") ||
-           isNoPayloadFileCommand(command) ||
-           isAttributeCommand(command);
+           isNoPayloadFileCommand(command) || isAttributeCommand(command);
 }
 
 std::optional<QString> parseCommand(const QCommandLineParser& parser, QString* error) {
@@ -446,11 +446,11 @@ bool validatePathArguments(const RequiredPathArguments& arguments, QString* erro
         }
         return true;
     }
-    const bool missing =
-        arguments.target_path.isEmpty() ||
-        (!arguments.attribute_command && arguments.hfs_path.isEmpty()) ||
-        (arguments.rename_move_command && arguments.destination_hfs_path.isEmpty()) ||
-        (!arguments.truncate_command && arguments.payload_path.isEmpty());
+    const bool missing = arguments.target_path.isEmpty() ||
+                         (!arguments.attribute_command && arguments.hfs_path.isEmpty()) ||
+                         (arguments.rename_move_command &&
+                          arguments.destination_hfs_path.isEmpty()) ||
+                         (!arguments.truncate_command && arguments.payload_path.isEmpty());
     if (missing) {
         *error = missingPathArgumentsError(arguments);
         return false;
@@ -459,9 +459,9 @@ bool validatePathArguments(const RequiredPathArguments& arguments, QString* erro
 }
 
 std::optional<AttributeArguments> parseAttributeArguments(const QCommandLineParser& parser,
-                                                         const CliOptions& options,
-                                                         bool attributeCommand,
-                                                         QString* error) {
+                                                          const CliOptions& options,
+                                                          bool attributeCommand,
+                                                          QString* error) {
     AttributeArguments arguments;
     if (!attributeCommand) {
         return arguments;
@@ -471,8 +471,8 @@ std::optional<AttributeArguments> parseAttributeArguments(const QCommandLinePars
     arguments.file_id = parser.value(options.file_id).toUInt(&fileIdOk);
     arguments.attribute_name = parser.value(options.attribute_name).trimmed();
     if (!fileIdOk || arguments.file_id == 0 || arguments.attribute_name.isEmpty()) {
-        *error = QStringLiteral(
-            "--file-id and --attribute-name are required for attribute commands.");
+        *error =
+            QStringLiteral("--file-id and --attribute-name are required for attribute commands.");
         return std::nullopt;
     }
     return arguments;
@@ -525,26 +525,24 @@ std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
         }
         payload = *payloadBytes;
     }
-    return CliInvocation{.command = *command,
-                         .target_image_path = targetPath,
-                         .hfs_path = hfsPath,
-                         .destination_hfs_path = destinationHfsPath,
-                         .file_id = attributeArguments->file_id,
-                         .attribute_name = attributeArguments->attribute_name,
-                         .payload = payload,
-                         .evidence_id = evidenceIdForCommand(parser, options.evidence, *command),
-                         .file_count = parser.value(options.file_count).toInt(),
-                         .name_pad = parser.value(options.name_pad).toInt(),
-                         .confirm_target = parser.isSet(QStringLiteral("confirm-target")),
-                         .allow_journaled_volume =
-                             parser.isSet(QStringLiteral("allow-journaled-volume")),
-                         .allow_wrapped_volume =
-                             parser.isSet(QStringLiteral("allow-wrapped-volume")),
-                         .allow_compressed_file_mutation =
-                             parser.isSet(QStringLiteral("allow-compressed-file-mutation")),
-                         .secure_wipe_released_blocks =
-                             parser.isSet(QStringLiteral("secure-wipe-released-blocks")),
-                         .allow_raw_target = parser.isSet(options.allow_raw)};
+    return CliInvocation{
+        .command = *command,
+        .target_image_path = targetPath,
+        .hfs_path = hfsPath,
+        .destination_hfs_path = destinationHfsPath,
+        .file_id = attributeArguments->file_id,
+        .attribute_name = attributeArguments->attribute_name,
+        .payload = payload,
+        .evidence_id = evidenceIdForCommand(parser, options.evidence, *command),
+        .file_count = parser.value(options.file_count).toInt(),
+        .name_pad = parser.value(options.name_pad).toInt(),
+        .confirm_target = parser.isSet(QStringLiteral("confirm-target")),
+        .allow_journaled_volume = parser.isSet(QStringLiteral("allow-journaled-volume")),
+        .allow_wrapped_volume = parser.isSet(QStringLiteral("allow-wrapped-volume")),
+        .allow_compressed_file_mutation =
+            parser.isSet(QStringLiteral("allow-compressed-file-mutation")),
+        .secure_wipe_released_blocks = parser.isSet(QStringLiteral("secure-wipe-released-blocks")),
+        .allow_raw_target = parser.isSet(options.allow_raw)};
 }
 
 }  // namespace
@@ -568,17 +566,16 @@ int main(int argc, char* argv[]) {
         .hfs_path = QCommandLineOption({QStringLiteral("hfs-path")},
                                        QStringLiteral("HFS path for file mutation."),
                                        QStringLiteral("path")),
-        .destination_hfs_path = QCommandLineOption(
-            {QStringLiteral("destination-hfs-path")},
-            QStringLiteral("Destination HFS path for catalog rename/move."),
-            QStringLiteral("path")),
+        .destination_hfs_path =
+            QCommandLineOption({QStringLiteral("destination-hfs-path")},
+                               QStringLiteral("Destination HFS path for catalog rename/move."),
+                               QStringLiteral("path")),
         .file_id = QCommandLineOption({QStringLiteral("file-id")},
                                       QStringLiteral("HFS catalog file ID for attribute writes."),
                                       QStringLiteral("id")),
-        .attribute_name = QCommandLineOption(
-            {QStringLiteral("attribute-name")},
-            QStringLiteral("HFS attribute name to replace."),
-            QStringLiteral("name")),
+        .attribute_name = QCommandLineOption({QStringLiteral("attribute-name")},
+                                             QStringLiteral("HFS attribute name to replace."),
+                                             QStringLiteral("name")),
         .payload = QCommandLineOption({QStringLiteral("payload-file")},
                                       QStringLiteral("Replacement payload file."),
                                       QStringLiteral("path")),
@@ -588,44 +585,46 @@ int main(int argc, char* argv[]) {
         .evidence = QCommandLineOption({QStringLiteral("evidence-id")},
                                        QStringLiteral("Certification/evidence ID."),
                                        QStringLiteral("id")),
-        .file_count = QCommandLineOption(
-            {QStringLiteral("file-count")},
-            QStringLiteral("Number of files for create-empty-files-image."),
-            QStringLiteral("count")),
-        .name_pad = QCommandLineOption(
-            {QStringLiteral("name-pad")},
-            QStringLiteral("Filename padding length for create-empty-files-image."),
-            QStringLiteral("length")),
+        .file_count =
+            QCommandLineOption({QStringLiteral("file-count")},
+                               QStringLiteral("Number of files for create-empty-files-image."),
+                               QStringLiteral("count")),
+        .name_pad = QCommandLineOption({QStringLiteral("name-pad")},
+                                       QStringLiteral(
+                                           "Filename padding length for create-empty-files-image."),
+                                       QStringLiteral("length")),
         .allow_raw = QCommandLineOption({QStringLiteral("allow-raw-target")},
                                         QStringLiteral("Permit Windows raw-device mutation."))};
-    parser.addOptions({options.target,
-                       options.hfs_path,
-                       options.destination_hfs_path,
-                       options.file_id,
-                       options.attribute_name,
-                       options.payload,
-                       options.output_json,
-                       options.evidence,
-                       options.file_count,
-                       options.name_pad,
-                       options.allow_raw,
-                       QCommandLineOption({QStringLiteral("confirm-target")},
-                                          QStringLiteral("Confirm target image mutation.")),
-                       QCommandLineOption({QStringLiteral("allow-journaled-volume")},
-                                          QStringLiteral("Permit journaled HFS+ image overwrite.")),
-                       QCommandLineOption({QStringLiteral("allow-wrapped-volume")},
-                                          QStringLiteral("Permit classic-wrapped HFS+ image overwrite.")),
-                       QCommandLineOption({QStringLiteral("allow-compressed-file-mutation")},
-                                          QStringLiteral("Permit compressed-file mutation.")),
-                       QCommandLineOption({QStringLiteral("secure-wipe-released-blocks")},
-                                          QStringLiteral(
-                                              "Zero released file blocks before HFS delete operations."))});
+    parser.addOptions(
+        {options.target,
+         options.hfs_path,
+         options.destination_hfs_path,
+         options.file_id,
+         options.attribute_name,
+         options.payload,
+         options.output_json,
+         options.evidence,
+         options.file_count,
+         options.name_pad,
+         options.allow_raw,
+         QCommandLineOption({QStringLiteral("confirm-target")},
+                            QStringLiteral("Confirm target image mutation.")),
+         QCommandLineOption({QStringLiteral("allow-journaled-volume")},
+                            QStringLiteral("Permit journaled HFS+ image overwrite.")),
+         QCommandLineOption({QStringLiteral("allow-wrapped-volume")},
+                            QStringLiteral("Permit classic-wrapped HFS+ image overwrite.")),
+         QCommandLineOption({QStringLiteral("allow-compressed-file-mutation")},
+                            QStringLiteral("Permit compressed-file mutation.")),
+         QCommandLineOption({QStringLiteral("secure-wipe-released-blocks")},
+                            QStringLiteral(
+                                "Zero released file blocks before HFS delete operations."))});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
             "overwrite-image, replace-image, replace-resource-fork-image, grow-image, "
             "grow-resource-fork-image, truncate-image, truncate-resource-fork-image, "
-            "create-file-image, create-empty-file-image, delete-empty-file-image, delete-file-image, "
+            "create-file-image, create-empty-file-image, delete-empty-file-image, "
+            "delete-file-image, "
             "create-empty-folder-image, delete-empty-folder-image, delete-folder-tree-image, "
             "rename-catalog-entry-image, "
             "replace-inline-attribute-image, replace-fork-attribute-image, or "

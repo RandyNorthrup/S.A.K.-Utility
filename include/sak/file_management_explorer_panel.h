@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "sak/file_explorer_command_registry.h"
 #include "sak/file_explorer_command_bar.h"
+#include "sak/file_explorer_command_registry.h"
 #include "sak/file_explorer_details_pane.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_omnibar.h"
@@ -15,16 +15,16 @@
 #include "sak/file_explorer_sidebar.h"
 #include "sak/file_management_file_system.h"
 
+#include <QAbstractItemView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QPushButton>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QResizeEvent>
 #include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
-#include <QAbstractItemView>
 #include <QWidget>
 
 class QMenu;
@@ -105,9 +105,36 @@ private:
                                   const FileExplorerCommandContext& context);
     void rebuildViewMenu(const FileExplorerCommandContext& context);
     void executeCommand(FileExplorerCommandId command);
+    bool dispatchNavigationCommand(FileExplorerCommandId command);
+    bool dispatchSelectionCommand(FileExplorerCommandId command);
+    bool dispatchFileViewCommand(FileExplorerCommandId command);
+    void invertCurrentSelection();
+    void toggleHiddenItems();
+    void toggleFileExtensions();
+    void showSelectedItemProperties();
+    void togglePreviewPane();
+    void resetListingForUnavailableTarget(const QString& message, bool is_error);
+    int deleteSelectedEntries(const FileManagementTarget& target,
+                              const FileExplorerSelection& selection,
+                              QStringList* blockers,
+                              QStringList* warnings);
+    [[nodiscard]] int resolveSidebarTargetIndex(QListWidgetItem* item) const;
+    void appendSidebarTargetsWhere(const QString& title,
+                                   bool (*predicate)(const FileManagementTarget&));
+    void appendSidebarTargetsById(const QString& title, const QStringList& target_ids);
     void promptCurrentFolderFilter();
     void showCommandPalette();
     void updateDetailsPane();
+    [[nodiscard]] QStringList buildDetailsProperties(const FileManagementTarget& target,
+                                                     const FileExplorerSelection& selection) const;
+    [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
+    [[nodiscard]] QStringList buildDetailsEvidence(const FileManagementTarget& target) const;
+    [[nodiscard]] int resolveContextMenuTargetIndex(const QPoint& position);
+    [[nodiscard]] QString favoriteActionLabel(int target_index, bool has_target) const;
+    void openTargetAtIndex(int target_index);
+    void copyTargetRootAtIndex(int target_index);
+    void toggleFavoriteAtIndex(int target_index);
+    void showTargetPropertiesAtIndex(int target_index);
     void updateActionButtons();
     void logMessage(const QString& message);
 

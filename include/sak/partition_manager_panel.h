@@ -151,12 +151,11 @@ private:
                               const QVector<ActionLinkSpec>& specs,
                               bool scroll_buttons = false);
     void addPendingOperationsSection(QVBoxLayout* layout, QWidget* pane);
-    [[nodiscard]] ActionLinkSpec makeActionSpec(
-        const QString& text,
-        const QString& icon_path,
-        const QString& tooltip,
-        void (PartitionManagerPanel::*slot)(),
-        const ActionLinkOptions& options) const;
+    [[nodiscard]] ActionLinkSpec makeActionSpec(const QString& text,
+                                                const QString& icon_path,
+                                                const QString& tooltip,
+                                                void (PartitionManagerPanel::*slot)(),
+                                                const ActionLinkOptions& options) const;
     [[nodiscard]] QVector<ActionLinkSpec> wizardActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> partitionOperationActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> layoutOperationActionSpecs() const;

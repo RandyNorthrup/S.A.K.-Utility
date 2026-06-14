@@ -47,8 +47,8 @@ sak::FileManagementTarget rawTarget(const QString& file_system,
                                     const bool can_write,
                                     const QString& blocker = {}) {
     sak::FileManagementTarget target;
-    target.id = QStringLiteral("raw:%1:%2").arg(file_system, can_write ? QStringLiteral("rw")
-                                                                       : QStringLiteral("ro"));
+    target.id = QStringLiteral("raw:%1:%2")
+                    .arg(file_system, can_write ? QStringLiteral("rw") : QStringLiteral("ro"));
     target.label = QStringLiteral("%1 fixture").arg(file_system);
     target.root_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk7\\Partition1");
     target.file_system = file_system;
@@ -89,10 +89,10 @@ sak::FileExplorerCommandContext contextFor(const sak::FileManagementTarget& targ
     sak::FileExplorerCommandContext context;
     context.target = target;
     context.pane.location.target_id = sak::FileExplorerTargetId::fromTarget(target);
-    context.pane.location.path =
-        sak::FileExplorerLocation::normalizePath(target.local_file_system ? target.root_path
-                                                                          : QStringLiteral("/"),
-                                                target.local_file_system);
+    context.pane.location.path = sak::FileExplorerLocation::normalizePath(target.local_file_system
+                                                                              ? target.root_path
+                                                                              : QStringLiteral("/"),
+                                                                          target.local_file_system);
     if (with_selection) {
         context.pane.selection.entries.append(selectedFile());
     }
@@ -114,8 +114,8 @@ private Q_SLOTS:
         target.id.clear();
         const auto missing_id = sak::FileExplorerTargetId::fromTarget(target);
         QVERIFY(missing_id.isEmpty());
-        QCOMPARE(sak::FileExplorerLocation::normalizePath(QStringLiteral("\\Users\\Randy\\..\\Test"),
-                                                          false),
+        QCOMPARE(sak::FileExplorerLocation::normalizePath(
+                     QStringLiteral("\\Users\\Randy\\..\\Test"), false),
                  QStringLiteral("/Users/Test"));
         QCOMPARE(sak::FileExplorerLocation::normalizePath(QStringLiteral("C:\\fixture\\.\\child"),
                                                           true),
@@ -167,7 +167,8 @@ private Q_SLOTS:
         QVERIFY(selection.containsRegularFile());
         QVERIFY(selection.containsDirectory());
         QCOMPARE(selection.totalRegularFileBytes(), 42ULL);
-        QCOMPARE(selection.paths(), QStringList({QStringLiteral("/note.txt"), QStringLiteral("/folder")}));
+        QCOMPARE(selection.paths(),
+                 QStringList({QStringLiteral("/note.txt"), QStringLiteral("/folder")}));
 
         selection.clear();
         QVERIFY(selection.isEmpty());
@@ -192,14 +193,15 @@ private Q_SLOTS:
         QVERIFY(read_only.can_copy_path);
         QVERIFY(!read_only.can_rename);
         QVERIFY(!read_only.can_delete);
-        QVERIFY(read_only.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("write blocker")));
+        QVERIFY(read_only.blockers.join(QStringLiteral("; "))
+                    .contains(QStringLiteral("write blocker")));
     }
 
     void registryEnablesWritableLocalCommands() {
         const auto context = contextFor(writableLocalTarget(), true);
 
-        const auto new_folder = sak::FileExplorerCommandRegistry::state(
-            sak::FileExplorerCommandId::NewFolder, context);
+        const auto new_folder =
+            sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::NewFolder, context);
         const auto rename =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Rename, context);
         const auto delete_item =
@@ -218,8 +220,8 @@ private Q_SLOTS:
         const auto target = readOnlyRawTarget(QStringLiteral("ext raw target is read-only"));
         const auto context = contextFor(target, true);
 
-        const auto write_file = sak::FileExplorerCommandRegistry::state(
-            sak::FileExplorerCommandId::WriteFile, context);
+        const auto write_file =
+            sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::WriteFile, context);
         const auto delete_item =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Delete, context);
         const auto preview =
@@ -310,8 +312,8 @@ private Q_SLOTS:
 
         const auto details = sak::FileExplorerCommandRegistry::state(
             sak::FileExplorerCommandId::ViewDetails, context);
-        const auto list = sak::FileExplorerCommandRegistry::state(
-            sak::FileExplorerCommandId::ViewList, context);
+        const auto list =
+            sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::ViewList, context);
         const auto hidden = sak::FileExplorerCommandRegistry::state(
             sak::FileExplorerCommandId::ToggleHiddenItems, context);
 
@@ -342,8 +344,8 @@ private Q_SLOTS:
 
         const auto rename =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Rename, context);
-        const auto open =
-            sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Open, context);
+        const auto open = sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Open,
+                                                                  context);
         const auto delete_item =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Delete, context);
         const auto copy_path = sak::FileExplorerCommandRegistry::state(

@@ -730,10 +730,9 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
             &QPushButton::clicked,
             this,
             &AdvancedSearchPanel::onRegexPatternsClicked);
-    connect(m_target_combo,
-            &QComboBox::currentIndexChanged,
-            this,
-            [this](int) { populateFileExplorerRoot(); });
+    connect(m_target_combo, &QComboBox::currentIndexChanged, this, [this](int) {
+        populateFileExplorerRoot();
+    });
     connect(m_target_refresh_button, &QPushButton::clicked, this, [this]() {
         populateSearchTargets(FileManagementFileSystemBridge::mountedTargets());
         Q_EMIT statusMessage(tr("Mounted search targets refreshed"), sak::kTimerStatusMessageMs);
@@ -1102,11 +1101,13 @@ void AdvancedSearchPanel::populateFileExplorerRoot() {
 
     auto* rootItem = new QTreeWidgetItem(m_file_explorer);
     rootItem->setText(0, target.label);
-    rootItem->setData(0, Qt::UserRole, target.local_file_system ? target.root_path
-                                                                : QStringLiteral("/"));
+    rootItem->setData(0,
+                      Qt::UserRole,
+                      target.local_file_system ? target.root_path : QStringLiteral("/"));
     rootItem->setData(0, Qt::UserRole + 1, true);
-    rootItem->setIcon(0, style()->standardIcon(target.local_file_system ? QStyle::SP_DriveHDIcon
-                                                                        : QStyle::SP_DirIcon));
+    rootItem->setIcon(0,
+                      style()->standardIcon(target.local_file_system ? QStyle::SP_DriveHDIcon
+                                                                     : QStyle::SP_DirIcon));
     addPlaceholderChild(rootItem);
     m_file_explorer->expandItem(rootItem);
 }
@@ -1118,9 +1119,8 @@ void AdvancedSearchPanel::populateDirectoryChildren(QTreeWidgetItem* parentItem,
         return;
     }
 
-    const auto listing =
-        FileManagementFileSystemBridge::listDirectory(
-            target, dirPath, kAdvancedSearchTargetBrowseMaxEntries);
+    const auto listing = FileManagementFileSystemBridge::listDirectory(
+        target, dirPath, kAdvancedSearchTargetBrowseMaxEntries);
     if (!listing.ok) {
         auto* item = new QTreeWidgetItem(parentItem);
         item->setText(0, listing.blockers.join(QStringLiteral("; ")));
@@ -1542,8 +1542,8 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
     const auto target = currentSearchTarget();
     if (!target.local_file_system) {
         const auto prefs = m_controller->preferences();
-        const uint64_t maxSize =
-            static_cast<uint64_t>(prefs.max_preview_file_size_mb) * kBytesPerMiB;
+        const uint64_t maxSize = static_cast<uint64_t>(prefs.max_preview_file_size_mb) *
+                                 kBytesPerMiB;
         const auto read = FileManagementFileSystemBridge::readFile(target, filePath, maxSize);
         if (!read.ok) {
             m_preview_edit->setPlainText(read.blockers.join(QStringLiteral("\n")));
@@ -1594,48 +1594,23 @@ void AdvancedSearchPanel::showFilePreview(const QString& filePath,
     }
 }
 
-void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
-    if (!currentSearchTarget().local_file_system) {
-        QMap<QString, QString> metadata;
-        const auto target = currentSearchTarget();
-        metadata[QStringLiteral("FilePath")] = filePath;
-        metadata[QStringLiteral("Target")] = target.label;
-        metadata[QStringLiteral("FileSystem")] = target.file_system;
-        if (m_all_results.contains(filePath)) {
-            const auto parsed = parseMetadataFromMatches(m_all_results.value(filePath));
-            for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
-                metadata.insert(it.key(), it.value());
-            }
+QMap<QString, QString> AdvancedSearchPanel::collectRemoteMetadata(const QString& filePath) const {
+    QMap<QString, QString> metadata;
+    const auto target = currentSearchTarget();
+    metadata[QStringLiteral("FilePath")] = filePath;
+    metadata[QStringLiteral("Target")] = target.label;
+    metadata[QStringLiteral("FileSystem")] = target.file_system;
+    if (m_all_results.contains(filePath)) {
+        const auto parsed = parseMetadataFromMatches(m_all_results.value(filePath));
+        for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
+            metadata.insert(it.key(), it.value());
         }
-
-        QDialog dialog(this);
-        dialog.setWindowTitle(tr("Metadata - %1").arg(filePath));
-        dialog.resize(kMetadataDialogWidth, kMetadataDialogHeight);
-        auto* layout = new QVBoxLayout(&dialog);
-        auto* tree = new QTreeWidget(&dialog);
-        tree->setHeaderLabels({tr("Property"), tr("Value")});
-        tree->setColumnWidth(kMetadataNameColumnIndex, kMetadataNameColumnWidth);
-        tree->setAlternatingRowColors(true);
-        tree->setRootIsDecorated(true);
-        populateMetadataTree(tree, metadata);
-        layout->addWidget(tree);
-        auto* close_btn = new QPushButton(tr("Close"), &dialog);
-        close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-        connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
-        auto* btn_layout = new QHBoxLayout();
-        btn_layout->addStretch();
-        btn_layout->addWidget(close_btn);
-        layout->addLayout(btn_layout);
-        dialog.exec();
-        return;
     }
+    return metadata;
+}
 
+QMap<QString, QString> AdvancedSearchPanel::collectLocalMetadata(const QString& filePath) const {
     const QFileInfo fi(filePath);
-    if (!fi.exists()) {
-        return;
-    }
-
-    // Collect metadata from QFileInfo
     QMap<QString, QString> metadata;
     metadata[QStringLiteral("FileName")] = fi.fileName();
     metadata[QStringLiteral("FileSize")] = formatMetadataSize(fi.size());
@@ -1643,7 +1618,6 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
     metadata[QStringLiteral("Created")] = fi.birthTime().toString(Qt::ISODate);
     metadata[QStringLiteral("LastModified")] = fi.lastModified().toString(Qt::ISODate);
 
-    // Image properties from QImageReader
     QImageReader reader(filePath);
     if (reader.canRead()) {
         const QSize size = reader.size();
@@ -1661,7 +1635,6 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
         }
     }
 
-    // Merge metadata from search results (if available)
     if (m_all_results.contains(filePath)) {
         const auto parsed = parseMetadataFromMatches(m_all_results.value(filePath));
         for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
@@ -1670,14 +1643,15 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
             }
         }
     }
+    return metadata;
+}
 
-    // Build dialog with categorized tree
+void AdvancedSearchPanel::showMetadataTreeDialog(const QString& title,
+                                                 const QMap<QString, QString>& metadata) {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Metadata \u2014 %1").arg(fi.fileName()));
+    dialog.setWindowTitle(title);
     dialog.resize(kMetadataDialogWidth, kMetadataDialogHeight);
-
     auto* layout = new QVBoxLayout(&dialog);
-
     auto* tree = new QTreeWidget(&dialog);
     tree->setHeaderLabels({tr("Property"), tr("Value")});
     tree->setColumnWidth(kMetadataNameColumnIndex, kMetadataNameColumnWidth);
@@ -1685,7 +1659,6 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
     tree->setRootIsDecorated(true);
     populateMetadataTree(tree, metadata);
     layout->addWidget(tree);
-
     auto* close_btn = new QPushButton(tr("Close"), &dialog);
     close_btn->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     connect(close_btn, &QPushButton::clicked, &dialog, &QDialog::accept);
@@ -1693,8 +1666,19 @@ void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
     btn_layout->addStretch();
     btn_layout->addWidget(close_btn);
     layout->addLayout(btn_layout);
-
     dialog.exec();
+}
+
+void AdvancedSearchPanel::showMetadataDialog(const QString& filePath) {
+    if (!currentSearchTarget().local_file_system) {
+        showMetadataTreeDialog(tr("Metadata - %1").arg(filePath), collectRemoteMetadata(filePath));
+        return;
+    }
+    if (!QFileInfo::exists(filePath)) {
+        return;
+    }
+    showMetadataTreeDialog(tr("Metadata \u2014 %1").arg(QFileInfo(filePath).fileName()),
+                           collectLocalMetadata(filePath));
 }
 
 void AdvancedSearchPanel::showMetadataPreview(const QString& filePath,

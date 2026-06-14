@@ -300,9 +300,8 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
                 }
                 watcher->deleteLater();
             });
-    watcher->setFuture(QtConcurrent::run([request]() {
-        return PartitionFileSystemToolRunner::runReadOnlyCheck(request);
-    }));
+    watcher->setFuture(QtConcurrent::run(
+        [request]() { return PartitionFileSystemToolRunner::runReadOnlyCheck(request); }));
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS

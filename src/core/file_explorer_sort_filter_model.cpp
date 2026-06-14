@@ -7,7 +7,62 @@
 
 #include <QDateTime>
 
+#include <optional>
+
 namespace sak {
+namespace {
+
+bool directoryAt(const QModelIndex& index) {
+    return index.siblingAtColumn(FileExplorerItemModel::NameColumn)
+        .data(FileExplorerItemModel::EntryDirectoryRole)
+        .toBool();
+}
+
+QString nameAt(const QModelIndex& index) {
+    return index.siblingAtColumn(FileExplorerItemModel::NameColumn)
+        .data(FileExplorerItemModel::EntryNameRole)
+        .toString();
+}
+
+std::optional<bool> sizeLessThan(const QModelIndex& left, const QModelIndex& right) {
+    if (left.column() != FileExplorerItemModel::SizeColumn) {
+        return std::nullopt;
+    }
+    const quint64 left_size = left.siblingAtColumn(FileExplorerItemModel::NameColumn)
+                                  .data(FileExplorerItemModel::EntrySizeRole)
+                                  .toULongLong();
+    const quint64 right_size = right.siblingAtColumn(FileExplorerItemModel::NameColumn)
+                                   .data(FileExplorerItemModel::EntrySizeRole)
+                                   .toULongLong();
+    if (left_size != right_size) {
+        return left_size < right_size;
+    }
+    return std::nullopt;
+}
+
+std::optional<bool> dateTimeLessThan(const QModelIndex& left, const QModelIndex& right) {
+    const int column = left.column();
+    if (column != FileExplorerItemModel::ModifiedColumn &&
+        column != FileExplorerItemModel::CreatedColumn) {
+        return std::nullopt;
+    }
+    const int role = column == FileExplorerItemModel::ModifiedColumn
+                         ? FileExplorerItemModel::EntryModifiedTimeRole
+                         : FileExplorerItemModel::EntryCreatedTimeRole;
+    const QDateTime left_time =
+        left.siblingAtColumn(FileExplorerItemModel::NameColumn).data(role).toDateTime();
+    const QDateTime right_time =
+        right.siblingAtColumn(FileExplorerItemModel::NameColumn).data(role).toDateTime();
+    if (left_time.isValid() != right_time.isValid()) {
+        return left_time.isValid();
+    }
+    if (left_time != right_time) {
+        return left_time < right_time;
+    }
+    return std::nullopt;
+}
+
+}  // namespace
 
 FileExplorerSortFilterModel::FileExplorerSortFilterModel(QObject* parent)
     : QSortFilterProxyModel(parent) {
@@ -43,66 +98,26 @@ bool FileExplorerSortFilterModel::showHiddenItems() const {
 
 bool FileExplorerSortFilterModel::lessThan(const QModelIndex& source_left,
                                            const QModelIndex& source_right) const {
-    const bool left_directory =
-        source_left.siblingAtColumn(FileExplorerItemModel::NameColumn)
-            .data(FileExplorerItemModel::EntryDirectoryRole)
-            .toBool();
-    const bool right_directory =
-        source_right.siblingAtColumn(FileExplorerItemModel::NameColumn)
-            .data(FileExplorerItemModel::EntryDirectoryRole)
-            .toBool();
-    if (left_directory != right_directory) {
+    const bool left_directory = directoryAt(source_left);
+    if (left_directory != directoryAt(source_right)) {
         return sortOrder() == Qt::DescendingOrder ? !left_directory : left_directory;
     }
-
-    if (source_left.column() == FileExplorerItemModel::SizeColumn) {
-        const quint64 left_size =
-            source_left.siblingAtColumn(FileExplorerItemModel::NameColumn)
-                .data(FileExplorerItemModel::EntrySizeRole)
-                .toULongLong();
-        const quint64 right_size =
-            source_right.siblingAtColumn(FileExplorerItemModel::NameColumn)
-                .data(FileExplorerItemModel::EntrySizeRole)
-                .toULongLong();
-        if (left_size != right_size) {
-            return left_size < right_size;
-        }
+    if (const auto by_size = sizeLessThan(source_left, source_right)) {
+        return *by_size;
     }
-    if (source_left.column() == FileExplorerItemModel::ModifiedColumn ||
-        source_left.column() == FileExplorerItemModel::CreatedColumn) {
-        const int role = source_left.column() == FileExplorerItemModel::ModifiedColumn
-                             ? FileExplorerItemModel::EntryModifiedTimeRole
-                             : FileExplorerItemModel::EntryCreatedTimeRole;
-        const QDateTime left_time =
-            source_left.siblingAtColumn(FileExplorerItemModel::NameColumn).data(role).toDateTime();
-        const QDateTime right_time =
-            source_right.siblingAtColumn(FileExplorerItemModel::NameColumn).data(role).toDateTime();
-        if (left_time.isValid() != right_time.isValid()) {
-            return left_time.isValid();
-        }
-        if (left_time != right_time) {
-            return left_time < right_time;
-        }
+    if (const auto by_time = dateTimeLessThan(source_left, source_right)) {
+        return *by_time;
     }
-
-    const QString left_text = source_left.data(Qt::DisplayRole).toString();
-    const QString right_text = source_right.data(Qt::DisplayRole).toString();
-    const int compared = QString::localeAwareCompare(left_text, right_text);
+    const int compared = QString::localeAwareCompare(source_left.data(Qt::DisplayRole).toString(),
+                                                     source_right.data(Qt::DisplayRole).toString());
     if (compared != 0) {
         return compared < 0;
     }
-    return QString::localeAwareCompare(
-               source_left.siblingAtColumn(FileExplorerItemModel::NameColumn)
-                   .data(FileExplorerItemModel::EntryNameRole)
-                   .toString(),
-               source_right.siblingAtColumn(FileExplorerItemModel::NameColumn)
-                   .data(FileExplorerItemModel::EntryNameRole)
-                   .toString()) < 0;
+    return QString::localeAwareCompare(nameAt(source_left), nameAt(source_right)) < 0;
 }
 
-bool FileExplorerSortFilterModel::filterAcceptsRow(
-    const int source_row,
-    const QModelIndex& source_parent) const {
+bool FileExplorerSortFilterModel::filterAcceptsRow(const int source_row,
+                                                   const QModelIndex& source_parent) const {
     const QModelIndex name_index =
         sourceModel()->index(source_row, FileExplorerItemModel::NameColumn, source_parent);
     const QString entry_name = name_index.data(FileExplorerItemModel::EntryNameRole).toString();

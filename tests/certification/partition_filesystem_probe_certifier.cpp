@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#include "sak/partition_file_system_detector.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/partition_file_system_detector.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -13,10 +13,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QIODevice>
 #include <QTextStream>
 
 #include <algorithm>
@@ -35,7 +35,7 @@
 namespace {
 
 constexpr uint64_t kDefaultReadMaxBytes = 1024ULL * 1024ULL;
-constexpr uint64_t kDefaultApfsExportMaxEntries = 10000;
+constexpr uint64_t kDefaultApfsExportMaxEntries = 10'000;
 constexpr uint64_t kDefaultApfsExportMaxFileBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kDefaultApfsExportMaxTotalBytes = 1024ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMaxIntValue = static_cast<uint64_t>(std::numeric_limits<int>::max());
@@ -58,8 +58,8 @@ constexpr qsizetype kFixtureHfsExtentBlockCountOffset = 4;
 constexpr qsizetype kFixtureHfsExtentBytes = 8;
 constexpr int kFixtureHfsExtentCount = 8;
 constexpr qsizetype kFixtureHfsCatalogFileDataForkOffset = 88;
-constexpr qsizetype kFixtureHfsForkDataBytes =
-    kFixtureHfsForkExtentsOffset + kFixtureHfsExtentBytes * kFixtureHfsExtentCount;
+constexpr qsizetype kFixtureHfsForkDataBytes = kFixtureHfsForkExtentsOffset +
+                                               kFixtureHfsExtentBytes * kFixtureHfsExtentCount;
 constexpr qsizetype kFixtureHfsCatalogFileResourceForkOffset =
     kFixtureHfsCatalogFileDataForkOffset + kFixtureHfsForkDataBytes;
 constexpr qsizetype kFixtureHfsBTreeKindOffset = 8;
@@ -78,8 +78,8 @@ constexpr qsizetype kFixtureHfsBTreeHeaderFreeNodesOffset = 26;
 constexpr qsizetype kFixtureHfsBTreeHeaderKeyCompareTypeOffset = 37;
 constexpr qsizetype kFixtureHfsBTreeHeaderAttributesOffset = 38;
 constexpr uint16_t kFixtureHfsCatalogMaxKeyLength = 516;
-constexpr uint32_t kFixtureHfsBTreeBigKeysMask = 0x00000002;
-constexpr uint32_t kFixtureHfsBTreeVariableIndexKeysMask = 0x00000004;
+constexpr uint32_t kFixtureHfsBTreeBigKeysMask = 0x00'00'00'02;
+constexpr uint32_t kFixtureHfsBTreeVariableIndexKeysMask = 0x00'00'00'04;
 constexpr qsizetype kFixtureHfsCatalogRecordIdOffset = 8;
 constexpr qsizetype kFixtureHfsFolderRecordBytes = 88;
 constexpr qsizetype kFixtureHfsFileRecordBytes = 248;
@@ -87,7 +87,7 @@ constexpr qsizetype kFixtureHfsRootRecordOffset = 14;
 constexpr qsizetype kFixtureHfsHelloRecordOffset = 120;
 constexpr qsizetype kFixtureHfsNoteRecordOffset = 248;
 constexpr qsizetype kFixtureHfsHeaderFreeOffset = 256;
-constexpr uint32_t kFixtureHfsJournaledMask = 0x00002000;
+constexpr uint32_t kFixtureHfsJournaledMask = 0x00'00'20'00;
 constexpr uint32_t kFixtureHfsBlockSize = 4096;
 constexpr uint32_t kFixtureHfsImageBlockCount = 64;
 constexpr uint32_t kFixtureHfsFreeBlockCount = 40;
@@ -112,12 +112,12 @@ constexpr uint32_t kFixtureHfsAttributeInlineRecord = 0x10;
 constexpr uint32_t kFixtureHfsAttributeForkRecord = 0x20;
 constexpr qsizetype kFixtureHfsAttributeRecordTypeBytes = 4;
 constexpr qsizetype kFixtureHfsAttributeInlineReservedBytes = 8;
-constexpr qsizetype kFixtureHfsAttributeInlineSizeOffset =
-    kFixtureHfsAttributeRecordTypeBytes + kFixtureHfsAttributeInlineReservedBytes;
-constexpr qsizetype kFixtureHfsAttributeInlineDataOffset =
-    kFixtureHfsAttributeInlineSizeOffset + sizeof(uint32_t);
-constexpr qsizetype kFixtureHfsAttributeForkDataOffset =
-    kFixtureHfsAttributeRecordTypeBytes + sizeof(uint32_t);
+constexpr qsizetype kFixtureHfsAttributeInlineSizeOffset = kFixtureHfsAttributeRecordTypeBytes +
+                                                           kFixtureHfsAttributeInlineReservedBytes;
+constexpr qsizetype kFixtureHfsAttributeInlineDataOffset = kFixtureHfsAttributeInlineSizeOffset +
+                                                           sizeof(uint32_t);
+constexpr qsizetype kFixtureHfsAttributeForkDataOffset = kFixtureHfsAttributeRecordTypeBytes +
+                                                         sizeof(uint32_t);
 constexpr char kFixtureHfsBTreeHeaderKind = 1;
 constexpr char kFixtureHfsBTreeLeafKind = static_cast<char>(0xFF);
 constexpr char kFixtureHfsBTreeLeafHeight = 1;
@@ -266,10 +266,8 @@ QJsonObject hfsEntryObject(const sak::PartitionHfsFileEntry& entry) {
     return QJsonObject{{QStringLiteral("path"), entry.path},
                        {QStringLiteral("name"), entry.name},
                        {QStringLiteral("type"), entry.type},
-                       {QStringLiteral("catalog_id"),
-                        QString::number(entry.catalog_id)},
-                       {QStringLiteral("size_bytes"),
-                        QString::number(entry.size_bytes)},
+                       {QStringLiteral("catalog_id"), QString::number(entry.catalog_id)},
+                       {QStringLiteral("size_bytes"), QString::number(entry.size_bytes)},
                        {QStringLiteral("resource_fork_size_bytes"),
                         QString::number(entry.resource_fork_size_bytes)},
                        {QStringLiteral("directory"), entry.directory},
@@ -305,8 +303,7 @@ QJsonObject hfsAttributeMetadataObject(const sak::PartitionHfsAttributeMetadata&
                        {QStringLiteral("readable"), record.readable}};
 }
 
-QJsonArray hfsAttributeMetadataArray(
-    const QVector<sak::PartitionHfsAttributeMetadata>& records) {
+QJsonArray hfsAttributeMetadataArray(const QVector<sak::PartitionHfsAttributeMetadata>& records) {
     QJsonArray array;
     for (const auto& record : records) {
         array.append(hfsAttributeMetadataObject(record));
@@ -377,8 +374,7 @@ QString win32ErrorMessage(DWORD errorCode) {
 }
 
 bool isWindowsDevicePath(const QString& path) {
-    return path.startsWith(QStringLiteral("\\\\.\\")) ||
-           path.startsWith(QStringLiteral("\\\\?\\"));
+    return path.startsWith(QStringLiteral("\\\\.\\")) || path.startsWith(QStringLiteral("\\\\?\\"));
 }
 
 ScopedWin32Handle openWindowsReadHandle(const QString& path) {
@@ -427,11 +423,8 @@ std::optional<QByteArray> readWindowsProbeBytesFromHandle(HANDLE handle, QString
     bytes.resize(static_cast<int>(clampedReadLimit));
 
     DWORD bytesRead = 0;
-    const BOOL ok = ReadFile(handle,
-                             bytes.data(),
-                             static_cast<DWORD>(bytes.size()),
-                             &bytesRead,
-                             nullptr);
+    const BOOL ok =
+        ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr);
     const DWORD readError = GetLastError();
     if (!ok) {
         setErrorMessage(errorMessage,
@@ -534,10 +527,7 @@ void writeBe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
     (*bytes)[offset + 7] = static_cast<char>(value & 0xFF);
 }
 
-void writeHfsExtent(QByteArray* bytes,
-                    qsizetype offset,
-                    uint32_t startBlock,
-                    uint32_t blockCount) {
+void writeHfsExtent(QByteArray* bytes, qsizetype offset, uint32_t startBlock, uint32_t blockCount) {
     writeBe32(bytes, offset + kFixtureHfsExtentStartBlockOffset, startBlock);
     writeBe32(bytes, offset + kFixtureHfsExtentBlockCountOffset, blockCount);
 }
@@ -553,8 +543,8 @@ void writeHfsFork(QByteArray* bytes,
 }
 
 void setHfsAllocationBit(QByteArray* bytes, uint32_t block) {
-    const qsizetype offset = static_cast<qsizetype>(
-        kFixtureHfsAllocationStartBlock * kFixtureHfsBlockSize + block / 8U);
+    const qsizetype offset =
+        static_cast<qsizetype>(kFixtureHfsAllocationStartBlock * kFixtureHfsBlockSize + block / 8U);
     const char mask = static_cast<char>(0x80U >> (block % 8U));
     (*bytes)[offset] = static_cast<char>((*bytes)[offset] | mask);
 }
@@ -571,17 +561,15 @@ void writeHfsAllocationFork(QByteArray* image, const QVector<uint32_t>& allocate
 }
 
 QByteArray hfsCatalogKey(uint32_t parentId, const QString& name) {
-    const uint16_t keyLength = static_cast<uint16_t>(
-        sizeof(uint32_t) + sizeof(uint16_t) + name.size() * sizeof(uint16_t));
+    const uint16_t keyLength =
+        static_cast<uint16_t>(sizeof(uint32_t) + sizeof(uint16_t) + name.size() * sizeof(uint16_t));
     QByteArray key(static_cast<qsizetype>(sizeof(uint16_t) + keyLength), '\0');
     writeBe16(&key, 0, keyLength);
     writeBe32(&key, sizeof(uint16_t), parentId);
-    writeBe16(&key, sizeof(uint16_t) + sizeof(uint32_t),
-              static_cast<uint16_t>(name.size()));
+    writeBe16(&key, sizeof(uint16_t) + sizeof(uint32_t), static_cast<uint16_t>(name.size()));
     for (qsizetype index = 0; index < name.size(); ++index) {
         writeBe16(&key,
-                  sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) +
-                      index * sizeof(uint16_t),
+                  sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) + index * sizeof(uint16_t),
                   name.at(index).unicode());
     }
     return key;
@@ -627,24 +615,19 @@ QByteArray hfsCatalogRecord(uint32_t parentId, const QString& name, const QByteA
 }
 
 QByteArray hfsAttributeKey(uint32_t fileId, const QString& name) {
-    const uint16_t keyLength = static_cast<uint16_t>(
-        12 + name.size() * sizeof(uint16_t));
+    const uint16_t keyLength = static_cast<uint16_t>(12 + name.size() * sizeof(uint16_t));
     QByteArray key(static_cast<qsizetype>(sizeof(uint16_t) + keyLength), '\0');
     writeBe16(&key, 0, keyLength);
     writeBe32(&key, 4, fileId);
     writeBe32(&key, 8, 0);
-    writeBe16(&key, 12,
-              static_cast<uint16_t>(name.size()));
+    writeBe16(&key, 12, static_cast<uint16_t>(name.size()));
     for (qsizetype index = 0; index < name.size(); ++index) {
-        writeBe16(&key, 14 + index * sizeof(uint16_t),
-                  name.at(index).unicode());
+        writeBe16(&key, 14 + index * sizeof(uint16_t), name.at(index).unicode());
     }
     return key;
 }
 
-QByteArray hfsInlineAttributeRecord(uint32_t fileId,
-                                    const QString& name,
-                                    const QByteArray& value) {
+QByteArray hfsInlineAttributeRecord(uint32_t fileId, const QString& name, const QByteArray& value) {
     QByteArray record = hfsAttributeKey(fileId, name);
     const qsizetype dataOffset = record.size();
     record.resize(record.size() + kFixtureHfsAttributeInlineDataOffset + value.size());
@@ -667,8 +650,7 @@ QByteArray hfsForkAttributeRecord(uint32_t fileId,
                                   uint32_t firstBlock) {
     QByteArray record = hfsAttributeKey(fileId, name);
     const qsizetype dataOffset = record.size();
-    record.resize(record.size() + kFixtureHfsAttributeForkDataOffset +
-                  kFixtureHfsForkDataBytes);
+    record.resize(record.size() + kFixtureHfsAttributeForkDataOffset + kFixtureHfsForkDataBytes);
     writeBe32(&record, dataOffset, kFixtureHfsAttributeForkRecord);
     writeHfsFork(&record,
                  dataOffset + kFixtureHfsAttributeForkDataOffset,
@@ -707,26 +689,20 @@ void writeHfsCatalogHeaderNode(QByteArray* image) {
     writeBe32(&node, header + kFixtureHfsBTreeHeaderLeafRecordsOffset, 3);
     writeBe32(&node, header + kFixtureHfsBTreeHeaderFirstLeafNodeOffset, 1);
     writeBe32(&node, header + kFixtureHfsBTreeHeaderLastLeafNodeOffset, 1);
-    writeBe16(&node,
-              header + kFixtureHfsBTreeHeaderNodeSizeOffset,
-              kFixtureHfsCatalogNodeSize);
+    writeBe16(&node, header + kFixtureHfsBTreeHeaderNodeSizeOffset, kFixtureHfsCatalogNodeSize);
     writeBe16(&node,
               header + kFixtureHfsBTreeHeaderMaxKeyLengthOffset,
               kFixtureHfsCatalogMaxKeyLength);
-    writeBe32(&node,
-              header + kFixtureHfsBTreeHeaderTotalNodesOffset,
-              kFixtureHfsCatalogTotalNodes);
+    writeBe32(&node, header + kFixtureHfsBTreeHeaderTotalNodesOffset, kFixtureHfsCatalogTotalNodes);
     writeBe32(&node, header + kFixtureHfsBTreeHeaderFreeNodesOffset, 0);
-    node[header + kFixtureHfsBTreeHeaderKeyCompareTypeOffset] =
-        kFixtureHfsBTreeKeyCompareType;
+    node[header + kFixtureHfsBTreeHeaderKeyCompareTypeOffset] = kFixtureHfsBTreeKeyCompareType;
     writeBe32(&node,
               header + kFixtureHfsBTreeHeaderAttributesOffset,
               kFixtureHfsBTreeBigKeysMask | kFixtureHfsBTreeVariableIndexKeysMask);
-    writeHfsNodeOffsets(&node,
-                        {kFixtureHfsRootRecordOffset,
-                         kFixtureHfsHelloRecordOffset,
-                         kFixtureHfsNoteRecordOffset},
-                        kFixtureHfsHeaderFreeOffset);
+    writeHfsNodeOffsets(
+        &node,
+        {kFixtureHfsRootRecordOffset, kFixtureHfsHelloRecordOffset, kFixtureHfsNoteRecordOffset},
+        kFixtureHfsHeaderFreeOffset);
     // Mark the header node and the root leaf as allocated in the map record so
     // the catalog tree-mutation engine accepts the fixture.
     node[kFixtureHfsNoteRecordOffset] = static_cast<char>(0xC0);
@@ -751,12 +727,10 @@ void writeHfsCatalogLeafNode(QByteArray* image) {
                                        kFixtureHfsHelloResourceForkBlock)),
         hfsCatalogRecord(kFixtureHfsDocsFolderId,
                          QStringLiteral("note.txt"),
-                         hfsFileRecord(kFixtureHfsNoteFileId,
-                                       note,
-                                       kFixtureHfsNoteFileBlock))};
+                         hfsFileRecord(kFixtureHfsNoteFileId, note, kFixtureHfsNoteFileBlock))};
 
-    const qsizetype nodeOffset = static_cast<qsizetype>(
-        (kFixtureHfsCatalogStartBlock + 1) * kFixtureHfsBlockSize);
+    const qsizetype nodeOffset =
+        static_cast<qsizetype>((kFixtureHfsCatalogStartBlock + 1) * kFixtureHfsBlockSize);
     QByteArray node(kFixtureHfsCatalogNodeSize, '\0');
     node[kFixtureHfsBTreeKindOffset] = kFixtureHfsBTreeLeafKind;
     node[kFixtureHfsBTreeHeightOffset] = kFixtureHfsBTreeLeafHeight;
@@ -782,8 +756,7 @@ void writeHfsCatalogLeafNode(QByteArray* image) {
     std::copy(helloResource.cbegin(),
               helloResource.cend(),
               image->begin() +
-                  static_cast<qsizetype>(kFixtureHfsHelloResourceForkBlock *
-                                         kFixtureHfsBlockSize));
+                  static_cast<qsizetype>(kFixtureHfsHelloResourceForkBlock * kFixtureHfsBlockSize));
 }
 
 void writeHfsAttributesHeaderNode(QByteArray* image) {
@@ -799,14 +772,11 @@ void writeHfsAttributesHeaderNode(QByteArray* image) {
     writeBe32(&node, header + kFixtureHfsBTreeHeaderLeafRecordsOffset, 2);
     writeBe32(&node, header + kFixtureHfsBTreeHeaderFirstLeafNodeOffset, 1);
     writeBe32(&node, header + kFixtureHfsBTreeHeaderLastLeafNodeOffset, 1);
-    writeBe16(&node,
-              header + kFixtureHfsBTreeHeaderNodeSizeOffset,
-              kFixtureHfsAttributesNodeSize);
+    writeBe16(&node, header + kFixtureHfsBTreeHeaderNodeSizeOffset, kFixtureHfsAttributesNodeSize);
     writeBe32(&node,
               header + kFixtureHfsBTreeHeaderTotalNodesOffset,
               kFixtureHfsAttributesTotalNodes);
-    node[header + kFixtureHfsBTreeHeaderKeyCompareTypeOffset] =
-        kFixtureHfsBTreeKeyCompareType;
+    node[header + kFixtureHfsBTreeHeaderKeyCompareTypeOffset] = kFixtureHfsBTreeKeyCompareType;
     writeHfsNodeOffsets(&node, {kFixtureHfsRootRecordOffset}, kFixtureHfsHelloRecordOffset);
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
 }
@@ -816,16 +786,15 @@ void writeHfsAttributesLeafNode(QByteArray* image) {
     finderInfo.resize(32, '\0');
     const QByteArray forkValue(kFixtureHfsAttributeForkText);
     const QVector<QByteArray> records{
-        hfsInlineAttributeRecord(kFixtureHfsHelloFileId,
-                                 QStringLiteral("com.apple.FinderInfo"),
-                                 finderInfo),
+        hfsInlineAttributeRecord(
+            kFixtureHfsHelloFileId, QStringLiteral("com.apple.FinderInfo"), finderInfo),
         hfsForkAttributeRecord(kFixtureHfsHelloFileId,
                                QStringLiteral("com.apple.ResourceFork"),
                                forkValue,
                                kFixtureHfsAttributeForkValueBlock)};
 
-    const qsizetype nodeOffset = static_cast<qsizetype>(
-        (kFixtureHfsAttributesStartBlock + 1) * kFixtureHfsBlockSize);
+    const qsizetype nodeOffset =
+        static_cast<qsizetype>((kFixtureHfsAttributesStartBlock + 1) * kFixtureHfsBlockSize);
     QByteArray node(kFixtureHfsAttributesNodeSize, '\0');
     node[kFixtureHfsBTreeKindOffset] = kFixtureHfsBTreeLeafKind;
     node[kFixtureHfsBTreeHeightOffset] = kFixtureHfsBTreeLeafHeight;
@@ -842,9 +811,8 @@ void writeHfsAttributesLeafNode(QByteArray* image) {
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
     std::copy(forkValue.cbegin(),
               forkValue.cend(),
-              image->begin() +
-                  static_cast<qsizetype>(kFixtureHfsAttributeForkValueBlock *
-                                         kFixtureHfsBlockSize));
+              image->begin() + static_cast<qsizetype>(kFixtureHfsAttributeForkValueBlock *
+                                                      kFixtureHfsBlockSize));
 }
 
 QByteArray hfsWriterFixture() {
@@ -857,9 +825,7 @@ QByteArray hfsWriterFixture() {
               kFixtureHfsJournaledMask);
     writeBe32(&image, kFixtureHfsHeaderOffset + kFixtureHfsFileCountOffset, 2);
     writeBe32(&image, kFixtureHfsHeaderOffset + kFixtureHfsFolderCountOffset, 1);
-    writeBe32(&image,
-              kFixtureHfsHeaderOffset + kFixtureHfsBlockSizeOffset,
-              kFixtureHfsBlockSize);
+    writeBe32(&image, kFixtureHfsHeaderOffset + kFixtureHfsBlockSizeOffset, kFixtureHfsBlockSize);
     writeBe32(&image,
               kFixtureHfsHeaderOffset + kFixtureHfsTotalBlocksOffset,
               kFixtureHfsImageBlockCount);
@@ -961,15 +927,14 @@ bool hasSanityWarning(const QStringList& details) {
 }
 
 QJsonObject baseReport(const Config& config) {
-    return QJsonObject{{QStringLiteral("schema_version"), 1},
-                       {QStringLiteral("tool"),
-                        QStringLiteral("partition-filesystem-probe-certifier")},
-                       {QStringLiteral("created_utc"), utcNow()},
-                       {QStringLiteral("input_path"), reportInputPath(config.inputPath)},
-                       {QStringLiteral("input_offset_bytes"),
-                        QString::number(config.inputOffsetBytes)},
-                       {QStringLiteral("expected_file_system"), config.expectedFileSystem},
-                       {QStringLiteral("require_sane_metadata"), config.requireSane}};
+    return QJsonObject{
+        {QStringLiteral("schema_version"), 1},
+        {QStringLiteral("tool"), QStringLiteral("partition-filesystem-probe-certifier")},
+        {QStringLiteral("created_utc"), utcNow()},
+        {QStringLiteral("input_path"), reportInputPath(config.inputPath)},
+        {QStringLiteral("input_offset_bytes"), QString::number(config.inputOffsetBytes)},
+        {QStringLiteral("expected_file_system"), config.expectedFileSystem},
+        {QStringLiteral("require_sane_metadata"), config.requireSane}};
 }
 
 Config parseBaseConfig(const QStringList& args) {
@@ -990,8 +955,8 @@ Config parseBaseConfig(const QStringList& args) {
 }
 
 void parseHfsConfig(const QStringList& args, Config* config) {
-    config->hfsBuildWriterFixturePath =
-        argValue(args, QStringLiteral("--hfs-build-writer-fixture"));
+    config->hfsBuildWriterFixturePath = argValue(args,
+                                                 QStringLiteral("--hfs-build-writer-fixture"));
     config->hfsCheck = hasSwitch(args, QStringLiteral("--hfs-check"));
     config->hfsListPath = argValue(args, QStringLiteral("--hfs-list-path"));
     config->hfsReadFilePath = argValue(args, QStringLiteral("--hfs-read-file"));
@@ -999,19 +964,18 @@ void parseHfsConfig(const QStringList& args, Config* config) {
     config->hfsReadAttributeName = argValue(args, QStringLiteral("--hfs-read-attribute-name"));
     const QString hfsReadAttributeFileIdValue =
         argValue(args, QStringLiteral("--hfs-read-attribute-file-id"));
-    config->hfsReadAttributeFileIdProvided =
-        !hfsReadAttributeFileIdValue.trimmed().isEmpty();
-    const auto hfsReadAttributeFileId =
-        argUInt64(args, QStringLiteral("--hfs-read-attribute-file-id"));
-    config->hfsReadAttributeFileIdInvalid =
-        config->hfsReadAttributeFileIdProvided && !hfsReadAttributeFileId.has_value();
+    config->hfsReadAttributeFileIdProvided = !hfsReadAttributeFileIdValue.trimmed().isEmpty();
+    const auto hfsReadAttributeFileId = argUInt64(args,
+                                                  QStringLiteral("--hfs-read-attribute-file-id"));
+    config->hfsReadAttributeFileIdInvalid = config->hfsReadAttributeFileIdProvided &&
+                                            !hfsReadAttributeFileId.has_value();
     config->hfsReadAttributeFileId =
         hfsReadAttributeFileId.value_or(config->hfsReadAttributeFileId);
     const QString hfsReadMaxBytesValue = argValue(args, QStringLiteral("--hfs-read-max-bytes"));
     config->hfsReadMaxBytesProvided = !hfsReadMaxBytesValue.trimmed().isEmpty();
     const auto hfsReadMaxBytes = argUInt64(args, QStringLiteral("--hfs-read-max-bytes"));
-    config->hfsReadMaxBytesInvalid =
-        config->hfsReadMaxBytesProvided && !hfsReadMaxBytes.has_value();
+    config->hfsReadMaxBytesInvalid = config->hfsReadMaxBytesProvided &&
+                                     !hfsReadMaxBytes.has_value();
     config->hfsReadMaxBytes = hfsReadMaxBytes.value_or(config->hfsReadMaxBytes);
 }
 
@@ -1021,127 +985,112 @@ void parseApfsReadConfig(const QStringList& args, Config* config) {
     const QString apfsReadMaxBytesValue = argValue(args, QStringLiteral("--apfs-read-max-bytes"));
     config->apfsReadMaxBytesProvided = !apfsReadMaxBytesValue.trimmed().isEmpty();
     const auto apfsReadMaxBytes = argUInt64(args, QStringLiteral("--apfs-read-max-bytes"));
-    config->apfsReadMaxBytesInvalid =
-        config->apfsReadMaxBytesProvided && !apfsReadMaxBytes.has_value();
+    config->apfsReadMaxBytesInvalid = config->apfsReadMaxBytesProvided &&
+                                      !apfsReadMaxBytes.has_value();
     config->apfsReadMaxBytes = apfsReadMaxBytes.value_or(config->apfsReadMaxBytes);
 }
 
 void parseApfsExportConfig(const QStringList& args, Config* config) {
     config->apfsExportPath = argValue(args, QStringLiteral("--apfs-export-path"));
-    config->apfsExportOutputDirectory =
-        argValue(args, QStringLiteral("--apfs-export-output"));
-    const QString apfsExportMaxEntriesValue =
-        argValue(args, QStringLiteral("--apfs-export-max-entries"));
+    config->apfsExportOutputDirectory = argValue(args, QStringLiteral("--apfs-export-output"));
+    const QString apfsExportMaxEntriesValue = argValue(args,
+                                                       QStringLiteral("--apfs-export-max-entries"));
     config->apfsExportMaxEntriesProvided = !apfsExportMaxEntriesValue.trimmed().isEmpty();
-    const auto apfsExportMaxEntries =
-        argUInt64(args, QStringLiteral("--apfs-export-max-entries"));
-    config->apfsExportMaxEntriesInvalid =
-        config->apfsExportMaxEntriesProvided && !apfsExportMaxEntries.has_value();
-    config->apfsExportMaxEntries =
-        apfsExportMaxEntries.value_or(config->apfsExportMaxEntries);
+    const auto apfsExportMaxEntries = argUInt64(args, QStringLiteral("--apfs-export-max-entries"));
+    config->apfsExportMaxEntriesInvalid = config->apfsExportMaxEntriesProvided &&
+                                          !apfsExportMaxEntries.has_value();
+    config->apfsExportMaxEntries = apfsExportMaxEntries.value_or(config->apfsExportMaxEntries);
     const QString apfsExportMaxFileBytesValue =
         argValue(args, QStringLiteral("--apfs-export-max-file-bytes"));
-    config->apfsExportMaxFileBytesProvided =
-        !apfsExportMaxFileBytesValue.trimmed().isEmpty();
-    const auto apfsExportMaxFileBytes =
-        argUInt64(args, QStringLiteral("--apfs-export-max-file-bytes"));
-    config->apfsExportMaxFileBytesInvalid =
-        config->apfsExportMaxFileBytesProvided && !apfsExportMaxFileBytes.has_value();
+    config->apfsExportMaxFileBytesProvided = !apfsExportMaxFileBytesValue.trimmed().isEmpty();
+    const auto apfsExportMaxFileBytes = argUInt64(args,
+                                                  QStringLiteral("--apfs-export-max-file-bytes"));
+    config->apfsExportMaxFileBytesInvalid = config->apfsExportMaxFileBytesProvided &&
+                                            !apfsExportMaxFileBytes.has_value();
     config->apfsExportMaxFileBytes =
         apfsExportMaxFileBytes.value_or(config->apfsExportMaxFileBytes);
     const QString apfsExportMaxTotalBytesValue =
         argValue(args, QStringLiteral("--apfs-export-max-total-bytes"));
-    config->apfsExportMaxTotalBytesProvided =
-        !apfsExportMaxTotalBytesValue.trimmed().isEmpty();
-    const auto apfsExportMaxTotalBytes =
-        argUInt64(args, QStringLiteral("--apfs-export-max-total-bytes"));
-    config->apfsExportMaxTotalBytesInvalid =
-        config->apfsExportMaxTotalBytesProvided && !apfsExportMaxTotalBytes.has_value();
+    config->apfsExportMaxTotalBytesProvided = !apfsExportMaxTotalBytesValue.trimmed().isEmpty();
+    const auto apfsExportMaxTotalBytes = argUInt64(args,
+                                                   QStringLiteral("--apfs-export-max-total-bytes"));
+    config->apfsExportMaxTotalBytesInvalid = config->apfsExportMaxTotalBytesProvided &&
+                                             !apfsExportMaxTotalBytes.has_value();
     config->apfsExportMaxTotalBytes =
         apfsExportMaxTotalBytes.value_or(config->apfsExportMaxTotalBytes);
 }
 
 void parseApfsFormatConfig(const QStringList& args, Config* config) {
-    config->apfsBuildFormatImagePath =
-        argValue(args, QStringLiteral("--apfs-build-format-image"));
+    config->apfsBuildFormatImagePath = argValue(args, QStringLiteral("--apfs-build-format-image"));
     config->apfsFormatExistingTargetPath =
         argValue(args, QStringLiteral("--apfs-format-existing-target"));
     config->apfsFormatVolumeName =
         argValue(args, QStringLiteral("--apfs-format-volume-name"), config->apfsFormatVolumeName);
-    config->apfsFormatSeedFileName =
-        argValue(args, QStringLiteral("--apfs-format-seed-file-name"));
-    config->apfsFormatSeedFileText =
-        argValue(args, QStringLiteral("--apfs-format-seed-file-text"));
+    config->apfsFormatSeedFileName = argValue(args, QStringLiteral("--apfs-format-seed-file-name"));
+    config->apfsFormatSeedFileText = argValue(args, QStringLiteral("--apfs-format-seed-file-text"));
     config->apfsFormatTargetWipeConfirmed =
         hasSwitch(args, QStringLiteral("--apfs-format-target-wipe-confirmed"));
-    config->apfsFormatAllowRawTarget =
-        hasSwitch(args, QStringLiteral("--apfs-format-allow-raw-target"));
+    config->apfsFormatAllowRawTarget = hasSwitch(args,
+                                                 QStringLiteral("--apfs-format-allow-raw-target"));
     config->apfsFormatRawHardwareProof =
         hasSwitch(args, QStringLiteral("--apfs-format-raw-hardware-proof"));
     const QString sizeValue = argValue(args, QStringLiteral("--apfs-format-size-bytes"));
     config->apfsFormatSizeBytesProvided = !sizeValue.trimmed().isEmpty();
     const auto sizeBytes = argUInt64(args, QStringLiteral("--apfs-format-size-bytes"));
-    config->apfsFormatSizeBytesInvalid =
-        config->apfsFormatSizeBytesProvided && !sizeBytes.has_value();
+    config->apfsFormatSizeBytesInvalid = config->apfsFormatSizeBytesProvided &&
+                                         !sizeBytes.has_value();
     config->apfsFormatSizeBytes = sizeBytes.value_or(config->apfsFormatSizeBytes);
     const QString blockSizeValue = argValue(args, QStringLiteral("--apfs-format-block-size"));
     config->apfsFormatBlockSizeBytesProvided = !blockSizeValue.trimmed().isEmpty();
     const auto blockSize = argUInt64(args, QStringLiteral("--apfs-format-block-size"));
-    config->apfsFormatBlockSizeBytesInvalid =
-        config->apfsFormatBlockSizeBytesProvided && !blockSize.has_value();
+    config->apfsFormatBlockSizeBytesInvalid = config->apfsFormatBlockSizeBytesProvided &&
+                                              !blockSize.has_value();
     config->apfsFormatBlockSizeBytes = blockSize.value_or(config->apfsFormatBlockSizeBytes);
 }
 
 void parseApfsWriteConfig(const QStringList& args, Config* config) {
-    config->apfsWriteRootFileImagePath =
-        argValue(args, QStringLiteral("--apfs-write-root-file-image"));
-    config->apfsWriteRootFileTargetPath =
-        argValue(args, QStringLiteral("--apfs-write-root-file-target"));
-    config->apfsWriteRootFileName =
-        argValue(args, QStringLiteral("--apfs-write-root-file-name"));
-    config->apfsWriteRootFileText =
-        argValue(args, QStringLiteral("--apfs-write-root-file-text"));
-    config->apfsWriteTargetConfirmed =
-        hasSwitch(args, QStringLiteral("--apfs-write-target-confirmed"));
-    config->apfsWriteAllowRawTarget =
-        hasSwitch(args, QStringLiteral("--apfs-write-allow-raw-target"));
+    config->apfsWriteRootFileImagePath = argValue(args,
+                                                  QStringLiteral("--apfs-write-root-file-image"));
+    config->apfsWriteRootFileTargetPath = argValue(args,
+                                                   QStringLiteral("--apfs-write-root-file-target"));
+    config->apfsWriteRootFileName = argValue(args, QStringLiteral("--apfs-write-root-file-name"));
+    config->apfsWriteRootFileText = argValue(args, QStringLiteral("--apfs-write-root-file-text"));
+    config->apfsWriteTargetConfirmed = hasSwitch(args,
+                                                 QStringLiteral("--apfs-write-target-confirmed"));
+    config->apfsWriteAllowRawTarget = hasSwitch(args,
+                                                QStringLiteral("--apfs-write-allow-raw-target"));
     config->apfsWriteRawHardwareProof =
         hasSwitch(args, QStringLiteral("--apfs-write-raw-hardware-proof"));
     const QString sizeValue = argValue(args, QStringLiteral("--apfs-write-target-size-bytes"));
     config->apfsWriteTargetSizeBytesProvided = !sizeValue.trimmed().isEmpty();
     const auto sizeBytes = argUInt64(args, QStringLiteral("--apfs-write-target-size-bytes"));
-    config->apfsWriteTargetSizeBytesInvalid =
-        config->apfsWriteTargetSizeBytesProvided && !sizeBytes.has_value();
+    config->apfsWriteTargetSizeBytesInvalid = config->apfsWriteTargetSizeBytesProvided &&
+                                              !sizeBytes.has_value();
     config->apfsWriteTargetSizeBytes = sizeBytes.value_or(config->apfsWriteTargetSizeBytes);
 }
 
 void parseApfsPatchConfig(const QStringList& args, Config* config) {
-    config->apfsPatchRootFileImagePath =
-        argValue(args, QStringLiteral("--apfs-patch-root-file-image"));
-    config->apfsPatchRootFileTargetPath =
-        argValue(args, QStringLiteral("--apfs-patch-root-file-target"));
-    config->apfsPatchRootFileName =
-        argValue(args, QStringLiteral("--apfs-patch-root-file-name"));
-    config->apfsPatchRootFileText =
-        argValue(args, QStringLiteral("--apfs-patch-root-file-text"));
-    const QString offsetValue =
-        argValue(args, QStringLiteral("--apfs-patch-root-file-offset-bytes"));
+    config->apfsPatchRootFileImagePath = argValue(args,
+                                                  QStringLiteral("--apfs-patch-root-file-image"));
+    config->apfsPatchRootFileTargetPath = argValue(args,
+                                                   QStringLiteral("--apfs-patch-root-file-target"));
+    config->apfsPatchRootFileName = argValue(args, QStringLiteral("--apfs-patch-root-file-name"));
+    config->apfsPatchRootFileText = argValue(args, QStringLiteral("--apfs-patch-root-file-text"));
+    const QString offsetValue = argValue(args,
+                                         QStringLiteral("--apfs-patch-root-file-offset-bytes"));
     config->apfsPatchRootFileOffsetBytesProvided = !offsetValue.trimmed().isEmpty();
-    const auto offset =
-        argUInt64(args, QStringLiteral("--apfs-patch-root-file-offset-bytes"));
-    config->apfsPatchRootFileOffsetBytesInvalid =
-        config->apfsPatchRootFileOffsetBytesProvided && !offset.has_value();
-    config->apfsPatchRootFileOffsetBytes =
-        offset.value_or(config->apfsPatchRootFileOffsetBytes);
+    const auto offset = argUInt64(args, QStringLiteral("--apfs-patch-root-file-offset-bytes"));
+    config->apfsPatchRootFileOffsetBytesInvalid = config->apfsPatchRootFileOffsetBytesProvided &&
+                                                  !offset.has_value();
+    config->apfsPatchRootFileOffsetBytes = offset.value_or(config->apfsPatchRootFileOffsetBytes);
 }
 
 void parseApfsDeleteConfig(const QStringList& args, Config* config) {
-    config->apfsDeleteRootFileImagePath =
-        argValue(args, QStringLiteral("--apfs-delete-root-file-image"));
+    config->apfsDeleteRootFileImagePath = argValue(args,
+                                                   QStringLiteral("--apfs-delete-root-file-image"));
     config->apfsDeleteRootFileTargetPath =
         argValue(args, QStringLiteral("--apfs-delete-root-file-target"));
-    config->apfsDeleteRootFileName =
-        argValue(args, QStringLiteral("--apfs-delete-root-file-name"));
+    config->apfsDeleteRootFileName = argValue(args, QStringLiteral("--apfs-delete-root-file-name"));
 }
 
 void parseApfsRepairConfig(const QStringList& args, Config* config) {
@@ -1149,40 +1098,35 @@ void parseApfsRepairConfig(const QStringList& args, Config* config) {
         argValue(args, QStringLiteral("--apfs-repair-object-checksums"));
     config->apfsRepairObjectChecksumsTargetPath =
         argValue(args, QStringLiteral("--apfs-repair-object-checksums-target"));
-    config->apfsRepairReadFilePath =
-        argValue(args, QStringLiteral("--apfs-repair-read-file"));
-    config->apfsRepairTargetConfirmed =
-        hasSwitch(args, QStringLiteral("--apfs-repair-target-confirmed"));
-    config->apfsRepairAllowRawTarget =
-        hasSwitch(args, QStringLiteral("--apfs-repair-allow-raw-target"));
+    config->apfsRepairReadFilePath = argValue(args, QStringLiteral("--apfs-repair-read-file"));
+    config->apfsRepairTargetConfirmed = hasSwitch(args,
+                                                  QStringLiteral("--apfs-repair-target-confirmed"));
+    config->apfsRepairAllowRawTarget = hasSwitch(args,
+                                                 QStringLiteral("--apfs-repair-allow-raw-target"));
     config->apfsRepairRawHardwareProof =
         hasSwitch(args, QStringLiteral("--apfs-repair-raw-hardware-proof"));
     const QString sizeValue = argValue(args, QStringLiteral("--apfs-repair-target-size-bytes"));
     config->apfsRepairTargetSizeBytesProvided = !sizeValue.trimmed().isEmpty();
     const auto sizeBytes = argUInt64(args, QStringLiteral("--apfs-repair-target-size-bytes"));
-    config->apfsRepairTargetSizeBytesInvalid =
-        config->apfsRepairTargetSizeBytesProvided && !sizeBytes.has_value();
-    config->apfsRepairTargetSizeBytes =
-        sizeBytes.value_or(config->apfsRepairTargetSizeBytes);
+    config->apfsRepairTargetSizeBytesInvalid = config->apfsRepairTargetSizeBytesProvided &&
+                                               !sizeBytes.has_value();
+    config->apfsRepairTargetSizeBytes = sizeBytes.value_or(config->apfsRepairTargetSizeBytes);
     const QString corruptBlockValue =
         argValue(args, QStringLiteral("--apfs-repair-corrupt-metadata-block"));
     config->apfsRepairCorruptMetadataBlockProvided = !corruptBlockValue.trimmed().isEmpty();
-    const auto corruptBlock =
-        argUInt64(args, QStringLiteral("--apfs-repair-corrupt-metadata-block"));
+    const auto corruptBlock = argUInt64(args,
+                                        QStringLiteral("--apfs-repair-corrupt-metadata-block"));
     config->apfsRepairCorruptMetadataBlockInvalid =
         config->apfsRepairCorruptMetadataBlockProvided && !corruptBlock.has_value();
     config->apfsRepairCorruptMetadataBlock =
         corruptBlock.value_or(config->apfsRepairCorruptMetadataBlock);
     const QString repairReadMaxBytesValue =
         argValue(args, QStringLiteral("--apfs-repair-read-max-bytes"));
-    config->apfsRepairReadMaxBytesProvided =
-        !repairReadMaxBytesValue.trimmed().isEmpty();
-    const auto repairReadMaxBytes =
-        argUInt64(args, QStringLiteral("--apfs-repair-read-max-bytes"));
-    config->apfsRepairReadMaxBytesInvalid =
-        config->apfsRepairReadMaxBytesProvided && !repairReadMaxBytes.has_value();
-    config->apfsRepairReadMaxBytes =
-        repairReadMaxBytes.value_or(config->apfsRepairReadMaxBytes);
+    config->apfsRepairReadMaxBytesProvided = !repairReadMaxBytesValue.trimmed().isEmpty();
+    const auto repairReadMaxBytes = argUInt64(args, QStringLiteral("--apfs-repair-read-max-bytes"));
+    config->apfsRepairReadMaxBytesInvalid = config->apfsRepairReadMaxBytesProvided &&
+                                            !repairReadMaxBytes.has_value();
+    config->apfsRepairReadMaxBytes = repairReadMaxBytes.value_or(config->apfsRepairReadMaxBytes);
 }
 
 Config parseConfig(const QStringList& args) {
@@ -1240,9 +1184,7 @@ void appendInputPathErrors(const Config& config,
                  config.inputPath.trimmed().isEmpty(),
              errors,
              QStringLiteral("--input is required"));
-    appendIf(config.outputPath.trimmed().isEmpty(),
-             errors,
-             QStringLiteral("--output is required"));
+    appendIf(config.outputPath.trimmed().isEmpty(), errors, QStringLiteral("--output is required"));
 }
 
 void appendFormatPathErrors(const Config& config,
@@ -1251,9 +1193,11 @@ void appendFormatPathErrors(const Config& config,
     appendIf(requested.formatBuild && config.apfsBuildFormatImagePath.trimmed().isEmpty(),
              errors,
              QStringLiteral("--apfs-build-format-image requires an image path"));
-    appendIf(requested.formatBuild && requested.existingFormat,
-             errors,
-             QStringLiteral("Use either --apfs-build-format-image or --apfs-format-existing-target, not both"));
+    appendIf(
+        requested.formatBuild && requested.existingFormat,
+        errors,
+        QStringLiteral(
+            "Use either --apfs-build-format-image or --apfs-format-existing-target, not both"));
     appendIf(requested.existingFormat && config.apfsFormatExistingTargetPath.trimmed().isEmpty(),
              errors,
              QStringLiteral("--apfs-format-existing-target requires a target path"));
@@ -1271,19 +1215,17 @@ bool rawRootMutationRequested(const RequestedApfsActions& requested) {
     return requested.rawWrite || requested.rawPatch || requested.rawDelete;
 }
 
-void appendRootMutationConflictErrors(const RequestedApfsActions& requested,
-                                      QStringList* errors) {
-    const int imageMutationCount = requestedRootMutationCount(
-        requested.imageWrite,
-        requested.imagePatch,
-        requested.imageDelete);
-    const int rawMutationCount = requestedRootMutationCount(
-        requested.rawWrite,
-        requested.rawPatch,
-        requested.rawDelete);
-    appendIf(imageRootMutationRequested(requested) && rawRootMutationRequested(requested),
-             errors,
-             QStringLiteral("Use either APFS image root-file mutation or APFS raw root-file mutation, not both"));
+void appendRootMutationConflictErrors(const RequestedApfsActions& requested, QStringList* errors) {
+    const int imageMutationCount = requestedRootMutationCount(requested.imageWrite,
+                                                              requested.imagePatch,
+                                                              requested.imageDelete);
+    const int rawMutationCount =
+        requestedRootMutationCount(requested.rawWrite, requested.rawPatch, requested.rawDelete);
+    appendIf(
+        imageRootMutationRequested(requested) && rawRootMutationRequested(requested),
+        errors,
+        QStringLiteral(
+            "Use either APFS image root-file mutation or APFS raw root-file mutation, not both"));
     appendIf(imageMutationCount > 1,
              errors,
              QStringLiteral("Use only one APFS image root-file mutation at a time"));
@@ -1330,7 +1272,8 @@ void appendRepairPathErrors(const Config& config,
              QStringLiteral("--apfs-repair-object-checksums requires an image path"));
     appendIf(requested.imageRepair && requested.rawRepair,
              errors,
-             QStringLiteral("Use either --apfs-repair-object-checksums or --apfs-repair-object-checksums-target, not both"));
+             QStringLiteral("Use either --apfs-repair-object-checksums or "
+                            "--apfs-repair-object-checksums-target, not both"));
     appendIf(requested.rawRepair && config.apfsRepairObjectChecksumsTargetPath.trimmed().isEmpty(),
              errors,
              QStringLiteral("--apfs-repair-object-checksums-target requires a target path"));
@@ -1363,14 +1306,14 @@ void appendHfsNumericConfigErrors(const Config& config, QStringList* errors) {
     appendIf(config.hfsReadAttributeFileIdProvided && config.hfsReadAttributeFileId == 0,
              errors,
              QStringLiteral("--hfs-read-attribute-file-id must be positive"));
-    appendIf(config.hfsReadAttributeFileIdProvided &&
-                 config.hfsReadAttributeName.trimmed().isEmpty(),
-             errors,
-             QStringLiteral("--hfs-read-attribute-name is required with --hfs-read-attribute-file-id"));
-    appendIf(!config.hfsReadAttributeName.trimmed().isEmpty() &&
-                 !config.hfsReadAttributeFileIdProvided,
-             errors,
-             QStringLiteral("--hfs-read-attribute-file-id is required with --hfs-read-attribute-name"));
+    appendIf(
+        config.hfsReadAttributeFileIdProvided && config.hfsReadAttributeName.trimmed().isEmpty(),
+        errors,
+        QStringLiteral("--hfs-read-attribute-name is required with --hfs-read-attribute-file-id"));
+    appendIf(
+        !config.hfsReadAttributeName.trimmed().isEmpty() && !config.hfsReadAttributeFileIdProvided,
+        errors,
+        QStringLiteral("--hfs-read-attribute-file-id is required with --hfs-read-attribute-name"));
 }
 
 void appendApfsReadLimitConfigErrors(const Config& config, QStringList* errors) {
@@ -1419,11 +1362,13 @@ void appendApfsFormatConfigErrors(const Config& config, QStringList* errors) {
     appendIf(!config.apfsFormatSeedFileName.trimmed().isEmpty() &&
                  config.apfsFormatSeedFileText.isEmpty(),
              errors,
-             QStringLiteral("--apfs-format-seed-file-text is required with --apfs-format-seed-file-name"));
+             QStringLiteral(
+                 "--apfs-format-seed-file-text is required with --apfs-format-seed-file-name"));
     appendIf(config.apfsFormatSeedFileName.trimmed().isEmpty() &&
                  !config.apfsFormatSeedFileText.isEmpty(),
              errors,
-             QStringLiteral("--apfs-format-seed-file-name is required with --apfs-format-seed-file-text"));
+             QStringLiteral(
+                 "--apfs-format-seed-file-name is required with --apfs-format-seed-file-text"));
 }
 
 void appendApfsRootFilePatchConfigErrors(const Config& config, QStringList* errors) {
@@ -1437,7 +1382,8 @@ void appendApfsRootFilePatchConfigErrors(const Config& config, QStringList* erro
              QStringLiteral("--apfs-patch-root-file-text is required with APFS root-file patch"));
     appendIf(patchRequested && !config.apfsPatchRootFileOffsetBytesProvided,
              errors,
-             QStringLiteral("--apfs-patch-root-file-offset-bytes is required with APFS root-file patch"));
+             QStringLiteral(
+                 "--apfs-patch-root-file-offset-bytes is required with APFS root-file patch"));
     appendIf(config.apfsPatchRootFileOffsetBytesInvalid,
              errors,
              QStringLiteral("--apfs-patch-root-file-offset-bytes must be a non-negative integer"));
@@ -1482,7 +1428,8 @@ void appendApfsRawRootMutationConfigErrors(const Config& config, QStringList* er
              QStringLiteral("--apfs-write-target-size-bytes must be a positive integer"));
     appendIf(apfsRawRootMutationConfigRequested(config) && config.apfsWriteTargetSizeBytes == 0,
              errors,
-             QStringLiteral("--apfs-write-target-size-bytes is required with APFS raw root-file mutation"));
+             QStringLiteral(
+                 "--apfs-write-target-size-bytes is required with APFS raw root-file mutation"));
 }
 
 void appendApfsRepairConfigErrors(const Config& config, QStringList* errors) {
@@ -1492,7 +1439,8 @@ void appendApfsRepairConfigErrors(const Config& config, QStringList* errors) {
     appendIf(!config.apfsRepairObjectChecksumsTargetPath.trimmed().isEmpty() &&
                  config.apfsRepairTargetSizeBytes == 0,
              errors,
-             QStringLiteral("--apfs-repair-target-size-bytes is required with --apfs-repair-object-checksums-target"));
+             QStringLiteral("--apfs-repair-target-size-bytes is required with "
+                            "--apfs-repair-object-checksums-target"));
 }
 
 void appendApfsExportConfigErrors(const Config& config, QStringList* errors) {
@@ -1594,10 +1542,8 @@ std::optional<sak::PartitionFileSystemDetection> detectInput(const Config& confi
     }
     const uint64_t inputSize = inputSizeBytes ? *inputSizeBytes : 0ULL;
     QString detectError;
-    auto detection = sak::PartitionFileSystemDetector::detectFromDevicePath(config.inputPath,
-                                                                            config.inputOffsetBytes,
-                                                                            inputSize,
-                                                                            &detectError);
+    auto detection = sak::PartitionFileSystemDetector::detectFromDevicePath(
+        config.inputPath, config.inputOffsetBytes, inputSize, &detectError);
     if (!detection.has_value()) {
         detection = sak::PartitionFileSystemDetector::detectBytes(*bytes, inputSize);
     }
@@ -1627,8 +1573,8 @@ QJsonObject detectionReport(const Config& config,
                             uint64_t inputSizeBytes,
                             const QStringList& blockers) {
     QJsonObject report = baseReport(config);
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("detected_file_system"), detection.file_system);
     report.insert(QStringLiteral("source"), detection.source);
     report.insert(QStringLiteral("input_size_bytes"), QString::number(inputSizeBytes));
@@ -1640,8 +1586,7 @@ QJsonObject detectionReport(const Config& config,
 }
 
 bool hfsOperationsRequested(const Config& config) {
-    return config.hfsCheck ||
-           !config.hfsListPath.trimmed().isEmpty() ||
+    return config.hfsCheck || !config.hfsListPath.trimmed().isEmpty() ||
            !config.hfsReadFilePath.trimmed().isEmpty() ||
            !config.hfsReadResourceForkPath.trimmed().isEmpty() ||
            config.hfsReadAttributeFileIdProvided ||
@@ -1718,11 +1663,13 @@ QStringList hfsOperationBlockers(const Config& config,
         return blockers;
     }
     if (config.inputOffsetBytes != 0) {
-        blockers.append(QStringLiteral("HFS check/browse/read/attribute proof does not support input offsets"));
+        blockers.append(
+            QStringLiteral("HFS check/browse/read/attribute proof does not support input offsets"));
     }
     if (detection.file_system.compare(QStringLiteral("HFS+"), Qt::CaseInsensitive) != 0 &&
         detection.file_system.compare(QStringLiteral("HFSX"), Qt::CaseInsensitive) != 0) {
-        blockers.append(QStringLiteral("HFS check/browse/read/attribute proof requires detected HFS+ or HFSX"));
+        blockers.append(
+            QStringLiteral("HFS check/browse/read/attribute proof requires detected HFS+ or HFSX"));
     }
     return blockers;
 }
@@ -1743,74 +1690,57 @@ QStringList apfsOperationBlockers(const Config& config,
 }
 
 QJsonObject hfsListingReport(const Config& config) {
-    const auto result =
-        sak::PartitionHfsFileSystemReader::listDirectoryFromImage(config.inputPath,
-                                                                  config.hfsListPath,
-                                                                  1000);
-    QJsonObject report{{QStringLiteral("path"), config.hfsListPath},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("entry_count"), result.entries.size()},
-                       {QStringLiteral("entries"), hfsEntriesArray(result.entries)},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+    const auto result = sak::PartitionHfsFileSystemReader::listDirectoryFromImage(
+        config.inputPath, config.hfsListPath, 1000);
+    QJsonObject report{
+        {QStringLiteral("path"), config.hfsListPath},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("entry_count"), result.entries.size()},
+        {QStringLiteral("entries"), hfsEntriesArray(result.entries)},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
     return report;
 }
 
 QJsonObject hfsConsistencyReport(const Config& config) {
     const auto result =
         sak::PartitionHfsFileSystemReader::checkConsistencyFromImage(config.inputPath);
-    return QJsonObject{{QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("records_scanned"), result.records_scanned},
-                       {QStringLiteral("directories"), result.directories},
-                       {QStringLiteral("files"), result.files},
-                       {QStringLiteral("threads"), result.threads},
-                       {QStringLiteral("other_records"), result.other_records},
-                       {QStringLiteral("invalid_records_skipped"),
-                        result.invalid_records_skipped},
-                       {QStringLiteral("attributes_present"), result.attributes_present},
-                       {QStringLiteral("attribute_records_scanned"),
-                        result.attribute_records_scanned},
-                       {QStringLiteral("inline_attribute_records"),
-                        result.inline_attribute_records},
-                       {QStringLiteral("fork_attribute_records"), result.fork_attribute_records},
-                       {QStringLiteral("extent_attribute_records"),
-                        result.extent_attribute_records},
-                       {QStringLiteral("other_attribute_records"),
-                        result.other_attribute_records},
-                       {QStringLiteral("attribute_names"), stringArray(result.attribute_names)},
-                       {QStringLiteral("attribute_metadata"),
-                        stringArray(result.attribute_metadata)},
-                       {QStringLiteral("attribute_records"),
-                        hfsAttributeMetadataArray(result.attribute_records)},
-                       {QStringLiteral("details"), stringArray(result.details)},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+    return QJsonObject{
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("records_scanned"), result.records_scanned},
+        {QStringLiteral("directories"), result.directories},
+        {QStringLiteral("files"), result.files},
+        {QStringLiteral("threads"), result.threads},
+        {QStringLiteral("other_records"), result.other_records},
+        {QStringLiteral("invalid_records_skipped"), result.invalid_records_skipped},
+        {QStringLiteral("attributes_present"), result.attributes_present},
+        {QStringLiteral("attribute_records_scanned"), result.attribute_records_scanned},
+        {QStringLiteral("inline_attribute_records"), result.inline_attribute_records},
+        {QStringLiteral("fork_attribute_records"), result.fork_attribute_records},
+        {QStringLiteral("extent_attribute_records"), result.extent_attribute_records},
+        {QStringLiteral("other_attribute_records"), result.other_attribute_records},
+        {QStringLiteral("attribute_names"), stringArray(result.attribute_names)},
+        {QStringLiteral("attribute_metadata"), stringArray(result.attribute_metadata)},
+        {QStringLiteral("attribute_records"), hfsAttributeMetadataArray(result.attribute_records)},
+        {QStringLiteral("details"), stringArray(result.details)},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
 }
 
 QJsonObject hfsReadReport(const Config& config, const QString& path, bool resourceFork) {
-    const auto result =
-        resourceFork
-            ? sak::PartitionHfsFileSystemReader::readResourceForkFromImage(
-                  config.inputPath,
-                  path,
-                  config.hfsReadMaxBytes)
-            : sak::PartitionHfsFileSystemReader::readFileFromImage(config.inputPath,
-                                                                   path,
-                                                                   config.hfsReadMaxBytes);
+    const auto result = resourceFork ? sak::PartitionHfsFileSystemReader::readResourceForkFromImage(
+                                           config.inputPath, path, config.hfsReadMaxBytes)
+                                     : sak::PartitionHfsFileSystemReader::readFileFromImage(
+                                           config.inputPath, path, config.hfsReadMaxBytes);
     const QByteArray hash = QCryptographicHash::hash(result.data, QCryptographicHash::Sha256);
-    return QJsonObject{{QStringLiteral("path"), path},
-                       {QStringLiteral("resource_fork"), resourceFork},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("bytes_read"), result.data.size()},
-                       {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
-                       {QStringLiteral("blockers"),
-                       blockersArray(result.blockers, result.warnings)}};
+    return QJsonObject{
+        {QStringLiteral("path"), path},
+        {QStringLiteral("resource_fork"), resourceFork},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("bytes_read"), result.data.size()},
+        {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
 }
 
 QJsonObject hfsAttributeReadReport(const Config& config) {
@@ -1820,75 +1750,62 @@ QJsonObject hfsAttributeReadReport(const Config& config) {
         config.hfsReadAttributeName,
         config.hfsReadMaxBytes);
     const QByteArray hash = QCryptographicHash::hash(result.data, QCryptographicHash::Sha256);
-    return QJsonObject{{QStringLiteral("file_id"),
-                        QString::number(result.file_id)},
-                       {QStringLiteral("attribute_name"), result.attribute_name},
-                       {QStringLiteral("storage"), result.storage},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("bytes_read"), result.data.size()},
-                       {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+    return QJsonObject{
+        {QStringLiteral("file_id"), QString::number(result.file_id)},
+        {QStringLiteral("attribute_name"), result.attribute_name},
+        {QStringLiteral("storage"), result.storage},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("bytes_read"), result.data.size()},
+        {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
 }
 
 QJsonObject apfsListingReport(const Config& config) {
-    const auto result =
-        sak::PartitionApfsFileSystemReader::listDirectoryFromImage(config.inputPath,
-                                                                   config.apfsListPath,
-                                                                   1000);
-    QJsonObject report{{QStringLiteral("path"), config.apfsListPath},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("volume_name"), result.volume_name},
-                       {QStringLiteral("entry_count"), result.entries.size()},
-                       {QStringLiteral("entries"), apfsEntriesArray(result.entries)},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+    const auto result = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
+        config.inputPath, config.apfsListPath, 1000);
+    QJsonObject report{
+        {QStringLiteral("path"), config.apfsListPath},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("volume_name"), result.volume_name},
+        {QStringLiteral("entry_count"), result.entries.size()},
+        {QStringLiteral("entries"), apfsEntriesArray(result.entries)},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
     return report;
 }
 
 QJsonObject apfsReadReport(const Config& config, const QString& path) {
     const auto result = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        config.inputPath,
-        path,
-        config.apfsReadMaxBytes);
+        config.inputPath, path, config.apfsReadMaxBytes);
     const QByteArray hash = QCryptographicHash::hash(result.data, QCryptographicHash::Sha256);
-    return QJsonObject{{QStringLiteral("path"), path},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("file_system"), result.file_system},
-                       {QStringLiteral("volume_name"), result.volume_name},
-                       {QStringLiteral("bytes_read"), result.data.size()},
-                       {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+    return QJsonObject{
+        {QStringLiteral("path"), path},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("file_system"), result.file_system},
+        {QStringLiteral("volume_name"), result.volume_name},
+        {QStringLiteral("bytes_read"), result.data.size()},
+        {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
 }
 
 QJsonObject apfsExportReport(const Config& config) {
-    const sak::PartitionApfsDirectoryExportOptions options{
-        static_cast<int>(config.apfsExportMaxEntries),
-        config.apfsExportMaxFileBytes,
-        config.apfsExportMaxTotalBytes};
+    const sak::PartitionApfsDirectoryExportOptions options{static_cast<int>(
+                                                               config.apfsExportMaxEntries),
+                                                           config.apfsExportMaxFileBytes,
+                                                           config.apfsExportMaxTotalBytes};
     const auto result = sak::PartitionApfsFileSystemReader::exportDirectoryFromImage(
-        config.inputPath,
-        config.apfsExportPath,
-        config.apfsExportOutputDirectory,
-        options);
-    return QJsonObject{{QStringLiteral("path"), config.apfsExportPath},
-                       {QStringLiteral("output_directory"), config.apfsExportOutputDirectory},
-                       {QStringLiteral("status"),
-                        result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
-                       {QStringLiteral("files_exported"), result.files_exported},
-                       {QStringLiteral("directories_exported"), result.directories_exported},
-                       {QStringLiteral("symlinks_skipped"), result.symlinks_skipped},
-                       {QStringLiteral("entries_scanned"), result.entries_scanned},
-                       {QStringLiteral("bytes_exported"),
-                        QString::number(result.bytes_exported)},
-                       {QStringLiteral("blockers"),
-                        blockersArray(result.blockers, result.warnings)}};
+        config.inputPath, config.apfsExportPath, config.apfsExportOutputDirectory, options);
+    return QJsonObject{
+        {QStringLiteral("path"), config.apfsExportPath},
+        {QStringLiteral("output_directory"), config.apfsExportOutputDirectory},
+        {QStringLiteral("status"), result.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("files_exported"), result.files_exported},
+        {QStringLiteral("directories_exported"), result.directories_exported},
+        {QStringLiteral("symlinks_skipped"), result.symlinks_skipped},
+        {QStringLiteral("entries_scanned"), result.entries_scanned},
+        {QStringLiteral("bytes_exported"), QString::number(result.bytes_exported)},
+        {QStringLiteral("blockers"), blockersArray(result.blockers, result.warnings)}};
 }
 
 QString jsonStringArraySummary(const QJsonArray& array) {
@@ -1956,9 +1873,9 @@ QStringList appendHfsOperationReports(QJsonObject* report,
         const QJsonObject resourceFork =
             hfsReadReport(config, config.hfsReadResourceForkPath, true);
         report->insert(QStringLiteral("hfs_read_resource_fork"), resourceFork);
-        appendIfNotEmpty(
-            &operationBlockers,
-            hfsOperationFailureBlocker(QStringLiteral("HFS resource-fork read"), resourceFork));
+        appendIfNotEmpty(&operationBlockers,
+                         hfsOperationFailureBlocker(QStringLiteral("HFS resource-fork read"),
+                                                    resourceFork));
     }
     if (config.hfsReadAttributeFileIdProvided) {
         const QJsonObject attribute = hfsAttributeReadReport(config);
@@ -2021,10 +1938,9 @@ int runHfsWriterFixtureCertifier(const Config& config) {
     report.insert(QStringLiteral("fixture_bytes"), QString::number(image.size()));
     report.insert(QStringLiteral("original_text"), QString::fromLatin1(kFixtureHfsHelloText));
     report.insert(QStringLiteral("original_sha256"),
-                  QString::fromLatin1(
-                      QCryptographicHash::hash(QByteArray(kFixtureHfsHelloText),
-                                               QCryptographicHash::Sha256)
-                          .toHex()));
+                  QString::fromLatin1(QCryptographicHash::hash(QByteArray(kFixtureHfsHelloText),
+                                                               QCryptographicHash::Sha256)
+                                          .toHex()));
     report.insert(QStringLiteral("original_resource_text"),
                   QString::fromLatin1(kFixtureHfsHelloResourceText));
     report.insert(QStringLiteral("original_resource_sha256"),
@@ -2036,8 +1952,8 @@ int runHfsWriterFixtureCertifier(const Config& config) {
     if (!writeBinaryFile(config.hfsBuildWriterFixturePath, image)) {
         blockers.append(QStringLiteral("Unable to write HFS writer fixture image"));
     }
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2048,8 +1964,7 @@ int runHfsWriterFixtureCertifier(const Config& config) {
         return 1;
     }
     QTextStream(stdout) << "Built HFS writer fixture "
-                        << QFileInfo(config.hfsBuildWriterFixturePath).fileName()
-                        << Qt::endl;
+                        << QFileInfo(config.hfsBuildWriterFixturePath).fileName() << Qt::endl;
     return 0;
 }
 
@@ -2067,9 +1982,8 @@ sak::PartitionApfsWriteOptions apfsCertifierWriteOptions() {
     return options;
 }
 
-QJsonObject apfsFormatBuildReportObject(
-    const Config& config,
-    const sak::PartitionApfsImageBuildResult& build) {
+QJsonObject apfsFormatBuildReportObject(const Config& config,
+                                        const sak::PartitionApfsImageBuildResult& build) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   build.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2113,14 +2027,10 @@ struct ApfsDetectionValidation {
 };
 
 std::optional<sak::PartitionFileSystemDetection> appendApfsDetectionValidation(
-    const ApfsDetectionValidation& validation,
-    QStringList* blockers) {
+    const ApfsDetectionValidation& validation, QStringList* blockers) {
     QString detectionError;
     const auto detection = sak::PartitionFileSystemDetector::detectFromDevicePath(
-        validation.imagePath,
-        0,
-        validation.imageSize,
-        &detectionError);
+        validation.imagePath, 0, validation.imageSize, &detectionError);
     if (!detection.has_value()) {
         blockers->append(detectionError.isEmpty() ? validation.missingMessage : detectionError);
         return std::nullopt;
@@ -2149,12 +2059,9 @@ struct ApfsListingValidation {
 };
 
 sak::PartitionApfsFileReadResult appendApfsListingValidation(
-    const ApfsListingValidation& validation,
-    QStringList* blockers) {
+    const ApfsListingValidation& validation, QStringList* blockers) {
     const auto listing = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
-        validation.imagePath,
-        QStringLiteral("/"),
-        sak::kPartitionApfsDefaultBrowseEntryLimit);
+        validation.imagePath, QStringLiteral("/"), sak::kPartitionApfsDefaultBrowseEntryLimit);
     const QJsonObject listingObject = apfsListingObject(listing);
     validation.report->insert(validation.reportKey, listingObject);
     if (!listing.ok) {
@@ -2177,18 +2084,15 @@ struct ApfsReadValidation {
 
 void appendApfsReadValidation(const ApfsReadValidation& validation, QStringList* blockers) {
     const auto readBack = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        validation.imagePath,
-        validation.path,
-        validation.maxBytes);
+        validation.imagePath, validation.path, validation.maxBytes);
     const QByteArray hash = QCryptographicHash::hash(readBack.data, QCryptographicHash::Sha256);
-    const QJsonObject readObject{{QStringLiteral("path"), validation.path},
-                                 {QStringLiteral("status"),
-                                  readBack.ok ? QStringLiteral("Passed")
-                                              : QStringLiteral("Failed")},
-                                 {QStringLiteral("bytes_read"), readBack.data.size()},
-                                 {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
-                                 {QStringLiteral("blockers"),
-                                  blockersArray(readBack.blockers, readBack.warnings)}};
+    const QJsonObject readObject{
+        {QStringLiteral("path"), validation.path},
+        {QStringLiteral("status"),
+         readBack.ok ? QStringLiteral("Passed") : QStringLiteral("Failed")},
+        {QStringLiteral("bytes_read"), readBack.data.size()},
+        {QStringLiteral("sha256"), QString::fromLatin1(hash.toHex())},
+        {QStringLiteral("blockers"), blockersArray(readBack.blockers, readBack.warnings)}};
     validation.report->insert(validation.reportKey, readObject);
     if (!readBack.ok) {
         blockers->append(hfsOperationFailureBlocker(validation.failureLabel, readObject));
@@ -2217,12 +2121,12 @@ QStringList appendApfsFormatBuildValidation(QJsonObject* report,
         return blockers;
     }
 
-    const auto rootListing = appendApfsListingValidation(
-        {.report = report,
-         .imagePath = build.image_path,
-         .reportKey = QStringLiteral("generated_apfs_listing"),
-         .failureLabel = QStringLiteral("Generated APFS listing")},
-        &blockers);
+    const auto rootListing =
+        appendApfsListingValidation({.report = report,
+                                     .imagePath = build.image_path,
+                                     .reportKey = QStringLiteral("generated_apfs_listing"),
+                                     .failureLabel = QStringLiteral("Generated APFS listing")},
+                                    &blockers);
     if (rootListing.ok && rootListing.volume_name != build.plan.volume_name) {
         blockers.append(QStringLiteral("Generated APFS volume name did not round-trip"));
     }
@@ -2258,15 +2162,15 @@ int runApfsFormatBuildCertifier(const Config& config) {
         .seed_file_name = config.apfsFormatSeedFileName,
         .seed_file_data = config.apfsFormatSeedFileText.toUtf8(),
         .options = apfsCertifierWriteOptions()};
-    const auto build = config.apfsFormatSeedFileName.trimmed().isEmpty()
-                           ? sak::PartitionApfsWriter::buildImageOnlyFormatImage(request)
-                           : sak::PartitionApfsWriter::buildImageOnlyFormatImageWithSeedFile(
-                                 request);
+    const auto build =
+        config.apfsFormatSeedFileName.trimmed().isEmpty()
+            ? sak::PartitionApfsWriter::buildImageOnlyFormatImage(request)
+            : sak::PartitionApfsWriter::buildImageOnlyFormatImageWithSeedFile(request);
     QJsonObject report = apfsFormatBuildReportObject(config, build);
     QStringList blockers = build.blockers;
     blockers.append(appendApfsFormatBuildValidation(&report, config, build));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2285,8 +2189,7 @@ sak::PartitionApfsWriteOptions apfsExistingFormatOptions(const Config& config) {
     auto options = apfsCertifierWriteOptions();
     if (config.apfsFormatAllowRawTarget) {
         options.image_only = false;
-        options.raw_media_hardware_certification_evidence =
-            config.apfsFormatRawHardwareProof;
+        options.raw_media_hardware_certification_evidence = config.apfsFormatRawHardwareProof;
         options.evidence_id = QStringLiteral("certifier.apfs-raw-existing-format");
     }
     return options;
@@ -2296,8 +2199,8 @@ sak::PartitionApfsWriteOptions apfsRawMutationOptions(const Config& config,
                                                       const QString& evidenceId) {
     auto options = apfsCertifierWriteOptions();
     options.image_only = false;
-    options.raw_media_hardware_certification_evidence =
-        config.apfsWriteRawHardwareProof || config.apfsRepairRawHardwareProof;
+    options.raw_media_hardware_certification_evidence = config.apfsWriteRawHardwareProof ||
+                                                        config.apfsRepairRawHardwareProof;
     options.evidence_id = evidenceId;
     return options;
 }
@@ -2320,8 +2223,8 @@ int runApfsExistingFormatCertifier(const Config& config) {
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS existing-target format"));
     QStringList blockers = build.blockers;
     blockers.append(appendApfsFormatBuildValidation(&report, config, build));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2331,14 +2234,13 @@ int runApfsExistingFormatCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Formatted APFS target "
-                        << QFileInfo(build.image_path).fileName() << Qt::endl;
+    QTextStream(stdout) << "Formatted APFS target " << QFileInfo(build.image_path).fileName()
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsFileWriteReportObject(
-    const Config& config,
-    const sak::PartitionApfsImageFileWriteResult& write) {
+QJsonObject apfsFileWriteReportObject(const Config& config,
+                                      const sak::PartitionApfsImageFileWriteResult& write) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   write.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2360,10 +2262,9 @@ QJsonObject apfsFileWriteReportObject(
     return report;
 }
 
-QStringList appendApfsFileWriteValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsImageFileWriteResult& write) {
+QStringList appendApfsFileWriteValidation(QJsonObject* report,
+                                          const Config& config,
+                                          const sak::PartitionApfsImageFileWriteResult& write) {
     QStringList blockers;
     if (!report || !write.ok) {
         return blockers;
@@ -2388,20 +2289,18 @@ QStringList appendApfsFileWriteValidation(
                                  .failureLabel = QStringLiteral("Written APFS listing")},
                                 &blockers);
 
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsWriteRootFileName.trimmed());
-    appendApfsReadValidation({.report = report,
-                              .imagePath = write.written_image_path,
-                              .path = readPath,
-                              .maxBytes = static_cast<uint64_t>(
-                                  config.apfsWriteRootFileText.toUtf8().size()),
-                              .reportKey = QStringLiteral("written_file_read"),
-                              .failureLabel = QStringLiteral("Written APFS read"),
-                              .expectedData = config.apfsWriteRootFileText.toUtf8(),
-                              .mismatchMessage = QStringLiteral(
-                                  "Written APFS file contents did not round-trip"),
-                              .compareExpected = true},
-                             &blockers);
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsWriteRootFileName.trimmed());
+    appendApfsReadValidation(
+        {.report = report,
+         .imagePath = write.written_image_path,
+         .path = readPath,
+         .maxBytes = static_cast<uint64_t>(config.apfsWriteRootFileText.toUtf8().size()),
+         .reportKey = QStringLiteral("written_file_read"),
+         .failureLabel = QStringLiteral("Written APFS read"),
+         .expectedData = config.apfsWriteRootFileText.toUtf8(),
+         .mismatchMessage = QStringLiteral("Written APFS file contents did not round-trip"),
+         .compareExpected = true},
+        &blockers);
     return blockers;
 }
 
@@ -2420,8 +2319,8 @@ int runApfsRootFileWriteCertifier(const Config& config) {
     QJsonObject report = apfsFileWriteReportObject(config, write);
     QStringList blockers = write.blockers;
     blockers.append(appendApfsFileWriteValidation(&report, config, write));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2431,14 +2330,13 @@ int runApfsRootFileWriteCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Wrote APFS image "
-                        << QFileInfo(write.written_image_path).fileName() << Qt::endl;
+    QTextStream(stdout) << "Wrote APFS image " << QFileInfo(write.written_image_path).fileName()
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsFilePatchReportObject(
-    const Config& config,
-    const sak::PartitionApfsImageFilePatchResult& patch) {
+QJsonObject apfsFilePatchReportObject(const Config& config,
+                                      const sak::PartitionApfsImageFilePatchResult& patch) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   patch.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2452,8 +2350,7 @@ QJsonObject apfsFilePatchReportObject(
                   QString::number(patch.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsPatchRootFileName);
     report.insert(QStringLiteral("file_bytes"), QString::number(patch.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"),
-                  QString::number(patch.patch_offset_bytes));
+    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(patch.patch_offset_bytes));
     report.insert(QStringLiteral("patch_bytes"), QString::number(patch.patch_bytes));
     report.insert(QStringLiteral("patch_sha256"), patch.patch_sha256);
     report.insert(QStringLiteral("readback_sha256"), patch.readback_sha256);
@@ -2466,11 +2363,10 @@ QJsonObject apfsFilePatchReportObject(
     return report;
 }
 
-QStringList appendApfsFilePatchValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsImageFilePatchResult& patch,
-    const QByteArray& expectedData) {
+QStringList appendApfsFilePatchValidation(QJsonObject* report,
+                                          const Config& config,
+                                          const sak::PartitionApfsImageFilePatchResult& patch,
+                                          const QByteArray& expectedData) {
     QStringList blockers;
     if (!report || !patch.ok) {
         return blockers;
@@ -2495,8 +2391,7 @@ QStringList appendApfsFilePatchValidation(
                                  .failureLabel = QStringLiteral("Patched APFS listing")},
                                 &blockers);
 
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
     appendApfsReadValidation({.report = report,
                               .imagePath = patch.written_image_path,
                               .path = readPath,
@@ -2511,14 +2406,10 @@ QStringList appendApfsFilePatchValidation(
     return blockers;
 }
 
-std::optional<QByteArray> expectedApfsPatchData(const Config& config,
-                                                QStringList* blockers) {
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
+std::optional<QByteArray> expectedApfsPatchData(const Config& config, QStringList* blockers) {
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
     const auto original = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        config.inputPath,
-        readPath,
-        kDefaultApfsExportMaxFileBytes);
+        config.inputPath, readPath, kDefaultApfsExportMaxFileBytes);
     if (!original.ok) {
         blockers->append(QStringLiteral("APFS patch source read failed: %1")
                              .arg(original.blockers.join(QStringLiteral("; "))));
@@ -2531,14 +2422,13 @@ std::optional<QByteArray> expectedApfsPatchData(const Config& config,
     const uint64_t patchBytesCount = static_cast<uint64_t>(patchBytes.size());
     if (config.apfsPatchRootFileOffsetBytes > fileBytes ||
         patchBytesCount > fileBytes - config.apfsPatchRootFileOffsetBytes) {
-        blockers->append(QStringLiteral(
-            "APFS patch expected range must stay inside existing file"));
+        blockers->append(
+            QStringLiteral("APFS patch expected range must stay inside existing file"));
         return std::nullopt;
     }
     std::copy(patchBytes.cbegin(),
               patchBytes.cend(),
-              expected.begin() +
-                  static_cast<qsizetype>(config.apfsPatchRootFileOffsetBytes));
+              expected.begin() + static_cast<qsizetype>(config.apfsPatchRootFileOffsetBytes));
     return expected;
 }
 
@@ -2564,8 +2454,8 @@ int runApfsRootFilePatchCertifier(const Config& config) {
     QJsonObject report = apfsFilePatchReportObject(config, patch);
     QStringList blockers = patch.blockers;
     blockers.append(appendApfsFilePatchValidation(&report, config, patch, *expected));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2575,14 +2465,13 @@ int runApfsRootFilePatchCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Patched APFS image "
-                        << QFileInfo(patch.written_image_path).fileName() << Qt::endl;
+    QTextStream(stdout) << "Patched APFS image " << QFileInfo(patch.written_image_path).fileName()
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsFileDeleteReportObject(
-    const Config& config,
-    const sak::PartitionApfsImageFileDeleteResult& deleted) {
+QJsonObject apfsFileDeleteReportObject(const Config& config,
+                                       const sak::PartitionApfsImageFileDeleteResult& deleted) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   deleted.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2595,8 +2484,7 @@ QJsonObject apfsFileDeleteReportObject(
     report.insert(QStringLiteral("deleted_file_bytes"),
                   QString::number(deleted.deleted_file_bytes));
     report.insert(QStringLiteral("deleted_file_sha256"), deleted.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"),
-                  QString::number(deleted.freed_data_blocks));
+    report.insert(QStringLiteral("freed_data_blocks"), QString::number(deleted.freed_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsDeleteRootFileName);
     report.insert(QStringLiteral("plan_operation"), deleted.plan.operation);
     report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(deleted.plan.steps));
@@ -2607,10 +2495,9 @@ QJsonObject apfsFileDeleteReportObject(
     return report;
 }
 
-QStringList appendApfsFileDeleteValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsImageFileDeleteResult& deleted) {
+QStringList appendApfsFileDeleteValidation(QJsonObject* report,
+                                           const Config& config,
+                                           const sak::PartitionApfsImageFileDeleteResult& deleted) {
     QStringList blockers;
     if (!report || !deleted.ok) {
         return blockers;
@@ -2635,16 +2522,12 @@ QStringList appendApfsFileDeleteValidation(
                                  .failureLabel = QStringLiteral("Deleted APFS listing")},
                                 &blockers);
 
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsDeleteRootFileName.trimmed());
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsDeleteRootFileName.trimmed());
     const auto readBack = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        deleted.written_image_path,
-        readPath,
-        1);
+        deleted.written_image_path, readPath, 1);
     report->insert(QStringLiteral("deleted_file_negative_read"),
                    QJsonObject{{QStringLiteral("status"),
-                                readBack.ok ? QStringLiteral("Failed")
-                                            : QStringLiteral("Passed")},
+                                readBack.ok ? QStringLiteral("Failed") : QStringLiteral("Passed")},
                                {QStringLiteral("path"), readPath},
                                {QStringLiteral("blockers"), stringArray(readBack.blockers)}});
     if (readBack.ok) {
@@ -2667,8 +2550,8 @@ int runApfsRootFileDeleteCertifier(const Config& config) {
     QJsonObject report = apfsFileDeleteReportObject(config, deleted);
     QStringList blockers = deleted.blockers;
     blockers.append(appendApfsFileDeleteValidation(&report, config, deleted));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2683,9 +2566,8 @@ int runApfsRootFileDeleteCertifier(const Config& config) {
     return 0;
 }
 
-QJsonObject apfsRawFileWriteReportObject(
-    const Config& config,
-    const sak::PartitionApfsRawFileWriteResult& write) {
+QJsonObject apfsRawFileWriteReportObject(const Config& config,
+                                         const sak::PartitionApfsRawFileWriteResult& write) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   write.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2705,10 +2587,9 @@ QJsonObject apfsRawFileWriteReportObject(
     return report;
 }
 
-QStringList appendApfsRawFileWriteValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsRawFileWriteResult& write) {
+QStringList appendApfsRawFileWriteValidation(QJsonObject* report,
+                                             const Config& config,
+                                             const sak::PartitionApfsRawFileWriteResult& write) {
     QStringList blockers;
     if (!report || !write.ok) {
         return blockers;
@@ -2729,20 +2610,18 @@ QStringList appendApfsRawFileWriteValidation(
                                  .reportKey = QStringLiteral("raw_written_apfs_listing"),
                                  .failureLabel = QStringLiteral("Raw written APFS listing")},
                                 &blockers);
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsWriteRootFileName.trimmed());
-    appendApfsReadValidation({.report = report,
-                              .imagePath = write.target_path,
-                              .path = readPath,
-                              .maxBytes = static_cast<uint64_t>(
-                                  config.apfsWriteRootFileText.toUtf8().size()),
-                              .reportKey = QStringLiteral("raw_written_file_read"),
-                              .failureLabel = QStringLiteral("Raw written APFS read"),
-                              .expectedData = config.apfsWriteRootFileText.toUtf8(),
-                              .mismatchMessage = QStringLiteral(
-                                  "Raw written APFS file contents did not round-trip"),
-                              .compareExpected = true},
-                             &blockers);
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsWriteRootFileName.trimmed());
+    appendApfsReadValidation(
+        {.report = report,
+         .imagePath = write.target_path,
+         .path = readPath,
+         .maxBytes = static_cast<uint64_t>(config.apfsWriteRootFileText.toUtf8().size()),
+         .reportKey = QStringLiteral("raw_written_file_read"),
+         .failureLabel = QStringLiteral("Raw written APFS read"),
+         .expectedData = config.apfsWriteRootFileText.toUtf8(),
+         .mismatchMessage = QStringLiteral("Raw written APFS file contents did not round-trip"),
+         .compareExpected = true},
+        &blockers);
     return blockers;
 }
 
@@ -2759,14 +2638,13 @@ int runApfsRawRootFileWriteCertifier(const Config& config) {
          .file_data = config.apfsWriteRootFileText.toUtf8(),
          .target_write_confirmed = config.apfsWriteTargetConfirmed,
          .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(
-             config,
-             QStringLiteral("certifier.apfs-raw-root-file-write"))});
+         .options = apfsRawMutationOptions(config,
+                                           QStringLiteral("certifier.apfs-raw-root-file-write"))});
     QJsonObject report = apfsRawFileWriteReportObject(config, write);
     QStringList blockers = write.blockers;
     blockers.append(appendApfsRawFileWriteValidation(&report, config, write));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2776,14 +2654,13 @@ int runApfsRawRootFileWriteCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Wrote APFS raw target "
-                        << config.apfsWriteRootFileTargetPath << Qt::endl;
+    QTextStream(stdout) << "Wrote APFS raw target " << config.apfsWriteRootFileTargetPath
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsRawFilePatchReportObject(
-    const Config& config,
-    const sak::PartitionApfsRawFilePatchResult& patch) {
+QJsonObject apfsRawFilePatchReportObject(const Config& config,
+                                         const sak::PartitionApfsRawFilePatchResult& patch) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   patch.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2795,8 +2672,7 @@ QJsonObject apfsRawFilePatchReportObject(
                   QString::number(patch.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsPatchRootFileName);
     report.insert(QStringLiteral("file_bytes"), QString::number(patch.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"),
-                  QString::number(patch.patch_offset_bytes));
+    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(patch.patch_offset_bytes));
     report.insert(QStringLiteral("patch_bytes"), QString::number(patch.patch_bytes));
     report.insert(QStringLiteral("patch_sha256"), patch.patch_sha256);
     report.insert(QStringLiteral("readback_sha256"), patch.readback_sha256);
@@ -2809,11 +2685,10 @@ QJsonObject apfsRawFilePatchReportObject(
     return report;
 }
 
-QStringList appendApfsRawFilePatchValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsRawFilePatchResult& patch,
-    const QByteArray& expectedData) {
+QStringList appendApfsRawFilePatchValidation(QJsonObject* report,
+                                             const Config& config,
+                                             const sak::PartitionApfsRawFilePatchResult& patch,
+                                             const QByteArray& expectedData) {
     QStringList blockers;
     if (!report || !patch.ok) {
         return blockers;
@@ -2834,8 +2709,7 @@ QStringList appendApfsRawFilePatchValidation(
                                  .reportKey = QStringLiteral("raw_patched_apfs_listing"),
                                  .failureLabel = QStringLiteral("Raw patched APFS listing")},
                                 &blockers);
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
     appendApfsReadValidation({.report = report,
                               .imagePath = patch.target_path,
                               .path = readPath,
@@ -2850,14 +2724,10 @@ QStringList appendApfsRawFilePatchValidation(
     return blockers;
 }
 
-std::optional<QByteArray> expectedApfsRawPatchData(const Config& config,
-                                                   QStringList* blockers) {
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
+std::optional<QByteArray> expectedApfsRawPatchData(const Config& config, QStringList* blockers) {
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
     const auto original = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        config.apfsPatchRootFileTargetPath,
-        readPath,
-        kDefaultApfsExportMaxFileBytes);
+        config.apfsPatchRootFileTargetPath, readPath, kDefaultApfsExportMaxFileBytes);
     if (!original.ok) {
         blockers->append(QStringLiteral("APFS raw patch source read failed: %1")
                              .arg(original.blockers.join(QStringLiteral("; "))));
@@ -2870,14 +2740,13 @@ std::optional<QByteArray> expectedApfsRawPatchData(const Config& config,
     const uint64_t patchBytesCount = static_cast<uint64_t>(patchBytes.size());
     if (config.apfsPatchRootFileOffsetBytes > fileBytes ||
         patchBytesCount > fileBytes - config.apfsPatchRootFileOffsetBytes) {
-        blockers->append(QStringLiteral(
-            "APFS raw patch expected range must stay inside existing file"));
+        blockers->append(
+            QStringLiteral("APFS raw patch expected range must stay inside existing file"));
         return std::nullopt;
     }
     std::copy(patchBytes.cbegin(),
               patchBytes.cend(),
-              expected.begin() +
-                  static_cast<qsizetype>(config.apfsPatchRootFileOffsetBytes));
+              expected.begin() + static_cast<qsizetype>(config.apfsPatchRootFileOffsetBytes));
     return expected;
 }
 
@@ -2901,14 +2770,13 @@ int runApfsRawRootFilePatchCertifier(const Config& config) {
          .patch_data = config.apfsPatchRootFileText.toUtf8(),
          .target_write_confirmed = config.apfsWriteTargetConfirmed,
          .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(
-             config,
-             QStringLiteral("certifier.apfs-raw-root-file-patch"))});
+         .options = apfsRawMutationOptions(config,
+                                           QStringLiteral("certifier.apfs-raw-root-file-patch"))});
     QJsonObject report = apfsRawFilePatchReportObject(config, patch);
     QStringList blockers = patch.blockers;
     blockers.append(appendApfsRawFilePatchValidation(&report, config, patch, *expected));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -2918,14 +2786,13 @@ int runApfsRawRootFilePatchCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Patched APFS raw target "
-                        << config.apfsPatchRootFileTargetPath << Qt::endl;
+    QTextStream(stdout) << "Patched APFS raw target " << config.apfsPatchRootFileTargetPath
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsRawFileDeleteReportObject(
-    const Config& config,
-    const sak::PartitionApfsRawFileDeleteResult& deleted) {
+QJsonObject apfsRawFileDeleteReportObject(const Config& config,
+                                          const sak::PartitionApfsRawFileDeleteResult& deleted) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   deleted.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2936,8 +2803,7 @@ QJsonObject apfsRawFileDeleteReportObject(
     report.insert(QStringLiteral("deleted_file_bytes"),
                   QString::number(deleted.deleted_file_bytes));
     report.insert(QStringLiteral("deleted_file_sha256"), deleted.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"),
-                  QString::number(deleted.freed_data_blocks));
+    report.insert(QStringLiteral("freed_data_blocks"), QString::number(deleted.freed_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsDeleteRootFileName);
     report.insert(QStringLiteral("plan_operation"), deleted.plan.operation);
     report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(deleted.plan.steps));
@@ -2973,16 +2839,12 @@ QStringList appendApfsRawFileDeleteValidation(
                                  .failureLabel = QStringLiteral("Raw deleted APFS listing")},
                                 &blockers);
 
-    const QString readPath =
-        QStringLiteral("/%1").arg(config.apfsDeleteRootFileName.trimmed());
-    const auto readBack = sak::PartitionApfsFileSystemReader::readFileFromImage(
-        deleted.target_path,
-        readPath,
-        1);
+    const QString readPath = QStringLiteral("/%1").arg(config.apfsDeleteRootFileName.trimmed());
+    const auto readBack =
+        sak::PartitionApfsFileSystemReader::readFileFromImage(deleted.target_path, readPath, 1);
     report->insert(QStringLiteral("raw_deleted_file_negative_read"),
                    QJsonObject{{QStringLiteral("status"),
-                                readBack.ok ? QStringLiteral("Failed")
-                                            : QStringLiteral("Passed")},
+                                readBack.ok ? QStringLiteral("Failed") : QStringLiteral("Passed")},
                                {QStringLiteral("path"), readPath},
                                {QStringLiteral("blockers"), stringArray(readBack.blockers)}});
     if (readBack.ok) {
@@ -3003,14 +2865,13 @@ int runApfsRawRootFileDeleteCertifier(const Config& config) {
          .file_name = config.apfsDeleteRootFileName,
          .target_write_confirmed = config.apfsWriteTargetConfirmed,
          .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(
-             config,
-             QStringLiteral("certifier.apfs-raw-root-file-delete"))});
+         .options = apfsRawMutationOptions(config,
+                                           QStringLiteral("certifier.apfs-raw-root-file-delete"))});
     QJsonObject report = apfsRawFileDeleteReportObject(config, deleted);
     QStringList blockers = deleted.blockers;
     blockers.append(appendApfsRawFileDeleteValidation(&report, config, deleted));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -3020,14 +2881,13 @@ int runApfsRawRootFileDeleteCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Deleted APFS raw root file from "
-                        << config.apfsDeleteRootFileTargetPath << Qt::endl;
+    QTextStream(stdout) << "Deleted APFS raw root file from " << config.apfsDeleteRootFileTargetPath
+                        << Qt::endl;
     return 0;
 }
 
-QJsonObject apfsRepairReportObject(
-    const Config& config,
-    const sak::PartitionApfsImageRepairResult& repair) {
+QJsonObject apfsRepairReportObject(const Config& config,
+                                   const sak::PartitionApfsImageRepairResult& repair) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   repair.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -3038,8 +2898,7 @@ QJsonObject apfsRepairReportObject(
     report.insert(QStringLiteral("repaired_image_path"),
                   QFileInfo(repair.repaired_image_path).absoluteFilePath());
     report.insert(QStringLiteral("repaired_image_sha256"), repair.repaired_image_sha256);
-    report.insert(QStringLiteral("scanned_blocks"),
-                  QString::number(repair.scanned_blocks));
+    report.insert(QStringLiteral("scanned_blocks"), QString::number(repair.scanned_blocks));
     report.insert(QStringLiteral("repaired_checksum_blocks"),
                   QString::number(repair.repaired_checksum_blocks));
     report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(repair.plan.steps));
@@ -3050,10 +2909,9 @@ QJsonObject apfsRepairReportObject(
     return report;
 }
 
-QStringList appendApfsRepairValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsImageRepairResult& repair) {
+QStringList appendApfsRepairValidation(QJsonObject* report,
+                                       const Config& config,
+                                       const sak::PartitionApfsImageRepairResult& repair) {
     QStringList blockers;
     if (!report || !repair.ok) {
         return blockers;
@@ -3103,8 +2961,8 @@ int runApfsRepairCertifier(const Config& config) {
     QJsonObject report = apfsRepairReportObject(config, repair);
     QStringList blockers = repair.blockers;
     blockers.append(appendApfsRepairValidation(&report, config, repair));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -3125,26 +2983,25 @@ bool corruptApfsRawMetadataChecksumBlock(const QString& targetPath,
     QString openError;
     auto target = sak::openFileOrRawDeviceReadWrite(targetPath, &openError);
     if (!target) {
-        blockers->append(QStringLiteral("Unable to open APFS raw corruption target: %1")
-                             .arg(openError));
+        blockers->append(
+            QStringLiteral("Unable to open APFS raw corruption target: %1").arg(openError));
         return false;
     }
     const uint64_t offset = blockIndex * 4096ULL;
     if (offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) ||
         !target->seek(static_cast<qint64>(offset))) {
-        blockers->append(QStringLiteral("Unable to seek APFS raw corruption block %1")
-                             .arg(blockIndex));
+        blockers->append(
+            QStringLiteral("Unable to seek APFS raw corruption block %1").arg(blockIndex));
         return false;
     }
     QByteArray block(4096, '\0');
     if (target->read(block.data(), block.size()) != block.size()) {
-        blockers->append(QStringLiteral("Unable to read APFS raw corruption block %1")
-                             .arg(blockIndex));
+        blockers->append(
+            QStringLiteral("Unable to read APFS raw corruption block %1").arg(blockIndex));
         return false;
     }
     block[0] = static_cast<char>(block.at(0) ^ 0x5A);
-    if (!target->seek(static_cast<qint64>(offset)) ||
-        target->write(block) != block.size()) {
+    if (!target->seek(static_cast<qint64>(offset)) || target->write(block) != block.size()) {
         blockers->append(QStringLiteral("Unable to write APFS raw corruption block %1: %2")
                              .arg(blockIndex)
                              .arg(target->errorString()));
@@ -3154,9 +3011,8 @@ bool corruptApfsRawMetadataChecksumBlock(const QString& targetPath,
     return true;
 }
 
-QJsonObject apfsRawRepairReportObject(
-    const Config& config,
-    const sak::PartitionApfsRawRepairResult& repair) {
+QJsonObject apfsRawRepairReportObject(const Config& config,
+                                      const sak::PartitionApfsRawRepairResult& repair) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   repair.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -3179,10 +3035,9 @@ QJsonObject apfsRawRepairReportObject(
     return report;
 }
 
-QStringList appendApfsRawRepairValidation(
-    QJsonObject* report,
-    const Config& config,
-    const sak::PartitionApfsRawRepairResult& repair) {
+QStringList appendApfsRawRepairValidation(QJsonObject* report,
+                                          const Config& config,
+                                          const sak::PartitionApfsRawRepairResult& repair) {
     QStringList blockers;
     if (!report || !repair.ok) {
         return blockers;
@@ -3224,8 +3079,8 @@ int runApfsRawRepairCertifier(const Config& config) {
     QStringList preRepairBlockers;
     if (config.apfsRepairCorruptMetadataBlockProvided) {
         corruptApfsRawMetadataChecksumBlock(config.apfsRepairObjectChecksumsTargetPath,
-                                           config.apfsRepairCorruptMetadataBlock,
-                                           &preRepairBlockers);
+                                            config.apfsRepairCorruptMetadataBlock,
+                                            &preRepairBlockers);
     }
     const auto repair = sak::PartitionApfsWriter::repairRawObjectChecksums(
         {.target_path = config.apfsRepairObjectChecksumsTargetPath,
@@ -3233,14 +3088,13 @@ int runApfsRawRepairCertifier(const Config& config) {
          .target_repair_confirmed = config.apfsRepairTargetConfirmed,
          .allow_raw_device_target = config.apfsRepairAllowRawTarget,
          .options = apfsRawMutationOptions(
-             config,
-             QStringLiteral("certifier.apfs-raw-object-checksum-repair"))});
+             config, QStringLiteral("certifier.apfs-raw-object-checksum-repair"))});
     QJsonObject report = apfsRawRepairReportObject(config, repair);
     QStringList blockers = preRepairBlockers;
     blockers.append(repair.blockers);
     blockers.append(appendApfsRawRepairValidation(&report, config, repair));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;
@@ -3250,8 +3104,8 @@ int runApfsRawRepairCertifier(const Config& config) {
         QTextStream(stderr) << blockers.join(QStringLiteral("; ")) << Qt::endl;
         return 1;
     }
-    QTextStream(stdout) << "Repaired APFS raw target "
-                        << config.apfsRepairObjectChecksumsTargetPath << Qt::endl;
+    QTextStream(stdout) << "Repaired APFS raw target " << config.apfsRepairObjectChecksumsTargetPath
+                        << Qt::endl;
     return 0;
 }
 
@@ -3298,8 +3152,8 @@ int runCertifier(const Config& config) {
     QJsonObject report = detectionReport(config, *detection, inputSizeBytes, blockers);
     blockers.append(appendHfsOperationReports(&report, config, *detection));
     blockers.append(appendApfsOperationReports(&report, config, *detection));
-    report.insert(QStringLiteral("status"), blockers.isEmpty() ? QStringLiteral("Passed")
-                                                               : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  blockers.isEmpty() ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("blockers"), stringArray(blockers));
     if (!writeJsonFile(config.outputPath, report)) {
         QTextStream(stderr) << "Failed to write output report" << Qt::endl;

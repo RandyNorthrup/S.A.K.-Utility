@@ -254,9 +254,8 @@ auto DuplicateFinderWorker::scanFileSystemTarget()
         roots.append(QStringLiteral("/"));
     }
     for (const auto& root : roots) {
-        auto result = collectVirtualFiles(root.trimmed().isEmpty() ? QStringLiteral("/") : root,
-                                          files,
-                                          0);
+        auto result =
+            collectVirtualFiles(root.trimmed().isEmpty() ? QStringLiteral("/") : root, files, 0);
         if (!result) {
             return std::unexpected(result.error());
         }
@@ -266,8 +265,7 @@ auto DuplicateFinderWorker::scanFileSystemTarget()
 
 auto DuplicateFinderWorker::collectVirtualFiles(const QString& directory_path,
                                                 QVector<VirtualFile>& files,
-                                                int depth)
-    -> std::expected<void, sak::error_code> {
+                                                int depth) -> std::expected<void, sak::error_code> {
     Q_UNUSED(depth)
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
@@ -317,8 +315,7 @@ auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)
         const auto read = sak::FileManagementFileSystemBridge::readFile(
             m_config.file_system_target, file.path, kDuplicateVirtualReadMaxBytes);
         if (!read.ok) {
-            sak::logWarning("Failed to read file-system target entry: {}",
-                            file.path.toStdString());
+            sak::logWarning("Failed to read file-system target entry: {}", file.path.toStdString());
             continue;
         }
         const QByteArray hash =
@@ -328,7 +325,8 @@ auto DuplicateFinderWorker::hashVirtualFiles(const QVector<VirtualFile>& files)
     return hashed;
 }
 
-std::vector<DuplicateFinderWorker::DuplicateGroup> DuplicateFinderWorker::buildVirtualDuplicateGroups(
+std::vector<DuplicateFinderWorker::DuplicateGroup>
+DuplicateFinderWorker::buildVirtualDuplicateGroups(
     const QVector<QPair<VirtualFile, QString>>& hashed_files,
     int& total_duplicates,
     qint64& total_wasted) const {

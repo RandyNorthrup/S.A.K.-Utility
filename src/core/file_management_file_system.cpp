@@ -136,6 +136,39 @@ FileManagementMutationResult mutationBlocked(const QString& fileSystem,
     return result;
 }
 
+bool computeWritableNonNative(const QString& fs, const FileManagementTarget& target) {
+    const bool apfsGeneratedWriteSizeSupported =
+        fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition &&
+        target.size_bytes >= kMinimumGeneratedApfsBytes &&
+        target.size_bytes <= kGeneratedApfsSingleChunkMaxBytes;
+    return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") ||
+           apfsGeneratedWriteSizeSupported;
+}
+
+void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
+    target.blockers.clear();
+    if (!target.can_browse) {
+        target.blockers.append(
+            QStringLiteral("No directory browser is registered for %1").arg(target.file_system));
+    }
+    if (!target.can_organize) {
+        target.blockers.append(
+            QStringLiteral("Generic organizer moves are blocked for raw/non-native targets; use "
+                           "certified Partition Manager file actions for supported writes"));
+    }
+    if (!target.can_write_files) {
+        target.blockers.append(
+            fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition
+                ? QStringLiteral("APFS File Explorer writes require a 64-128 MiB "
+                                 "S.A.K.-generated one-spaceman-chunk partition")
+                : QStringLiteral("File Management opens this target read-only"));
+    } else if (!target.local_file_system) {
+        target.blockers.append(
+            QStringLiteral("Raw/non-native write support is limited to explicit File Explorer "
+                           "create/write/delete/rename actions with confirmation"));
+    }
+}
+
 FileManagementTarget applyCapabilities(FileManagementTarget target) {
     const QString fs = FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
     const bool native = FileManagementFileSystemBridge::isNativeFileSystem(fs);
@@ -147,40 +180,11 @@ FileManagementTarget applyCapabilities(FileManagementTarget target) {
     target.read_only = !target.local_file_system;
     target.can_browse = target.local_file_system || readableNonNative;
     target.can_read_files = target.local_file_system || readableNonNative;
-    const bool apfsGeneratedWriteSizeSupported =
-        fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition &&
-        target.size_bytes >= kMinimumGeneratedApfsBytes &&
-        target.size_bytes <= kGeneratedApfsSingleChunkMaxBytes;
-    const bool writableNonNative =
-        (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) ||
-        apfsGeneratedWriteSizeSupported;
-    target.can_write_files = target.local_file_system || writableNonNative;
+    target.can_write_files = target.local_file_system || computeWritableNonNative(fs, target);
     target.can_organize = target.local_file_system;
     target.can_duplicate_scan = target.local_file_system || readableNonNative;
     target.can_advanced_search = target.local_file_system || readableNonNative;
-
-    target.blockers.clear();
-    if (!target.can_browse) {
-        target.blockers.append(QStringLiteral("No directory browser is registered for %1")
-                                   .arg(target.file_system));
-    }
-    if (!target.can_organize) {
-        target.blockers.append(
-            QStringLiteral("Generic organizer moves are blocked for raw/non-native targets; use "
-                           "certified Partition Manager file actions for supported writes"));
-    }
-    if (!target.can_write_files) {
-        target.blockers.append(fs == QStringLiteral("apfs") && target.kind ==
-                                                         FileManagementTargetKind::Partition
-                                   ? QStringLiteral(
-                                         "APFS File Explorer writes require a 64-128 MiB "
-                                         "S.A.K.-generated one-spaceman-chunk partition")
-                                   : QStringLiteral("File Management opens this target read-only"));
-    } else if (!target.local_file_system) {
-        target.blockers.append(
-            QStringLiteral("Raw/non-native write support is limited to explicit File Explorer "
-                           "create/write/delete/rename actions with confirmation"));
-    }
+    appendTargetBlockers(target, fs);
     return target;
 }
 
@@ -214,15 +218,14 @@ FileManagementListResult listLocalDirectory(const QString& path, int maxEntries)
 
     const auto entries = dir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
                                            QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
-    const qsizetype limit =
-        maxEntries > 0 ? std::min<qsizetype>(maxEntries, entries.size()) : entries.size();
+    const qsizetype limit = maxEntries > 0 ? std::min<qsizetype>(maxEntries, entries.size())
+                                           : entries.size();
     result.entries.reserve(limit);
     for (qsizetype i = 0; i < limit; ++i) {
         result.entries.append(fromLocalInfo(entries.at(i), path));
     }
     if (limit < entries.size()) {
-        result.warnings.append(
-            QStringLiteral("Listing truncated to %1 entries").arg(limit));
+        result.warnings.append(QStringLiteral("Listing truncated to %1 entries").arg(limit));
     }
     result.ok = true;
     return result;
@@ -312,7 +315,8 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
         return result;
     }
     if (maxBytes > 0 && static_cast<uint64_t>(file.size()) > maxBytes) {
-        result.blockers.append(QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
+        result.blockers.append(
+            QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
         return result;
     }
     result.data = file.readAll();
@@ -366,8 +370,7 @@ FileManagementMutationResult fromApfsDeleteResult(const PartitionApfsRawFileDele
 }
 
 FileManagementMutationResult fromApfsDirectoryResult(
-    const PartitionApfsRawDirectoryMutationResult& input,
-    const QString& path) {
+    const PartitionApfsRawDirectoryMutationResult& input, const QString& path) {
     return {.ok = input.ok,
             .file_system = QStringLiteral("APFS"),
             .path = path,
@@ -398,7 +401,8 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
             label = volume.rootPath();
         }
         target.id = QStringLiteral("volume:%1").arg(volume.rootPath());
-        target.label = QStringLiteral("%1 (%2)").arg(label, volume.rootPath().left(kDriveRootPrefixLength));
+        target.label =
+            QStringLiteral("%1 (%2)").arg(label, volume.rootPath().left(kDriveRootPrefixLength));
         target.file_system = QString::fromUtf8(volume.fileSystemType());
         target.source = QStringLiteral("Mounted volume");
         targets.append(applyCapabilities(target));
@@ -411,8 +415,8 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::targetsFromInvento
     QVector<FileManagementTarget> targets = mountedTargets();
     for (const auto& disk : inventory.disks) {
         for (const auto& partition : disk.partitions) {
-            const QString fs =
-                partition.volume ? partition.volume->file_system : QStringLiteral("Unknown");
+            const QString fs = partition.volume ? partition.volume->file_system
+                                                : QStringLiteral("Unknown");
             const QString mountedPath =
                 partition.volume && partition.volume->hasDriveLetter()
                     ? QStringLiteral("%1:/").arg(partition.volume->drive_letter)
@@ -431,8 +435,8 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::targetsFromInvento
             target.file_system = fs;
             target.source = partition.volume ? partition.volume->file_system_source
                                              : QStringLiteral("Partition inventory");
-            target.details =
-                partition.volume ? partition.volume->file_system_details : QStringList{};
+            target.details = partition.volume ? partition.volume->file_system_details
+                                              : QStringList{};
             target.size_bytes = partition.size_bytes;
             target.kind = mountedPath.isEmpty() ? FileManagementTargetKind::Partition
                                                 : FileManagementTargetKind::LocalPath;
@@ -460,7 +464,8 @@ FileManagementTarget FileManagementFileSystemBridge::manualTarget(const QString&
     if (size_bytes > 0) {
         target.size_bytes = size_bytes;
     } else if (!isRawDevicePath(target.root_path)) {
-        target.size_bytes = static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
+        target.size_bytes =
+            static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
     }
     target.kind = isRawDevicePath(target.root_path) ? FileManagementTargetKind::Partition
                                                     : FileManagementTargetKind::ImageFile;
@@ -474,7 +479,8 @@ FileManagementTarget FileManagementFileSystemBridge::localTarget(const QString& 
     target.root_path = normalizedPath(root_path);
     target.file_system = QStringLiteral("Local");
     target.source = QStringLiteral("Local path");
-    target.size_bytes = static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
+    target.size_bytes =
+        static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
     target.kind = FileManagementTargetKind::LocalPath;
     return applyCapabilities(target);
 }
@@ -525,9 +531,7 @@ QString FileManagementFileSystemBridge::capabilitySummary(const FileManagementTa
 }
 
 FileManagementListResult FileManagementFileSystemBridge::listDirectory(
-    const FileManagementTarget& target,
-    const QString& path,
-    int max_entries) {
+    const FileManagementTarget& target, const QString& path, int max_entries) {
     const QString fs = normalizedFileSystem(target.file_system);
     if (target.local_file_system) {
         const QString localPath = path.trimmed().isEmpty() ? target.root_path : path;
@@ -535,35 +539,27 @@ FileManagementListResult FileManagementFileSystemBridge::listDirectory(
     }
     if (fs == QStringLiteral("ext2") || fs == QStringLiteral("ext3") ||
         fs == QStringLiteral("ext4")) {
-        return fromExtResult(
-            PartitionExtFileSystemReader::listDirectoryFromImage(target.root_path,
-                                                                 pathOrRoot(path),
-                                                                 max_entries));
+        return fromExtResult(PartitionExtFileSystemReader::listDirectoryFromImage(
+            target.root_path, pathOrRoot(path), max_entries));
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
-        return fromHfsResult(
-            PartitionHfsFileSystemReader::listDirectoryFromImage(target.root_path,
-                                                                 pathOrRoot(path),
-                                                                 max_entries));
+        return fromHfsResult(PartitionHfsFileSystemReader::listDirectoryFromImage(
+            target.root_path, pathOrRoot(path), max_entries));
     }
     if (fs == QStringLiteral("apfs")) {
-        return fromApfsResult(
-            PartitionApfsFileSystemReader::listDirectoryFromImage(target.root_path,
-                                                                  pathOrRoot(path),
-                                                                  max_entries));
+        return fromApfsResult(PartitionApfsFileSystemReader::listDirectoryFromImage(
+            target.root_path, pathOrRoot(path), max_entries));
     }
 
     FileManagementListResult result;
     result.file_system = displayFileSystem(fs);
-    result.blockers.append(QStringLiteral("No File Management browser is registered for %1")
-                               .arg(result.file_system));
+    result.blockers.append(
+        QStringLiteral("No File Management browser is registered for %1").arg(result.file_system));
     return result;
 }
 
 FileManagementReadResult FileManagementFileSystemBridge::readFile(
-    const FileManagementTarget& target,
-    const QString& path,
-    uint64_t max_bytes) {
+    const FileManagementTarget& target, const QString& path, uint64_t max_bytes) {
     const QString fs = normalizedFileSystem(target.file_system);
     if (target.local_file_system) {
         return readLocalFile(path.trimmed().isEmpty() ? target.root_path : path, max_bytes);
@@ -584,14 +580,13 @@ FileManagementReadResult FileManagementFileSystemBridge::readFile(
 
     FileManagementReadResult result;
     result.file_system = displayFileSystem(fs);
-    result.blockers.append(QStringLiteral("No File Management reader is registered for %1")
-                               .arg(result.file_system));
+    result.blockers.append(
+        QStringLiteral("No File Management reader is registered for %1").arg(result.file_system));
     return result;
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
-    const FileManagementTarget& target,
-    const QString& path) {
+    const FileManagementTarget& target, const QString& path) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -605,9 +600,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
         return result;
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
-        return fromHfsWriteResult(
-            PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
-                target.root_path, cleanPath, hfsWriteOptions(target)));
+        return fromHfsWriteResult(PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
+            target.root_path, cleanPath, hfsWriteOptions(target)));
     }
     if (fs == QStringLiteral("apfs")) {
         if (!isApfsPathSupported(cleanPath, true)) {
@@ -627,13 +621,14 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
                  .options = apfsRawWriteOptions()}),
             cleanPath);
     }
-    return mutationBlocked(fs, cleanPath, QStringLiteral("Directory create is not supported for %1")
-                                          .arg(displayFileSystem(fs)));
+    return mutationBlocked(
+        fs,
+        cleanPath,
+        QStringLiteral("Directory create is not supported for %1").arg(displayFileSystem(fs)));
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
-    const FileManagementTarget& target,
-    const QString& path) {
+    const FileManagementTarget& target, const QString& path) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -670,14 +665,14 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                  .options = apfsRawWriteOptions()}),
             cleanPath);
     }
-    return mutationBlocked(fs, cleanPath, QStringLiteral("Directory delete is not supported for %1")
-                                          .arg(displayFileSystem(fs)));
+    return mutationBlocked(
+        fs,
+        cleanPath,
+        QStringLiteral("Directory delete is not supported for %1").arg(displayFileSystem(fs)));
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
-    const FileManagementTarget& target,
-    const QString& path,
-    const QByteArray& data) {
+    const FileManagementTarget& target, const QString& path, const QByteArray& data) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (data.size() > static_cast<qsizetype>(kFileManagementMaxWriteBytes)) {
@@ -691,7 +686,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         result.path = path;
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            result.blockers.append(QStringLiteral("Unable to write file: %1").arg(file.errorString()));
+            result.blockers.append(
+                QStringLiteral("Unable to write file: %1").arg(file.errorString()));
             return result;
         }
         result.bytes_written = static_cast<uint64_t>(file.write(data));
@@ -702,9 +698,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         return result;
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
-        return fromHfsWriteResult(
-            PartitionHfsFileSystemWriter::createFileWithDataFromImage(
-                target.root_path, cleanPath, data, hfsWriteOptions(target)));
+        return fromHfsWriteResult(PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+            target.root_path, cleanPath, data, hfsWriteOptions(target)));
     }
     if (fs == QStringLiteral("apfs")) {
         if (!isApfsPathSupported(cleanPath, false)) {
@@ -738,13 +733,14 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
                  .options = apfsRawWriteOptions()}),
             cleanPath);
     }
-    return mutationBlocked(fs, cleanPath, QStringLiteral("File write is not supported for %1")
-                                          .arg(displayFileSystem(fs)));
+    return mutationBlocked(
+        fs,
+        cleanPath,
+        QStringLiteral("File write is not supported for %1").arg(displayFileSystem(fs)));
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
-    const FileManagementTarget& target,
-    const QString& path) {
+    const FileManagementTarget& target, const QString& path) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -792,8 +788,10 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
                  .options = apfsRawWriteOptions()}),
             cleanPath);
     }
-    return mutationBlocked(fs, cleanPath, QStringLiteral("File delete is not supported for %1")
-                                          .arg(displayFileSystem(fs)));
+    return mutationBlocked(
+        fs,
+        cleanPath,
+        QStringLiteral("File delete is not supported for %1").arg(displayFileSystem(fs)));
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
@@ -814,14 +812,13 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
         return result;
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
-        return fromHfsWriteResult(
-            PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
-                target.root_path, cleanSource, cleanDestination, hfsWriteOptions(target)));
+        return fromHfsWriteResult(PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
+            target.root_path, cleanSource, cleanDestination, hfsWriteOptions(target)));
     }
-    return mutationBlocked(fs,
-                           cleanSource,
-                           QStringLiteral("Rename is not supported for %1")
-                               .arg(displayFileSystem(fs)));
+    return mutationBlocked(
+        fs,
+        cleanSource,
+        QStringLiteral("Rename is not supported for %1").arg(displayFileSystem(fs)));
 }
 
 }  // namespace sak

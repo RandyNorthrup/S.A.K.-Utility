@@ -5,6 +5,7 @@
 /// @brief Read-only raw file-system signature detector for Partition Manager.
 
 #include "sak/partition_file_system_detector.h"
+
 #include "sak/partition_raw_device_io.h"
 
 #include <QFile>
@@ -148,8 +149,8 @@ constexpr qsizetype kApfsSpacemanDeviceBlockCountOffset = 0x00;
 constexpr qsizetype kApfsSpacemanDeviceChunkCountOffset = 0x08;
 constexpr qsizetype kApfsSpacemanDeviceCibCountOffset = 0x10;
 constexpr qsizetype kApfsSpacemanDeviceFreeCountOffset = 0x18;
-constexpr qsizetype kApfsSpacemanMinimumBytes =
-    kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceFreeCountOffset + kUint64Size;
+constexpr qsizetype kApfsSpacemanMinimumBytes = kApfsSpacemanMainDeviceOffset +
+                                                kApfsSpacemanDeviceFreeCountOffset + kUint64Size;
 constexpr qsizetype kApfsBtreeNodeFlagsOffset = 0x20;
 constexpr qsizetype kApfsBtreeNodeLevelOffset = 0x22;
 constexpr qsizetype kApfsBtreeNodeKeyCountOffset = 0x24;
@@ -161,8 +162,8 @@ constexpr qsizetype kApfsBtreeNodeKeyFreeListOffsetOffset = 0x30;
 constexpr qsizetype kApfsBtreeNodeKeyFreeListLengthOffset = 0x32;
 constexpr qsizetype kApfsBtreeNodeValueFreeListOffsetOffset = 0x34;
 constexpr qsizetype kApfsBtreeNodeValueFreeListLengthOffset = 0x36;
-constexpr qsizetype kApfsBtreeNodeMinimumBytes =
-    kApfsBtreeNodeValueFreeListLengthOffset + kUint16Size;
+constexpr qsizetype kApfsBtreeNodeMinimumBytes = kApfsBtreeNodeValueFreeListLengthOffset +
+                                                 kUint16Size;
 constexpr qsizetype kApfsBtreeInfoSize = 40;
 constexpr qsizetype kApfsBtreeInfoFlagsOffset = 0x00;
 constexpr qsizetype kApfsBtreeInfoNodeSizeOffset = 0x04;
@@ -224,12 +225,12 @@ constexpr uint32_t kExtRoCompatGdtCsum = 0x0010;
 constexpr uint32_t kExtRoCompatDirNlink = 0x0020;
 constexpr uint32_t kExtRoCompatExtraIsize = 0x0040;
 constexpr uint32_t kExtRoCompatMetadataCsum = 0x0400;
-constexpr uint32_t kHfsVolumeJournaledMask = 0x00002000;
-constexpr uint32_t kApfsObjectTypeMask = 0x0000FFFF;
-constexpr uint32_t kApfsObjectTypeBtreeRoot = 0x00000002;
-constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00000003;
-constexpr uint32_t kApfsObjectTypeSpaceman = 0x00000005;
-constexpr uint32_t kApfsObjectTypeObjectMap = 0x0000000B;
+constexpr uint32_t kHfsVolumeJournaledMask = 0x00'00'20'00;
+constexpr uint32_t kApfsObjectTypeMask = 0x00'00'FF'FF;
+constexpr uint32_t kApfsObjectTypeBtreeRoot = 0x00'00'00'02;
+constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00'00'00'03;
+constexpr uint32_t kApfsObjectTypeSpaceman = 0x00'00'00'05;
+constexpr uint32_t kApfsObjectTypeObjectMap = 0x00'00'00'0B;
 constexpr uint16_t kApfsBtreeNodeRootFlag = 0x0001;
 constexpr uint16_t kApfsBtreeNodeLeafFlag = 0x0002;
 constexpr uint16_t kApfsBtreeNodeFixedKvFlag = 0x0004;
@@ -393,18 +394,18 @@ QString fixedUtf8Field(const QByteArray& bytes, qsizetype offset, qsizetype leng
 }
 
 QString hex32(uint32_t value) {
-    return QStringLiteral("0x%1")
-        .arg(static_cast<qulonglong>(value), kHex32FieldWidth, kHexBase, QLatin1Char('0'));
+    return QStringLiteral("0x%1").arg(
+        static_cast<qulonglong>(value), kHex32FieldWidth, kHexBase, QLatin1Char('0'));
 }
 
 QString hex16(uint16_t value) {
-    return QStringLiteral("0x%1")
-        .arg(static_cast<qulonglong>(value), kHex16FieldWidth, kHexBase, QLatin1Char('0'));
+    return QStringLiteral("0x%1").arg(
+        static_cast<qulonglong>(value), kHex16FieldWidth, kHexBase, QLatin1Char('0'));
 }
 
 QString hex64(uint64_t value) {
-    return QStringLiteral("0x%1")
-        .arg(static_cast<qulonglong>(value), kHex64FieldWidth, kHexBase, QLatin1Char('0'));
+    return QStringLiteral("0x%1").arg(
+        static_cast<qulonglong>(value), kHex64FieldWidth, kHexBase, QLatin1Char('0'));
 }
 
 QString uuidField(const QByteArray& bytes, qsizetype offset) {
@@ -438,15 +439,13 @@ QString hfsFamilyNameAt(const QByteArray& bytes, qsizetype offset) {
 std::optional<uint64_t> hfsWrapperEmbeddedOffset(uint16_t allocationStartSector,
                                                  uint16_t extentStartBlock,
                                                  uint32_t allocationBlockSize) {
-    if (allocationBlockSize < kMinimumFileSystemBlockSize ||
-        !isPowerOfTwo(allocationBlockSize)) {
+    if (allocationBlockSize < kMinimumFileSystemBlockSize || !isPowerOfTwo(allocationBlockSize)) {
         return std::nullopt;
     }
 
-    const uint64_t allocationStartBytes =
-        static_cast<uint64_t>(allocationStartSector) * kHfsWrapperSectorBytes;
-    const uint64_t extentStartBytes =
-        static_cast<uint64_t>(extentStartBlock) * allocationBlockSize;
+    const uint64_t allocationStartBytes = static_cast<uint64_t>(allocationStartSector) *
+                                          kHfsWrapperSectorBytes;
+    const uint64_t extentStartBytes = static_cast<uint64_t>(extentStartBlock) * allocationBlockSize;
     if (allocationStartBytes > std::numeric_limits<uint64_t>::max() - extentStartBytes) {
         return std::nullopt;
     }
@@ -460,14 +459,14 @@ std::optional<HfsWrapperInfo> hfsWrapperInfo(const QByteArray& bytes) {
         return std::nullopt;
     }
 
-    const uint32_t allocationBlockSize =
-        bigEndian32(bytes, mdb + kHfsWrapperAllocationBlockSizeOffset);
-    const uint16_t allocationStartSector =
-        bigEndian16(bytes, mdb + kHfsWrapperAllocationBlockStartOffset);
-    const uint16_t extentStartBlock =
-        bigEndian16(bytes, mdb + kHfsWrapperEmbeddedExtentStartOffset);
-    const uint16_t extentBlockCount =
-        bigEndian16(bytes, mdb + kHfsWrapperEmbeddedExtentCountOffset);
+    const uint32_t allocationBlockSize = bigEndian32(bytes,
+                                                     mdb + kHfsWrapperAllocationBlockSizeOffset);
+    const uint16_t allocationStartSector = bigEndian16(bytes,
+                                                       mdb + kHfsWrapperAllocationBlockStartOffset);
+    const uint16_t extentStartBlock = bigEndian16(bytes,
+                                                  mdb + kHfsWrapperEmbeddedExtentStartOffset);
+    const uint16_t extentBlockCount = bigEndian16(bytes,
+                                                  mdb + kHfsWrapperEmbeddedExtentCountOffset);
     if (extentBlockCount == 0) {
         return std::nullopt;
     }
@@ -556,21 +555,21 @@ void appendExtSuperblockDetails(PartitionFileSystemDetection* detection,
     appendExtBlockDetails(detection, blockSize, totalBlocks, freeBlocks);
     detection->details.append(QStringLiteral("Inodes: %1").arg(inodes));
     detection->details.append(QStringLiteral("Free inodes: %1").arg(freeInodes));
-    detection->details.append(QStringLiteral("Blocks per group: %1")
-                                  .arg(littleEndian32(bytes,
-                                                      superblock + kExtBlocksPerGroupOffset)));
-    detection->details.append(QStringLiteral("Inodes per group: %1")
-                                  .arg(littleEndian32(bytes,
-                                                      superblock + kExtInodesPerGroupOffset)));
     detection->details.append(
-        QStringLiteral("Journaled: %1")
-            .arg((compat & kExtCompatHasJournal) != 0 ? QStringLiteral("Yes")
-                                                      : QStringLiteral("No")));
+        QStringLiteral("Blocks per group: %1")
+            .arg(littleEndian32(bytes, superblock + kExtBlocksPerGroupOffset)));
+    detection->details.append(
+        QStringLiteral("Inodes per group: %1")
+            .arg(littleEndian32(bytes, superblock + kExtInodesPerGroupOffset)));
+    detection->details.append(QStringLiteral("Journaled: %1")
+                                  .arg((compat & kExtCompatHasJournal) != 0
+                                           ? QStringLiteral("Yes")
+                                           : QStringLiteral("No")));
     detection->details.append(QStringLiteral("Feature compat: %1").arg(hex32(compat)));
     detection->details.append(QStringLiteral("Feature incompat: %1").arg(hex32(incompat)));
     detection->details.append(QStringLiteral("Feature ro compat: %1").arg(hex32(roCompat)));
-    const QString label = fixedAsciiField(bytes, superblock + kExtVolumeNameOffset,
-                                          kExtVolumeNameSize);
+    const QString label =
+        fixedAsciiField(bytes, superblock + kExtVolumeNameOffset, kExtVolumeNameSize);
     if (!label.isEmpty()) {
         detection->details.append(QStringLiteral("Volume label: %1").arg(label));
     }
@@ -614,16 +613,14 @@ QString detectWindowsBootSectorFamily(const QByteArray& bytes) {
 }
 
 std::optional<PartitionFileSystemDetection> detectHfsHeaderAt(
-    const QByteArray& bytes,
-    qsizetype headerOffset,
-    const std::optional<HfsWrapperInfo>& wrapper) {
+    const QByteArray& bytes, qsizetype headerOffset, const std::optional<HfsWrapperInfo>& wrapper) {
     const QString familyName = hfsFamilyNameAt(bytes, headerOffset);
     if (familyName.isEmpty()) {
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{
-        familyName, PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{familyName,
+                                           PartitionFileSystemDetector::rawSignatureSource()};
     const uint16_t version = bigEndian16(bytes, headerOffset + kHfsVersionOffset);
     const uint32_t attributes = bigEndian32(bytes, headerOffset + kHfsAttributesOffset);
     const uint32_t fileCount = bigEndian32(bytes, headerOffset + kHfsFileCountOffset);
@@ -636,24 +633,21 @@ std::optional<PartitionFileSystemDetection> detectHfsHeaderAt(
         detection.details.append(QStringLiteral("HFS wrapper: Yes"));
         detection.details.append(
             QStringLiteral("Embedded offset: %1").arg(wrapper->embedded_offset_bytes));
-        detection.details.append(
-            QStringLiteral("Wrapper allocation block size: %1")
-                .arg(wrapper->allocation_block_size));
-        detection.details.append(
-            QStringLiteral("Wrapper allocation start sector: %1")
-                .arg(wrapper->allocation_block_start_sector));
-        detection.details.append(
-            QStringLiteral("Embedded extent: %1 blocks at block %2")
-                .arg(wrapper->extent_block_count)
-                .arg(wrapper->extent_start_block));
+        detection.details.append(QStringLiteral("Wrapper allocation block size: %1")
+                                     .arg(wrapper->allocation_block_size));
+        detection.details.append(QStringLiteral("Wrapper allocation start sector: %1")
+                                     .arg(wrapper->allocation_block_start_sector));
+        detection.details.append(QStringLiteral("Embedded extent: %1 blocks at block %2")
+                                     .arg(wrapper->extent_block_count)
+                                     .arg(wrapper->extent_start_block));
     }
     detection.details.append(QStringLiteral("Version: %1").arg(version));
     detection.details.append(QStringLiteral("Files: %1").arg(fileCount));
     detection.details.append(QStringLiteral("Folders: %1").arg(folderCount));
-    detection.details.append(
-        QStringLiteral("Journaled: %1")
-            .arg((attributes & kHfsVolumeJournaledMask) != 0 ? QStringLiteral("Yes")
-                                                             : QStringLiteral("No")));
+    detection.details.append(QStringLiteral("Journaled: %1")
+                                 .arg((attributes & kHfsVolumeJournaledMask) != 0
+                                          ? QStringLiteral("Yes")
+                                          : QStringLiteral("No")));
     if (blockSize >= kMinimumFileSystemBlockSize && isPowerOfTwo(blockSize) && totalBlocks > 0 &&
         freeBlocks <= totalBlocks) {
         detection.total_bytes = static_cast<uint64_t>(blockSize) * totalBlocks;
@@ -666,8 +660,7 @@ std::optional<PartitionFileSystemDetection> detectHfsHeaderAt(
 }
 
 std::optional<PartitionFileSystemDetection> detectHfsPlusFamily(const QByteArray& bytes) {
-    if (const auto directHeader =
-            detectHfsHeaderAt(bytes, kHfsVolumeHeaderOffset, std::nullopt);
+    if (const auto directHeader = detectHfsHeaderAt(bytes, kHfsVolumeHeaderOffset, std::nullopt);
         directHeader.has_value()) {
         return directHeader;
     }
@@ -748,12 +741,10 @@ void appendXfsBlockDetails(PartitionFileSystemDetection* detection,
         !isPowerOfTwo(blockSize) || dataBlocks == 0 || freeDataBlocks > dataBlocks) {
         return;
     }
-    if (const auto totalBytes = checkedProduct(blockSize, dataBlocks);
-        totalBytes.has_value()) {
+    if (const auto totalBytes = checkedProduct(blockSize, dataBlocks); totalBytes.has_value()) {
         detection->total_bytes = *totalBytes;
     }
-    if (const auto freeBytes = checkedProduct(blockSize, freeDataBlocks);
-        freeBytes.has_value()) {
+    if (const auto freeBytes = checkedProduct(blockSize, freeDataBlocks); freeBytes.has_value()) {
         detection->free_bytes = *freeBytes;
     }
     detection->details.append(QStringLiteral("Block size: %1").arg(blockSize));
@@ -787,9 +778,7 @@ QStringList xfsMetadataWarnings(uint32_t blockSize,
 }
 
 void appendXfsIdentityDetails(PartitionFileSystemDetection* detection, const QByteArray& bytes) {
-    appendDetailIfText(detection,
-                       QStringLiteral("UUID"),
-                       uuidField(bytes, kXfsUuidOffset));
+    appendDetailIfText(detection, QStringLiteral("UUID"), uuidField(bytes, kXfsUuidOffset));
     appendDetailIfText(detection,
                        QStringLiteral("File-system name"),
                        fixedAsciiField(bytes, kXfsNameOffset, kXfsNameSize));
@@ -812,8 +801,7 @@ void appendXfsGeometryDetails(PartitionFileSystemDetection* detection, const QBy
     appendDetailIfNonZero(detection, QStringLiteral("Inodes"), inodeCount);
     if (inodeCount > 0) {
         detection->details.append(
-            QStringLiteral("Free inodes: %1").arg(bigEndian64(bytes,
-                                                              kXfsFreeInodeCountOffset)));
+            QStringLiteral("Free inodes: %1").arg(bigEndian64(bytes, kXfsFreeInodeCountOffset)));
     }
 }
 
@@ -822,8 +810,8 @@ std::optional<PartitionFileSystemDetection> detectXfsFamily(const QByteArray& by
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{
-        QStringLiteral("XFS"), PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{QStringLiteral("XFS"),
+                                           PartitionFileSystemDetector::rawSignatureSource()};
     const uint32_t blockSize = bigEndian32(bytes, kXfsBlockSizeOffset);
     const uint64_t dataBlocks = bigEndian64(bytes, kXfsDataBlocksOffset);
     const uint64_t freeDataBlocks = bigEndian64(bytes, kXfsFreeDataBlocksOffset);
@@ -836,13 +824,10 @@ std::optional<PartitionFileSystemDetection> detectXfsFamily(const QByteArray& by
         QStringLiteral("Version flags: %1").arg(hex32(bigEndian16(bytes, kXfsVersionOffset))));
     detection.details.append(
         QStringLiteral("Features2: %1").arg(hex32(bigEndian32(bytes, kXfsFeatures2Offset))));
-    appendMetadataSanity(&detection,
-                         QStringLiteral("XFS superblock geometry is internally consistent"),
-                         xfsMetadataWarnings(blockSize,
-                                             dataBlocks,
-                                             freeDataBlocks,
-                                             sectorSize,
-                                             inodeSize));
+    appendMetadataSanity(
+        &detection,
+        QStringLiteral("XFS superblock geometry is internally consistent"),
+        xfsMetadataWarnings(blockSize, dataBlocks, freeDataBlocks, sectorSize, inodeSize));
     return detection;
 }
 
@@ -857,8 +842,7 @@ QStringList btrfsMetadataWarnings(const BtrfsSuperblockValues& values) {
     if (values.devices < kMinimumDeviceCount) {
         warnings.append(QStringLiteral("Btrfs device count is zero"));
     }
-    if (values.sector_size < kMinimumFileSystemBlockSize ||
-        !isPowerOfTwo(values.sector_size)) {
+    if (values.sector_size < kMinimumFileSystemBlockSize || !isPowerOfTwo(values.sector_size)) {
         warnings.append(QStringLiteral("Btrfs sector size is outside supported sane bounds"));
     }
     if (values.node_size < kMinimumBtrfsTreeBlockSize || !isPowerOfTwo(values.node_size)) {
@@ -876,8 +860,8 @@ std::optional<PartitionFileSystemDetection> detectBtrfsFamily(const QByteArray& 
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{
-        QStringLiteral("Btrfs"), PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{QStringLiteral("Btrfs"),
+                                           PartitionFileSystemDetector::rawSignatureSource()};
     const qsizetype superblock = kBtrfsSuperblockOffset;
     const BtrfsSuperblockValues values{
         .total_bytes = littleEndian64(bytes, superblock + kBtrfsTotalBytesOffset),
@@ -901,9 +885,8 @@ std::optional<PartitionFileSystemDetection> detectBtrfsFamily(const QByteArray& 
     if (!label.isEmpty()) {
         detection.details.append(QStringLiteral("Label: %1").arg(label));
     }
-    detection.details.append(
-        QStringLiteral("Generation: %1")
-            .arg(littleEndian64(bytes, superblock + kBtrfsGenerationOffset)));
+    detection.details.append(QStringLiteral("Generation: %1")
+                                 .arg(littleEndian64(bytes, superblock + kBtrfsGenerationOffset)));
     detection.details.append(QStringLiteral("Devices: %1").arg(values.devices));
     detection.details.append(QStringLiteral("Sector size: %1").arg(values.sector_size));
     detection.details.append(QStringLiteral("Node size: %1").arg(values.node_size));
@@ -930,8 +913,7 @@ void appendApfsSizeDetails(PartitionFileSystemDetection* detection,
         !isPowerOfTwo(blockSize) || blockCount == 0) {
         return;
     }
-    if (const auto totalBytes = checkedProduct(blockSize, blockCount);
-        totalBytes.has_value()) {
+    if (const auto totalBytes = checkedProduct(blockSize, blockCount); totalBytes.has_value()) {
         detection->total_bytes = *totalBytes;
     }
     detection->details.append(QStringLiteral("Block size: %1").arg(blockSize));
@@ -980,43 +962,34 @@ void appendApfsCheckpointWarnings(QStringList* warnings,
                                   uint64_t blockCount) {
     appendWarningIf(
         warnings,
-        apfsCheckpointLengthExceedsArea(checkpoint.descriptor_blocks,
-                                        checkpoint.descriptor_length),
+        apfsCheckpointLengthExceedsArea(checkpoint.descriptor_blocks, checkpoint.descriptor_length),
         QStringLiteral("APFS checkpoint descriptor length exceeds descriptor block count"));
     appendWarningIf(warnings,
-                    apfsCheckpointLengthExceedsArea(checkpoint.data_blocks,
-                                                    checkpoint.data_length),
+                    apfsCheckpointLengthExceedsArea(checkpoint.data_blocks, checkpoint.data_length),
                     QStringLiteral("APFS checkpoint data length exceeds data block count"));
     appendWarningIf(
         warnings,
-        apfsCheckpointIndexOutsideArea(checkpoint.descriptor_blocks,
-                                       checkpoint.descriptor_index),
+        apfsCheckpointIndexOutsideArea(checkpoint.descriptor_blocks, checkpoint.descriptor_index),
         QStringLiteral("APFS checkpoint descriptor start index is outside descriptor area"));
     appendWarningIf(warnings,
-                    apfsCheckpointIndexOutsideArea(checkpoint.data_blocks,
-                                                   checkpoint.data_index),
+                    apfsCheckpointIndexOutsideArea(checkpoint.data_blocks, checkpoint.data_index),
                     QStringLiteral("APFS checkpoint data start index is outside data area"));
     appendWarningIf(
         warnings,
-        apfsCheckpointIndexOutsideArea(checkpoint.descriptor_blocks,
-                                       checkpoint.descriptor_next),
+        apfsCheckpointIndexOutsideArea(checkpoint.descriptor_blocks, checkpoint.descriptor_next),
         QStringLiteral("APFS checkpoint descriptor next index is outside descriptor area"));
     appendWarningIf(warnings,
-                    apfsCheckpointIndexOutsideArea(checkpoint.data_blocks,
-                                                   checkpoint.data_next),
+                    apfsCheckpointIndexOutsideArea(checkpoint.data_blocks, checkpoint.data_next),
                     QStringLiteral("APFS checkpoint data next index is outside data area"));
     appendWarningIf(warnings,
-                    apfsCheckpointRangeExceedsContainer(checkpoint.descriptor_base,
-                                                        checkpoint.descriptor_length,
-                                                        blockCount),
+                    apfsCheckpointRangeExceedsContainer(
+                        checkpoint.descriptor_base, checkpoint.descriptor_length, blockCount),
                     QStringLiteral(
                         "APFS checkpoint descriptor range exceeds container block count"));
-    appendWarningIf(
-        warnings,
-        apfsCheckpointRangeExceedsContainer(checkpoint.data_base,
-                                            checkpoint.data_length,
-                                            blockCount),
-        QStringLiteral("APFS checkpoint data range exceeds container block count"));
+    appendWarningIf(warnings,
+                    apfsCheckpointRangeExceedsContainer(
+                        checkpoint.data_base, checkpoint.data_length, blockCount),
+                    QStringLiteral("APFS checkpoint data range exceeds container block count"));
 }
 
 QStringList apfsMetadataWarnings(uint32_t blockSize,
@@ -1036,11 +1009,10 @@ QStringList apfsMetadataWarnings(uint32_t blockSize,
 
 QStringList apfsVolumeOids(const QByteArray& bytes, uint32_t maxFileSystems) {
     QStringList oids;
-    const uint32_t boundedCount =
-        std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
+    const uint32_t boundedCount = std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
     for (uint32_t index = 0; index < boundedCount; ++index) {
-        const qsizetype offset =
-            kApfsFileSystemOidArrayOffset + static_cast<qsizetype>(index) * kUint64Size;
+        const qsizetype offset = kApfsFileSystemOidArrayOffset +
+                                 static_cast<qsizetype>(index) * kUint64Size;
         const uint64_t oid = littleEndian64(bytes, offset);
         if (oid != 0) {
             oids.append(QStringLiteral("%1:%2").arg(index).arg(oid));
@@ -1070,15 +1042,13 @@ void appendApfsContainerObjectReferences(std::vector<ApfsObjectReference>* refer
                               QStringLiteral("container reaper OID"),
                               littleEndian64(bytes, kApfsReaperOidOffset));
 
-    const uint32_t boundedCount =
-        std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
+    const uint32_t boundedCount = std::min<uint32_t>(maxFileSystems, kApfsFileSystemOidCount);
     for (uint32_t index = 0; index < boundedCount; ++index) {
-        const qsizetype offset =
-            kApfsFileSystemOidArrayOffset + static_cast<qsizetype>(index) * kUint64Size;
-        appendApfsObjectReference(
-            references,
-            QStringLiteral("volume OID slot %1").arg(index),
-            littleEndian64(bytes, offset));
+        const qsizetype offset = kApfsFileSystemOidArrayOffset +
+                                 static_cast<qsizetype>(index) * kUint64Size;
+        appendApfsObjectReference(references,
+                                  QStringLiteral("volume OID slot %1").arg(index),
+                                  littleEndian64(bytes, offset));
     }
 }
 
@@ -1087,14 +1057,12 @@ void appendApfsVolumeCandidateObjectReferences(std::vector<ApfsObjectReference>*
                                                qsizetype blockOffset,
                                                uint32_t blockSize) {
     const QString block = QString::number(static_cast<qulonglong>(blockOffset / blockSize));
-    appendApfsObjectReference(
-        references,
-        QStringLiteral("volume candidate block %1 object map OID").arg(block),
-        littleEndian64(bytes, blockOffset + kApfsVolumeObjectMapOidOffset));
-    appendApfsObjectReference(
-        references,
-        QStringLiteral("volume candidate block %1 root tree OID").arg(block),
-        littleEndian64(bytes, blockOffset + kApfsVolumeRootTreeOidOffset));
+    appendApfsObjectReference(references,
+                              QStringLiteral("volume candidate block %1 object map OID").arg(block),
+                              littleEndian64(bytes, blockOffset + kApfsVolumeObjectMapOidOffset));
+    appendApfsObjectReference(references,
+                              QStringLiteral("volume candidate block %1 root tree OID").arg(block),
+                              littleEndian64(bytes, blockOffset + kApfsVolumeRootTreeOidOffset));
     appendApfsObjectReference(
         references,
         QStringLiteral("volume candidate block %1 extentref tree OID").arg(block),
@@ -1106,8 +1074,8 @@ void appendApfsVolumeCandidateObjectReferences(std::vector<ApfsObjectReference>*
 }
 
 std::vector<ApfsObjectReference> apfsObjectReferences(const QByteArray& bytes,
-                                                     uint32_t blockSize,
-                                                     uint32_t maxFileSystems) {
+                                                      uint32_t blockSize,
+                                                      uint32_t maxFileSystems) {
     std::vector<ApfsObjectReference> references;
     appendApfsContainerObjectReferences(&references, bytes, maxFileSystems);
     if (blockSize < kMinimumApfsBlockSize || blockSize > kMaximumApfsBlockSize ||
@@ -1116,17 +1084,11 @@ std::vector<ApfsObjectReference> apfsObjectReferences(const QByteArray& bytes,
     }
 
     const qsizetype step = static_cast<qsizetype>(blockSize);
-    for (qsizetype blockOffset = step;
-         blockOffset + kApfsVolumeMinimumBytes <= bytes.size();
+    for (qsizetype blockOffset = step; blockOffset + kApfsVolumeMinimumBytes <= bytes.size();
          blockOffset += step) {
-        if (matchesBytes(bytes,
-                         blockOffset + kApfsVolumeMagicOffset,
-                         "APSB",
-                         kApfsVolumeMagicSize)) {
-            appendApfsVolumeCandidateObjectReferences(&references,
-                                                      bytes,
-                                                      blockOffset,
-                                                      blockSize);
+        if (matchesBytes(
+                bytes, blockOffset + kApfsVolumeMagicOffset, "APSB", kApfsVolumeMagicSize)) {
+            appendApfsVolumeCandidateObjectReferences(&references, bytes, blockOffset, blockSize);
         }
     }
     return references;
@@ -1153,8 +1115,8 @@ QString apfsReferencedObjectHeaderSummary(const QByteArray& bytes,
                      .arg(static_cast<qulonglong>(blockOffset / blockSize)));
     parts.append(QStringLiteral("labels %1").arg(labels.join(QStringLiteral(" / "))));
     parts.append(QStringLiteral("OID %1").arg(oid));
-    parts.append(QStringLiteral("XID %1")
-                     .arg(littleEndian64(bytes, blockOffset + kApfsObjectXidOffset)));
+    parts.append(
+        QStringLiteral("XID %1").arg(littleEndian64(bytes, blockOffset + kApfsObjectXidOffset)));
     parts.append(QStringLiteral("object type %1")
                      .arg(hex32(littleEndian32(bytes, blockOffset + kApfsObjectTypeOffset))));
     parts.append(QStringLiteral("object subtype %1")
@@ -1192,28 +1154,25 @@ QString apfsObjectMapDetailSummary(const QByteArray& bytes,
     appendSummaryPartIfNonZero(&parts,
                                QStringLiteral("tree OID"),
                                littleEndian64(bytes, blockOffset + kApfsOmapTreeOidOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("snapshot tree OID"),
-        littleEndian64(bytes, blockOffset + kApfsOmapSnapshotTreeOidOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("most recent snapshot XID"),
-        littleEndian64(bytes, blockOffset + kApfsOmapMostRecentSnapshotOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("pending revert min XID"),
-        littleEndian64(bytes, blockOffset + kApfsOmapPendingRevertMinOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("pending revert max XID"),
-        littleEndian64(bytes, blockOffset + kApfsOmapPendingRevertMaxOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("snapshot tree OID"),
+                               littleEndian64(bytes, blockOffset + kApfsOmapSnapshotTreeOidOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("most recent snapshot XID"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsOmapMostRecentSnapshotOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("pending revert min XID"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsOmapPendingRevertMinOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("pending revert max XID"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsOmapPendingRevertMaxOffset));
     return parts.join(QStringLiteral(", "));
 }
 
-bool apfsBlockHasObjectType(const QByteArray& bytes,
-                            qsizetype blockOffset,
-                            uint32_t objectType) {
+bool apfsBlockHasObjectType(const QByteArray& bytes, qsizetype blockOffset, uint32_t objectType) {
     if (!hasBytes(bytes, blockOffset, kApfsObjectSubtypeOffset + kUint32Size)) {
         return false;
     }
@@ -1240,11 +1199,10 @@ struct ApfsSpaceManagerContext {
 };
 
 QStringList apfsSpaceManagerWarnings(const ApfsSpaceManagerContext& context,
-                                      const ApfsSpaceManagerCandidate& candidate) {
+                                     const ApfsSpaceManagerCandidate& candidate) {
     QStringList warnings;
     appendWarningIf(&warnings,
-                    candidate.blockSize != 0 &&
-                        candidate.blockSize != context.containerBlockSize,
+                    candidate.blockSize != 0 && candidate.blockSize != context.containerBlockSize,
                     QStringLiteral("APFS space manager block size differs from container"));
     appendWarningIf(&warnings,
                     candidate.mainBlockCount == 0,
@@ -1259,21 +1217,17 @@ QStringList apfsSpaceManagerWarnings(const ApfsSpaceManagerContext& context,
                     candidate.chunkCount == 0,
                     QStringLiteral("APFS space manager chunk count is zero"));
     if (candidate.blocksPerChunk != 0 && candidate.chunkCount != 0) {
-        const auto coveredBlocks =
-            checkedProduct(candidate.blocksPerChunk, candidate.chunkCount);
+        const auto coveredBlocks = checkedProduct(candidate.blocksPerChunk, candidate.chunkCount);
         appendWarningIf(&warnings,
-                        !coveredBlocks.has_value() ||
-                            candidate.mainBlockCount > *coveredBlocks,
+                        !coveredBlocks.has_value() || candidate.mainBlockCount > *coveredBlocks,
                         QStringLiteral(
                             "APFS space manager chunk count does not cover main blocks"));
     }
     if (candidate.chunksPerCib != 0 && candidate.cibCount != 0) {
         const auto coveredChunks = checkedProduct(candidate.chunksPerCib, candidate.cibCount);
         appendWarningIf(&warnings,
-                        !coveredChunks.has_value() ||
-                            candidate.chunkCount > *coveredChunks,
-                        QStringLiteral(
-                            "APFS space manager CIB count does not cover chunks"));
+                        !coveredChunks.has_value() || candidate.chunkCount > *coveredChunks,
+                        QStringLiteral("APFS space manager CIB count does not cover chunks"));
     }
     appendWarningIf(&warnings,
                     candidate.freeBlocks > candidate.mainBlockCount,
@@ -1288,9 +1242,9 @@ void appendApfsSpaceManagerSuccess(PartitionFileSystemDetection* detection,
                                    const ApfsSpaceManagerContext& context,
                                    const ApfsSpaceManagerCandidate& candidate) {
     detection->free_bytes = *candidate.freeBytes;
-    detection->details.append(QStringLiteral("APFS space manager block: %1")
-                                  .arg(static_cast<qulonglong>(
-                                      candidate.blockOffset / context.containerBlockSize)));
+    detection->details.append(
+        QStringLiteral("APFS space manager block: %1")
+            .arg(static_cast<qulonglong>(candidate.blockOffset / context.containerBlockSize)));
     detection->details.append(QStringLiteral("APFS space manager OID: %1").arg(candidate.oid));
     detection->details.append(
         QStringLiteral("APFS space manager block size: %1")
@@ -1322,31 +1276,23 @@ std::optional<ApfsSpaceManagerCandidate> apfsSpaceManagerCandidateAt(const QByte
     }
 
     candidate.blockSize = littleEndian32(bytes, blockOffset + kApfsSpacemanBlockSizeOffset);
-    candidate.blocksPerChunk =
-        littleEndian32(bytes, blockOffset + kApfsSpacemanBlocksPerChunkOffset);
+    candidate.blocksPerChunk = littleEndian32(bytes,
+                                              blockOffset + kApfsSpacemanBlocksPerChunkOffset);
     candidate.chunksPerCib = littleEndian32(bytes, blockOffset + kApfsSpacemanChunksPerCibOffset);
-    candidate.mainBlockCount =
-        littleEndian64(bytes,
-                       blockOffset + kApfsSpacemanMainDeviceOffset +
-                           kApfsSpacemanDeviceBlockCountOffset);
-    candidate.chunkCount =
-        littleEndian64(bytes,
-                       blockOffset + kApfsSpacemanMainDeviceOffset +
-                           kApfsSpacemanDeviceChunkCountOffset);
-    candidate.cibCount =
-        littleEndian32(bytes,
-                       blockOffset + kApfsSpacemanMainDeviceOffset +
-                           kApfsSpacemanDeviceCibCountOffset);
-    candidate.freeBlocks = littleEndian64(bytes,
-                                          blockOffset + kApfsSpacemanMainDeviceOffset +
-                                              kApfsSpacemanDeviceFreeCountOffset);
+    candidate.mainBlockCount = littleEndian64(
+        bytes, blockOffset + kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceBlockCountOffset);
+    candidate.chunkCount = littleEndian64(
+        bytes, blockOffset + kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceChunkCountOffset);
+    candidate.cibCount = littleEndian32(
+        bytes, blockOffset + kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset);
+    candidate.freeBlocks = littleEndian64(
+        bytes, blockOffset + kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceFreeCountOffset);
     candidate.freeBytes = checkedProduct(blockSize, candidate.freeBlocks);
     return candidate;
 }
 
-std::optional<ApfsSpaceManagerCandidate> findApfsSpaceManagerCandidate(
-    const QByteArray& bytes,
-    uint32_t blockSize) {
+std::optional<ApfsSpaceManagerCandidate> findApfsSpaceManagerCandidate(const QByteArray& bytes,
+                                                                       uint32_t blockSize) {
     const uint64_t expectedOid = littleEndian64(bytes, kApfsSpacemanOidOffset);
     const qsizetype step = static_cast<qsizetype>(blockSize);
     for (qsizetype blockOffset = 0; blockOffset + kApfsSpacemanMinimumBytes <= bytes.size();
@@ -1376,9 +1322,9 @@ bool appendApfsSpaceManagerDetails(PartitionFileSystemDetection* detection,
     const ApfsSpaceManagerContext context{blockSize, blockCount};
     const QStringList warnings = apfsSpaceManagerWarnings(context, *candidate);
     if (!warnings.isEmpty()) {
-        detection->details.append(QStringLiteral("APFS space manager block %1 ignored")
-                                      .arg(static_cast<qulonglong>(
-                                          candidate->blockOffset / context.containerBlockSize)));
+        detection->details.append(
+            QStringLiteral("APFS space manager block %1 ignored")
+                .arg(static_cast<qulonglong>(candidate->blockOffset / context.containerBlockSize)));
         appendMetadataSanity(detection,
                              QStringLiteral("APFS space manager counters are usable"),
                              warnings);
@@ -1487,9 +1433,7 @@ struct ApfsSupplementalInput {
 };
 
 std::optional<ApfsSpaceManagerCandidate> apfsSpaceManagerCandidateAtDeviceBlock(
-    const ApfsSupplementalReadContext& context,
-    uint64_t blockNumber,
-    QString* errorMessage) {
+    const ApfsSupplementalReadContext& context, uint64_t blockNumber, QString* errorMessage) {
     const auto absoluteOffset =
         apfsBlockByteOffset(context.partitionOffsetBytes, blockNumber, context.blockSize);
     if (!absoluteOffset.has_value()) {
@@ -1497,11 +1441,8 @@ std::optional<ApfsSpaceManagerCandidate> apfsSpaceManagerCandidateAtDeviceBlock(
         return std::nullopt;
     }
 
-    const auto blockBytes =
-        readExactDeviceBytes(context.device,
-                             *absoluteOffset,
-                             static_cast<qsizetype>(context.blockSize),
-                             errorMessage);
+    const auto blockBytes = readExactDeviceBytes(
+        context.device, *absoluteOffset, static_cast<qsizetype>(context.blockSize), errorMessage);
     if (!blockBytes.has_value()) {
         return std::nullopt;
     }
@@ -1560,9 +1501,9 @@ bool appendApfsSupplementalCandidate(PartitionFileSystemDetection* detection,
     const ApfsSpaceManagerContext spaceContext{context.blockSize, context.blockCount};
     const QStringList warnings = apfsSpaceManagerWarnings(spaceContext, candidate);
     if (!warnings.isEmpty()) {
-        detection->details.append(QStringLiteral("APFS supplemental space manager block %1 ignored")
-                                      .arg(static_cast<qulonglong>(
-                                          candidate.blockOffset / context.blockSize)));
+        detection->details.append(
+            QStringLiteral("APFS supplemental space manager block %1 ignored")
+                .arg(static_cast<qulonglong>(candidate.blockOffset / context.blockSize)));
         appendMetadataSanity(detection,
                              QStringLiteral("APFS supplemental space manager counters are usable"),
                              warnings);
@@ -1578,14 +1519,13 @@ bool appendApfsSupplementalCandidate(PartitionFileSystemDetection* detection,
 bool scanApfsSupplementalSpaceManager(PartitionFileSystemDetection* detection,
                                       const ApfsSupplementalReadContext& context,
                                       QString* errorMessage) {
-    const uint32_t scanBlocks =
-        std::min<uint32_t>(context.checkpoint.data_blocks, kApfsSupplementalCheckpointScanBlocks);
+    const uint32_t scanBlocks = std::min<uint32_t>(context.checkpoint.data_blocks,
+                                                   kApfsSupplementalCheckpointScanBlocks);
     for (uint32_t delta = 0; delta < scanBlocks; ++delta) {
         const auto blockNumber = checkedSum(context.checkpoint.data_base, delta);
-        if (!blockNumber.has_value() ||
-            !apfsBlockInsidePartition(*blockNumber,
-                                      context.blockSize,
-                                      context.partitionSizeBytes)) {
+        if (!blockNumber.has_value() || !apfsBlockInsidePartition(*blockNumber,
+                                                                  context.blockSize,
+                                                                  context.partitionSizeBytes)) {
             continue;
         }
         QString readError;
@@ -1608,14 +1548,9 @@ bool appendApfsSupplementalSpaceManagerDetails(PartitionFileSystemDetection* det
         return false;
     }
 
-    const auto context =
-        apfsSupplementalReadContext(*input.probeBytes,
-                                    input.device,
-                                    input.partitionOffsetBytes,
-                                    input.partitionSizeBytes);
-    return context.has_value() ? scanApfsSupplementalSpaceManager(detection,
-                                                                 *context,
-                                                                 errorMessage)
+    const auto context = apfsSupplementalReadContext(
+        *input.probeBytes, input.device, input.partitionOffsetBytes, input.partitionSizeBytes);
+    return context.has_value() ? scanApfsSupplementalSpaceManager(detection, *context, errorMessage)
                                : false;
 }
 
@@ -1623,8 +1558,8 @@ bool apfsBlockIsBtreeObject(const QByteArray& bytes, qsizetype blockOffset) {
     if (!hasBytes(bytes, blockOffset, kApfsObjectSubtypeOffset + kUint32Size)) {
         return false;
     }
-    const uint32_t type =
-        littleEndian32(bytes, blockOffset + kApfsObjectTypeOffset) & kApfsObjectTypeMask;
+    const uint32_t type = littleEndian32(bytes, blockOffset + kApfsObjectTypeOffset) &
+                          kApfsObjectTypeMask;
     return type == kApfsObjectTypeBtreeRoot || type == kApfsObjectTypeBtreeNode;
 }
 
@@ -1641,9 +1576,7 @@ void appendApfsReferenceFromBlockField(std::vector<ApfsObjectReference>* referen
                                        qsizetype blockOffset,
                                        qsizetype fieldOffset,
                                        const QString& label) {
-    appendApfsObjectReference(references,
-                              label,
-                              littleEndian64(bytes, blockOffset + fieldOffset));
+    appendApfsObjectReference(references, label, littleEndian64(bytes, blockOffset + fieldOffset));
 }
 
 void appendApfsVisibleObjectMapTreeReferences(std::vector<ApfsObjectReference>* references,
@@ -1682,8 +1615,7 @@ void appendApfsObjectMapDetailIfVisible(QStringList* objectMapSummaries,
                                         qsizetype blockOffset,
                                         uint32_t blockSize,
                                         const QStringList& labels) {
-    if (!apfsObjectMapLabels(labels) ||
-        objectMapSummaries->size() >= kMaxApfsObjectMapDetails) {
+    if (!apfsObjectMapLabels(labels) || objectMapSummaries->size() >= kMaxApfsObjectMapDetails) {
         return;
     }
     const QString summary = apfsObjectMapDetailSummary(bytes, blockOffset, blockSize, labels);
@@ -1730,29 +1662,21 @@ void appendApfsBtreeInfoIfRoot(QStringList* parts,
     }
 
     parts->append(QStringLiteral("tree flags %1")
-                      .arg(hex32(littleEndian32(bytes,
-                                                infoOffset + kApfsBtreeInfoFlagsOffset))));
+                      .arg(hex32(littleEndian32(bytes, infoOffset + kApfsBtreeInfoFlagsOffset))));
     parts->append(QStringLiteral("tree node size %1")
-                      .arg(littleEndian32(bytes,
-                                          infoOffset + kApfsBtreeInfoNodeSizeOffset)));
+                      .arg(littleEndian32(bytes, infoOffset + kApfsBtreeInfoNodeSizeOffset)));
     parts->append(QStringLiteral("tree key size %1")
-                      .arg(littleEndian32(bytes,
-                                          infoOffset + kApfsBtreeInfoKeySizeOffset)));
+                      .arg(littleEndian32(bytes, infoOffset + kApfsBtreeInfoKeySizeOffset)));
     parts->append(QStringLiteral("tree value size %1")
-                      .arg(littleEndian32(bytes,
-                                          infoOffset + kApfsBtreeInfoValueSizeOffset)));
+                      .arg(littleEndian32(bytes, infoOffset + kApfsBtreeInfoValueSizeOffset)));
     parts->append(QStringLiteral("tree longest key %1")
-                      .arg(littleEndian32(bytes,
-                                          infoOffset + kApfsBtreeInfoLongestKeyOffset)));
+                      .arg(littleEndian32(bytes, infoOffset + kApfsBtreeInfoLongestKeyOffset)));
     parts->append(QStringLiteral("tree longest value %1")
-                      .arg(littleEndian32(bytes,
-                                          infoOffset + kApfsBtreeInfoLongestValueOffset)));
+                      .arg(littleEndian32(bytes, infoOffset + kApfsBtreeInfoLongestValueOffset)));
     parts->append(QStringLiteral("tree key count %1")
-                      .arg(littleEndian64(bytes,
-                                          infoOffset + kApfsBtreeInfoKeyCountOffset)));
+                      .arg(littleEndian64(bytes, infoOffset + kApfsBtreeInfoKeyCountOffset)));
     parts->append(QStringLiteral("tree node count %1")
-                      .arg(littleEndian64(bytes,
-                                          infoOffset + kApfsBtreeInfoNodeCountOffset)));
+                      .arg(littleEndian64(bytes, infoOffset + kApfsBtreeInfoNodeCountOffset)));
 }
 
 QString apfsBtreeNodeDetailSummary(const QByteArray& bytes,
@@ -1764,40 +1688,37 @@ QString apfsBtreeNodeDetailSummary(const QByteArray& bytes,
     }
 
     QStringList parts;
-    const uint16_t nodeFlags =
-        littleEndian16(bytes, blockOffset + kApfsBtreeNodeFlagsOffset);
+    const uint16_t nodeFlags = littleEndian16(bytes, blockOffset + kApfsBtreeNodeFlagsOffset);
     const QStringList flagNames = apfsBtreeNodeFlagNames(nodeFlags);
     parts.append(QStringLiteral("APFS B-tree node detail block %1")
                      .arg(static_cast<qulonglong>(blockOffset / blockSize)));
     parts.append(QStringLiteral("labels %1").arg(labels.join(QStringLiteral(" / "))));
-    parts.append(QStringLiteral("OID %1")
-                     .arg(littleEndian64(bytes, blockOffset + kApfsObjectOidOffset)));
+    parts.append(
+        QStringLiteral("OID %1").arg(littleEndian64(bytes, blockOffset + kApfsObjectOidOffset)));
     parts.append(QStringLiteral("flags %1").arg(hex16(nodeFlags)));
     if (!flagNames.isEmpty()) {
         parts.append(QStringLiteral("flag names %1").arg(flagNames.join(QStringLiteral("/"))));
     }
     parts.append(QStringLiteral("level %1")
                      .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeLevelOffset)));
-    parts.append(QStringLiteral("keys %1")
-                     .arg(littleEndian32(bytes, blockOffset + kApfsBtreeNodeKeyCountOffset)));
-    parts.append(QStringLiteral("table space %1:%2")
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeTableSpaceOffsetOffset))
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeTableSpaceLengthOffset)));
-    parts.append(QStringLiteral("free space %1:%2")
-                     .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeFreeSpaceOffsetOffset))
-                     .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeFreeSpaceLengthOffset)));
-    parts.append(QStringLiteral("key free list %1:%2")
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeKeyFreeListOffsetOffset))
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeKeyFreeListLengthOffset)));
-    parts.append(QStringLiteral("value free list %1:%2")
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeValueFreeListOffsetOffset))
-                     .arg(littleEndian16(bytes,
-                                         blockOffset + kApfsBtreeNodeValueFreeListLengthOffset)));
+    parts.append(QStringLiteral("keys %1").arg(
+        littleEndian32(bytes, blockOffset + kApfsBtreeNodeKeyCountOffset)));
+    parts.append(
+        QStringLiteral("table space %1:%2")
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeTableSpaceOffsetOffset))
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeTableSpaceLengthOffset)));
+    parts.append(
+        QStringLiteral("free space %1:%2")
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeFreeSpaceOffsetOffset))
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeFreeSpaceLengthOffset)));
+    parts.append(
+        QStringLiteral("key free list %1:%2")
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeKeyFreeListOffsetOffset))
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeKeyFreeListLengthOffset)));
+    parts.append(
+        QStringLiteral("value free list %1:%2")
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeValueFreeListOffsetOffset))
+            .arg(littleEndian16(bytes, blockOffset + kApfsBtreeNodeValueFreeListLengthOffset)));
     appendApfsBtreeInfoIfRoot(&parts, bytes, blockOffset, blockSize, nodeFlags);
     return parts.join(QStringLiteral(", "));
 }
@@ -1825,58 +1746,50 @@ void appendApfsBtreeNodeDetails(PartitionFileSystemDetection* detection,
         summaries.append(apfsBtreeNodeDetailSummary(bytes, blockOffset, blockSize, labels));
     }
     if (!summaries.isEmpty()) {
-        detection->details.append(QStringLiteral("APFS B-tree node details in probe window: %1")
-                                      .arg(summaries.size()));
+        detection->details.append(
+            QStringLiteral("APFS B-tree node details in probe window: %1").arg(summaries.size()));
         detection->details.append(summaries);
     }
 }
 
-void collectApfsReferencedObjectHeaderDetails(
-    QStringList* summaries,
-    QStringList* objectMapSummaries,
-    const QByteArray& bytes,
-    uint32_t blockSize,
-    const std::vector<ApfsObjectReference>& references) {
+void collectApfsReferencedObjectHeaderDetails(QStringList* summaries,
+                                              QStringList* objectMapSummaries,
+                                              const QByteArray& bytes,
+                                              uint32_t blockSize,
+                                              const std::vector<ApfsObjectReference>& references) {
     const qsizetype step = static_cast<qsizetype>(blockSize);
-    for (qsizetype blockOffset = 0; blockOffset + kApfsObjectSubtypeOffset + kUint32Size <=
-         bytes.size(); blockOffset += step) {
+    for (qsizetype blockOffset = 0;
+         blockOffset + kApfsObjectSubtypeOffset + kUint32Size <= bytes.size();
+         blockOffset += step) {
         const uint64_t oid = littleEndian64(bytes, blockOffset + kApfsObjectOidOffset);
         const QStringList labels = apfsLabelsForObjectOid(references, oid);
         if (!labels.isEmpty() && summaries->size() < kMaxApfsReferencedObjectHeaders) {
             summaries->append(
                 apfsReferencedObjectHeaderSummary(bytes, blockOffset, blockSize, labels, oid));
         }
-        appendApfsObjectMapDetailIfVisible(objectMapSummaries,
-                                           bytes,
-                                           blockOffset,
-                                           blockSize,
-                                           labels);
+        appendApfsObjectMapDetailIfVisible(
+            objectMapSummaries, bytes, blockOffset, blockSize, labels);
     }
 }
 
-void appendApfsReferencedObjectHeaderDetails(
-    PartitionFileSystemDetection* detection,
-    const QByteArray& bytes,
-    uint32_t blockSize,
-    const std::vector<ApfsObjectReference>& references) {
+void appendApfsReferencedObjectHeaderDetails(PartitionFileSystemDetection* detection,
+                                             const QByteArray& bytes,
+                                             uint32_t blockSize,
+                                             const std::vector<ApfsObjectReference>& references) {
     if (references.empty() || !apfsProbeBlockScanSupported(bytes, blockSize)) {
         return;
     }
 
     QStringList summaries;
     QStringList objectMapSummaries;
-    collectApfsReferencedObjectHeaderDetails(&summaries,
-                                             &objectMapSummaries,
-                                             bytes,
-                                             blockSize,
-                                             references);
+    collectApfsReferencedObjectHeaderDetails(
+        &summaries, &objectMapSummaries, bytes, blockSize, references);
     if (summaries.isEmpty()) {
         return;
     }
 
     detection->details.append(
-        QStringLiteral("APFS referenced object headers in probe window: %1")
-            .arg(summaries.size()));
+        QStringLiteral("APFS referenced object headers in probe window: %1").arg(summaries.size()));
     detection->details.append(summaries);
     if (!objectMapSummaries.isEmpty()) {
         detection->details.append(QStringLiteral("APFS object map details in probe window: %1")
@@ -1893,12 +1806,12 @@ void appendApfsCheckpointDetails(PartitionFileSystemDetection* detection,
     appendDetailIfNonZero(detection,
                           QStringLiteral("Checkpoint data base block"),
                           checkpoint.data_base);
-    detection->details.append(QStringLiteral("Checkpoint descriptor next index: %1")
-                                  .arg(checkpoint.descriptor_next));
+    detection->details.append(
+        QStringLiteral("Checkpoint descriptor next index: %1").arg(checkpoint.descriptor_next));
     detection->details.append(
         QStringLiteral("Checkpoint data next index: %1").arg(checkpoint.data_next));
-    detection->details.append(QStringLiteral("Checkpoint descriptor start index: %1")
-                                  .arg(checkpoint.descriptor_index));
+    detection->details.append(
+        QStringLiteral("Checkpoint descriptor start index: %1").arg(checkpoint.descriptor_index));
     detection->details.append(
         QStringLiteral("Checkpoint data start index: %1").arg(checkpoint.data_index));
     appendDetailIfNonZero(detection,
@@ -1925,8 +1838,8 @@ void appendApfsObjectDetails(PartitionFileSystemDetection* detection,
     const QStringList volumeOids = apfsVolumeOids(bytes, maxFileSystems);
     detection->details.append(QStringLiteral("Volume OID slots used: %1").arg(volumeOids.size()));
     if (!volumeOids.isEmpty()) {
-        detection->details.append(QStringLiteral("Volume OIDs: %1")
-                                      .arg(volumeOids.join(QStringLiteral(", "))));
+        detection->details.append(
+            QStringLiteral("Volume OIDs: %1").arg(volumeOids.join(QStringLiteral(", "))));
     }
 }
 
@@ -1939,41 +1852,38 @@ QString apfsVolumeCandidateSummary(const QByteArray& bytes,
     parts.append(QStringLiteral("index %1")
                      .arg(littleEndian32(bytes, blockOffset + kApfsVolumeIndexOffset)));
 
-    appendSummaryPartIfText(&parts,
-                            QStringLiteral("name"),
-                            fixedUtf8Field(bytes,
-                                           blockOffset + kApfsVolumeNameOffset,
-                                           kApfsVolumeNameSize));
+    appendSummaryPartIfText(
+        &parts,
+        QStringLiteral("name"),
+        fixedUtf8Field(bytes, blockOffset + kApfsVolumeNameOffset, kApfsVolumeNameSize));
     appendSummaryPartIfText(&parts,
                             QStringLiteral("uuid"),
                             uuidField(bytes, blockOffset + kApfsVolumeUuidOffset));
     appendSummaryPartIfNonZero(&parts,
                                QStringLiteral("role"),
                                littleEndian16(bytes, blockOffset + kApfsVolumeRoleOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("reserve blocks"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeReserveBlockCountOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("quota blocks"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeQuotaBlockCountOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("allocated blocks"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeAllocatedBlockCountOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("volume object map OID"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeObjectMapOidOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("root tree OID"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeRootTreeOidOffset));
-    appendSummaryPartIfNonZero(
-        &parts,
-        QStringLiteral("extentref tree OID"),
-        littleEndian64(bytes, blockOffset + kApfsVolumeExtentrefTreeOidOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("reserve blocks"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsVolumeReserveBlockCountOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("quota blocks"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsVolumeQuotaBlockCountOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("allocated blocks"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsVolumeAllocatedBlockCountOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("volume object map OID"),
+                               littleEndian64(bytes, blockOffset + kApfsVolumeObjectMapOidOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("root tree OID"),
+                               littleEndian64(bytes, blockOffset + kApfsVolumeRootTreeOidOffset));
+    appendSummaryPartIfNonZero(&parts,
+                               QStringLiteral("extentref tree OID"),
+                               littleEndian64(bytes,
+                                              blockOffset + kApfsVolumeExtentrefTreeOidOffset));
     appendSummaryPartIfNonZero(
         &parts,
         QStringLiteral("snapshot metadata tree OID"),
@@ -1992,13 +1902,10 @@ void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
     const qsizetype step = static_cast<qsizetype>(blockSize);
     int candidateCount = 0;
     QStringList candidateSummaries;
-    for (qsizetype blockOffset = step;
-         blockOffset + kApfsVolumeMinimumBytes <= bytes.size();
+    for (qsizetype blockOffset = step; blockOffset + kApfsVolumeMinimumBytes <= bytes.size();
          blockOffset += step) {
-        if (!matchesBytes(bytes,
-                          blockOffset + kApfsVolumeMagicOffset,
-                          "APSB",
-                          kApfsVolumeMagicSize)) {
+        if (!matchesBytes(
+                bytes, blockOffset + kApfsVolumeMagicOffset, "APSB", kApfsVolumeMagicSize)) {
             continue;
         }
         ++candidateCount;
@@ -2026,8 +1933,8 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{
-        QStringLiteral("APFS"), PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{QStringLiteral("APFS"),
+                                           PartitionFileSystemDetector::rawSignatureSource()};
     const uint32_t blockSize = littleEndian32(bytes, kApfsBlockSizeOffset);
     const uint64_t blockCount = littleEndian64(bytes, kApfsBlockCountOffset);
     const ApfsCheckpointValues checkpoint = apfsCheckpointValues(bytes);
@@ -2037,8 +1944,7 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
                        QStringLiteral("Container UUID"),
                        uuidField(bytes, kApfsUuidOffset));
     detection.details.append(
-        QStringLiteral("Features: %1").arg(hex64(littleEndian64(bytes,
-                                                                 kApfsFeaturesOffset))));
+        QStringLiteral("Features: %1").arg(hex64(littleEndian64(bytes, kApfsFeaturesOffset))));
     detection.details.append(
         QStringLiteral("Read-only compatible features: %1")
             .arg(hex64(littleEndian64(bytes, kApfsReadOnlyCompatibleFeaturesOffset))));
@@ -2063,14 +1969,9 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
     appendApfsVolumeCandidateDetails(&detection, bytes, blockSize);
     auto objectReferences = apfsObjectReferences(bytes, blockSize, maxFileSystems);
     appendApfsVisibleObjectMapTreeReferences(&objectReferences, bytes, blockSize);
-    appendApfsReferencedObjectHeaderDetails(&detection,
-                                            bytes,
-                                            blockSize,
-                                            objectReferences);
+    appendApfsReferencedObjectHeaderDetails(&detection, bytes, blockSize, objectReferences);
     appendApfsBtreeNodeDetails(&detection, bytes, blockSize, objectReferences);
-    appendDetailIfNonZero(&detection,
-                          QStringLiteral("Max file systems"),
-                          maxFileSystems);
+    appendDetailIfNonZero(&detection, QStringLiteral("Max file systems"), maxFileSystems);
     appendMetadataSanity(&detection,
                          QStringLiteral("APFS container block geometry is internally consistent"),
                          apfsMetadataWarnings(blockSize, blockCount, checkpoint));
@@ -2098,8 +1999,8 @@ std::optional<PartitionFileSystemDetection> detectSwapFamily(const QByteArray& b
     detection->details.append(QStringLiteral("Signature: %1").arg(signature->signature));
     detection->details.append(QStringLiteral("Detected page size: %1").arg(signature->page_size));
     if (signature->signature != QStringLiteral("SWAPSPACE2")) {
-        detection->details.append(QStringLiteral(
-            "Legacy swap signature does not expose modern label/UUID metadata"));
+        detection->details.append(
+            QStringLiteral("Legacy swap signature does not expose modern label/UUID metadata"));
         return detection;
     }
     if (!hasBytes(bytes, kSwapInfoOffset, kSwapLabelOffset + kSwapLabelSize - kSwapInfoOffset)) {
@@ -2117,9 +2018,8 @@ std::optional<PartitionFileSystemDetection> detectSwapFamily(const QByteArray& b
                        QStringLiteral("Volume label"),
                        fixedAsciiField(bytes, kSwapLabelOffset, kSwapLabelSize));
     if (lastPage > 0) {
-        const auto totalBytes =
-            checkedProduct(static_cast<uint64_t>(lastPage) + 1ULL,
-                           static_cast<uint64_t>(signature->page_size));
+        const auto totalBytes = checkedProduct(static_cast<uint64_t>(lastPage) + 1ULL,
+                                               static_cast<uint64_t>(signature->page_size));
         if (totalBytes.has_value()) {
             detection->total_bytes = *totalBytes;
             detection->details.append(QStringLiteral("Total swap bytes: %1").arg(*totalBytes));
@@ -2236,11 +2136,10 @@ qsizetype PartitionFileSystemDetector::probeReadLimit(uint64_t partition_size_by
     if (partition_size_bytes == 0) {
         return kMaxProbeBytes;
     }
-    return std::min<qsizetype>(
-        kMaxProbeBytes,
-        static_cast<qsizetype>(
-            std::min<uint64_t>(partition_size_bytes,
-                               static_cast<uint64_t>(std::numeric_limits<qsizetype>::max()))));
+    return std::min<qsizetype>(kMaxProbeBytes,
+                               static_cast<qsizetype>(std::min<uint64_t>(
+                                   partition_size_bytes,
+                                   static_cast<uint64_t>(std::numeric_limits<qsizetype>::max()))));
 }
 
 std::optional<QByteArray> PartitionFileSystemDetector::readProbeBytesFromDevicePath(
@@ -2257,8 +2156,7 @@ std::optional<QByteArray> PartitionFileSystemDetector::readProbeBytesFromDeviceP
     QString openError;
     auto device = openFileOrRawDeviceReadOnly(device_path, &openError);
     if (!device) {
-        setProbeError(error_message,
-                      QStringLiteral("Raw probe open failed: %1").arg(openError));
+        setProbeError(error_message, QStringLiteral("Raw probe open failed: %1").arg(openError));
         return std::nullopt;
     }
     if (!seekProbeDevice(device.get(), partition_offset_bytes, error_message)) {
@@ -2298,13 +2196,9 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
         setProbeError(error_message, QStringLiteral("No filesystem signature detected"));
         return std::nullopt;
     }
-    const ApfsSupplementalInput supplementalInput{&*bytes,
-                                                  device,
-                                                  partition_offset_bytes,
-                                                  partition_size_bytes};
-    appendApfsSupplementalSpaceManagerDetails(&*detection,
-                                              supplementalInput,
-                                              error_message);
+    const ApfsSupplementalInput supplementalInput{
+        &*bytes, device, partition_offset_bytes, partition_size_bytes};
+    appendApfsSupplementalSpaceManagerDetails(&*detection, supplementalInput, error_message);
     if (error_message) {
         error_message->clear();
     }
@@ -2325,14 +2219,11 @@ std::optional<PartitionFileSystemDetection> PartitionFileSystemDetector::detectF
     QString openError;
     auto device = openFileOrRawDeviceReadOnly(device_path, &openError);
     if (!device) {
-        setProbeError(error_message,
-                      QStringLiteral("Raw probe open failed: %1").arg(openError));
+        setProbeError(error_message, QStringLiteral("Raw probe open failed: %1").arg(openError));
         return std::nullopt;
     }
-    return detectFromDevice(device.get(),
-                            partition_offset_bytes,
-                            partition_size_bytes,
-                            error_message);
+    return detectFromDevice(
+        device.get(), partition_offset_bytes, partition_size_bytes, error_message);
 }
 
 }  // namespace sak

@@ -18,12 +18,13 @@ class QIODevice;
 namespace sak {
 
 inline constexpr int kPartitionHfsDefaultBrowseEntryLimit = 1000;
-inline constexpr int kPartitionHfsDefaultCheckRecordLimit = 100000;
+inline constexpr int kPartitionHfsDefaultCheckRecordLimit = 100'000;
 inline constexpr uint64_t kPartitionHfsBytesPerKiB = 1024ULL;
-inline constexpr uint64_t kPartitionHfsBytesPerMiB = kPartitionHfsBytesPerKiB * kPartitionHfsBytesPerKiB;
+inline constexpr uint64_t kPartitionHfsBytesPerMiB = kPartitionHfsBytesPerKiB *
+                                                     kPartitionHfsBytesPerKiB;
 inline constexpr uint64_t kPartitionHfsDefaultMaxWriteMiB = 64ULL;
-inline constexpr uint64_t kPartitionHfsDefaultMaxWriteBytes =
-    kPartitionHfsDefaultMaxWriteMiB * kPartitionHfsBytesPerMiB;
+inline constexpr uint64_t kPartitionHfsDefaultMaxWriteBytes = kPartitionHfsDefaultMaxWriteMiB *
+                                                              kPartitionHfsBytesPerMiB;
 
 struct PartitionHfsFileEntry {
     QString path;
@@ -149,11 +150,9 @@ struct PartitionHfsConsistencyCheckResult {
 class PartitionHfsFileSystemReader {
 public:
     [[nodiscard]] static PartitionHfsConsistencyCheckResult checkConsistency(
-        QIODevice* device,
-        int max_records = kPartitionHfsDefaultCheckRecordLimit);
+        QIODevice* device, int max_records = kPartitionHfsDefaultCheckRecordLimit);
     [[nodiscard]] static PartitionHfsConsistencyCheckResult checkConsistencyFromImage(
-        const QString& image_path,
-        int max_records = kPartitionHfsDefaultCheckRecordLimit);
+        const QString& image_path, int max_records = kPartitionHfsDefaultCheckRecordLimit);
     [[nodiscard]] static PartitionHfsFileReadResult listDirectory(
         QIODevice* device,
         const QString& path = {},
@@ -165,22 +164,16 @@ public:
     [[nodiscard]] static PartitionHfsFileReadResult readFile(QIODevice* device,
                                                              const QString& path,
                                                              uint64_t max_bytes);
-    [[nodiscard]] static PartitionHfsFileReadResult readFileFromImage(
-        const QString& image_path,
-        const QString& path,
-        uint64_t max_bytes);
+    [[nodiscard]] static PartitionHfsFileReadResult readFileFromImage(const QString& image_path,
+                                                                      const QString& path,
+                                                                      uint64_t max_bytes);
     [[nodiscard]] static PartitionHfsFileReadResult readResourceFork(QIODevice* device,
                                                                      const QString& path,
                                                                      uint64_t max_bytes);
     [[nodiscard]] static PartitionHfsFileReadResult readResourceForkFromImage(
-        const QString& image_path,
-        const QString& path,
-        uint64_t max_bytes);
+        const QString& image_path, const QString& path, uint64_t max_bytes);
     [[nodiscard]] static PartitionHfsAttributeReadResult readAttributeValue(
-        QIODevice* device,
-        uint32_t file_id,
-        const QString& attribute_name,
-        uint64_t max_bytes);
+        QIODevice* device, uint32_t file_id, const QString& attribute_name, uint64_t max_bytes);
     [[nodiscard]] static PartitionHfsAttributeReadResult readAttributeValueFromImage(
         const QString& image_path,
         uint32_t file_id,
@@ -216,9 +209,7 @@ public:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult truncateFileWithinAllocatedBlocks(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult truncateFileWithinAllocatedBlocksFromImage(
         const QString& image_path,
         const QString& path,
@@ -228,11 +219,11 @@ public:
         const QString& path,
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
-    [[nodiscard]] static PartitionHfsFileWriteResult replaceResourceForkWithinAllocatedBlocksFromImage(
-        const QString& image_path,
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult
+    replaceResourceForkWithinAllocatedBlocksFromImage(const QString& image_path,
+                                                      const QString& path,
+                                                      const QByteArray& data,
+                                                      const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult replaceFileWithAllocationGrowth(
         QIODevice* device,
         const QString& path,
@@ -248,19 +239,17 @@ public:
         const QString& path,
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
-    [[nodiscard]] static PartitionHfsFileWriteResult replaceResourceForkWithAllocationGrowthFromImage(
-        const QString& image_path,
-        const QString& path,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult
+    replaceResourceForkWithAllocationGrowthFromImage(const QString& image_path,
+                                                     const QString& path,
+                                                     const QByteArray& data,
+                                                     const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult truncateResourceForkWithinAllocatedBlocks(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
-    [[nodiscard]] static PartitionHfsFileWriteResult truncateResourceForkWithinAllocatedBlocksFromImage(
-        const QString& image_path,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult
+    truncateResourceForkWithinAllocatedBlocksFromImage(const QString& image_path,
+                                                       const QString& path,
+                                                       const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult replaceCompressedFileContent(
         QIODevice* device,
         const QString& path,
@@ -272,9 +261,7 @@ public:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createEmptyFile(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createEmptyFileFromImage(
         const QString& image_path,
         const QString& path,
@@ -290,29 +277,23 @@ public:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFile(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFileFromImage(
         const QString& image_path,
         const QString& path,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteFileAndReleaseAllocatedBlocks(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteFileAndReleaseAllocatedBlocksFromImage(
         const QString& image_path,
         const QString& path,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteFolderTreeAndReleaseAllocatedBlocks(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
-    [[nodiscard]] static PartitionHfsFileWriteResult deleteFolderTreeAndReleaseAllocatedBlocksFromImage(
-        const QString& image_path,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult
+    deleteFolderTreeAndReleaseAllocatedBlocksFromImage(const QString& image_path,
+                                                       const QString& path,
+                                                       const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult renameOrMoveCatalogEntry(
         QIODevice* device,
         const QString& source_path,
@@ -324,17 +305,13 @@ public:
         const QString& destination_path,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createEmptyFolder(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createEmptyFolderFromImage(
         const QString& image_path,
         const QString& path,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFolder(
-        QIODevice* device,
-        const QString& path,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFolderFromImage(
         const QString& image_path,
         const QString& path,
@@ -352,11 +329,9 @@ public:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult replayJournal(
-        QIODevice* device,
-        const PartitionHfsFileWriteOptions& options);
+        QIODevice* device, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult replayJournalFromImage(
-        const QString& image_path,
-        const PartitionHfsFileWriteOptions& options);
+        const QString& image_path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsAttributeWriteResult createForkAttributeValue(
         QIODevice* device,
         uint32_t file_id,
@@ -391,12 +366,12 @@ public:
         const QString& attribute_name,
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
-    [[nodiscard]] static PartitionHfsAttributeWriteResult replaceForkAttributeValueWithinAllocatedBlocks(
-        QIODevice* device,
-        uint32_t file_id,
-        const QString& attribute_name,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsAttributeWriteResult
+    replaceForkAttributeValueWithinAllocatedBlocks(QIODevice* device,
+                                                   uint32_t file_id,
+                                                   const QString& attribute_name,
+                                                   const QByteArray& data,
+                                                   const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsAttributeWriteResult
     replaceForkAttributeValueWithinAllocatedBlocksFromImage(
         const QString& image_path,
@@ -405,12 +380,11 @@ public:
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsAttributeWriteResult
-    replaceForkAttributeValueWithAllocationGrowth(
-        QIODevice* device,
-        uint32_t file_id,
-        const QString& attribute_name,
-        const QByteArray& data,
-        const PartitionHfsFileWriteOptions& options);
+    replaceForkAttributeValueWithAllocationGrowth(QIODevice* device,
+                                                  uint32_t file_id,
+                                                  const QString& attribute_name,
+                                                  const QByteArray& data,
+                                                  const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsAttributeWriteResult
     replaceForkAttributeValueWithAllocationGrowthFromImage(
         const QString& image_path,

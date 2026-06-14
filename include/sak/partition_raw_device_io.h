@@ -17,11 +17,9 @@ namespace sak {
 [[nodiscard]] bool isWindowsRawDevicePath(const QString& path);
 
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(
-    const QString& path,
-    QString* error_message = nullptr);
+    const QString& path, QString* error_message = nullptr);
 
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(
-    const QString& path,
-    QString* error_message = nullptr);
+    const QString& path, QString* error_message = nullptr);
 
 }  // namespace sak

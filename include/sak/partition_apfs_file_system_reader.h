@@ -70,10 +70,9 @@ public:
     [[nodiscard]] static PartitionApfsFileReadResult readFile(QIODevice* device,
                                                               const QString& path,
                                                               uint64_t max_bytes);
-    [[nodiscard]] static PartitionApfsFileReadResult readFileFromImage(
-        const QString& image_path,
-        const QString& path,
-        uint64_t max_bytes);
+    [[nodiscard]] static PartitionApfsFileReadResult readFileFromImage(const QString& image_path,
+                                                                       const QString& path,
+                                                                       uint64_t max_bytes);
     [[nodiscard]] static PartitionApfsDirectoryExportResult exportDirectoryFromImage(
         const QString& image_path,
         const QString& source_path,

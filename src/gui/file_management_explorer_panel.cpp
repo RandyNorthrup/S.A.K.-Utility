@@ -13,9 +13,9 @@
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
-#include <QApplication>
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
@@ -27,8 +27,8 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFutureWatcher>
-#include <QHeaderView>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QItemSelection>
 #include <QItemSelectionModel>
@@ -36,20 +36,21 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
-#include <QShortcut>
 #include <QSettings>
+#include <QShortcut>
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
 #include <QTableView>
+#include <QtConcurrent>
 #include <QTimer>
 #include <QToolButton>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QWidgetAction>
-#include <QtConcurrent>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 namespace sak {
@@ -111,10 +112,8 @@ QString targetBadge(const FileManagementTarget& target) {
         return QStringLiteral("Blocked");
     }
     if (target.can_write_files && !target.local_file_system &&
-        targetMatchesFileSystem(target,
-                                {QStringLiteral("apfs"),
-                                 QStringLiteral("hfs+"),
-                                 QStringLiteral("hfsx")})) {
+        targetMatchesFileSystem(
+            target, {QStringLiteral("apfs"), QStringLiteral("hfs+"), QStringLiteral("hfsx")})) {
         return QStringLiteral("Write certified");
     }
     if (target.read_only || !target.can_write_files) {
@@ -131,9 +130,8 @@ QString parentPathFor(const QString& path, bool local) {
         const QDir dir(path);
         return dir.absoluteFilePath(QStringLiteral(".."));
     }
-    const QString trimmed = path.endsWith(QLatin1Char('/')) && path.size() > 1
-                                ? path.left(path.size() - 1)
-                                : path;
+    const QString trimmed =
+        path.endsWith(QLatin1Char('/')) && path.size() > 1 ? path.left(path.size() - 1) : path;
     const int slash = trimmed.lastIndexOf(QLatin1Char('/'));
     if (slash <= 0) {
         return QStringLiteral("/");
@@ -238,9 +236,96 @@ FileExplorerViewMode modeForCommand(const FileExplorerCommandId command) {
     }
 }
 
+bool isViewModeCommand(const FileExplorerCommandId command) {
+    using enum FileExplorerCommandId;
+    static constexpr auto kViewCommands =
+        std::to_array({ViewDetails, ViewList, ViewGrid, ViewCards, ViewColumns, ViewAdaptive});
+    return std::ranges::find(kViewCommands, command) != kViewCommands.end();
+}
+
+bool isOpenElsewhereCommand(const FileExplorerCommandId command) {
+    using enum FileExplorerCommandId;
+    return command == OpenInNewTab || command == OpenInSecondPane || command == ToggleDualPane;
+}
+
+bool isLocalFsTarget(const FileManagementTarget& target) {
+    return target.local_file_system;
+}
+
+bool isMountedVolumeTarget(const FileManagementTarget& target) {
+    return target.local_file_system || target.kind == FileManagementTargetKind::LocalPath;
+}
+
+bool isPartitionTarget(const FileManagementTarget& target) {
+    return target.kind == FileManagementTargetKind::Partition;
+}
+
+bool isRawImageTarget(const FileManagementTarget& target) {
+    return target.kind == FileManagementTargetKind::ImageFile ||
+           (!target.local_file_system && target.kind != FileManagementTargetKind::Partition);
+}
+
+bool isCertificationTarget(const FileManagementTarget& target) {
+    return !target.local_file_system && target.can_write_files &&
+           targetMatchesFileSystem(
+               target, {QStringLiteral("apfs"), QStringLiteral("hfs+"), QStringLiteral("hfsx")});
+}
+
+// Adds one command-palette row; returns its row index when enabled, else -1.
+int addPaletteCommandItem(QListWidget* commands,
+                          const FileExplorerCommandState& state,
+                          const QString& needle) {
+    const QString searchable =
+        QStringList{state.command.text, state.command.shortcut, state.command.status_text}.join(
+            QLatin1Char(' '));
+    if (!needle.isEmpty() && !searchable.contains(needle, Qt::CaseInsensitive)) {
+        return -1;
+    }
+    QString label = state.command.text;
+    if (!state.command.shortcut.trimmed().isEmpty()) {
+        label += QCoreApplication::translate("FileManagementExplorerPanel", " (%1)")
+                     .arg(state.command.shortcut);
+    }
+    if (!state.enabled && !state.blocker.isEmpty()) {
+        label +=
+            QCoreApplication::translate("FileManagementExplorerPanel", " - %1").arg(state.blocker);
+    }
+    auto* item = new QListWidgetItem(label, commands);
+    item->setData(kCommandIdRole, QVariant::fromValue(state.command.id));
+    item->setData(kCommandEnabledRole, state.enabled);
+    item->setData(kCommandBlockerRole, state.blocker);
+    item->setToolTip(state.enabled ? state.command.status_text : state.blocker);
+    if (!state.enabled) {
+        item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+        return -1;
+    }
+    return commands->row(item);
+}
+
+void populateCommandPalette(QListWidget* commands,
+                            const QString& needle,
+                            const FileExplorerCommandContext& context,
+                            QDialogButtonBox* buttons) {
+    commands->clear();
+    int first_enabled_row = -1;
+    for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
+        const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
+                                                                                  context);
+        const int row = addPaletteCommandItem(commands, state, needle);
+        if (row >= 0 && first_enabled_row < 0) {
+            first_enabled_row = row;
+        }
+    }
+    if (commands->count() > 0) {
+        commands->setCurrentRow(first_enabled_row >= 0 ? first_enabled_row : 0);
+    }
+    buttons->button(QDialogButtonBox::Ok)
+        ->setEnabled(commands->currentItem() &&
+                     commands->currentItem()->data(kCommandEnabledRole).toBool());
+}
+
 QString locationViewSettingsGroup(const FileExplorerLocation& location) {
-    const QString raw =
-        QStringLiteral("%1\n%2").arg(location.target_id.value, location.path);
+    const QString raw = QStringLiteral("%1\n%2").arg(location.target_id.value, location.path);
     const QByteArray digest =
         QCryptographicHash::hash(raw.toUtf8(), QCryptographicHash::Sha256).toHex();
     return QStringLiteral("View/%1").arg(QString::fromLatin1(digest.left(24)));
@@ -255,8 +340,7 @@ void selectRowInView(QAbstractItemView* view, const int row) {
     const QModelIndex left = view->model()->index(row, 0);
     const QModelIndex right = view->model()->index(row, view->model()->columnCount() - 1);
     view->selectionModel()->select(QItemSelection(left, right),
-                                   QItemSelectionModel::ClearAndSelect |
-                                       QItemSelectionModel::Rows);
+                                   QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     view->setCurrentIndex(left);
 }
 
@@ -325,7 +409,8 @@ void FileManagementExplorerPanel::setupUi() {
     m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
     m_summary_label->setWordWrap(true);
     m_summary_label->setAccessibleName(tr("Explorer target summary"));
-    m_summary_label->setStyleSheet(ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
+    m_summary_label->setStyleSheet(
+        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     centerLayout->addWidget(m_summary_label);
 
     m_pane = new FileExplorerPane(center);
@@ -384,19 +469,15 @@ void FileManagementExplorerPanel::setupUi() {
             &QLineEdit::returnPressed,
             this,
             &FileManagementExplorerPanel::onPathReturnPressed);
-    connect(m_back_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::onBackClicked);
+    connect(
+        m_back_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onBackClicked);
     connect(m_forward_button,
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::onForwardClicked);
     connect(m_up_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onUpClicked);
-    connect(m_open_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::onOpenSelected);
+    connect(
+        m_open_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onOpenSelected);
     connect(m_copy_path_button,
             &QPushButton::clicked,
             this,
@@ -421,9 +502,7 @@ void FileManagementExplorerPanel::setupUi() {
         connect(m_pane->sharedSelectionModel(),
                 &QItemSelectionModel::selectionChanged,
                 this,
-                [this]() {
-                    updateActionButtons();
-                });
+                [this]() { updateActionButtons(); });
     }
     for (auto* view : m_pane->itemViews()) {
         if (!view) {
@@ -442,12 +521,9 @@ void FileManagementExplorerPanel::setupUi() {
             &FileExplorerPane::columnsDirectoryPreviewRequested,
             this,
             &FileManagementExplorerPanel::loadColumnsPreview);
-    connect(m_pane,
-            &FileExplorerPane::columnsChildActivated,
-            this,
-            [this](const QString& path) {
-                loadDirectory(path);
-            });
+    connect(m_pane, &FileExplorerPane::columnsChildActivated, this, [this](const QString& path) {
+        loadDirectory(path);
+    });
     installCommandShortcuts();
     updateActionButtons();
 }
@@ -560,16 +636,36 @@ void FileManagementExplorerPanel::appendSidebarHeader(const QString& text) {
 void FileManagementExplorerPanel::appendSidebarTarget(const FileManagementTarget& target,
                                                       const int target_index) {
     const auto icon = target.local_file_system ? QStyle::SP_DriveHDIcon : QStyle::SP_FileIcon;
-    const QString label =
-        QStringLiteral("%1  [%2]\n%3").arg(target.label, targetBadge(target), targetSubtitle(target));
+    const QString label = QStringLiteral("%1  [%2]\n%3")
+                              .arg(target.label, targetBadge(target), targetSubtitle(target));
     auto* item = new QListWidgetItem(style()->standardIcon(icon), label, m_target_list);
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Target));
     item->setData(kTargetIndexRole, target_index);
-    item->setToolTip(QStringLiteral("%1\n%2")
-                         .arg(target.root_path,
-                              FileManagementFileSystemBridge::capabilitySummary(target)));
+    item->setToolTip(QStringLiteral("%1\n%2").arg(
+        target.root_path, FileManagementFileSystemBridge::capabilitySummary(target)));
     if (!target.blockers.isEmpty()) {
         item->setStatusTip(target.blockers.join(QStringLiteral("; ")));
+    }
+}
+
+void FileManagementExplorerPanel::appendSidebarTargetsWhere(
+    const QString& title, bool (*predicate)(const FileManagementTarget&)) {
+    appendSidebarHeader(title);
+    for (int index = 0; index < m_targets.size(); ++index) {
+        if (predicate(m_targets.at(index))) {
+            appendSidebarTarget(m_targets.at(index), index);
+        }
+    }
+}
+
+void FileManagementExplorerPanel::appendSidebarTargetsById(const QString& title,
+                                                           const QStringList& target_ids) {
+    appendSidebarHeader(title);
+    for (const QString& target_id : target_ids) {
+        const int index = targetIndexForId(target_id);
+        if (index >= 0) {
+            appendSidebarTarget(m_targets.at(index), index);
+        }
     }
 }
 
@@ -578,80 +674,30 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
         return;
     }
 
-    const QString current_id = !preferred_target_id.trimmed().isEmpty()
-                                   ? preferred_target_id.trimmed()
-                                   : (m_current_target_index >= 0 && m_current_target_index < m_targets.size()
-                                          ? FileExplorerTargetId::fromTarget(
-                                                m_targets.at(m_current_target_index))
-                                                .value
-                                          : QString());
+    const QString current_id =
+        !preferred_target_id.trimmed().isEmpty()
+            ? preferred_target_id.trimmed()
+            : (m_current_target_index >= 0 && m_current_target_index < m_targets.size()
+                   ? FileExplorerTargetId::fromTarget(m_targets.at(m_current_target_index)).value
+                   : QString());
 
     m_target_list->blockSignals(true);
     m_target_list->clear();
 
     appendSidebarHeader(tr("Home"));
-    auto* home = new QListWidgetItem(style()->standardIcon(QStyle::SP_DirHomeIcon), tr("Home"), m_target_list);
+    auto* home = new QListWidgetItem(style()->standardIcon(QStyle::SP_DirHomeIcon),
+                                     tr("Home"),
+                                     m_target_list);
     home->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Home));
     home->setToolTip(tr("Open the first mounted local target."));
 
-    appendSidebarHeader(tr("Favorites"));
-    for (const QString& target_id : m_favorite_target_ids) {
-        const int index = targetIndexForId(target_id);
-        if (index >= 0) {
-            appendSidebarTarget(m_targets.at(index), index);
-        }
-    }
-
-    appendSidebarHeader(tr("This PC"));
-    for (int index = 0; index < m_targets.size(); ++index) {
-        if (m_targets.at(index).local_file_system) {
-            appendSidebarTarget(m_targets.at(index), index);
-        }
-    }
-
-    appendSidebarHeader(tr("Mounted Volumes"));
-    for (int index = 0; index < m_targets.size(); ++index) {
-        const auto& target = m_targets.at(index);
-        if (target.local_file_system || target.kind == FileManagementTargetKind::LocalPath) {
-            appendSidebarTarget(target, index);
-        }
-    }
-
-    appendSidebarHeader(tr("Disks and Partitions"));
-    for (int index = 0; index < m_targets.size(); ++index) {
-        if (m_targets.at(index).kind == FileManagementTargetKind::Partition) {
-            appendSidebarTarget(m_targets.at(index), index);
-        }
-    }
-
-    appendSidebarHeader(tr("Raw Images"));
-    for (int index = 0; index < m_targets.size(); ++index) {
-        const auto& target = m_targets.at(index);
-        if (target.kind == FileManagementTargetKind::ImageFile ||
-            (!target.local_file_system && target.kind != FileManagementTargetKind::Partition)) {
-            appendSidebarTarget(target, index);
-        }
-    }
-
-    appendSidebarHeader(tr("Recent"));
-    for (const QString& target_id : m_recent_target_ids) {
-        const int index = targetIndexForId(target_id);
-        if (index >= 0) {
-            appendSidebarTarget(m_targets.at(index), index);
-        }
-    }
-
-    appendSidebarHeader(tr("Certification Targets"));
-    for (int index = 0; index < m_targets.size(); ++index) {
-        const auto& target = m_targets.at(index);
-        if (!target.local_file_system && target.can_write_files &&
-            targetMatchesFileSystem(target,
-                                    {QStringLiteral("apfs"),
-                                     QStringLiteral("hfs+"),
-                                     QStringLiteral("hfsx")})) {
-            appendSidebarTarget(target, index);
-        }
-    }
+    appendSidebarTargetsById(tr("Favorites"), m_favorite_target_ids);
+    appendSidebarTargetsWhere(tr("This PC"), &isLocalFsTarget);
+    appendSidebarTargetsWhere(tr("Mounted Volumes"), &isMountedVolumeTarget);
+    appendSidebarTargetsWhere(tr("Disks and Partitions"), &isPartitionTarget);
+    appendSidebarTargetsWhere(tr("Raw Images"), &isRawImageTarget);
+    appendSidebarTargetsById(tr("Recent"), m_recent_target_ids);
+    appendSidebarTargetsWhere(tr("Certification Targets"), &isCertificationTarget);
 
     m_target_list->blockSignals(false);
     if (!current_id.isEmpty()) {
@@ -665,8 +711,8 @@ void FileManagementExplorerPanel::selectTargetById(const QString& target_id) {
     }
     for (int row = 0; row < m_target_list->count(); ++row) {
         auto* item = m_target_list->item(row);
-        if (!item || item->data(kSidebarKindRole).toInt() !=
-                         static_cast<int>(SidebarEntryKind::Target)) {
+        if (!item ||
+            item->data(kSidebarKindRole).toInt() != static_cast<int>(SidebarEntryKind::Target)) {
             continue;
         }
         const int index = item->data(kTargetIndexRole).toInt();
@@ -695,7 +741,8 @@ void FileManagementExplorerPanel::rememberRecentTarget(const QString& target_id)
 void FileManagementExplorerPanel::loadSidebarState() {
     QSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
-    m_favorite_target_ids = settings.value(QString::fromLatin1(kFavoriteTargetIdsKey)).toStringList();
+    m_favorite_target_ids =
+        settings.value(QString::fromLatin1(kFavoriteTargetIdsKey)).toStringList();
     m_recent_target_ids = settings.value(QString::fromLatin1(kRecentTargetIdsKey)).toStringList();
     m_last_target_id = settings.value(QString::fromLatin1(kLastTargetIdKey)).toString();
     settings.endGroup();
@@ -715,10 +762,9 @@ void FileManagementExplorerPanel::applyViewSettings() {
     if (!m_pane) {
         return;
     }
-    m_pane_state.view.item_size_px =
-        std::clamp(m_pane_state.view.item_size_px,
-                   kFileExplorerItemSizeMin,
-                   kFileExplorerItemSizeMax);
+    m_pane_state.view.item_size_px = std::clamp(m_pane_state.view.item_size_px,
+                                                kFileExplorerItemSizeMin,
+                                                kFileExplorerItemSizeMax);
     m_pane->setViewMode(m_pane_state.view.mode);
     m_pane->setItemSizePx(m_pane_state.view.item_size_px);
     m_pane->setShowHiddenItems(m_pane_state.view.show_hidden);
@@ -766,8 +812,7 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
             settings.value(QString::fromLatin1(kShowExtensionsKey)).toBool();
     }
     if (settings.contains(QString::fromLatin1(kItemSizeKey))) {
-        m_pane_state.view.item_size_px =
-            settings.value(QString::fromLatin1(kItemSizeKey)).toInt();
+        m_pane_state.view.item_size_px = settings.value(QString::fromLatin1(kItemSizeKey)).toInt();
     }
     settings.endGroup();
     settings.endGroup();
@@ -795,9 +840,7 @@ void FileManagementExplorerPanel::setExplorerViewMode(const FileExplorerViewMode
     saveViewSettings();
     Q_EMIT statusMessage(tr("Explorer view switched to %1").arg(viewModeName(mode)),
                          sak::kTimerStatusMessageMs);
-    QTimer::singleShot(0, this, [this]() {
-        updateActionButtons();
-    });
+    QTimer::singleShot(0, this, [this]() { updateActionButtons(); });
 }
 
 QAbstractItemView* FileManagementExplorerPanel::currentItemView() const {
@@ -874,30 +917,34 @@ bool FileManagementExplorerPanel::validateCurrentTargetIdentity(QString* blocker
     return true;
 }
 
+void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString& message,
+                                                                   const bool is_error) {
+    ++m_listing_revision;
+    ++m_columns_preview_revision;
+    if (is_error) {
+        m_summary_label->setText(message);
+        m_item_model->clear();
+    }
+    if (m_pane) {
+        if (is_error) {
+            m_pane->showErrorState(message);
+        } else {
+            m_pane->showEmptyState(message);
+        }
+        m_pane->clearColumnsPreview();
+    }
+    updateDetailsPane();
+    updateActionButtons();
+}
+
 void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool add_history) {
     const auto target = currentTarget();
     if (target.root_path.isEmpty()) {
-        ++m_listing_revision;
-        ++m_columns_preview_revision;
-        if (m_pane) {
-            m_pane->showEmptyState(tr("No File Explorer target selected."));
-            m_pane->clearColumnsPreview();
-        }
-        updateDetailsPane();
-        updateActionButtons();
+        resetListingForUnavailableTarget(tr("No File Explorer target selected."), false);
         return;
     }
     if (!target.can_browse) {
-        ++m_listing_revision;
-        ++m_columns_preview_revision;
-        m_summary_label->setText(target.blockers.join(QStringLiteral("; ")));
-        m_item_model->clear();
-        if (m_pane) {
-            m_pane->showErrorState(target.blockers.join(QStringLiteral("; ")));
-            m_pane->clearColumnsPreview();
-        }
-        updateDetailsPane();
-        updateActionButtons();
+        resetListingForUnavailableTarget(target.blockers.join(QStringLiteral("; ")), true);
         return;
     }
     const QString requested_path = path.trimmed().isEmpty()
@@ -930,13 +977,16 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     updateActionButtons();
 
     auto* watcher = new QFutureWatcher<FileManagementListResult>(this);
-    connect(watcher, &QFutureWatcher<FileManagementListResult>::finished, this, [this, watcher, listing_revision]() {
-        watcher->deleteLater();
-        if (listing_revision != m_listing_revision) {
-            return;
-        }
-        populateTable(watcher->result());
-    });
+    connect(watcher,
+            &QFutureWatcher<FileManagementListResult>::finished,
+            this,
+            [this, watcher, listing_revision]() {
+                watcher->deleteLater();
+                if (listing_revision != m_listing_revision) {
+                    return;
+                }
+                populateTable(watcher->result());
+            });
     watcher->setFuture(QtConcurrent::run([target, path = m_current_path]() {
         return FileManagementFileSystemBridge::listDirectory(target, path, kExplorerListMaxEntries);
     }));
@@ -976,7 +1026,9 @@ void FileManagementExplorerPanel::loadColumnsPreview(const QString& path) {
                 m_pane->setColumnsPreviewEntries(requested_path, result.entries);
             });
     watcher->setFuture(QtConcurrent::run([target, requested_path]() {
-        return FileManagementFileSystemBridge::listDirectory(target, requested_path, kExplorerListMaxEntries);
+        return FileManagementFileSystemBridge::listDirectory(target,
+                                                             requested_path,
+                                                             kExplorerListMaxEntries);
     }));
 }
 
@@ -1005,8 +1057,9 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
     }
 
     const auto target = currentTarget();
-    QString summary = tr("%1 item(s) - %2").arg(result.entries.size()).arg(
-        FileManagementFileSystemBridge::capabilitySummary(target));
+    QString summary = tr("%1 item(s) - %2")
+                          .arg(result.entries.size())
+                          .arg(FileManagementFileSystemBridge::capabilitySummary(target));
     if (!result.warnings.isEmpty()) {
         summary += tr(" - %1").arg(result.warnings.join(QStringLiteral("; ")));
     }
@@ -1026,9 +1079,7 @@ void FileManagementExplorerPanel::previewSelectedFile() {
     const auto read =
         FileManagementFileSystemBridge::readFile(target, path, kExplorerPreviewMaxBytes);
     if (!read.ok) {
-        sak::showWarningLogged(this,
-                               tr("Preview File"),
-                               read.blockers.join(QStringLiteral("\n")));
+        sak::showWarningLogged(this, tr("Preview File"), read.blockers.join(QStringLiteral("\n")));
         return;
     }
 
@@ -1060,9 +1111,8 @@ void FileManagementExplorerPanel::logMessage(const QString& message) {
     }
 }
 
-void FileManagementExplorerPanel::showMutationResult(
-    const QString& title,
-    const FileManagementMutationResult& result) {
+void FileManagementExplorerPanel::showMutationResult(const QString& title,
+                                                     const FileManagementMutationResult& result) {
     QStringList details;
     details.append(result.blockers);
     details.append(result.warnings);
@@ -1073,9 +1123,8 @@ void FileManagementExplorerPanel::showMutationResult(
     }
     sak::showWarningLogged(this,
                            title,
-                           details.isEmpty()
-                               ? tr("Operation failed.")
-                               : details.join(QStringLiteral("\n")));
+                           details.isEmpty() ? tr("Operation failed.")
+                                             : details.join(QStringLiteral("\n")));
 }
 
 FileExplorerSelection FileManagementExplorerPanel::currentSelection() const {
@@ -1101,10 +1150,9 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     return context;
 }
 
-void FileManagementExplorerPanel::applyCommandState(
-    QPushButton* button,
-    const FileExplorerCommandId command,
-    const FileExplorerCommandContext& context) {
+void FileManagementExplorerPanel::applyCommandState(QPushButton* button,
+                                                    const FileExplorerCommandId command,
+                                                    const FileExplorerCommandContext& context) {
     if (!button) {
         return;
     }
@@ -1116,9 +1164,7 @@ void FileManagementExplorerPanel::applyCommandState(
 }
 
 QAction* FileManagementExplorerPanel::addCommandMenuAction(
-    QMenu* menu,
-    const FileExplorerCommandId command,
-    const FileExplorerCommandContext& context) {
+    QMenu* menu, const FileExplorerCommandId command, const FileExplorerCommandContext& context) {
     if (!menu) {
         return nullptr;
     }
@@ -1138,9 +1184,7 @@ QAction* FileManagementExplorerPanel::addCommandMenuAction(
     if (!state.command.shortcut.trimmed().isEmpty()) {
         action->setShortcut(QKeySequence(state.command.shortcut));
     }
-    connect(action, &QAction::triggered, this, [this, command]() {
-        executeCommand(command);
-    });
+    connect(action, &QAction::triggered, this, [this, command]() { executeCommand(command); });
     return action;
 }
 
@@ -1178,8 +1222,8 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     auto* sizeRow = new QWidget(menu);
     sizeRow->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
     auto* sizeLayout = new QHBoxLayout(sizeRow);
-    sizeLayout->setContentsMargins(ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall,
-                                   ui::kSpacingTight);
+    sizeLayout->setContentsMargins(
+        ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
     sizeLayout->setSpacing(ui::kSpacingSmall);
     auto* sizeLabel = new QLabel(tr("Item size"), sizeRow);
     sizeLabel->setAccessibleName(tr("Explorer item size label"));
@@ -1226,8 +1270,8 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
 }
 
 void FileManagementExplorerPanel::executeCommand(const FileExplorerCommandId command) {
-    const FileExplorerCommandState state =
-        FileExplorerCommandRegistry::state(command, commandContext());
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command,
+                                                                              commandContext());
     if (!state.enabled) {
         if (!state.blocker.isEmpty()) {
             if (m_status_label) {
@@ -1237,137 +1281,174 @@ void FileManagementExplorerPanel::executeCommand(const FileExplorerCommandId com
         }
         return;
     }
+    if (dispatchNavigationCommand(command)) {
+        return;
+    }
+    if (dispatchSelectionCommand(command)) {
+        return;
+    }
+    dispatchFileViewCommand(command);
+}
 
+bool FileManagementExplorerPanel::dispatchNavigationCommand(const FileExplorerCommandId command) {
     switch (command) {
     case FileExplorerCommandId::Open:
         onOpenSelected();
-        break;
+        return true;
     case FileExplorerCommandId::Back:
         onBackClicked();
-        break;
+        return true;
     case FileExplorerCommandId::Forward:
         onForwardClicked();
-        break;
+        return true;
     case FileExplorerCommandId::Up:
         onUpClicked();
-        break;
+        return true;
     case FileExplorerCommandId::Home: {
         const auto target = currentTarget();
         loadDirectory(target.local_file_system ? target.root_path : QStringLiteral("/"));
-        break;
+        return true;
     }
     case FileExplorerCommandId::Refresh:
         loadDirectory(m_current_path, false);
-        break;
+        return true;
     case FileExplorerCommandId::CopyPath:
         QApplication::clipboard()->setText(m_current_path);
         Q_EMIT statusMessage(tr("Current path copied"), sak::kTimerStatusMessageMs);
-        break;
+        return true;
     case FileExplorerCommandId::CopyItemPath:
         QApplication::clipboard()->setText(currentSelection().paths().join(QStringLiteral("\n")));
         Q_EMIT statusMessage(tr("Item path copied"), sak::kTimerStatusMessageMs);
-        break;
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCommandId command) {
+    switch (command) {
     case FileExplorerCommandId::Preview:
         previewSelectedFile();
-        break;
+        return true;
     case FileExplorerCommandId::Properties:
-        updateDetailsPane();
-        if (m_details_tabs && m_properties_text) {
-            m_details_tabs->setCurrentWidget(m_properties_text);
-        }
-        break;
+        showSelectedItemProperties();
+        return true;
     case FileExplorerCommandId::SelectAll:
         if (auto* view = currentItemView()) {
             view->selectAll();
         }
-        break;
+        return true;
     case FileExplorerCommandId::ClearSelection:
         if (auto* selection_model = m_pane ? m_pane->sharedSelectionModel() : nullptr) {
             selection_model->clearSelection();
         }
-        break;
+        return true;
     case FileExplorerCommandId::InvertSelection:
-        if (auto* view = currentItemView(); view && view->selectionModel() && view->model()) {
-            auto* selection_model = view->selectionModel();
-            for (int row = 0; row < view->model()->rowCount(); ++row) {
-                const QModelIndex left = view->model()->index(row, 0);
-                const QModelIndex right =
-                    view->model()->index(row, view->model()->columnCount() - 1);
-                const QItemSelection row_selection(left, right);
-                const bool selected = selection_model->isRowSelected(row, QModelIndex());
-                selection_model->select(row_selection,
-                                        selected ? QItemSelectionModel::Deselect
-                                                 : QItemSelectionModel::Select);
-            }
-        }
-        break;
+        invertCurrentSelection();
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerCommandId command) {
+    if (isViewModeCommand(command)) {
+        setExplorerViewMode(modeForCommand(command));
+        return true;
+    }
+    if (isOpenElsewhereCommand(command)) {
+        Q_EMIT statusMessage(FileExplorerCommandRegistry::command(command).status_text,
+                             sak::kTimerStatusMessageMs);
+        return true;
+    }
+    switch (command) {
     case FileExplorerCommandId::NewFolder:
         onNewFolderClicked();
-        break;
+        return true;
     case FileExplorerCommandId::WriteFile:
         onWriteFileClicked();
-        break;
+        return true;
     case FileExplorerCommandId::Rename:
         onRenameClicked();
-        break;
+        return true;
     case FileExplorerCommandId::Delete:
         onDeleteClicked();
-        break;
+        return true;
     case FileExplorerCommandId::TogglePreviewPane:
-        if (m_details_tabs) {
-            m_details_tabs->setVisible(!m_details_tabs->isVisible());
-        }
-        break;
+        togglePreviewPane();
+        return true;
     case FileExplorerCommandId::ToggleHiddenItems:
-        m_pane_state.view.show_hidden = !m_pane_state.view.show_hidden;
-        applyViewSettings();
-        if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
-            if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
-                m_pane->showEmptyState(tr("No items match current view settings."));
-            } else {
-                m_pane->showReadyState();
-            }
-        }
-        saveViewSettings();
-        QTimer::singleShot(0, this, [this]() {
-            updateActionButtons();
-        });
-        Q_EMIT statusMessage(m_pane_state.view.show_hidden ? tr("Hidden items shown")
-                                                            : tr("Hidden items hidden"),
-                             sak::kTimerStatusMessageMs);
-        break;
+        toggleHiddenItems();
+        return true;
     case FileExplorerCommandId::ToggleFileExtensions:
-        m_pane_state.view.show_extensions = !m_pane_state.view.show_extensions;
-        applyViewSettings();
-        if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
-            if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
-                m_pane->showEmptyState(tr("No items match current view settings."));
-            } else {
-                m_pane->showReadyState();
-            }
-        }
-        saveViewSettings();
-        QTimer::singleShot(0, this, [this]() {
-            updateActionButtons();
-        });
-        Q_EMIT statusMessage(m_pane_state.view.show_extensions ? tr("File extensions shown")
-                                                               : tr("File extensions hidden"),
-                             sak::kTimerStatusMessageMs);
-        break;
-    case FileExplorerCommandId::ViewDetails:
-    case FileExplorerCommandId::ViewList:
-    case FileExplorerCommandId::ViewGrid:
-    case FileExplorerCommandId::ViewCards:
-    case FileExplorerCommandId::ViewColumns:
-    case FileExplorerCommandId::ViewAdaptive:
-        setExplorerViewMode(modeForCommand(command));
-        break;
-    case FileExplorerCommandId::OpenInNewTab:
-    case FileExplorerCommandId::OpenInSecondPane:
-    case FileExplorerCommandId::ToggleDualPane:
-        Q_EMIT statusMessage(state.command.status_text, sak::kTimerStatusMessageMs);
-        break;
+        toggleFileExtensions();
+        return true;
+    default:
+        return false;
     }
+}
+
+void FileManagementExplorerPanel::showSelectedItemProperties() {
+    updateDetailsPane();
+    if (m_details_tabs && m_properties_text) {
+        m_details_tabs->setCurrentWidget(m_properties_text);
+    }
+}
+
+void FileManagementExplorerPanel::togglePreviewPane() {
+    if (m_details_tabs) {
+        m_details_tabs->setVisible(!m_details_tabs->isVisible());
+    }
+}
+
+void FileManagementExplorerPanel::invertCurrentSelection() {
+    auto* view = currentItemView();
+    if (!view || !view->selectionModel() || !view->model()) {
+        return;
+    }
+    auto* selection_model = view->selectionModel();
+    for (int row = 0; row < view->model()->rowCount(); ++row) {
+        const QModelIndex left = view->model()->index(row, 0);
+        const QModelIndex right = view->model()->index(row, view->model()->columnCount() - 1);
+        const QItemSelection row_selection(left, right);
+        const bool selected = selection_model->isRowSelected(row, QModelIndex());
+        selection_model->select(
+            row_selection, selected ? QItemSelectionModel::Deselect : QItemSelectionModel::Select);
+    }
+}
+
+void FileManagementExplorerPanel::toggleHiddenItems() {
+    m_pane_state.view.show_hidden = !m_pane_state.view.show_hidden;
+    applyViewSettings();
+    if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
+        if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
+            m_pane->showEmptyState(tr("No items match current view settings."));
+        } else {
+            m_pane->showReadyState();
+        }
+    }
+    saveViewSettings();
+    QTimer::singleShot(0, this, [this]() { updateActionButtons(); });
+    Q_EMIT statusMessage(m_pane_state.view.show_hidden ? tr("Hidden items shown")
+                                                       : tr("Hidden items hidden"),
+                         sak::kTimerStatusMessageMs);
+}
+
+void FileManagementExplorerPanel::toggleFileExtensions() {
+    m_pane_state.view.show_extensions = !m_pane_state.view.show_extensions;
+    applyViewSettings();
+    if (m_pane && m_item_model && !m_item_model->entries().isEmpty()) {
+        if (m_pane->sortFilterModel() && m_pane->sortFilterModel()->rowCount() == 0) {
+            m_pane->showEmptyState(tr("No items match current view settings."));
+        } else {
+            m_pane->showReadyState();
+        }
+    }
+    saveViewSettings();
+    QTimer::singleShot(0, this, [this]() { updateActionButtons(); });
+    Q_EMIT statusMessage(m_pane_state.view.show_extensions ? tr("File extensions shown")
+                                                           : tr("File extensions hidden"),
+                         sak::kTimerStatusMessageMs);
 }
 
 void FileManagementExplorerPanel::promptCurrentFolderFilter() {
@@ -1421,51 +1502,13 @@ void FileManagementExplorerPanel::showCommandPalette() {
     layout->addWidget(buttons);
 
     const auto rebuild = [this, commands, filter, buttons]() {
-        const QString needle = filter->text().trimmed();
-        const auto context = commandContext();
-        commands->clear();
-        int firstEnabledRow = -1;
-        for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
-            const FileExplorerCommandState state =
-                FileExplorerCommandRegistry::state(command.id, context);
-            const QString searchable =
-                QStringList{state.command.text, state.command.shortcut, state.command.status_text}
-                    .join(QLatin1Char(' '));
-            if (!needle.isEmpty() && !searchable.contains(needle, Qt::CaseInsensitive)) {
-                continue;
-            }
-
-            QString label = state.command.text;
-            if (!state.command.shortcut.trimmed().isEmpty()) {
-                label += tr(" (%1)").arg(state.command.shortcut);
-            }
-            if (!state.enabled && !state.blocker.isEmpty()) {
-                label += tr(" - %1").arg(state.blocker);
-            }
-
-            auto* item = new QListWidgetItem(label, commands);
-            item->setData(kCommandIdRole, QVariant::fromValue(state.command.id));
-            item->setData(kCommandEnabledRole, state.enabled);
-            item->setData(kCommandBlockerRole, state.blocker);
-            item->setToolTip(state.enabled ? state.command.status_text : state.blocker);
-            if (!state.enabled) {
-                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-            } else if (firstEnabledRow < 0) {
-                firstEnabledRow = commands->row(item);
-            }
-        }
-        if (commands->count() > 0) {
-            commands->setCurrentRow(firstEnabledRow >= 0 ? firstEnabledRow : 0);
-        }
-        buttons->button(QDialogButtonBox::Ok)->setEnabled(
-            commands->currentItem() &&
-            commands->currentItem()->data(kCommandEnabledRole).toBool());
+        populateCommandPalette(commands, filter->text().trimmed(), commandContext(), buttons);
     };
 
     connect(filter, &QLineEdit::textChanged, &dialog, rebuild);
     connect(commands, &QListWidget::currentItemChanged, &dialog, [buttons](QListWidgetItem* item) {
-        buttons->button(QDialogButtonBox::Ok)->setEnabled(
-            item && item->data(kCommandEnabledRole).toBool());
+        buttons->button(QDialogButtonBox::Ok)
+            ->setEnabled(item && item->data(kCommandEnabledRole).toBool());
     });
     connect(commands, &QListWidget::itemDoubleClicked, &dialog, [&dialog](QListWidgetItem* item) {
         if (item && item->data(kCommandEnabledRole).toBool()) {
@@ -1487,66 +1530,78 @@ void FileManagementExplorerPanel::showCommandPalette() {
     executeCommand(current->data(kCommandIdRole).value<FileExplorerCommandId>());
 }
 
-void FileManagementExplorerPanel::updateDetailsPane() {
-    const auto target = currentTarget();
-    const FileExplorerSelection selection = currentSelection();
-
+QStringList FileManagementExplorerPanel::buildDetailsProperties(
+    const FileManagementTarget& target, const FileExplorerSelection& selection) const {
     QStringList properties;
     if (target.root_path.isEmpty()) {
         properties.append(tr("No target selected."));
-    } else {
-        properties.append(tr("Target: %1").arg(target.label));
-        properties.append(tr("File system: %1").arg(target.file_system));
-        properties.append(tr("Root: %1").arg(target.root_path));
-        properties.append(tr("Path: %1").arg(m_current_path));
-        properties.append(tr("Capability: %1").arg(
-            FileManagementFileSystemBridge::capabilitySummary(target)));
-        if (!selection.isEmpty()) {
-            properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
-            properties.append(selection.paths().join(QStringLiteral("\n")));
-        }
+        return properties;
     }
+    properties.append(tr("Target: %1").arg(target.label));
+    properties.append(tr("File system: %1").arg(target.file_system));
+    properties.append(tr("Root: %1").arg(target.root_path));
+    properties.append(tr("Path: %1").arg(m_current_path));
+    properties.append(
+        tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
+    if (!selection.isEmpty()) {
+        properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
+        properties.append(selection.paths().join(QStringLiteral("\n")));
+    }
+    return properties;
+}
 
+QStringList FileManagementExplorerPanel::buildDetailsSafety(
+    const FileManagementTarget& target) const {
     QStringList safety;
     if (target.root_path.isEmpty()) {
         safety.append(tr("No File Explorer target selected."));
-    } else {
-        safety.append(tr("Write state: %1").arg(target.can_write_files ? tr("enabled") : tr("blocked")));
-        safety.append(tr("Read state: %1").arg(target.can_read_files ? tr("enabled") : tr("blocked")));
-        safety.append(tr("Browse state: %1").arg(target.can_browse ? tr("enabled") : tr("blocked")));
-        if (!target.blockers.isEmpty()) {
-            safety.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
-        }
-
-        const auto context = commandContext();
-        for (const FileExplorerCommandId command : {FileExplorerCommandId::NewFolder,
-                                                    FileExplorerCommandId::WriteFile,
-                                                    FileExplorerCommandId::Rename,
-                                                    FileExplorerCommandId::Delete,
-                                                    FileExplorerCommandId::OpenInNewTab,
-                                                    FileExplorerCommandId::ToggleDualPane}) {
-            const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
-            safety.append(tr("%1: %2")
-                              .arg(state.command.text,
-                                   state.enabled ? tr("available") : state.blocker));
-        }
+        return safety;
     }
+    safety.append(
+        tr("Write state: %1").arg(target.can_write_files ? tr("enabled") : tr("blocked")));
+    safety.append(tr("Read state: %1").arg(target.can_read_files ? tr("enabled") : tr("blocked")));
+    safety.append(tr("Browse state: %1").arg(target.can_browse ? tr("enabled") : tr("blocked")));
+    if (!target.blockers.isEmpty()) {
+        safety.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
+    }
+    const auto context = commandContext();
+    for (const FileExplorerCommandId command : {FileExplorerCommandId::NewFolder,
+                                                FileExplorerCommandId::WriteFile,
+                                                FileExplorerCommandId::Rename,
+                                                FileExplorerCommandId::Delete,
+                                                FileExplorerCommandId::OpenInNewTab,
+                                                FileExplorerCommandId::ToggleDualPane}) {
+        const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
+        safety.append(
+            tr("%1: %2").arg(state.command.text, state.enabled ? tr("available") : state.blocker));
+    }
+    return safety;
+}
 
+QStringList FileManagementExplorerPanel::buildDetailsEvidence(
+    const FileManagementTarget& target) const {
     QStringList evidence;
     evidence.append(tr("Command-route evidence attaches in later certification milestones."));
     if (!target.root_path.isEmpty()) {
         evidence.append(tr("Target ID: %1").arg(target.id));
         evidence.append(tr("Source: %1").arg(target.source));
     }
+    return evidence;
+}
+
+void FileManagementExplorerPanel::updateDetailsPane() {
+    const auto target = currentTarget();
+    const FileExplorerSelection selection = currentSelection();
 
     if (m_properties_text) {
-        m_properties_text->setPlainText(properties.join(QStringLiteral("\n")));
+        m_properties_text->setPlainText(
+            buildDetailsProperties(target, selection).join(QStringLiteral("\n")));
     }
     if (m_safety_text) {
-        m_safety_text->setPlainText(safety.join(QStringLiteral("\n")));
+        m_safety_text->setPlainText(buildDetailsSafety(target).join(QStringLiteral("\n")));
     }
     if (m_evidence_text) {
-        m_evidence_text->setPlainText(evidence.join(QStringLiteral("\n")));
+        m_evidence_text->setPlainText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
     }
     if (m_preview_text && m_preview_text->toPlainText().isEmpty()) {
         m_preview_text->setPlainText(tr("Select a readable file and choose Preview."));
@@ -1555,12 +1610,12 @@ void FileManagementExplorerPanel::updateDetailsPane() {
         if (target.root_path.isEmpty()) {
             m_status_label->setText(tr("No target selected"));
         } else {
-            m_status_label->setText(tr("%1 | %2 | %3 selected | writes %4")
-                                        .arg(target.label,
-                                             target.file_system,
-                                             QString::number(selection.count()),
-                                             target.can_write_files ? tr("enabled")
-                                                                    : tr("blocked")));
+            m_status_label->setText(
+                tr("%1 | %2 | %3 selected | writes %4")
+                    .arg(target.label,
+                         target.file_system,
+                         QString::number(selection.count()),
+                         target.can_write_files ? tr("enabled") : tr("blocked")));
         }
     }
 }
@@ -1643,6 +1698,22 @@ void FileManagementExplorerPanel::onAddManualTarget() {
     appendTarget(FileManagementFileSystemBridge::manualTarget(path->text(), fs->currentText()));
 }
 
+int FileManagementExplorerPanel::resolveSidebarTargetIndex(QListWidgetItem* item) const {
+    const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
+    if (kind == SidebarEntryKind::Home) {
+        for (int target_row = 0; target_row < m_targets.size(); ++target_row) {
+            if (m_targets.at(target_row).local_file_system) {
+                return target_row;
+            }
+        }
+        return -1;
+    }
+    if (kind == SidebarEntryKind::Target) {
+        return item->data(kTargetIndexRole).toInt();
+    }
+    return -1;
+}
+
 void FileManagementExplorerPanel::onTargetChanged(int index) {
     if (!m_target_list || index < 0 || index >= m_target_list->count()) {
         m_current_target_index = -1;
@@ -1655,19 +1726,7 @@ void FileManagementExplorerPanel::onTargetChanged(int index) {
     if (!item) {
         return;
     }
-    const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
-    int target_index = -1;
-    if (kind == SidebarEntryKind::Home) {
-        for (int target_row = 0; target_row < m_targets.size(); ++target_row) {
-            if (m_targets.at(target_row).local_file_system) {
-                target_index = target_row;
-                break;
-            }
-        }
-    } else if (kind == SidebarEntryKind::Target) {
-        target_index = item->data(kTargetIndexRole).toInt();
-    }
-
+    const int target_index = resolveSidebarTargetIndex(item);
     if (target_index < 0 || target_index >= m_targets.size()) {
         return;
     }
@@ -1721,9 +1780,7 @@ void FileManagementExplorerPanel::onCopyPathClicked() {
 void FileManagementExplorerPanel::onNewFolderClicked() {
     const auto target = currentTarget();
     if (!target.can_write_files) {
-        sak::showWarningLogged(this,
-                               tr("New Folder"),
-                               target.blockers.join(QStringLiteral("\n")));
+        sak::showWarningLogged(this, tr("New Folder"), target.blockers.join(QStringLiteral("\n")));
         return;
     }
     QString identity_blocker;
@@ -1743,7 +1800,9 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
     }
     const QString path = targetPathForName(name);
     if (path.isEmpty()) {
-        sak::showWarningLogged(this, tr("New Folder"), tr("Enter a folder name without path separators."));
+        sak::showWarningLogged(this,
+                               tr("New Folder"),
+                               tr("Enter a folder name without path separators."));
         return;
     }
     const auto result = FileManagementFileSystemBridge::createDirectory(target, path);
@@ -1756,9 +1815,7 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
 void FileManagementExplorerPanel::onWriteFileClicked() {
     const auto target = currentTarget();
     if (!target.can_write_files) {
-        sak::showWarningLogged(this,
-                               tr("Write File"),
-                               target.blockers.join(QStringLiteral("\n")));
+        sak::showWarningLogged(this, tr("Write File"), target.blockers.join(QStringLiteral("\n")));
         return;
     }
     QString identity_blocker;
@@ -1796,7 +1853,9 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
     }
     const QString targetPath = targetPathForName(name);
     if (targetPath.isEmpty()) {
-        sak::showWarningLogged(this, tr("Write File"), tr("Enter a file name without path separators."));
+        sak::showWarningLogged(this,
+                               tr("Write File"),
+                               tr("Enter a file name without path separators."));
         return;
     }
     const auto result =
@@ -1844,6 +1903,25 @@ void FileManagementExplorerPanel::onRenameClicked() {
     }
 }
 
+int FileManagementExplorerPanel::deleteSelectedEntries(const FileManagementTarget& target,
+                                                       const FileExplorerSelection& selection,
+                                                       QStringList* blockers,
+                                                       QStringList* warnings) {
+    int deleted = 0;
+    for (const FileManagementEntry& entry : selection.entries) {
+        const auto result =
+            entry.directory ? FileManagementFileSystemBridge::deleteDirectory(target, entry.path)
+                            : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+        blockers->append(result.blockers);
+        warnings->append(result.warnings);
+        if (result.ok) {
+            ++deleted;
+            logMessage(tr("Delete Entry: %1").arg(entry.path));
+        }
+    }
+    return deleted;
+}
+
 void FileManagementExplorerPanel::onDeleteClicked() {
     const auto target = currentTarget();
     const auto selection = currentSelection();
@@ -1856,30 +1934,22 @@ void FileManagementExplorerPanel::onDeleteClicked() {
         return;
     }
     const QStringList paths = selection.paths();
-    const auto response = sak::showQuestionLogged(
-        this,
-        tr("Delete Entry"),
-        tr("Delete %1 item(s) from '%2'? This permanently removes data from the selected target.\n\n%3")
-            .arg(QString::number(selection.count()), target.label, paths.join(QStringLiteral("\n"))),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No);
+    const auto response =
+        sak::showQuestionLogged(this,
+                                tr("Delete Entry"),
+                                tr("Delete %1 item(s) from '%2'? This permanently removes data "
+                                   "from the selected target.\n\n%3")
+                                    .arg(QString::number(selection.count()),
+                                         target.label,
+                                         paths.join(QStringLiteral("\n"))),
+                                QMessageBox::Yes | QMessageBox::No,
+                                QMessageBox::No);
     if (response != QMessageBox::Yes) {
         return;
     }
     QStringList blockers;
     QStringList warnings;
-    int deleted = 0;
-    for (const FileManagementEntry& entry : selection.entries) {
-        const auto result = entry.directory
-                                ? FileManagementFileSystemBridge::deleteDirectory(target, entry.path)
-                                : FileManagementFileSystemBridge::deleteFile(target, entry.path);
-        blockers.append(result.blockers);
-        warnings.append(result.warnings);
-        if (result.ok) {
-            ++deleted;
-            logMessage(tr("Delete Entry: %1").arg(entry.path));
-        }
-    }
+    const int deleted = deleteSelectedEntries(target, selection, &blockers, &warnings);
 
     if (deleted == selection.count()) {
         Q_EMIT statusMessage(tr("Delete Entry complete"), sak::kTimerStatusDefaultMs);
@@ -1890,12 +1960,11 @@ void FileManagementExplorerPanel::onDeleteClicked() {
     QStringList details;
     details.append(blockers);
     details.append(warnings);
-    sak::showWarningLogged(
-        this,
-        tr("Delete Entry"),
-        details.isEmpty()
-            ? tr("Deleted %1 of %2 item(s).").arg(deleted).arg(selection.count())
-            : details.join(QStringLiteral("\n")));
+    sak::showWarningLogged(this,
+                           tr("Delete Entry"),
+                           details.isEmpty()
+                               ? tr("Deleted %1 of %2 item(s).").arg(deleted).arg(selection.count())
+                               : details.join(QStringLiteral("\n")));
     if (deleted > 0) {
         loadDirectory(m_current_path);
     }
@@ -1938,26 +2007,88 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     menu.exec(view->viewport()->mapToGlobal(position));
 }
 
-void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& position) {
-    if (!m_target_list) {
-        return;
-    }
-
-    int menu_target_index = -1;
+int FileManagementExplorerPanel::resolveContextMenuTargetIndex(const QPoint& position) {
     if (const QModelIndex index = m_target_list->indexAt(position); index.isValid()) {
         auto* item = m_target_list->item(index.row());
         if (item) {
             const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
             if (kind == SidebarEntryKind::Target) {
-                menu_target_index = item->data(kTargetIndexRole).toInt();
                 m_target_list->setCurrentRow(index.row());
+                return item->data(kTargetIndexRole).toInt();
             }
         }
     }
-    if (menu_target_index < 0 && m_current_target_index >= 0 &&
-        m_current_target_index < m_targets.size()) {
-        menu_target_index = m_current_target_index;
+    if (m_current_target_index >= 0 && m_current_target_index < m_targets.size()) {
+        return m_current_target_index;
     }
+    return -1;
+}
+
+QString FileManagementExplorerPanel::favoriteActionLabel(const int target_index,
+                                                         const bool has_target) const {
+    const bool pinned = has_target &&
+                        m_favorite_target_ids.contains(
+                            FileExplorerTargetId::fromTarget(m_targets.at(target_index)).value);
+    return pinned ? tr("Unpin Favorite") : tr("Pin Favorite");
+}
+
+void FileManagementExplorerPanel::openTargetAtIndex(const int target_index) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    m_current_target_index = target_index;
+    const auto target = m_targets.at(target_index);
+    rememberRecentTarget(FileExplorerTargetId::fromTarget(target).value);
+    loadDirectory(target.local_file_system ? target.root_path : QStringLiteral("/"));
+}
+
+void FileManagementExplorerPanel::copyTargetRootAtIndex(const int target_index) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    QApplication::clipboard()->setText(m_targets.at(target_index).root_path);
+    Q_EMIT statusMessage(tr("Target root copied"), sak::kTimerStatusMessageMs);
+}
+
+void FileManagementExplorerPanel::toggleFavoriteAtIndex(const int target_index) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    const QString target_id = FileExplorerTargetId::fromTarget(m_targets.at(target_index)).value;
+    if (m_favorite_target_ids.contains(target_id)) {
+        m_favorite_target_ids.removeAll(target_id);
+    } else {
+        m_favorite_target_ids.prepend(target_id);
+    }
+    saveSidebarState();
+    rebuildTargetList(target_id);
+}
+
+void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_index) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    const auto target = m_targets.at(target_index);
+    QStringList lines;
+    lines.append(tr("Target: %1").arg(target.label));
+    lines.append(tr("ID: %1").arg(FileExplorerTargetId::fromTarget(target).value));
+    lines.append(tr("Root: %1").arg(target.root_path));
+    lines.append(tr("File system: %1").arg(target.file_system));
+    lines.append(tr("Source: %1").arg(target.source));
+    lines.append(tr("Size: %1 bytes").arg(QString::number(target.size_bytes)));
+    lines.append(
+        tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
+    if (!target.blockers.isEmpty()) {
+        lines.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
+    }
+    QMessageBox::information(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
+}
+
+void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& position) {
+    if (!m_target_list) {
+        return;
+    }
+    const int menu_target_index = resolveContextMenuTargetIndex(position);
     const bool has_menu_target = menu_target_index >= 0 && menu_target_index < m_targets.size();
 
     QMenu menu(this);
@@ -1965,66 +2096,27 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     auto* open = menu.addAction(tr("Open Target"));
     open->setEnabled(has_menu_target);
     connect(open, &QAction::triggered, this, [this, menu_target_index]() {
-        if (menu_target_index >= 0 && menu_target_index < m_targets.size()) {
-            m_current_target_index = menu_target_index;
-            const auto target = m_targets.at(menu_target_index);
-            rememberRecentTarget(FileExplorerTargetId::fromTarget(target).value);
-            loadDirectory(target.local_file_system ? target.root_path : QStringLiteral("/"));
-        }
+        openTargetAtIndex(menu_target_index);
     });
     auto* copyRoot = menu.addAction(tr("Copy Target Root"));
     copyRoot->setEnabled(has_menu_target && !m_targets.at(menu_target_index).root_path.isEmpty());
     connect(copyRoot, &QAction::triggered, this, [this, menu_target_index]() {
-        if (menu_target_index < 0 || menu_target_index >= m_targets.size()) {
-            return;
-        }
-        QApplication::clipboard()->setText(m_targets.at(menu_target_index).root_path);
-        Q_EMIT statusMessage(tr("Target root copied"), sak::kTimerStatusMessageMs);
+        copyTargetRootAtIndex(menu_target_index);
     });
-    auto* favorite = menu.addAction(
-        has_menu_target &&
-                m_favorite_target_ids.contains(
-                    FileExplorerTargetId::fromTarget(m_targets.at(menu_target_index)).value)
-            ? tr("Unpin Favorite")
-            : tr("Pin Favorite"));
+    auto* favorite = menu.addAction(favoriteActionLabel(menu_target_index, has_menu_target));
     favorite->setEnabled(has_menu_target);
     connect(favorite, &QAction::triggered, this, [this, menu_target_index]() {
-        if (menu_target_index < 0 || menu_target_index >= m_targets.size()) {
-            return;
-        }
-        const QString target_id = FileExplorerTargetId::fromTarget(m_targets.at(menu_target_index)).value;
-        if (m_favorite_target_ids.contains(target_id)) {
-            m_favorite_target_ids.removeAll(target_id);
-        } else {
-            m_favorite_target_ids.prepend(target_id);
-        }
-        saveSidebarState();
-        rebuildTargetList(target_id);
+        toggleFavoriteAtIndex(menu_target_index);
     });
     auto* properties = menu.addAction(tr("Target Properties"));
     properties->setEnabled(has_menu_target);
     connect(properties, &QAction::triggered, this, [this, menu_target_index]() {
-        if (menu_target_index < 0 || menu_target_index >= m_targets.size()) {
-            return;
-        }
-        const auto target = m_targets.at(menu_target_index);
-        QStringList lines;
-        lines.append(tr("Target: %1").arg(target.label));
-        lines.append(tr("ID: %1").arg(FileExplorerTargetId::fromTarget(target).value));
-        lines.append(tr("Root: %1").arg(target.root_path));
-        lines.append(tr("File system: %1").arg(target.file_system));
-        lines.append(tr("Source: %1").arg(target.source));
-        lines.append(tr("Size: %1 bytes").arg(QString::number(target.size_bytes)));
-        lines.append(tr("Capability: %1").arg(
-            FileManagementFileSystemBridge::capabilitySummary(target)));
-        if (!target.blockers.isEmpty()) {
-            lines.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
-        }
-        QMessageBox::information(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
+        showTargetPropertiesAtIndex(menu_target_index);
     });
     menu.addSeparator();
     auto* refresh = menu.addAction(tr("Refresh Mounted Targets"));
-    connect(refresh, &QAction::triggered, this, &FileManagementExplorerPanel::onRefreshMountedTargets);
+    connect(
+        refresh, &QAction::triggered, this, &FileManagementExplorerPanel::onRefreshMountedTargets);
     auto* scan = menu.addAction(tr("Scan Disks"));
     connect(scan, &QAction::triggered, this, &FileManagementExplorerPanel::onScanDiskTargets);
     auto* addManual = menu.addAction(tr("Add Raw/Image"));

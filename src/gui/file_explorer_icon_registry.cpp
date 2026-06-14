@@ -3,16 +3,19 @@
 
 #include "sak/file_explorer_icon_registry.h"
 
+#include <algorithm>
+#include <array>
+#include <utility>
+
 namespace sak {
 namespace {
 
 using IconDescriptor = FileExplorerIconDescriptor;
 
-[[nodiscard]] IconDescriptor descriptor(
-    const char* key,
-    const char* file_name,
-    const char* upstream_key,
-    const char* upstream_source) {
+[[nodiscard]] IconDescriptor descriptor(const char* key,
+                                        const char* file_name,
+                                        const char* upstream_key,
+                                        const char* upstream_source) {
     return {QString::fromLatin1(key),
             QStringLiteral(":/icons/icons/files/%1.svg").arg(QString::fromLatin1(file_name)),
             QString::fromLatin1(upstream_key),
@@ -150,45 +153,29 @@ QIcon FileExplorerIconRegistry::iconForKey(const QString& key) {
 }
 
 QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId command) {
-    switch (command) {
-    case FileExplorerCommandId::Open:
-        return QStringLiteral("open");
-    case FileExplorerCommandId::OpenInNewTab:
-        return QStringLiteral("open-in-new-tab");
-    case FileExplorerCommandId::CopyPath:
-    case FileExplorerCommandId::CopyItemPath:
-        return QStringLiteral("copy-path");
-    case FileExplorerCommandId::Refresh:
-        return QStringLiteral("refresh");
-    case FileExplorerCommandId::NewFolder:
-        return QStringLiteral("new-folder");
-    case FileExplorerCommandId::WriteFile:
-        return QStringLiteral("write-file");
-    case FileExplorerCommandId::Rename:
-        return QStringLiteral("rename");
-    case FileExplorerCommandId::Delete:
-        return QStringLiteral("delete");
-    case FileExplorerCommandId::ViewDetails:
-        return QStringLiteral("view-details");
-    case FileExplorerCommandId::ViewList:
-        return QStringLiteral("view-list");
-    case FileExplorerCommandId::ViewGrid:
-        return QStringLiteral("view-grid");
-    case FileExplorerCommandId::ViewCards:
-        return QStringLiteral("view-cards");
-    case FileExplorerCommandId::ViewColumns:
-        return QStringLiteral("view-columns");
-    case FileExplorerCommandId::ViewAdaptive:
-        return QStringLiteral("view-grid");
-    case FileExplorerCommandId::TogglePreviewPane:
-        return QStringLiteral("details-pane");
-    case FileExplorerCommandId::ToggleDualPane:
-        return QStringLiteral("dual-pane");
-    case FileExplorerCommandId::OpenInSecondPane:
-        return QStringLiteral("dual-pane");
-    default:
-        return {};
-    }
+    using Id = FileExplorerCommandId;
+    static constexpr auto kIconKeys = std::to_array<std::pair<Id, const char*>>({
+        {Id::Open, "open"},
+        {Id::OpenInNewTab, "open-in-new-tab"},
+        {Id::CopyPath, "copy-path"},
+        {Id::CopyItemPath, "copy-path"},
+        {Id::Refresh, "refresh"},
+        {Id::NewFolder, "new-folder"},
+        {Id::WriteFile, "write-file"},
+        {Id::Rename, "rename"},
+        {Id::Delete, "delete"},
+        {Id::ViewDetails, "view-details"},
+        {Id::ViewList, "view-list"},
+        {Id::ViewGrid, "view-grid"},
+        {Id::ViewCards, "view-cards"},
+        {Id::ViewColumns, "view-columns"},
+        {Id::ViewAdaptive, "view-grid"},
+        {Id::TogglePreviewPane, "details-pane"},
+        {Id::ToggleDualPane, "dual-pane"},
+        {Id::OpenInSecondPane, "dual-pane"},
+    });
+    const auto it = std::ranges::find(kIconKeys, command, &std::pair<Id, const char*>::first);
+    return it != kIconKeys.end() ? QString::fromLatin1(it->second) : QString();
 }
 
 FileExplorerIconDescriptor FileExplorerIconRegistry::descriptorForKey(const QString& key) {

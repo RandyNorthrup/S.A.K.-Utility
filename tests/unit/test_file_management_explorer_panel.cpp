@@ -4,33 +4,33 @@
 /// @file test_file_management_explorer_panel.cpp
 /// @brief GUI tests for the File Management Explorer shell.
 
-#include "sak/file_management_explorer_panel.h"
 #include "sak/file_explorer_details_view.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_sort_filter_model.h"
+#include "sak/file_management_explorer_panel.h"
 
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
-#include <QDir>
 #include <QDialog>
+#include <QDir>
 #include <QHeaderView>
 #include <QImage>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QListView>
+#include <QListWidget>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
-#include <QTabWidget>
 #include <QTableView>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest/QtTest>
@@ -125,8 +125,8 @@ void captureBaseline(QWidget* widget, const QString& name) {
 
     QDir dir(QDir::currentPath());
     QVERIFY(dir.mkpath(QStringLiteral("artifacts/file-management-explorer-baseline")));
-    const QString path =
-        dir.filePath(QStringLiteral("artifacts/file-management-explorer-baseline/%1.png").arg(name));
+    const QString path = dir.filePath(
+        QStringLiteral("artifacts/file-management-explorer-baseline/%1.png").arg(name));
     QVERIFY2(widget->grab().save(path), qPrintable(path));
 }
 
@@ -155,9 +155,7 @@ private Q_SLOTS:
         QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
     }
 
-    void init() {
-        resetExplorerPanelSettings();
-    }
+    void init() { resetExplorerPanelSettings(); }
 
     void shellCreatesFilesLikeRegions() {
         sak::FileManagementExplorerPanel panel;
@@ -260,7 +258,8 @@ private Q_SLOTS:
 
         for (const auto command : mappedCommands) {
             const QString key = sak::FileExplorerIconRegistry::iconKeyForCommand(command);
-            QVERIFY2(!key.isEmpty(), qPrintable(sak::FileExplorerCommandRegistry::commandIdName(command)));
+            QVERIFY2(!key.isEmpty(),
+                     qPrintable(sak::FileExplorerCommandRegistry::commandIdName(command)));
 
             const auto descriptor = sak::FileExplorerIconRegistry::descriptorForKey(key);
             QVERIFY2(!descriptor.resource_path.isEmpty(), qPrintable(key));
@@ -270,7 +269,8 @@ private Q_SLOTS:
                          QStringLiteral("src/Files.App.Controls/ThemedIcon/Styles/")),
                      qPrintable(descriptor.upstream_source));
             QCOMPARE(descriptor.license, QStringLiteral("MIT"));
-            QVERIFY2(!sak::FileExplorerIconRegistry::iconForCommand(command).isNull(), qPrintable(key));
+            QVERIFY2(!sak::FileExplorerIconRegistry::iconForCommand(command).isNull(),
+                     qPrintable(key));
         }
 
         const auto refreshDescriptor =
@@ -372,7 +372,8 @@ private Q_SLOTS:
         QVERIFY(actionStartingWith(view->menu(), QStringLiteral("Cards")));
         QVERIFY(actionStartingWith(view->menu(), QStringLiteral("Columns")));
         QVERIFY(actionStartingWith(view->menu(), QStringLiteral("Adaptive")));
-        auto* slider = view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
+        auto* slider =
+            view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
         QVERIFY(slider);
         QVERIFY(slider->minimum() < slider->maximum());
     }
@@ -418,7 +419,8 @@ private Q_SLOTS:
         QApplication::processEvents();
         QTRY_VERIFY(list->isVisible());
         QVERIFY(!table->isVisible());
-        if (pane->sharedSelectionModel()->model() && pane->sharedSelectionModel()->model()->rowCount() > 0) {
+        if (pane->sharedSelectionModel()->model() &&
+            pane->sharedSelectionModel()->model()->rowCount() > 0) {
             QCOMPARE(pane->sharedSelectionModel()->selectedRows().size(), 1);
         }
 
@@ -452,7 +454,8 @@ private Q_SLOTS:
         savedModeSettings.endGroup();
         savedModeSettings.endGroup();
 
-        auto* slider = view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
+        auto* slider =
+            view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
         QVERIFY(slider);
         slider->setValue(96);
         QApplication::processEvents();
@@ -646,7 +649,8 @@ private Q_SLOTS:
             view.resize(900, 400);
             view.show();
             QVERIFY(QTest::qWaitForWindowExposed(&view));
-            QCOMPARE(view.model()->columnCount(), static_cast<int>(sak::FileExplorerItemModel::ColumnCount));
+            QCOMPARE(view.model()->columnCount(),
+                     static_cast<int>(sak::FileExplorerItemModel::ColumnCount));
             view.horizontalHeader()->resizeSection(sak::FileExplorerItemModel::NameColumn, 321);
             QCOMPARE(view.columnWidth(sak::FileExplorerItemModel::NameColumn), 321);
             view.saveColumnState();
@@ -690,7 +694,8 @@ private Q_SLOTS:
         QTRY_VERIFY(table->model() && table->model()->rowCount() > 0);
         int directoryRow = -1;
         for (int row = 0; row < table->model()->rowCount(); ++row) {
-            const QModelIndex index = table->model()->index(row, sak::FileExplorerItemModel::NameColumn);
+            const QModelIndex index = table->model()->index(row,
+                                                            sak::FileExplorerItemModel::NameColumn);
             if (index.data(sak::FileExplorerItemModel::EntryDirectoryRole).toBool()) {
                 directoryRow = row;
                 break;
@@ -701,12 +706,11 @@ private Q_SLOTS:
         }
 
         const QString beforePath = pathEdit->text();
-        const QModelIndex index = table->model()->index(directoryRow, sak::FileExplorerItemModel::NameColumn);
+        const QModelIndex index = table->model()->index(directoryRow,
+                                                        sak::FileExplorerItemModel::NameColumn);
         table->selectRow(directoryRow);
-        QVERIFY(QMetaObject::invokeMethod(&panel,
-                                          "onItemDoubleClicked",
-                                          Qt::DirectConnection,
-                                          Q_ARG(QModelIndex, index)));
+        QVERIFY(QMetaObject::invokeMethod(
+            &panel, "onItemDoubleClicked", Qt::DirectConnection, Q_ARG(QModelIndex, index)));
         QTRY_VERIFY(pathEdit->text() != beforePath);
     }
 

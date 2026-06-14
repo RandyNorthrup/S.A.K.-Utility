@@ -13,8 +13,8 @@
 #include "sak/layout_constants.h"
 
 #include <QAbstractItemView>
-#include <QLabel>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QListView>
 #include <QStackedWidget>
 #include <QWidget>

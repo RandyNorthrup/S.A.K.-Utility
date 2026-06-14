@@ -5,6 +5,7 @@
 /// @brief Read-only APFS file browser for Partition Manager.
 
 #include "sak/partition_apfs_file_system_reader.h"
+
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -49,30 +50,30 @@ constexpr qsizetype kApfsBtreeVariableTocKeyLengthOffset = 2;
 constexpr qsizetype kApfsBtreeVariableTocValueOffset = 4;
 constexpr qsizetype kApfsBtreeVariableTocValueLengthOffset = 6;
 constexpr qsizetype kApfsBtreeChildPointerBytes = 8;
-constexpr uint32_t kApfsBtreeMaxEntryCount = 100000;
-constexpr uint32_t kApfsMagicNxsb = 0x4253584E;  // NXSB
-constexpr uint32_t kApfsMagicApsb = 0x42535041;  // APSB
-constexpr uint32_t kApfsObjectTypeMask = 0x0000FFFF;
-constexpr uint32_t kApfsObjectTypeNxSuperblock = 0x00000001;
-constexpr uint32_t kApfsObjectTypeBtree = 0x00000002;
-constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00000003;
-constexpr uint32_t kApfsObjectTypeObjectMap = 0x0000000B;
-constexpr uint32_t kApfsObjectTypeCheckpointMap = 0x0000000C;
-constexpr uint32_t kApfsObjectTypeFs = 0x0000000D;
-constexpr uint32_t kApfsObjectSubtypeFsTree = 0x0000000E;
-constexpr uint32_t kApfsObjectPhysical = 0x40000000;
+constexpr uint32_t kApfsBtreeMaxEntryCount = 100'000;
+constexpr uint32_t kApfsMagicNxsb = 0x42'53'58'4E;  // NXSB
+constexpr uint32_t kApfsMagicApsb = 0x42'53'50'41;  // APSB
+constexpr uint32_t kApfsObjectTypeMask = 0x00'00'FF'FF;
+constexpr uint32_t kApfsObjectTypeNxSuperblock = 0x00'00'00'01;
+constexpr uint32_t kApfsObjectTypeBtree = 0x00'00'00'02;
+constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00'00'00'03;
+constexpr uint32_t kApfsObjectTypeObjectMap = 0x00'00'00'0B;
+constexpr uint32_t kApfsObjectTypeCheckpointMap = 0x00'00'00'0C;
+constexpr uint32_t kApfsObjectTypeFs = 0x00'00'00'0D;
+constexpr uint32_t kApfsObjectSubtypeFsTree = 0x00'00'00'0E;
+constexpr uint32_t kApfsObjectPhysical = 0x40'00'00'00;
 constexpr uint16_t kApfsBtreeNodeRoot = 0x0001;
 constexpr uint16_t kApfsBtreeNodeLeaf = 0x0002;
 constexpr uint16_t kApfsBtreeNodeFixedKvSize = 0x0004;
-constexpr uint32_t kApfsBtreePhysical = 0x00000010;
-constexpr uint32_t kApfsContainerIncompatVersion1 = 0x00000001;
-constexpr uint32_t kApfsContainerIncompatVersion2 = 0x00000002;
-constexpr uint32_t kApfsContainerIncompatFusion = 0x00000100;
-constexpr uint64_t kApfsSupportedContainerIncompat =
-    kApfsContainerIncompatVersion2 | kApfsContainerIncompatFusion;
-constexpr uint64_t kApfsVolumeIncompatIncompleteRestore = 0x00000010;
-constexpr uint64_t kApfsObjIdMask = 0x0FFFFFFFFFFFFFFFULL;
-constexpr uint64_t kApfsObjTypeMask = 0xF000000000000000ULL;
+constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
+constexpr uint32_t kApfsContainerIncompatVersion1 = 0x00'00'00'01;
+constexpr uint32_t kApfsContainerIncompatVersion2 = 0x00'00'00'02;
+constexpr uint32_t kApfsContainerIncompatFusion = 0x00'00'01'00;
+constexpr uint64_t kApfsSupportedContainerIncompat = kApfsContainerIncompatVersion2 |
+                                                     kApfsContainerIncompatFusion;
+constexpr uint64_t kApfsVolumeIncompatIncompleteRestore = 0x00'00'00'10;
+constexpr uint64_t kApfsObjIdMask = 0x0F'FF'FF'FF'FF'FF'FF'FFULL;
+constexpr uint64_t kApfsObjTypeMask = 0xF0'00'00'00'00'00'00'00ULL;
 constexpr int kApfsObjTypeShift = 60;
 constexpr uint8_t kApfsRecordInode = 3;
 constexpr uint8_t kApfsRecordFileExtent = 8;
@@ -89,16 +90,16 @@ constexpr uint16_t kApfsModeTypeMask = 0170000;
 constexpr uint16_t kApfsModeDirectory = 0040000;
 constexpr uint16_t kApfsModeRegularFile = 0100000;
 constexpr uint16_t kApfsModeSymlink = 0120000;
-constexpr uint64_t kApfsFileExtentLengthMask = 0x00FFFFFFFFFFFFFFULL;
-constexpr uint64_t kApfsFileExtentFlagMask = 0xFF00000000000000ULL;
+constexpr uint64_t kApfsFileExtentLengthMask = 0x00'FF'FF'FF'FF'FF'FF'FFULL;
+constexpr uint64_t kApfsFileExtentFlagMask = 0xFF'00'00'00'00'00'00'00ULL;
 constexpr qsizetype kApfsFileExtentKeyBytes = 16;
 constexpr qsizetype kApfsFileExtentValueBytes = 24;
 constexpr qsizetype kApfsFileExtentKeyLogicalOffset = 8;
 constexpr qsizetype kApfsFileExtentValuePhysicalBlockOffset = 8;
 constexpr qsizetype kApfsFileExtentValueCryptoIdOffset = 16;
-constexpr uint32_t kApfsOmapValueDeleted = 0x00000001;
-constexpr uint32_t kApfsOmapValueEncrypted = 0x00000004;
-constexpr uint32_t kApfsOmapValueNoHeader = 0x00000008;
+constexpr uint32_t kApfsOmapValueDeleted = 0x00'00'00'01;
+constexpr uint32_t kApfsOmapValueEncrypted = 0x00'00'00'04;
+constexpr uint32_t kApfsOmapValueNoHeader = 0x00'00'00'08;
 constexpr qsizetype kApfsOmapKeyBytes = 16;
 constexpr qsizetype kApfsOmapKeyXidOffset = 8;
 constexpr qsizetype kApfsOmapValueBytes = 16;
@@ -127,21 +128,21 @@ constexpr qsizetype kApfsVolumeRootTreeOidOffset = 0x88;
 constexpr qsizetype kApfsVolumeFlagsOffset = 0x198;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
 constexpr qsizetype kApfsVolumeNameBytes = 256;
-constexpr uint32_t kApfsCheckpointMapLast = 0x00000001;
-constexpr uint32_t kApfsCheckpointCountNonContiguousMask = 0x80000000;
+constexpr uint32_t kApfsCheckpointMapLast = 0x00'00'00'01;
+constexpr uint32_t kApfsCheckpointCountNonContiguousMask = 0x80'00'00'00;
 constexpr uint64_t kApfsInitialProbeBytes = 4096;
 constexpr uint64_t kApfsMinBlockSize = 512;
 constexpr uint64_t kApfsBlockSizeAlignment = 512;
 constexpr uint64_t kMaxApfsBlockSize = 1024ULL * 1024ULL;
-constexpr int kMaxCheckpointDescriptorBlocks = 65536;
+constexpr int kMaxCheckpointDescriptorBlocks = 65'536;
 constexpr int kMaxObjectMapDepth = 16;
 constexpr int kMaxFsTreeDepth = 16;
-constexpr int kMaxFsTreeNodes = 20000;
-constexpr int kMaxFsTreeRecords = 300000;
+constexpr int kMaxFsTreeNodes = 20'000;
+constexpr int kMaxFsTreeRecords = 300'000;
 constexpr uint64_t kMaxFileReadBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kExportNameFallbackBase = 10;
 constexpr int kUniqueExportNameFirstSuffix = 2;
-constexpr int kMaxUniqueExportNameAttempts = 10000;
+constexpr int kMaxUniqueExportNameAttempts = 10'000;
 constexpr qsizetype kApfsFsKeyBytes = 8;
 constexpr qsizetype kApfsDrecMinValueBytes = 18;
 constexpr qsizetype kApfsDrecHashedNameOffset = 12;
@@ -225,7 +226,8 @@ QString childPath(const QString& parent, const QString& name) {
 }
 
 QString entryTypeName(uint16_t directoryType, uint16_t mode) {
-    if (directoryType == kApfsDirTypeDirectory || (mode & kApfsModeTypeMask) == kApfsModeDirectory) {
+    if (directoryType == kApfsDirTypeDirectory ||
+        (mode & kApfsModeTypeMask) == kApfsModeDirectory) {
         return QStringLiteral("Directory");
     }
     if (directoryType == kApfsDirTypeRegularFile ||
@@ -240,10 +242,15 @@ QString entryTypeName(uint16_t directoryType, uint16_t mode) {
 
 QString safeExportName(QString name, const QString& fallbackId) {
     name = name.trimmed();
-    static const QSet<QChar> kInvalidNameChars{
-        QLatin1Char('<'), QLatin1Char('>'), QLatin1Char(':'), QLatin1Char('"'),
-        QLatin1Char('/'), QLatin1Char('\\'), QLatin1Char('|'), QLatin1Char('?'),
-        QLatin1Char('*')};
+    static const QSet<QChar> kInvalidNameChars{QLatin1Char('<'),
+                                               QLatin1Char('>'),
+                                               QLatin1Char(':'),
+                                               QLatin1Char('"'),
+                                               QLatin1Char('/'),
+                                               QLatin1Char('\\'),
+                                               QLatin1Char('|'),
+                                               QLatin1Char('?'),
+                                               QLatin1Char('*')};
     for (auto& ch : name) {
         if (kInvalidNameChars.contains(ch) || ch.category() == QChar::Other_Control) {
             ch = QLatin1Char('_');
@@ -262,13 +269,11 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
     }
     const QFileInfo info(safeName);
     const QString base = info.completeBaseName().isEmpty() ? safeName : info.completeBaseName();
-    const QString extension = info.suffix().isEmpty() ? QString() : QStringLiteral(".%1").arg(info.suffix());
+    const QString extension = info.suffix().isEmpty() ? QString()
+                                                      : QStringLiteral(".%1").arg(info.suffix());
     for (int index = kUniqueExportNameFirstSuffix; index < kMaxUniqueExportNameAttempts; ++index) {
-        candidate = dir.filePath(QStringLiteral("%1-%2-%3%4")
-                                     .arg(base)
-                                     .arg(suffixId)
-                                     .arg(index)
-                                     .arg(extension));
+        candidate = dir.filePath(
+            QStringLiteral("%1-%2-%3%4").arg(base).arg(suffixId).arg(index).arg(extension));
         if (!QFileInfo::exists(candidate)) {
             return candidate;
         }
@@ -281,9 +286,9 @@ bool writeExportFile(const QString& path,
                      QStringList* blockers,
                      const QString& sourcePath) {
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
-        file.write(data) != data.size()) {
-        blockers->append(QStringLiteral("Unable to write exported APFS file for %1").arg(sourcePath));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) || file.write(data) != data.size()) {
+        blockers->append(
+            QStringLiteral("Unable to write exported APFS file for %1").arg(sourcePath));
         return false;
     }
     return true;
@@ -490,8 +495,7 @@ private:
     }
 
     [[nodiscard]] std::optional<ObjectMapValue> resolveVolumeMapping(
-        const QByteArray& nxBlock,
-        PartitionApfsFileReadResult* result) {
+        const QByteArray& nxBlock, PartitionApfsFileReadResult* result) {
         const auto fsOid = firstVolumeOid(nxBlock);
         if (!fsOid.has_value()) {
             result->blockers.append(QStringLiteral("APFS container has no volume OID"));
@@ -535,8 +539,8 @@ private:
         if (volumeName_.isEmpty()) {
             volumeName_ = QStringLiteral("APFS");
         }
-        const uint64_t volumeIncompatible =
-            le64(volumeBlock, kApfsVolumeIncompatibleFeaturesOffset);
+        const uint64_t volumeIncompatible = le64(volumeBlock,
+                                                 kApfsVolumeIncompatibleFeaturesOffset);
         if ((volumeIncompatible & kApfsVolumeIncompatIncompleteRestore) != 0) {
             result->blockers.append(QStringLiteral("APFS volume has incomplete-restore state"));
             return false;
@@ -561,9 +565,7 @@ private:
     }
 
     [[nodiscard]] std::optional<FileReadTarget> resolveFileReadTarget(
-        const QString& path,
-        uint64_t maxBytes,
-        PartitionApfsFileReadResult* result) const {
+        const QString& path, uint64_t maxBytes, PartitionApfsFileReadResult* result) const {
         const QString normalized = cleanPath(path);
         const auto record = resolveFile(normalized, result);
         if (!record.has_value()) {
@@ -607,8 +609,7 @@ private:
             return false;
         }
         result->data.reserve(static_cast<qsizetype>(std::min<uint64_t>(
-            target.bytes_to_read,
-            static_cast<uint64_t>(std::numeric_limits<int>::max()))));
+            target.bytes_to_read, static_cast<uint64_t>(std::numeric_limits<int>::max()))));
 
         uint64_t cursor = 0;
         for (const auto& extent : extents) {
@@ -645,8 +646,8 @@ private:
         }
 
         const uint64_t extentOffset = *cursor - extent.logical_offset;
-        const uint64_t readable =
-            std::min<uint64_t>(extent.length - extentOffset, bytesToRead - *cursor);
+        const uint64_t readable = std::min<uint64_t>(extent.length - extentOffset,
+                                                     bytesToRead - *cursor);
         if (!appendExtentBytes(extent, extentOffset, readable, result)) {
             return false;
         }
@@ -661,8 +662,8 @@ private:
         if (!cursor || extent.logical_offset <= *cursor) {
             return;
         }
-        const uint64_t sparseBytes =
-            std::min<uint64_t>(extent.logical_offset - *cursor, bytesToRead - *cursor);
+        const uint64_t sparseBytes = std::min<uint64_t>(extent.logical_offset - *cursor,
+                                                        bytesToRead - *cursor);
         result->data.append(QByteArray(static_cast<int>(sparseBytes), '\0'));
         *cursor += sparseBytes;
     }
@@ -698,9 +699,8 @@ private:
         return true;
     }
 
-    [[nodiscard]] QByteArray latestContainerSuperblock(
-        const QByteArray& firstBlock,
-        PartitionApfsFileReadResult* result) {
+    [[nodiscard]] QByteArray latestContainerSuperblock(const QByteArray& firstBlock,
+                                                       PartitionApfsFileReadResult* result) {
         const uint32_t descBlockCountRaw = le32(firstBlock, kApfsNxDescBlocksOffset);
         const uint32_t dataBlockCountRaw = le32(firstBlock, kApfsNxDataBlocksOffset);
         if ((descBlockCountRaw & kApfsCheckpointCountNonContiguousMask) != 0 ||
@@ -744,11 +744,10 @@ private:
         return best;
     }
 
-    [[nodiscard]] bool checkpointMapTerminatorObserved(
-        const QByteArray& best,
-        uint32_t descBlockCount,
-        uint64_t descBase,
-        PartitionApfsFileReadResult* result) {
+    [[nodiscard]] bool checkpointMapTerminatorObserved(const QByteArray& best,
+                                                       uint32_t descBlockCount,
+                                                       uint64_t descBase,
+                                                       PartitionApfsFileReadResult* result) {
         const uint32_t descIndex = le32(best, kApfsNxDescIndexOffset);
         const uint32_t descLen = le32(best, kApfsNxDescLenOffset);
         if (descLen == 0 || descLen >= descBlockCount) {
@@ -775,8 +774,7 @@ private:
         for (uint32_t index = 0; index < maxFileSystems; ++index) {
             const uint64_t oid =
                 le64(nxBlock,
-                     kApfsNxFsOidArrayOffset +
-                         static_cast<qsizetype>(index) * kApfsObjectIdBytes);
+                     kApfsNxFsOidArrayOffset + static_cast<qsizetype>(index) * kApfsObjectIdBytes);
             if (oid != 0) {
                 return oid;
             }
@@ -793,8 +791,8 @@ private:
         }
         const auto header = objectHeader(block);
         if (header.baseType() != kApfsObjectTypeObjectMap) {
-            result->blockers.append(QStringLiteral("APFS object map %1 is invalid")
-                                        .arg(physicalAddress));
+            result->blockers.append(
+                QStringLiteral("APFS object map %1 is invalid").arg(physicalAddress));
             return false;
         }
         state->flags = le32(block, kApfsOmapFlagsOffset);
@@ -858,10 +856,8 @@ private:
             const uint64_t keyXid = le64(node, entry.key_offset + kApfsOmapKeyXidOffset);
             if (keyOid == oid && keyXid <= xid && (!best.has_value() || keyXid > best->xid)) {
                 best = ObjectMapValue{le32(node, entry.value_offset),
-                                      le32(node,
-                                           entry.value_offset + kApfsOmapValueSizeOffset),
-                                      le64(node,
-                                           entry.value_offset + kApfsOmapValuePaddrOffset),
+                                      le32(node, entry.value_offset + kApfsOmapValueSizeOffset),
+                                      le64(node, entry.value_offset + kApfsOmapValuePaddrOffset),
                                       keyXid};
             }
         }
@@ -869,8 +865,7 @@ private:
     }
 
     [[nodiscard]] bool isObjectMapLeafEntry(const BtreeEntryView& entry) const {
-        return entry.key_length >= kApfsOmapKeyBytes &&
-               entry.value_length >= kApfsOmapValueBytes;
+        return entry.key_length >= kApfsOmapKeyBytes && entry.value_length >= kApfsOmapValueBytes;
     }
 
     [[nodiscard]] std::optional<ObjectMapValue> usableObjectMapValue(
@@ -878,8 +873,8 @@ private:
         if (!value.has_value()) {
             return std::nullopt;
         }
-        const uint32_t blockedFlags =
-            kApfsOmapValueDeleted | kApfsOmapValueEncrypted | kApfsOmapValueNoHeader;
+        const uint32_t blockedFlags = kApfsOmapValueDeleted | kApfsOmapValueEncrypted |
+                                      kApfsOmapValueNoHeader;
         if ((value->flags & blockedFlags) != 0) {
             return std::nullopt;
         }
@@ -1042,8 +1037,8 @@ private:
             return;
         }
         const qsizetype payloadLength = std::max<qsizetype>(0, nameLength - 1);
-        QString name =
-            QString::fromUtf8(node.mid(nameOffset, std::min(payloadLength, node.size() - nameOffset)));
+        QString name = QString::fromUtf8(
+            node.mid(nameOffset, std::min(payloadLength, node.size() - nameOffset)));
         if (name.isEmpty()) {
             return;
         }
@@ -1051,8 +1046,8 @@ private:
         record.parent_id = parentId;
         record.name = name;
         record.file_id = le64(node, entry.value_offset);
-        record.directory_type =
-            le16(node, entry.value_offset + kApfsDrecTypeOffset) & kApfsDrecTypeMask;
+        record.directory_type = le16(node, entry.value_offset + kApfsDrecTypeOffset) &
+                                kApfsDrecTypeMask;
         directoryRecords_.append(record);
     }
 
@@ -1088,8 +1083,8 @@ private:
              kApfsXfieldAlignment) *
             kApfsXfieldAlignment;
         for (uint16_t index = 0; index < count; ++index) {
-            const qsizetype fieldRelative =
-                metadataRelative + static_cast<qsizetype>(index) * kApfsXfieldTocEntryBytes;
+            const qsizetype fieldRelative = metadataRelative + static_cast<qsizetype>(index) *
+                                                                   kApfsXfieldTocEntryBytes;
             if (fieldRelative + kApfsXfieldTocEntryBytes > entry.value_length) {
                 return 0;
             }
@@ -1118,13 +1113,12 @@ private:
         }
         FileExtentRecord record;
         record.owner_id = ownerId;
-        record.logical_offset =
-            le64(node, entry.key_offset + kApfsFileExtentKeyLogicalOffset);
+        record.logical_offset = le64(node, entry.key_offset + kApfsFileExtentKeyLogicalOffset);
         const uint64_t lenAndFlags = le64(node, entry.value_offset);
         record.length = lenAndFlags & kApfsFileExtentLengthMask;
         record.flags = lenAndFlags & kApfsFileExtentFlagMask;
-        record.physical_block =
-            le64(node, entry.value_offset + kApfsFileExtentValuePhysicalBlockOffset);
+        record.physical_block = le64(node,
+                                     entry.value_offset + kApfsFileExtentValuePhysicalBlockOffset);
         record.crypto_id = le64(node, entry.value_offset + kApfsFileExtentValueCryptoIdOffset);
         if (record.length > 0) {
             extentsByOwner_.insert(record.owner_id, record);
@@ -1142,8 +1136,7 @@ private:
     }
 
     [[nodiscard]] std::optional<uint64_t> resolveDirectory(
-        const QString& path,
-        PartitionApfsFileReadResult* result) const {
+        const QString& path, PartitionApfsFileReadResult* result) const {
         uint64_t current = kApfsRootDirectoryId;
         for (const auto& part : pathParts(path)) {
             const auto records = directoryRecordsFor(current);
@@ -1156,7 +1149,8 @@ private:
                 return std::nullopt;
             }
             if (match->directory_type != kApfsDirTypeDirectory) {
-                result->blockers.append(QStringLiteral("APFS path is not a directory: %1").arg(path));
+                result->blockers.append(
+                    QStringLiteral("APFS path is not a directory: %1").arg(path));
                 return std::nullopt;
             }
             current = match->file_id;
@@ -1165,8 +1159,7 @@ private:
     }
 
     [[nodiscard]] std::optional<DirectoryRecord> resolveFile(
-        const QString& path,
-        PartitionApfsFileReadResult* result) const {
+        const QString& path, PartitionApfsFileReadResult* result) const {
         const auto parts = pathParts(path);
         if (parts.isEmpty()) {
             result->blockers.append(QStringLiteral("APFS file path is required"));
@@ -1179,8 +1172,8 @@ private:
                 return record.name.compare(parts.at(index), Qt::CaseInsensitive) == 0;
             });
             if (match == records.cend() || match->directory_type != kApfsDirTypeDirectory) {
-                result->blockers.append(QStringLiteral("APFS parent directory not found: %1")
-                                            .arg(path));
+                result->blockers.append(
+                    QStringLiteral("APFS parent directory not found: %1").arg(path));
                 return std::nullopt;
             }
             parent = match->file_id;
@@ -1260,21 +1253,20 @@ private:
         const bool root = (flags & kApfsBtreeNodeRoot) != 0;
         const qsizetype tableStart = kApfsBtreeNodeHeaderBytes + tableOffset;
         const qsizetype keyAreaStart = tableStart + tableLength;
-        const qsizetype valueAreaEnd =
-            root ? static_cast<qsizetype>(blockSize_) - kApfsBtreeInfoBytes
-                 : static_cast<qsizetype>(blockSize_);
-        const qsizetype tocEntryBytes =
-            fixed ? kApfsBtreeFixedTocEntryBytes : kApfsBtreeVariableTocEntryBytes;
+        const qsizetype valueAreaEnd = root ? static_cast<qsizetype>(blockSize_) -
+                                                  kApfsBtreeInfoBytes
+                                            : static_cast<qsizetype>(blockSize_);
+        const qsizetype tocEntryBytes = fixed ? kApfsBtreeFixedTocEntryBytes
+                                              : kApfsBtreeVariableTocEntryBytes;
         if (!btreeTableInBounds(node, count, tableStart, keyAreaStart, tocEntryBytes)) {
             return entries;
         }
-        entries.reserve(
-            static_cast<int>(std::min<uint32_t>(count, kApfsBtreeMaxEntryCount)));
+        entries.reserve(static_cast<int>(std::min<uint32_t>(count, kApfsBtreeMaxEntryCount)));
         const BtreeEntryContext context{keyAreaStart, valueAreaEnd, level, info};
         for (uint32_t index = 0; index < count; ++index) {
             const qsizetype toc = tableStart + static_cast<qsizetype>(index) * tocEntryBytes;
-            const auto entry =
-                fixed ? fixedBtreeEntry(node, toc, context) : variableBtreeEntry(node, toc, context);
+            const auto entry = fixed ? fixedBtreeEntry(node, toc, context)
+                                     : variableBtreeEntry(node, toc, context);
             if (entry.has_value() && btreeEntryInBounds(node, *entry)) {
                 entries.append(*entry);
             }
@@ -1293,27 +1285,22 @@ private:
     }
 
     [[nodiscard]] std::optional<BtreeEntryView> fixedBtreeEntry(
-        const QByteArray& node,
-        qsizetype toc,
-        const BtreeEntryContext& context) const {
+        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) const {
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeFixedTocValueOffset);
-        return BtreeEntryView{
-            context.key_area_start + keyOffset,
-            context.info.key_size,
-            context.value_area_end - valueOffset,
-            context.level > 0 ? kApfsBtreeChildPointerBytes : context.info.value_size};
+        return BtreeEntryView{context.key_area_start + keyOffset,
+                              context.info.key_size,
+                              context.value_area_end - valueOffset,
+                              context.level > 0 ? kApfsBtreeChildPointerBytes
+                                                : context.info.value_size};
     }
 
     [[nodiscard]] std::optional<BtreeEntryView> variableBtreeEntry(
-        const QByteArray& node,
-        qsizetype toc,
-        const BtreeEntryContext& context) const {
+        const QByteArray& node, qsizetype toc, const BtreeEntryContext& context) const {
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t keyLength = le16(node, toc + kApfsBtreeVariableTocKeyLengthOffset);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
-        const uint16_t valueLength =
-            le16(node, toc + kApfsBtreeVariableTocValueLengthOffset);
+        const uint16_t valueLength = le16(node, toc + kApfsBtreeVariableTocValueLengthOffset);
         return BtreeEntryView{context.key_area_start + keyOffset,
                               keyLength,
                               context.value_area_end - valueOffset,
@@ -1350,10 +1337,9 @@ private:
                                                    const QByteArray& bytes,
                                                    PartitionApfsFileReadResult* result,
                                                    bool appendBlocker = true) const {
-        const QByteArray objectBytes =
-            bytes.size() > static_cast<qsizetype>(blockSize_)
-                ? bytes.left(static_cast<qsizetype>(blockSize_))
-                : bytes;
+        const QByteArray objectBytes = bytes.size() > static_cast<qsizetype>(blockSize_)
+                                           ? bytes.left(static_cast<qsizetype>(blockSize_))
+                                           : bytes;
         if (PartitionApfsWriter::verifyObjectChecksum(objectBytes)) {
             return true;
         }
@@ -1381,20 +1367,18 @@ private:
         if (offset > static_cast<uint64_t>(std::numeric_limits<qint64>::max()) ||
             !device_->seek(static_cast<qint64>(offset))) {
             if (appendBlocker) {
-                result->blockers.append(
-                    QStringLiteral("APFS seek failed at byte %1: %2")
-                        .arg(offset)
-                        .arg(device_->errorString()));
+                result->blockers.append(QStringLiteral("APFS seek failed at byte %1: %2")
+                                            .arg(offset)
+                                            .arg(device_->errorString()));
             }
             return false;
         }
         *bytes = device_->read(static_cast<qint64>(length));
         if (bytes->size() < static_cast<qsizetype>(length)) {
             if (appendBlocker) {
-                result->blockers.append(
-                    QStringLiteral("APFS read failed at byte %1: %2")
-                        .arg(offset)
-                        .arg(device_->errorString()));
+                result->blockers.append(QStringLiteral("APFS read failed at byte %1: %2")
+                                            .arg(offset)
+                                            .arg(device_->errorString()));
             }
             return false;
         }
@@ -1446,8 +1430,9 @@ public:
 
     PartitionApfsDirectoryExportResult run(const QString& sourcePath,
                                            const QString& outputDirectory) {
-        pending_.append({sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
-                         outputDirectory});
+        pending_.append(
+            {sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
+             outputDirectory});
         while (!pending_.isEmpty()) {
             if (!processFrame(pending_.takeLast())) {
                 break;
@@ -1465,8 +1450,7 @@ private:
         }
         visited_directories_.insert(visitKey);
         const auto listing = reader_.listDirectory(
-            frame.source_path,
-            std::max(1, options_.max_entries - result_.entries_scanned));
+            frame.source_path, std::max(1, options_.max_entries - result_.entries_scanned));
         result_.warnings.append(listing.warnings);
         if (!listing.ok) {
             result_.blockers.append(listing.blockers);
@@ -1504,7 +1488,8 @@ private:
             return skipSymlink(entry);
         }
         if (!entry.regular_file) {
-            result_.warnings.append(QStringLiteral("Skipped unsupported APFS entry: %1").arg(entry.path));
+            result_.warnings.append(
+                QStringLiteral("Skipped unsupported APFS entry: %1").arg(entry.path));
             return true;
         }
         return exportFile(entry, targetPath);
@@ -1558,9 +1543,11 @@ private:
     [[nodiscard]] bool fitsByteCaps(const PartitionApfsFileEntry& entry) {
         const bool fileTooLarge = entry.size_bytes > options_.max_file_bytes;
         const bool totalTooLarge = result_.bytes_exported > options_.max_total_bytes ||
-                                   entry.size_bytes > options_.max_total_bytes - result_.bytes_exported;
+                                   entry.size_bytes >
+                                       options_.max_total_bytes - result_.bytes_exported;
         if (fileTooLarge || totalTooLarge) {
-            result_.blockers.append(QStringLiteral("Export byte cap reached before %1").arg(entry.path));
+            result_.blockers.append(
+                QStringLiteral("Export byte cap reached before %1").arg(entry.path));
             return false;
         }
         return true;
@@ -1574,8 +1561,7 @@ private:
 };
 
 PartitionApfsFileReadResult withOpenedApfsImage(
-    const QString& path,
-    const std::function<PartitionApfsFileReadResult(QIODevice*)>& operation) {
+    const QString& path, const std::function<PartitionApfsFileReadResult(QIODevice*)>& operation) {
     QString openError;
     auto device = openFileOrRawDeviceReadOnly(path, &openError);
     if (!device) {
@@ -1596,24 +1582,20 @@ PartitionApfsFileReadResult PartitionApfsFileSystemReader::listDirectory(QIODevi
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::listDirectoryFromImage(
-    const QString& image_path,
-    const QString& path,
-    int max_entries) {
+    const QString& image_path, const QString& path, int max_entries) {
     return withOpenedApfsImage(image_path, [&](QIODevice* device) {
         return PartitionApfsFileSystemReader::listDirectory(device, path, max_entries);
     });
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::readFile(QIODevice* device,
-                                                                     const QString& path,
-                                                                     uint64_t max_bytes) {
+                                                                    const QString& path,
+                                                                    uint64_t max_bytes) {
     return ApfsReader(device).readFile(path, max_bytes);
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::readFileFromImage(
-    const QString& image_path,
-    const QString& path,
-    uint64_t max_bytes) {
+    const QString& image_path, const QString& path, uint64_t max_bytes) {
     return withOpenedApfsImage(image_path, [&](QIODevice* device) {
         return PartitionApfsFileSystemReader::readFile(device, path, max_bytes);
     });
@@ -1633,8 +1615,8 @@ PartitionApfsDirectoryExportResult PartitionApfsFileSystemReader::exportDirector
     QString openError;
     auto image = openFileOrRawDeviceReadOnly(image_path, &openError);
     if (!image) {
-        exportResult.blockers.append(QStringLiteral("Unable to open APFS image read-only: %1")
-                                         .arg(openError));
+        exportResult.blockers.append(
+            QStringLiteral("Unable to open APFS image read-only: %1").arg(openError));
         return exportResult;
     }
 

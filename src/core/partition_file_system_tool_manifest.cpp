@@ -91,9 +91,8 @@ QVector<PartitionFileSystemToolRuntimeFile> objectRuntimeFiles(const QJsonObject
             continue;
         }
         const QJsonObject fileObject = entry.toObject();
-        files.append({.relative_path =
-                          normalizedRelativePath(objectString(fileObject,
-                                                               QStringLiteral("relative_path"))),
+        files.append({.relative_path = normalizedRelativePath(
+                          objectString(fileObject, QStringLiteral("relative_path"))),
                       .sha256 = objectString(fileObject, QStringLiteral("sha256"))});
     }
     return files;
@@ -158,11 +157,11 @@ void validateDigestFields(const PartitionFileSystemToolSpec& tool, QStringList* 
     }
     for (const auto& runtimeFile : tool.runtime_files) {
         if (!validSha256Hex(runtimeFile.sha256)) {
-            errors->append(QStringLiteral("Tool '%1' runtime file sha256 is not a SHA-256 hex digest: %2")
-                               .arg(tool.id,
-                                    runtimeFile.relative_path.isEmpty()
-                                        ? QStringLiteral("<missing path>")
-                                        : runtimeFile.relative_path));
+            errors->append(
+                QStringLiteral("Tool '%1' runtime file sha256 is not a SHA-256 hex digest: %2")
+                    .arg(tool.id,
+                         runtimeFile.relative_path.isEmpty() ? QStringLiteral("<missing path>")
+                                                             : runtimeFile.relative_path));
         }
     }
 }
@@ -190,10 +189,9 @@ void validatePathAndHash(const PathHashCheck& check, QStringList* errors) {
     }
 
     const QString actualHash = fileSha256Hex(filePath);
-    if (actualHash.isEmpty() ||
-        actualHash.compare(check.expected_hash, Qt::CaseInsensitive) != 0) {
-        errors->append(QStringLiteral("Tool '%1' %2 hash mismatch")
-                           .arg(check.tool_id, check.label));
+    if (actualHash.isEmpty() || actualHash.compare(check.expected_hash, Qt::CaseInsensitive) != 0) {
+        errors->append(
+            QStringLiteral("Tool '%1' %2 hash mismatch").arg(check.tool_id, check.label));
     }
 }
 
@@ -214,8 +212,8 @@ void validateRuntimeFiles(const PartitionFileSystemToolSpec& tool,
     QStringList seenPaths;
     for (const auto& runtimeFile : tool.runtime_files) {
         if (runtimeFile.relative_path.trimmed().isEmpty()) {
-            errors->append(QStringLiteral("Tool '%1' runtime file is missing relative_path")
-                               .arg(tool.id));
+            errors->append(
+                QStringLiteral("Tool '%1' runtime file is missing relative_path").arg(tool.id));
         }
         if (runtimeFile.sha256.trimmed().isEmpty()) {
             errors->append(QStringLiteral("Tool '%1' runtime file is missing sha256: %2")

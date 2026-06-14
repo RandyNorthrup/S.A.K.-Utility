@@ -95,10 +95,8 @@ void FileExplorerDetailsView::restoreColumnState() {
     }
     QSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerDetailsViewGroup));
-    const QByteArray state =
-        settings.value(QString::fromLatin1(kHeaderStateKey)).toByteArray();
-    const QVariantList widths =
-        settings.value(QString::fromLatin1(kColumnWidthsKey)).toList();
+    const QByteArray state = settings.value(QString::fromLatin1(kHeaderStateKey)).toByteArray();
+    const QVariantList widths = settings.value(QString::fromLatin1(kColumnWidthsKey)).toList();
     settings.endGroup();
     if (!state.isEmpty()) {
         horizontalHeader()->restoreState(state);

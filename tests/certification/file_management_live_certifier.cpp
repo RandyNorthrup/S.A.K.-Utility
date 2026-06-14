@@ -32,7 +32,7 @@ namespace {
 constexpr int kDefaultMaxDepth = 8;
 constexpr int kDefaultMaxDirectories = 512;
 constexpr int kDefaultMaxEntriesPerDirectory = 1024;
-constexpr int kDefaultWorkerTimeoutMs = 180000;
+constexpr int kDefaultWorkerTimeoutMs = 180'000;
 constexpr uint64_t kDefaultReadMaxBytes = 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumGeneratedApfsBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kGeneratedApfsSingleChunkMaxBytes = 128ULL * 1024ULL * 1024ULL;
@@ -154,6 +154,26 @@ QString targetSizeKey(const QString& fileSystem) {
     return key.isEmpty() ? fileSystem.trimmed().toLower() : key;
 }
 
+void appendTargetSpecErrors(QStringList& errors, const TargetSpec& target, const bool destructive) {
+    if (target.file_system.trimmed().isEmpty() || target.path.trimmed().isEmpty()) {
+        errors.append(QStringLiteral("--target values must use FS=path"));
+    }
+    const bool destructive_apfs = destructive &&
+                                  sak::FileManagementFileSystemBridge::normalizedFileSystem(
+                                      target.file_system) == QStringLiteral("apfs");
+    if (destructive_apfs && target.size_bytes == 0) {
+        errors.append(
+            QStringLiteral("--target-size APFS=bytes is required for destructive APFS raw writes"));
+    }
+    if (destructive_apfs && target.size_bytes != 0 &&
+        (target.size_bytes < kMinimumGeneratedApfsBytes ||
+         target.size_bytes > kGeneratedApfsSingleChunkMaxBytes)) {
+        errors.append(QStringLiteral(
+            "Destructive APFS live certification currently supports one-spaceman-chunk "
+            "generated targets only (64 MiB through 128 MiB)"));
+    }
+}
+
 QStringList parseErrors(const Config& config) {
     QStringList errors;
     if (config.output_path.trimmed().isEmpty()) {
@@ -163,26 +183,7 @@ QStringList parseErrors(const Config& config) {
         errors.append(QStringLiteral("At least one --target FS=path argument is required"));
     }
     for (const auto& target : config.targets) {
-        if (target.file_system.trimmed().isEmpty() || target.path.trimmed().isEmpty()) {
-            errors.append(QStringLiteral("--target values must use FS=path"));
-        }
-        if (config.destructive &&
-            sak::FileManagementFileSystemBridge::normalizedFileSystem(target.file_system) ==
-                QStringLiteral("apfs") &&
-            target.size_bytes == 0) {
-            errors.append(
-                QStringLiteral("--target-size APFS=bytes is required for destructive APFS raw writes"));
-        }
-        if (config.destructive &&
-            sak::FileManagementFileSystemBridge::normalizedFileSystem(target.file_system) ==
-                QStringLiteral("apfs") &&
-            target.size_bytes != 0 &&
-            (target.size_bytes < kMinimumGeneratedApfsBytes ||
-             target.size_bytes > kGeneratedApfsSingleChunkMaxBytes)) {
-            errors.append(QStringLiteral(
-                "Destructive APFS live certification currently supports one-spaceman-chunk "
-                "generated targets only (64 MiB through 128 MiB)"));
-        }
+        appendTargetSpecErrors(errors, target, config.destructive);
     }
     return errors;
 }
@@ -232,8 +233,8 @@ bool writeJsonFile(const QString& path, const QJsonObject& object, QString* erro
     const QFileInfo info(path);
     if (!info.absoluteDir().exists() && !QDir().mkpath(info.absolutePath())) {
         if (error) {
-            *error = QStringLiteral("Unable to create output directory: %1")
-                         .arg(info.absolutePath());
+            *error =
+                QStringLiteral("Unable to create output directory: %1").arg(info.absolutePath());
         }
         return false;
     }
@@ -303,9 +304,32 @@ QString joinTargetPath(QString directory, const QString& name) {
 
 QString previewToken(const QByteArray& data) {
     const QString text = QString::fromUtf8(data);
-    static const QRegularExpression tokenPattern(QStringLiteral("[A-Za-z0-9][A-Za-z0-9 _.-]{2,31}"));
+    static const QRegularExpression tokenPattern(
+        QStringLiteral("[A-Za-z0-9][A-Za-z0-9 _.-]{2,31}"));
     const auto match = tokenPattern.match(text);
     return match.hasMatch() ? match.captured(0).trimmed() : QString();
+}
+
+std::optional<Sample> findReadableSampleInEntries(const sak::FileManagementTarget& target,
+                                                  const auto& entries,
+                                                  const Config& config,
+                                                  TraversalState* state) {
+    for (const auto& entry : entries) {
+        if (!entry.regular_file || entry.size_bytes == 0 ||
+            entry.size_bytes > config.read_max_bytes) {
+            continue;
+        }
+        ++state->files_seen;
+        const auto read = sak::FileManagementFileSystemBridge::readFile(target,
+                                                                        entry.path,
+                                                                        config.read_max_bytes);
+        if (read.ok && !read.data.isEmpty()) {
+            return Sample{entry, read.data};
+        }
+        state->warnings.append(QStringLiteral("Read skipped at %1: %2")
+                                   .arg(entry.path, read.blockers.join(QStringLiteral("; "))));
+    }
+    return std::nullopt;
 }
 
 std::optional<Sample> findReadableSample(const sak::FileManagementTarget& target,
@@ -328,19 +352,8 @@ std::optional<Sample> findReadableSample(const sak::FileManagementTarget& target
     }
     state->warnings.append(listing.warnings);
 
-    for (const auto& entry : listing.entries) {
-        if (!entry.regular_file || entry.size_bytes == 0 ||
-            entry.size_bytes > config.read_max_bytes) {
-            continue;
-        }
-        ++state->files_seen;
-        const auto read =
-            sak::FileManagementFileSystemBridge::readFile(target, entry.path, config.read_max_bytes);
-        if (read.ok && !read.data.isEmpty()) {
-            return Sample{entry, read.data};
-        }
-        state->warnings.append(QStringLiteral("Read skipped at %1: %2")
-                                   .arg(entry.path, read.blockers.join(QStringLiteral("; "))));
+    if (auto sample = findReadableSampleInEntries(target, listing.entries, config, state)) {
+        return sample;
     }
 
     for (const auto& entry : listing.entries) {
@@ -411,11 +424,11 @@ DuplicateRun runDuplicateWorker(const sak::FileManagementTarget& target,
 
     worker.start();
     timeout.start(timeoutMs);
-    hardTimeout.start(timeoutMs + 15000);
+    hardTimeout.start(timeoutMs + 15'000);
     loop.exec();
     if (worker.isRunning()) {
         worker.requestStop();
-        worker.wait(15000);
+        worker.wait(15'000);
     }
     return run;
 }
@@ -466,11 +479,12 @@ SearchRun runAdvancedSearchWorker(const sak::FileManagementTarget& target,
         }
         loop.quit();
     });
-    QObject::connect(&worker, &sak::AdvancedSearchWorker::failed, &loop, [&](int, const QString& msg) {
-        run.ok = false;
-        run.error = msg;
-        loop.quit();
-    });
+    QObject::connect(
+        &worker, &sak::AdvancedSearchWorker::failed, &loop, [&](int, const QString& msg) {
+            run.ok = false;
+            run.error = msg;
+            loop.quit();
+        });
     QObject::connect(&worker, &sak::AdvancedSearchWorker::cancelled, &loop, [&]() {
         run.ok = false;
         run.error = QStringLiteral("cancelled");
@@ -488,11 +502,11 @@ SearchRun runAdvancedSearchWorker(const sak::FileManagementTarget& target,
 
     worker.start();
     timeout.start(timeoutMs);
-    hardTimeout.start(timeoutMs + 15000);
+    hardTimeout.start(timeoutMs + 15'000);
     loop.exec();
     if (worker.isRunning()) {
         worker.requestStop();
-        worker.wait(15000);
+        worker.wait(15'000);
     }
     return run;
 }
@@ -555,11 +569,16 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
                                      const Config& config) {
     QJsonArray steps;
     bool ok = target.can_write_files;
-    const QString fs = sak::FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
+    const auto accumulate = [&ok](const bool step) {
+        ok = ok && step;
+    };
+    const QString fs =
+        sak::FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
     const QString stamp = safeStamp();
     const QString rootDirectory = QStringLiteral("/sak-fm-live-%1").arg(stamp);
     const QString filePath = joinTargetPath(rootDirectory, QStringLiteral("payload.txt"));
-    const QString renamedPath = joinTargetPath(rootDirectory, QStringLiteral("payload-renamed.txt"));
+    const QString renamedPath = joinTargetPath(rootDirectory,
+                                               QStringLiteral("payload-renamed.txt"));
     const QByteArray payload =
         QStringLiteral("S.A.K. File Management live mutation proof\nfs=%1\nstamp=%2\n")
             .arg(target.file_system, stamp)
@@ -574,15 +593,16 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
     const auto createDirectory =
         sak::FileManagementFileSystemBridge::createDirectory(target, rootDirectory);
     steps.append(mutationToJson(QStringLiteral("create-directory"), createDirectory));
-    ok = ok && createDirectory.ok;
+    accumulate(createDirectory.ok);
 
-    const auto writeFile = sak::FileManagementFileSystemBridge::writeFile(target, filePath, payload);
+    const auto writeFile =
+        sak::FileManagementFileSystemBridge::writeFile(target, filePath, payload);
     steps.append(mutationToJson(QStringLiteral("write-file"), writeFile));
-    ok = ok && writeFile.ok;
+    accumulate(writeFile.ok);
 
     const auto verifyWrite = verifyReadBack(target, filePath, payload, config.read_max_bytes);
     steps.append(verifyToJson(QStringLiteral("read-after-write"), verifyWrite));
-    ok = ok && verifyWrite.ok;
+    accumulate(verifyWrite.ok);
     if (verifyWrite.ok) {
         Sample mutationSample;
         mutationSample.entry.name = QStringLiteral("payload.txt");
@@ -593,27 +613,29 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
         mutationSample.data = payload;
 
         const auto duplicate = runDuplicateWorker(target, rootDirectory, config.worker_timeout_ms);
-        steps.append(QJsonObject{{QStringLiteral("action"), QStringLiteral("duplicate-finder-created-file")},
-                                 {QStringLiteral("ok"), duplicate.ok},
-                                 {QStringLiteral("timed_out"), duplicate.timed_out},
-                                 {QStringLiteral("scan_directory"), rootDirectory},
-                                 {QStringLiteral("summary"), duplicate.summary},
-                                 {QStringLiteral("duplicate_count"), duplicate.duplicate_count},
-                                 {QStringLiteral("wasted_space"), QString::number(duplicate.wasted_space)},
-                                 {QStringLiteral("progress_events"), duplicate.progress_events},
-                                 {QStringLiteral("error"), duplicate.error}});
-        ok = ok && duplicate.ok;
+        steps.append(
+            QJsonObject{{QStringLiteral("action"), QStringLiteral("duplicate-finder-created-file")},
+                        {QStringLiteral("ok"), duplicate.ok},
+                        {QStringLiteral("timed_out"), duplicate.timed_out},
+                        {QStringLiteral("scan_directory"), rootDirectory},
+                        {QStringLiteral("summary"), duplicate.summary},
+                        {QStringLiteral("duplicate_count"), duplicate.duplicate_count},
+                        {QStringLiteral("wasted_space"), QString::number(duplicate.wasted_space)},
+                        {QStringLiteral("progress_events"), duplicate.progress_events},
+                        {QStringLiteral("error"), duplicate.error}});
+        accumulate(duplicate.ok);
 
-        const auto search =
-            runAdvancedSearchWorker(target, mutationSample, config.worker_timeout_ms, config.read_max_bytes);
-        steps.append(QJsonObject{{QStringLiteral("action"), QStringLiteral("advanced-search-created-file")},
-                                 {QStringLiteral("ok"), search.ok},
-                                 {QStringLiteral("timed_out"), search.timed_out},
-                                 {QStringLiteral("result_count"), search.result_count},
-                                 {QStringLiteral("searched_files"), search.searched_files},
-                                 {QStringLiteral("matched_paths"), stringsToJson(search.matched_paths)},
-                                 {QStringLiteral("error"), search.error}});
-        ok = ok && search.ok;
+        const auto search = runAdvancedSearchWorker(
+            target, mutationSample, config.worker_timeout_ms, config.read_max_bytes);
+        steps.append(
+            QJsonObject{{QStringLiteral("action"), QStringLiteral("advanced-search-created-file")},
+                        {QStringLiteral("ok"), search.ok},
+                        {QStringLiteral("timed_out"), search.timed_out},
+                        {QStringLiteral("result_count"), search.result_count},
+                        {QStringLiteral("searched_files"), search.searched_files},
+                        {QStringLiteral("matched_paths"), stringsToJson(search.matched_paths)},
+                        {QStringLiteral("error"), search.error}});
+        accumulate(search.ok);
     }
 
     QString deletePath = filePath;
@@ -621,19 +643,19 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
         const auto rename =
             sak::FileManagementFileSystemBridge::renameEntry(target, filePath, renamedPath);
         steps.append(mutationToJson(QStringLiteral("rename-entry"), rename));
-        ok = ok && rename.ok;
+        accumulate(rename.ok);
         if (rename.ok) {
             deletePath = renamedPath;
             const auto verifyRename =
                 verifyReadBack(target, renamedPath, payload, config.read_max_bytes);
             steps.append(verifyToJson(QStringLiteral("read-after-rename"), verifyRename));
-            ok = ok && verifyRename.ok;
+            accumulate(verifyRename.ok);
         }
     }
 
     const auto deleteFile = sak::FileManagementFileSystemBridge::deleteFile(target, deletePath);
     steps.append(mutationToJson(QStringLiteral("delete-file"), deleteFile));
-    ok = ok && deleteFile.ok;
+    accumulate(deleteFile.ok);
 
     const auto deleteVerify =
         sak::FileManagementFileSystemBridge::readFile(target, deletePath, config.read_max_bytes);
@@ -643,12 +665,12 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
                              {QStringLiteral("path"), deletePath},
                              {QStringLiteral("blockers"), stringsToJson(deleteVerify.blockers)},
                              {QStringLiteral("warnings"), stringsToJson(deleteVerify.warnings)}});
-    ok = ok && deleteVerified;
+    accumulate(deleteVerified);
 
     const auto deleteDirectory =
         sak::FileManagementFileSystemBridge::deleteDirectory(target, rootDirectory);
     steps.append(mutationToJson(QStringLiteral("delete-directory"), deleteDirectory));
-    ok = ok && deleteDirectory.ok;
+    accumulate(deleteDirectory.ok);
 
     return QJsonObject{{QStringLiteral("ok"), ok},
                        {QStringLiteral("root_directory"), rootDirectory},
@@ -656,8 +678,9 @@ QJsonObject runMutationCertification(const sak::FileManagementTarget& target,
 }
 
 QJsonObject certifyTarget(const TargetSpec& spec, const Config& config) {
-    auto target =
-        sak::FileManagementFileSystemBridge::manualTarget(spec.path, spec.file_system, spec.size_bytes);
+    auto target = sak::FileManagementFileSystemBridge::manualTarget(spec.path,
+                                                                    spec.file_system,
+                                                                    spec.size_bytes);
     target.label = QStringLiteral("%1 live target").arg(target.file_system);
 
     QJsonObject result;
@@ -706,30 +729,35 @@ QJsonObject certifyTarget(const TargetSpec& spec, const Config& config) {
                                   {QStringLiteral("scan_directory"), scanDirectory},
                                   {QStringLiteral("summary"), duplicate.summary},
                                   {QStringLiteral("duplicate_count"), duplicate.duplicate_count},
-                                  {QStringLiteral("wasted_space"), QString::number(duplicate.wasted_space)},
+                                  {QStringLiteral("wasted_space"),
+                                   QString::number(duplicate.wasted_space)},
                                   {QStringLiteral("progress_events"), duplicate.progress_events},
                                   {QStringLiteral("error"), duplicate.error}});
 
-        const auto search =
-            runAdvancedSearchWorker(target, *sample, config.worker_timeout_ms, config.read_max_bytes);
+        const auto search = runAdvancedSearchWorker(
+            target, *sample, config.worker_timeout_ms, config.read_max_bytes);
         result.insert(QStringLiteral("advanced_search"),
                       QJsonObject{{QStringLiteral("ok"), search.ok},
                                   {QStringLiteral("timed_out"), search.timed_out},
                                   {QStringLiteral("result_count"), search.result_count},
                                   {QStringLiteral("searched_files"), search.searched_files},
-                                  {QStringLiteral("matched_paths"), stringsToJson(search.matched_paths)},
+                                  {QStringLiteral("matched_paths"),
+                                   stringsToJson(search.matched_paths)},
                                   {QStringLiteral("error"), search.error}});
         targetPassed = targetPassed && duplicate.ok && search.ok;
     } else {
         result.insert(QStringLiteral("file_explorer_sample_read"),
                       QJsonObject{{QStringLiteral("ok"), false},
-                                  {QStringLiteral("error"), QStringLiteral("no readable sample file found")}});
+                                  {QStringLiteral("error"),
+                                   QStringLiteral("no readable sample file found")}});
         result.insert(QStringLiteral("duplicate_finder"),
                       QJsonObject{{QStringLiteral("ok"), false},
-                                  {QStringLiteral("error"), QStringLiteral("not run without sample")}});
+                                  {QStringLiteral("error"),
+                                   QStringLiteral("not run without sample")}});
         result.insert(QStringLiteral("advanced_search"),
                       QJsonObject{{QStringLiteral("ok"), false},
-                                  {QStringLiteral("error"), QStringLiteral("not run without sample")}});
+                                  {QStringLiteral("error"),
+                                   QStringLiteral("not run without sample")}});
         if (!config.destructive) {
             targetPassed = false;
         }
@@ -743,11 +771,12 @@ QJsonObject certifyTarget(const TargetSpec& spec, const Config& config) {
         result.insert(QStringLiteral("file_explorer_mutations"),
                       QJsonObject{{QStringLiteral("ok"), true},
                                   {QStringLiteral("skipped"), true},
-                                  {QStringLiteral("reason"), QStringLiteral("--destructive not set")}});
+                                  {QStringLiteral("reason"),
+                                   QStringLiteral("--destructive not set")}});
     }
 
-    result.insert(QStringLiteral("status"), targetPassed ? QStringLiteral("Passed")
-                                                         : QStringLiteral("Failed"));
+    result.insert(QStringLiteral("status"),
+                  targetPassed ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     return result;
 }
 
@@ -787,8 +816,8 @@ int main(int argc, char* argv[]) {
     }
 
     report.insert(QStringLiteral("targets"), targetReports);
-    report.insert(QStringLiteral("status"), passed ? QStringLiteral("Passed")
-                                                   : QStringLiteral("Failed"));
+    report.insert(QStringLiteral("status"),
+                  passed ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("finished_utc"), utcNow());
 
     QString writeError;
