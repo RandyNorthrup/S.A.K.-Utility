@@ -1224,6 +1224,36 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
     return report;
 }
 
+std::optional<QJsonObject> buildCommitFileDeleteReport(const CliInvocation& invocation,
+                                                       QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-delete.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileDelete(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .file_name = invocation.file_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file delete commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, QString* error) {
     if (invocation.command == QStringLiteral("list-image")) {
         return buildListImageReport(invocation, error);
@@ -1236,6 +1266,9 @@ std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, Q
     }
     if (invocation.command == QStringLiteral("commit-image-file-insert")) {
         return buildCommitFileInsertReport(invocation, error);
+    }
+    if (invocation.command == QStringLiteral("commit-image-file-delete")) {
+        return buildCommitFileDeleteReport(invocation, error);
     }
     if (isImageCommand(invocation.command)) {
         return buildImageCommandReport(invocation, error);
@@ -1263,7 +1296,8 @@ bool isFileNameCommand(const QString& command) {
            command == QStringLiteral("delete-image-root-directory-file") ||
            command == QStringLiteral("delete-raw-root-directory-file") ||
            command == QStringLiteral("delete-raw-root-file") ||
-           command == QStringLiteral("commit-image-file-insert");
+           command == QStringLiteral("commit-image-file-insert") ||
+           command == QStringLiteral("commit-image-file-delete");
 }
 
 bool isDirectoryNameCommand(const QString& command) {

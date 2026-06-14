@@ -1648,6 +1648,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
+    void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6824,6 +6825,84 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertChainsAndPreservesEx
          .options = options});
     QVERIFY(!duplicate.ok);
     QVERIFY(duplicate.blockers.join(' ').contains(QStringLiteral("already exists")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString d0 = dir.filePath(QStringLiteral("del0.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = d0,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("DEL"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // Build three content files via chained inserts.
+    const QByteArray a = QByteArrayLiteral("AAAA file one content");
+    const QByteArray b = QByteArrayLiteral("BBBB file two content");
+    const QByteArray c = QByteArrayLiteral("CCCC file three content");
+    const QString d1 = dir.filePath(QStringLiteral("del1.apfs"));
+    const QString d2 = dir.filePath(QStringLiteral("del2.apfs"));
+    const QString d3 = dir.filePath(QStringLiteral("del3.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = d0,
+                                                            .written_image_path = d1,
+                                                            .file_name = "f1.txt",
+                                                            .file_data = a,
+                                                            .options = options})
+                .ok);
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = d1,
+                                                            .written_image_path = d2,
+                                                            .file_name = "f2.txt",
+                                                            .file_data = b,
+                                                            .options = options})
+                .ok);
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = d2,
+                                                            .written_image_path = d3,
+                                                            .file_name = "f3.txt",
+                                                            .file_data = c,
+                                                            .options = options})
+                .ok);
+
+    // Delete the middle file in place.
+    const QString d4 = dir.filePath(QStringLiteral("del4.apfs"));
+    const auto del =
+        PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = d3,
+                                                        .written_image_path = d4,
+                                                        .file_name = QStringLiteral("f2.txt"),
+                                                        .options = options});
+    QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+
+    // Only f1 and f3 remain, with their content intact.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(d4, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    QStringList names;
+    for (const auto& entry : listing.entries) {
+        names.append(entry.name);
+    }
+    QVERIFY(names.contains(QStringLiteral("f1.txt")));
+    QVERIFY(names.contains(QStringLiteral("f3.txt")));
+    QVERIFY(!names.contains(QStringLiteral("f2.txt")));
+    QCOMPARE(
+        PartitionApfsFileSystemReader::readFileFromImage(d4, QStringLiteral("/f1.txt"), 4096).data,
+        a);
+    QCOMPARE(
+        PartitionApfsFileSystemReader::readFileFromImage(d4, QStringLiteral("/f3.txt"), 4096).data,
+        c);
+
+    // Deleting a missing file fails closed.
+    const auto missing = PartitionApfsWriter::commitImageOnlyFileDelete(
+        {.source_image_path = d4,
+         .written_image_path = dir.filePath(QStringLiteral("del5.apfs")),
+         .file_name = QStringLiteral("nope.txt"),
+         .options = options});
+    QVERIFY(!missing.ok);
+    QVERIFY(missing.blockers.join(' ').contains(QStringLiteral("not found")));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

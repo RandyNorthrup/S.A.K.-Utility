@@ -1959,8 +1959,10 @@ struct ApfsCowFileInsert {
     // [rootTree, volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
     QVector<uint64_t> newBlocks;
     QVector<ApfsRootFilePayload> files;
-    uint64_t dataBlockCount{0};  // file data blocks the volume newly allocates
-    uint64_t extentRefNew{0};    // new extent-ref tree block (0 = keep the existing empty tree)
+    int64_t allocBlockDelta{0};  // change to the volume allocated-block count (data blocks)
+    uint64_t extentRefNew{0};    // new extent-ref tree block (0 = keep the existing tree)
+    int64_t fileCountDelta{1};   // +1 for insert, -1 for delete
+    uint64_t nextObjIdDelta{1};  // +1 for insert (consumes an object id), 0 for delete
 };
 
 // Copy-on-write the file-system metadata chain to the newly allocated blocks
@@ -2011,11 +2013,16 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     if (cow.extentRefNew != 0) {
         writeLe64(&vol, kApfsVolumeExtentRefTreeOidOffset, cow.extentRefNew);
     }
-    writeLe64(&vol, kApfsVolumeFileCountOffset, le64(vol, kApfsVolumeFileCountOffset) + 1);
-    writeLe64(&vol, kApfsVolumeNextObjectIdOffset, le64(vol, kApfsVolumeNextObjectIdOffset) + 1);
+    writeLe64(&vol,
+              kApfsVolumeFileCountOffset,
+              le64(vol, kApfsVolumeFileCountOffset) + static_cast<uint64_t>(cow.fileCountDelta));
+    writeLe64(&vol,
+              kApfsVolumeNextObjectIdOffset,
+              le64(vol, kApfsVolumeNextObjectIdOffset) + cow.nextObjIdDelta);
     writeLe64(&vol,
               kApfsVolumeAllocatedBlockCountOffset,
-              le64(vol, kApfsVolumeAllocatedBlockCountOffset) + cow.dataBlockCount);
+              le64(vol, kApfsVolumeAllocatedBlockCountOffset) +
+                  static_cast<uint64_t>(cow.allocBlockDelta));
     writeLe64(&vol, kApfsObjectXidOffset, cow.newXid);
     if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
         return false;
@@ -2086,37 +2093,40 @@ bool adjustCibFreeCount(QIODevice* image,
 struct ApfsFileInsertAllocation {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
-    ApfsLiveFsChain chain;
-    QVector<uint64_t> newBlocks;
-    uint64_t dataBlocks{0};
+    QVector<uint64_t> freed;      // old COW-chain blocks (+ freed data on delete)
+    QVector<uint64_t> allocated;  // newly written COW blocks
+    int64_t cibFreeDelta{0};      // + when net blocks are freed, - when consumed
     uint64_t newXid{0};
 };
 
-// Swap the allocation bitmap (free the six old COW-chain blocks, allocate the
-// new ones) and reduce the CIB free count by the net data-block allocation.
+// Swap the allocation bitmap (free the old COW-chain/data blocks, allocate the
+// new ones) and adjust the CIB free count by the net allocation.
 bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray bitmap(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
             alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, &bitmap, blockers)) {
         return false;
     }
-    QVector<uint64_t> freed{alloc.chain.rootTree,
-                            alloc.chain.volOmapTree,
-                            alloc.chain.volOmapHdr,
-                            alloc.chain.volSb,
-                            alloc.chain.ctrOmapTree,
-                            alloc.chain.ctrOmapHdr};
-    if (alloc.dataBlocks > 0) {
-        freed.append(alloc.chain.extentRef);
-    }
-    flipChunkBitmapBits(&bitmap, freed, alloc.newBlocks);
+    flipChunkBitmapBits(&bitmap, alloc.freed, alloc.allocated);
     return writeApfsRepairBlock(
                alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, bitmap, blockers) &&
-           adjustCibFreeCount(alloc.image,
-                              alloc.geometry,
-                              -static_cast<int64_t>(alloc.dataBlocks),
-                              alloc.newXid,
-                              blockers);
+           adjustCibFreeCount(
+               alloc.image, alloc.geometry, alloc.cibFreeDelta, alloc.newXid, blockers);
+}
+
+// The six COW-chain blocks freed by a commit, plus the old extent-ref tree when
+// it was copied-on-written.
+QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain, bool extentRefCowed) {
+    QVector<uint64_t> freed{chain.rootTree,
+                            chain.volOmapTree,
+                            chain.volOmapHdr,
+                            chain.volSb,
+                            chain.ctrOmapTree,
+                            chain.ctrOmapHdr};
+    if (extentRefCowed) {
+        freed.append(chain.extentRef);
+    }
+    return freed;
 }
 
 struct ApfsFileInsertRequest {
@@ -2218,18 +2228,24 @@ bool commitInPlaceFileInsert(QIODevice* image,
         !writeApfsFileDataBlocks(image, geometry, dataBlockList, request.fileData, blockers)) {
         return false;
     }
-    if (!writeFileInsertCowChain({image,
-                                  geometry,
-                                  newXid,
-                                  chain,
-                                  newBlocks.mid(0, 6),
-                                  files,
-                                  dataBlocks,
-                                  newBlocks.value(6)},
+    const uint64_t extentRefNew = newBlocks.value(6);
+    if (!writeFileInsertCowChain({.image = image,
+                                  .geometry = geometry,
+                                  .newXid = newXid,
+                                  .live = chain,
+                                  .newBlocks = newBlocks.mid(0, 6),
+                                  .files = files,
+                                  .allocBlockDelta = static_cast<int64_t>(dataBlocks),
+                                  .extentRefNew = extentRefNew},
                                  blockers)) {
         return false;
     }
-    if (!applyFileInsertAllocation({image, geometry, chain, newBlocks, dataBlocks, newXid},
+    if (!applyFileInsertAllocation({.image = image,
+                                    .geometry = geometry,
+                                    .freed = oldChainFreedBlocks(chain, extentRefNew != 0),
+                                    .allocated = newBlocks,
+                                    .cibFreeDelta = -static_cast<int64_t>(dataBlocks),
+                                    .newXid = newXid},
                                    blockers)) {
         return false;
     }
@@ -2239,13 +2255,136 @@ bool commitInPlaceFileInsert(QIODevice* image,
         blockers);
 }
 
-// Enumerate the existing root regular files of a generated container (name +
-// object id + size) so a chained in-place insert preserves them. Fails closed
-// if the new file name already exists.
-bool collectExistingRootFiles(const QString& sourcePath,
-                              const QString& newFileName,
-                              QVector<ApfsRootFilePayload>* existingFiles,
-                              QStringList* blockers) {
+struct ApfsDeleteListInput {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    ApfsLiveFsChain chain;
+    QVector<ApfsRootFilePayload> allFiles;
+    QString targetName;
+};
+
+// Split the container's root files into the delete target (matched by name,
+// with its data extent recovered) and the remaining files (data extents filled
+// so they are preserved in place). Fails closed if the target is not found.
+bool buildDeleteFileList(const ApfsDeleteListInput& in,
+                         QVector<ApfsRootFilePayload>* remaining,
+                         ApfsRootFilePayload* target,
+                         QStringList* blockers) {
+    const QHash<uint64_t, uint64_t> owners =
+        parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
+    bool found = false;
+    for (ApfsRootFilePayload file : in.allFiles) {
+        file.parentDirectoryId = kApfsRootDirectoryId;
+        file.privateId = file.fileId;
+        file.dataStartBlock = owners.value(file.fileId);
+        if (file.fileName == in.targetName) {
+            *target = file;
+            found = true;
+        } else {
+            remaining->append(file);
+        }
+    }
+    if (!found) {
+        blockers->append(
+            QStringLiteral("APFS file-delete-commit: file '%1' was not found").arg(in.targetName));
+        return false;
+    }
+    return true;
+}
+
+// The data blocks a deleted file releases, appended to the freed COW-chain set.
+QVector<uint64_t> deleteFreedBlocks(const ApfsLiveFsChain& chain,
+                                    bool extentRefCowed,
+                                    uint64_t targetDataStart,
+                                    uint64_t targetDataBlocks) {
+    QVector<uint64_t> freed = oldChainFreedBlocks(chain, extentRefCowed);
+    for (uint64_t index = 0; index < targetDataBlocks; ++index) {
+        freed.append(targetDataStart + index);
+    }
+    return freed;
+}
+
+// A2: delete one file from a generated container with a true in-place
+// copy-on-write checkpoint commit, preserving the other files. COW the
+// fs-metadata chain (and the extent-ref tree, when the deleted file had data)
+// to newly allocated blocks with the target's records removed, free the
+// target's data blocks and the old chain blocks, return the freed blocks to the
+// spaceman/CIB free counts, then advance the checkpoint.
+bool commitInPlaceFileDelete(QIODevice* image,
+                             const QVector<ApfsRootFilePayload>& allFiles,
+                             const QString& targetName,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
+        return false;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
+        return false;
+    }
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    ApfsLiveFsChain chain;
+    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootFilePayload> remaining;
+    ApfsRootFilePayload target;
+    if (!buildDeleteFileList(
+            {image, geometry, chain, allFiles, targetName}, &remaining, &target, blockers)) {
+        return false;
+    }
+    const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
+                                                    blockSize);
+    // Removing a file with data rewrites the extent-ref tree (a seventh chain
+    // block); deleting an empty file leaves the extent-ref tree in place.
+    const int metaCount = 6 + static_cast<int>(targetBlocks > 0);
+    QVector<uint64_t> newBlocks;
+    if (!findFreeBlocksInBitmap(
+            {image, geometry, kApfsFormatChunkBitmapBlock, kApfsFormatSeedFileDataBlock, metaCount},
+            &newBlocks,
+            blockers)) {
+        return false;
+    }
+    const uint64_t newXid = live.xid + 1;
+    const uint64_t extentRefNew = newBlocks.value(6);
+    if (!writeFileInsertCowChain({.image = image,
+                                  .geometry = geometry,
+                                  .newXid = newXid,
+                                  .live = chain,
+                                  .newBlocks = newBlocks.mid(0, 6),
+                                  .files = remaining,
+                                  .allocBlockDelta = -static_cast<int64_t>(targetBlocks),
+                                  .extentRefNew = extentRefNew,
+                                  .fileCountDelta = -1,
+                                  .nextObjIdDelta = 0},
+                                 blockers)) {
+        return false;
+    }
+    if (!applyFileInsertAllocation(
+            {.image = image,
+             .geometry = geometry,
+             .freed =
+                 deleteFreedBlocks(chain, extentRefNew != 0, target.dataStartBlock, targetBlocks),
+             .allocated = newBlocks,
+             .cibFreeDelta = static_cast<int64_t>(targetBlocks),
+             .newXid = newXid},
+            blockers)) {
+        return false;
+    }
+    return advanceCheckpoint(
+        {image, geometry, nxsb, live, newBlocks.at(5), static_cast<int64_t>(targetBlocks)},
+        result,
+        blockers);
+}
+
+// Enumerate the root regular files of a generated container (name + object id +
+// size as a sized-but-empty payload) so an in-place commit can preserve them.
+bool collectAllRootFiles(const QString& sourcePath,
+                         QVector<ApfsRootFilePayload>* files,
+                         QStringList* blockers) {
     const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         sourcePath, QStringLiteral("/"), kApfsWriteRootListingMaxEntries);
     if (!listing.ok) {
@@ -2254,18 +2393,31 @@ bool collectExistingRootFiles(const QString& sourcePath,
         return false;
     }
     for (const auto& entry : listing.entries) {
-        if (!entry.regular_file) {
-            continue;
+        if (entry.regular_file) {
+            files->append({.fileName = entry.name,
+                           .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
+                           .fileId = entry.object_id});
         }
-        if (entry.name == newFileName) {
+    }
+    return true;
+}
+
+// Existing files for a chained insert; fails closed if the new file name
+// already exists.
+bool collectExistingRootFiles(const QString& sourcePath,
+                              const QString& newFileName,
+                              QVector<ApfsRootFilePayload>* existingFiles,
+                              QStringList* blockers) {
+    if (!collectAllRootFiles(sourcePath, existingFiles, blockers)) {
+        return false;
+    }
+    for (const auto& file : *existingFiles) {
+        if (file.fileName == newFileName) {
             blockers->append(
                 QStringLiteral("APFS file-insert-commit: a file named '%1' already exists")
                     .arg(newFileName));
             return false;
         }
-        existingFiles->append({.fileName = entry.name,
-                               .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
-                               .fileId = entry.object_id});
     }
     return true;
 }
@@ -8045,6 +8197,72 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     QStringList commitBlockers;
     if (commitInPlaceFileInsert(
             &image, {existingFiles, cleanFileName, request.file_data}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileDelete(
+    const PartitionApfsImageFileDeleteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place file delete remains image-only and is not exposed to user "
+        "actions; raw in-place commit support requires fsck_apfs/diskutil, crash replay, and "
+        "hardware evidence"));
+
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("file-delete-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-delete-commit"),
+                                                &result.blockers);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-delete-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-delete-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.source_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-delete-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-delete-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileDelete(&image, allFiles, cleanFileName, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
