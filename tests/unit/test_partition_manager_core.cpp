@@ -1650,7 +1650,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
-    void apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeOverflow();
+    void apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree();
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
@@ -6975,7 +6975,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjec
     QVERIFY(collide.blockers.join(' ').contains(QStringLiteral("already exists")));
 }
 
-void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeOverflow() {
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree() {
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -6989,10 +6989,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeO
                  .options = options})
                 .ok);
 
-    // Chained inserts succeed until the single-leaf fs-tree fills, then fail
-    // closed with a clear message - never silently corrupting the node.
+    // Chained inserts keep succeeding past the ~15-file single-leaf cap: the
+    // fs-tree splits into an internal root over leaf nodes and the reader still
+    // lists every file (no silent truncation). The only accepted stop is the
+    // checkpoint data ring filling - a separate, known limit, not corruption.
     int inserted = 0;
-    bool sawOverflow = false;
     for (int index = 1; index <= 40; ++index) {
         const QString next = dir.filePath(QStringLiteral("ml%1.apfs").arg(index));
         const auto commit = PartitionApfsWriter::commitImageOnlyFileInsert(
@@ -7001,22 +7002,19 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeO
              .file_name = QStringLiteral("f%1.txt").arg(index),
              .file_data = {},
              .options = options});
-        if (commit.ok) {
-            const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
-                next, QStringLiteral("/"), 64);
-            QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
-            QCOMPARE(listing.entries.size(), index);  // no silent truncation
-            inserted = index;
-            current = next;
-        } else {
-            QVERIFY2(commit.blockers.join(' ').contains(QStringLiteral("exceeds a single B-tree")),
+        if (!commit.ok) {
+            QVERIFY2(commit.blockers.join(' ').contains(QStringLiteral("data ring would wrap")),
                      qPrintable(commit.blockers.join(QStringLiteral("; "))));
-            sawOverflow = true;
             break;
         }
+        const auto listing =
+            PartitionApfsFileSystemReader::listDirectoryFromImage(next, QStringLiteral("/"), 64);
+        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(listing.entries.size(), index);  // multi-leaf: every file readable
+        inserted = index;
+        current = next;
     }
-    QVERIFY(inserted > 0);
-    QVERIFY2(sawOverflow, "expected the single-leaf fs-tree to fail closed within 40 inserts");
+    QVERIFY2(inserted > 15, "expected chained inserts to grow past the single-leaf fs-tree cap");
 }
 
 void PartitionManagerCoreTests::apfsWriter_buildsTwoLevelFsTreeOnOverflow() {

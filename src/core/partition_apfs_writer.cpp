@@ -1902,6 +1902,7 @@ struct ApfsCheckpointAdvanceRequest {
     ApfsLiveCheckpoint live;
     uint64_t newContainerOmap{0};  // 0 = carry the existing container object map forward
     int64_t spacemanFreeDelta{0};  // net free-block change (negative when blocks are consumed)
+    uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -1943,6 +1944,11 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     advanceNxSuperblockCheckpoint(&request.nxsb, live, newXid, ephemeralCount);
     if (request.newContainerOmap != 0) {
         writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
+    }
+    if (request.nextOidAdvance != 0) {
+        writeLe64(&request.nxsb,
+                  kApfsNxNextOidOffset,
+                  le64(request.nxsb, kApfsNxNextOidOffset) + request.nextOidAdvance);
     }
     if (!stampAndWriteApfsBlock(request.image, geometry, nxsbBlock, &request.nxsb, blockers) ||
         !writeApfsRepairBlock(
@@ -2124,12 +2130,65 @@ void flipChunkBitmapBits(QByteArray* bitmap,
     }
 }
 
+// Parse a generated volume object-map B-tree leaf (448-byte TOC, 16-byte
+// fixed keys/values, as buildObjectMapTreeBlock emits) into {oid -> paddr}.
+QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
+                                              const ApfsRepairGeometry& geometry,
+                                              uint64_t volOmapTree,
+                                              QStringList* blockers) {
+    QHash<uint64_t, uint64_t> entries;
+    QByteArray node(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, volOmapTree, &node, blockers)) {
+        return entries;
+    }
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 448;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const uint64_t oid = le64(node, keyAreaStart + static_cast<qsizetype>(index) * 16);
+        const uint64_t paddr = le64(node,
+                                    valueAreaEnd - (static_cast<qsizetype>(index) + 1) * 16 +
+                                        kApfsOmapValuePaddrOffset);
+        entries.insert(oid, paddr);
+    }
+    return entries;
+}
+
+// Every block the live fs-tree occupies (the root, plus its leaves when the root
+// is an internal node), so a commit can free them all when it copies the tree.
+bool collectOldFsTreeNodePaddrs(QIODevice* image,
+                                const ApfsRepairGeometry& geometry,
+                                const ApfsLiveFsChain& chain,
+                                QVector<uint64_t>* paddrs,
+                                QStringList* blockers) {
+    QByteArray root(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, chain.rootTree, &root, blockers)) {
+        return false;
+    }
+    paddrs->append(chain.rootTree);
+    if (le16(root, kApfsBtreeNodeLevelOffset) == 0) {
+        return true;  // single leaf
+    }
+    const QHash<uint64_t, uint64_t> omap =
+        parseVolOmapEntries(image, geometry, chain.volOmapTree, blockers);
+    const uint32_t nkeys = le32(root, kApfsBtreeNodeCountOffset);
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+        const uint16_t valueOffset = le16(root, toc + kApfsBtreeVariableTocValueOffset);
+        paddrs->append(omap.value(le64(root, valueAreaEnd - valueOffset)));
+    }
+    return true;
+}
+
 struct ApfsCowFileInsert {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
     uint64_t newXid{0};
     ApfsLiveFsChain live;
-    // [rootTree, volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
+    QVector<ApfsFsTreeNode> fsNodes;  // fs-tree nodes (root first); paddrs are newBlocks[0..K-1]
+    // [fs-tree nodes (K), volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
     QVector<uint64_t> newBlocks;
     QVector<ApfsRootFilePayload> files;
     int64_t allocBlockDelta{0};  // change to the volume allocated-block count (data blocks)
@@ -2154,31 +2213,38 @@ bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
     return stampAndWriteApfsBlock(cow.image, cow.geometry, cow.extentRefNew, &extentRef, blockers);
 }
 
-// Build the COW'd root file-system tree (failing closed if it overflows the
-// single leaf node) and write it at the new block, stamped at the new xid.
-bool writeCowRootTree(const ApfsCowFileInsert& cow, uint64_t rootTree, QStringList* blockers) {
-    QByteArray root = buildRootTreeBlock(cow.geometry.blockSize, cow.files, {}, blockers);
-    if (!blockers->isEmpty()) {
-        return false;
+// Write each COW'd fs-tree node (root + leaves) at its allocated block, stamped
+// at the new xid, and collect the {node oid -> paddr} mappings the volume object
+// map records.
+bool writeCowFsTreeNodes(const ApfsCowFileInsert& cow,
+                         QVector<ApfsObjectMapEntry>* mappings,
+                         QStringList* blockers) {
+    for (qsizetype index = 0; index < cow.fsNodes.size(); ++index) {
+        QByteArray node = cow.fsNodes.at(index).block;
+        const uint64_t paddr = cow.newBlocks.at(index);
+        writeLe64(&node, kApfsObjectXidOffset, cow.newXid);
+        if (!stampAndWriteApfsBlock(cow.image, cow.geometry, paddr, &node, blockers)) {
+            return false;
+        }
+        mappings->append({cow.fsNodes.at(index).oid, cow.newXid, paddr});
     }
-    writeLe64(&root, kApfsObjectXidOffset, cow.newXid);
-    return stampAndWriteApfsBlock(cow.image, cow.geometry, rootTree, &root, blockers);
+    return true;
 }
 
 bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
-    const uint64_t rootTree = cow.newBlocks.at(0);
-    const uint64_t volOmapTree = cow.newBlocks.at(1);
-    const uint64_t volOmapHdr = cow.newBlocks.at(2);
-    const uint64_t volSb = cow.newBlocks.at(3);
-    const uint64_t ctrOmapTree = cow.newBlocks.at(4);
-    const uint64_t ctrOmapHdr = cow.newBlocks.at(5);
+    const qsizetype nodeCount = cow.fsNodes.size();
+    const uint64_t volOmapTree = cow.newBlocks.at(nodeCount);
+    const uint64_t volOmapHdr = cow.newBlocks.at(nodeCount + 1);
+    const uint64_t volSb = cow.newBlocks.at(nodeCount + 2);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(nodeCount + 3);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(nodeCount + 4);
 
-    if (!writeCowRootTree(cow, rootTree, blockers)) {
+    QVector<ApfsObjectMapEntry> fsMappings;
+    if (!writeCowFsTreeNodes(cow, &fsMappings, blockers)) {
         return false;
     }
-    QByteArray volTree = buildObjectMapTreeBlock(
-        bs, volOmapTree, {{kApfsFormatRootTreeOid, cow.newXid, rootTree}}, cow.newXid, blockers);
+    QByteArray volTree = buildObjectMapTreeBlock(bs, volOmapTree, fsMappings, cow.newXid, blockers);
     QByteArray volHdr = buildObjectMapBlock({bs, volOmapHdr, volOmapTree, cow.newXid, 0}, blockers);
     if (!writeApfsRepairBlock(cow.image, cow.geometry, volOmapTree, volTree, blockers) ||
         !writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers)) {
@@ -2294,15 +2360,18 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
            adjustCibFreeCount(alloc, blockers);
 }
 
-// The six COW-chain blocks freed by a commit, plus the old extent-ref tree when
-// it was copied-on-written.
-QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain, bool extentRefCowed) {
-    QVector<uint64_t> freed{chain.rootTree,
-                            chain.volOmapTree,
-                            chain.volOmapHdr,
-                            chain.volSb,
-                            chain.ctrOmapTree,
-                            chain.ctrOmapHdr};
+// The blocks a commit frees: the old fs-tree nodes (root + any leaves), the
+// volume/container object-map chain, and the old extent-ref tree when it was
+// copied-on-written.
+QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
+                                      const QVector<uint64_t>& oldFsTreeNodes,
+                                      bool extentRefCowed) {
+    QVector<uint64_t> freed = oldFsTreeNodes;
+    freed.append(chain.volOmapTree);
+    freed.append(chain.volOmapHdr);
+    freed.append(chain.volSb);
+    freed.append(chain.ctrOmapTree);
+    freed.append(chain.ctrOmapHdr);
     if (extentRefCowed) {
         freed.append(chain.extentRef);
     }
@@ -2351,91 +2420,243 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     return true;
 }
 
-// A2: insert one file into a generated container with a true in-place
-// copy-on-write checkpoint commit, preserving any files already present. COW
-// the fs-metadata chain (root tree -> volume object map -> volume superblock ->
-// container object map, plus the extent-ref tree when there is data) to newly
-// allocated blocks with the merged record set, write the new file's payload to
-// further newly allocated data blocks (existing files' data stays in place),
-// swap the allocation bitmap, adjust the spaceman/CIB free counts by the net
-// data-block allocation, then advance the checkpoint with nx_omap_oid
-// re-pointed at the new container object map.
-bool commitInPlaceFileInsert(QIODevice* image,
-                             const ApfsFileInsertRequest& request,
-                             ApfsInPlaceCheckpointResult* result,
-                             QStringList* blockers) {
+// The live container state every in-place fs-tree commit reads up front: the
+// nx_superblock, its decoded checkpoint, the live fs-metadata chain, the
+// generated layout, the paddrs of the old fs-tree nodes (freed by the commit),
+// and the next virtual object id (the source of fresh fs-tree leaf oids).
+struct ApfsFsCommitContext {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    QByteArray nxsb;
+    ApfsLiveCheckpoint live;
+    ApfsLiveFsChain chain;
+    ApfsGeneratedLayout layout;
+    QVector<uint64_t> oldFsNodes;  // every block the live fs-tree occupies
+    uint64_t firstLeafOid{0};      // nx_next_oid - first oid a new leaf consumes
+};
+
+bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
     if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
         return false;
     }
-    const ApfsRepairGeometry geometry{blockSize, blockCount};
-    QByteArray nxsb(blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
+    ctx->image = image;
+    ctx->geometry = {blockSize, blockCount};
+    ctx->nxsb = QByteArray(blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx->geometry, kApfsFormatNxsbBlock, &ctx->nxsb, blockers)) {
         return false;
     }
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    ApfsLiveFsChain chain;
-    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+    ctx->live = readLiveCheckpoint(ctx->nxsb);
+    if (!walkLiveFsChain(
+            image, ctx->geometry, le64(ctx->nxsb, kApfsNxOmapOidOffset), &ctx->chain, blockers)) {
         return false;
     }
-    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
+    ctx->layout = computeGeneratedLayout(blockCount);
+    if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
+        return false;
+    }
+    ctx->firstLeafOid = le64(ctx->nxsb, kApfsNxNextOidOffset);
+    return true;
+}
+
+// How many blocks a commit allocates: K fs-tree nodes + the five-block
+// object-map chain + an optional extent-ref tree block + the file's data blocks.
+struct ApfsCommitBlockSizing {
+    qsizetype fsNodeCount{0};
+    int extentRefSlots{0};
+    uint64_t dataBlocks{0};
+};
+
+// Allocate the commit's blocks as one contiguous run from the generated free
+// region: the fs-tree nodes and object-map chain first, then the data blocks.
+bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
+                            const ApfsCommitBlockSizing& sizing,
+                            QVector<uint64_t>* newBlocks,
+                            QStringList* blockers) {
+    const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
+    return findFreeBlocksInBitmap({ctx.image,
+                                   ctx.geometry,
+                                   ctx.layout.chunkBitmap,
+                                   ctx.layout.seedData,
+                                   ctx.layout.chunk0Blocks,
+                                   static_cast<int>(metaCount + sizing.dataBlocks)},
+                                  newBlocks,
+                                  blockers);
+}
+
+// The contiguous data blocks a file occupies (for the freed list on delete).
+QVector<uint64_t> dataBlockRange(uint64_t start, uint64_t count) {
+    QVector<uint64_t> blocks;
+    for (uint64_t index = 0; index < count; ++index) {
+        blocks.append(start + index);
+    }
+    return blocks;
+}
+
+struct ApfsFsCommitFinalize {
+    ApfsFsCommitContext ctx;
+    uint64_t newXid{0};
+    QVector<ApfsFsTreeNode> fsNodes;     // root first; paddrs are newBlocks[0..K-1]
+    QVector<uint64_t> newBlocks;         // [K nodes, 5-chain, extentRef?, data?]
+    QVector<ApfsRootFilePayload> files;  // the committed root-file set
+    uint64_t extentRefNew{0};            // new extent-ref tree block (0 = keep)
+    QVector<uint64_t> freedDataBlocks;   // data blocks the commit releases
+    int64_t dataBlocksNew{0};            // data blocks the commit allocates
+    int64_t fileCountDelta{0};
+    uint64_t nextObjIdDelta{0};
+};
+
+// Shared commit tail: write the COW fs-tree + object-map chain, swap the
+// allocation bitmap (old fs-tree nodes + object-map chain + freed data out, the
+// new blocks in), and advance the checkpoint. The net block change (extra
+// fs-tree nodes plus new minus freed data) threads identically through the
+// volume allocated-count, the CIB/spaceman free counts, and nx_next_oid grows by
+// the number of new fs-tree leaves.
+bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
+                      ApfsInPlaceCheckpointResult* result,
+                      QStringList* blockers) {
+    const qsizetype nodeCount = f.fsNodes.size();
+    const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
+                               static_cast<int64_t>(f.ctx.oldFsNodes.size());
+    const int64_t netConsumed = extraNodes +
+                                (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
+    if (!writeFileInsertCowChain({.image = f.ctx.image,
+                                  .geometry = f.ctx.geometry,
+                                  .newXid = f.newXid,
+                                  .live = f.ctx.chain,
+                                  .fsNodes = f.fsNodes,
+                                  .newBlocks = f.newBlocks.mid(0, nodeCount + 5),
+                                  .files = f.files,
+                                  .allocBlockDelta = netConsumed,
+                                  .extentRefNew = f.extentRefNew,
+                                  .fileCountDelta = f.fileCountDelta,
+                                  .nextObjIdDelta = f.nextObjIdDelta},
+                                 blockers)) {
+        return false;
+    }
+    QVector<uint64_t> freed =
+        oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
+    freed += f.freedDataBlocks;
+    if (!applyFileInsertAllocation({.image = f.ctx.image,
+                                    .geometry = f.ctx.geometry,
+                                    .layout = f.ctx.layout,
+                                    .freed = freed,
+                                    .allocated = f.newBlocks,
+                                    .cibFreeDelta = -netConsumed,
+                                    .newXid = f.newXid},
+                                   blockers)) {
+        return false;
+    }
+    return advanceCheckpoint({f.ctx.image,
+                              f.ctx.geometry,
+                              f.ctx.nxsb,
+                              f.ctx.live,
+                              f.newBlocks.at(nodeCount + 4),
+                              -netConsumed,
+                              static_cast<uint64_t>(nodeCount - 1)},
+                             result,
+                             blockers);
+}
+
+// Pass 1 of an insert: build the merged file list with a placeholder data-start
+// and size the resulting fs-tree (the node count is independent of the extent's
+// paddr, so the placeholder is harmless) to learn how many blocks to allocate.
+bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
+                      const ApfsFileInsertRequest& request,
+                      qsizetype* nodeCount,
+                      QStringList* blockers) {
+    QVector<ApfsRootFilePayload> files;
+    QVector<ApfsFsTreeNode> probe;
+    if (!buildChainedFileList({ctx.image, ctx.geometry, ctx.chain, request, 0}, &files, blockers) ||
+        !buildFsTreeNodes(
+            {ctx.geometry.blockSize, files, {}, ctx.firstLeafOid}, &probe, blockers)) {
+        return false;
+    }
+    *nodeCount = probe.size();
+    return true;
+}
+
+struct ApfsInsertFsNodes {
+    QVector<ApfsRootFilePayload> files;  // the committed root-file set
+    QVector<ApfsFsTreeNode> nodes;       // the fs-tree nodes (root first)
+};
+
+// Pass 2 of an insert: rebuild the file list with the real data-start, write the
+// payload to its data blocks, and build the fs-tree nodes with the new file's
+// data extent.
+bool buildInsertFsNodes(const ApfsFsCommitContext& ctx,
+                        const ApfsFileInsertRequest& request,
+                        const QVector<uint64_t>& dataBlockList,
+                        ApfsInsertFsNodes* out,
+                        QStringList* blockers) {
+    return buildChainedFileList(
+               {ctx.image, ctx.geometry, ctx.chain, request, dataBlockList.value(0)},
+               &out->files,
+               blockers) &&
+           writeApfsFileDataBlocks(
+               ctx.image, ctx.geometry, dataBlockList, request.fileData, blockers) &&
+           buildFsTreeNodes({ctx.geometry.blockSize, out->files, {}, ctx.firstLeafOid},
+                            &out->nodes,
+                            blockers);
+}
+
+// A2: insert one file into a generated container with a true in-place
+// copy-on-write checkpoint commit, preserving any files already present. COW
+// the fs-metadata chain (fs-tree nodes -> volume object map -> volume superblock
+// -> container object map, plus the extent-ref tree when there is data) to newly
+// allocated blocks with the merged record set, write the new file's payload to
+// further newly allocated data blocks (existing files' data stays in place),
+// swap the allocation bitmap, adjust the spaceman/CIB free counts by the net
+// data-block allocation, then advance the checkpoint with nx_omap_oid
+// re-pointed at the new container object map. The fs-tree splits into an
+// internal root over leaf nodes once the records overflow a single node.
+bool commitInPlaceFileInsert(QIODevice* image,
+                             const ApfsFileInsertRequest& request,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.fileData.size()),
-                                                  blockSize);
-    // A file with data also copy-on-writes the extent-ref tree (a seventh chain
-    // block); an empty new file leaves the existing extent-ref tree in place.
-    const int metaCount = 6 + static_cast<int>(dataBlocks > 0);
-    QVector<uint64_t> newBlocks;
-    if (!findFreeBlocksInBitmap({image,
-                                 geometry,
-                                 layout.chunkBitmap,
-                                 layout.seedData,
-                                 layout.chunk0Blocks,
-                                 static_cast<int>(metaCount + dataBlocks)},
-                                &newBlocks,
-                                blockers)) {
+                                                  ctx.geometry.blockSize);
+    qsizetype nodeCount = 0;
+    if (!sizeInsertFsTree(ctx, request, &nodeCount, blockers)) {
         return false;
     }
-    const uint64_t newXid = live.xid + 1;
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(metaCount);
+    // A file with data also copy-on-writes the extent-ref tree (one extra block);
+    // an empty new file leaves the existing extent-ref tree in place.
+    const int extentRefSlots = static_cast<int>(dataBlocks > 0);
+    QVector<uint64_t> newBlocks;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, extentRefSlots, dataBlocks}, &newBlocks, blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
     if (!blocksAreContiguous(dataBlockList)) {
         blockers->append(QStringLiteral(
             "APFS in-place file insert: fragmented free space (non-contiguous data extent) is "
             "unsupported in this increment"));
         return false;
     }
-    QVector<ApfsRootFilePayload> files;
-    if (!buildChainedFileList(
-            {image, geometry, chain, request, dataBlockList.value(0)}, &files, blockers) ||
-        !writeApfsFileDataBlocks(image, geometry, dataBlockList, request.fileData, blockers)) {
+    ApfsInsertFsNodes built;
+    if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = newBlocks.value(6);
-    if (!writeFileInsertCowChain({.image = image,
-                                  .geometry = geometry,
-                                  .newXid = newXid,
-                                  .live = chain,
-                                  .newBlocks = newBlocks.mid(0, 6),
-                                  .files = files,
-                                  .allocBlockDelta = static_cast<int64_t>(dataBlocks),
-                                  .extentRefNew = extentRefNew},
-                                 blockers)) {
-        return false;
-    }
-    if (!applyFileInsertAllocation({.image = image,
-                                    .geometry = geometry,
-                                    .layout = layout,
-                                    .freed = oldChainFreedBlocks(chain, extentRefNew != 0),
-                                    .allocated = newBlocks,
-                                    .cibFreeDelta = -static_cast<int64_t>(dataBlocks),
-                                    .newXid = newXid},
-                                   blockers)) {
-        return false;
-    }
-    return advanceCheckpoint(
-        {image, geometry, nxsb, live, newBlocks.at(5), -static_cast<int64_t>(dataBlocks)},
-        result,
-        blockers);
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = built.nodes,
+                             .newBlocks = newBlocks,
+                             .files = built.files,
+                             .extentRefNew = extentRefNew,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = static_cast<int64_t>(dataBlocks),
+                             .fileCountDelta = 1,
+                             .nextObjIdDelta = 1},
+                            result,
+                            blockers);
 }
 
 struct ApfsDeleteListInput {
@@ -2475,94 +2696,57 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
     return true;
 }
 
-// The data blocks a deleted file releases, appended to the freed COW-chain set.
-QVector<uint64_t> deleteFreedBlocks(const ApfsLiveFsChain& chain,
-                                    bool extentRefCowed,
-                                    uint64_t targetDataStart,
-                                    uint64_t targetDataBlocks) {
-    QVector<uint64_t> freed = oldChainFreedBlocks(chain, extentRefCowed);
-    for (uint64_t index = 0; index < targetDataBlocks; ++index) {
-        freed.append(targetDataStart + index);
-    }
-    return freed;
-}
-
 // A2: delete one file from a generated container with a true in-place
 // copy-on-write checkpoint commit, preserving the other files. COW the
 // fs-metadata chain (and the extent-ref tree, when the deleted file had data)
 // to newly allocated blocks with the target's records removed, free the
-// target's data blocks and the old chain blocks, return the freed blocks to the
-// spaceman/CIB free counts, then advance the checkpoint.
+// target's data blocks and the old fs-tree/chain blocks, return the freed blocks
+// to the spaceman/CIB free counts, then advance the checkpoint.
 bool commitInPlaceFileDelete(QIODevice* image,
                              const QVector<ApfsRootFilePayload>& allFiles,
                              const QString& targetName,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
-    uint32_t blockSize = 0;
-    uint64_t blockCount = 0;
-    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
-        return false;
-    }
-    const ApfsRepairGeometry geometry{blockSize, blockCount};
-    QByteArray nxsb(blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
-        return false;
-    }
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    ApfsLiveFsChain chain;
-    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QVector<ApfsRootFilePayload> remaining;
     ApfsRootFilePayload target;
-    if (!buildDeleteFileList(
-            {image, geometry, chain, allFiles, targetName}, &remaining, &target, blockers)) {
+    if (!buildDeleteFileList({ctx.image, ctx.geometry, ctx.chain, allFiles, targetName},
+                             &remaining,
+                             &target,
+                             blockers)) {
         return false;
     }
-    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
-                                                    blockSize);
-    // Removing a file with data rewrites the extent-ref tree (a seventh chain
-    // block); deleting an empty file leaves the extent-ref tree in place.
-    const int metaCount = 6 + static_cast<int>(targetBlocks > 0);
+                                                    ctx.geometry.blockSize);
+    // Removing a file with data rewrites the extent-ref tree (one extra block);
+    // deleting an empty file leaves the extent-ref tree in place.
+    const int extentRefSlots = static_cast<int>(targetBlocks > 0);
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes(
+            {ctx.geometry.blockSize, remaining, {}, ctx.firstLeafOid}, &fsNodes, blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
     QVector<uint64_t> newBlocks;
-    if (!findFreeBlocksInBitmap(
-            {image, geometry, layout.chunkBitmap, layout.seedData, layout.chunk0Blocks, metaCount},
-            &newBlocks,
-            blockers)) {
+    if (!allocateFsCommitBlocks(ctx, {nodeCount, extentRefSlots, 0}, &newBlocks, blockers)) {
         return false;
     }
-    const uint64_t newXid = live.xid + 1;
-    const uint64_t extentRefNew = newBlocks.value(6);
-    if (!writeFileInsertCowChain({.image = image,
-                                  .geometry = geometry,
-                                  .newXid = newXid,
-                                  .live = chain,
-                                  .newBlocks = newBlocks.mid(0, 6),
-                                  .files = remaining,
-                                  .allocBlockDelta = -static_cast<int64_t>(targetBlocks),
-                                  .extentRefNew = extentRefNew,
-                                  .fileCountDelta = -1,
-                                  .nextObjIdDelta = 0},
-                                 blockers)) {
-        return false;
-    }
-    if (!applyFileInsertAllocation(
-            {.image = image,
-             .geometry = geometry,
-             .layout = layout,
-             .freed =
-                 deleteFreedBlocks(chain, extentRefNew != 0, target.dataStartBlock, targetBlocks),
-             .allocated = newBlocks,
-             .cibFreeDelta = static_cast<int64_t>(targetBlocks),
-             .newXid = newXid},
-            blockers)) {
-        return false;
-    }
-    return advanceCheckpoint(
-        {image, geometry, nxsb, live, newBlocks.at(5), static_cast<int64_t>(targetBlocks)},
-        result,
-        blockers);
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = remaining,
+                             .extentRefNew = extentRefNew,
+                             .freedDataBlocks = dataBlockRange(target.dataStartBlock, targetBlocks),
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = -1,
+                             .nextObjIdDelta = 0},
+                            result,
+                            blockers);
 }
 
 struct ApfsRenameListInput {
@@ -2614,68 +2798,51 @@ struct ApfsRenameRequest {
 };
 
 // A2: rename one root file in place. The renamed dirent/inode are rebuilt into
-// the copy-on-written root tree; the file keeps its object id and its data
-// extent stays put, so this is a net-zero allocation (six-block chain COW, no
+// the copy-on-written fs-tree; the file keeps its object id and its data extent
+// stays put, so this is a net-zero allocation when the tree shape is unchanged
+// (extra/fewer fs-tree nodes thread through the free counts like any commit, no
 // extent-ref change).
 bool commitInPlaceFileRename(QIODevice* image,
                              const ApfsRenameRequest& request,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
-    uint32_t blockSize = 0;
-    uint64_t blockCount = 0;
-    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
-        return false;
-    }
-    const ApfsRepairGeometry geometry{blockSize, blockCount};
-    QByteArray nxsb(blockSize, '\0');
-    if (!readApfsRepairBlock(image, geometry, kApfsFormatNxsbBlock, &nxsb, blockers)) {
-        return false;
-    }
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    ApfsLiveFsChain chain;
-    if (!walkLiveFsChain(image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, blockers)) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QVector<ApfsRootFilePayload> files;
-    if (!buildRenameFileList(
-            {image, geometry, chain, request.allFiles, request.oldName, request.newName},
-            &files,
-            blockers)) {
+    if (!buildRenameFileList({ctx.image,
+                              ctx.geometry,
+                              ctx.chain,
+                              request.allFiles,
+                              request.oldName,
+                              request.newName},
+                             &files,
+                             blockers)) {
         return false;
     }
-    const ApfsGeneratedLayout layout = computeGeneratedLayout(blockCount);
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes(
+            {ctx.geometry.blockSize, files, {}, ctx.firstLeafOid}, &fsNodes, blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
     QVector<uint64_t> newBlocks;
-    if (!findFreeBlocksInBitmap(
-            {image, geometry, layout.chunkBitmap, layout.seedData, layout.chunk0Blocks, 6},
-            &newBlocks,
-            blockers)) {
+    if (!allocateFsCommitBlocks(ctx, {nodeCount, 0, 0}, &newBlocks, blockers)) {
         return false;
     }
-    const uint64_t newXid = live.xid + 1;
-    if (!writeFileInsertCowChain({.image = image,
-                                  .geometry = geometry,
-                                  .newXid = newXid,
-                                  .live = chain,
-                                  .newBlocks = newBlocks,
-                                  .files = files,
-                                  .allocBlockDelta = 0,
-                                  .extentRefNew = 0,
-                                  .fileCountDelta = 0,
-                                  .nextObjIdDelta = 0},
-                                 blockers)) {
-        return false;
-    }
-    if (!applyFileInsertAllocation({.image = image,
-                                    .geometry = geometry,
-                                    .layout = layout,
-                                    .freed = oldChainFreedBlocks(chain, false),
-                                    .allocated = newBlocks,
-                                    .cibFreeDelta = 0,
-                                    .newXid = newXid},
-                                   blockers)) {
-        return false;
-    }
-    return advanceCheckpoint({image, geometry, nxsb, live, newBlocks.at(5), 0}, result, blockers);
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = files,
+                             .extentRefNew = 0,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = 0,
+                             .nextObjIdDelta = 0},
+                            result,
+                            blockers);
 }
 
 // Enumerate the root regular files of a generated container (name + object id +
