@@ -72,6 +72,32 @@ the spaceman with the new cib_addr + ring (not a verbatim copy). Parse any
 generated container's live spaceman the same way (highest-xid object of type
 0x80000005).
 
+## Decoded IP-region rotation (2026-06-14, step-1 prep cont'd)
+
+Parsed the cib/bitmap/ipbm bytes of the generated 64 MiB container:
+- **cib 187** (type 0x40000007, xid 17): chunk[0] {addr 0, block_count 16384,
+  free_count 16181, bitmap_addr 188}. Overwritten in place each commit (xid 17).
+- **bitmap 188**: raw bit array, 203 bits set (203 allocated blocks in chunk 0).
+- **IP region 185-190**: 185 cib (xid 1, ghost), 186 ghost bitmap, 187 cib (xid
+  17, live), 188 live bitmap, **189 + 190 are ZEROED — the spare slot S.A.K.
+  never uses (the bug)**.
+- **ipbm ring**: block 169 = 0x03 (bits 0,1 → IP blocks 185,186 in use = the
+  ghost checkpoint's IP state), block 170 = 0x0f (bits 0-3 → 185,186,187,188 =
+  the live checkpoint's IP state); 171-184 zero. So each ipbm block is a bitmap
+  of the 6-block IP region for one checkpoint; the ring advances one block/commit.
+
+**Rotation the implementation performs** (3-slot round robin): the new cib/bitmap
+go into the slot that is neither live nor ghost (the oldest, currently the spare
+189/190). After a commit at xid N: new live = the written slot, new ghost = the
+prior live slot, the prior ghost slot becomes reusable. Sequence of live cib:
+187 → 189 → 185 → 187 …  Each commit also: (a) updates `cib_addr@2568` to the new
+cib; (b) writes a fresh ipbm block (171, 172, …) holding the new IP state bitmap
+(the bits for the new-live + new-ghost slots), and advances the ring free-head
+@2528 / ring array @2536 / xid @2520; (c) re-emits the spaceman carrying the new
+cib_addr + ring state. The old (now-ghost-aged-out) cib/bitmap blocks are only
+returned to the chunk bitmap once their referencing checkpoint leaves the ring
+(free-queue, step 6).
+
 ## Implementation plan (the hardest remaining APFS subsystem)
 
 1. **Resolve the live IP state**: parse the spaceman (already resolvable via the
