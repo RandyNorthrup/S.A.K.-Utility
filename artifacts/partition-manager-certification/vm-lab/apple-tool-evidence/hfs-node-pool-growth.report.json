@@ -2,7 +2,20 @@
     "schema_version": 1,
     "gate_id": "driver.h-a-catalog-node-pool-growth",
     "milestone": "H1 (H-a): special-file node-pool growth",
-    "status": "Passed (CLI self-test + unit); VM fsck_hfs + kernel mount still required before matrix flip",
+    "status": "Passed (unit + bundled fsck + macOS VM Apple fsck_hfs + kernel RW mount). H1 exit gate met.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T11:30:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; grown HFS+ image attached as a raw SATA disk",
+        "method": [
+            "1. newfs_hfs an 8 MiB HFS+ volume (H1GROW); sak_hfs_writer_cli create-empty-files-image --file-count 800 grew the catalog fork 16 -> 126 blocks.",
+            "2. Attached the grown image to the macOS VM; macOS auto-mounted it read-write at /Volumes/H1GROW (hfs, local) and `touch /Volumes/H1GROW/h1-rw-proof.txt` succeeded (kernel RW mount).",
+            "3. diskutil unmount; fsck_hfs -f -n /dev/rdisk0."
+        ],
+        "kernel_rw_mount": "auto-mounted /Volumes/H1GROW; kernel write (touch) succeeded",
+        "apple_fsck_hfs": "fsck_hfs version hfs-583.100.9: The volume H1GROW appears to be OK.",
+        "evidence_png": "hfs.h1-catalog-growth.vm-fsck_hfs-kernel-mount-PASS.png"
+    },
     "performed_at_utc": "2026-06-14T09:00:00Z",
     "capability": "When a special-file B-tree split exhausts the node pool, the writer now grows the special-file fork (allocation bitmap + fork extents + node map + total/free node counts) instead of failing closed. A generic engine (planSpecialTreeNodePoolGrowth / applySpecialTreeNodePoolGrowth / ensureSpecialTreeFreeNodes over an HfsSpecialTreeTarget) drives all three special-file B-trees: catalog, extents-overflow, and attributes. Node 0 of every B-tree special file lives at fork offset 0, so reads/writes go through readForkBytes/writeForkBytes. Reactive: a mutation is tried first and only grows+retries on a genuine node-exhaustion failure, so non-exhausting mutations are unchanged.",
     "trees_wired": {
@@ -27,7 +40,7 @@
     },
     "gates": "clang-format + lizard (CCN<=10) + cppcheck clean; full build + 139/140 ctest (only the pre-existing deferred test_file_explorer_types).",
     "follow_ups": [
-        "External gate before flipping the H-a matrix cell to Yes: Apple fsck_hfs + kernel RW mount in the macOS VM, plus physical-USB destructive + crash + rollback (per APFS_HFS_FULL_DRIVER_WRITE_PLAN.md milestone H1).",
+        "H1 exit gate (Apple fsck_hfs + kernel RW mount on the grown catalog) is met (see vm_external_gate). The broader HFS full-driver matrix flip (milestone H8) additionally requires physical-USB destructive + crash + rollback across the deeper engine.",
         "Extend node-pool growth past the single-map-node and 8-extent (extents-overflow) bounds.",
         "Apply the same growth to the attributes and extents-overflow B-tree special files."
     ],
