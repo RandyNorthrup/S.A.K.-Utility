@@ -32,16 +32,24 @@ cap to thousands by splitting the fs-tree into an internal root + leaf nodes.
    fit one omap leaf (`buildObjectMapTreeBlock` already emits N entries; it would
    need the same overflow guard as the fs-tree for very large trees).
 
-## Open items to confirm by harvest (mount a S.A.K. container in the macOS VM,
-## write ~30 files so apfs.kext splits the tree, unmount, byte-diff/decode)
-- **Leaf node oid source**: whether child node oids come from the volume
-  `apfs_next_obj_id`, a separate fs-tree oid counter, or the container/omap oid
-  space. (newfs/apfs.kext assigns them; the harvest shows the exact values.)
-- **Internal record value**: oid only (8 bytes) vs oid + a flags/transid word.
-- **Internal record key**: the full child-first-key bytes vs a truncated/ghost
-  key, and the internal-node key/value sizes written to the (root) info trailer.
-- **btn_flags** subtleties (BTNODE_FIXED_KV_SIZE is **not** set on the fs-tree,
-  which uses variable keys; confirm the internal node carries the same).
+## Ground truth (HARVESTED 2026-06-15 — apfs.kext split a S.A.K. MLH container
+## after ~60 touch'd files into a root + 4 leaves; mlh.s60.img)
+- **Leaf node oid source**: CONFIRMED the container `nx_next_oid` (nx_superblock
+  offset 0x58, = 1030 at genesis). The four leaves took oids 1030, 1031, 1032,
+  1033 (consecutive); `nx_next_oid` advanced 1030 → 1034 (consumed one per leaf).
+  The fs-tree root keeps oid 1028 (`apfs_root_tree_oid`).
+- **Internal (root) node**: btn_flags = ROOT (0x0001, **not** LEAF), level 1,
+  subtype FSTREE (0x0e), keeps the 40-byte btree_info trailer. Variable-kv TOC
+  (8-byte entries). One record per child: **key = that child leaf's first
+  (smallest) key, copied whole** (klen 24 for a leading dirent, 8 for a leading
+  inode), **value = the 8-byte child node oid** (vlen 8, oid only — no flags).
+  Records ordered by child first-key.
+- **Leaf nodes**: btn_flags = LEAF (0x0002), level 0, subtype FSTREE, **no**
+  btree_info trailer, variable record counts (apfs.kext split unevenly: 73 and
+  25 records in two of the leaves), holding the fs records for their key range.
+- **Volume object map** maps every node: {1028 → rootPaddr} + {1030..1033 →
+  leafPaddr} (5 fixed-kv entries; the omap node TOC is 448 bytes, 16-byte
+  keys/values).
 
 ## Allocation / accounting impact (reuses the existing in-place engine)
 - The COW chain grows from 6 blocks to `6 + leafCount` (each new fs-tree node is
