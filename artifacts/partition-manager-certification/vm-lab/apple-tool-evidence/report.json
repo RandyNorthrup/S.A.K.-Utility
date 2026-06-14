@@ -1,0 +1,194 @@
+{
+    "schema_version": 1,
+    "gate_id": "apple-tool.apfs-writer-vm-fsck-and-kernel-mount",
+    "status": "Passed",
+    "started_at_utc": "2026-06-14T05:05:00Z",
+    "finished_at_utc": "2026-06-14T05:40:00Z",
+    "destructive": false,
+    "writes_target_media": true,
+    "environment": {
+        "host": "WSL2 archlinux, qemu-system-x86_64 11.0.1, KVM",
+        "guest_os": "macOS Sequoia Recovery (BaseSystem)",
+        "opencore_release": "REL-106-2025-11-03",
+        "apfs_kext_version": "2332.101.1",
+        "machine": "q35, Penryn, ich9-ahci (6 SATA ports)",
+        "note": "S.A.K. APFS containers attached as bare raw SATA disks (no GPT); macOS auto-synthesized and auto-mounted each container read-write at boot."
+    },
+    "method": [
+        "1. S.A.K. APFS writer (userspace, no kernel driver) emitted each container image on Windows.",
+        "2. Images attached to qemu/KVM macOS Sequoia recovery as raw SATA disks.",
+        "3. macOS apfs.kext auto-mounted each container read-write (proven by 'last modified by apfs_kext (2332.101.1)' in the volume superblock).",
+        "4. diskutil unmountDisk force <disk>; fsck_apfs /dev/r<disk> run on each container.",
+        "5. Kernel read-write round-trip: diskutil mountDisk; mkdir + touch on the mounted volume; sync; unmount; fsck_apfs again. Checkpoint transaction id advanced and fsck still reports container OK."
+    ],
+    "results": [
+        {
+            "image": "sak1chunk.img",
+            "size_bytes": "67108864",
+            "size_label": "64 MiB",
+            "layout": "single-chunk",
+            "volume_name": "SAK1",
+            "volume_uuid": "5A68C768-4455-6677-E2F3-4F5CCC0DEEFF",
+            "formatted_by": "S.A.K. Utility APFS writer",
+            "vm_disk": "disk0",
+            "fsck_apfs": {
+                "status": "Passed",
+                "verdict": "The container /dev/rdisk0 appears to be OK.",
+                "volume_verdict": "The volume /dev/rdisk0s1 appears to be OK."
+            },
+            "kernel_mount_rw": {
+                "status": "Passed",
+                "evidence": "last modified by apfs_kext (2332.101.1)"
+            },
+            "kernel_write_roundtrip": {
+                "status": "Passed",
+                "operations": "mkdir sak-cert-dir; touch sak-cert-file; sync",
+                "checkpoint_xid_before": 4,
+                "checkpoint_xid_after": 8,
+                "post_write_fsck": "The container /dev/rdisk0 appears to be OK."
+            },
+            "evidence_png": [
+                "apfs.sak1-64MiB-singlechunk.fsck_apfs-PASS.png",
+                "apfs.sak1-kernel-rw-roundtrip-PASS.png"
+            ]
+        },
+        {
+            "image": "sak2chunk.img",
+            "size_bytes": "268435456",
+            "size_label": "256 MiB",
+            "layout": "multi-chunk",
+            "volume_name": "SAK2CHUNK",
+            "volume_uuid": "5A68C768-4455-6677-E2F3-4F78CC0DEEFF",
+            "formatted_by": "S.A.K. Utility APFS writer",
+            "vm_disk": "disk1",
+            "fsck_apfs": {
+                "status": "Passed",
+                "verdict": "The container /dev/rdisk1 appears to be OK.",
+                "volume_verdict": "The volume /dev/rdisk1s1 appears to be OK."
+            },
+            "kernel_mount_rw": {
+                "status": "Passed",
+                "evidence": "last modified by apfs_kext (2332.101.1)"
+            },
+            "kernel_write_roundtrip": {
+                "status": "Passed",
+                "operations": "mkdir sak-cert-dir; touch sak-cert-file; sync",
+                "checkpoint_xid_before": 4,
+                "checkpoint_xid_after": 7,
+                "post_write_fsck": "The container /dev/rdisk1 appears to be OK."
+            },
+            "evidence_png": [
+                "apfs.sak2chunk-256MiB-multichunk.fsck_apfs-PASS.png",
+                "apfs.sak2chunk-multichunk-kernel-rw-roundtrip-PASS.png"
+            ]
+        },
+        {
+            "image": "sak8.img",
+            "size_bytes": "1073741824",
+            "size_label": "1 GiB",
+            "layout": "multi-chunk (8 chunks)",
+            "volume_name": "SAK8",
+            "volume_uuid": "5A68C768-4455-6677-E2F3-4FABCC0DEEFF",
+            "formatted_by": "S.A.K. Utility APFS writer",
+            "vm_disk": "disk2",
+            "fsck_apfs": {
+                "status": "Passed",
+                "verdict": "The container /dev/rdisk2 appears to be OK.",
+                "volume_verdict": "The volume /dev/rdisk2s1 appears to be OK."
+            },
+            "kernel_mount_rw": {
+                "status": "Passed",
+                "evidence": "last modified by apfs_kext (2332.101.1)"
+            },
+            "kernel_write_roundtrip": {
+                "status": "NotRun",
+                "note": "fsck_apfs + kernel mount certified; explicit file round-trip performed on single-chunk and 256 MiB multi-chunk representatives."
+            },
+            "evidence_png": [
+                "apfs.sak8-1GiB-multichunk.fsck_apfs-PASS.png"
+            ]
+        }
+    ],
+    "production_recert": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T06:30:00Z",
+        "reason": "The first run used the deterministic-UUID build. The writer was then changed to emit a cryptographically-random v4 UUID per container/volume at format and to read the on-disk UUID back during mutation (no deterministic fallback remains). The shipping output was re-certified.",
+        "results": [
+            {"image": "sak1chunk.img", "size_label": "64 MiB", "layout": "single-chunk", "volume_name": "SAK1", "volume_uuid": "4442EE88-8B15-4132-BAB3-1483E3ED9ACF", "vm_disk": "disk0", "fsck_apfs": "The container /dev/rdisk0 appears to be OK.", "kernel_mount_rw": "last modified by apfs_kext (2332.101.1)", "evidence_png": "apfs.sak1-64MiB-singlechunk.random-uuid.fsck_apfs-PASS.png"},
+            {"image": "sak2chunk.img", "size_label": "256 MiB", "layout": "multi-chunk", "volume_name": "SAK2CHUNK", "volume_uuid": "B30DC5F0-C29E-4FB0-9934-C24D7BA85335", "vm_disk": "disk1", "fsck_apfs": "The container /dev/rdisk1 appears to be OK.", "kernel_mount_rw": "last modified by apfs_kext (2332.101.1)", "evidence_png": "apfs.sak2chunk-256MiB-multichunk.random-uuid.fsck_apfs-PASS.png"},
+            {"image": "sak8.img", "size_label": "1 GiB", "layout": "multi-chunk (8 chunks)", "volume_name": "SAK8", "volume_uuid": "4DDB9A45-4E89-44E5-B8DC-7A77B65AF27A", "vm_disk": "disk3", "fsck_apfs": "The container /dev/rdisk3 appears to be OK.", "kernel_mount_rw": "last modified by apfs_kext (2332.101.1)", "evidence_png": "apfs.sak8-1GiB-multichunk.random-uuid.fsck_apfs-PASS.png"}
+        ],
+        "uniqueness_proof": "Two same-size (64 MiB) same-name (TESTU) containers produced distinct v4 container UUIDs (ecfc9a1a-07ea-4077-... vs 9c508bc5-345f-4b12-...); a mutation round-trip preserved both the on-disk container and volume UUID byte-for-byte."
+    },
+    "hfs_cert": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T06:45:00Z",
+        "filesystem": "HFS+ (non-journaled)",
+        "method": [
+            "1. Apple newfs_hfs created a 1 GiB non-journaled HFS+ volume 'SAKHFS' on a bare SATA disk in the macOS Sequoia recovery VM; baseline fsck_hfs reported the volume OK.",
+            "2. The image was detached and sak_hfs_writer_cli.exe (userspace, no kernel driver) ran create-file-image, adding /sak-cert.txt (54 bytes) with a known payload; ok=true, 'HFS+ alternate volume header synchronized'.",
+            "3. The mutated image was reattached; macOS auto-mounted it at /Volumes/SAKHFS and `cat` returned the exact payload (kernel HFS+ driver read the S.A.K.-written file byte-for-byte).",
+            "4. fsck_hfs -f on the unmounted volume reported 'The volume SAKHFS appears to be OK'."
+        ],
+        "tool": "sak_hfs_writer_cli.exe create-file-image",
+        "created_file": "/sak-cert.txt",
+        "bytes": 54,
+        "payload_readback": "S.A.K. HFS Apple-tool certification payload 2026-06-14",
+        "kernel_mount": "auto-mounted at /Volumes/SAKHFS (hfs, local)",
+        "fsck_hfs": "The volume SAKHFS appears to be OK.",
+        "evidence_png": [
+            "hfs.sak-create-file.kernel-mount-readback-PASS.png",
+            "hfs.sak-create-file.fsck_hfs-PASS.png"
+        ],
+        "follow_ups": [
+            "RESOLVED 2026-06-14: the HFS writer now stamps catalog create/contentMod/attributeMod/access dates with the real time and HFSPlusBSDInfo owner=0 group=0 fileMode=0o100644 (files) / 0o040755 (folders). Byte-level verification of a newly created record showed createDate=2026-06-14 07:43:25, owner=0, group=0, mode=0x81a4. Gates (clang-format/lizard/cppcheck) and the full test suite pass."
+        ]
+    },
+    "crash_rollback_cert": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T07:05:00Z",
+        "target": "sak8.img (1 GiB multi-chunk, volume SAK8)",
+        "method": [
+            "1. macOS mounted the S.A.K. container read-write; `mkfile 900m /Volumes/SAK8/crashtest` started a sustained write.",
+            "2. qemu was hard-killed (pkill -9) ~2 s into the write to simulate power loss mid-write.",
+            "3. The VM was rebooted into recovery.",
+            "4. macOS auto-mounted SAK8 again (APFS checkpoint recovery succeeded), and fsck_apfs on the unmounted container reported it OK."
+        ],
+        "post_crash_auto_mount": "SAK8 re-mounted at /Volumes/SAK8 (APFS Container disk6, Physical Store disk0)",
+        "fsck_apfs": "The container /dev/rdisk0 appears to be OK.",
+        "interpretation": "The uncommitted mid-write data rolled back to the last valid checkpoint; no corruption. The S.A.K.-written container participates correctly in APFS copy-on-write checkpoint atomicity.",
+        "evidence_png": "apfs.sak8-crash-rollback.fsck_apfs-PASS.png"
+    },
+    "usb_destructive_cert": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T07:30:00Z",
+        "media": "physical USB - JMicron Tech 238.5 GB (Windows Disk 3, disposable, user-authorized destruction)",
+        "method": [
+            "1. A 128 MiB S.A.K. APFS container (volume SAKUSB, random v4 UUID) was generated and written to the disposable JMicron disk's 128 MiB Apple_APFS GPT partition (Windows Disk 3, Partition 2).",
+            "2. The whole physical disk was attached to WSL2 via `wsl --mount --bare \\.\\PHYSICALDRIVE3` (device /dev/sde) and passed to the macOS Sequoia recovery VM as a raw SATA disk.",
+            "3. macOS recognized the partition as 'Apple_APFS Container disk3' on physical /dev/disk2s2 and auto-mounted volume SAKUSB read-write (superblock records last modified by apfs_kext (2332.101.1)).",
+            "4. fsck_apfs on the unmounted physical partition reported the container OK."
+        ],
+        "physical_partition": "/dev/disk2s2 (Apple_APFS Container, 134.2 MB)",
+        "volume": "SAKUSB",
+        "volume_uuid": "332897AC-8ED2-47D7-9711-079499449A05",
+        "kernel_mount_rw": "last modified by apfs_kext (2332.101.1)",
+        "fsck_apfs": "The container /dev/rdisk2s2 appears to be OK.",
+        "evidence_png": "apfs.sakusb-physical-jmicron.fsck_apfs-PASS.png",
+        "cleanup_note": "Disk 3 remains attached to WSL2 (wsl --mount). Run elevated `wsl --unmount \\.\\PHYSICALDRIVE3` to return it to Windows."
+    },
+    "evidence_chain_complete": {
+        "apple_fsck_apfs": "Passed (virtual SATA: SAK1/SAK2CHUNK/SAK8; physical USB: SAKUSB)",
+        "kernel_mount_rw": "Passed (apfs.kext auto-mounted + wrote every container)",
+        "kernel_write_roundtrip": "Passed (single-chunk + 256 MiB multi-chunk)",
+        "usb_destructive": "Passed (physical JMicron, Apple-native fsck_apfs)",
+        "crash": "Passed (power-loss mid-write, auto-remount on reboot)",
+        "rollback": "Passed (uncommitted write rolled back to last checkpoint; fsck OK)",
+        "note": "All evidence required by the locked scope for an APFS raw-write matrix flip is now collected on Apple's own tools. Flip the certification matrix only after a human review of this report and the paired evidence screendumps."
+    },
+    "follow_ups": [
+        "Optional: extend physical-USB Apple-native validation to a multi-chunk (>128 MiB) partition; multi-chunk is already Apple-validated on virtual media.",
+        "Optional: re-run the HFS VM round-trip to visually confirm the new root:wheel owner and real mtime in Finder/ls (byte-level verification already confirms the catalog fields)."
+    ],
+    "error": ""
+}

@@ -17,6 +17,7 @@
 #include <QIODevice>
 #include <QStringView>
 #include <QtEndian>
+#include <QUuid>
 
 #include <algorithm>
 #include <array>
@@ -88,9 +89,6 @@ constexpr uint64_t kApfsFormatStaleSignatureClearBytes = 8ULL * 1024ULL * 1024UL
 constexpr qsizetype kApfsFormatZeroChunkBytes = 1024 * 1024;
 constexpr uint64_t kApfsMaximumSeedFileBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsUuidBytes = 16;
-constexpr qsizetype kApfsUuidSeedWordBytes = 8;
-constexpr qsizetype kApfsUuidIndexStride = 17;
-constexpr uint64_t kApfsDeterministicUuidSalt = 0xA5'A5'5A'5AULL;
 constexpr int kApfsWriteRootListingMaxEntries = 1000;
 constexpr int kApfsGeneratedRootRecordsPerFile = 3;
 // APFS reserves dynamically assigned object IDs below OID_RESERVED_COUNT
@@ -575,14 +573,10 @@ bool stampApfsObjectBlock(QByteArray* block, QStringList* blockers) {
     return false;
 }
 
-QByteArray deterministicUuidBytes(uint64_t seed) {
-    QByteArray uuid(kApfsUuidBytes, '\0');
-    for (qsizetype index = 0; index < uuid.size(); ++index) {
-        uuid[index] = static_cast<char>(
-            (seed >> ((index % kApfsUuidSeedWordBytes) * kApfsUuidSeedWordBytes)) +
-            index * kApfsUuidIndexStride);
-    }
-    return uuid;
+// APFS container/volume UUIDs must be unique per instance (newfs_apfs emits a
+// random v4 UUID). Returns the 16-byte RFC 4122 representation.
+QByteArray randomApfsUuid() {
+    return QUuid::createUuid().toRfc4122();
 }
 
 struct ApfsBtreeInfoFields {
@@ -3267,9 +3261,8 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                           uint64_t blockCount,
                                           const QString& volumeName,
                                           QStringList* blockers) {
-    const QByteArray containerUuid = deterministicUuidBytes(request.target_container_bytes);
-    const QByteArray volumeUuid =
-        deterministicUuidBytes(request.target_container_bytes ^ kApfsDeterministicUuidSalt);
+    const QByteArray containerUuid = randomApfsUuid();
+    const QByteArray volumeUuid = randomApfsUuid();
     // The internal pool grows to 3*(chunk_count+1) blocks; every object placed
     // after the internal pool shifts by the same delta so the IP region and the
     // post-pool metadata never overlap (apfsck marks the whole IP region used).
@@ -3621,7 +3614,7 @@ struct ApfsSeedRewrite {
     QString volumeName;
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsRootDirectoryPayload> directories;
-    uint64_t uuidSeed{0};
+    QByteArray volumeUuid;
 };
 
 QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStringList* blockers) {
@@ -3630,8 +3623,13 @@ QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStrin
     // block (fsck cross-checks this against its extent traversal).
     const uint64_t volumeAllocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks +
                                            (allocatedBlocks - kApfsFormatSeedFileDataBlock);
-    const QByteArray volumeUuid =
-        deterministicUuidBytes(rewrite.uuidSeed ^ kApfsDeterministicUuidSalt);
+    if (rewrite.volumeUuid.size() != kApfsUuidBytes) {
+        if (blockers) {
+            blockers->append(QStringLiteral("APFS rewrite is missing the on-disk volume UUID"));
+        }
+        return {};
+    }
+    const QByteArray& volumeUuid = rewrite.volumeUuid;
     QVector<ApfsImageBlock> blocks{
         {kApfsFormatVolumeSuperblockBlock,
          buildVolumeSuperblock(
@@ -3668,6 +3666,29 @@ QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStrin
         appendFilePayloadDataBlocks(&blocks, file, rewrite.blockSize);
     }
     return blocks;
+}
+
+// Reads the on-disk volume UUID from a generated single-chunk layout so a
+// mutation rewrite preserves the container identity instead of minting a new
+// one. Mutations are gated to the certified single-chunk layout, where the
+// volume superblock sits at the fixed block.
+QByteArray readGeneratedVolumeUuid(QIODevice* image,
+                                   const ApfsRepairGeometry& geometry,
+                                   QStringList* blockers) {
+    QByteArray volumeBlock;
+    if (!readGeneratedLayoutBlock(
+            image, geometry, kApfsFormatVolumeSuperblockBlock, &volumeBlock, blockers)) {
+        return {};
+    }
+    return volumeBlock.mid(kApfsVolumeUuidOffset, kApfsUuidBytes);
+}
+
+QVector<ApfsImageBlock> rewriteGeneratedBlocks(QIODevice* image,
+                                               ApfsSeedRewrite rewrite,
+                                               QStringList* blockers) {
+    rewrite.volumeUuid = readGeneratedVolumeUuid(
+        image, {.blockSize = rewrite.blockSize, .blockCount = rewrite.blockCount}, blockers);
+    return seedRewriteBlocks(rewrite, blockers);
 }
 
 struct ApfsImageSource {
@@ -4105,7 +4126,6 @@ struct ApfsRootFileWriteScratch {
     QString fileName;
     QByteArray fileData;
     PartitionApfsFileReadResult rootListing;
-    uint64_t uuidSeed{0};
     uint64_t* writtenDataBlocks{nullptr};
 };
 
@@ -4143,13 +4163,15 @@ bool runRootFileWriteOnScratch(const ApfsRootFileWriteScratch& scratch, QStringL
         blockers->append(QStringLiteral("APFS file-write data exceeds target container size"));
         return false;
     }
-    const auto blocks = seedRewriteBlocks({.blockSize = blockSize,
-                                           .blockCount = blockCount,
-                                           .volumeName = scratch.rootListing.volume_name,
-                                           .files = files,
-                                           .directories = rootDirectories,
-                                           .uuidSeed = scratch.uuidSeed},
-                                          blockers);
+    const auto blocks = rewriteGeneratedBlocks(scratch.image,
+                                               {
+                                                   .blockSize = blockSize,
+                                                   .blockCount = blockCount,
+                                                   .volumeName = scratch.rootListing.volume_name,
+                                                   .files = files,
+                                                   .directories = rootDirectories,
+                                               },
+                                               blockers);
     writeImageBlocks(scratch.image, blockSize, blocks, blockers);
     if (scratch.writtenDataBlocks) {
         *scratch.writtenDataBlocks = dataBlocks;
@@ -4162,7 +4184,6 @@ struct ApfsRootFileDeleteScratch {
     QString sourceImagePath;
     QString fileName;
     PartitionApfsFileReadResult rootListing;
-    uint64_t uuidSeed{0};
     uint64_t targetSizeBytes{0};
     uint64_t* freedDataBlocks{nullptr};
 };
@@ -4229,13 +4250,15 @@ bool runRootFileDeleteOnScratch(const ApfsRootFileDeleteScratch& scratch, QStrin
         return false;
     }
 
-    const auto blocks = seedRewriteBlocks({.blockSize = blockSize,
-                                           .blockCount = blockCount,
-                                           .volumeName = scratch.rootListing.volume_name,
-                                           .files = preservedFiles,
-                                           .directories = rootDirectories,
-                                           .uuidSeed = scratch.uuidSeed},
-                                          blockers);
+    const auto blocks = rewriteGeneratedBlocks(scratch.image,
+                                               {
+                                                   .blockSize = blockSize,
+                                                   .blockCount = blockCount,
+                                                   .volumeName = scratch.rootListing.volume_name,
+                                                   .files = preservedFiles,
+                                                   .directories = rootDirectories,
+                                               },
+                                               blockers);
     writeImageBlocks(scratch.image, blockSize, blocks, blockers);
     if (scratch.freedDataBlocks) {
         *scratch.freedDataBlocks = roundedBlockCount(scratch.targetSizeBytes, blockSize);
@@ -4314,7 +4337,6 @@ struct ApfsRootDirectoryRewriteScratch {
     QString directoryName;
     PartitionApfsFileReadResult rootListing;
     bool createDirectory{false};
-    uint64_t uuidSeed{0};
 };
 
 bool runRootDirectoryRewriteOnScratch(const ApfsRootDirectoryRewriteScratch& scratch,
@@ -4357,13 +4379,15 @@ bool runRootDirectoryRewriteOnScratch(const ApfsRootDirectoryRewriteScratch& scr
             QStringLiteral("APFS directory mutation preserved data exceeds target container size"));
         return false;
     }
-    const auto blocks = seedRewriteBlocks({.blockSize = blockSize,
-                                           .blockCount = blockCount,
-                                           .volumeName = scratch.rootListing.volume_name,
-                                           .files = files,
-                                           .directories = rootDirectories,
-                                           .uuidSeed = scratch.uuidSeed},
-                                          blockers);
+    const auto blocks = rewriteGeneratedBlocks(scratch.image,
+                                               {
+                                                   .blockSize = blockSize,
+                                                   .blockCount = blockCount,
+                                                   .volumeName = scratch.rootListing.volume_name,
+                                                   .files = files,
+                                                   .directories = rootDirectories,
+                                               },
+                                               blockers);
     writeImageBlocks(scratch.image, blockSize, blocks, blockers);
     return blockers->isEmpty();
 }
@@ -4521,7 +4545,6 @@ struct ApfsRootDirectoryFileScratch {
     QString fileName;
     QByteArray fileData;
     PartitionApfsFileReadResult rootListing;
-    uint64_t uuidSeed{0};
     uint64_t targetSizeBytes{0};
     uint64_t* changedDataBlocks{nullptr};
     bool deleteFile{false};
@@ -4651,13 +4674,15 @@ bool runRootDirectoryFileRewriteOnScratch(const ApfsRootDirectoryFileScratch& sc
         !updateRootDirectoryFileChangedBlocks(scratch, blockSize, payloads, blockers)) {
         return false;
     }
-    const auto blocks = seedRewriteBlocks({.blockSize = blockSize,
-                                           .blockCount = blockCount,
-                                           .volumeName = scratch.rootListing.volume_name,
-                                           .files = payloads.files,
-                                           .directories = payloads.rootDirectories,
-                                           .uuidSeed = scratch.uuidSeed},
-                                          blockers);
+    const auto blocks = rewriteGeneratedBlocks(scratch.image,
+                                               {
+                                                   .blockSize = blockSize,
+                                                   .blockCount = blockCount,
+                                                   .volumeName = scratch.rootListing.volume_name,
+                                                   .files = payloads.files,
+                                                   .directories = payloads.rootDirectories,
+                                               },
+                                               blockers);
     writeImageBlocks(scratch.image, blockSize, blocks, blockers);
     return blockers->isEmpty();
 }
@@ -5401,7 +5426,6 @@ bool runRootFilePatchRewriteOnImage(const ApfsRootFilePatchRewrite& rewrite,
                                .fileName = rewrite.fileName,
                                .fileData = rewrite.fileData,
                                .rootListing = rewrite.rootListing,
-                               .uuidSeed = static_cast<uint64_t>(rewrite.sourceInfo.size()),
                                .writtenDataBlocks = rewrite.writtenDataBlocks},
                               &patchBlockers);
     image.close();
@@ -5729,12 +5753,14 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImageWith
         return result;
     }
 
-    const auto blocks = seedRewriteBlocks({.blockSize = request.block_size_bytes,
-                                           .blockCount = blockCount,
-                                           .volumeName = result.plan.volume_name,
-                                           .files = files,
-                                           .uuidSeed = request.target_container_bytes},
-                                          &writeBlockers);
+    const auto blocks = rewriteGeneratedBlocks(&image,
+                                               {
+                                                   .blockSize = request.block_size_bytes,
+                                                   .blockCount = blockCount,
+                                                   .volumeName = result.plan.volume_name,
+                                                   .files = files,
+                                               },
+                                               &writeBlockers);
     writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
     image.close();
 
@@ -5870,7 +5896,6 @@ PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootFile(
                                .fileName = cleanFileName,
                                .fileData = request.file_data,
                                .rootListing = *rootListing,
-                               .uuidSeed = static_cast<uint64_t>(source.info.size()),
                                .writtenDataBlocks = &result.written_data_blocks},
                               &writeBlockers);
     image.close();
@@ -5953,7 +5978,6 @@ PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootFile(
                                 .sourceImagePath = result.source_image_path,
                                 .fileName = cleanFileName,
                                 .rootListing = *rootListing,
-                                .uuidSeed = static_cast<uint64_t>(source.info.size()),
                                 .targetSizeBytes = result.deleted_file_bytes,
                                 .freedDataBlocks = &result.freed_data_blocks},
                                &deleteBlockers);
@@ -6036,7 +6060,6 @@ PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootDirecto
                                           .fileName = cleanFileName,
                                           .fileData = request.file_data,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = static_cast<uint64_t>(source.info.size()),
                                           .changedDataBlocks = &result.written_data_blocks},
                                          &writeBlockers);
     image.close();
@@ -6125,7 +6148,6 @@ PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootDirec
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = static_cast<uint64_t>(source.info.size()),
                                           .targetSizeBytes = result.deleted_file_bytes,
                                           .changedDataBlocks = &result.freed_data_blocks,
                                           .deleteFile = true},
@@ -6217,7 +6239,6 @@ PartitionApfsImageFilePatchResult PartitionApfsWriter::patchImageOnlyRootDirecto
                                           .fileName = cleanFileName,
                                           .fileData = patchedData,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = static_cast<uint64_t>(source.info.size()),
                                           .changedDataBlocks = &result.written_data_blocks},
                                          &patchBlockers);
     image.close();
@@ -6357,13 +6378,15 @@ PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::createImageOnlyRo
         return result;
     }
     QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch({.image = &image,
-                                      .sourceImagePath = result.source_image_path,
-                                      .directoryName = cleanDirectoryName,
-                                      .rootListing = *rootListing,
-                                      .createDirectory = true,
-                                      .uuidSeed = static_cast<uint64_t>(source.info.size())},
-                                     &writeBlockers);
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = &image,
+            .sourceImagePath = result.source_image_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = *rootListing,
+            .createDirectory = true,
+        },
+        &writeBlockers);
     image.close();
     result.blockers.append(writeBlockers);
     appendDirectoryCreateReadback(result.written_image_path, cleanDirectoryName, &result);
@@ -6432,13 +6455,15 @@ PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::deleteImageOnlyRo
         return result;
     }
     QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch({.image = &image,
-                                      .sourceImagePath = result.source_image_path,
-                                      .directoryName = cleanDirectoryName,
-                                      .rootListing = *rootListing,
-                                      .createDirectory = false,
-                                      .uuidSeed = static_cast<uint64_t>(source.info.size())},
-                                     &writeBlockers);
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = &image,
+            .sourceImagePath = result.source_image_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = *rootListing,
+            .createDirectory = false,
+        },
+        &writeBlockers);
     image.close();
     result.blockers.append(writeBlockers);
     appendDirectoryDeleteReadback(result.written_image_path, cleanDirectoryName, &result);
@@ -6582,7 +6607,6 @@ PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootFile(
                                .fileName = cleanFileName,
                                .fileData = request.file_data,
                                .rootListing = *rootListing,
-                               .uuidSeed = request.target_container_bytes,
                                .writtenDataBlocks = &result.written_data_blocks},
                               &writeBlockers);
     target->close();
@@ -6651,7 +6675,6 @@ PartitionApfsRawFileDeleteResult PartitionApfsWriter::deleteRawRootFile(
                                 .sourceImagePath = result.target_path,
                                 .fileName = cleanFileName,
                                 .rootListing = *rootListing,
-                                .uuidSeed = request.target_container_bytes,
                                 .targetSizeBytes = result.deleted_file_bytes,
                                 .freedDataBlocks = &result.freed_data_blocks},
                                &deleteBlockers);
@@ -6731,7 +6754,6 @@ PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootDirectoryFile(
                                           .fileName = cleanFileName,
                                           .fileData = request.file_data,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = request.target_container_bytes,
                                           .changedDataBlocks = &result.written_data_blocks},
                                          &writeBlockers);
     target->close();
@@ -6809,7 +6831,6 @@ PartitionApfsRawFileDeleteResult PartitionApfsWriter::deleteRawRootDirectoryFile
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = request.target_container_bytes,
                                           .targetSizeBytes = result.deleted_file_bytes,
                                           .changedDataBlocks = &result.freed_data_blocks,
                                           .deleteFile = true},
@@ -6898,7 +6919,6 @@ PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootDirectoryFile(
                                           .fileName = cleanFileName,
                                           .fileData = patchedData,
                                           .rootListing = *rootListing,
-                                          .uuidSeed = request.target_container_bytes,
                                           .changedDataBlocks = &result.written_data_blocks},
                                          &patchBlockers);
     target->close();
@@ -6978,7 +6998,6 @@ PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootFile(
                                .fileName = cleanFileName,
                                .fileData = patchedData,
                                .rootListing = *rootListing,
-                               .uuidSeed = request.target_container_bytes,
                                .writtenDataBlocks = &result.written_data_blocks},
                               &patchBlockers);
     target->close();
@@ -7038,13 +7057,15 @@ PartitionApfsRawDirectoryMutationResult PartitionApfsWriter::createRawRootDirect
         return result;
     }
     QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch({.image = target.get(),
-                                      .sourceImagePath = result.target_path,
-                                      .directoryName = cleanDirectoryName,
-                                      .rootListing = *rootListing,
-                                      .createDirectory = true,
-                                      .uuidSeed = request.target_container_bytes},
-                                     &writeBlockers);
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = target.get(),
+            .sourceImagePath = result.target_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = *rootListing,
+            .createDirectory = true,
+        },
+        &writeBlockers);
     target->close();
     result.blockers.append(writeBlockers);
     if (result.blockers.isEmpty()) {
@@ -7111,13 +7132,15 @@ PartitionApfsRawDirectoryMutationResult PartitionApfsWriter::deleteRawRootDirect
         return result;
     }
     QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch({.image = target.get(),
-                                      .sourceImagePath = result.target_path,
-                                      .directoryName = cleanDirectoryName,
-                                      .rootListing = *rootListing,
-                                      .createDirectory = false,
-                                      .uuidSeed = request.target_container_bytes},
-                                     &writeBlockers);
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = target.get(),
+            .sourceImagePath = result.target_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = *rootListing,
+            .createDirectory = false,
+        },
+        &writeBlockers);
     target->close();
     result.blockers.append(writeBlockers);
     if (result.blockers.isEmpty()) {

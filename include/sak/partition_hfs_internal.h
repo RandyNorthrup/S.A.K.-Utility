@@ -16,6 +16,7 @@
 #include "sak/partition_raw_device_io.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -114,6 +115,17 @@ constexpr uint16_t kHfsCatalogFileThreadRecord = 4;
 constexpr qsizetype kHfsCatalogRecordTypeOffset = 0;
 constexpr qsizetype kHfsCatalogFolderValenceOffset = 4;
 constexpr qsizetype kHfsCatalogRecordIdOffset = 8;
+constexpr qsizetype kHfsCatalogCreateDateOffset = 12;
+constexpr qsizetype kHfsCatalogContentModDateOffset = 16;
+constexpr qsizetype kHfsCatalogAttributeModDateOffset = 20;
+constexpr qsizetype kHfsCatalogAccessDateOffset = 24;
+constexpr qsizetype kHfsCatalogBackupDateOffset = 28;
+constexpr qsizetype kHfsCatalogBsdOwnerIdOffset = 32;
+constexpr qsizetype kHfsCatalogBsdGroupIdOffset = 36;
+constexpr qsizetype kHfsCatalogBsdFileModeOffset = 42;
+constexpr uint32_t kHfsToUnixEpochSeconds = 2'082'844'800U;
+constexpr uint16_t kHfsFileModeRegular = 0x81A4;    // S_IFREG | 0644
+constexpr uint16_t kHfsFileModeDirectory = 0x41ED;  // S_IFDIR | 0755
 constexpr qsizetype kHfsCatalogFileDataForkOffset = 88;
 constexpr qsizetype kHfsForkDataBytes = kHfsForkExtentsOffset + kHfsExtentBytes * kHfsExtentCount;
 constexpr qsizetype kHfsCatalogFileResourceForkOffset = kHfsCatalogFileDataForkOffset +
@@ -514,10 +526,29 @@ QByteArray hfsCatalogKeyBytes(uint32_t parentId, const QString& name) {
     return key;
 }
 
+uint32_t hfsCurrentTimestamp() {
+    return static_cast<uint32_t>(QDateTime::currentSecsSinceEpoch() + kHfsToUnixEpochSeconds);
+}
+
+// Stamps the HFS+ catalog dates and HFSPlusBSDInfo (owner root:wheel, mode) that
+// macOS expects; without these a created entry shows _unknown owner and a 1904/1970
+// epoch date and is not production-clean even though fsck_hfs tolerates it.
+void hfsStampCommonCatalogFields(QByteArray* record, uint16_t fileMode) {
+    const uint32_t now = hfsCurrentTimestamp();
+    writeBe32(record, kHfsCatalogCreateDateOffset, now);
+    writeBe32(record, kHfsCatalogContentModDateOffset, now);
+    writeBe32(record, kHfsCatalogAttributeModDateOffset, now);
+    writeBe32(record, kHfsCatalogAccessDateOffset, now);
+    writeBe32(record, kHfsCatalogBsdOwnerIdOffset, 0);
+    writeBe32(record, kHfsCatalogBsdGroupIdOffset, 0);
+    writeBe16(record, kHfsCatalogBsdFileModeOffset, fileMode);
+}
+
 QByteArray hfsCatalogEmptyFileRecord(uint32_t fileId) {
     QByteArray record(kHfsCatalogFileRecordBytes, '\0');
     writeBe16(&record, kHfsCatalogRecordTypeOffset, kHfsCatalogFileRecord);
     writeBe32(&record, kHfsCatalogRecordIdOffset, fileId);
+    hfsStampCommonCatalogFields(&record, kHfsFileModeRegular);
     return record;
 }
 
@@ -546,6 +577,7 @@ QByteArray hfsCatalogEmptyFolderRecord(uint32_t folderId) {
     QByteArray record(kHfsCatalogFolderRecordBytes, '\0');
     writeBe16(&record, kHfsCatalogRecordTypeOffset, kHfsCatalogFolderRecord);
     writeBe32(&record, kHfsCatalogRecordIdOffset, folderId);
+    hfsStampCommonCatalogFields(&record, kHfsFileModeDirectory);
     return record;
 }
 

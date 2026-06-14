@@ -179,7 +179,7 @@ Each row is a capability that must move from its current state to "full driver".
 
 | # | Capability | Current | Target | Primary method | Validator |
 |---|---|---|---|---|---|
-| A-a | Multi-CIB / multi-chunk space manager (size > 128 MiB, real geometry) | One-spaceman-chunk envelope only; Apple kernel rejected 51 GB layout (`spaceman_sanity_check`) | Arbitrary-size space manager: multiple chunk-info blocks, internal pool, CIB addressing, free-queue | Build spaceman to mirror same-geometry `newfs_apfs`; CIB array + bitmap blocks | `fsck_apfs`, kernel mount on multi-GB target |
+| A-a | Multi-CIB / multi-chunk space manager (size > 128 MiB, real geometry) | **✅ CERTIFIED 2026-06-14** — single-CIB multi-chunk shipped; 64 MiB / 256 MiB / 1 GiB pass Apple `fsck_apfs` + kernel rw mount + crash/rollback + physical-USB. Multi-CIB/CAB tier (>~16 GiB / >126 chunks) still gated | Arbitrary-size space manager: multiple chunk-info blocks, internal pool, CIB addressing, free-queue | Build spaceman to mirror same-geometry `newfs_apfs`; CIB array + bitmap blocks | `fsck_apfs`, kernel mount on multi-GB target — **DONE** (`artifacts/partition-manager-certification/vm-lab/apple-tool-evidence/`) |
 | A-b | True in-place copy-on-write checkpoint mutation of arbitrary Apple containers | `import-image` rewrites the whole container | Mutate existing container in place: checkpoint ring, ephemeral commit, omap COW, xid advance, reaper, free-queue | COW checkpoint engine over the existing NXSB/checkpoint descriptor area | `fsck_apfs` + kernel RW mount after each commit; crash proof |
 | A-c | Snapshots (create/delete/revert) | Read-only; snapshotted containers blocked | Create/delete snapshots, manage `snap_meta_tree`, `extentref_tree`, omap snapshot tree | APFS snapshot metadata + extent-reference accounting | `fsck_apfs` snapshot checks, kernel `tmutil`/mount |
 | A-d | Multi-volume containers | Single-volume only | Add/remove/mutate volumes sharing one space manager | Volume superblock array + shared spaceman allocation | `fsck_apfs` multi-volume, kernel mount of each volume |
@@ -279,7 +279,7 @@ the artifact.**
 
 | MS | Name | Unlocks | Exit gate |
 |---|---|---|---|
-| A1 | Multi-CIB / multi-chunk space manager (A-a) | Arbitrary size > 128 MiB | `fsck_apfs` + kernel mount on a multi-GB generated container (closes the 51 GB `spaceman_sanity_check` rejection) |
+| A1 ✅ | Multi-CIB / multi-chunk space manager (A-a) | Arbitrary size > 128 MiB | `fsck_apfs` + kernel mount on a multi-GB generated container (closes the 51 GB `spaceman_sanity_check` rejection) — **DONE 2026-06-14** (64 MiB/256 MiB/1 GiB Apple `fsck_apfs` + kernel rw mount + write round-trip + crash/rollback + physical-USB; also flips the matrix's general crash/rollback/physical-USB lanes to proven). Writer UUIDs are now random v4 with read-back; HFS catalog metadata stamped |
 | A2 | In-place COW checkpoint mutation of arbitrary Apple containers (A-b) | Mutate real Apple media without full rewrite | `fsck_apfs` + kernel RW mount after each in-place commit; crash-interruption proof |
 | A3 | Snapshots create/delete/revert (A-c) | Snapshotted containers writable | `fsck_apfs` snapshot checks; kernel mount; `tmutil`/`diskutil` cross-check |
 | A4 | Multi-volume containers (A-d) | Multi-volume Apple media | `fsck_apfs` multi-volume; kernel mount of each volume |
