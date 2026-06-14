@@ -1,0 +1,24 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-inplace-commit-layout-general-256mb",
+    "milestone": "A2 (A-b): in-place COW commit on any container size (256 MiB)",
+    "status": "Passed (host layout verify + Apple kernel reads file + Apple fsck_apfs clean, incl. allocated-space verification). In-place commit is layout-general.",
+    "capability": "computeGeneratedLayout derives the free-region start from ipDelta = 3*(chunk_count+1) - kApfsFormatIpBlockCount and caps allocation to chunk 0; the live chunk-info block + bitmap stay at their fixed internal-pool addresses (187/188) for any size. The in-place commit source cap is raised to the A1-certified 256 MiB single-CIB tier. Fixes a latent bug: the old hardcoded 188/187/201 silently produced an inconsistent container above 128 MiB.",
+    "host_verify": "256 MiB container (block_count 65536, chunk_count 2, ipDelta 3): COW chain + data at the shifted free region (seed 204, data 211); the fixed chunk-0 bitmap (188) marks blocks 204-211 used; chunk-info (187) chunk-0 free count 32564 -> 32563 (no underflow). 64 MiB output byte-identical (ipDelta 0).",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T23:30:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; 256 MiB container with a file inserted in place (xid 3) attached raw as SATA disk0",
+        "method": [
+            "1. format-image 256 MiB (BIG256) -> commit-image-file-insert big.txt (content) (xid 3).",
+            "2. Apple kernel auto-mounted /Volumes/BIG256; `cat big.txt` = 'content in a 256MB container' (apfs.kext read the file from the 256 MiB container).",
+            "3. diskutil unmount; fsck_apfs -n /dev/disk0 -> no warnings, including 'Verifying allocated space' (the fixed-bitmap accounting is correct)."
+        ],
+        "kernel_data_read": "cat /Volumes/BIG256/big.txt -> content in a 256MB container",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 5 ... fsroot tree / extent ref tree / volume object map space / allocated space all consistent; The volume BIG256 appears to be OK; The container /dev/disk0 appears to be OK (no warnings).",
+        "evidence_png": "big256-fsck.png (cat big.txt + clean fsck on the 256 MiB container)"
+    },
+    "gates": "clang-format + lizard + cppcheck clean; commit 9feaf75 (all pre-commit hooks passed, no bypass).",
+    "next": "Free-queue crash-safety, multi-CIB (>256 MiB, multiple chunks/bitmaps), arbitrary real-Apple containers, multi-leaf fstree, fragmented free space.",
+    "error": ""
+}
