@@ -6704,8 +6704,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     QCOMPARE(listing2.entries.size(), 1);
     QCOMPARE(listing2.entries.first().name, QStringLiteral("hello.txt"));
     QCOMPARE(listing2.entries.first().size_bytes, static_cast<uint64_t>(payload.size()));
-    // The payload landed in the data block past the six COW chain blocks (207).
-    QCOMPARE(readBlock(out2, 207).left(payload.size()), payload);
+    // The payload landed in the data block past the seven COW chain blocks (six
+    // metadata + the copy-on-written extent-ref tree), i.e. block 208.
+    QCOMPARE(readBlock(out2, 208).left(payload.size()), payload);
+    // The copy-on-written extent-ref tree (block 207) carries the data extent.
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(readBlock(out2, 207)));
     // One data block consumed: the spaceman free count (block 15) drops by one
     // versus the unmodified source (block 11).
     const auto deviceFree = [&le64](const QByteArray& spaceman) {

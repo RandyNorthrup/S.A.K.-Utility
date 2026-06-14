@@ -268,6 +268,7 @@ constexpr qsizetype kApfsVolumeRevertToXidOffset = 0xA0;
 constexpr qsizetype kApfsVolumeRevertToSblockOidOffset = 0xA8;
 constexpr qsizetype kApfsVolumeNextObjectIdOffset = 0xB0;
 constexpr qsizetype kApfsVolumeFileCountOffset = 0xB8;
+constexpr qsizetype kApfsVolumeExtentRefTreeOidOffset = 0x90;
 constexpr qsizetype kApfsVolumeNumSnapshotsOffset = 0xD8;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
 constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
@@ -1840,6 +1841,7 @@ struct ApfsLiveFsChain {
     uint64_t volOmapHdr{0};
     uint64_t volOmapTree{0};
     uint64_t rootTree{0};
+    uint64_t extentRef{0};
 };
 
 // Walk the container object map -> volume superblock -> volume object map ->
@@ -1864,6 +1866,7 @@ bool walkLiveFsChain(QIODevice* image,
         return false;
     }
     chain->volOmapHdr = le64(node, kApfsVolumeOmapOidOffset);
+    chain->extentRef = le64(node, kApfsVolumeExtentRefTreeOidOffset);
     if (!readApfsRepairBlock(image, geometry, chain->volOmapHdr, &node, blockers)) {
         return false;
     }
@@ -1927,11 +1930,25 @@ struct ApfsCowFileInsert {
     QVector<uint64_t> newBlocks;
     QVector<ApfsRootFilePayload> files;
     uint64_t dataBlockCount{0};  // file data blocks the volume newly allocates
+    uint64_t extentRefNew{0};    // new extent-ref tree block (0 = keep the existing empty tree)
 };
 
 // Copy-on-write the file-system metadata chain to the newly allocated blocks
 // with the new file inserted: root tree -> volume object map -> volume
 // superblock -> container object map, all stamped at the new transaction id.
+// Copy-on-write the extent-ref tree with a j_phys_ext record per data extent so
+// fsck_apfs credits the file's data blocks; an empty file (extentRefNew == 0)
+// keeps the existing empty tree in place.
+bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
+    if (cow.extentRefNew == 0) {
+        return true;
+    }
+    QByteArray extentRef = buildExtentRefTreeBlock(cow.geometry.blockSize, cow.files, blockers);
+    writeLe64(&extentRef, kApfsObjectOidOffset, cow.extentRefNew);
+    writeLe64(&extentRef, kApfsObjectXidOffset, cow.newXid);
+    return stampAndWriteApfsBlock(cow.image, cow.geometry, cow.extentRefNew, &extentRef, blockers);
+}
+
 bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const uint64_t rootTree = cow.newBlocks.at(0);
@@ -1953,11 +1970,17 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
         !writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers)) {
         return false;
     }
+    if (!cowExtentRefTree(cow, blockers)) {
+        return false;
+    }
     QByteArray vol(bs, '\0');
     if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volSb, &vol, blockers)) {
         return false;
     }
     writeLe64(&vol, kApfsVolumeOmapOidOffset, volOmapHdr);
+    if (cow.extentRefNew != 0) {
+        writeLe64(&vol, kApfsVolumeExtentRefTreeOidOffset, cow.extentRefNew);
+    }
     writeLe64(&vol, kApfsVolumeFileCountOffset, le64(vol, kApfsVolumeFileCountOffset) + 1);
     writeLe64(&vol, kApfsVolumeNextObjectIdOffset, le64(vol, kApfsVolumeNextObjectIdOffset) + 1);
     writeLe64(&vol,
@@ -2035,14 +2058,16 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
             alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, &bitmap, blockers)) {
         return false;
     }
-    flipChunkBitmapBits(&bitmap,
-                        {alloc.chain.rootTree,
-                         alloc.chain.volOmapTree,
-                         alloc.chain.volOmapHdr,
-                         alloc.chain.volSb,
-                         alloc.chain.ctrOmapTree,
-                         alloc.chain.ctrOmapHdr},
-                        alloc.newBlocks);
+    QVector<uint64_t> freed{alloc.chain.rootTree,
+                            alloc.chain.volOmapTree,
+                            alloc.chain.volOmapHdr,
+                            alloc.chain.volSb,
+                            alloc.chain.ctrOmapTree,
+                            alloc.chain.ctrOmapHdr};
+    if (alloc.dataBlocks > 0) {
+        freed.append(alloc.chain.extentRef);
+    }
+    flipChunkBitmapBits(&bitmap, freed, alloc.newBlocks);
     return writeApfsRepairBlock(
                alloc.image, alloc.geometry, kApfsFormatChunkBitmapBlock, bitmap, blockers) &&
            adjustCibFreeCount(alloc.image,
@@ -2082,30 +2107,36 @@ bool commitInPlaceFileInsert(QIODevice* image,
     }
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(fileData.size()),
                                                   blockSize);
+    // A file with data also copy-on-writes the extent-ref tree (a seventh chain
+    // block); an empty file leaves the empty extent-ref tree in place. When
+    // there is no data the seventh slot and data slots are absent, so the
+    // QVector value() lookups below resolve to 0 / empty without branching.
+    const int metaCount = 6 + static_cast<int>(dataBlocks > 0);
     QVector<uint64_t> newBlocks;
     if (!findFreeBlocksInBitmap({image,
                                  geometry,
                                  kApfsFormatChunkBitmapBlock,
                                  kApfsFormatSeedFileDataBlock,
-                                 static_cast<int>(6 + dataBlocks)},
+                                 static_cast<int>(metaCount + dataBlocks)},
                                 &newBlocks,
                                 blockers)) {
         return false;
     }
     const uint64_t newXid = live.xid + 1;
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(6);
+    const uint64_t extentRefNew = newBlocks.value(6);
+    const QVector<uint64_t> dataBlockList = newBlocks.mid(metaCount);
     if (!writeApfsFileDataBlocks(image, geometry, dataBlockList, fileData, blockers)) {
         return false;
     }
-    const QVector<ApfsRootFilePayload> files{
-        {.fileName = fileName.trimmed(),
-         .data = fileData,
-         .parentDirectoryId = kApfsRootDirectoryId,
-         .fileId = kApfsFirstUserObjectId,
-         .privateId = kApfsFirstUserObjectId,
-         .dataStartBlock = dataBlocks > 0 ? dataBlockList.at(0) : 0}};
+    const QVector<ApfsRootFilePayload> files{{.fileName = fileName.trimmed(),
+                                              .data = fileData,
+                                              .parentDirectoryId = kApfsRootDirectoryId,
+                                              .fileId = kApfsFirstUserObjectId,
+                                              .privateId = kApfsFirstUserObjectId,
+                                              .dataStartBlock = dataBlockList.value(0)}};
     if (!writeFileInsertCowChain(
-            {image, geometry, newXid, chain, newBlocks.mid(0, 6), files, dataBlocks}, blockers)) {
+            {image, geometry, newXid, chain, newBlocks.mid(0, 6), files, dataBlocks, extentRefNew},
+            blockers)) {
         return false;
     }
     if (!applyFileInsertAllocation({image, geometry, chain, newBlocks, dataBlocks, newXid},
