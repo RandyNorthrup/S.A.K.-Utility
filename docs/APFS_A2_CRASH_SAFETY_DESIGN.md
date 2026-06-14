@@ -38,6 +38,40 @@ Which IP slot is free is tracked by two structures:
   (one slot used); the live container sets free-head 2 / tail 0 (two slots used).
   The harvested xid7 spaceman shows the chain advanced to 6.
 
+## Confirmed live IP state of a generated container (2026-06-14, step-1 prep)
+
+Parsed the spaceman of a certified generated 64 MiB container (mleaf.img, 22
+in-place commits) host-side — confirms the bug and pins the exact targets:
+
+| spaceman field | offset | value |
+|----------------|--------|-------|
+| blocks_per_chunk | 0x24 | 32768 |
+| dev[MAIN] block_count / chunk_count / cib_count | 0x30/0x38/0x40 | 16384 / 1 / 1 |
+| dev[MAIN] addr_offset (→ cib_addr array) | 0x50 | 2568 |
+| flags | 0x90 | 0x1 |
+| sm_ip_bm_tx_multiplier | 0x94 | 16 |
+| sm_ip_block_count | 0x98 | **6** |
+| sm_ip_bitmap_size (blocks) | 0xA0 | 1 |
+| sm_ip_bitmap_block_count | 0xA4 | **16** |
+| sm_ip_bitmap_base | 0xA8 | **169** |
+| sm_ip_base | 0xB0 | **185** |
+| cib_addr[0] | 2568 | **187** |
+| ring xid | 2520 | 2 |
+| ring free-head | 2528 | **1** |
+| ring array (u16[16]) | 2536 | [FFFF, FFFF, 3,4,…,15, 0] |
+
+So the generated 64 MiB container's IP region is **6 blocks = 3 cib/bitmap
+slots**: slot0 (185,186), slot1 (187,188), slot2 (189,190); the live slot is
+**slot1** (cib 187, bitmap 188). **The bug, confirmed empirically:** after 22
+commits `cib_addr` is still 187 and the ring free-head is still 1 — the writer
+rewrites slot1 in place every commit (Apple round-robins the slots and advances
+the ring). The implementation cycles cib/bitmap slot1→slot2→slot0→slot1… , moves
+`cib_addr@2568` to the new slot's cib, advances the `sm_ip_bitmap` ring
+(free-head @2528, ring array @2536, xid @2520) over blocks 169–184, and re-emits
+the spaceman with the new cib_addr + ring (not a verbatim copy). Parse any
+generated container's live spaceman the same way (highest-xid object of type
+0x80000005).
+
 ## Implementation plan (the hardest remaining APFS subsystem)
 
 1. **Resolve the live IP state**: parse the spaceman (already resolvable via the
