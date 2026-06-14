@@ -1,0 +1,32 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-inplace-commit-ground-truth",
+    "milestone": "A2 (A-b): in-place COW checkpoint commit - ground-truth harvest",
+    "status": "Harvested (Apple apfs.kext in-place commit captured + decoded). Engine implementation in progress.",
+    "performed_at_utc": "2026-06-14T16:10:00Z",
+    "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; S.A.K. 64 MiB single-chunk container attached raw as SATA disk0",
+    "method": [
+        "1. sak_apfs_writer_cli format-image -> temp/a2base.img (A2BASE, genesis xid 2); kept temp/a2base.before.img.",
+        "2. Attached raw to the VM. Recovery auto-mounted A2BASE READ-ONLY; `mount -uw /Volumes/A2BASE` remounted read-write.",
+        "3. `touch /Volumes/A2BASE/a2proof.txt` (zero-length); `ls -la` confirms the file; `diskutil unmount` flushed.",
+        "4. Copied the mutated image back (temp/a2base.after.img) and byte-diffed at 4096-byte block granularity."
+    ],
+    "result": {
+        "blocks_total": 16384,
+        "blocks_changed": 64,
+        "apple_commits_observed": "xid 3 -> 7 (mount-replay, remount, touch, sync, unmount)",
+        "read_write_remount": "mount -uw succeeded; kernel write (touch) succeeded; in-place checkpoint commit performed by apfs.kext",
+        "a1_revalidation": "Apple read the S.A.K.-generated container cleanly (diskutil apfs list: 1 container, A2BASE volume, 1.2% used) before mutation - re-confirms A1 container validity"
+    },
+    "decoded_per_commit_protocol": {
+        "ring_advance": "desc_index := old desc_next (len 2: cpm + nxsb); desc_next := (index+2) mod 8. data_index := old data_next (len 4); data_next := (index+4) mod 160. xid+1; nx_omap_oid := new COW container-omap header paddr; block 0 := copy of new nxsb.",
+        "file_add_chain_cow": "fstree-root(subtype 0x0e) -> volume-omap-tree(0x0b) -> volume-omap-hdr(0x0b, physical) -> volume-sb(0x0d FS, virtual) -> container-omap-tree(0x0b) -> container-omap-hdr(0x0b, physical). 6 newly allocated blocks.",
+        "container_only_commit": "Apple xid3/xid7: volume-sb + container-omap-hdr + container-omap-tree only (3 blocks) - the minimal valid xid advance; A2 increment 1 target.",
+        "ephemerals": "spaceman(1024) + reaper(1025) + free-queue-ip(1027) + free-queue-main(1029), re-emitted fresh each commit at the next 4 data-ring slots, stamped xid=N; ephemeral oids stable.",
+        "spaceman": "chunk-info-block(0x07 CIB) + allocation bitmap + internal-pool bitmap updated to mark new blocks used and COW-freed blocks free; freed blocks scheduled in the free-queue with xid=N."
+    },
+    "checkpoint_position_table": "see docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md (exact desc/data idx/len/next + nx_omap_oid for xid 4-7)",
+    "ground_truth_doc": "docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md",
+    "next": "Implement A2 increment 1 (container-only xid 2->3 commit: ring advance + container-omap COW + volume-sb COW + ephemeral re-emit + spaceman bitmap), validate with fsck_apfs -n + kernel RW remount in the VM; then increment 2 (fstree COW = real file insert).",
+    "error": ""
+}
