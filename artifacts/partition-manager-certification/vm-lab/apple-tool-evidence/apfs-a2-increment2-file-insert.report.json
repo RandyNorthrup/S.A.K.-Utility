@@ -1,0 +1,30 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-increment2-inplace-file-insert",
+    "milestone": "A2 (A-b): in-place COW checkpoint commit - increment 2 (real file insert)",
+    "status": "Passed (unit + host reader round-trip + Apple kernel RW mount reads the file + Apple fsck_apfs clean). A2 core capability certified for the file-insert case.",
+    "capability": "PartitionApfsWriter::commitImageOnlyFileInsert performs a true copy-on-write in-place checkpoint commit that inserts one empty file into a generated container: walk the live object-map chain (container omap -> volume superblock -> volume omap -> root tree), COW the whole chain to six newly allocated blocks with the new inode+dirent in the root tree, swap the allocation bitmap (free the six old chain blocks, allocate the six new - net-zero), then advance the checkpoint (shared advanceCheckpoint engine) with nx_omap_oid re-pointed at the new container object map.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: commitInPlaceFileInsert / walkLiveFsChain / readOmapSingleEntryPaddr / findFreeBlocksInBitmap / flipChunkBitmapBits / writeFileInsertCowChain / advanceCheckpoint (shared with increment 1).",
+        "src/tools/sak_apfs_writer_cli.cpp: commit-image-file-insert command.",
+        "Fix: appendRootFileRecords skips the j_file_extent record for zero-length files (a zero-length extent at logical 0 is rejected by fsck_apfs)."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileInsertCommitAddsReadableFile - format -> insert proof.txt -> the S.A.K. reader walks the COW'd object-map chain and lists the file (size 0), block 0 advances to xid 3 with nx_omap_oid relocated to the new container omap, every COW'd block carries a valid object checksum, and the chunk bitmap shows the net-zero swap (old chain freed, new allocated). 115/115 core subtests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T18:05:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; in-place file-insert container (xid 3) attached raw as SATA disk0",
+        "method": [
+            "1. sak_apfs_writer_cli format-image (A2INS, xid 2) -> commit-image-file-insert --file-name a2proof.txt (xid 3), host-verified (reader lists a2proof.txt).",
+            "2. Attached to the macOS VM. Apple kernel auto-mounted /Volumes/A2INS read-write; `ls -la` shows a2proof.txt (0 bytes, -rw-r--r--) - apfs.kext read the COW-inserted file with correct metadata.",
+            "3. apfs.kext continued the S.A.K. checkpoint ring (auto-mount advanced xid 3 -> 5).",
+            "4. diskutil unmount; fsck_apfs -n /dev/disk0."
+        ],
+        "kernel_rw_mount": "auto-mounted /Volumes/A2INS read-write; ls reads a2proof.txt (0 bytes); apfs.kext continued the ring xid 3 -> 5",
+        "apple_fsck_apfs": "Checking ... container superblock / space manager / free queue trees / object map / volume superblock (formatted by S.A.K. Utility APFS writer, last modified by apfs_kext 2332.101.1) / snapshot metadata / fsroot tree / extent ref tree / volume object map space ... The volume A2INS appears to be OK ... Verifying allocated space ... The container /dev/disk0 appears to be OK.",
+        "evidence_png": "a2i-ls.png (kernel reads the file) + a2i2-fsck.png (clean fsck after the zero-length-extent fix); a2i-fsck.png shows the pre-fix zero-length-extent failure that motivated the fix"
+    },
+    "gates": "clang-format + lizard (CCN<=10, params<=5) + cppcheck clean; commits fa5f5a8 (engine) + 9559920 (empty-file extent fix), all pre-commit hooks passed, no bypass.",
+    "next": "Increment 2b: non-empty files (data extents + extent-ref tree), chained commits (walk past the first COW), free-queue crash-safety (defer freeing the old chain blocks), and arbitrary Apple containers. Then the A-b full flip needs physical-USB destructive + crash + rollback like A1/H1.",
+    "error": ""
+}
