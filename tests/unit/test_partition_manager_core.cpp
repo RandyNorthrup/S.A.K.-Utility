@@ -870,7 +870,13 @@ void writeHfsAttributesHeaderNode(QByteArray* image) {
     writeBe32(&node, header + kTestHfsBTreeHeaderLastLeafNodeOffset, 1);
     writeBe16(&node, header + kTestHfsBTreeHeaderNodeSizeOffset, kTestHfsAttributesNodeSize);
     writeBe32(&node, header + kTestHfsBTreeHeaderTotalNodesOffset, kTestHfsAttributesTotalNodes);
+    node[header + kTestHfsBTreeHeaderKeyCompareTypeOffset] = static_cast<char>(0xBC);
+    writeBe32(&node,
+              header + kTestHfsBTreeHeaderAttributesOffset,
+              kTestHfsBTreeBigKeysMask | kTestHfsBTreeVariableIndexKeysMask);
     writeHfsNodeOffsets(&node, {14, 120, 248}, 256);
+    setFixtureMapBit(&node, 0, true);
+    setFixtureMapBit(&node, 1, true);
 
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
 }
@@ -1370,6 +1376,7 @@ struct HfsSplitFixtureOptions {
     uint32_t free_nodes{kTestHfsSplitCatalogTotalNodes - 2};
     uint32_t attributes_mask{kTestHfsBTreeBigKeysMask | kTestHfsBTreeVariableIndexKeysMask};
     bool leaf_map_bit{true};
+    bool full_volume{false};
 };
 
 void writeHfsSplitCatalogHeaderNode(QByteArray* image,
@@ -1410,10 +1417,13 @@ QByteArray hfsSplitReadyFixture(const HfsSplitFixtureOptions& options = {}) {
     writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFolderCountOffset, 0);
     writeBe32(&image, kTestHfsHeaderOffset + kTestHfsBlockSizeOffset, kTestHfsBlockSize);
     writeBe32(&image, kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset, 64);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset, 53);
+    writeBe32(&image,
+              kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset,
+              options.full_volume ? 0U : 53U);
 
     QVector<uint32_t> usedBlocks{kTestHfsAllocationStartBlock};
-    for (uint32_t block = 0; block <= 9; ++block) {
+    const uint32_t lastUsedBlock = options.full_volume ? 63U : 9U;
+    for (uint32_t block = 0; block <= lastUsedBlock; ++block) {
         usedBlocks.append(block);
     }
     writeHfsAllocationFork(&image, usedBlocks);
@@ -1620,7 +1630,8 @@ private Q_SLOTS:
     void hfsFileSystemWriter_mutatesDepthTwoCatalogs();
     void hfsFileSystemWriter_mutatesDepthThreeCatalogs();
     void hfsFileSystemWriter_replaysJournalTransactions();
-    void hfsFileSystemWriter_blocksCatalogRootLeafSplitFailClosed();
+    void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
+    void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
     void hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords();
     void hfsFileSystemWriter_splitsExtentsOverflowRootLeaf();
     void hfsFileSystemWriter_truncatesResourceForkWithinAllocatedBlocks();
@@ -4312,7 +4323,7 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replaysJournalTransactions()
     QVERIFY(notJournaled.blockers.join(' ').contains(QStringLiteral("not journaled")));
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_blocksCatalogRootLeafSplitFailClosed() {
+void PartitionManagerCoreTests::hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
@@ -4320,19 +4331,56 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_blocksCatalogRootLeafSplitFa
     options.enable_writer = true;
     options.target_write_confirmed = true;
     options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-catalog-split-fail-closed");
+    options.evidence_id = QStringLiteral("unit.hfs-catalog-node-pool-growth");
 
+    // H-a: a catalog split that exhausts the node pool now GROWS the catalog
+    // B-tree file (allocation bitmap + node map + counts) instead of failing.
     HfsSplitFixtureOptions lowFreeNodes;
     lowFreeNodes.free_nodes = 1;
-    const QString lowFreePath = temp.filePath(QStringLiteral("hfs-split-low-free-nodes.img"));
-    QVERIFY(writeBytes(lowFreePath, hfsSplitReadyFixture(lowFreeNodes)));
-    const QByteArray lowFreeBefore = readBytes(lowFreePath);
-    const auto lowFreeBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        lowFreePath, QStringLiteral("/split-created.txt"), options);
-    QVERIFY(!lowFreeBlocked.ok);
-    QVERIFY(lowFreeBlocked.blockers.join(' ').contains(
-        QStringLiteral("does not have enough free nodes")));
-    QCOMPARE(readBytes(lowFreePath), lowFreeBefore);
+    const QString growPath = temp.filePath(QStringLiteral("hfs-split-grow.img"));
+    QVERIFY(writeBytes(growPath, hfsSplitReadyFixture(lowFreeNodes)));
+    const qsizetype catalogHeader = static_cast<qsizetype>(kTestHfsCatalogStartBlock) *
+                                        kTestHfsBlockSize +
+                                    kTestHfsBTreeHeaderRecordOffset;
+    const QByteArray growBefore = readBytes(growPath);
+    const uint32_t totalNodesBefore = readBe32(growBefore,
+                                               catalogHeader + kTestHfsBTreeHeaderTotalNodesOffset);
+    const uint32_t freeBlocksBefore = readBe32(growBefore,
+                                               kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset);
+    const auto grown = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        growPath, QStringLiteral("/split-created.txt"), options);
+    QVERIFY2(grown.ok, qPrintable(grown.blockers.join(QStringLiteral("; "))));
+    const QByteArray growAfter = readBytes(growPath);
+    QVERIFY(readBe32(growAfter, catalogHeader + kTestHfsBTreeHeaderTotalNodesOffset) >
+            totalNodesBefore);
+    QVERIFY(readBe32(growAfter, kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset) <
+            freeBlocksBefore);
+    const auto growConsistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(growPath,
+                                                                                         200);
+    QVERIFY2(growConsistency.ok, qPrintable(growConsistency.blockers.join(QStringLiteral("; "))));
+    const auto growListing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(growPath, QStringLiteral("/"), 200);
+    QVERIFY2(growListing.ok, qPrintable(growListing.blockers.join(QStringLiteral("; "))));
+    bool foundCreated = false;
+    for (const auto& entry : growListing.entries) {
+        if (entry.name == QStringLiteral("split-created.txt")) {
+            foundCreated = true;
+        }
+    }
+    QVERIFY(foundCreated);
+
+    // Fail closed when the node pool is exhausted AND there are no free blocks
+    // to grow into; the image must be left untouched.
+    HfsSplitFixtureOptions noFreeBlocks;
+    noFreeBlocks.free_nodes = 1;
+    noFreeBlocks.full_volume = true;
+    const QString noBlocksPath = temp.filePath(QStringLiteral("hfs-split-no-free-blocks.img"));
+    QVERIFY(writeBytes(noBlocksPath, hfsSplitReadyFixture(noFreeBlocks)));
+    const QByteArray noBlocksBefore = readBytes(noBlocksPath);
+    const auto noBlocksBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        noBlocksPath, QStringLiteral("/split-created.txt"), options);
+    QVERIFY(!noBlocksBlocked.ok);
+    QCOMPARE(readBytes(noBlocksPath), noBlocksBefore);
 
     HfsSplitFixtureOptions fixedIndexKeys;
     fixedIndexKeys.attributes_mask = kTestHfsBTreeBigKeysMask;
@@ -4357,6 +4405,59 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_blocksCatalogRootLeafSplitFa
     QVERIFY(badMapBlocked.blockers.join(' ').contains(
         QStringLiteral("inconsistent with allocated nodes")));
     QCOMPARE(readBytes(badMapPath), badMapBefore);
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-attributes-node-pool-growth");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-attr-grow.img"));
+    QVERIFY(writeBytes(imagePath, hfsReaderAttributeFixture()));
+    const qsizetype attrHeader = static_cast<qsizetype>(kTestHfsAttributesStartBlock) *
+                                     kTestHfsBlockSize +
+                                 kTestHfsBTreeHeaderRecordOffset;
+    const uint32_t totalBefore = readBe32(readBytes(imagePath),
+                                          attrHeader + kTestHfsBTreeHeaderTotalNodesOffset);
+
+    // The attributes B-tree starts with free_nodes=0, so once the single leaf
+    // fills and a create forces a root-leaf split, the split must grow the
+    // attributes node pool (H-a) instead of failing closed.
+    bool grew = false;
+    const QByteArray value(96, 'a');
+    for (int index = 0; index < 200 && !grew; ++index) {
+        const auto created = PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
+            imagePath,
+            18,
+            QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
+            value,
+            options);
+        if (!created.ok) {
+            // After the root-leaf split the tree is depth 2; the current attributes
+            // engine inserts only into an empty/single-leaf tree, which is the
+            // expected stop condition once growth + the split have happened.
+            QVERIFY2(created.blockers.join(' ').contains(QStringLiteral("single-leaf")),
+                     qPrintable(created.blockers.join(QStringLiteral("; "))));
+            break;
+        }
+        grew = readBe32(readBytes(imagePath), attrHeader + kTestHfsBTreeHeaderTotalNodesOffset) >
+               totalBefore;
+    }
+    QVERIFY2(grew, "attributes B-tree node pool did not grow during the root-leaf split");
+
+    const uint32_t freeBlocksAfter = readBe32(readBytes(imagePath),
+                                              kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset);
+    QVERIFY(freeBlocksAfter < 37U);
+
+    const auto readBack = PartitionHfsFileSystemReader::readAttributeValueFromImage(
+        imagePath, 18, QStringLiteral("org.sak.attr0000"), 1024);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, value);
 }
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords() {

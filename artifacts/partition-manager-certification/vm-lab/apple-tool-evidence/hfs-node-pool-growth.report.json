@@ -1,0 +1,35 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.h-a-catalog-node-pool-growth",
+    "milestone": "H1 (H-a): special-file node-pool growth",
+    "status": "Passed (CLI self-test + unit); VM fsck_hfs + kernel mount still required before matrix flip",
+    "performed_at_utc": "2026-06-14T09:00:00Z",
+    "capability": "When a special-file B-tree split exhausts the node pool, the writer now grows the special-file fork (allocation bitmap + fork extents + node map + total/free node counts) instead of failing closed. A generic engine (planSpecialTreeNodePoolGrowth / applySpecialTreeNodePoolGrowth / ensureSpecialTreeFreeNodes over an HfsSpecialTreeTarget) drives all three special-file B-trees: catalog, extents-overflow, and attributes. Node 0 of every B-tree special file lives at fork offset 0, so reads/writes go through readForkBytes/writeForkBytes. Reactive: a mutation is tried first and only grows+retries on a genuine node-exhaustion failure, so non-exhausting mutations are unchanged.",
+    "trees_wired": {
+        "catalog": "ensureCatalogFreeNodes via withCatalogNodePoolGrowth around prepareEmptyFileCreate / prepareFileCreate / prepareEmptyFolderCreate / prepareCatalogRenameMove / prepareCatalogTreeMutation.",
+        "extents_overflow": "ensureExtentsFreeNodes via grow-retry around prepareExtentsTreeMutation. Note: with 1024-byte extents nodes in 4096-byte blocks (4 nodes/block minimum) and root-leaf-only splits, extents-tree exhaustion is effectively unreachable today; the wiring is defensive for the future deeper-tree engine (H-b).",
+        "attributes": "ensureAttributesFreeNodes via grow-retry around prepareAttributesTreeInsert; the attributes header is parsed on demand (loadAttributeHeader re-reads the grown header after growth)."
+    },
+    "code": [
+        "include/sak/partition_hfs_internal.h: HfsSpecialTreeTarget + planSpecialTreeNodePoolGrowth / applySpecialTreeNodePoolGrowth / ensureSpecialTreeFreeNodes / ensureCatalogFreeNodes / ensureExtentsFreeNodes / ensureAttributesFreeNodes / writeSpecialFileForkToVolumeHeader / blockersIndicateNodeExhaustion / withCatalogNodePoolGrowth + grow-retry wrappers on prepareExtentsTreeMutation and prepareAttributesTreeInsert.",
+        "Bounds (fail-closed, not yet supported; H-b/H-d): growth that would span multiple B-tree map nodes (~63k nodes at 8 KiB = ~0.5 GiB single tree), or that would push the special-file fork past 8 volume-header extents (extents-overflow of the special-file fork itself)."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed - exhausts a free_nodes=1 catalog, asserts growth succeeds (total_nodes up, free_blocks down, file created, S.A.K. consistency clean), and asserts fail-closed when no free blocks remain. This exercises the complete generic engine that the extents + attributes trees reuse.",
+    "test_coverage_note": "Catalog growth: direct unit test + bundled fsck (below). Attributes-tree growth: direct unit test hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit (fills the single leaf until a create forces a root-leaf split under free_nodes=0; asserts the node pool grew, free_blocks dropped, and a created attribute reads back) - proves the generic engine on a second tree geometry. Extents-tree growth: wired through the same engine but exhaustion is unreachable in the current single-leaf-split geometry (1024-byte nodes in 4096-byte blocks = 4-node minimum); the wiring is defensive for the future deeper-tree engine (H-b).",
+    "second_tree_unit_test": "tests/unit/test_partition_manager_core.cpp::hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit",
+    "bundled_fsck_self_test": {
+        "tool": "tools/filesystem/hfsprogs/fsck_hfs.exe (fsck_hfs 540.1) + newfs_hfs.exe",
+        "method": "newfs_hfs an 8 MB HFS+ volume (GROWTEST); sak_hfs_writer_cli create-empty-files-image --file-count 800 to exhaust+grow the catalog; fsck_hfs -n -f.",
+        "catalog_fork_total_blocks_before": 16,
+        "catalog_fork_total_blocks_after": 126,
+        "files_created": 800,
+        "fsck_result": "The volume GROWTEST appears to be OK."
+    },
+    "gates": "clang-format + lizard (CCN<=10) + cppcheck clean; full build + 139/140 ctest (only the pre-existing deferred test_file_explorer_types).",
+    "follow_ups": [
+        "External gate before flipping the H-a matrix cell to Yes: Apple fsck_hfs + kernel RW mount in the macOS VM, plus physical-USB destructive + crash + rollback (per APFS_HFS_FULL_DRIVER_WRITE_PLAN.md milestone H1).",
+        "Extend node-pool growth past the single-map-node and 8-extent (extents-overflow) bounds.",
+        "Apply the same growth to the attributes and extents-overflow B-tree special files."
+    ],
+    "error": ""
+}
