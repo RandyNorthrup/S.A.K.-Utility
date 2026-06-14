@@ -1644,6 +1644,7 @@ private Q_SLOTS:
     void apfsWriter_blocksOversizedGeneratedContainers();
     void apfsWriter_blocksGeneratedLayoutWithSnapshotState();
     void apfsWriter_preflightFailsClosedUntilCertified();
+    void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6528,6 +6529,78 @@ void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() 
         *detection, PartitionApfsWriteOperation::CreateFile, certifiedImageOnly);
     QVERIFY(!rawMediaBlocked.allowed);
     QVERIFY(rawMediaBlocked.blockers.join(' ').contains(QStringLiteral("Raw APFS media writes")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransaction() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2-base.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = base,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("A2 Commit"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    const auto readBlock = [](const QString& path, quint64 block) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le32 = [](const QByteArray& bytes, int offset) {
+        return qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar*>(bytes.constData() + offset));
+    };
+    const auto le64 = [](const QByteArray& bytes, int offset) {
+        return qFromLittleEndian<quint64>(
+            reinterpret_cast<const uchar*>(bytes.constData() + offset));
+    };
+
+    // First in-place commit: xid 2 -> 3, checkpoint into descriptor-ring slot 5/6.
+    const QString x3 = dir.filePath(QStringLiteral("a2-x3.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyCheckpoint(
+        {.source_image_path = base, .written_image_path = x3, .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.previous_xid, 2ULL);
+    QCOMPARE(commit.new_xid, 3ULL);
+    QCOMPARE(commit.checkpoint_map_block, 5ULL);
+    QCOMPARE(commit.superblock_block, 6ULL);
+
+    const QByteArray nxsb = readBlock(x3, 0);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    QCOMPARE(le64(nxsb, 0x10), 3ULL);    // o_xid advanced
+    QCOMPARE(le64(nxsb, 0x60), 4ULL);    // nx_next_xid
+    QCOMPARE(le32(nxsb, 0x88), 4U);      // nx_xp_desc_index
+    QCOMPARE(le32(nxsb, 0x90), 6U);      // nx_xp_data_index
+    QCOMPARE(le64(nxsb, 0xA0), 199ULL);  // nx_omap_oid carried forward (no fs COW)
+    QCOMPARE(readBlock(x3, 6), nxsb);    // descriptor-ring nx_superblock mirrors block 0
+    for (quint64 block : {0ULL, 5ULL, 6ULL, 15ULL, 16ULL, 17ULL, 18ULL}) {
+        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readBlock(x3, block)),
+                 qPrintable(QStringLiteral("invalid object checksum at block %1").arg(block)));
+    }
+
+    // The volume content carries forward unchanged: the reader still walks it.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(x3, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("A2 Commit"));
+
+    // A second commit advances again (xid 3 -> 4) into the next ring slots.
+    const QString x4 = dir.filePath(QStringLiteral("a2-x4.apfs"));
+    const auto commit2 = PartitionApfsWriter::commitImageOnlyCheckpoint(
+        {.source_image_path = x3, .written_image_path = x4, .options = options});
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit2.new_xid, 4ULL);
+    QCOMPARE(commit2.checkpoint_map_block, 7ULL);
+    const QByteArray nxsb4 = readBlock(x4, 0);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb4));
+    QCOMPARE(le64(nxsb4, 0x10), 4ULL);
+    QCOMPARE(le32(nxsb4, 0x88), 6U);   // descriptor index advanced one pair
+    QCOMPARE(le32(nxsb4, 0x90), 10U);  // data index advanced one quad
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

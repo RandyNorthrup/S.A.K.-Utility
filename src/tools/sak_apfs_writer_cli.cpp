@@ -1161,12 +1161,46 @@ std::optional<QJsonObject> buildListImageReport(const CliInvocation& invocation,
     return report;
 }
 
+std::optional<QJsonObject> buildCommitCheckpointReport(const CliInvocation& invocation,
+                                                       QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-checkpoint.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyCheckpoint(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place checkpoint commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    report.insert(QStringLiteral("checkpoint_map_block"),
+                  static_cast<qint64>(commit.checkpoint_map_block));
+    report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, QString* error) {
     if (invocation.command == QStringLiteral("list-image")) {
         return buildListImageReport(invocation, error);
     }
     if (invocation.command == QStringLiteral("import-image")) {
         return buildImportImageReport(invocation, error);
+    }
+    if (invocation.command == QStringLiteral("commit-image-checkpoint")) {
+        return buildCommitCheckpointReport(invocation, error);
     }
     if (isImageCommand(invocation.command)) {
         return buildImageCommandReport(invocation, error);

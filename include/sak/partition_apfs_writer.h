@@ -430,6 +430,31 @@ struct PartitionApfsRawRepairRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to advance an existing generated APFS container's checkpoint
+///        by one transaction in place (A2: in-place COW checkpoint commit).
+///        If @c written_image_path differs from the source the source is cloned
+///        first and the commit applied to the clone.
+struct PartitionApfsImageCheckpointCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Result of an in-place checkpoint commit: the advanced transaction id
+///        and the descriptor-ring blocks the new checkpoint-map and
+///        nx_superblock landed on.
+struct PartitionApfsImageCheckpointCommitResult {
+    QString source_image_path;
+    QString written_image_path;
+    bool ok{false};
+    uint64_t previous_xid{0};
+    uint64_t new_xid{0};
+    uint64_t checkpoint_map_block{0};
+    uint64_t superblock_block{0};
+    QStringList blockers;
+    QStringList warnings;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -496,6 +521,8 @@ public:
         const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageRepairResult repairImageOnlyObjectChecksums(
         const PartitionApfsImageRepairRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyCheckpoint(
+        const PartitionApfsImageCheckpointCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(
