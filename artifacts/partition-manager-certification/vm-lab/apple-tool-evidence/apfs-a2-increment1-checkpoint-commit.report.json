@@ -1,0 +1,31 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-increment1-inplace-checkpoint-commit",
+    "milestone": "A2 (A-b): in-place COW checkpoint commit - increment 1 (re-checkpoint engine)",
+    "status": "Passed (unit + host checksum verify + Apple fsck_apfs + kernel RW auto-mount + apfs.kext ring continuation). Increment 1 exit gate met.",
+    "capability": "PartitionApfsWriter::commitImageOnlyCheckpoint advances an existing generated APFS container's checkpoint by one transaction in place: re-emits the ephemeral object set (spaceman, reaper, free-queue B-trees) into the next checkpoint-data ring slot, writes a fresh checkpoint-map + nx_superblock into the next descriptor-ring slot, and re-anchors block 0 - all fletcher64 re-stamped. No file-system COW (volume content, object maps, spaceman free state carry forward); this proves the checkpoint-ring + checksum engine the file-mutating commit (increment 2) builds on.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: commitInPlaceCheckpoint / reemitCheckpointEphemerals / advanceNxSuperblockCheckpoint / readLiveCheckpoint / stampAndWriteApfsBlock; PartitionApfsWriter::commitImageOnlyCheckpoint.",
+        "src/tools/sak_apfs_writer_cli.cpp: commit-image-checkpoint command (buildCommitCheckpointReport).",
+        "Ring math: desc_index := old desc_next (cpm+nxsb pair), data_index := old data_next (4 ephemerals), xid+1, nx_omap_oid carried forward. Matches docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceCheckpointCommitAdvancesTransaction - advances xid 2->3->4, asserts exact ring positions (desc idx 4 then 6, data idx 6 then 10), descriptor-ring nx_superblock mirror of block 0, valid object checksums on every written block, and that the reader still walks the carried-forward volume.",
+    "host_verify": "scripts/CLI commit-image-checkpoint on a 64 MiB container: block 0 nx_superblock xid 2->3, desc idx=4/len2/next6, data idx=6/len4/next10, nx_omap_oid=199 carried; cpm@5 lists ephemerals at 15-18; fletcher64 OK on blocks 0,5,6,15,16,17,18.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T17:05:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; 2x in-place commit (xid 2->3->4) container attached raw as SATA disk0",
+        "method": [
+            "1. sak_apfs_writer_cli format-image (A2FSCK, xid 2) -> commit-image-checkpoint x2 (xid 3, xid 4), host-verified.",
+            "2. Attached to the macOS VM. diskutil apfs list: Apple parsed the container (A2FSCK volume, 1.2% used) and kernel auto-mounted it READ-WRITE at /Volumes/A2FSCK.",
+            "3. Apple's apfs.kext appended its own commits onto the S.A.K. checkpoint ring (auto-mount + unmount advanced xid 4 -> 6), proving the ring is byte-correct and continuable.",
+            "4. diskutil unmount; fsck_apfs -n /dev/disk0."
+        ],
+        "kernel_rw_mount": "auto-mounted /Volumes/A2FSCK read-write; apfs.kext continued the checkpoint ring from S.A.K. xid 4 to xid 6",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 6 ... The volume A2FSCK was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1) ... The volume /dev/rdisk1s1 ... appears to be OK ... The container /dev/disk0 appears to be OK.",
+        "evidence_png": "a2f-fsck2.png (full fsck run) + a2f-list.png (diskutil apfs list) + a2f-exit.png"
+    },
+    "gates": "clang-format + lizard (CCN<=10) + cppcheck clean; commit ae3b941 (all pre-commit hooks passed, no bypass).",
+    "next": "Increment 2: real in-place file insert - COW the fstree -> volume-omap -> volume-sb -> container-omap chain to newly allocated blocks, update the spaceman chunk bitmap + free-queue, advance the checkpoint via the proven increment-1 engine. fsck_apfs + kernel RW mount after each commit; crash-interruption proof.",
+    "error": ""
+}
