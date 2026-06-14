@@ -884,6 +884,14 @@ void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
                      directoryEntryValue(directory.directoryId, kApfsDirTypeDirectory)});
 }
 
+qsizetype btreeRecordsByteSize(const QVector<ApfsBtreeKeyValue>& records) {
+    qsizetype total = 0;
+    for (const auto& record : records) {
+        total += record.key.size() + record.value.size();
+    }
+    return total;
+}
+
 QByteArray buildRootTreeBlock(uint32_t blockSize,
                               const QVector<ApfsRootFilePayload>& files,
                               const QVector<ApfsRootDirectoryPayload>& directories,
@@ -962,6 +970,16 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
 
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    // Fail closed when the records would overflow the single leaf node (keys grow
+    // up, values grow down toward each other): multi-node fs-trees are not yet
+    // supported, and overflowing silently corrupts the node.
+    if (btreeRecordsByteSize(records) > valueAreaEnd - keyAreaStart) {
+        blockers->append(
+            QStringLiteral("APFS root file-system tree exceeds a single B-tree node (%1 records); "
+                           "multi-node fs-trees are not yet supported")
+                .arg(records.size()));
+        return block;
+    }
     qsizetype keyCursor = 0;
     qsizetype valueBackCursor = 0;
     for (qsizetype index = 0; index < records.size(); ++index) {
@@ -2011,6 +2029,17 @@ bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
     return stampAndWriteApfsBlock(cow.image, cow.geometry, cow.extentRefNew, &extentRef, blockers);
 }
 
+// Build the COW'd root file-system tree (failing closed if it overflows the
+// single leaf node) and write it at the new block, stamped at the new xid.
+bool writeCowRootTree(const ApfsCowFileInsert& cow, uint64_t rootTree, QStringList* blockers) {
+    QByteArray root = buildRootTreeBlock(cow.geometry.blockSize, cow.files, {}, blockers);
+    if (!blockers->isEmpty()) {
+        return false;
+    }
+    writeLe64(&root, kApfsObjectXidOffset, cow.newXid);
+    return stampAndWriteApfsBlock(cow.image, cow.geometry, rootTree, &root, blockers);
+}
+
 bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const uint64_t rootTree = cow.newBlocks.at(0);
@@ -2020,9 +2049,7 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     const uint64_t ctrOmapTree = cow.newBlocks.at(4);
     const uint64_t ctrOmapHdr = cow.newBlocks.at(5);
 
-    QByteArray root = buildRootTreeBlock(bs, cow.files, {}, blockers);
-    writeLe64(&root, kApfsObjectXidOffset, cow.newXid);
-    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, rootTree, &root, blockers)) {
+    if (!writeCowRootTree(cow, rootTree, blockers)) {
         return false;
     }
     QByteArray volTree = buildObjectMapTreeBlock(

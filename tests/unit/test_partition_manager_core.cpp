@@ -1650,6 +1650,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
+    void apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeOverflow();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -6971,6 +6972,50 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileRenameKeepsContentAndObjec
          .options = options});
     QVERIFY(!collide.ok);
     QVERIFY(collide.blockers.join(' ').contains(QStringLiteral("already exists")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertFailsClosedOnFsTreeOverflow() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    QString current = dir.filePath(QStringLiteral("ml0.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = current,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("ML"),
+                 .options = options})
+                .ok);
+
+    // Chained inserts succeed until the single-leaf fs-tree fills, then fail
+    // closed with a clear message - never silently corrupting the node.
+    int inserted = 0;
+    bool sawOverflow = false;
+    for (int index = 1; index <= 40; ++index) {
+        const QString next = dir.filePath(QStringLiteral("ml%1.apfs").arg(index));
+        const auto commit = PartitionApfsWriter::commitImageOnlyFileInsert(
+            {.source_image_path = current,
+             .written_image_path = next,
+             .file_name = QStringLiteral("f%1.txt").arg(index),
+             .file_data = {},
+             .options = options});
+        if (commit.ok) {
+            const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+                next, QStringLiteral("/"), 64);
+            QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+            QCOMPARE(listing.entries.size(), index);  // no silent truncation
+            inserted = index;
+            current = next;
+        } else {
+            QVERIFY2(commit.blockers.join(' ').contains(QStringLiteral("exceeds a single B-tree")),
+                     qPrintable(commit.blockers.join(QStringLiteral("; "))));
+            sawOverflow = true;
+            break;
+        }
+    }
+    QVERIFY(inserted > 0);
+    QVERIFY2(sawOverflow, "expected the single-leaf fs-tree to fail closed within 40 inserts");
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {
