@@ -1,5 +1,17 @@
 # A2 — Multi-leaf fs-tree: design + implementation plan
 
+> **STATUS (2026-06-14): DONE and Apple-certified (commits e29422e, 60f9101,
+> 34c3086).** Builder + commit-path wiring split the fs-tree into an internal
+> root over leaf nodes past ~15 files; chained inserts list every file with no
+> truncation (host test `apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree`).
+> A generated 20-file container (volume MLEAF) was **macOS-kernel auto-mounted
+> read-write** and **`fsck_apfs` passed fully** (container + volume + multi-leaf
+> fsroot tree + extent-ref tree). fsck caught two on-disk defects the host reader
+> accepted: leaf nodes need `o_type` `OBJECT_TYPE_BTREE_NODE` (0x3) not the root's
+> `BTREE` (0x2); and the internal root's `btree_info` longest-key/value must
+> measure the whole tree's records, not the root's child-oid pointers. Evidence:
+> `artifacts/.../apple-tool-evidence/apfs-a2-multileaf-fsck-PASS.png`.
+
 The in-place commit (and the whole-rewrite) builds the root file-system tree as
 a **single 4096-byte leaf node** (`buildRootTreeBlock`: flags ROOT|LEAF, level 0).
 That caps a generated container at ~15 root files; beyond it the records now

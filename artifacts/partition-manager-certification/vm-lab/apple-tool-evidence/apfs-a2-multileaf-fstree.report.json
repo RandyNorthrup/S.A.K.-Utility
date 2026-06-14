@@ -1,0 +1,29 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-multileaf-fstree",
+    "milestone": "A2 (A-b): multi-leaf APFS file-system tree (internal root over leaf nodes)",
+    "status": "Passed (host reader lists every file + Apple kernel auto-mounts read-write + Apple fsck_apfs full clean on the multi-leaf fsroot tree). Multi-leaf fs-tree certified.",
+    "capability": "buildFsTreeNodes splits the file-system tree into an internal root (level 1, oid 1028, keeps the btree_info trailer) over N leaf nodes (level 0, virtual oids consecutive from nx_next_oid, mapped per-node by the volume object map) once the records overflow a single node. Wired into every in-place commit (insert/delete/rename) via the shared finalizeFsCommit engine: the net block change (extra fs-tree nodes plus data) threads through the volume allocated-count, the CIB/spaceman free counts, and nx_next_oid. Lifts the ~15-root-file single-leaf cap to thousands.",
+    "host_verify": "format-image 64 MiB volume MLEAF -> 20 chained commit-image-file-insert (leaf1..leaf20.txt); list-image reads all 20 files (no truncation); the fs-tree is a two-level tree (internal root + leaves). Unit test apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree: chained inserts grow past the single-leaf cap, reader lists every file until the checkpoint data ring fills.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T23:15:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; 20-file multi-leaf container (volume MLEAF) attached raw as SATA disk0 (bare APFS container, 67.1 MB, no GPT)",
+        "method": [
+            "1. format-image 64 MiB MLEAF -> 20x commit-image-file-insert leafN.txt (multi-leaf fsroot tree).",
+            "2. Apple kernel auto-synthesized + auto-mounted the container read-write (fsck banner: 'last modified by apfs_kext (2332.101.1)').",
+            "3. diskutil unmountDisk force disk1; fsck_apfs -n /dev/rdisk0 -> walked the multi-leaf fsroot tree, extent-ref tree, object maps, allocated space - all consistent."
+        ],
+        "kernel_behavior": "macOS kernel auto-mounted the multi-leaf MLEAF volume read-write (apfs_kext touched the volume superblock on mount).",
+        "apple_fsck_apfs": "Checking the container superblock / checkpoint (xid) / space manager / object map; volume MLEAF formatted by S.A.K. Utility APFS writer; Checking the fsroot tree / extent ref tree / volume object map space / allocated space; The volume /dev/rdisk1s1 (UUID 6C00A3D5-F0E4-45AB-9FF6-CB9B0DD97B5E) appears to be OK; The container /dev/rdisk0 appears to be OK.",
+        "evidence_png": "apfs-a2-multileaf-fsck-PASS.png"
+    },
+    "fsck_found_defects": [
+        "Leaf (non-root) fs-tree nodes were typed OBJECT_TYPE_BTREE (0x2, the root's type); a B-tree leaf must be OBJECT_TYPE_BTREE_NODE (0x3). fsck read the one-bit difference as a header bit flip and rejected the fsroot tree. Fixed: newFsTreeNode types a node by its ROOT flag.",
+        "The internal root's btree_info longest-key/value described only the root's 8-byte child-oid pointers (bt_longest_val 8) instead of the whole tree's largest record (160-byte inode). Fixed: writeFsTreeInfoTrailer measures over the full fs-record set for the internal root.",
+        "Both defects were accepted by the host reader and only surfaced under Apple fsck_apfs - exactly the class of bug the external validator exists to catch."
+    ],
+    "gates": "clang-format + lizard + cppcheck clean; commits 60f9101 (wiring), 34c3086 (fsck fixes) - all pre-commit hooks passed, no bypass. 121/121 unit tests pass (single-leaf regression clean).",
+    "next": "Free-queue crash-safety implementation, fragmented/multi-extent files, arbitrary real-Apple containers, then the A-b matrix flip (physical-USB destructive + crash + rollback).",
+    "error": ""
+}
