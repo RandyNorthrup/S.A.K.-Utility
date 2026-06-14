@@ -132,7 +132,8 @@ constexpr uint64_t kApfsSeedFileId = 16;
 constexpr uint32_t kApfsObjStoragePhysical = 0x40'00'00'00;
 constexpr uint32_t kApfsObjStorageEphemeral = 0x80'00'00'00;
 constexpr uint32_t kApfsObjectTypeNxSuperblock = kApfsObjStorageEphemeral | 0x00'00'00'01;
-constexpr uint32_t kApfsObjectTypeBtree = 0x00'00'00'02;
+constexpr uint32_t kApfsObjectTypeBtree = 0x00'00'00'02;      // B-tree root node
+constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00'00'00'03;  // non-root B-tree node
 constexpr uint32_t kApfsObjectTypeBtreePhysical = kApfsObjStoragePhysical | 0x00'00'00'02;
 constexpr uint32_t kApfsObjectTypeObjectMap = kApfsObjStoragePhysical | 0x00'00'00'0B;
 constexpr uint32_t kApfsObjectTypeFs = 0x00'00'00'0D;
@@ -1107,8 +1108,14 @@ struct ApfsFsTreeBuildInput {
 };
 
 QByteArray newFsTreeNode(uint32_t blockSize, uint64_t oid, uint16_t flags, uint16_t level) {
-    QByteArray block = newApfsObjectBlock(
-        blockSize, oid, kApfsFormatXid, kApfsObjectTypeBtree, kApfsObjectSubtypeFsTree);
+    // The B-tree root node carries object type BTREE; non-root nodes (the leaves
+    // of a multi-level tree) carry BTREE_NODE - Apple's fsck_apfs rejects a leaf
+    // typed as a root (it reads the one-bit 0x2-vs-0x3 difference as a header bit
+    // flip in the fsroot tree).
+    const uint32_t objectType = (flags & kApfsBtreeNodeRoot) ? kApfsObjectTypeBtree
+                                                             : kApfsObjectTypeBtreeNode;
+    QByteArray block =
+        newApfsObjectBlock(blockSize, oid, kApfsFormatXid, objectType, kApfsObjectSubtypeFsTree);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, flags);
     writeLe16(&block, kApfsBtreeNodeLevelOffset, level);
     return block;
@@ -1155,8 +1162,11 @@ bool buildFsTreeNodes(const ApfsFsTreeBuildInput& in,
                              .arg(leaves.size()));
         return false;
     }
+    // The root's btree_info longest-key/value must describe the whole tree (the
+    // leaves' fs-records, not the root's 8-byte child-oid pointers), so fsck_apfs
+    // sees the true maxima - measure from the full record set.
     writeFsTreeInfoTrailer(
-        &root, rootRecords, in.blockSize, records.size(), 1 + static_cast<uint64_t>(leaves.size()));
+        &root, records, in.blockSize, records.size(), 1 + static_cast<uint64_t>(leaves.size()));
     stampApfsObjectBlock(&root, blockers);
     nodes->append({kApfsFormatRootTreeOid, root});
     for (const auto& leafNode : leafNodes) {
