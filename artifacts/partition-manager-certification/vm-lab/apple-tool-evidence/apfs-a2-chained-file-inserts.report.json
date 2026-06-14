@@ -1,0 +1,27 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-chained-inplace-file-inserts",
+    "milestone": "A2 (A-b): chained in-place COW file inserts preserving existing files",
+    "status": "Passed (unit + host extent preservation + Apple kernel reads both files + Apple fsck_apfs clean). Chained multi-file in-place inserts certified.",
+    "capability": "commitImageOnlyFileInsert inserts into a container that already holds files without losing them: it enumerates existing root regular files via the reader (name + object id + size), recovers each existing file's data extent by parsing the extent-ref tree (parseExtentRefOwners), and rebuilds the COW'd root tree + extent-ref tree with the merged record set - existing files keep their object ids and their data stays in place, the new file takes the volume next object id. Each commit advances the checkpoint over the prior result (xid 2->3->4->...). Duplicate names fail closed.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: parseExtentRefOwners, buildChainedFileList, collectExistingRootFiles, ApfsFileInsertRequest; commitInPlaceFileInsert reworked to merge existing + new files."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles - chains two content-file inserts (xid 2->3->4), asserts the reader reads back both payloads from the final image and that a duplicate name is rejected. 117/117 core subtests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T21:10:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; container with two files inserted in two chained commits (xid 4) attached raw as SATA disk0",
+        "method": [
+            "1. format-image (CC, xid 2) -> commit-image-file-insert f1.txt (content) (xid 3) -> commit-image-file-insert f2.txt (content) into the result (xid 4). Host parse confirmed both extent-ref records (owner 16 @208 'FIRST...', owner 17 @216 'SECOND...').",
+            "2. Apple kernel auto-mounted /Volumes/CC; `cat f1.txt` = 'FIRST FILE CONTENT aaaa' (preserved across the second commit) and `cat f2.txt` = 'SECOND FILE different bbbb' - apfs.kext read both files' data extents.",
+            "3. diskutil unmount; fsck_apfs -n /dev/disk0 -> no warnings."
+        ],
+        "kernel_data_read": "cat f1.txt -> FIRST FILE CONTENT aaaa (existing file's data preserved in place); cat f2.txt -> SECOND FILE different bbbb",
+        "apple_fsck_apfs": "fsroot tree / extent ref tree / volume object map space / allocated space all consistent; The volume CC appears to be OK; The container /dev/disk0 appears to be OK (no warnings).",
+        "evidence_png": "cc-cat3.png (Apple reads both files) + cc-fsck.png (clean fsck)"
+    },
+    "gates": "clang-format + lizard (CCN<=10, params<=5) + cppcheck clean; commit a11ad56 (all pre-commit hooks passed, no bypass).",
+    "next": "Free-queue crash-safety (defer freeing the old chain blocks), arbitrary Apple containers, multi-leaf fstree (>~250 files), fragmented free space (multi-extent). A-b full flip then needs physical-USB destructive + crash + rollback like A1/H1.",
+    "error": ""
+}
