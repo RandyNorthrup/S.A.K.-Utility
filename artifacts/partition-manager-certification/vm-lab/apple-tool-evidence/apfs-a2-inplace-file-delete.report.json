@@ -1,0 +1,28 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-inplace-file-delete",
+    "milestone": "A2 (A-b): in-place COW file delete preserving other files",
+    "status": "Passed (unit + host accounting + Apple kernel confirms deletion and reads survivors + Apple fsck_apfs clean). In-place file delete certified.",
+    "capability": "commitImageOnlyFileDelete removes one root file with a true in-place copy-on-write checkpoint commit: it enumerates all root files, splits out the delete target (data extent recovered from the extent-ref tree), rebuilds the COW'd root tree + extent-ref tree from the remaining files (data left in place), frees the target's data blocks + the old chain blocks, returns them to the spaceman/CIB free counts, and advances the checkpoint. File count -1, next object id unchanged.",
+    "code": [
+        "src/core/partition_apfs_writer.cpp: commitInPlaceFileDelete / buildDeleteFileList / deleteFreedBlocks / collectAllRootFiles; the COW-chain writer parameterized with signed file-count/alloc/next-id deltas (shared by insert + delete); applyFileInsertAllocation takes explicit freed/allocated lists.",
+        "src/tools/sak_apfs_writer_cli.cpp: commit-image-file-delete command."
+    ],
+    "unit_test": "tests/unit/test_partition_manager_core.cpp::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers - builds three content files via chained inserts, deletes the middle one, asserts the reader reads back the surviving two files' content, the deleted file is gone, and deleting a missing file fails closed. 118/118 core subtests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T22:15:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; container with f2 deleted (3 files -> 2) attached raw as SATA disk0",
+        "method": [
+            "1. format-image (DEL) -> insert f1/f2/f3 (content) via chained commits -> commit-image-file-delete f2.txt. Host parse confirmed f2's extent-ref record removed, its data block freed, alloc_count 8->7, file_count 3->2.",
+            "2. Apple kernel auto-mounted /Volumes/DEL; `ls` shows only f1.txt + f3.txt (f2.txt gone); `cat f1.txt` = 'AAAA file one content' and `cat f3.txt` = 'CCCC file three content' (both survivors' data intact).",
+            "3. diskutil unmount; fsck_apfs -n /dev/disk0 -> no warnings."
+        ],
+        "kernel_result": "ls -> f1.txt f3.txt (no f2.txt); cat f1.txt -> AAAA file one content; cat f3.txt -> CCCC file three content",
+        "apple_fsck_apfs": "fsroot tree / extent ref tree / volume object map space / allocated space all consistent; The volume DEL appears to be OK; The container /dev/disk0 appears to be OK (no warnings).",
+        "evidence_png": "del-ls2.png (ls + cat f1) + del-fsck.png (cat f3 + clean fsck)"
+    },
+    "gates": "clang-format + lizard (CCN<=10, params<=5) + cppcheck clean; commit 025e5e9 (all pre-commit hooks passed, no bypass).",
+    "next": "Free-queue crash-safety, arbitrary Apple containers, multi-leaf fstree, fragmented free space. A-b full flip then needs physical-USB destructive + crash + rollback like A1/H1.",
+    "error": ""
+}
