@@ -317,6 +317,17 @@ constexpr qsizetype kApfsSpacemanIpBaseOffset = 0xB0;
 constexpr qsizetype kApfsSpacemanIpBmFreeHeadOffset = 0x140;
 constexpr qsizetype kApfsSpacemanIpBmFreeTailOffset = 0x142;
 constexpr uint32_t kApfsSpacemanIpBmTxMultiplier = 16;
+// IP-bitmap ring detail (offsets within the spaceman, mirrored from the kernel-
+// advanced harvest): the ring transaction id, a per-commit sequence counter, and
+// the 16-entry ring array whose two 0xFFFF markers are the in-use ip-bitmap slots.
+constexpr qsizetype kApfsSpacemanIpBmRingXidOffset = 2520;
+constexpr qsizetype kApfsSpacemanIpBmRingSeqOffset = 2528;
+constexpr qsizetype kApfsSpacemanIpBmRingArrayOffset = 2536;
+constexpr uint16_t kApfsSpacemanIpBmRingInUse = 0xFFFF;
+// The IP-usage bitmap an advanced ring slot carries: once the rotation has touched
+// the spare slot all six IP blocks are cumulatively allocated (0x3f), matching the
+// kernel-advanced harvest (the genesis 0x0f only reflects the untouched spare).
+constexpr uint8_t kApfsIpBitmapAdvancedUsage = 0x3f;
 // Free-queue tree_node_limit values mirrored from the reference container;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
@@ -1876,7 +1887,40 @@ struct ApfsCheckpointCommitContext {
     uint64_t newDataIndex{0};
     int64_t spacemanFreeDelta{0};  // applied to the re-emitted spaceman free count
     uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
+    uint8_t ipBitmapUsage{0};      // 0 = leave the sm_ip_bitmap ring; else advance it
 };
+
+// Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
+// the kernel-advanced harvest, docs/APFS_A2_CRASH_SAFETY_DESIGN.md): allocate the
+// next free ring index for this checkpoint's IP-usage bitmap, mark it in-use,
+// release the index that ages out into the free-list, and advance the head/tail/
+// xid/seq. Writes the new live ip-bitmap block (the two active cib/bitmap slots).
+// Without this the ring stays at genesis while the cib rotates, and the kernel's
+// continuation draws an internal-pool overallocation warning.
+bool advanceIpBitmapRing(QByteArray* spaceman,
+                         const ApfsCheckpointCommitContext& ctx,
+                         QStringList* blockers) {
+    const uint64_t base = le64(*spaceman, kApfsSpacemanIpBmBaseOffset);
+    const uint16_t allocIndex = le16(*spaceman, kApfsSpacemanIpBmFreeHeadOffset);
+    const uint16_t freeIndex = le16(*spaceman, kApfsSpacemanIpBmFreeTailOffset);
+    const uint16_t nextFree = le16(*spaceman, kApfsSpacemanIpBmRingArrayOffset + allocIndex * 2);
+    const uint16_t newTail = static_cast<uint16_t>((freeIndex + 1) % kApfsSpacemanIpBmTxMultiplier);
+    writeLe16(spaceman,
+              kApfsSpacemanIpBmRingArrayOffset + allocIndex * 2,
+              kApfsSpacemanIpBmRingInUse);
+    writeLe16(spaceman, kApfsSpacemanIpBmRingArrayOffset + freeIndex * 2, newTail);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeHeadOffset, nextFree);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeTailOffset, newTail);
+    writeLe64(spaceman, kApfsSpacemanIpBmRingXidOffset, ctx.newXid);
+    writeLe16(spaceman,
+              kApfsSpacemanIpBmRingSeqOffset,
+              static_cast<uint16_t>(le16(*spaceman, kApfsSpacemanIpBmRingSeqOffset) + 1));
+    return writeApfsRepairBlock(ctx.image,
+                                ctx.geometry,
+                                base + allocIndex,
+                                buildIpBitmapBlock(ctx.geometry.blockSize, ctx.ipBitmapUsage),
+                                blockers);
+}
 
 // Copy each live ephemeral object to the next data-ring slot, re-stamped at the
 // new transaction id, and rewrite the checkpoint-map paddrs to the new slots.
@@ -1906,6 +1950,9 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             }
             if (ctx.newCibAddr != 0) {
                 writeLe64(&object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+            }
+            if (ctx.ipBitmapUsage != 0 && !advanceIpBitmapRing(&object, ctx, blockers)) {
+                return false;
             }
         }
         if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
@@ -1949,6 +1996,7 @@ struct ApfsCheckpointAdvanceRequest {
     int64_t spacemanFreeDelta{0};  // net free-block change (negative when blocks are consumed)
     uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
     uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
+    uint8_t ipBitmapUsage{0};      // sm_ip_bitmap ring advance usage byte (0 = leave)
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -1983,7 +2031,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           newXid,
                                           live.dataNext,
                                           request.spacemanFreeDelta,
-                                          request.newCibAddr};
+                                          request.newCibAddr,
+                                          request.ipBitmapUsage};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -2699,7 +2748,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               f.newBlocks.at(nodeCount + 4),
                               -netConsumed,
                               static_cast<uint64_t>(nodeCount - 1),
-                              rotation.newCib},
+                              rotation.newCib,
+                              kApfsIpBitmapAdvancedUsage},
                              result,
                              blockers);
 }
