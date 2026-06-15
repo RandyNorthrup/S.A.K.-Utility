@@ -1,0 +1,26 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-main-free-queue",
+    "milestone": "A2 (A-b): main-device free-queue - arbitrary file sizes per commit (lift the 64-block region cap)",
+    "status": "Passed (macOS kernel mounts a 200-block / 800 KB single-commit file read-write, reads it back byte-for-byte, and fsck_apfs is fully clean after the kernel continued the container). Arbitrary-size in-place commit certified.",
+    "capability": "The COW commit no longer allocates from a fixed rotating 64-block region (which capped a single commit's chain+data at ~256 KB). It now uses the main free-queue the kernel itself uses: each commit appends its freed blocks to the main free-queue tree (oid 1029) as coalesced {xid, paddr, length} runs (single blocks as ghosts, TOC value offset 0xFFFF), keeps them allocated in the bitmap, and advances sm_fq[MAIN] sfq_count + sfq_oldest_xid. Blocks are reclaimed (returned to the bitmap) only once they age past the rollback window (the descriptor-ring depth, 4 checkpoints), so an interrupted commit's predecessor keeps its blocks. With recent frees held, the allocator takes the lowest contiguous free run large enough from the data region, so one commit can consume an arbitrarily large contiguous run.",
+    "accounting": "The volume allocated-block count still moves by netConsumed; the cib chunk-0 free count and the spaceman main-device free count move by (reclaimed - allocated); sm_fq[MAIN] sfq_count absorbs the divergence (the queued-but-not-yet-reclaimed blocks). Algebraically A == netConsumed + freed.size(), so used += allocated - reclaimed and free -= allocated - reclaimed. apfsck (apfsprogs) confirms the space accounting is exact.",
+    "host_verify": "apfsck -w clean at rest on (1) a 200-block (800 KB) single-commit file - 4x the old 64-block cap - and (2) a five-commit chain (xid 3..7) where the rolling window reclaims the genesis + xid3 runs: sm_fq[MAIN] sfq_count == free-queue tree total == 28, sfq_oldest_xid == 4 (the window holds xid 4..7). 124/124 unit tests pass, including apfsWriter_crashBeforeCheckpointDurableRollsBack (the old-chain blocks now read as queued, not freed; the device free count drops by every newly allocated block).",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-15T05:05:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; the 200-block-file container (volume BIGFILE614) attached raw as SATA disk0",
+        "method": [
+            "1. format BIGFILE614 64 MiB -> commit-image-file-insert big.bin (819200-byte random payload = 200 data blocks, 4x the old 64-block region cap) in a single commit.",
+            "2. Apple kernel auto-mounted /Volumes/BIGFILE614; `ls -l` showed big.bin at 819200 bytes; `md5 /Volumes/BIGFILE614/big.bin` == the host md5 467516ae941738f05f1dc2b3027c1c67 (byte-for-byte).",
+            "3. diskutil unmountDisk force disk1; fsck_apfs -n /dev/rdisk0 -> Checking the space manager free queue trees (clean); The container /dev/rdisk0 appears to be OK (zero warnings)."
+        ],
+        "kernel_behavior": "macOS kernel mounted the arbitrary-size container read-write, read the 800 KB file back byte-for-byte (md5 match), and continued the checkpoint (transaction ID 3 -> 5).",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 5; Checking the space manager free queue trees; volume BIGFILE614 formatted by S.A.K. Utility APFS writer; fsroot tree / extent ref tree / volume object map space checked; The container /dev/rdisk0 appears to be OK - no internal-pool note, no free-queue error, zero warnings.",
+        "evidence_png": "apfs-a2-mainfreequeue-bigfile-fsck-PASS.png (md5 match + fsck clean)"
+    },
+    "residual": "A single commit's data extent is still one contiguous run (blocksAreContiguous), so an arbitrarily large file needs contiguous free space; fragmented free space needs the multi-extent engine (the file's j_file_extent / j_phys_ext would split into several runs). Containers above 256 MiB still need multi-CIB. Both are orthogonal scaling axes; the per-commit size cap itself is lifted.",
+    "gates": "clang-format + lizard + cppcheck clean; commit 7f3fdcc (main free-queue + anywhere allocator + tests) - all pre-commit hooks passed, no bypass.",
+    "next": "Multi-extent data (fragmented free space), multi-CIB (>256 MiB), then the A-b matrix flip (physical-USB destructive + crash/rollback on Apple-written media).",
+    "error": ""
+}
