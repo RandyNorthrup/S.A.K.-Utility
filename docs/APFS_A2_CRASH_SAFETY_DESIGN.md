@@ -147,27 +147,39 @@ commit cannot reuse a block a surviving checkpoint still references. Only then
 does reverting block 0 roll back cleanly. The rotation + free-queue together make
 the truncation test pass.
 
-## sm_ip_bitmap ring residual (2026-06-14): one cosmetic fsck warning
+## sm_ip_bitmap ring advance + internal-pool note (2026-06-14)
 
-Crash-safety is certified (rotation + rollback above), but a rolled-back or
-non-genesis-cib container draws one cosmetic warning: `overallocation detected in
-internal pool (0xbb+2) bitmap address (0xac)` - i.e. blocks 187,188 over-counted
-against ip-bitmap block **172**, which fsck self-answers no and passes ("The
-container appears to be OK").
+Crash-safety is certified (rotation + rollback above). The `sm_ip_bitmap` ring now
+advances in lockstep with the cib rotation (commit `642ed99`, `advanceIpBitmapRing`):
+each commit allocates `base + free_head` for this checkpoint's IP-usage bitmap, marks
+that ring index `0xFFFF`, ages the third index out onto the free-list (updating
+free_tail), sets `free_head = ring[free_head]`, and bumps the ring xid/seq - decoded
+from the kernel-advanced harvest below. The advanced slot carries `0x3f` (all six IP
+blocks cumulatively allocated once the spare is touched); genesis stays `0x0f`.
 
-Root cause (investigated 2026-06-14): the S.A.K. commit rotates the **cib** through
-the IP slots but leaves the **sm_ip_bitmap ring** (blocks 169-184, free-head, ring
-array at spaceman 2520-2536) at the genesis state (live ip-bitmap 170). When the
-macOS kernel auto-mounts the container read-write it **advances that ring** (a
-1-commit container fsck'd at transaction ID 5 = the kernel continued it twice, ring
-live block now 172) and notices the cib is on a non-genesis slot while the ring
-implies the genesis pair - hence the over-count of 187,188. A content-only rewrite
-of block 170 is neutral (the kernel uses the advanced block). The fix is to advance
-the sm_ip_bitmap ring in lockstep with the cib rotation: each commit write the new
-ip-bitmap (live + rollback slots used, third free) into the next ring block and
-update free-head / ring array / xid. That needs the ring free-list chain semantics
-(the `0xFFFF` markers + next-index chain) decoded from an Apple multi-commit harvest
-(the a2base harvest changed blocks 171-175) - not yet reverse-engineered.
+Verification - `apfsprogs apfsck -w` is **clean** on the at-rest writer container all
+the way through xid5 (cib cycled `187->189->185->187`, ip-bitmap blocks 171/172/173
+all `0x3f`). So the writer's own output is structurally correct.
+
+Residual (one cosmetic note): under Apple `fsck_apfs` *after the macOS kernel has
+continued the container* (it auto-mounts read-write and re-derives its own
+checkpoints past the writer's commit), one note appears: `overallocation detected in
+internal pool (0xbb+2) bitmap address (0xad)` - blocks 187,188 over-counted - which
+fsck self-answers no and passes ("The container appears to be OK").
+
+Corrected root cause (the earlier "ring at genesis" theory was **disproven**: moving
+the ring in lockstep, and trying both the per-slot `0x3c` and all-six `0x3f`
+contents, left the note unchanged - it only shifts the cited bitmap address as the
+ring steps). The note is **not** an ip-bitmap-content problem. It is an IP
+**free-count** accounting subtlety in the kernel's continuation: the three-slot
+rotation reuses IP slot 187 at the kernel's xid5 while the **genesis checkpoint xid2**
+(also cib 187) is still referenced in the depth-4 descriptor ring, so the stricter
+fsck_apfs free-count cross-check double-counts 187,188. apfsck does not flag it at
+rest because at the writer's xid3/xid5 there is no live overlap yet. Retiring the
+note needs a clean Apple spaceman harvest of the IP free-count / descriptor-ring
+**aging** semantics (when xid2 ages out of the ring, its 187 reference must be
+released before xid5 reuses the slot) - deferred, and orthogonal to A2's certified
+in-place-commit + rollback substance.
 
 ## Harvested ring ground truth (2026-06-14, kernel-advanced a generated container)
 
@@ -186,11 +198,11 @@ of its own commits, xid3 -> xid5) and read back the spaceman:
 So the lockstep ring advance per commit is: live ip-bitmap = `base + free_head`
 (write the IP usage), mark that index `0xFFFF`, free the index that ages out
 (append to the free-list, update free_tail), `free_head = ring[free_head]`, bump
-ring xid. KEY: even the kernel's own xid5 still draws the overallocation warning,
-which means the inconsistency is inherited from S.A.K. rotating the cib while
-leaving the ring at genesis - the cib rotation and ring advance MUST move together.
-Implement from this harvest next (one more multi-commit harvest pins the free-list
-chain exactly).
+ring xid. This is now implemented (`advanceIpBitmapRing`, commit `642ed99`) and the
+at-rest container is apfsck-clean through xid5. NOTE: even the kernel's own xid5
+still draws the overallocation note, so it is **not** cured by the ring advance -
+see the corrected root cause above (kernel-continuation IP free-count double-count of
+the genesis slot 187, an accounting/aging issue, not the ring content).
 
 ## Crash-proof test plan
 - Build a committed container; run one in-place commit but truncate the image
