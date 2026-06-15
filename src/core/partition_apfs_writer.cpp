@@ -2586,17 +2586,33 @@ struct ApfsCommitBlockSizing {
     uint64_t dataBlocks{0};
 };
 
-// Allocate the commit's blocks as one contiguous run from the generated free
-// region: the fs-tree nodes and object-map chain first, then the data blocks.
+// The COW chain rotates through this many disjoint allocation regions so a
+// commit never lands on the blocks the previous few checkpoints still
+// reference. More than the descriptor-ring depth (8 desc blocks / 2 = 4
+// checkpoints) guarantees a region only recycles once its checkpoint has aged
+// out, so an interrupted commit's predecessor keeps its fs blocks intact - this
+// is what makes the truncation test roll back. Region 0 starts at the genesis
+// free region, so the first commit (xid 3) is byte-identical to the pre-rotation
+// layout.
+constexpr uint64_t kCommitChainRegions = 4;
+constexpr uint64_t kCommitChainRegionBlocks = 64;
+
+// Allocate the commit's blocks as one contiguous run from this commit's rotating
+// region of the free space: the fs-tree nodes and object-map chain first, then
+// the data blocks. Reads the live (rotated) bitmap so freed blocks of the most
+// recent checkpoints are not reused.
 bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             const ApfsCommitBlockSizing& sizing,
                             QVector<uint64_t>* newBlocks,
                             QStringList* blockers) {
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
+    const uint64_t newXid = ctx.live.xid + 1;
+    const uint64_t region = (newXid - kApfsFormatXid - 1) % kCommitChainRegions;
+    const uint64_t regionStart = ctx.layout.seedData + region * kCommitChainRegionBlocks;
     return findFreeBlocksInBitmap({ctx.image,
                                    ctx.geometry,
                                    ctx.liveBitmap,
-                                   ctx.layout.seedData,
+                                   regionStart,
                                    ctx.layout.chunk0Blocks,
                                    static_cast<int>(metaCount + sizing.dataBlocks)},
                                   newBlocks,

@@ -1654,6 +1654,7 @@ private Q_SLOTS:
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
     void apfsWriter_readsGeneratedLiveCibAddr();
+    void apfsWriter_crashBeforeCheckpointDurableRollsBack();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -7110,6 +7111,78 @@ void PartitionManagerCoreTests::apfsWriter_readsGeneratedLiveCibAddr() {
                  .options = options})
                 .ok);
     QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(path), static_cast<quint64>(187));
+}
+
+void PartitionManagerCoreTests::apfsWriter_crashBeforeCheckpointDurableRollsBack() {
+    // Crash-safety: a commit interrupted before its checkpoint becomes durable
+    // must roll back to the previous checkpoint with its data intact. The cib/
+    // bitmap and COW-chain both rotate, so the interrupted commit never touches
+    // the previous checkpoint's blocks.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const auto commit = [&](const QString& src, const QString& dst, const QString& name) {
+        return PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = src,
+                                                               .written_image_path = dst,
+                                                               .file_name = name,
+                                                               .file_data = {},
+                                                               .options = options})
+            .ok;
+    };
+    const QString fmt = dir.filePath(QStringLiteral("r0.apfs"));
+    const QString a = dir.filePath(QStringLiteral("ra.apfs"));
+    const QString n = dir.filePath(QStringLiteral("rn.apfs"));    // last committed (2 files)
+    const QString n1 = dir.filePath(QStringLiteral("rn1.apfs"));  // interrupted commit (3 files)
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = fmt,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("ROLLBACK"),
+                 .options = options})
+                .ok);
+    QVERIFY(commit(fmt, a, QStringLiteral("alpha.txt")));
+    QVERIFY(commit(a, n, QStringLiteral("bravo.txt")));
+    QVERIFY(commit(n, n1, QStringLiteral("charlie.txt")));
+
+    const auto readImage = [](const QString& p) {
+        QFile f(p);
+        f.open(QIODevice::ReadOnly);
+        return f.readAll();
+    };
+    const auto le64 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le32 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const QByteArray nBytes = readImage(n);
+    QByteArray crashedBytes = readImage(n1);
+    const quint64 descBase = le64(crashedBytes, 0x70);   // nx_xp_desc_base
+    const quint32 descIndex = le32(crashedBytes, 0x88);  // nx_xp_desc_index
+    crashedBytes.replace(0, 4096, nBytes.left(4096));    // block 0 -> previous checkpoint
+    const qsizetype checkpoint = static_cast<qsizetype>((descBase + descIndex) * 4096);
+    crashedBytes.replace(checkpoint,
+                         8192,
+                         QByteArray(8192, '\0'));  // void the interrupted checkpoint
+
+    const QString crashed = dir.filePath(QStringLiteral("rcrash.apfs"));
+    {
+        QFile f(crashed);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(crashedBytes);
+    }
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(crashed, QStringLiteral("/"), 64);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QStringList names;
+    for (const auto& entry : listing.entries) {
+        names.append(entry.name);
+    }
+    names.sort();
+    // Rolled back: the interrupted commit's charlie.txt is gone, the previous
+    // checkpoint's two files survive intact.
+    QCOMPARE(names, (QStringList{QStringLiteral("alpha.txt"), QStringLiteral("bravo.txt")}));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {
