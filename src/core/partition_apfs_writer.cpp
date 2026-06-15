@@ -94,7 +94,7 @@ constexpr uint64_t kApfsFormatGhostReservedBlocks = kApfsFormatGhostContainerOma
 constexpr uint64_t kApfsFormatVolumeBaseAllocatedBlocks = 5;
 constexpr uint64_t kApfsFormatStaleSignatureClearBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsFormatZeroChunkBytes = 1024 * 1024;
-constexpr uint64_t kApfsMaximumSeedFileBytes = 8ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kApfsMaximumSeedFileBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsUuidBytes = 16;
 constexpr int kApfsWriteRootListingMaxEntries = 1000;
 constexpr int kApfsGeneratedRootRecordsPerFile = 3;
@@ -2451,6 +2451,47 @@ void flipChunkBitmapBits(QByteArray* bitmap,
     }
 }
 
+// A chunk-bitmap scan window: chunkBase is the chunk's first absolute block (chunk
+// 1's bit 0 is block 32768), [startBlock, maxBlock) the absolute range to scan.
+struct ApfsBitmapScanRange {
+    uint64_t chunkBase{0};
+    uint64_t startBlock{0};
+    uint64_t maxBlock{0};
+};
+
+// Scan a chunk's allocation bitmap CONTENT for up to `count` free blocks in the
+// window, ascending (skipping used); appends their absolute addresses.
+void findFreeBlocksInBitmapContent(const QByteArray& bitmap,
+                                   const ApfsBitmapScanRange& range,
+                                   int count,
+                                   QVector<uint64_t>* freeBlocks) {
+    for (uint64_t block = range.startBlock; block < range.maxBlock && freeBlocks->size() < count;
+         ++block) {
+        const uint64_t bit = block - range.chunkBase;
+        const bool used = (bitmap.at(static_cast<qsizetype>(bit / 8)) >> (bit % 8)) & 1;
+        if (!used) {
+            freeBlocks->append(block);
+        }
+    }
+}
+
+// Read chunk `chunkIndex`'s allocation bitmap from the live cib. A cib entry with
+// bitmap_addr 0 means the chunk is entirely free (an all-zero bitmap).
+QByteArray readChunkAllocationBitmap(QIODevice* image,
+                                     const ApfsRepairGeometry& geometry,
+                                     const QByteArray& cib,
+                                     uint64_t chunkIndex,
+                                     QStringList* blockers) {
+    QByteArray bitmap(geometry.blockSize, '\0');
+    const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                            static_cast<qsizetype>(chunkIndex) * kApfsChunkInfoEntryStride;
+    const uint64_t bitmapAddr = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+    if (bitmapAddr != 0) {
+        readApfsRepairBlock(image, geometry, bitmapAddr, &bitmap, blockers);
+    }
+    return bitmap;
+}
+
 // Parse a generated volume object-map B-tree leaf (448-byte TOC, 16-byte
 // fixed keys/values, as buildObjectMapTreeBlock emits) into {oid -> paddr}.
 QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
@@ -2629,30 +2670,58 @@ struct ApfsFileInsertAllocation {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
     ApfsGeneratedLayout layout;
-    ApfsIpRotation rotation;      // crash-safe cib/bitmap slot rotation
-    QVector<uint64_t> freed;      // old COW-chain blocks (+ freed data on delete)
-    QVector<uint64_t> allocated;  // newly written COW blocks
-    int64_t cibFreeDelta{0};      // + when net blocks are freed, - when consumed
+    ApfsIpRotation rotation;        // crash-safe cib/bitmap slot rotation
+    QVector<uint64_t> freed;        // old COW-chain blocks (+ freed data on delete)
+    QVector<uint64_t> allocated;    // newly written COW blocks
+    int64_t cibFreeDelta{0};        // chunk-0 free-block delta if all allocation hit chunk 0
     uint64_t newXid{0};
+    uint64_t chunk1BitmapBlock{0};  // 0 = single-chunk; else the chunk-1 bitmap's chunk-0 block
 };
 
-// Write the rotated chunk-info block: read the live cib, adjust chunk 0's
-// free-block count by cibFreeDelta, re-point its bitmap_addr at the new bitmap
-// slot, re-stamp at the new xid, and write it into the new (spare) cib slot -
-// leaving the live cib intact for the previous checkpoint (crash-safe).
+// The allocated blocks that landed in chunk 1+ (>= chunk0Blocks) - their data went
+// past chunk 0, so they are tracked by chunk 1's bitmap, not chunk 0's.
+QVector<uint64_t> chunk1AllocatedBlocks(const ApfsFileInsertAllocation& alloc) {
+    QVector<uint64_t> chunk1;
+    for (uint64_t block : alloc.allocated) {
+        if (block >= alloc.layout.chunk0Blocks) {
+            chunk1.append(block);
+        }
+    }
+    return chunk1;
+}
+
+// Write the rotated chunk-info block: read the live cib, adjust chunk 0's free count
+// (and chunk 1's, on a multi-chunk overflow), re-point chunk 0's bitmap_addr at the
+// new rotated bitmap slot (and chunk 1's at its fresh physical bitmap block), re-stamp
+// at the new xid, and write it into the spare cib slot - leaving the live cib intact
+// for the previous checkpoint (crash-safe).
 bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray cib(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(alloc.image, alloc.geometry, alloc.rotation.liveCib, &cib, blockers)) {
         return false;
     }
+    const int chunk1Count = static_cast<int>(chunk1AllocatedBlocks(alloc).size());
+    const int bitmapCount = alloc.chunk1BitmapBlock != 0 ? 1 : 0;
+    // cibFreeDelta assumed every allocation hit chunk 0; move the chunk-1 data back
+    // out of chunk 0's count and charge chunk 0 for the chunk-1 bitmap block.
+    const int64_t chunk0Delta = alloc.cibFreeDelta + chunk1Count - bitmapCount;
     const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
     writeLe32(&cib,
               freeOffset,
-              static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) +
-                                    alloc.cibFreeDelta));
+              static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) + chunk0Delta));
     writeLe64(&cib,
               kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
               alloc.rotation.newBitmap);
+    if (alloc.chunk1BitmapBlock != 0) {
+        const qsizetype entry1 = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryStride;
+        writeLe32(&cib,
+                  entry1 + kApfsChunkInfoEntryFreeCountOffset,
+                  static_cast<uint32_t>(
+                      static_cast<int64_t>(le32(cib, entry1 + kApfsChunkInfoEntryFreeCountOffset)) -
+                      chunk1Count));
+        writeLe64(&cib, entry1 + kApfsChunkInfoEntryBitmapAddrOffset, alloc.chunk1BitmapBlock);
+        writeLe64(&cib, entry1, alloc.newXid);
+    }
     // The cib is a physical object: its o_oid must equal its block address, so it
     // has to move with the rotation (or a rolled-back checkpoint whose live cib is
     // not the genesis slot fails fsck with "cib at address 0x0").
@@ -2677,10 +2746,41 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
             alloc.image, alloc.geometry, alloc.rotation.liveBitmap, &bitmap, blockers)) {
         return false;
     }
-    flipChunkBitmapBits(&bitmap, alloc.freed, alloc.allocated);
-    return writeApfsRepairBlock(
-               alloc.image, alloc.geometry, alloc.rotation.newBitmap, bitmap, blockers) &&
-           writeRotatedCib(alloc, blockers);
+    // Chunk 0's bitmap tracks the chunk-0 allocations (and, on overflow, the chunk-1
+    // bitmap block, which physically lives in chunk 0); chunk 1's data is tracked by
+    // its own bitmap below. freed blocks are always the old chain in chunk 0.
+    QVector<uint64_t> chunk0Allocated;
+    for (uint64_t block : alloc.allocated) {
+        if (block < alloc.layout.chunk0Blocks) {
+            chunk0Allocated.append(block);
+        }
+    }
+    if (alloc.chunk1BitmapBlock != 0) {
+        chunk0Allocated.append(alloc.chunk1BitmapBlock);
+    }
+    flipChunkBitmapBits(&bitmap, alloc.freed, chunk0Allocated);
+    if (!writeApfsRepairBlock(
+            alloc.image, alloc.geometry, alloc.rotation.newBitmap, bitmap, blockers)) {
+        return false;
+    }
+    if (alloc.chunk1BitmapBlock != 0) {
+        QByteArray liveCib(alloc.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(
+                alloc.image, alloc.geometry, alloc.rotation.liveCib, &liveCib, blockers)) {
+            return false;
+        }
+        QByteArray chunk1Bitmap =
+            readChunkAllocationBitmap(alloc.image, alloc.geometry, liveCib, 1, blockers);
+        for (uint64_t block : chunk1AllocatedBlocks(alloc)) {
+            const uint64_t bit = block - alloc.layout.chunk0Blocks;
+            chunk1Bitmap[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+        }
+        if (!writeApfsRepairBlock(
+                alloc.image, alloc.geometry, alloc.chunk1BitmapBlock, chunk1Bitmap, blockers)) {
+            return false;
+        }
+    }
+    return writeRotatedCib(alloc, blockers);
 }
 
 // The blocks a commit frees: the old fs-tree nodes (root + any leaves), the
@@ -2922,30 +3022,66 @@ struct ApfsCommitBlockSizing {
 // an interrupted commit's predecessor keeps its blocks (the truncation test).
 constexpr uint64_t kMainFqRollbackWindow = 4;
 
-// Allocate the commit's blocks as one contiguous run from this commit's rotating
-// region of the free space: the fs-tree nodes and object-map chain first, then
-// the data blocks. Reads the live (rotated) bitmap so freed blocks of the most
-// recent checkpoints are not reused.
+// Allocate the commit's blocks: fs-tree nodes + object-map chain + data, taken as
+// the lowest free blocks of chunk 0 (ascending, skipping used - non-contiguous when
+// fragmented, the data extent then splits into runs). Crash-safety comes from the
+// main free-queue (recently-freed blocks stay allocated until they age past the
+// rollback window), so there is no per-commit size cap.
+//
+// When chunk 0 cannot hold everything, the data overflow goes into chunk 1 and one
+// chunk-0 block is reserved for chunk 1's allocation bitmap (*chunk1BitmapBlock,
+// 0 when no overflow). The fs-tree/extent records already handle chunk-1 data
+// addresses; only the chunk-1 bitmap + its cib entry are special (finalizeFsCommit/
+// applyFileInsertAllocation). The chunk-1 bitmap is a physical chunk-0 block, as
+// Apple's large containers place per-chunk bitmaps, so the IP rotation is untouched.
 bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             const ApfsCommitBlockSizing& sizing,
                             QVector<uint64_t>* newBlocks,
+                            uint64_t* chunk1BitmapBlock,
                             QStringList* blockers) {
+    *chunk1BitmapBlock = 0;
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
-    // Collect the lowest free blocks in the data region (findFreeBlocksInBitmap
-    // returns them ascending, skipping used blocks - they may be non-contiguous when
-    // free space is fragmented; the data extent then splits into several runs).
-    // Crash-safety no longer comes from a fixed rotating region but from the main
-    // free-queue: the previous few checkpoints' blocks stay allocated (queued) until
-    // they age past the rollback window, so the search skips them. A single commit
-    // can therefore consume an arbitrarily large run, no 64-block cap.
-    return findFreeBlocksInBitmap({ctx.image,
-                                   ctx.geometry,
-                                   ctx.liveBitmap,
-                                   ctx.layout.seedData,
-                                   ctx.layout.chunk0Blocks,
-                                   static_cast<int>(metaCount + sizing.dataBlocks)},
-                                  newBlocks,
-                                  blockers);
+    const int need = metaCount + static_cast<int>(sizing.dataBlocks);
+    QByteArray chunk0Bitmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveBitmap, &chunk0Bitmap, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> chunk0Free;
+    findFreeBlocksInBitmapContent(
+        chunk0Bitmap, {0, ctx.layout.seedData, ctx.layout.chunk0Blocks}, need + 1, &chunk0Free);
+    if (chunk0Free.size() >= need) {
+        *newBlocks = chunk0Free.mid(0, need);
+        return true;
+    }
+    // Overflow into chunk 1: keep the fs-tree/chain metadata and chunk 1's bitmap in
+    // chunk 0, spill the remaining data blocks into chunk 1.
+    const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    if (chunkCount < 2 || chunk0Free.size() < metaCount + 1) {
+        blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
+        return false;
+    }
+    *chunk1BitmapBlock = chunk0Free.takeLast();
+    *newBlocks = chunk0Free;
+    QByteArray cib(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
+        return false;
+    }
+    const QByteArray chunk1Bitmap =
+        readChunkAllocationBitmap(ctx.image, ctx.geometry, cib, 1, blockers);
+    const int overflow = need - static_cast<int>(newBlocks->size());
+    QVector<uint64_t> chunk1Free;
+    findFreeBlocksInBitmapContent(
+        chunk1Bitmap,
+        {ctx.layout.chunk0Blocks, ctx.layout.chunk0Blocks, 2 * ctx.layout.chunk0Blocks},
+        overflow,
+        &chunk1Free);
+    if (chunk1Free.size() < overflow) {
+        blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 1"));
+        return false;
+    }
+    *newBlocks += chunk1Free;
+    return true;
 }
 
 // The contiguous data blocks a file occupies (for the freed list on delete).
@@ -2968,6 +3104,7 @@ struct ApfsFsCommitFinalize {
     int64_t dataBlocksNew{0};            // data blocks the commit allocates
     int64_t fileCountDelta{0};
     uint64_t nextObjIdDelta{0};
+    uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
 };
 
 // Shared commit tail: write the COW fs-tree + object-map chain, swap the
@@ -3020,6 +3157,9 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = static_cast<int64_t>(freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
+    // The chunk-1 bitmap (on a multi-chunk overflow) is one extra chunk-0 block the
+    // commit consumes beyond newBlocks, so the device free count drops by one more.
+    const int64_t bitmapBlockCount = f.chunk1BitmapBlock != 0 ? 1 : 0;
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3027,7 +3167,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                     .freed = mainFq.reclaimed,
                                     .allocated = f.newBlocks,
                                     .cibFreeDelta = freeDelta,
-                                    .newXid = f.newXid},
+                                    .newXid = f.newXid,
+                                    .chunk1BitmapBlock = f.chunk1BitmapBlock},
                                    blockers)) {
         return false;
     }
@@ -3036,7 +3177,7 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               f.ctx.nxsb,
                               f.ctx.live,
                               f.newBlocks.at(nodeCount + 4),
-                              freeDelta,
+                              freeDelta - bitmapBlockCount,
                               static_cast<uint64_t>(nodeCount - 1),
                               rotation.newCib,
                               kApfsIpBitmapAdvancedUsage,
@@ -3121,12 +3262,17 @@ bool commitInPlaceFileInsert(QIODevice* image,
     // an empty new file leaves the existing extent-ref tree in place.
     const int extentRefSlots = static_cast<int>(dataBlocks > 0);
     QVector<uint64_t> newBlocks;
-    if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, extentRefSlots, dataBlocks}, &newBlocks, blockers)) {
+    uint64_t chunk1BitmapBlock = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, extentRefSlots, dataBlocks},
+                                &newBlocks,
+                                &chunk1BitmapBlock,
+                                blockers)) {
         return false;
     }
-    // The data blocks may be non-contiguous when free space is fragmented; they are
-    // grouped into one file-extent + extent-ref record per contiguous run.
+    // The data blocks may be non-contiguous when free space is fragmented or when the
+    // file overflows into chunk 1; they are grouped into one file-extent + extent-ref
+    // record per contiguous run.
     const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
     ApfsInsertFsNodes built;
     if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
@@ -3142,7 +3288,8 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .freedDataBlocks = {},
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
                              .fileCountDelta = 1,
-                             .nextObjIdDelta = 1},
+                             .nextObjIdDelta = 1,
+                             .chunk1BitmapBlock = chunk1BitmapBlock},
                             result,
                             blockers);
 }
@@ -3223,7 +3370,9 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     const qsizetype nodeCount = fsNodes.size();
     QVector<uint64_t> newBlocks;
-    if (!allocateFsCommitBlocks(ctx, {nodeCount, extentRefSlots, 0}, &newBlocks, blockers)) {
+    uint64_t deleteChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, extentRefSlots, 0}, &newBlocks, &deleteChunk1Bitmap, blockers)) {
         return false;
     }
     const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
@@ -3320,7 +3469,9 @@ bool commitInPlaceFileRename(QIODevice* image,
     }
     const qsizetype nodeCount = fsNodes.size();
     QVector<uint64_t> newBlocks;
-    if (!allocateFsCommitBlocks(ctx, {nodeCount, 0, 0}, &newBlocks, blockers)) {
+    uint64_t renameChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, 0, 0}, &newBlocks, &renameChunk1Bitmap, blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,
