@@ -120,6 +120,33 @@ returned to the chunk bitmap once their referencing checkpoint leaves the ring
    referencing checkpoint is gone. This is what makes *sustained* multi-commit
    operation crash-safe (single-commit safety only needs steps 1-5).
 
+## Truncation test result (2026-06-14): rotation done, free-queue REQUIRED
+
+The cib/bitmap rotation is implemented and Apple-certified at rest (commit
+1240750: macOS kernel auto-mounts a rotated container read-write, `fsck_apfs`
+passes including "Verifying allocated space"). But the truncation test exposed
+that the rotation alone is **not** crash-safe:
+
+- Built state N (2 files) -> commit to N+1 (3 files); simulated a crash before
+  the final block-0 write by reverting only block 0 of the N+1 image to N's.
+- The result still read **3 files** (N+1's state), not N's 2 - the previous
+  checkpoint was destroyed.
+
+Root cause (confirmed by scanning the images): every commit's COW chain lands on
+the **same blocks 201-206** because `findFreeBlocksInBitmap` immediately reclaims
+the previous commit's freed chain. So N+1 overwrites N's container-omap / volume
+/ fs-tree blocks; reverting to N's superblock then walks into blocks now holding
+N+1's data. The cib/bitmap rotation keeps N's *allocation* metadata intact, but
+nothing keeps N's *fs* blocks intact.
+
+**Conclusion: the free-queue (step 6) is mandatory for crash-safety, not just an
+optimisation for sustained operation.** COW-freed fs blocks must stay allocated
+(enqueued by xid in the spaceman free-queue B-tree) until the freeing checkpoint
+ages out of the descriptor ring (8 desc blocks / 2 = 4 checkpoints), so a later
+commit cannot reuse a block a surviving checkpoint still references. Only then
+does reverting block 0 roll back cleanly. The rotation + free-queue together make
+the truncation test pass.
+
 ## Crash-proof test plan
 - Build a committed container; run one in-place commit but truncate the image
   after the cib/bitmap COW and before the new `nx_superblock` (and a second
