@@ -337,6 +337,12 @@ constexpr qsizetype kApfsSpacemanFqMainLimitOffset = 0x108;
 // from the rolling free-queue window on every cib rotation.
 constexpr qsizetype kApfsSpacemanFqIpCountOffset = 0xC8;
 constexpr qsizetype kApfsSpacemanFqIpOldestXidOffset = 0xD8;
+// sm_fq[MAIN]: the main-device free-queue tracks blocks the commit freed but keeps
+// pending (still allocated in the bitmap) until they age past the rollback window,
+// so an interrupted commit's predecessor keeps its blocks. sfq_count = total
+// pending blocks, sfq_oldest_xid = the oldest still-pending transaction.
+constexpr qsizetype kApfsSpacemanFqMainCountOffset = 0xF0;
+constexpr qsizetype kApfsSpacemanFqMainOldestXidOffset = 0x100;
 constexpr qsizetype kApfsChunkInfoCountOffset = 0x24;
 constexpr qsizetype kApfsChunkInfoEntriesOffset = 0x28;
 constexpr qsizetype kApfsChunkInfoEntryAddrOffset = 8;
@@ -1297,9 +1303,17 @@ QByteArray buildFreeQueueLeaf(uint32_t blockSize,
     // node flags ROOT|LEAF|FIXED_KV_ALIGN (0x0007), 576-byte TOC, info flags
     // EPHEMERAL|ALLOWS_GHOSTS|SEQUENTIAL_INSERT (0x0E), 16-byte keys
     // {xid, paddr}, 8-byte count values, records sorted ascending by (xid, paddr).
-    // Genesis carries one record; the cib rotation grows it to the rolling window
-    // the kernel keeps (the freed cib slots awaiting deferred reclamation).
+    // A single-block run (length == 1) is stored as a ghost: its TOC value offset
+    // is BTOFF_INVALID (0xFFFF) and no value byte is emitted, matching the kernel.
+    // Genesis carries one record; the rotation/main free-queue grow it to the
+    // rolling window of freed blocks awaiting deferred reclamation.
     const int nkeys = static_cast<int>(entries.size());
+    int valueRecords = 0;
+    for (const ApfsFreeQueueEntry& fqEntry : entries) {
+        if (fqEntry.length != 1) {
+            ++valueRecords;
+        }
+    }
     QByteArray block = newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreeEphemeral);
     writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeFreeQueue);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, 0x0007);
@@ -1311,20 +1325,24 @@ QByteArray buildFreeQueueLeaf(uint32_t blockSize,
     writeLe16(&block, 0x2C, static_cast<uint16_t>(nkeys * 16));
     writeLe16(&block,
               0x2E,
-              static_cast<uint16_t>(infoOffset - keyAreaStart -
-                                    nkeys * static_cast<qsizetype>(24)));
+              static_cast<uint16_t>(infoOffset - keyAreaStart - nkeys * static_cast<qsizetype>(16) -
+                                    valueRecords * static_cast<qsizetype>(8)));
     writeLe16(&block, 0x30, 0xFFFF);
     writeLe16(&block, 0x32, 0);
     writeLe16(&block, 0x34, 0xFFFF);
     writeLe16(&block, 0x36, 0);
+    int valueSlot = 0;
     for (int i = 0; i < nkeys; ++i) {
         writeLe16(&block, kApfsBtreeNodeHeaderBytes + i * 4, static_cast<uint16_t>(i * 16));
-        writeLe16(&block,
-                  kApfsBtreeNodeHeaderBytes + i * 4 + 2,
-                  static_cast<uint16_t>((i + 1) * 8));
+        uint16_t valueOffset = 0xFFFF;
+        if (entries[i].length != 1) {
+            ++valueSlot;
+            valueOffset = static_cast<uint16_t>(valueSlot * 8);
+            writeLe64(&block, infoOffset - valueSlot * 8, entries[i].length);
+        }
+        writeLe16(&block, kApfsBtreeNodeHeaderBytes + i * 4 + 2, valueOffset);
         writeLe64(&block, keyAreaStart + i * 16, entries[i].xid);
         writeLe64(&block, keyAreaStart + i * 16 + 8, entries[i].paddr);
-        writeLe64(&block, infoOffset - (i + 1) * 8, entries[i].length);
     }
     writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'0E);
     writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
@@ -1920,7 +1938,8 @@ struct ApfsCheckpointCommitContext {
     int64_t spacemanFreeDelta{0};  // applied to the re-emitted spaceman free count
     uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
     uint8_t ipBitmapUsage{0};      // 0 = leave the sm_ip_bitmap ring; else advance it
-    QVector<ApfsFreeQueueEntry> ipFqEntries;  // non-empty: rebuild the IP free-queue + counts
+    QVector<ApfsFreeQueueEntry> ipFqEntries;    // non-empty: rebuild the IP free-queue + counts
+    QVector<ApfsFreeQueueEntry> mainFqEntries;  // non-empty: rebuild the main free-queue + counts
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -1979,12 +1998,20 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
         writeLe64(object, kApfsSpacemanFqIpCountOffset, pendingBlocks);
         writeLe64(object, kApfsSpacemanFqIpOldestXidOffset, ctx.ipFqEntries.first().xid);
     }
+    if (!ctx.mainFqEntries.isEmpty()) {
+        uint64_t pendingBlocks = 0;
+        for (const ApfsFreeQueueEntry& fqEntry : ctx.mainFqEntries) {
+            pendingBlocks += fqEntry.length;
+        }
+        writeLe64(object, kApfsSpacemanFqMainCountOffset, pendingBlocks);
+        writeLe64(object, kApfsSpacemanFqMainOldestXidOffset, ctx.mainFqEntries.first().xid);
+    }
     return ctx.ipBitmapUsage == 0 || advanceIpBitmapRing(object, ctx, blockers);
 }
 
-bool isIpFreeQueueTree(const QByteArray& object) {
+bool isFreeQueueTreeWithOid(const QByteArray& object, uint64_t oid) {
     return le32(object, kApfsObjectSubtypeOffset) == kApfsObjectSubtypeFreeQueue &&
-           le64(object, kApfsObjectOidOffset) == kApfsFormatFqIpTreeOid;
+           le64(object, kApfsObjectOidOffset) == oid;
 }
 
 // Copy each live ephemeral object to the next data-ring slot, re-stamped at the
@@ -2009,11 +2036,19 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             if (!applySpacemanCommitMutations(ctx, &object, blockers)) {
                 return false;
             }
-        } else if (!ctx.ipFqEntries.isEmpty() && isIpFreeQueueTree(object)) {
+        } else if (!ctx.ipFqEntries.isEmpty() &&
+                   isFreeQueueTreeWithOid(object, kApfsFormatFqIpTreeOid)) {
             object = buildFreeQueueLeaf(ctx.geometry.blockSize,
                                         kApfsFormatFqIpTreeOid,
                                         ctx.newXid,
                                         ctx.ipFqEntries,
+                                        blockers);
+        } else if (!ctx.mainFqEntries.isEmpty() &&
+                   isFreeQueueTreeWithOid(object, kApfsFormatFqMainTreeOid)) {
+            object = buildFreeQueueLeaf(ctx.geometry.blockSize,
+                                        kApfsFormatFqMainTreeOid,
+                                        ctx.newXid,
+                                        ctx.mainFqEntries,
                                         blockers);
         }
         if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
@@ -2060,6 +2095,7 @@ struct ApfsCheckpointAdvanceRequest {
     uint8_t ipBitmapUsage{0};      // sm_ip_bitmap ring advance usage byte (0 = leave)
     uint64_t freedCibSlot{0};      // cib slot freed this commit -> IP free-queue (0 = no update)
     uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
+    QVector<ApfsFreeQueueEntry> mainFqEntries;  // rebuilt main free-queue (empty = leave it)
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -2104,7 +2140,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           request.spacemanFreeDelta,
                                           request.newCibAddr,
                                           request.ipBitmapUsage,
-                                          ipFqEntries};
+                                          ipFqEntries,
+                                          request.mainFqEntries};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -2607,6 +2644,106 @@ QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
     return freed;
 }
 
+// The live paddr of an ephemeral object (by oid) in the current checkpoint map.
+uint64_t findEphemeralPaddrByOid(QIODevice* image,
+                                 const ApfsRepairGeometry& geometry,
+                                 const ApfsLiveCheckpoint& live,
+                                 uint64_t oid,
+                                 QStringList* blockers) {
+    QByteArray cpm(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, live.descBase + live.descIndex, &cpm, blockers)) {
+        return 0;
+    }
+    const uint32_t count = le32(cpm, kApfsCheckpointMapCountOffset);
+    for (uint32_t index = 0; index < count; ++index) {
+        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
+                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        if (le64(cpm, entry + kApfsCheckpointMapEntryOidOffset) == oid) {
+            return le64(cpm, entry + kApfsCheckpointMapEntryPaddrOffset);
+        }
+    }
+    return 0;
+}
+
+// Decode the {xid, paddr}->length records of a free-queue leaf (a 0xFFFF value
+// offset is a ghost = length 1).
+QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
+                                                  const ApfsRepairGeometry& geometry,
+                                                  uint64_t paddr,
+                                                  QStringList* blockers) {
+    QVector<ApfsFreeQueueEntry> entries;
+    QByteArray node(geometry.blockSize, '\0');
+    if (paddr == 0 || !readApfsRepairBlock(image, geometry, paddr, &node, blockers)) {
+        return entries;
+    }
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
+                               le16(node, kApfsBtreeNodeTableLengthOffset);
+    const qsizetype infoOffset = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
+        const uint16_t voff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
+        const uint64_t entryXid = le64(node, keyStart + koff);
+        const uint64_t entryPaddr = le64(node, keyStart + koff + 8);
+        const uint64_t length = (voff == 0xFFFF) ? 1 : le64(node, infoOffset - voff);
+        entries.append({entryXid, entryPaddr, length});
+    }
+    return entries;
+}
+
+// Coalesce freed blocks into ascending contiguous runs tagged at this xid.
+QVector<ApfsFreeQueueEntry> coalesceFreedRuns(QVector<uint64_t> blocks, uint64_t xid) {
+    std::sort(blocks.begin(), blocks.end());
+    QVector<ApfsFreeQueueEntry> runs;
+    for (uint64_t block : blocks) {
+        if (!runs.isEmpty() && runs.last().paddr + runs.last().length == block) {
+            runs.last().length += 1;
+        } else if (runs.isEmpty() || runs.last().paddr != block) {
+            runs.append({xid, block, 1});
+        }
+    }
+    return runs;
+}
+
+// Expand free-queue runs back into their individual block addresses.
+QVector<uint64_t> expandFreeQueueEntries(const QVector<ApfsFreeQueueEntry>& entries) {
+    QVector<uint64_t> blocks;
+    for (const ApfsFreeQueueEntry& entry : entries) {
+        for (uint64_t offset = 0; offset < entry.length; ++offset) {
+            blocks.append(entry.paddr + offset);
+        }
+    }
+    return blocks;
+}
+
+// Advance the main free-queue one commit: reclaim every run older than the
+// rollback window (its blocks return to the allocator), keep the rest, and append
+// this commit's freed blocks as fresh runs. Records sorted ascending by (xid,
+// paddr); the window equals the COW chain region count (descriptor-ring depth).
+struct ApfsMainFqAdvance {
+    QVector<ApfsFreeQueueEntry> entries;  // the rebuilt queue (kept window + new runs)
+    QVector<uint64_t> reclaimed;          // blocks freed back into the bitmap this commit
+};
+
+ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
+                                       const QVector<uint64_t>& freedThisCommit,
+                                       uint64_t newXid,
+                                       uint64_t window) {
+    ApfsMainFqAdvance out;
+    const uint64_t reclaimThrough = newXid > window ? newXid - window : 0;
+    QVector<ApfsFreeQueueEntry> reclaimedRuns;
+    for (const ApfsFreeQueueEntry& entry : live) {
+        if (entry.xid <= reclaimThrough) {
+            reclaimedRuns.append(entry);
+        } else {
+            out.entries.append(entry);
+        }
+    }
+    out.reclaimed = expandFreeQueueEntries(reclaimedRuns);
+    out.entries += coalesceFreedRuns(freedThisCommit, newXid);
+    return out;
+}
+
 struct ApfsFileInsertRequest {
     QVector<ApfsRootFilePayload> existingFiles;  // {fileName, fileId, data sized for size only}
     QString fileName;
@@ -2714,16 +2851,12 @@ struct ApfsCommitBlockSizing {
     uint64_t dataBlocks{0};
 };
 
-// The COW chain rotates through this many disjoint allocation regions so a
-// commit never lands on the blocks the previous few checkpoints still
-// reference. More than the descriptor-ring depth (8 desc blocks / 2 = 4
-// checkpoints) guarantees a region only recycles once its checkpoint has aged
-// out, so an interrupted commit's predecessor keeps its fs blocks intact - this
-// is what makes the truncation test roll back. Region 0 starts at the genesis
-// free region, so the first commit (xid 3) is byte-identical to the pre-rotation
-// layout.
-constexpr uint64_t kCommitChainRegions = 4;
-constexpr uint64_t kCommitChainRegionBlocks = 64;
+// The main free-queue rollback window: a freed block is reclaimed (returned to the
+// bitmap) only once it has aged this many commits, so it stays allocated while any
+// of the last few checkpoints can still roll back onto it. Set to the descriptor-
+// ring depth (8 desc blocks / 2 = 4 checkpoints) - the same depth that guarantees
+// an interrupted commit's predecessor keeps its blocks (the truncation test).
+constexpr uint64_t kMainFqRollbackWindow = 4;
 
 // Allocate the commit's blocks as one contiguous run from this commit's rotating
 // region of the free space: the fs-tree nodes and object-map chain first, then
@@ -2734,13 +2867,17 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             QVector<uint64_t>* newBlocks,
                             QStringList* blockers) {
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
-    const uint64_t newXid = ctx.live.xid + 1;
-    const uint64_t region = (newXid - kApfsFormatXid - 1) % kCommitChainRegions;
-    const uint64_t regionStart = ctx.layout.seedData + region * kCommitChainRegionBlocks;
+    // Allocate the lowest contiguous free run large enough from the data region.
+    // Crash-safety no longer comes from a fixed rotating region but from the main
+    // free-queue: the previous few checkpoints' blocks stay allocated (queued) until
+    // they age past the rollback window, so the search skips them. A single commit
+    // can therefore consume an arbitrarily large contiguous run (no 64-block cap),
+    // bounded only by the contiguous free space (fragmented space needs the
+    // multi-extent engine, guarded by blocksAreContiguous on the data extent).
     return findFreeBlocksInBitmap({ctx.image,
                                    ctx.geometry,
                                    ctx.liveBitmap,
-                                   regionStart,
+                                   ctx.layout.seedData,
                                    ctx.layout.chunk0Blocks,
                                    static_cast<int>(metaCount + sizing.dataBlocks)},
                                   newBlocks,
@@ -2802,13 +2939,30 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     QVector<uint64_t> freed =
         oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
     freed += f.freedDataBlocks;
+    // Queue this commit's freed blocks on the main free-queue (they stay allocated
+    // in the bitmap so an interrupted commit's predecessor keeps them) and reclaim
+    // only the runs that have aged past the rollback window. The bitmap therefore
+    // releases the reclaimed runs, not this commit's frees; the cib/spaceman free
+    // counts move by (reclaimed - allocated) while the volume allocated-count still
+    // moves by netConsumed (the queued blocks leave the volume but not the device).
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
+        f.ctx.image,
+        f.ctx.geometry,
+        findEphemeralPaddrByOid(
+            f.ctx.image, f.ctx.geometry, f.ctx.live, kApfsFormatFqMainTreeOid, blockers),
+        blockers);
+    const ApfsMainFqAdvance mainFq =
+        advanceMainFreeQueue(liveMainFq, freed, f.newXid, kMainFqRollbackWindow);
+    const int64_t netQueued = static_cast<int64_t>(freed.size()) -
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t freeDelta = -netConsumed - netQueued;
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
                                     .rotation = rotation,
-                                    .freed = freed,
+                                    .freed = mainFq.reclaimed,
                                     .allocated = f.newBlocks,
-                                    .cibFreeDelta = -netConsumed,
+                                    .cibFreeDelta = freeDelta,
                                     .newXid = f.newXid},
                                    blockers)) {
         return false;
@@ -2818,12 +2972,13 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               f.ctx.nxsb,
                               f.ctx.live,
                               f.newBlocks.at(nodeCount + 4),
-                              -netConsumed,
+                              freeDelta,
                               static_cast<uint64_t>(nodeCount - 1),
                               rotation.newCib,
                               kApfsIpBitmapAdvancedUsage,
                               rotation.liveCib,
-                              rotation.freeCib},
+                              rotation.freeCib,
+                              mainFq.entries},
                              result,
                              blockers);
 }

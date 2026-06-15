@@ -6675,15 +6675,18 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     // checkpoint's cib/bitmap intact, and moved the spaceman cib_addr to 189. The
     // live allocation bitmap is therefore block 190.
     QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(out), 189ULL);
-    // Net-zero allocation: the six old chain blocks are freed and the six new
-    // ones allocated in the (rotated) chunk allocation bitmap.
+    // Deferred reclamation: the old chain blocks are NOT freed immediately - they
+    // are queued on the main free-queue (kept allocated in the rotated chunk bitmap
+    // until they age past the rollback window), so they still read as used; the six
+    // new blocks are allocated.
     const QByteArray bitmap = readBlock(out, 190);
     const auto used = [&bitmap](quint64 block) {
         return (static_cast<quint8>(bitmap.at(static_cast<qsizetype>(block / 8))) >> (block % 8)) &
                1;
     };
     for (quint64 block : {193ULL, 194ULL, 197ULL, 198ULL, 199ULL, 200ULL}) {
-        QVERIFY2(used(block) == 0, qPrintable(QStringLiteral("old block %1 not freed").arg(block)));
+        QVERIFY2(used(block) == 1,
+                 qPrintable(QStringLiteral("old block %1 should stay queued (used)").arg(block)));
     }
     for (quint64 block : {201ULL, 202ULL, 203ULL, 204ULL, 205ULL, 206ULL}) {
         QVERIFY2(used(block) == 1,
@@ -6723,12 +6726,16 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     QCOMPARE(readBlock(out2, 208).left(payload.size()), payload);
     // The copy-on-written extent-ref tree (block 207) carries the data extent.
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(readBlock(out2, 207)));
-    // One data block consumed: the spaceman free count (block 15) drops by one
-    // versus the unmodified source (block 11).
+    // Deferred reclamation: nothing ages out at this first commit, so the spaceman
+    // free count (block 15) drops by every newly allocated block - the seven-block
+    // COW chain (one fs node + five object-map blocks + the copy-on-written extent-
+    // ref tree) plus the one data block - while the seven old chain blocks are
+    // queued on the main free-queue rather than released. apfsck confirms the
+    // resulting space accounting is exact.
     const auto deviceFree = [&le64](const QByteArray& spaceman) {
         return le64(spaceman, 0x30 + 0x18);  // sm_dev[MAIN].sm_free_count
     };
-    QCOMPARE(deviceFree(readBlock(out2, 15)) + 1ULL, deviceFree(readBlock(base2, 11)));
+    QCOMPARE(deviceFree(readBlock(out2, 15)) + 8ULL, deviceFree(readBlock(base2, 11)));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
