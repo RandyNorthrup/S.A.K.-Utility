@@ -161,25 +161,37 @@ Verification - `apfsprogs apfsck -w` is **clean** on the at-rest writer containe
 the way through xid5 (cib cycled `187->189->185->187`, ip-bitmap blocks 171/172/173
 all `0x3f`). So the writer's own output is structurally correct.
 
-Residual (one cosmetic note): under Apple `fsck_apfs` *after the macOS kernel has
-continued the container* (it auto-mounts read-write and re-derives its own
-checkpoints past the writer's commit), one note appears: `overallocation detected in
-internal pool (0xbb+2) bitmap address (0xad)` - blocks 187,188 over-counted - which
-fsck self-answers no and passes ("The container appears to be OK").
+### Internal-pool note - RESOLVED by the IP free-queue (commit 089f7ff)
 
-Corrected root cause (the earlier "ring at genesis" theory was **disproven**: moving
-the ring in lockstep, and trying both the per-slot `0x3c` and all-six `0x3f`
-contents, left the note unchanged - it only shifts the cited bitmap address as the
-ring steps). The note is **not** an ip-bitmap-content problem. It is an IP
-**free-count** accounting subtlety in the kernel's continuation: the three-slot
-rotation reuses IP slot 187 at the kernel's xid5 while the **genesis checkpoint xid2**
-(also cib 187) is still referenced in the depth-4 descriptor ring, so the stricter
-fsck_apfs free-count cross-check double-counts 187,188. apfsck does not flag it at
-rest because at the writer's xid3/xid5 there is no live overlap yet. Retiring the
-note needs a clean Apple spaceman harvest of the IP free-count / descriptor-ring
-**aging** semantics (when xid2 ages out of the ring, its 187 reference must be
-released before xid5 reuses the slot) - deferred, and orthogonal to A2's certified
-in-place-commit + rollback substance.
+Under Apple `fsck_apfs` *after the macOS kernel continued the container* (it
+auto-mounts read-write and re-derives its own checkpoints past the writer's commit)
+the prior build drew one cosmetic note: `overallocation detected in internal pool
+(0xbb+2)` - the genesis cib slot 187,188 - which fsck self-answered no.
+
+Root cause: the crash-safe commit rotated the cib/bitmap through the spare slot but
+**never recorded the freed slot** anywhere, so the kernel's stricter IP free-count
+cross-check counted the genesis slot as orphaned. (Ruled out first: it is not the
+ip-bitmap content - both the per-slot `0x3c` and all-six `0x3f` left it unchanged -
+nor the `sm_ip_bitmap` ring, which advances correctly and is apfsck-clean.)
+
+Fix: implement the **IP free-queue**. Harvested the kernel continuing a generated
+container (a2base = my genesis + five kernel commits): on every cib rotation it
+keeps a rolling **two-deep window** in the IP free-queue tree (oid 1027) - the slot
+freed the previous commit plus the slot freed this commit, each two ghost blocks
+`{xid, paddr, len=2}` sorted by xid - and sets `sm_fq[IP].sfq_count` to the pending
+block total (4) and `sfq_oldest_xid` to the window's oldest xid. Both window slots
+are computable from the rotation (`rotation.liveCib` freed now; `rotation.freeCib =
+nextIpSlot(newCib)` is the previous freed slot, `==` the genesis seed `{2,185}` at
+the first commit), so `buildFreeQueueLeaf` rebuilds the tree and the spaceman counts
+with no tree read. The generated xid3 container is now byte-for-byte the kernel's
+xid3 free-queue state (`nkeys=2 [{2,185,2},{3,187,2}]`, `sfq_count=4`,
+`sfq_oldest_xid=2`).
+
+Apple-verified: the macOS Sequoia kernel auto-mounted it read-write and `fsck_apfs
+-n` is **fully clean** - "Checking the space manager free queue trees" passes with no
+internal-pool note and "The container appears to be OK" with zero warnings (evidence
+`apfs-a2-ipfreequeue-fsck-PASS.png`). The same free-queue is the general solution for
+the four-region chain allocator's single-commit size cap (arbitrary file sizes).
 
 ## Harvested ring ground truth (2026-06-14, kernel-advanced a generated container)
 
@@ -199,10 +211,10 @@ So the lockstep ring advance per commit is: live ip-bitmap = `base + free_head`
 (write the IP usage), mark that index `0xFFFF`, free the index that ages out
 (append to the free-list, update free_tail), `free_head = ring[free_head]`, bump
 ring xid. This is now implemented (`advanceIpBitmapRing`, commit `642ed99`) and the
-at-rest container is apfsck-clean through xid5. NOTE: even the kernel's own xid5
-still draws the overallocation note, so it is **not** cured by the ring advance -
-see the corrected root cause above (kernel-continuation IP free-count double-count of
-the genesis slot 187, an accounting/aging issue, not the ring content).
+at-rest container is apfsck-clean through xid5. The ring advance alone did **not**
+cure the overallocation note - that needed the **IP free-queue** (commit `089f7ff`,
+see "Internal-pool note - RESOLVED" above), which records the freed cib slot so the
+kernel's free-count cross-check balances. fsck_apfs is now fully clean.
 
 ## Crash-proof test plan
 - Build a committed container; run one in-place commit but truncate the image
