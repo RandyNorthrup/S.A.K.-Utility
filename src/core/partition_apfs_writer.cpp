@@ -2452,7 +2452,10 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
 // rotated cib into the new cib slot. The live cib/bitmap (referenced by the
 // previous checkpoint) are never overwritten, so an interrupted commit leaves
 // that checkpoint intact. The whole internal-pool region stays reserved in the
-// chunk bitmap; the sm_ip_bitmap (advanced separately) tracks the live slots.
+// chunk bitmap. (The sm_ip_bitmap ring is not advanced to match the cib rotation,
+// so a container left on a non-genesis cib slot draws one cosmetic fsck
+// "internal-pool overallocation" warning when the kernel continues it - see
+// docs/APFS_A2_CRASH_SAFETY_DESIGN.md; fsck self-answers no and passes.)
 bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray bitmap(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
