@@ -542,6 +542,12 @@ public:
     ///        crash-safe IP rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
     [[nodiscard]] static QPair<quint64, quint64> nextCrashSafeIpSlot(quint64 live_cib,
                                                                      quint64 block_count);
+    /// \brief The live spaceman's first cib_addr in the generated container at
+    ///        @p image_path - the chunk-info block the live checkpoint uses (187
+    ///        for a freshly formatted container; the crash-safe rotation moves it
+    ///        through the IP slots). Walks the live checkpoint-map to the
+    ///        ephemeral spaceman. Returns 0 on read failure.
+    [[nodiscard]] static quint64 readGeneratedLiveCibAddr(const QString& image_path);
     [[nodiscard]] static QStringList enterpriseCertificationRequirements();
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,

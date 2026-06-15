@@ -1653,6 +1653,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree();
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
+    void apfsWriter_readsGeneratedLiveCibAddr();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -7086,6 +7087,24 @@ void PartitionManagerCoreTests::apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots(
         cib = PartitionApfsWriter::nextCrashSafeIpSlot(cib, blocks).first;
     }
     QCOMPARE(cib, static_cast<quint64>(187));
+}
+
+void PartitionManagerCoreTests::apfsWriter_readsGeneratedLiveCibAddr() {
+    // Reading the live spaceman's cib_addr (the crash-safe rotation's starting
+    // point) walks the live checkpoint-map to the ephemeral spaceman. A freshly
+    // formatted single-chunk container reports the genesis live cib block, 187.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("cib.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = path,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("CIB"),
+                 .options = options})
+                .ok);
+    QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(path), static_cast<quint64>(187));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

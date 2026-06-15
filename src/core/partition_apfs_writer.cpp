@@ -1838,6 +1838,36 @@ ApfsLiveCheckpoint readLiveCheckpoint(const QByteArray& nxsb) {
             le32(nxsb, kApfsNxXpDataNextOffset)};
 }
 
+// Walk the live checkpoint-map to the ephemeral spaceman and read its first
+// cib_addr (offset 2568) - the chunk-info block the live checkpoint uses, i.e.
+// the slot a crash-safe commit rotates away from (pairs with nextIpSlot).
+// Returns 0 if no spaceman is found.
+uint64_t readLiveSpacemanCibAddr(QIODevice* image,
+                                 const ApfsRepairGeometry& geometry,
+                                 const QByteArray& nxsb,
+                                 QStringList* blockers) {
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    QByteArray checkpointMap(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+        return 0;
+    }
+    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    for (uint32_t index = 0; index < count; ++index) {
+        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
+                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
+        QByteArray object(geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
+            return 0;
+        }
+        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
+            return le64(object, kApfsSpacemanCibAddrArrayOffset);
+        }
+    }
+    return 0;
+}
+
 struct ApfsCheckpointCommitContext {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
@@ -8890,6 +8920,25 @@ QPair<quint64, quint64> PartitionApfsWriter::nextCrashSafeIpSlot(quint64 live_ci
                                                                  quint64 block_count) {
     const ApfsIpSlot slot = nextIpSlot(live_cib, computeGeneratedLayout(block_count));
     return {slot.cib, slot.bitmap};
+}
+
+quint64 PartitionApfsWriter::readGeneratedLiveCibAddr(const QString& image_path) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return 0;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return 0;
+    }
+    return readLiveSpacemanCibAddr(&image, geometry, nxsb, &blockers);
 }
 
 }  // namespace sak
