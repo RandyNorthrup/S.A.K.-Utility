@@ -147,6 +147,28 @@ commit cannot reuse a block a surviving checkpoint still references. Only then
 does reverting block 0 roll back cleanly. The rotation + free-queue together make
 the truncation test pass.
 
+## sm_ip_bitmap ring residual (2026-06-14): one cosmetic fsck warning
+
+Crash-safety is certified (rotation + rollback above), but a rolled-back or
+non-genesis-cib container draws one cosmetic warning: `overallocation detected in
+internal pool (0xbb+2) bitmap address (0xac)` - i.e. blocks 187,188 over-counted
+against ip-bitmap block **172**, which fsck self-answers no and passes ("The
+container appears to be OK").
+
+Root cause (investigated 2026-06-14): the S.A.K. commit rotates the **cib** through
+the IP slots but leaves the **sm_ip_bitmap ring** (blocks 169-184, free-head, ring
+array at spaceman 2520-2536) at the genesis state (live ip-bitmap 170). When the
+macOS kernel auto-mounts the container read-write it **advances that ring** (a
+1-commit container fsck'd at transaction ID 5 = the kernel continued it twice, ring
+live block now 172) and notices the cib is on a non-genesis slot while the ring
+implies the genesis pair - hence the over-count of 187,188. A content-only rewrite
+of block 170 is neutral (the kernel uses the advanced block). The fix is to advance
+the sm_ip_bitmap ring in lockstep with the cib rotation: each commit write the new
+ip-bitmap (live + rollback slots used, third free) into the next ring block and
+update free-head / ring array / xid. That needs the ring free-list chain semantics
+(the `0xFFFF` markers + next-index chain) decoded from an Apple multi-commit harvest
+(the a2base harvest changed blocks 171-175) - not yet reverse-engineered.
+
 ## Crash-proof test plan
 - Build a committed container; run one in-place commit but truncate the image
   after the cib/bitmap COW and before the new `nx_superblock` (and a second
