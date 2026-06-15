@@ -332,9 +332,10 @@ constexpr uint8_t kApfsIpBitmapAdvancedUsage = 0x3f;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
 constexpr qsizetype kApfsSpacemanFqMainLimitOffset = 0x108;
-// sm_fq[IP].sfq_oldest_xid: the kernel advances this to the new transaction id on
-// every cib rotation (harvested x4->4, x5->5); leaving it at the genesis xid makes
-// the freed internal-pool slot read as still pending from genesis.
+// sm_fq[IP]: sfq_count (total ghost blocks pending in the IP free-queue) and
+// sfq_oldest_xid (the oldest still-pending transaction). The kernel rebuilds both
+// from the rolling free-queue window on every cib rotation.
+constexpr qsizetype kApfsSpacemanFqIpCountOffset = 0xC8;
 constexpr qsizetype kApfsSpacemanFqIpOldestXidOffset = 0xD8;
 constexpr qsizetype kApfsChunkInfoCountOffset = 0x24;
 constexpr qsizetype kApfsChunkInfoEntriesOffset = 0x28;
@@ -1279,47 +1280,74 @@ QByteArray buildReaperBlock(uint32_t blockSize, uint64_t xid, QStringList* block
     return block;
 }
 
-QByteArray buildFreeQueueTreeBlock(uint32_t blockSize,
-                                   uint64_t oid,
-                                   uint64_t pendingFreePaddr,
-                                   uint64_t pendingFreeCount,
-                                   QStringList* blockers) {
+// One free-queue record: the ghost blocks at `paddr` (count `length`) scheduled
+// for reclamation once transaction `xid` ages past the rollback window.
+struct ApfsFreeQueueEntry {
+    uint64_t xid{0};
+    uint64_t paddr{0};
+    uint64_t length{0};
+};
+
+QByteArray buildFreeQueueLeaf(uint32_t blockSize,
+                              uint64_t oid,
+                              uint64_t xid,
+                              const QVector<ApfsFreeQueueEntry>& entries,
+                              QStringList* blockers) {
     // Ephemeral free-queue B-tree root/leaf mirrored from newfs_apfs output:
     // node flags ROOT|LEAF|FIXED_KV_ALIGN (0x0007), 576-byte TOC, info flags
     // EPHEMERAL|ALLOWS_GHOSTS|SEQUENTIAL_INSERT (0x0E), 16-byte keys
-    // {xid, paddr}, 8-byte count values. Fresh queues carry one record
-    // scheduling the corresponding ghost blocks for reclamation.
-    QByteArray block =
-        newApfsObjectBlock(blockSize, oid, kApfsFormatXid, kApfsObjectTypeBtreeEphemeral);
+    // {xid, paddr}, 8-byte count values, records sorted ascending by (xid, paddr).
+    // Genesis carries one record; the cib rotation grows it to the rolling window
+    // the kernel keeps (the freed cib slots awaiting deferred reclamation).
+    const int nkeys = static_cast<int>(entries.size());
+    QByteArray block = newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreeEphemeral);
     writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeFreeQueue);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, 0x0007);
-    writeLe32(&block, kApfsBtreeNodeCountOffset, 1);
+    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(nkeys));
     writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, 576);
     const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 576;
-    const uint16_t freeLength = static_cast<uint16_t>(infoOffset - keyAreaStart - 16 - 8);
-    writeLe16(&block, 0x2C, 16);
-    writeLe16(&block, 0x2E, freeLength);
+    writeLe16(&block, 0x2C, static_cast<uint16_t>(nkeys * 16));
+    writeLe16(&block,
+              0x2E,
+              static_cast<uint16_t>(infoOffset - keyAreaStart -
+                                    nkeys * static_cast<qsizetype>(24)));
     writeLe16(&block, 0x30, 0xFFFF);
     writeLe16(&block, 0x32, 0);
     writeLe16(&block, 0x34, 0xFFFF);
     writeLe16(&block, 0x36, 0);
-    writeLe16(&block, kApfsBtreeNodeHeaderBytes, 0);
-    writeLe16(&block, kApfsBtreeNodeHeaderBytes + 2, 8);
-    writeLe64(&block, keyAreaStart, kApfsFormatXid);
-    writeLe64(&block, keyAreaStart + 8, pendingFreePaddr);
-    writeLe64(&block, infoOffset - 8, pendingFreeCount);
+    for (int i = 0; i < nkeys; ++i) {
+        writeLe16(&block, kApfsBtreeNodeHeaderBytes + i * 4, static_cast<uint16_t>(i * 16));
+        writeLe16(&block,
+                  kApfsBtreeNodeHeaderBytes + i * 4 + 2,
+                  static_cast<uint16_t>((i + 1) * 8));
+        writeLe64(&block, keyAreaStart + i * 16, entries[i].xid);
+        writeLe64(&block, keyAreaStart + i * 16 + 8, entries[i].paddr);
+        writeLe64(&block, infoOffset - (i + 1) * 8, entries[i].length);
+    }
     writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'0E);
     writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
     writeLe32(&block, infoOffset + kApfsBtreeInfoKeySizeOffset, 16);
     writeLe32(&block, infoOffset + kApfsBtreeInfoValueSizeOffset, 8);
     writeLe32(&block, infoOffset + 16, 16);
     writeLe32(&block, infoOffset + 20, 8);
-    writeLe64(&block, infoOffset + kApfsBtreeInfoKeyCountOffset, 1);
+    writeLe64(&block, infoOffset + kApfsBtreeInfoKeyCountOffset, static_cast<uint64_t>(nkeys));
     writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
     stampApfsObjectBlock(&block, blockers);
     return block;
+}
+
+QByteArray buildFreeQueueTreeBlock(uint32_t blockSize,
+                                   uint64_t oid,
+                                   uint64_t pendingFreePaddr,
+                                   uint64_t pendingFreeCount,
+                                   QStringList* blockers) {
+    return buildFreeQueueLeaf(blockSize,
+                              oid,
+                              kApfsFormatXid,
+                              {{kApfsFormatXid, pendingFreePaddr, pendingFreeCount}},
+                              blockers);
 }
 
 // Physical-extent-reference tree carrying one j_phys_ext record per file so
@@ -1892,6 +1920,7 @@ struct ApfsCheckpointCommitContext {
     int64_t spacemanFreeDelta{0};  // applied to the re-emitted spaceman free count
     uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
     uint8_t ipBitmapUsage{0};      // 0 = leave the sm_ip_bitmap ring; else advance it
+    QVector<ApfsFreeQueueEntry> ipFqEntries;  // non-empty: rebuild the IP free-queue + counts
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -1926,10 +1955,42 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
                                 blockers);
 }
 
+// Apply this commit's mutations to the re-emitted spaceman: the net free-count
+// delta, the rotated cib_addr, the IP free-queue counts (sfq_count + oldest_xid
+// from the rolling window), and the sm_ip_bitmap ring advance.
+bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
+                                  QByteArray* object,
+                                  QStringList* blockers) {
+    if (ctx.spacemanFreeDelta != 0) {
+        const qsizetype freeOffset = kApfsSpacemanMainDeviceOffset +
+                                     kApfsSpacemanDeviceFreeCountOffset;
+        writeLe64(object,
+                  freeOffset,
+                  le64(*object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
+    }
+    if (ctx.newCibAddr != 0) {
+        writeLe64(object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+    }
+    if (!ctx.ipFqEntries.isEmpty()) {
+        uint64_t pendingBlocks = 0;
+        for (const ApfsFreeQueueEntry& fqEntry : ctx.ipFqEntries) {
+            pendingBlocks += fqEntry.length;
+        }
+        writeLe64(object, kApfsSpacemanFqIpCountOffset, pendingBlocks);
+        writeLe64(object, kApfsSpacemanFqIpOldestXidOffset, ctx.ipFqEntries.first().xid);
+    }
+    return ctx.ipBitmapUsage == 0 || advanceIpBitmapRing(object, ctx, blockers);
+}
+
+bool isIpFreeQueueTree(const QByteArray& object) {
+    return le32(object, kApfsObjectSubtypeOffset) == kApfsObjectSubtypeFreeQueue &&
+           le64(object, kApfsObjectOidOffset) == kApfsFormatFqIpTreeOid;
+}
+
 // Copy each live ephemeral object to the next data-ring slot, re-stamped at the
 // new transaction id, and rewrite the checkpoint-map paddrs to the new slots.
-// The re-emitted spaceman free count is adjusted by spacemanFreeDelta so a
-// non-zero net allocation (file data blocks) is reflected.
+// The spaceman gains this commit's free/cib/free-queue mutations; the IP
+// free-queue tree is rebuilt with the rolling freed-slot window.
 bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
                                 QByteArray* checkpointMap,
                                 QStringList* blockers) {
@@ -1945,20 +2006,15 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
         }
         writeLe64(&object, kApfsObjectXidOffset, ctx.newXid);
         if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            if (ctx.spacemanFreeDelta != 0) {
-                const qsizetype freeOffset = kApfsSpacemanMainDeviceOffset +
-                                             kApfsSpacemanDeviceFreeCountOffset;
-                writeLe64(&object,
-                          freeOffset,
-                          le64(object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
-            }
-            if (ctx.newCibAddr != 0) {
-                writeLe64(&object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
-                writeLe64(&object, kApfsSpacemanFqIpOldestXidOffset, ctx.newXid);
-            }
-            if (ctx.ipBitmapUsage != 0 && !advanceIpBitmapRing(&object, ctx, blockers)) {
+            if (!applySpacemanCommitMutations(ctx, &object, blockers)) {
                 return false;
             }
+        } else if (!ctx.ipFqEntries.isEmpty() && isIpFreeQueueTree(object)) {
+            object = buildFreeQueueLeaf(ctx.geometry.blockSize,
+                                        kApfsFormatFqIpTreeOid,
+                                        ctx.newXid,
+                                        ctx.ipFqEntries,
+                                        blockers);
         }
         if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
@@ -2002,6 +2058,8 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
     uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
     uint8_t ipBitmapUsage{0};      // sm_ip_bitmap ring advance usage byte (0 = leave)
+    uint64_t freedCibSlot{0};      // cib slot freed this commit -> IP free-queue (0 = no update)
+    uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -2030,6 +2088,14 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const uint64_t newXid = live.xid + 1;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
+    // The rolling two-deep IP free-queue window: the slot freed the previous commit
+    // (or the genesis seed at the first commit) plus the slot freed this commit,
+    // each two ghost blocks (cib + bitmap), sorted ascending by xid.
+    QVector<ApfsFreeQueueEntry> ipFqEntries;
+    if (request.freedCibSlot != 0) {
+        ipFqEntries = {{newXid - 1, request.prevFreedCibSlot, 2},
+                       {newXid, request.freedCibSlot, 2}};
+    }
     const ApfsCheckpointCommitContext ctx{request.image,
                                           geometry,
                                           live.dataBase,
@@ -2037,7 +2103,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           live.dataNext,
                                           request.spacemanFreeDelta,
                                           request.newCibAddr,
-                                          request.ipBitmapUsage};
+                                          request.ipBitmapUsage,
+                                          ipFqEntries};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -2754,7 +2821,9 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               -netConsumed,
                               static_cast<uint64_t>(nodeCount - 1),
                               rotation.newCib,
-                              kApfsIpBitmapAdvancedUsage},
+                              kApfsIpBitmapAdvancedUsage,
+                              rotation.liveCib,
+                              rotation.freeCib},
                              result,
                              blockers);
 }
