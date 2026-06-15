@@ -1,0 +1,25 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-multi-chunk-allocation",
+    "milestone": "A2 (A-b): multi-chunk allocation - a file can fill the whole container, not just chunk 0",
+    "status": "Passed functionally (macOS kernel reads a 130 MiB file that spans chunk 0 and chunk 1 byte-for-byte; container OK). One cosmetic main-device overallocation note remains on the chunk-1 bitmap placement (IP-slot vs physical), self-answered no by fsck.",
+    "capability": "The COW commit previously allocated only from chunk 0's bitmap, so any container exposed at most ~127 MiB of file data. allocateFsCommitBlocks now spills the data overflow into chunk 1 (findFreeBlocksInBitmapContent over chunk 1's bitmap) and reserves one chunk-0 block for chunk 1's allocation bitmap. The fs-tree/extent-ref records already handle chunk-1 addresses (the file splits into a chunk-0 run + a chunk-1 run via the multi-extent path); applyFileInsertAllocation splits the allocation by chunk (chunk 0's bitmap gets the chunk-0 blocks + the chunk-1 bitmap block; chunk 1's fresh bitmap gets the chunk-1 data) and writeRotatedCib updates both cib entries' free counts + chunk 1's bitmap_addr. Single-chunk commits are byte-identical (chunk1BitmapBlock 0).",
+    "host_verify": "apfsck -w clean at rest on a 256 MiB (2-chunk) container with a 130 MiB file: chunk 0 free_count 0 (filled), chunk 1 free_count 32044 with bitmap_addr set, total free consistent (chunk 0 + chunk 1 == spaceman main free). 124/124 unit tests pass (single-chunk byte-identical, incl. crash-safety rollback). Per-file payload cap raised 8 MiB -> 256 MiB.",
+    "vm_external_gate": {
+        "status": "Passed (functional); one cosmetic note",
+        "performed_at_utc": "2026-06-15T11:25:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; the 256 MiB 2-chunk container (volume MCHUNK) attached raw as SATA disk0",
+        "method": [
+            "1. format MCHUNK 256 MiB (2 chunks) -> commit-image-file-insert big.bin (130 MiB random payload, > chunk 0's ~127 MiB) in a single commit; the data overflows chunk 0 into chunk 1.",
+            "2. Apple kernel auto-mounted /Volumes/MCHUNK; `md5 /Volumes/MCHUNK/big.bin` == the host md5 d83f882a10fffe26958c3d302bc6e7b8 (byte-for-byte across the chunk-0 + chunk-1 runs).",
+            "3. diskutil unmountDisk force disk1; fsck_apfs -n /dev/rdisk0 -> The container appears to be OK, with one cosmetic 'overallocation detected on Main device (0x7fff+1)' it self-answers no."
+        ],
+        "kernel_behavior": "macOS kernel mounted the container read-write, reassembled the 130 MiB file from its chunk-0 and chunk-1 runs byte-for-byte (md5 match), and continued the checkpoint (transaction ID 3 -> 5); the file md5 still matched after the kernel continued the container.",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 5; the volume MCHUNK appears to be OK; The container /dev/rdisk0 appears to be OK. One self-answered-no warning: overallocation detected on Main device (0x7fff+1) - block 32767, the chunk-1 bitmap.",
+        "evidence_png": "apfs-a2-multichunk-130mib-md5-fsck.png (md5 match + fsck)"
+    },
+    "residual": "The chunk-1 allocation bitmap is placed as a physical chunk-0 block (32767), which is how Apple's LARGE (multi-CIB) containers place per-chunk bitmaps but NOT how single-CIB multi-chunk containers do it - those reserve the chunk's bitmap in the internal pool (the 256 MiB harvest leaves IP slots 191-193 zeroed for chunk 1). So when the kernel continues a single-CIB multi-chunk container it draws one cosmetic 'overallocation on Main device' note on that physical bitmap block (fsck self-answers no, container OK, md5 intact). Clearing it needs placing chunk 1's bitmap in its IP slot (191-193) and marking it in the sm_ip_bitmap - the same class as the now-retired internal-pool note, deferred because it touches the certified IP free-queue/sm_ip_bitmap. apfsck (apfsprogs) is clean at rest either way.",
+    "gates": "clang-format + lizard + cppcheck clean; commit 9e859f9 - all pre-commit hooks passed, no bypass.",
+    "next": "Place chunk-1 bitmap in its IP slot to retire the cosmetic note; multi-CIB (>15.75 GiB) for the 100 GB image; then the A-b physical-USB flip.",
+    "error": ""
+}
