@@ -1,0 +1,26 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-multi-extent",
+    "milestone": "A2 (A-b): multi-extent file data (a fragmented file split across several runs)",
+    "status": "Passed (macOS kernel reassembled a two-run fragmented file byte-for-byte (md5 match) and fsck_apfs is fully clean after the kernel continued the container). Multi-extent file data certified.",
+    "capability": "A file's data is no longer required to be one contiguous run. commitInPlaceFileInsert used to fail closed ('fragmented free space ... unsupported') when the allocated data blocks were non-contiguous. Now findFreeBlocksInBitmap's (possibly non-contiguous) free blocks are grouped into contiguous runs (groupContiguousRuns) and the writer emits one j_file_extent (fs-tree, keyed by file-logical byte offset) and one j_phys_ext (extent-ref tree) per run. ApfsRootFilePayload carries an optional dataExtents list (empty = the single contiguous run at dataStartBlock, so the certified single-extent output stays byte-identical); fileDataExtents resolves either form.",
+    "guard": "Preserving an already-fragmented file across a chained insert/delete needs its file-extent records (logical order, which the extent-ref tree does not carry), so buildChainedFileList / buildDeleteFileList fail closed via extentRefHasMultiExtentOwner rather than corrupt the file - a documented follow-up (read the file-extent records to recover multi-extent existing files).",
+    "host_verify": "apfsck -w clean on an engineered container: insert six one-block files, delete two (holes), four dummy inserts to age the deletes past the rollback window so their blocks reclaim, then insert a 16-block file - it split into two runs {paddr 232, 1 block} + {paddr 252, 15 blocks}, the extent-ref tree carrying two phys-ext records for the owner. apfsck validates the file-extent <-> extent-ref <-> allocated-space consistency. 124/124 unit tests pass (single-extent byte-identical, incl. the multi-block extent + crash-safety rollback).",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-15T05:55:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; the engineered fragmented container (volume MXFRAG) attached raw as SATA disk0",
+        "method": [
+            "1. Build MXFRAG with a 16-block (65536-byte) file fragmented into two runs (1 block + 15 blocks) across a reclaimed hole.",
+            "2. Apple kernel auto-mounted /Volumes/MXFRAG; `md5 /Volumes/MXFRAG/big.bin` == the host md5 ea96e8eb5ae342bb40379e9812f2a3f3 (byte-for-byte - the kernel reassembled the two non-contiguous runs).",
+            "3. diskutil unmountDisk force disk1; fsck_apfs -n /dev/rdisk0 -> Checking the space manager free queue trees (clean); The container /dev/rdisk0 appears to be OK (zero warnings)."
+        ],
+        "kernel_behavior": "macOS kernel mounted the container read-write, read the fragmented file back byte-for-byte (md5 match across the two runs), and continued the checkpoint (transaction ID 15 -> 17).",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 17; Checking the space manager free queue trees; volume MXFRAG formatted by S.A.K. Utility APFS writer; fsroot tree / extent ref tree / volume object map space checked; The container /dev/rdisk0 appears to be OK - zero warnings.",
+        "evidence_png": "apfs-a2-multiextent-fsck-PASS.png (md5 match + fsck clean)"
+    },
+    "residual": "Preserving a multi-extent existing file across a chained insert/delete fails closed (needs reading its file-extent records). The S.A.K. file-system reader's content read still assumes a single extent (the kernel handles multi-extent natively; the reader's concatenation is the follow-up).",
+    "gates": "clang-format + lizard + cppcheck clean; commit 64ced74 - all pre-commit hooks passed, no bypass.",
+    "next": "Multi-extent existing-file preservation (reader + chained paths), multi-chunk commit (large containers), multi-CIB (>16 GiB), then the A-b physical-USB flip.",
+    "error": ""
+}
