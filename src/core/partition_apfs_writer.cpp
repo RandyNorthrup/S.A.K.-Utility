@@ -1875,6 +1875,7 @@ struct ApfsCheckpointCommitContext {
     uint64_t newXid{0};
     uint64_t newDataIndex{0};
     int64_t spacemanFreeDelta{0};  // applied to the re-emitted spaceman free count
+    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
 };
 
 // Copy each live ephemeral object to the next data-ring slot, re-stamped at the
@@ -1895,13 +1896,17 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             return false;
         }
         writeLe64(&object, kApfsObjectXidOffset, ctx.newXid);
-        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman &&
-            ctx.spacemanFreeDelta != 0) {
-            const qsizetype freeOffset = kApfsSpacemanMainDeviceOffset +
-                                         kApfsSpacemanDeviceFreeCountOffset;
-            writeLe64(&object,
-                      freeOffset,
-                      le64(object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
+        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
+            if (ctx.spacemanFreeDelta != 0) {
+                const qsizetype freeOffset = kApfsSpacemanMainDeviceOffset +
+                                             kApfsSpacemanDeviceFreeCountOffset;
+                writeLe64(&object,
+                          freeOffset,
+                          le64(object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
+            }
+            if (ctx.newCibAddr != 0) {
+                writeLe64(&object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+            }
         }
         if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
@@ -1943,6 +1948,7 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t newContainerOmap{0};  // 0 = carry the existing container object map forward
     int64_t spacemanFreeDelta{0};  // net free-block change (negative when blocks are consumed)
     uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
+    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -1971,8 +1977,13 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const uint64_t newXid = live.xid + 1;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
-    const ApfsCheckpointCommitContext ctx{
-        request.image, geometry, live.dataBase, newXid, live.dataNext, request.spacemanFreeDelta};
+    const ApfsCheckpointCommitContext ctx{request.image,
+                                          geometry,
+                                          live.dataBase,
+                                          newXid,
+                                          live.dataNext,
+                                          request.spacemanFreeDelta,
+                                          request.newCibAddr};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -2146,6 +2157,27 @@ ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
     const int liveIndex = static_cast<int>((liveCib - ipBase) / 2);
     const uint64_t nextBase = ipBase + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
     return {nextBase, nextBase + 1};
+}
+
+// The full cib/bitmap rotation a crash-safe commit performs: read the live slot,
+// write the new cib/bitmap into the spare slot (nextIpSlot), and reclaim the
+// previous ghost slot (the third, = nextIpSlot of the spare) which is no longer
+// referenced by any ring checkpoint. live 187 -> new {189,190}, free {185,186}.
+struct ApfsIpRotation {
+    uint64_t liveCib{0};
+    uint64_t liveBitmap{0};
+    uint64_t newCib{0};
+    uint64_t newBitmap{0};
+    uint64_t freeCib{0};
+    uint64_t freeBitmap{0};
+};
+
+ApfsIpRotation computeIpRotation(uint64_t liveCib,
+                                 uint64_t liveBitmap,
+                                 const ApfsGeneratedLayout& layout) {
+    const ApfsIpSlot newSlot = nextIpSlot(liveCib, layout);
+    const ApfsIpSlot freeSlot = nextIpSlot(newSlot.cib, layout);
+    return {liveCib, liveBitmap, newSlot.cib, newSlot.bitmap, freeSlot.cib, freeSlot.bitmap};
 }
 
 struct ApfsFreeBlockScan {
@@ -2382,20 +2414,20 @@ struct ApfsFileInsertAllocation {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
     ApfsGeneratedLayout layout;
+    ApfsIpRotation rotation;      // crash-safe cib/bitmap slot rotation
     QVector<uint64_t> freed;      // old COW-chain blocks (+ freed data on delete)
     QVector<uint64_t> allocated;  // newly written COW blocks
     int64_t cibFreeDelta{0};      // + when net blocks are freed, - when consumed
     uint64_t newXid{0};
 };
 
-// Adjust chunk 0's free-block count in the chunk-info block by delta, re-stamped
-// at the new xid. A net-zero allocation (delta 0) leaves the CIB untouched.
-bool adjustCibFreeCount(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
-    if (alloc.cibFreeDelta == 0) {
-        return true;
-    }
+// Write the rotated chunk-info block: read the live cib, adjust chunk 0's
+// free-block count by cibFreeDelta, re-point its bitmap_addr at the new bitmap
+// slot, re-stamp at the new xid, and write it into the new (spare) cib slot -
+// leaving the live cib intact for the previous checkpoint (crash-safe).
+bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray cib(alloc.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(alloc.image, alloc.geometry, alloc.layout.chunkInfo, &cib, blockers)) {
+    if (!readApfsRepairBlock(alloc.image, alloc.geometry, alloc.rotation.liveCib, &cib, blockers)) {
         return false;
     }
     const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
@@ -2403,23 +2435,30 @@ bool adjustCibFreeCount(const ApfsFileInsertAllocation& alloc, QStringList* bloc
               freeOffset,
               static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) +
                                     alloc.cibFreeDelta));
+    writeLe64(&cib,
+              kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
+              alloc.rotation.newBitmap);
     writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
     return stampAndWriteApfsBlock(
-        alloc.image, alloc.geometry, alloc.layout.chunkInfo, &cib, blockers);
+        alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
 }
 
-// Swap the allocation bitmap (free the old COW-chain/data blocks, allocate the
-// new ones) and adjust the CIB free count by the net allocation.
+// Crash-safe allocation swap: copy the live allocation bitmap to the new (spare)
+// bitmap slot with the commit's freed/allocated blocks flipped, then write the
+// rotated cib into the new cib slot. The live cib/bitmap (referenced by the
+// previous checkpoint) are never overwritten, so an interrupted commit leaves
+// that checkpoint intact. The whole internal-pool region stays reserved in the
+// chunk bitmap; the sm_ip_bitmap (advanced separately) tracks the live slots.
 bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
     QByteArray bitmap(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
-            alloc.image, alloc.geometry, alloc.layout.chunkBitmap, &bitmap, blockers)) {
+            alloc.image, alloc.geometry, alloc.rotation.liveBitmap, &bitmap, blockers)) {
         return false;
     }
     flipChunkBitmapBits(&bitmap, alloc.freed, alloc.allocated);
     return writeApfsRepairBlock(
-               alloc.image, alloc.geometry, alloc.layout.chunkBitmap, bitmap, blockers) &&
-           adjustCibFreeCount(alloc, blockers);
+               alloc.image, alloc.geometry, alloc.rotation.newBitmap, bitmap, blockers) &&
+           writeRotatedCib(alloc, blockers);
 }
 
 // The blocks a commit frees: the old fs-tree nodes (root + any leaves), the
@@ -2495,7 +2534,24 @@ struct ApfsFsCommitContext {
     ApfsGeneratedLayout layout;
     QVector<uint64_t> oldFsNodes;  // every block the live fs-tree occupies
     uint64_t firstLeafOid{0};      // nx_next_oid - first oid a new leaf consumes
+    uint64_t liveCib{0};           // live chunk-info block (rotates through IP slots)
+    uint64_t liveBitmap{0};        // the live cib's allocation bitmap
 };
+
+// Resolve the live chunk-info block (the spaceman cib_addr) and its bitmap. As
+// the crash-safe commit rotates the cib/bitmap through the IP slots, these are
+// no longer the fixed genesis 187/188 - allocation must read the live bitmap or
+// it would scan a stale slot and reuse live blocks.
+bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
+    ctx->liveCib = readLiveSpacemanCibAddr(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    QByteArray cib(ctx->geometry.blockSize, '\0');
+    if (ctx->liveCib == 0 ||
+        !readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
+        return false;
+    }
+    ctx->liveBitmap = le64(cib, kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset);
+    return true;
+}
 
 bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
     uint32_t blockSize = 0;
@@ -2519,7 +2575,7 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->firstLeafOid = le64(ctx->nxsb, kApfsNxNextOidOffset);
-    return true;
+    return loadLiveAllocationSlot(ctx, blockers);
 }
 
 // How many blocks a commit allocates: K fs-tree nodes + the five-block
@@ -2539,7 +2595,7 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
     return findFreeBlocksInBitmap({ctx.image,
                                    ctx.geometry,
-                                   ctx.layout.chunkBitmap,
+                                   ctx.liveBitmap,
                                    ctx.layout.seedData,
                                    ctx.layout.chunk0Blocks,
                                    static_cast<int>(metaCount + sizing.dataBlocks)},
@@ -2583,6 +2639,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                static_cast<int64_t>(f.ctx.oldFsNodes.size());
     const int64_t netConsumed = extraNodes +
                                 (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
+    const ApfsIpRotation rotation =
+        computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
     if (!writeFileInsertCowChain({.image = f.ctx.image,
                                   .geometry = f.ctx.geometry,
                                   .newXid = f.newXid,
@@ -2603,6 +2661,7 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
+                                    .rotation = rotation,
                                     .freed = freed,
                                     .allocated = f.newBlocks,
                                     .cibFreeDelta = -netConsumed,
@@ -2616,7 +2675,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               f.ctx.live,
                               f.newBlocks.at(nodeCount + 4),
                               -netConsumed,
-                              static_cast<uint64_t>(nodeCount - 1)},
+                              static_cast<uint64_t>(nodeCount - 1),
+                              rotation.newCib},
                              result,
                              blockers);
 }

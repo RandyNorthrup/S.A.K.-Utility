@@ -6669,9 +6669,14 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
                  qPrintable(QStringLiteral("invalid object checksum at block %1").arg(block)));
     }
 
+    // Crash-safe IP rotation: the commit wrote the new chunk-info + bitmap into
+    // the spare internal-pool slot (187/188 -> 189/190), leaving the previous
+    // checkpoint's cib/bitmap intact, and moved the spaceman cib_addr to 189. The
+    // live allocation bitmap is therefore block 190.
+    QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(out), 189ULL);
     // Net-zero allocation: the six old chain blocks are freed and the six new
-    // ones allocated in the chunk allocation bitmap.
-    const QByteArray bitmap = readBlock(out, 188);
+    // ones allocated in the (rotated) chunk allocation bitmap.
+    const QByteArray bitmap = readBlock(out, 190);
     const auto used = [&bitmap](quint64 block) {
         return (static_cast<quint8>(bitmap.at(static_cast<qsizetype>(block / 8))) >> (block % 8)) &
                1;
