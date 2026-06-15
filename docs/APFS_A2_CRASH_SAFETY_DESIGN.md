@@ -169,6 +169,29 @@ update free-head / ring array / xid. That needs the ring free-list chain semanti
 (the `0xFFFF` markers + next-index chain) decoded from an Apple multi-commit harvest
 (the a2base harvest changed blocks 171-175) - not yet reverse-engineered.
 
+## Harvested ring ground truth (2026-06-14, kernel-advanced a generated container)
+
+Let the macOS kernel auto-mount + continue a 1-commit S.A.K. container (it ran two
+of its own commits, xid3 -> xid5) and read back the spaceman:
+- `cib_addr` 189 -> **185** (the kernel rotates the cib through the same 3 IP slots).
+- `bm_free_head` @0x140: 1 -> **4**; `bm_free_tail` @0x142: 15 -> **2**.
+- ring xid @2520: -> 5; @2528: -> 3.
+- ring array @2536 (u16[16]): genesis `[FFFF,FFFF,3,4,..,15,0]` -> **`[1,2,FFFF,FFFF,5,6,..,15,0]`**.
+  The two `0xFFFF` in-use markers slide one index per commit ({0,1} -> {1,2} -> {2,3}),
+  i.e. the live ip-bitmap block walks 170 -> 171 -> 172; the freed index is appended
+  to the free-list chain (ring[0]=1, ring[1]=2 are the just-freed indices).
+- ip-bitmap byte0: 169=0x03, 170=0x3c, 171=**0x3f**, 172=**0x3f** (the kernel's live
+  ip-bitmaps mark all six IP blocks used once every slot has been cycled).
+
+So the lockstep ring advance per commit is: live ip-bitmap = `base + free_head`
+(write the IP usage), mark that index `0xFFFF`, free the index that ages out
+(append to the free-list, update free_tail), `free_head = ring[free_head]`, bump
+ring xid. KEY: even the kernel's own xid5 still draws the overallocation warning,
+which means the inconsistency is inherited from S.A.K. rotating the cib while
+leaving the ring at genesis - the cib rotation and ring advance MUST move together.
+Implement from this harvest next (one more multi-commit harvest pins the free-list
+chain exactly).
+
 ## Crash-proof test plan
 - Build a committed container; run one in-place commit but truncate the image
   after the cib/bitmap COW and before the new `nx_superblock` (and a second
