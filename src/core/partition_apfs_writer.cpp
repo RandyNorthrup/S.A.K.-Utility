@@ -332,6 +332,10 @@ constexpr uint8_t kApfsIpBitmapAdvancedUsage = 0x3f;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
 constexpr qsizetype kApfsSpacemanFqMainLimitOffset = 0x108;
+// sm_fq[IP].sfq_oldest_xid: the kernel advances this to the new transaction id on
+// every cib rotation (harvested x4->4, x5->5); leaving it at the genesis xid makes
+// the freed internal-pool slot read as still pending from genesis.
+constexpr qsizetype kApfsSpacemanFqIpOldestXidOffset = 0xD8;
 constexpr qsizetype kApfsChunkInfoCountOffset = 0x24;
 constexpr qsizetype kApfsChunkInfoEntriesOffset = 0x28;
 constexpr qsizetype kApfsChunkInfoEntryAddrOffset = 8;
@@ -1950,6 +1954,7 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             }
             if (ctx.newCibAddr != 0) {
                 writeLe64(&object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+                writeLe64(&object, kApfsSpacemanFqIpOldestXidOffset, ctx.newXid);
             }
             if (ctx.ipBitmapUsage != 0 && !advanceIpBitmapRing(&object, ctx, blockers)) {
                 return false;
