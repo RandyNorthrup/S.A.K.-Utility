@@ -29,11 +29,13 @@ namespace sak {
 namespace {
 
 constexpr uint64_t kDefaultMaxApfsPayloadBytes = 64ULL * 1024ULL * 1024ULL;
-// In-place checkpoint commits operate on a container size A1 already certified
-// (Apple fsck_apfs + kernel mount at 64 MiB / 256 MiB / 1 GiB); the in-place
-// engine is layout-general (computeGeneratedLayout), so the commit source cap
-// is raised to the certified 256 MiB single-CIB tier.
-constexpr uint64_t kApfsInPlaceCommitMaxBytes = 256ULL * 1024ULL * 1024ULL;
+// In-place checkpoint commits run on any single-CIB container (computeGeneratedLayout
+// is layout-general): apfsck-clean at 64 MiB / 256 MiB / 1 GiB, Apple fsck_apfs +
+// kernel mount certified through 256 MiB. The cap is the single-CIB format ceiling,
+// 126 chunks * 128 MiB = 15.75 GiB. Allocation is still chunk-0-confined (~127 MiB of
+// file data per container) until multi-chunk allocation lands; the container itself
+// is valid at any size up to this cap.
+constexpr uint64_t kApfsInPlaceCommitMaxBytes = 126ULL * 128ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumApfsContainerBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 constexpr qsizetype kMaximumApfsVolumeNameChars = 255;
