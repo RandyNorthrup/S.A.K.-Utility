@@ -1,0 +1,26 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.a2-crash-safety",
+    "milestone": "A2 (A-b): crash-safe in-place COW commits (interrupted-commit rollback)",
+    "status": "Passed (macOS kernel rolls a crash-interrupted commit back to the previous checkpoint intact; fsck_apfs clean bar one cosmetic internal-pool warning it self-answers). Crash-safety certified.",
+    "capability": "Two rotations make an interrupted in-place commit roll back cleanly. (1) The chunk-info block + allocation bitmap copy-on-write into the spare internal-pool slot (nextIpSlot round-robin 187->189->185->187), the spaceman cib_addr moves to the new cib in the re-emitted spaceman, and the cib's o_oid moves with it (a physical object's o_oid must equal its block). (2) The COW chain allocates from one of four disjoint regions chosen by xid ((newXid-3)%4; region 0 = the genesis free region so single commits are byte-identical), so a commit never lands on the blocks the previous few checkpoints still reference (descriptor ring depth 4). The live cib/bitmap are resolved from the spaceman before allocation (loadLiveAllocationSlot), since after the first rotation they are no longer the fixed genesis 187/188.",
+    "host_verify": "Unit test apfsWriter_crashBeforeCheckpointDurableRollsBack: 3 chained commits (alpha, bravo, charlie); the third's descriptor-ring checkpoint is voided (desc_base+desc_index, 2 blocks) and block 0 reverted to the previous checkpoint to simulate a crash before durability; the reader lists the previous checkpoint's two files (charlie discarded). Block scan confirms disjoint regions (xid3 201-206, xid4 265-270, xid5 329-334) so the previous commit's blocks survive. 124/124 unit tests pass.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-14T23:45:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; apfs.kext 2332.101.1; the crash-simulated container (volume ROLLBACK) attached raw as SATA disk0",
+        "method": [
+            "1. format ROLLBACK 64 MiB -> commit alpha -> commit bravo (last committed) -> commit charlie (interrupted).",
+            "2. Crash before durability: revert block 0 to the bravo checkpoint and zero charlie's descriptor-ring checkpoint.",
+            "3. Apple kernel auto-mounted /Volumes/ROLLBACK; `ls` showed alpha.txt + bravo.txt with charlie.txt absent (rolled back).",
+            "4. diskutil unmount; fsck_apfs -n /dev/rdisk0 -> Checking the checkpoint with transaction ID 4 (rolled back, not 5); The container appears to be OK."
+        ],
+        "kernel_behavior": "macOS kernel rolled the interrupted commit back to the previous checkpoint and mounted it read-write (ls = alpha.txt, bravo.txt; charlie.txt discarded).",
+        "apple_fsck_apfs": "Checking the checkpoint with transaction ID 4; volume ROLLBACK formatted by S.A.K. Utility APFS writer; fsroot tree / extent ref tree / free queue trees / volume object map space checked; The container /dev/rdisk0 appears to be OK.",
+        "evidence_png": "apfs-a2-crashsafe-rollback-fsck-PASS.png (rollback) and apfs-a2-crashsafe-rotation-fsck-PASS.png (rotated container at rest)"
+    },
+    "residual": "One cosmetic fsck warning 'overallocation detected in internal pool (0xbb+2)' that fsck self-answers no and passes: the sm_ip_bitmap (the IP-region allocation tracker, blocks 169-184) does not yet move with the cib rotation, so for a live cib other than the genesis 187 it still marks the genesis slots used. The container is valid, kernel-mountable and rolls back correctly; clearing the warning needs the deferred ip-bitmap ring update (mark the live+ghost IP slots used, free the third). The four-region chain allocator also caps a single commit's chain+data at the region size; the spaceman free-queue would be the general solution for arbitrary file sizes per commit.",
+    "gates": "clang-format + lizard + cppcheck clean; commits 1240750 (cib/bitmap rotation), 70aa6d8 (COW chain region rotation + rollback test), fd18349 (cib o_oid) - all pre-commit hooks passed, no bypass.",
+    "next": "sm_ip_bitmap ring update (clear the cosmetic warning), free-queue (arbitrary file sizes), then the A-b matrix flip (physical-USB destructive + this crash/rollback on Apple-written media).",
+    "error": ""
+}
