@@ -2438,6 +2438,10 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     writeLe64(&cib,
               kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
               alloc.rotation.newBitmap);
+    // The cib is a physical object: its o_oid must equal its block address, so it
+    // has to move with the rotation (or a rolled-back checkpoint whose live cib is
+    // not the genesis slot fails fsck with "cib at address 0x0").
+    writeLe64(&cib, kApfsObjectOidOffset, alloc.rotation.newCib);
     writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
     return stampAndWriteApfsBlock(
         alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
