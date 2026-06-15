@@ -5360,14 +5360,24 @@ void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry()
     QCOMPARE(fullCib.cib_count, static_cast<uint64_t>(1));
     QVERIFY(!fullCib.multi_cib);
 
-    // One chunk past a full CIB crosses into the multi-CIB (CAB) tier.
+    // One chunk past a full CIB crosses into the multi-CIB tier, but stays below
+    // the CAB tier: the spaceman lists the cib addresses inline (cab_count 0,
+    // matching Apple newfs_apfs / mkapfs), so the CAB tier only begins above
+    // cibs_per_cab (507) cibs.
     const auto multiCib =
         PartitionApfsWriter::computeContainerGeometry((kChunksPerCib + 1) * kBlocksPerChunk);
     QCOMPARE(multiCib.chunk_count, kChunksPerCib + 1);
     QCOMPARE(multiCib.cib_count, static_cast<uint64_t>(2));
     QVERIFY(multiCib.multi_cib);
-    QCOMPARE(multiCib.cab_count, static_cast<uint64_t>(1));
+    QCOMPARE(multiCib.cab_count, static_cast<uint64_t>(0));
     QCOMPARE(multiCib.ip_block_count, 3ULL * (2 + (kChunksPerCib + 1)));
+
+    // A 100 GiB container (the harvested Apple newfs_apfs reference) has 800
+    // chunks across 7 cibs with cab_count 0.
+    const auto hundredGiB = PartitionApfsWriter::computeContainerGeometry(26'214'400);
+    QCOMPARE(hundredGiB.chunk_count, static_cast<uint64_t>(800));
+    QCOMPARE(hundredGiB.cib_count, static_cast<uint64_t>(7));
+    QCOMPARE(hundredGiB.cab_count, static_cast<uint64_t>(0));
 
     // Partial trailing chunk rounds up.
     const auto partial = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk * 3 + 17);
@@ -6356,21 +6366,24 @@ void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() 
     QVERIFY2(multiChunk.ok, qPrintable(multiChunk.blockers.join(QStringLiteral("; "))));
     QVERIFY(QFileInfo::exists(multiChunkPath));
 
-    // Beyond 126 chunks a second chunk-info block (CAB tier) is required, which
-    // is not yet implemented; the writer must fail closed before creating any
-    // image (127 chunks = 4161536 blocks).
+    // Multi-CIB containers (>126 chunks) up to the inline cib-address-array /
+    // chunk-0 internal-pool limit are now emitted (single-CIB and multi-CIB are
+    // both apfsck/fsck_apfs-clean; validated host-side to 7 CIBs / 100 GiB). Only
+    // the CAB tier (cib_count > cibs_per_cab, 507) still fails closed. An 8 TiB
+    // target needs 65536 chunks across 521 cibs -> CAB tier; the writer must fail
+    // closed before creating any image.
     const QString oversizedImagePath = QDir(temp.path()).filePath(QStringLiteral("oversized.apfs"));
     const auto oversized = PartitionApfsWriter::buildImageOnlyFormatImage(
         {.image_path = oversizedImagePath,
-         .target_container_bytes = 127ULL * 32'768ULL * 4096ULL,
+         .target_container_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL,
          .block_size_bytes = 4096,
          .volume_name = QStringLiteral("SAK Oversized"),
          .options = options});
     QVERIFY(!oversized.ok);
     const QString oversizedBlockers = oversized.blockers.join(' ');
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("multi-CIB (CAB tier)")));
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("127 spaceman chunk(s)")));
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("2 chunk-info block(s)")));
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("CAB tier")));
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("65536 chunk(s)")));
+    QVERIFY(oversizedBlockers.contains(QStringLiteral("521 chunk-info block(s)")));
     QVERIFY(!QFileInfo::exists(oversizedImagePath));
 
     auto oldFalsePassFixture = apfsRawDetectionFixture();

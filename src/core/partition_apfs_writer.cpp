@@ -302,12 +302,6 @@ constexpr uint32_t kApfsSpacemanCibsPerCab = 507;
 constexpr uint64_t kGeneratedApfsSingleChunkMaxBlocks = kApfsSpacemanBlocksPerChunk;
 constexpr uint64_t kGeneratedApfsSingleChunkMaxBytes =
     kGeneratedApfsSingleChunkMaxBlocks * static_cast<uint64_t>(kSupportedApfsBlockSizeBytes);
-// Multi-chunk emission: a single chunk-info block addresses up to 126 chunks
-// (no CAB tier), i.e. 126 * 128 MiB = 15.75 GiB of container.
-constexpr uint64_t kGeneratedApfsMaxChunkCount = 126;
-constexpr uint64_t kGeneratedApfsMultiChunkMaxBytes =
-    kGeneratedApfsMaxChunkCount * kApfsSpacemanBlocksPerChunk *
-    static_cast<uint64_t>(kSupportedApfsBlockSizeBytes);
 constexpr uint32_t kApfsSpacemanFlagVersioned = 1;
 constexpr qsizetype kApfsSpacemanCibAddrArrayOffset = 2568;
 constexpr qsizetype kApfsSpacemanIpBmTxMultiplierOffset = 0x94;
@@ -326,13 +320,15 @@ constexpr qsizetype kApfsSpacemanIpBmRingXidOffset = 2520;
 constexpr qsizetype kApfsSpacemanIpBmRingSeqOffset = 2528;
 constexpr qsizetype kApfsSpacemanIpBmRingArrayOffset = 2536;
 constexpr uint16_t kApfsSpacemanIpBmRingInUse = 0xFFFF;
-// The IP-usage bitmap an advanced ring slot carries: once the rotation has touched
-// the spare slot all six IP blocks are cumulatively allocated (0x3f), matching the
-// kernel-advanced harvest (the genesis 0x0f only reflects the untouched spare).
-constexpr uint8_t kApfsIpBitmapAdvancedUsage = 0x3f;
-// On a multi-chunk overflow chunk 1's bitmap occupies the seventh IP block (ip_base
-// + 6), so the sm_ip_bitmap marks one more block used.
-constexpr uint8_t kApfsIpBitmapMultiChunkUsage = 0x7f;
+// IP-usage bitmap block COUNTS (buildIpBitmapBlock marks this many low IP blocks
+// used). Once the crash-safe rotation has touched the spare slot, all three
+// cib/bitmap rotation slots (3 * slot_stride blocks) are cumulatively allocated;
+// single-CIB slot_stride is 2, so this is 6 blocks (low byte 0x3f), matching the
+// kernel-advanced harvest. Multi-CIB scales the count to 3 * (cib_count + 1).
+constexpr uint8_t kApfsIpBitmapAdvancedUsage = 6;
+// On a multi-chunk overflow chunk 1's bitmap occupies the next IP block after the
+// cib rotation region, so the sm_ip_bitmap marks one more block used.
+constexpr uint8_t kApfsIpBitmapMultiChunkUsage = 7;
 // Free-queue tree_node_limit values mirrored from the reference container;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
@@ -348,6 +344,7 @@ constexpr qsizetype kApfsSpacemanFqIpOldestXidOffset = 0xD8;
 // pending blocks, sfq_oldest_xid = the oldest still-pending transaction.
 constexpr qsizetype kApfsSpacemanFqMainCountOffset = 0xF0;
 constexpr qsizetype kApfsSpacemanFqMainOldestXidOffset = 0x100;
+constexpr qsizetype kApfsChunkInfoIndexOffset = 0x20;
 constexpr qsizetype kApfsChunkInfoCountOffset = 0x24;
 constexpr qsizetype kApfsChunkInfoEntriesOffset = 0x28;
 constexpr qsizetype kApfsChunkInfoEntryAddrOffset = 8;
@@ -1527,12 +1524,17 @@ QByteArray buildEmptyVariableTreeBlock(uint32_t blockSize,
     return block;
 }
 
-QByteArray buildIpBitmapBlock(uint32_t blockSize, uint8_t usageBits) {
-    // Raw internal-pool usage bitmap: the ghost slot marks the ghost
-    // chunk-info block and bitmap (0x3); the live slot additionally marks the
-    // live pair (0xF).
+QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
+    // Raw internal-pool usage bitmap: marks the first `usedBlocks` IP-region
+    // blocks used. The ghost checkpoint marks its own cib(s)+bitmap slot
+    // (single-CIB: 2 blocks -> 0x3); the live checkpoint additionally marks the
+    // ghost pair it still references via the IP free-queue (single-CIB: 4 ->
+    // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so
+    // the run can span several bytes.
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
-    block[0] = static_cast<char>(usageBits);
+    for (uint64_t bit = 0; bit < usedBlocks; ++bit) {
+        block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
+    }
     return block;
 }
 
@@ -1542,10 +1544,15 @@ struct ApfsSpacemanParams {
     uint64_t reservedBlocks;
     uint64_t xid;
     bool genesis;
+    // Live chunk-info-block addresses this checkpoint's spaceman publishes in its
+    // cib-address array (offset 2568). Single-CIB containers pass one address;
+    // multi-CIB (>126 chunks, cab_count 0) pass cib_count addresses.
+    QVector<uint64_t> cibAddrs;
 };
 
 QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blockers) {
-    const auto [blockSize, blockCount, reservedBlocks, xid, genesis] = params;
+    const auto& [blockSize, blockCount, reservedBlocks, xid, genesis, cibAddrs] = params;
+    const uint64_t cibCount = static_cast<uint64_t>(cibAddrs.size());
     QByteArray block =
         newApfsObjectBlock(blockSize, kApfsFormatSpacemanOid, xid, kApfsObjectTypeSpaceman);
     const uint64_t freeBlocks = blockCount > reservedBlocks ? blockCount - reservedBlocks : 0;
@@ -1561,7 +1568,9 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     writeLe64(&block,
               kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceChunkCountOffset,
               chunkCount);
-    writeLe32(&block, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset, 1);
+    writeLe32(&block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset,
+              static_cast<uint32_t>(cibCount));
     writeLe64(&block,
               kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceFreeCountOffset,
               freeBlocks);
@@ -1571,10 +1580,11 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     writeLe32(&block, kApfsSpacemanFlagsOffset, kApfsSpacemanFlagVersioned);
     writeLe32(&block, kApfsSpacemanIpBmTxMultiplierOffset, kApfsSpacemanIpBmTxMultiplier);
     // Internal-pool size scales with the allocator structures apfsck/fsck_apfs
-    // require: ip_block_count = 3 * (chunk_count + cib_count + cab_count). One
-    // CIB (no CAB) covers <=126 chunks, so this is 3 * (chunk_count + 1).
-    // Validated against Apple newfs_apfs output (1-chunk 6; 8-chunk 27).
-    const uint64_t ipBlockCount = 3 * (chunkCount + 1);
+    // require: ip_block_count = 3 * (chunk_count + cib_count + cab_count). With
+    // cab_count 0 (<=507 cibs) this is 3 * (chunk_count + cib_count). Validated
+    // against Apple newfs_apfs output (1-chunk/1-cib 6; 8-chunk 27) and mkapfs
+    // (128-chunk/2-cib -> 390).
+    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount);
     writeLe64(&block, kApfsSpacemanIpBlockCountOffset, ipBlockCount);
     writeLe32(&block, kApfsSpacemanIpBmSizeOffset, 1);
     writeLe32(&block, kApfsSpacemanIpBmBlockCountOffset, kApfsFormatIpBitmapBlocks);
@@ -1605,7 +1615,9 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
             writeLe16(&block, 2536 + index * 2, static_cast<uint16_t>(index + 1));
         }
         writeLe16(&block, 2536 + 15 * 2, 0xFFFF);
-        writeLe64(&block, kApfsSpacemanCibAddrArrayOffset, kApfsFormatGhostChunkInfoBlock);
+        for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
+            writeLe64(&block, kApfsSpacemanCibAddrArrayOffset + i * 8, cibAddrs.at(i));
+        }
     } else {
         // Two ring slots in use (genesis + live transactions); the live free
         // queues reference their ephemeral B-trees and carry the counts of
@@ -1618,13 +1630,18 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
         for (uint16_t index = 2; index < 15; ++index) {
             writeLe16(&block, 2536 + index * 2, static_cast<uint16_t>(index + 1));
         }
-        writeLe64(&block, 0xC8, 2);
+        // sm_fq[IP] holds the genesis cib/bitmap slot pending reclamation: one
+        // run of slot_stride (cib_count + 1) blocks. The live ip allocation
+        // bitmap therefore marks the genesis slot used on top of the live slot.
+        writeLe64(&block, 0xC8, cibCount + 1);
         writeLe64(&block, 0xD0, kApfsFormatFqIpTreeOid);
         writeLe64(&block, 0xD8, kApfsFormatXid);
         writeLe64(&block, 0xF0, 2);
         writeLe64(&block, 0xF8, kApfsFormatFqMainTreeOid);
         writeLe64(&block, 0x100, kApfsFormatXid);
-        writeLe64(&block, kApfsSpacemanCibAddrArrayOffset, kApfsFormatChunkInfoBlock);
+        for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
+            writeLe64(&block, kApfsSpacemanCibAddrArrayOffset + i * 8, cibAddrs.at(i));
+        }
     }
     stampApfsObjectBlock(&block, blockers);
     return block;
@@ -1637,17 +1654,39 @@ struct ApfsChunkInfoParams {
     uint64_t xid;
     uint64_t selfBlock;
     uint64_t bitmapBlock;
+    // The chunk range [chunkStart, chunkStart + chunkSpan) this chunk-info block
+    // covers. Single-CIB containers pass the whole device (start 0, span =
+    // chunk_count); multi-CIB split the device across cib_count blocks of up to
+    // chunks_per_cib (126) chunks each. cibIndex is the block's position in the
+    // spaceman cib-address array (apfsck checks cib_index matches).
+    uint64_t chunkStart;
+    uint64_t chunkSpan;
+    uint64_t cibIndex;
 };
 
 QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* blockers) {
-    const auto [blockSize, blockCount, reservedBlocks, xid, selfBlock, bitmapBlock] = params;
-    QByteArray block = newApfsObjectBlock(blockSize, selfBlock, xid, kApfsObjectTypeChunkInfoBlock);
-    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                                kApfsSpacemanBlocksPerChunk;
-    writeLe32(&block, kApfsChunkInfoCountOffset, static_cast<uint32_t>(chunkCount));
-    for (uint64_t chunk = 0; chunk < chunkCount; ++chunk) {
+    const auto [blockSize,
+                blockCount,
+                reservedBlocks,
+                xid,
+                selfBlock,
+                bitmapBlock,
+                chunkStart,
+                chunkSpan,
+                cibIndex] = params;
+    // apfsck requires a cib's object xid to equal the newest transaction id among
+    // its chunks (a cib only advances when one of its chunks changes). Only chunk
+    // 0 carries the live xid on a fresh container; a cib that does not hold chunk
+    // 0 is all-genesis, so its object xid stays at the genesis transaction.
+    const uint64_t cibObjXid = chunkStart == 0 ? xid : kApfsFormatGenesisXid;
+    QByteArray block =
+        newApfsObjectBlock(blockSize, selfBlock, cibObjXid, kApfsObjectTypeChunkInfoBlock);
+    writeLe32(&block, kApfsChunkInfoIndexOffset, static_cast<uint32_t>(cibIndex));
+    writeLe32(&block, kApfsChunkInfoCountOffset, static_cast<uint32_t>(chunkSpan));
+    for (uint64_t index = 0; index < chunkSpan; ++index) {
+        const uint64_t chunk = chunkStart + index;
         const qsizetype entry = kApfsChunkInfoEntriesOffset +
-                                static_cast<qsizetype>(chunk) * kApfsChunkInfoEntryStride;
+                                static_cast<qsizetype>(index) * kApfsChunkInfoEntryStride;
         const uint64_t chunkAddr = chunk * kApfsSpacemanBlocksPerChunk;
         const uint64_t chunkBlocks = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
                                                     blockCount - chunkAddr);
@@ -2343,10 +2382,59 @@ QString multiExtentPreserveBlocker(QLatin1StringView purpose) {
         .arg(purpose);
 }
 
+// Number of chunk-info blocks a device of `chunkCount` chunks needs: one cib per
+// chunks_per_cib (126) chunks. A container of <=126 chunks is single-CIB.
+uint64_t cibCountForChunks(uint64_t chunkCount) {
+    if (chunkCount == 0) {
+        return 1;
+    }
+    return (chunkCount + kApfsSpacemanChunksPerCib - 1) / kApfsSpacemanChunksPerCib;
+}
+
+// Internal-pool placement of a generated container's chunk-info block(s) and the
+// chunk-0 allocation bitmap. The IP region (ip_base = 185) is laid out as three
+// crash-safe rotation slots, each holding cib_count chunk-info blocks followed by
+// one chunk-0 bitmap (slot stride = cib_count + 1): the genesis (xid 1) slot, the
+// live (xid 2) slot, and a spare the first commit rotates into. Single-CIB
+// (cib_count 1) reduces to the certified {185,186}/{187,188}/{189,190} layout.
+// Chunks 1+ are fully free on a fresh container (no bitmap), so only chunk 0 has a
+// bitmap block per slot. Multi-CIB places its later cibs in the same slot, right
+// after cib 0.
+struct ApfsMultiCibLayout {
+    uint64_t cibCount{1};
+    uint64_t ipBase{kApfsFormatIpBaseBlock};
+    uint64_t slotStride{2};       // cib_count + 1 blocks per rotation slot
+    QVector<uint64_t> ghostCibs;  // genesis (xid 1) chunk-info blocks
+    uint64_t ghostBitmap{0};      // genesis chunk-0 allocation bitmap
+    QVector<uint64_t> liveCibs;   // live (xid 2) chunk-info blocks
+    uint64_t liveBitmap{0};       // live chunk-0 allocation bitmap
+    uint64_t genesisIpUsage{2};   // IP blocks the genesis checkpoint marks used
+    uint64_t liveIpUsage{4};      // IP blocks the live checkpoint marks used
+};
+
+ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
+    const uint64_t cibCount = cibCountForChunks(chunkCount);
+    ApfsMultiCibLayout layout;
+    layout.cibCount = cibCount;
+    layout.slotStride = cibCount + 1;
+    uint64_t block = layout.ipBase;
+    for (uint64_t i = 0; i < cibCount; ++i) {
+        layout.ghostCibs.append(block++);
+    }
+    layout.ghostBitmap = block++;
+    for (uint64_t i = 0; i < cibCount; ++i) {
+        layout.liveCibs.append(block++);
+    }
+    layout.liveBitmap = block;
+    layout.genesisIpUsage = layout.slotStride;   // one slot
+    layout.liveIpUsage = 2 * layout.slotStride;  // ghost + live slots
+    return layout;
+}
+
 // Locations of a generated container's chunk-0 allocation structures. The live
 // chunk-info block and its bitmap sit at fixed addresses inside the internal
 // pool regardless of size, but the post-pool free region shifts by
-// ipDelta = 3*(chunk_count+1) - kApfsFormatIpBlockCount (the formula
+// ipDelta = 3*(chunk_count+cib_count) - kApfsFormatIpBlockCount (the formula
 // emptyFormatBlocks uses), so the in-place engine works on any container size,
 // not only the 64 MiB envelope. Allocation stays inside chunk 0 (the only chunk
 // with a populated bitmap on a fresh container).
@@ -2355,16 +2443,19 @@ struct ApfsGeneratedLayout {
     uint64_t chunkInfo{0};
     uint64_t seedData{0};
     uint64_t chunk0Blocks{0};
+    uint64_t cibCount{1};  // chunk-info blocks per checkpoint slot (multi-CIB > 1)
 };
 
 ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    const uint64_t ipDelta = 3 * (chunkCount + 1) - kApfsFormatIpBlockCount;
-    return {.chunkBitmap = kApfsFormatChunkBitmapBlock,
-            .chunkInfo = kApfsFormatChunkInfoBlock,
+    const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
+    const uint64_t ipDelta = 3 * (chunkCount + mcib.cibCount) - kApfsFormatIpBlockCount;
+    return {.chunkBitmap = mcib.liveBitmap,
+            .chunkInfo = mcib.liveCibs.first(),
             .seedData = kApfsFormatSeedFileDataBlock + ipDelta,
-            .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk)};
+            .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk),
+            .cibCount = mcib.cibCount};
 }
 
 // One internal-pool cib/bitmap slot. A single-chunk generated container's IP
@@ -3721,6 +3812,40 @@ QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose, uint64_t
         .arg(geometry.multi_cib ? QStringLiteral(" (multi-CIB CAB tier)") : QString());
 }
 
+// Empty when S.A.K. can format a container of `blockCount` blocks, otherwise the
+// blocker. S.A.K. emits single-CIB and multi-CIB (cab_count 0) containers: the
+// cib-address array must fit inline in the spaceman after offset 2568, and the
+// whole internal pool + post-pool metadata prefix must fit inside chunk 0 (the
+// only chunk with an allocation bitmap on a fresh container). The CAB tier
+// (cab_count > 0) and chunk-1 metadata spill are not yet emitted.
+QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
+                                            uint64_t blockCount,
+                                            uint32_t blockSize) {
+    const PartitionApfsContainerGeometry geometry =
+        PartitionApfsWriter::computeContainerGeometry(blockCount, blockSize);
+    const uint64_t ipDelta = 3 * (geometry.chunk_count + geometry.cib_count) -
+                             kApfsFormatIpBlockCount;
+    const uint64_t seedData = kApfsFormatSeedFileDataBlock + ipDelta;
+    const bool arrayFits = kApfsSpacemanCibAddrArrayOffset +
+                               static_cast<qsizetype>(geometry.cib_count) * 8 <=
+                           static_cast<qsizetype>(blockSize);
+    if (geometry.cab_count == 0 && arrayFits && seedData < kApfsSpacemanBlocksPerChunk) {
+        return QString();
+    }
+    return QStringLiteral(
+               "APFS %1 supports S.A.K.-generated single-CIB and multi-CIB (cab_count 0) "
+               "containers up to the point where the chunk-info-block address array and the "
+               "internal pool fit chunk 0; this %2-block target needs %3 chunk(s) across %4 "
+               "chunk-info block(s) (%5), which requires CAB-tier spaceman emission and Apple "
+               "fsck validation")
+        .arg(purpose)
+        .arg(blockCount)
+        .arg(geometry.chunk_count)
+        .arg(geometry.cib_count)
+        .arg(geometry.cab_count > 0 ? QStringLiteral("CAB tier")
+                                    : QStringLiteral("metadata exceeds chunk 0"));
+}
+
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
     if (context.geometry.blockSize != kSupportedApfsBlockSizeBytes ||
         context.geometry.blockCount < kApfsFormatSeedFileDataBlock) {
@@ -4433,9 +4558,14 @@ PartitionApfsWritePreflight preflightNewContainerFormat(uint64_t target_containe
         result.blockers.append(
             QStringLiteral("APFS format requires at least 64 MiB target container size"));
     }
-    if (target_container_bytes > kGeneratedApfsMultiChunkMaxBytes) {
-        result.blockers.append(generatedApfsSingleChunkLimitBlocker(
-            QLatin1StringView("format"), target_container_bytes / kSupportedApfsBlockSizeBytes));
+    if (block_size_bytes == kSupportedApfsBlockSizeBytes) {
+        const QString formatBlocker =
+            generatedApfsContainerFormatBlocker(QLatin1StringView("format"),
+                                                target_container_bytes / block_size_bytes,
+                                                block_size_bytes);
+        if (!formatBlocker.isEmpty()) {
+            result.blockers.append(formatBlocker);
+        }
     }
     if (block_size_bytes != kSupportedApfsBlockSizeBytes) {
         result.blockers.append(
@@ -4862,9 +4992,14 @@ PartitionApfsContainerGeometry PartitionApfsWriter::computeContainerGeometry(uin
         geometry.cib_count = 1;
     }
     geometry.multi_cib = geometry.cib_count > 1;
-    geometry.cab_count = geometry.multi_cib ? (geometry.cib_count + geometry.cibs_per_cab - 1) /
-                                                  geometry.cibs_per_cab
-                                            : 0;
+    // The CAB tier (chunk-info ADDRESS blocks) is only needed when the cib count
+    // exceeds cibs_per_cab (507); below that the spaceman lists the cib addresses
+    // inline, so cab_count stays 0 (matching Apple newfs_apfs / mkapfs, e.g. a
+    // 100 GiB container has 7 cibs and cab_count 0).
+    geometry.cab_count = geometry.cib_count > geometry.cibs_per_cab
+                             ? (geometry.cib_count + geometry.cibs_per_cab - 1) /
+                                   geometry.cibs_per_cab
+                             : 0;
     // Internal-pool block count derived from real Apple newfs_apfs containers
     // (see PartitionApfsContainerGeometry doc): 3 * (cib_count + chunk_count).
     geometry.ip_block_count = 3ULL * (geometry.cib_count + geometry.chunk_count);
@@ -5166,12 +5301,14 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                           QStringList* blockers) {
     const QByteArray containerUuid = randomApfsUuid();
     const QByteArray volumeUuid = randomApfsUuid();
-    // The internal pool grows to 3*(chunk_count+1) blocks; every object placed
-    // after the internal pool shifts by the same delta so the IP region and the
-    // post-pool metadata never overlap (apfsck marks the whole IP region used).
+    // The internal pool grows to 3*(chunk_count+cib_count) blocks; every object
+    // placed after the internal pool shifts by the same delta so the IP region
+    // and the post-pool metadata never overlap (apfsck marks the whole IP region
+    // used). Multi-CIB (>126 chunks) widens each rotation slot to cib_count cibs.
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    const uint64_t ipDelta = 3 * (chunkCount + 1) - kApfsFormatIpBlockCount;
+    const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
+    const uint64_t ipDelta = 3 * (chunkCount + mcib.cibCount) - kApfsFormatIpBlockCount;
     const uint64_t ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
     const uint64_t ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
     const uint64_t ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
@@ -5217,119 +5354,143 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
          kApfsObjectSubtypeFreeQueue,
          kApfsFormatFqMainTreeOid,
          kApfsFormatFqMainTreeBlock}};
-    return {{kApfsFormatNxsbBlock, nxsb},
-            {kApfsFormatGenesisMapBlock,
-             buildCheckpointMapBlock(request.block_size_bytes,
-                                     kApfsFormatGenesisMapBlock,
-                                     kApfsFormatGenesisXid,
-                                     genesisMappings,
-                                     blockers)},
-            {kApfsFormatGenesisNxsbBlock, genesisNxsb},
-            {kApfsFormatCheckpointMapBlock,
-             buildCheckpointMapBlock(request.block_size_bytes,
-                                     kApfsFormatCheckpointMapBlock,
-                                     kApfsFormatXid,
-                                     liveMappings,
-                                     blockers)},
-            {kApfsFormatCheckpointNxsbCopyBlock, nxsb},
-            {kApfsFormatGenesisSpacemanBlock,
-             buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                                 .blockCount = blockCount,
-                                 .reservedBlocks = ghostReserved,
-                                 .xid = kApfsFormatGenesisXid,
-                                 .genesis = true},
-                                blockers)},
-            {kApfsFormatGenesisReaperBlock,
-             buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
-            {kApfsFormatSpacemanBlock,
-             buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                                 .blockCount = blockCount,
-                                 .reservedBlocks = seedData,
-                                 .xid = kApfsFormatXid,
-                                 .genesis = false},
-                                blockers)},
-            {kApfsFormatReaperBlock,
-             buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
-            {kApfsFormatFqIpTreeBlock,
-             buildFreeQueueTreeBlock(request.block_size_bytes,
-                                     kApfsFormatFqIpTreeOid,
-                                     kApfsFormatGhostChunkInfoBlock,
-                                     2,
-                                     blockers)},
-            {kApfsFormatFqMainTreeBlock,
-             buildFreeQueueTreeBlock(
-                 request.block_size_bytes, kApfsFormatFqMainTreeOid, ghostOmap, 2, blockers)},
-            {kApfsFormatIpBitmapBaseBlock, buildIpBitmapBlock(request.block_size_bytes, 0x3)},
-            {kApfsFormatIpBitmapBaseBlock + 1, buildIpBitmapBlock(request.block_size_bytes, 0xF)},
-            {kApfsFormatGhostChunkInfoBlock,
+    QVector<ApfsImageBlock> blocks{
+        {kApfsFormatNxsbBlock, nxsb},
+        {kApfsFormatGenesisMapBlock,
+         buildCheckpointMapBlock(request.block_size_bytes,
+                                 kApfsFormatGenesisMapBlock,
+                                 kApfsFormatGenesisXid,
+                                 genesisMappings,
+                                 blockers)},
+        {kApfsFormatGenesisNxsbBlock, genesisNxsb},
+        {kApfsFormatCheckpointMapBlock,
+         buildCheckpointMapBlock(request.block_size_bytes,
+                                 kApfsFormatCheckpointMapBlock,
+                                 kApfsFormatXid,
+                                 liveMappings,
+                                 blockers)},
+        {kApfsFormatCheckpointNxsbCopyBlock, nxsb},
+        {kApfsFormatGenesisSpacemanBlock,
+         buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                             .blockCount = blockCount,
+                             .reservedBlocks = ghostReserved,
+                             .xid = kApfsFormatGenesisXid,
+                             .genesis = true,
+                             .cibAddrs = mcib.ghostCibs},
+                            blockers)},
+        {kApfsFormatGenesisReaperBlock,
+         buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
+        {kApfsFormatSpacemanBlock,
+         buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                             .blockCount = blockCount,
+                             .reservedBlocks = seedData,
+                             .xid = kApfsFormatXid,
+                             .genesis = false,
+                             .cibAddrs = mcib.liveCibs},
+                            blockers)},
+        {kApfsFormatReaperBlock,
+         buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
+        {kApfsFormatFqIpTreeBlock,
+         buildFreeQueueTreeBlock(request.block_size_bytes,
+                                 kApfsFormatFqIpTreeOid,
+                                 mcib.ghostCibs.first(),
+                                 mcib.slotStride,
+                                 blockers)},
+        {kApfsFormatFqMainTreeBlock,
+         buildFreeQueueTreeBlock(
+             request.block_size_bytes, kApfsFormatFqMainTreeOid, ghostOmap, 2, blockers)},
+        {ghostOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = ghostOmap,
+                              .treeBlock = ghostOmapTree,
+                              .xid = kApfsFormatGenesisXid,
+                              .omapFlags = 1},
+                             blockers)},
+        {ghostOmapTree,
+         buildObjectMapTreeBlock(
+             request.block_size_bytes, ghostOmapTree, {}, kApfsFormatGenesisXid, blockers)},
+        {volOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = volOmap,
+                              .treeBlock = volOmapTree,
+                              .xid = kApfsFormatXid,
+                              .omapFlags = 0},
+                             blockers)},
+        {volOmapTree,
+         buildObjectMapTreeBlock(
+             request.block_size_bytes, volOmapTree, volumeMappings, kApfsFormatXid, blockers)},
+        {extentRef,
+         buildEmptyVariableTreeBlock(
+             request.block_size_bytes, extentRef, kApfsObjectSubtypeExtentRef, blockers)},
+        {snapMeta,
+         buildEmptyVariableTreeBlock(
+             request.block_size_bytes, snapMeta, kApfsObjectSubtypeSnapMeta, blockers)},
+        {rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers)},
+        {volSuper,
+         buildVolumeSuperblock({.blockSize = request.block_size_bytes,
+                                .volumeName = volumeName,
+                                .volumeUuid = volumeUuid,
+                                .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
+                                .volumeOmapBlock = volOmap,
+                                .extentRefTreeBlock = extentRef,
+                                .snapMetaTreeBlock = snapMeta},
+                               blockers)},
+        {containerOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = containerOmap,
+                              .treeBlock = containerOmapTree,
+                              .xid = kApfsFormatXid,
+                              .omapFlags = 1},
+                             blockers)},
+        {containerOmapTree,
+         buildObjectMapTreeBlock(request.block_size_bytes,
+                                 containerOmapTree,
+                                 containerMappings,
+                                 kApfsFormatXid,
+                                 blockers)}};
+
+    // Internal-pool chunk-info blocks + chunk-0 allocation bitmaps. Each of the
+    // genesis (xid 1) and live (xid 2) checkpoints publishes cib_count chunk-info
+    // blocks (126 chunks each) followed by one chunk-0 bitmap; chunks 1+ are fully
+    // free on a fresh container (no per-chunk bitmap). Single-CIB reduces to the
+    // certified {185,186} ghost / {187,188} live blocks.
+    blocks.append({kApfsFormatIpBitmapBaseBlock,
+                   buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
+    blocks.append({kApfsFormatIpBitmapBaseBlock + 1,
+                   buildIpBitmapBlock(request.block_size_bytes, mcib.liveIpUsage)});
+    for (uint64_t cib = 0; cib < mcib.cibCount; ++cib) {
+        const uint64_t chunkStart = cib * kApfsSpacemanChunksPerCib;
+        const uint64_t chunkSpan = std::min<uint64_t>(kApfsSpacemanChunksPerCib,
+                                                      chunkCount - chunkStart);
+        blocks.append(
+            {mcib.ghostCibs.at(static_cast<qsizetype>(cib)),
              buildChunkInfoBlock({.blockSize = request.block_size_bytes,
                                   .blockCount = blockCount,
                                   .reservedBlocks = ghostReserved,
                                   .xid = kApfsFormatGenesisXid,
-                                  .selfBlock = kApfsFormatGhostChunkInfoBlock,
-                                  .bitmapBlock = kApfsFormatGhostChunkBitmapBlock},
-                                 blockers)},
-            {kApfsFormatGhostChunkBitmapBlock,
-             buildChunkBitmapBlock(request.block_size_bytes, ghostReserved)},
-            {kApfsFormatChunkInfoBlock,
+                                  .selfBlock = mcib.ghostCibs.at(static_cast<qsizetype>(cib)),
+                                  .bitmapBlock = mcib.ghostBitmap,
+                                  .chunkStart = chunkStart,
+                                  .chunkSpan = chunkSpan,
+                                  .cibIndex = cib},
+                                 blockers)});
+        blocks.append(
+            {mcib.liveCibs.at(static_cast<qsizetype>(cib)),
              buildChunkInfoBlock({.blockSize = request.block_size_bytes,
                                   .blockCount = blockCount,
                                   .reservedBlocks = seedData,
                                   .xid = kApfsFormatXid,
-                                  .selfBlock = kApfsFormatChunkInfoBlock,
-                                  .bitmapBlock = kApfsFormatChunkBitmapBlock},
-                                 blockers)},
-            {kApfsFormatChunkBitmapBlock,
-             buildChunkBitmapBlock(request.block_size_bytes, seedData)},
-            {ghostOmap,
-             buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                                  .oid = ghostOmap,
-                                  .treeBlock = ghostOmapTree,
-                                  .xid = kApfsFormatGenesisXid,
-                                  .omapFlags = 1},
-                                 blockers)},
-            {ghostOmapTree,
-             buildObjectMapTreeBlock(
-                 request.block_size_bytes, ghostOmapTree, {}, kApfsFormatGenesisXid, blockers)},
-            {volOmap,
-             buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                                  .oid = volOmap,
-                                  .treeBlock = volOmapTree,
-                                  .xid = kApfsFormatXid,
-                                  .omapFlags = 0},
-                                 blockers)},
-            {volOmapTree,
-             buildObjectMapTreeBlock(
-                 request.block_size_bytes, volOmapTree, volumeMappings, kApfsFormatXid, blockers)},
-            {extentRef,
-             buildEmptyVariableTreeBlock(
-                 request.block_size_bytes, extentRef, kApfsObjectSubtypeExtentRef, blockers)},
-            {snapMeta,
-             buildEmptyVariableTreeBlock(
-                 request.block_size_bytes, snapMeta, kApfsObjectSubtypeSnapMeta, blockers)},
-            {rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers)},
-            {volSuper,
-             buildVolumeSuperblock({.blockSize = request.block_size_bytes,
-                                    .volumeName = volumeName,
-                                    .volumeUuid = volumeUuid,
-                                    .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
-                                    .volumeOmapBlock = volOmap,
-                                    .extentRefTreeBlock = extentRef,
-                                    .snapMetaTreeBlock = snapMeta},
-                                   blockers)},
-            {containerOmap,
-             buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                                  .oid = containerOmap,
-                                  .treeBlock = containerOmapTree,
-                                  .xid = kApfsFormatXid,
-                                  .omapFlags = 1},
-                                 blockers)},
-            {containerOmapTree,
-             buildObjectMapTreeBlock(request.block_size_bytes,
-                                     containerOmapTree,
-                                     containerMappings,
-                                     kApfsFormatXid,
-                                     blockers)}};
+                                  .selfBlock = mcib.liveCibs.at(static_cast<qsizetype>(cib)),
+                                  .bitmapBlock = mcib.liveBitmap,
+                                  .chunkStart = chunkStart,
+                                  .chunkSpan = chunkSpan,
+                                  .cibIndex = cib},
+                                 blockers)});
+    }
+    blocks.append(
+        {mcib.ghostBitmap, buildChunkBitmapBlock(request.block_size_bytes, ghostReserved)});
+    blocks.append({mcib.liveBitmap, buildChunkBitmapBlock(request.block_size_bytes, seedData)});
+    return blocks;
 }
 
 bool writeImageBlocks(QIODevice* device,
@@ -5554,7 +5715,8 @@ QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStrin
                              .blockCount = rewrite.blockCount,
                              .reservedBlocks = allocatedBlocks,
                              .xid = kApfsFormatXid,
-                             .genesis = false},
+                             .genesis = false,
+                             .cibAddrs = {kApfsFormatChunkInfoBlock}},
                             blockers)},
         {kApfsFormatChunkInfoBlock,
          buildChunkInfoBlock({.blockSize = rewrite.blockSize,
@@ -5562,7 +5724,11 @@ QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite, QStrin
                               .reservedBlocks = allocatedBlocks,
                               .xid = kApfsFormatXid,
                               .selfBlock = kApfsFormatChunkInfoBlock,
-                              .bitmapBlock = kApfsFormatChunkBitmapBlock},
+                              .bitmapBlock = kApfsFormatChunkBitmapBlock,
+                              .chunkStart = 0,
+                              .chunkSpan = (rewrite.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                           kApfsSpacemanBlocksPerChunk,
+                              .cibIndex = 0},
                              blockers)},
         {kApfsFormatChunkBitmapBlock, buildChunkBitmapBlock(rewrite.blockSize, allocatedBlocks)}};
     for (const auto& file : rewrite.files) {
