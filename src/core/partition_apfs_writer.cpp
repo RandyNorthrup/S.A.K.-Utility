@@ -706,6 +706,15 @@ struct ApfsBtreeKeyValue {
     QByteArray value;
 };
 
+// One contiguous run of a file's data: the file-logical block where the run
+// starts, its physical start block, and its block count. A file whose data is
+// fragmented across free space carries several of these.
+struct ApfsDataExtent {
+    uint64_t logicalBlock{0};
+    uint64_t paddr{0};
+    uint64_t blockCount{0};
+};
+
 struct ApfsRootFilePayload {
     QString fileName;
     QString parentDirectoryName;
@@ -714,7 +723,26 @@ struct ApfsRootFilePayload {
     uint64_t fileId{0};
     uint64_t privateId{0};
     uint64_t dataStartBlock{0};
+    // Empty: the data is the single contiguous run at dataStartBlock (the original
+    // path, byte-identical). Non-empty: an explicit multi-run extent list.
+    QVector<ApfsDataExtent> dataExtents;
 };
+
+// Group ascending block addresses into contiguous runs, assigning each run its
+// file-logical start block (the cumulative block index).
+QVector<ApfsDataExtent> groupContiguousRuns(const QVector<uint64_t>& blocks) {
+    QVector<ApfsDataExtent> extents;
+    uint64_t logical = 0;
+    for (uint64_t block : blocks) {
+        if (!extents.isEmpty() && extents.last().paddr + extents.last().blockCount == block) {
+            extents.last().blockCount += 1;
+        } else {
+            extents.append({logical, block, 1});
+        }
+        logical += 1;
+    }
+    return extents;
+}
 
 struct ApfsRootDirectoryPayload {
     QString directoryName;
@@ -839,23 +867,36 @@ QByteArray dstreamIdValue() {
     return value;
 }
 
-QByteArray fileExtentKey(uint64_t privateId) {
+QByteArray fileExtentKey(uint64_t privateId, uint64_t logicalByteOffset) {
     QByteArray key = fsKey(privateId, kApfsRecordFileExtent, kApfsFileExtentKeyBytes);
-    writeLe64(&key, kApfsFileExtentKeyLogicalOffset, 0);
+    writeLe64(&key, kApfsFileExtentKeyLogicalOffset, logicalByteOffset);
     return key;
 }
 
-QByteArray fileExtentValue(uint64_t sizeBytes, uint64_t dataStartBlock) {
+QByteArray fileExtentValue(uint64_t lengthBytes, uint64_t dataStartBlock) {
     QByteArray value(kApfsFileExtentValueBytes, '\0');
     // Extent lengths cover whole blocks; the logical size lives in the
     // inode's dstream xfield.
     writeLe64(&value,
               0,
-              ((sizeBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
+              ((lengthBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
                   kSupportedApfsBlockSizeBytes);
     writeLe64(&value, kApfsFileExtentValuePhysicalBlockOffset, dataStartBlock);
     writeLe64(&value, kApfsFileExtentValueCryptoIdOffset, 0);
     return value;
+}
+
+// The data extents a file's records describe: an explicit multi-run list when
+// present, otherwise the single contiguous run rounded from the payload size.
+QVector<ApfsDataExtent> fileDataExtents(const ApfsRootFilePayload& file, uint32_t blockSize) {
+    if (!file.dataExtents.isEmpty()) {
+        return file.dataExtents;
+    }
+    const uint64_t bytes = static_cast<uint64_t>(file.data.size());
+    if (bytes == 0 || blockSize == 0) {
+        return {};
+    }
+    return {{0, file.dataStartBlock, (bytes + blockSize - 1) / blockSize}};
 }
 
 uint64_t roundedBlockCount(uint64_t bytes, uint32_t blockSize) {
@@ -888,11 +929,12 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
     // A zero-length file has a size-0 data stream and no allocated blocks, so it
     // carries no file-extent record; emitting one produces a zero-length extent
     // at logical address 0, which fsck_apfs rejects ("invalid zero-length
-    // extent").
-    if (!file.data.isEmpty()) {
+    // extent"). A fragmented file carries one record per contiguous run, keyed by
+    // its file-logical byte offset.
+    for (const ApfsDataExtent& extent : fileDataExtents(file, kSupportedApfsBlockSizeBytes)) {
         records->append(
-            {fileExtentKey(file.privateId),
-             fileExtentValue(static_cast<uint64_t>(file.data.size()), file.dataStartBlock)});
+            {fileExtentKey(file.privateId, extent.logicalBlock * kSupportedApfsBlockSizeBytes),
+             fileExtentValue(extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr)});
     }
 }
 
@@ -1390,12 +1432,9 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
     };
     QVector<PhysExtRecord> records;
     for (const auto& file : files) {
-        const uint64_t blockCount = roundedBlockCount(static_cast<uint64_t>(file.data.size()),
-                                                      blockSize);
-        if (blockCount == 0) {
-            continue;
+        for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
+            records.append({extent.paddr, extent.blockCount, file.fileId});
         }
-        records.append({file.dataStartBlock, blockCount, file.fileId});
     }
     std::sort(records.begin(),
               records.end(),
@@ -2271,6 +2310,34 @@ QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
     return owners;
 }
 
+// True if any file owns more than one physical-extent record (its data is
+// fragmented across several runs). Preserving such a file in a chained commit
+// needs its file-extent records (logical order), which parseExtentRefOwners does
+// not recover, so the chained insert/delete paths fail closed on it for now.
+bool extentRefHasMultiExtentOwner(QIODevice* image,
+                                  const ApfsRepairGeometry& geometry,
+                                  uint64_t extentRefBlock,
+                                  QStringList* blockers) {
+    QByteArray node(geometry.blockSize, '\0');
+    if (extentRefBlock == 0 ||
+        !readApfsRepairBlock(image, geometry, extentRefBlock, &node, blockers)) {
+        return false;
+    }
+    // More physical-extent records than distinct owners means some file is
+    // fragmented across multiple runs (parseExtentRefOwners dedups by owner).
+    const uint32_t recordCount = le32(node, kApfsBtreeNodeCountOffset);
+    const auto owners = parseExtentRefOwners(image, geometry, extentRefBlock, blockers);
+    return recordCount > static_cast<uint32_t>(owners.size());
+}
+
+QString multiExtentPreserveBlocker(QLatin1StringView purpose) {
+    return QStringLiteral(
+               "APFS %1: an existing file is fragmented across multiple extents; preserving it in "
+               "a "
+               "chained commit is unsupported in this increment")
+        .arg(purpose);
+}
+
 // Locations of a generated container's chunk-0 allocation structures. The live
 // chunk-info block and its bitmap sit at fixed addresses inside the internal
 // pool regardless of size, but the post-pool free region shifts by
@@ -2537,18 +2604,6 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     return true;
 }
 
-// A single j_file_extent / j_phys_ext record describes one contiguous run, so
-// the file's data blocks must be contiguous (true for a fresh container's free
-// region; fragmented free space needs the multi-extent engine).
-bool blocksAreContiguous(const QVector<uint64_t>& blocks) {
-    for (qsizetype index = 1; index < blocks.size(); ++index) {
-        if (blocks.at(index) != blocks.at(index - 1) + 1) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // Write the file payload into its newly allocated data blocks (the final block
 // is zero-padded). A zero-length file allocates no data blocks.
 bool writeApfsFileDataBlocks(QIODevice* image,
@@ -2756,6 +2811,7 @@ struct ApfsChainedListInput {
     ApfsLiveFsChain chain;
     ApfsFileInsertRequest request;
     uint64_t newDataStart{0};
+    QVector<ApfsDataExtent> newDataExtents;  // the new file's runs (one if contiguous)
 };
 
 // Build the full root-file list for the commit: every existing file preserved
@@ -2769,6 +2825,11 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
         return false;
     }
     const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
+    if (!in.request.existingFiles.isEmpty() &&
+        extentRefHasMultiExtentOwner(in.image, in.geometry, in.chain.extentRef, blockers)) {
+        blockers->append(multiExtentPreserveBlocker(QLatin1StringView("file-insert-commit")));
+        return false;
+    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     for (ApfsRootFilePayload existing : in.request.existingFiles) {
@@ -2782,7 +2843,8 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
                    .parentDirectoryId = kApfsRootDirectoryId,
                    .fileId = newFileId,
                    .privateId = newFileId,
-                   .dataStartBlock = in.newDataStart});
+                   .dataStartBlock = in.newDataStart,
+                   .dataExtents = in.newDataExtents});
     return true;
 }
 
@@ -2867,13 +2929,13 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             QVector<uint64_t>* newBlocks,
                             QStringList* blockers) {
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
-    // Allocate the lowest contiguous free run large enough from the data region.
+    // Collect the lowest free blocks in the data region (findFreeBlocksInBitmap
+    // returns them ascending, skipping used blocks - they may be non-contiguous when
+    // free space is fragmented; the data extent then splits into several runs).
     // Crash-safety no longer comes from a fixed rotating region but from the main
     // free-queue: the previous few checkpoints' blocks stay allocated (queued) until
     // they age past the rollback window, so the search skips them. A single commit
-    // can therefore consume an arbitrarily large contiguous run (no 64-block cap),
-    // bounded only by the contiguous free space (fragmented space needs the
-    // multi-extent engine, guarded by blocksAreContiguous on the data extent).
+    // can therefore consume an arbitrarily large run, no 64-block cap.
     return findFreeBlocksInBitmap({ctx.image,
                                    ctx.geometry,
                                    ctx.liveBitmap,
@@ -3014,10 +3076,14 @@ bool buildInsertFsNodes(const ApfsFsCommitContext& ctx,
                         const QVector<uint64_t>& dataBlockList,
                         ApfsInsertFsNodes* out,
                         QStringList* blockers) {
-    return buildChainedFileList(
-               {ctx.image, ctx.geometry, ctx.chain, request, dataBlockList.value(0)},
-               &out->files,
-               blockers) &&
+    return buildChainedFileList({ctx.image,
+                                 ctx.geometry,
+                                 ctx.chain,
+                                 request,
+                                 dataBlockList.value(0),
+                                 groupContiguousRuns(dataBlockList)},
+                                &out->files,
+                                blockers) &&
            writeApfsFileDataBlocks(
                ctx.image, ctx.geometry, dataBlockList, request.fileData, blockers) &&
            buildFsTreeNodes({ctx.geometry.blockSize, out->files, {}, ctx.firstLeafOid},
@@ -3057,13 +3123,9 @@ bool commitInPlaceFileInsert(QIODevice* image,
             ctx, {nodeCount, extentRefSlots, dataBlocks}, &newBlocks, blockers)) {
         return false;
     }
+    // The data blocks may be non-contiguous when free space is fragmented; they are
+    // grouped into one file-extent + extent-ref record per contiguous run.
     const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
-    if (!blocksAreContiguous(dataBlockList)) {
-        blockers->append(QStringLiteral(
-            "APFS in-place file insert: fragmented free space (non-contiguous data extent) is "
-            "unsupported in this increment"));
-        return false;
-    }
     ApfsInsertFsNodes built;
     if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
         return false;
@@ -3098,6 +3160,10 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
                          QVector<ApfsRootFilePayload>* remaining,
                          ApfsRootFilePayload* target,
                          QStringList* blockers) {
+    if (extentRefHasMultiExtentOwner(in.image, in.geometry, in.chain.extentRef, blockers)) {
+        blockers->append(multiExtentPreserveBlocker(QLatin1StringView("file-delete-commit")));
+        return false;
+    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     bool found = false;
