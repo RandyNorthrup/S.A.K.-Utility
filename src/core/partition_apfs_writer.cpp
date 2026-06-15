@@ -29,13 +29,13 @@ namespace sak {
 namespace {
 
 constexpr uint64_t kDefaultMaxApfsPayloadBytes = 64ULL * 1024ULL * 1024ULL;
-// In-place checkpoint commits run on any single-CIB container (computeGeneratedLayout
-// is layout-general): apfsck-clean at 64 MiB / 256 MiB / 1 GiB, Apple fsck_apfs +
-// kernel mount certified through 256 MiB. The cap is the single-CIB format ceiling,
-// 126 chunks * 128 MiB = 15.75 GiB. Allocation is still chunk-0-confined (~127 MiB of
-// file data per container) until multi-chunk allocation lands; the container itself
-// is valid at any size up to this cap.
-constexpr uint64_t kApfsInPlaceCommitMaxBytes = 126ULL * 128ULL * 1024ULL * 1024ULL;
+// In-place checkpoint commits run on any single-CIB or multi-CIB container
+// (computeGeneratedLayout + the cib-rotation are layout-general): apfsck-clean at
+// 64 MiB / 256 MiB / 1 GiB single-CIB and 16 GiB (2 cib) multi-CIB, Apple fsck_apfs
+// + kernel mount certified through 256 MiB. The cap covers the multi-CIB range up to
+// the chunk-0 internal-pool / inline cib-array limit (~1.3 TiB); 1 TiB is a round
+// ceiling safely inside it, large enough for any external disk the A-b flip targets.
+constexpr uint64_t kApfsInPlaceCommitMaxBytes = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumApfsContainerBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 constexpr qsizetype kMaximumApfsVolumeNameChars = 255;
@@ -320,15 +320,6 @@ constexpr qsizetype kApfsSpacemanIpBmRingXidOffset = 2520;
 constexpr qsizetype kApfsSpacemanIpBmRingSeqOffset = 2528;
 constexpr qsizetype kApfsSpacemanIpBmRingArrayOffset = 2536;
 constexpr uint16_t kApfsSpacemanIpBmRingInUse = 0xFFFF;
-// IP-usage bitmap block COUNTS (buildIpBitmapBlock marks this many low IP blocks
-// used). Once the crash-safe rotation has touched the spare slot, all three
-// cib/bitmap rotation slots (3 * slot_stride blocks) are cumulatively allocated;
-// single-CIB slot_stride is 2, so this is 6 blocks (low byte 0x3f), matching the
-// kernel-advanced harvest. Multi-CIB scales the count to 3 * (cib_count + 1).
-constexpr uint8_t kApfsIpBitmapAdvancedUsage = 6;
-// On a multi-chunk overflow chunk 1's bitmap occupies the next IP block after the
-// cib rotation region, so the sm_ip_bitmap marks one more block used.
-constexpr uint8_t kApfsIpBitmapMultiChunkUsage = 7;
 // Free-queue tree_node_limit values mirrored from the reference container;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
@@ -2019,8 +2010,9 @@ struct ApfsCheckpointCommitContext {
     uint64_t newXid{0};
     uint64_t newDataIndex{0};
     int64_t spacemanFreeDelta{0};  // applied to the re-emitted spaceman free count
-    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
-    uint8_t ipBitmapUsage{0};      // 0 = leave the sm_ip_bitmap ring; else advance it
+    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr 0 (crash-safe rotation)
+    uint64_t cibCount{1};          // cib-address array length (multi-CIB > 1)
+    uint64_t ipBitmapUsage{0};     // 0 = leave the sm_ip_bitmap ring; else advance it
     QVector<ApfsFreeQueueEntry> ipFqEntries;    // non-empty: rebuild the IP free-queue + counts
     QVector<ApfsFreeQueueEntry> mainFqEntries;  // non-empty: rebuild the main free-queue + counts
 };
@@ -2071,7 +2063,14 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
                   le64(*object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
     }
     if (ctx.newCibAddr != 0) {
-        writeLe64(object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+        // The whole rotation slot moves together, so the new cib addresses are
+        // consecutive from newCibAddr; rewrite the full inline cib-address array
+        // (single-CIB writes one entry, unchanged).
+        for (uint64_t i = 0; i < ctx.cibCount; ++i) {
+            writeLe64(object,
+                      kApfsSpacemanCibAddrArrayOffset + static_cast<qsizetype>(i) * 8,
+                      ctx.newCibAddr + i);
+        }
     }
     if (!ctx.ipFqEntries.isEmpty()) {
         uint64_t pendingBlocks = 0;
@@ -2174,8 +2173,10 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t newContainerOmap{0};  // 0 = carry the existing container object map forward
     int64_t spacemanFreeDelta{0};  // net free-block change (negative when blocks are consumed)
     uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
-    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr (crash-safe rotation)
-    uint8_t ipBitmapUsage{0};      // sm_ip_bitmap ring advance usage byte (0 = leave)
+    uint64_t newCibAddr{0};        // re-point the spaceman cib_addr 0 (crash-safe rotation)
+    uint64_t cibCount{1};          // cib-address array length (multi-CIB > 1)
+    uint64_t ipSlotStride{2};      // IP rotation-slot size (cib_count + 1); fq run length
+    uint64_t ipBitmapUsage{0};     // sm_ip_bitmap ring advance usage count (0 = leave)
     uint64_t freedCibSlot{0};      // cib slot freed this commit -> IP free-queue (0 = no update)
     uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
     QVector<ApfsFreeQueueEntry> mainFqEntries;  // rebuilt main free-queue (empty = leave it)
@@ -2209,11 +2210,12 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const uint64_t nxsbBlock = cpmBlock + 1;
     // The rolling two-deep IP free-queue window: the slot freed the previous commit
     // (or the genesis seed at the first commit) plus the slot freed this commit,
-    // each two ghost blocks (cib + bitmap), sorted ascending by xid.
+    // each one whole rotation slot of ip_slot_stride ghost blocks (cib_count cibs
+    // + chunk-0 bitmap), sorted ascending by xid.
     QVector<ApfsFreeQueueEntry> ipFqEntries;
     if (request.freedCibSlot != 0) {
-        ipFqEntries = {{newXid - 1, request.prevFreedCibSlot, 2},
-                       {newXid, request.freedCibSlot, 2}};
+        ipFqEntries = {{newXid - 1, request.prevFreedCibSlot, request.ipSlotStride},
+                       {newXid, request.freedCibSlot, request.ipSlotStride}};
     }
     const ApfsCheckpointCommitContext ctx{request.image,
                                           geometry,
@@ -2222,6 +2224,7 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           live.dataNext,
                                           request.spacemanFreeDelta,
                                           request.newCibAddr,
+                                          request.cibCount,
                                           request.ipBitmapUsage,
                                           ipFqEntries,
                                           request.mainFqEntries};
@@ -2467,17 +2470,21 @@ struct ApfsIpSlot {
 };
 
 // The slot a crash-safe commit writes next: the round-robin successor of the
-// live cib, so the new cib/bitmap land in a slot that is neither the live one
-// nor the most recent ghost, leaving the previous checkpoint's cib/bitmap intact
-// (live cib 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}). Foundation
-// for the crash-safe IP-region rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md);
-// see that doc for the spaceman cib_addr + ip-bitmap ring updates that go with it.
+// live slot, so the new cib(s)/bitmap land in a slot that is neither the live
+// one nor the most recent ghost, leaving the previous checkpoint's slot intact
+// (single-CIB: live cib 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}).
+// A slot spans slot_stride = cib_count + 1 blocks (cib_count cibs then the
+// chunk-0 bitmap); the returned cib is the slot's first block and bitmap its
+// last. Foundation for the crash-safe IP-region rotation
+// (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
 ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
-    constexpr int kIpSlotCount = 3;  // single-chunk IP region = 3 cib/bitmap pairs
-    const uint64_t ipBase = layout.chunkInfo - 2;
-    const int liveIndex = static_cast<int>((liveCib - ipBase) / 2);
-    const uint64_t nextBase = ipBase + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
-    return {nextBase, nextBase + 1};
+    constexpr int kIpSlotCount = 3;  // the IP region holds 3 rotation slots
+    const uint64_t ipBase = kApfsFormatIpBaseBlock;
+    const uint64_t stride = layout.cibCount + 1;
+    const int liveIndex = static_cast<int>((liveCib - ipBase) / stride);
+    const uint64_t nextBase = ipBase +
+                              static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * stride;
+    return {nextBase, nextBase + layout.cibCount};
 }
 
 // The full cib/bitmap rotation a crash-safe commit performs: read the live slot,
@@ -2821,8 +2828,27 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     // not the genesis slot fails fsck with "cib at address 0x0").
     writeLe64(&cib, kApfsObjectOidOffset, alloc.rotation.newCib);
     writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
-    return stampAndWriteApfsBlock(
-        alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
+    if (!stampAndWriteApfsBlock(
+            alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers)) {
+        return false;
+    }
+    // Multi-CIB: the whole rotation slot moves together. Copy cibs 1..N-1 from the
+    // live slot to the new slot unchanged except their physical o_oid - the chunks
+    // they describe did not change this commit, so their xid stays at the genesis
+    // transaction (apfsck requires a cib's xid to equal its newest chunk xid).
+    for (uint64_t i = 1; i < alloc.layout.cibCount; ++i) {
+        QByteArray other(alloc.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(
+                alloc.image, alloc.geometry, alloc.rotation.liveCib + i, &other, blockers)) {
+            return false;
+        }
+        writeLe64(&other, kApfsObjectOidOffset, alloc.rotation.newCib + i);
+        if (!stampAndWriteApfsBlock(
+                alloc.image, alloc.geometry, alloc.rotation.newCib + i, &other, blockers)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Crash-safe allocation swap: copy the live allocation bitmap to the new (spare)
@@ -3148,16 +3174,17 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     }
     // Overflow into chunk 1: keep the fs-tree/chain metadata in chunk 0, spill the
     // remaining data blocks into chunk 1. Chunk 1's allocation bitmap goes in chunk
-    // 1's reserved internal-pool slot (ip_base + 6, i.e. the three slots after chunk
-    // 0's cib/bitmap rotation), as single-CIB containers do - no chunk-0 block is
-    // consumed and the slot is already reserved in the chunk-0 bitmap.
+    // 1's reserved internal-pool slot (ip_base + 3 * slot_stride, i.e. the first
+    // slot after the three cib/bitmap rotation slots), as single-CIB containers do
+    // - no chunk-0 block is consumed and the slot is already reserved in the chunk-0
+    // bitmap.
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     if (chunkCount < 2 || chunk0Free.size() < metaCount) {
         blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
         return false;
     }
-    *chunk1BitmapBlock = (ctx.layout.chunkInfo - 2) + 6;
+    *chunk1BitmapBlock = kApfsFormatIpBaseBlock + 3 * (ctx.layout.cibCount + 1);
     *newBlocks = chunk0Free;
     QByteArray cib(ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
@@ -3253,12 +3280,13 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = static_cast<int64_t>(freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    // On a multi-chunk overflow chunk 1's allocation bitmap occupies its internal-pool
-    // slot (ip_base + 6), so the sm_ip_bitmap marks one more IP block used (0x3f -> the
-    // seventh bit, 0x7f); the device free count is unchanged (the IP slot is already
-    // reserved in chunk 0's bitmap).
-    const uint8_t ipBitmapUsage = f.chunk1BitmapBlock != 0 ? kApfsIpBitmapMultiChunkUsage
-                                                           : kApfsIpBitmapAdvancedUsage;
+    // Once the crash-safe rotation has touched the spare slot, all three rotation
+    // slots (3 * slot_stride blocks) are cumulatively marked used in the live IP
+    // bitmap (2 ghost slots held by the IP free-queue + 1 live slot). A multi-chunk
+    // overflow additionally marks chunk 1's bitmap slot; the device free count is
+    // unchanged (the IP slot is already reserved in chunk 0's bitmap).
+    const uint64_t slotStride = f.ctx.layout.cibCount + 1;
+    const uint64_t ipBitmapUsage = 3 * slotStride + (f.chunk1BitmapBlock != 0 ? 1 : 0);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3271,18 +3299,20 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                    blockers)) {
         return false;
     }
-    return advanceCheckpoint({f.ctx.image,
-                              f.ctx.geometry,
-                              f.ctx.nxsb,
-                              f.ctx.live,
-                              f.newBlocks.at(nodeCount + 4),
-                              freeDelta,
-                              static_cast<uint64_t>(nodeCount - 1),
-                              rotation.newCib,
-                              ipBitmapUsage,
-                              rotation.liveCib,
-                              rotation.freeCib,
-                              mainFq.entries},
+    return advanceCheckpoint({.image = f.ctx.image,
+                              .geometry = f.ctx.geometry,
+                              .nxsb = f.ctx.nxsb,
+                              .live = f.ctx.live,
+                              .newContainerOmap = f.newBlocks.at(nodeCount + 4),
+                              .spacemanFreeDelta = freeDelta,
+                              .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
+                              .newCibAddr = rotation.newCib,
+                              .cibCount = f.ctx.layout.cibCount,
+                              .ipSlotStride = slotStride,
+                              .ipBitmapUsage = ipBitmapUsage,
+                              .freedCibSlot = rotation.liveCib,
+                              .prevFreedCibSlot = rotation.freeCib,
+                              .mainFqEntries = mainFq.entries},
                              result,
                              blockers);
 }
