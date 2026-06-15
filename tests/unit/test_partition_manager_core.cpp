@@ -1652,6 +1652,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
     void apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree();
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
+    void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -7062,6 +7063,29 @@ void PartitionManagerCoreTests::apfsWriter_buildsTwoLevelFsTreeOnOverflow() {
         const int valueOff = le16(root, 0x38 + index * 8 + 4);
         QVERIFY(leafOids.contains(le64(root, valueAreaEnd - valueOff)));
     }
+}
+
+void PartitionManagerCoreTests::apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots() {
+    // A generated 64 MiB single-chunk container's internal pool has three
+    // cib/bitmap slots: (185,186), (187,188), (189,190). A crash-safe commit
+    // writes the next slot after the live cib, round-robin, so the previous
+    // checkpoint's cib/bitmap survive an interrupted commit.
+    const quint64 blocks = 16'384;  // 64 MiB / 4096
+    const auto from187 = PartitionApfsWriter::nextCrashSafeIpSlot(187, blocks);
+    QCOMPARE(from187.first, static_cast<quint64>(189));
+    QCOMPARE(from187.second, static_cast<quint64>(190));
+    const auto from189 = PartitionApfsWriter::nextCrashSafeIpSlot(189, blocks);
+    QCOMPARE(from189.first, static_cast<quint64>(185));
+    QCOMPARE(from189.second, static_cast<quint64>(186));
+    const auto from185 = PartitionApfsWriter::nextCrashSafeIpSlot(185, blocks);
+    QCOMPARE(from185.first, static_cast<quint64>(187));
+    QCOMPARE(from185.second, static_cast<quint64>(188));
+    // Full cycle returns to the start (no slot is ever the live one).
+    quint64 cib = 187;
+    for (int i = 0; i < 3; ++i) {
+        cib = PartitionApfsWriter::nextCrashSafeIpSlot(cib, blocks).first;
+    }
+    QCOMPARE(cib, static_cast<quint64>(187));
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

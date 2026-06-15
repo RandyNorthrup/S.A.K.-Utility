@@ -534,6 +534,14 @@ public:
                                                                    uint64_t first_leaf_oid,
                                                                    QStringList* blockers);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
+    /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
+    ///        crash-safe in-place commit writes next, given the live cib block of
+    ///        a generated single-chunk container. Round-robins the three IP slots
+    ///        (live 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}) so the
+    ///        previous checkpoint's cib/bitmap stay intact. Foundation for the
+    ///        crash-safe IP rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
+    [[nodiscard]] static QPair<quint64, quint64> nextCrashSafeIpSlot(quint64 live_cib,
+                                                                     quint64 block_count);
     [[nodiscard]] static QStringList enterpriseCertificationRequirements();
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,

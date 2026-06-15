@@ -2096,6 +2096,28 @@ ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
             .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk)};
 }
 
+// One internal-pool cib/bitmap slot. A single-chunk generated container's IP
+// region (ip_base = chunkInfo - 2 = 185, six blocks) holds three slots:
+// (185,186), (187,188), (189,190).
+struct ApfsIpSlot {
+    uint64_t cib{0};
+    uint64_t bitmap{0};
+};
+
+// The slot a crash-safe commit writes next: the round-robin successor of the
+// live cib, so the new cib/bitmap land in a slot that is neither the live one
+// nor the most recent ghost, leaving the previous checkpoint's cib/bitmap intact
+// (live cib 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}). Foundation
+// for the crash-safe IP-region rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md);
+// see that doc for the spaceman cib_addr + ip-bitmap ring updates that go with it.
+ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
+    constexpr int kIpSlotCount = 3;  // single-chunk IP region = 3 cib/bitmap pairs
+    const uint64_t ipBase = layout.chunkInfo - 2;
+    const int liveIndex = static_cast<int>((liveCib - ipBase) / 2);
+    const uint64_t nextBase = ipBase + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
+    return {nextBase, nextBase + 1};
+}
+
 struct ApfsFreeBlockScan {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
@@ -8862,6 +8884,12 @@ QVector<QByteArray> PartitionApfsWriter::buildFsTreeNodeBlocks(uint32_t block_si
         blocks.append(node.block);
     }
     return blocks;
+}
+
+QPair<quint64, quint64> PartitionApfsWriter::nextCrashSafeIpSlot(quint64 live_cib,
+                                                                 quint64 block_count) {
+    const ApfsIpSlot slot = nextIpSlot(live_cib, computeGeneratedLayout(block_count));
+    return {slot.cib, slot.bitmap};
 }
 
 }  // namespace sak
