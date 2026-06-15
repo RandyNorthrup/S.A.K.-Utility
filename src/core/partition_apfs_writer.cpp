@@ -330,6 +330,9 @@ constexpr uint16_t kApfsSpacemanIpBmRingInUse = 0xFFFF;
 // the spare slot all six IP blocks are cumulatively allocated (0x3f), matching the
 // kernel-advanced harvest (the genesis 0x0f only reflects the untouched spare).
 constexpr uint8_t kApfsIpBitmapAdvancedUsage = 0x3f;
+// On a multi-chunk overflow chunk 1's bitmap occupies the seventh IP block (ip_base
+// + 6), so the sm_ip_bitmap marks one more block used.
+constexpr uint8_t kApfsIpBitmapMultiChunkUsage = 0x7f;
 // Free-queue tree_node_limit values mirrored from the reference container;
 // nonzero even when the queues themselves are empty.
 constexpr qsizetype kApfsSpacemanFqIpLimitOffset = 0xE0;
@@ -2701,10 +2704,10 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
         return false;
     }
     const int chunk1Count = static_cast<int>(chunk1AllocatedBlocks(alloc).size());
-    const int bitmapCount = alloc.chunk1BitmapBlock != 0 ? 1 : 0;
     // cibFreeDelta assumed every allocation hit chunk 0; move the chunk-1 data back
-    // out of chunk 0's count and charge chunk 0 for the chunk-1 bitmap block.
-    const int64_t chunk0Delta = alloc.cibFreeDelta + chunk1Count - bitmapCount;
+    // out of chunk 0's free count (chunk 1's bitmap is an internal-pool slot already
+    // reserved in chunk 0, so it does not change chunk 0's free count).
+    const int64_t chunk0Delta = alloc.cibFreeDelta + chunk1Count;
     const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
     writeLe32(&cib,
               freeOffset,
@@ -2755,9 +2758,8 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
             chunk0Allocated.append(block);
         }
     }
-    if (alloc.chunk1BitmapBlock != 0) {
-        chunk0Allocated.append(alloc.chunk1BitmapBlock);
-    }
+    // chunk 1's bitmap lives in chunk 1's reserved internal-pool slot, which the
+    // chunk-0 bitmap already marks used, so it is not added here.
     flipChunkBitmapBits(&bitmap, alloc.freed, chunk0Allocated);
     if (!writeApfsRepairBlock(
             alloc.image, alloc.geometry, alloc.rotation.newBitmap, bitmap, blockers)) {
@@ -3048,20 +3050,23 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     }
     QVector<uint64_t> chunk0Free;
     findFreeBlocksInBitmapContent(
-        chunk0Bitmap, {0, ctx.layout.seedData, ctx.layout.chunk0Blocks}, need + 1, &chunk0Free);
+        chunk0Bitmap, {0, ctx.layout.seedData, ctx.layout.chunk0Blocks}, need, &chunk0Free);
     if (chunk0Free.size() >= need) {
         *newBlocks = chunk0Free.mid(0, need);
         return true;
     }
-    // Overflow into chunk 1: keep the fs-tree/chain metadata and chunk 1's bitmap in
-    // chunk 0, spill the remaining data blocks into chunk 1.
+    // Overflow into chunk 1: keep the fs-tree/chain metadata in chunk 0, spill the
+    // remaining data blocks into chunk 1. Chunk 1's allocation bitmap goes in chunk
+    // 1's reserved internal-pool slot (ip_base + 6, i.e. the three slots after chunk
+    // 0's cib/bitmap rotation), as single-CIB containers do - no chunk-0 block is
+    // consumed and the slot is already reserved in the chunk-0 bitmap.
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    if (chunkCount < 2 || chunk0Free.size() < metaCount + 1) {
+    if (chunkCount < 2 || chunk0Free.size() < metaCount) {
         blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
         return false;
     }
-    *chunk1BitmapBlock = chunk0Free.takeLast();
+    *chunk1BitmapBlock = (ctx.layout.chunkInfo - 2) + 6;
     *newBlocks = chunk0Free;
     QByteArray cib(ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
@@ -3157,9 +3162,12 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = static_cast<int64_t>(freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    // The chunk-1 bitmap (on a multi-chunk overflow) is one extra chunk-0 block the
-    // commit consumes beyond newBlocks, so the device free count drops by one more.
-    const int64_t bitmapBlockCount = f.chunk1BitmapBlock != 0 ? 1 : 0;
+    // On a multi-chunk overflow chunk 1's allocation bitmap occupies its internal-pool
+    // slot (ip_base + 6), so the sm_ip_bitmap marks one more IP block used (0x3f -> the
+    // seventh bit, 0x7f); the device free count is unchanged (the IP slot is already
+    // reserved in chunk 0's bitmap).
+    const uint8_t ipBitmapUsage = f.chunk1BitmapBlock != 0 ? kApfsIpBitmapMultiChunkUsage
+                                                           : kApfsIpBitmapAdvancedUsage;
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3177,10 +3185,10 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               f.ctx.nxsb,
                               f.ctx.live,
                               f.newBlocks.at(nodeCount + 4),
-                              freeDelta - bitmapBlockCount,
+                              freeDelta,
                               static_cast<uint64_t>(nodeCount - 1),
                               rotation.newCib,
-                              kApfsIpBitmapAdvancedUsage,
+                              ipBitmapUsage,
                               rotation.liveCib,
                               rotation.freeCib,
                               mainFq.entries},
