@@ -757,14 +757,29 @@ uint32_t crc32cWord(uint32_t crc, uint32_t word) {
 // (including the trailing NUL); the high 22 bits hold a CRC-32C over the
 // name's UTF-32LE code points (seed ~0, no final inversion), verified against
 // names written by Apple's own APFS driver ('root', 'private-dir',
-// 'proof.txt').
+// 'proof.txt'). The S.A.K. volume sets APFS_INCOMPAT_CASE_INSENSITIVE, so Apple
+// (and apfsck) case-fold each code point before hashing - for ASCII that is
+// A-Z -> a-z (NFD is identity). Non-ASCII names need full Unicode normalization
+// and are rejected upstream (isAsciiApfsFileName), so this stays exact.
 uint32_t drecNameLenAndHash(const QString& name) {
     uint32_t crc = 0xFF'FF'FF'FFu;
     for (const QChar& ch : name) {
-        crc = crc32cWord(crc, ch.unicode());
+        uint32_t codePoint = ch.unicode();
+        if (codePoint >= 'A' && codePoint <= 'Z') {
+            codePoint += 0x20;
+        }
+        crc = crc32cWord(crc, codePoint);
     }
     const uint32_t nameLength = static_cast<uint32_t>(name.toUtf8().size() + 1) & 0x3FF;
     return ((crc & 0x3F'FF'FF) << 10) | nameLength;
+}
+
+// Apple's case-insensitive dirent hash folds + NFD-normalizes each code point;
+// S.A.K. only implements the ASCII fold, so a non-ASCII name would get a hash the
+// kernel/apfsck disagree with (the file would be unfindable). Restrict mutations
+// to ASCII filenames until full Unicode normalization lands.
+bool isAsciiApfsFileName(const QString& name) {
+    return std::all_of(name.cbegin(), name.cend(), [](QChar ch) { return ch.unicode() < 0x80; });
 }
 
 QByteArray fsKey(uint64_t objectId,
@@ -3328,6 +3343,12 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     if (!readApfsRepairBlock(in.image, in.geometry, in.chain.volSb, &volSb, blockers)) {
         return false;
     }
+    if (!isAsciiApfsFileName(in.request.fileName.trimmed())) {
+        blockers->append(QStringLiteral(
+            "APFS file-insert-commit: only ASCII file names are supported (the case-insensitive "
+            "dirent hash needs Unicode normalization for non-ASCII names)"));
+        return false;
+    }
     const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
@@ -3899,6 +3920,12 @@ struct ApfsRenameListInput {
 bool buildRenameFileList(const ApfsRenameListInput& in,
                          QVector<ApfsRootFilePayload>* files,
                          QStringList* blockers) {
+    if (!isAsciiApfsFileName(in.newName)) {
+        blockers->append(QStringLiteral(
+            "APFS file-rename-commit: only ASCII file names are supported (the case-insensitive "
+            "dirent hash needs Unicode normalization for non-ASCII names)"));
+        return false;
+    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     bool found = false;
