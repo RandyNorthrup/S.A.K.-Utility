@@ -9663,6 +9663,162 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     return result;
 }
 
+// Gate + open a raw in-place commit target: require explicit destructive
+// confirmation + raw opt-in, validate it is a generated APFS container within the
+// in-place commit cap, and open the device read-write. Returns nullptr (with
+// blockers populated) on any failure. The caller collects existing files from the
+// device BEFORE calling this (the reader's read-only handle is released first), so
+// no two handles are open on the device at once.
+static std::unique_ptr<QIODevice> openRawInPlaceCommitTarget(
+    const RawTargetMutationBlockersContext& gate, QStringList* blockers) {
+    appendRawTargetMutationBlockers(gate, blockers);
+    if (gate.targetBytes > kApfsInPlaceCommitMaxBytes) {
+        blockers->append(QStringLiteral("APFS raw %1 container exceeds the in-place commit cap")
+                             .arg(gate.purpose));
+    }
+    if (!blockers->isEmpty()) {
+        return nullptr;
+    }
+    if (!detectApfsRawTarget(gate.targetPath, gate.targetBytes, gate.purpose, blockers)
+             .has_value()) {
+        return nullptr;
+    }
+    QString openError;
+    auto target = openFileOrRawDeviceReadWrite(gate.targetPath, &openError);
+    if (!target) {
+        blockers->append(
+            QStringLiteral("Unable to open APFS raw commit target: %1").arg(openError));
+    }
+    return target;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInsert(
+    const PartitionApfsRawFileInsertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("raw file-insert-commit"), &result.blockers)) {
+        return result;
+    }
+    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+        result.blockers.append(
+            QStringLiteral("APFS raw file-insert-commit payload exceeds the current size cap"));
+        return result;
+    }
+    QVector<ApfsRootFilePayload> existingFiles;
+    if (!collectExistingRootFiles(
+            result.written_image_path, cleanFileName, &existingFiles, &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-insert-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileInsert(target.get(),
+                                {existingFiles, cleanFileName, request.file_data},
+                                &commit,
+                                &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileDelete(
+    const PartitionApfsRawFileDeleteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("raw file-delete-commit"), &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.written_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-delete-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileDelete(target.get(), allFiles, cleanFileName, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRename(
+    const PartitionApfsRawFileRenameCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString oldName = request.file_name.trimmed();
+    const QString newName = request.new_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            oldName, QLatin1StringView("raw file-rename-commit"), &result.blockers) ||
+        !appendRootFileNameBlockers(
+            newName, QLatin1StringView("raw file-rename-commit"), &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.written_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-rename-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileRename(
+            target.get(), {allFiles, oldName, newName}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
 PartitionApfsWritePreflight PartitionApfsWriter::validateImageOnlyExecutionEvidence(
     const PartitionApfsImageMutationPlan& plan,
     const PartitionApfsWriterExecutionEvidence& evidence) {

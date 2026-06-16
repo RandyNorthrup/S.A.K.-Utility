@@ -484,6 +484,43 @@ struct PartitionApfsImageFileRenameCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to insert one file into a generated APFS container on a raw
+///        device with a true in-place copy-on-write checkpoint commit (A2). The
+///        commit is applied to the device in place (no scratch clone), so it is
+///        gated by explicit destructive-target confirmation and raw opt-in.
+struct PartitionApfsRawFileInsertCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString file_name;
+    QByteArray file_data;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to delete one root file from a generated APFS container on a
+///        raw device with a true in-place copy-on-write checkpoint commit (A2).
+struct PartitionApfsRawFileDeleteCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to rename one root file in a generated APFS container on a raw
+///        device with a true in-place copy-on-write checkpoint commit (A2).
+struct PartitionApfsRawFileRenameCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString file_name;
+    QString new_file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -581,6 +618,15 @@ public:
         const PartitionApfsImageFileDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileRename(
         const PartitionApfsImageFileRenameCommitRequest& request);
+    /// @brief In-place COW file insert/delete/rename commit applied directly to a
+    ///        generated APFS container on a confirmed raw device (the on-hardware
+    ///        analogue of the commitImageOnly* family; no scratch clone).
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileInsert(
+        const PartitionApfsRawFileInsertCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileDelete(
+        const PartitionApfsRawFileDeleteCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileRename(
+        const PartitionApfsRawFileRenameCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(
