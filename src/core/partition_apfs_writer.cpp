@@ -1541,6 +1541,23 @@ struct ApfsSpacemanParams {
     QVector<uint64_t> cibAddrs;
 };
 
+// Blocks each internal-pool allocation bitmap occupies: one 4096-byte block holds
+// 32768 bits (one IP block each), so a large IP region needs several. mkapfs at
+// 4 TB: ip_block_count 90138 -> 3 blocks.
+uint64_t ipBitmapSizeBlocks(uint64_t chunkCount, uint64_t cibCount) {
+    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount);
+    return std::max<uint64_t>(
+        1, (ipBlockCount + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk);
+}
+
+// First block of the internal pool: the ip-bitmap ring (16 slots of
+// ip_bm_size_in_blocks blocks each) sits between ip_bm_base and ip_base, so a larger
+// ip bitmap pushes ip_base out. Single-block bitmaps keep the certified 185.
+uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount) {
+    return kApfsFormatIpBitmapBaseBlock +
+           ipBitmapSizeBlocks(chunkCount, cibCount) * kApfsSpacemanIpBmTxMultiplier;
+}
+
 QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blockers) {
     const auto& [blockSize, blockCount, reservedBlocks, xid, genesis, cibAddrs] = params;
     const uint64_t cibCount = static_cast<uint64_t>(cibAddrs.size());
@@ -1577,10 +1594,15 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     // (128-chunk/2-cib -> 390).
     const uint64_t ipBlockCount = 3 * (chunkCount + cibCount);
     writeLe64(&block, kApfsSpacemanIpBlockCountOffset, ipBlockCount);
-    writeLe32(&block, kApfsSpacemanIpBmSizeOffset, 1);
-    writeLe32(&block, kApfsSpacemanIpBmBlockCountOffset, kApfsFormatIpBitmapBlocks);
+    // Each ip allocation bitmap is ip_bm_size blocks (one 4096-byte block per 32768
+    // IP blocks); the 16-slot ring is ip_bm_size * 16 blocks and ip_base follows it.
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount);
+    writeLe32(&block, kApfsSpacemanIpBmSizeOffset, static_cast<uint32_t>(ipBmSize));
+    writeLe32(&block,
+              kApfsSpacemanIpBmBlockCountOffset,
+              static_cast<uint32_t>(ipBmSize * kApfsSpacemanIpBmTxMultiplier));
     writeLe64(&block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
-    writeLe64(&block, kApfsSpacemanIpBaseOffset, kApfsFormatIpBaseBlock);
+    writeLe64(&block, kApfsSpacemanIpBaseOffset, generatedIpBaseBlock(chunkCount, cibCount));
     // The secondary (tier2) device's cib-address offset sits immediately after the
     // main device's inline cib-address array. fsck_apfs rejects overlapping
     // spaceman structs, so this must clear the whole main array (cib_count entries),
@@ -1657,7 +1679,24 @@ struct ApfsChunkInfoParams {
     uint64_t chunkStart;
     uint64_t chunkSpan;
     uint64_t cibIndex;
+    // Metadata-overflow: how many chunks the reserved prefix (reservedBlocks)
+    // spans, and the immutable per-chunk bitmaps for chunks 1..M-1 (chunk 0 uses
+    // bitmapBlock). For the common case M == 1 (metadata fits chunk 0) these are
+    // {1, empty} and the entry below reduces to the certified single-chunk-0 form.
+    uint64_t metadataChunks{1};
+    QVector<uint64_t> extraChunkBitmaps;
 };
+
+// Blocks of chunk `chunkIndex` consumed by a reserved prefix of `reservedBlocks`
+// blocks (clamped to the 32768-block chunk so a multi-chunk prefix never overruns
+// a single bitmap block).
+uint64_t chunkReservedBlocks(uint64_t reservedBlocks, uint64_t chunkIndex) {
+    const uint64_t start = chunkIndex * kApfsSpacemanBlocksPerChunk;
+    if (reservedBlocks <= start) {
+        return 0;
+    }
+    return std::min<uint64_t>(reservedBlocks - start, kApfsSpacemanBlocksPerChunk);
+}
 
 QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* blockers) {
     const auto [blockSize,
@@ -1668,11 +1707,15 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
                 bitmapBlock,
                 chunkStart,
                 chunkSpan,
-                cibIndex] = params;
+                cibIndex,
+                metadataChunks,
+                extraChunkBitmaps] = params;
     // apfsck requires a cib's object xid to equal the newest transaction id among
-    // its chunks (a cib only advances when one of its chunks changes). Only chunk
-    // 0 carries the live xid on a fresh container; a cib that does not hold chunk
-    // 0 is all-genesis, so its object xid stays at the genesis transaction.
+    // its chunks (a cib only advances when one of its chunks changes). The reserved
+    // prefix changes genesis->live only in its boundary chunk (metadataChunks - 1,
+    // = chunk 0 when the prefix fits chunk 0); a cib without that chunk is
+    // all-genesis, so its object xid stays at the genesis transaction.
+    const uint64_t boundaryChunk = metadataChunks - 1;
     const uint64_t cibObjXid = chunkStart == 0 ? xid : kApfsFormatGenesisXid;
     QByteArray block =
         newApfsObjectBlock(blockSize, selfBlock, cibObjXid, kApfsObjectTypeChunkInfoBlock);
@@ -1685,12 +1728,18 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
         const uint64_t chunkAddr = chunk * kApfsSpacemanBlocksPerChunk;
         const uint64_t chunkBlocks = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk,
                                                     blockCount - chunkAddr);
-        // Chunk 0 carries the reserved metadata prefix and the only allocation
-        // bitmap; later chunks are fully free (bitmap_addr 0, genesis xid), the
-        // layout Apple's newfs_apfs emits for a freshly formatted container.
-        const bool first = chunk == 0;
-        const uint64_t usedBlocks = first ? qMin(reservedBlocks, chunkBlocks) : 0;
-        writeLe64(&block, entry, first ? xid : kApfsFormatGenesisXid);
+        // Chunks 0..M-1 hold the reserved metadata prefix, each with a bitmap
+        // (chunk 0's rotating bitmap, chunks 1..M-1 immutable); later chunks are
+        // fully free (bitmap_addr 0, genesis xid).
+        const bool metadataChunk = chunkStart == 0 && chunk < metadataChunks;
+        const uint64_t usedBlocks = metadataChunk ? chunkReservedBlocks(reservedBlocks, chunk) : 0;
+        const bool boundary = chunkStart == 0 && chunk == boundaryChunk;
+        uint64_t entryBitmap = 0;
+        if (metadataChunk) {
+            entryBitmap = chunk == 0 ? bitmapBlock
+                                     : extraChunkBitmaps.value(static_cast<qsizetype>(chunk) - 1);
+        }
+        writeLe64(&block, entry, boundary ? xid : kApfsFormatGenesisXid);
         writeLe64(&block, entry + kApfsChunkInfoEntryAddrOffset, chunkAddr);
         writeLe32(&block,
                   entry + kApfsChunkInfoEntryBlockCountOffset,
@@ -1698,7 +1747,7 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
         writeLe32(&block,
                   entry + kApfsChunkInfoEntryFreeCountOffset,
                   static_cast<uint32_t>(chunkBlocks - usedBlocks));
-        writeLe64(&block, entry + kApfsChunkInfoEntryBitmapAddrOffset, first ? bitmapBlock : 0);
+        writeLe64(&block, entry + kApfsChunkInfoEntryBitmapAddrOffset, entryBitmap);
     }
     stampApfsObjectBlock(&block, blockers);
     return block;
@@ -2414,26 +2463,61 @@ struct ApfsMultiCibLayout {
     QVector<uint64_t> liveCibs;                 // the live cib-address array (cib0 + immutable)
     uint64_t genesisIpUsage{2};                 // IP blocks the genesis checkpoint marks used
     uint64_t liveIpUsage{4};                    // IP blocks the live checkpoint marks used
+    // Metadata-overflow tier (>~1.3 TiB): the internal pool + metadata prefix
+    // (seedData) no longer fit chunk 0, so it spans metadataChunks chunks. Chunk 0
+    // uses the rotating cib-0 bitmap; chunks 1..M-1 get immutable per-chunk bitmaps.
+    uint64_t metadataChunks{1};
+    QVector<uint64_t> extraChunkBitmaps;  // immutable bitmaps for chunks 1..M-1
 };
+
+// The post-internal-pool metadata shift: the genesis omap and everything after it
+// move by this relative to the single-chunk layout. The post-pool region starts at
+// ip_base + ip_block_count; the original base is the ghost container omap (block
+// 191), so ipDelta is their difference (0 single-chunk).
+uint64_t generatedIpDelta(uint64_t chunkCount, uint64_t cibCount) {
+    return generatedIpBaseBlock(chunkCount, cibCount) + 3 * (chunkCount + cibCount) -
+           kApfsFormatGhostContainerOmapBlock;
+}
+
+// seedData (the reserved metadata prefix length) = the live allocation-region start
+// = the post-internal-pool seed-file block shifted by ipDelta.
+uint64_t generatedSeedDataBlock(uint64_t chunkCount, uint64_t cibCount) {
+    return kApfsFormatSeedFileDataBlock + generatedIpDelta(chunkCount, cibCount);
+}
 
 ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
     const uint64_t cibCount = cibCountForChunks(chunkCount);
     ApfsMultiCibLayout layout;
     layout.cibCount = cibCount;
+    layout.ipBase = generatedIpBaseBlock(chunkCount, cibCount);
+    // Metadata-overflow (>~1.3 TiB): the reserved prefix spans metadataChunks
+    // chunks, so chunks 1..M-1 need immutable per-chunk bitmaps.
+    const uint64_t seedData = generatedSeedDataBlock(chunkCount, cibCount);
+    layout.metadataChunks =
+        std::max<uint64_t>(1,
+                           std::min<uint64_t>(chunkCount,
+                                              (seedData + kApfsSpacemanBlocksPerChunk - 1) /
+                                                  kApfsSpacemanBlocksPerChunk));
+    const uint64_t extraBitmaps = layout.metadataChunks - 1;
+    // Contiguous IP region from ip_base: immutable cibs (N-1), then the chunk
+    // 1..M-1 metadata bitmaps (M-1), then cib 0's three {cib0, chunk-0 bitmap}
+    // rotation slots. M == 1 (no overflow) keeps the certified single-CIB layout.
+    uint64_t block = layout.ipBase;
     for (uint64_t i = 0; i + 1 < cibCount; ++i) {
-        layout.immutableCibs.append(layout.ipBase + i);
+        layout.immutableCibs.append(block++);
     }
-    layout.cib0Base = layout.ipBase + (cibCount - 1);
+    for (uint64_t i = 0; i < extraBitmaps; ++i) {
+        layout.extraChunkBitmaps.append(block++);
+    }
+    layout.cib0Base = block;
     const uint64_t ghostCib0 = layout.cib0Base;     // ghost cib 0
     layout.ghostBitmap = layout.cib0Base + 1;
     const uint64_t liveCib0 = layout.cib0Base + 2;  // live cib 0
     layout.liveBitmap = layout.cib0Base + 3;
     layout.ghostCibs = QVector<uint64_t>{ghostCib0} + layout.immutableCibs;
     layout.liveCibs = QVector<uint64_t>{liveCib0} + layout.immutableCibs;
-    // Contiguous from ip_base: immutable cibs (N-1) + ghost cib-0 slot (2), then
-    // the live cib-0 slot (2) on top.
-    layout.genesisIpUsage = cibCount + 1;
-    layout.liveIpUsage = cibCount + 3;
+    layout.genesisIpUsage = cibCount + extraBitmaps + 1;  // immutable + extra + ghost slot
+    layout.liveIpUsage = cibCount + extraBitmaps + 3;     // + live slot
     return layout;
 }
 
@@ -2449,19 +2533,21 @@ struct ApfsGeneratedLayout {
     uint64_t chunkInfo{0};
     uint64_t seedData{0};
     uint64_t chunk0Blocks{0};
-    uint64_t cibCount{1};  // chunk-info blocks per checkpoint slot (multi-CIB > 1)
+    uint64_t cibCount{1};        // chunk-info blocks per checkpoint slot (multi-CIB > 1)
+    uint64_t metadataChunks{1};  // chunks the reserved prefix spans (overflow tier > 1)
 };
 
 ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
-    const uint64_t ipDelta = 3 * (chunkCount + mcib.cibCount) - kApfsFormatIpBlockCount;
+    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount);
     return {.chunkBitmap = mcib.liveBitmap,
             .chunkInfo = mcib.liveCibs.first(),
             .seedData = kApfsFormatSeedFileDataBlock + ipDelta,
             .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk),
-            .cibCount = mcib.cibCount};
+            .cibCount = mcib.cibCount,
+            .metadataChunks = mcib.metadataChunks};
 }
 
 // One internal-pool cib/bitmap slot. A single-chunk generated container's IP
@@ -3105,6 +3191,16 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
+    // In-place commits on the metadata-overflow tier (>~1.3 TiB) fail closed: chunk
+    // 0 is full of the reserved prefix, so the allocator would have to find the
+    // first free chunk and rotate that chunk's bitmap (not implemented). The FORMAT
+    // is valid + kernel-mountable; only the commit allocator is pending.
+    if (ctx->layout.metadataChunks > 1) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit on a metadata-overflow container (>1.3 TiB) is not yet "
+            "supported; chunk 0 is fully reserved - the allocator must use the first free chunk"));
+        return false;
+    }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
     }
@@ -3832,34 +3928,42 @@ QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose, uint64_t
 // blocker. S.A.K. emits single-CIB and multi-CIB (cab_count 0) containers: the
 // cib-address array must fit inline in the spaceman after offset 2568, and the
 // whole internal pool + post-pool metadata prefix must fit inside chunk 0 (the
-// only chunk with an allocation bitmap on a fresh container). The CAB tier
-// (cab_count > 0) and chunk-1 metadata spill are not yet emitted.
+// only chunk with an allocation bitmap on a fresh container) up to the
+// metadata-overflow tier, where the prefix spans several chunks (each gets a
+// per-chunk bitmap). The CAB tier (cab_count > 0, the cib-address array no longer
+// fits inline) is not yet emitted.
 QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                                             uint64_t blockCount,
                                             uint32_t blockSize) {
     const PartitionApfsContainerGeometry geometry =
         PartitionApfsWriter::computeContainerGeometry(blockCount, blockSize);
-    const uint64_t ipDelta = 3 * (geometry.chunk_count + geometry.cib_count) -
-                             kApfsFormatIpBlockCount;
-    const uint64_t seedData = kApfsFormatSeedFileDataBlock + ipDelta;
     const bool arrayFits = kApfsSpacemanCibAddrArrayOffset +
                                static_cast<qsizetype>(geometry.cib_count) * 8 <=
                            static_cast<qsizetype>(blockSize);
-    if (geometry.cab_count == 0 && arrayFits && seedData < kApfsSpacemanBlocksPerChunk) {
+    // The metadata-overflow tier (>~1.3 TiB) - where the reserved prefix and the
+    // internal pool no longer fit chunk 0 - is partially built (per-chunk metadata
+    // bitmaps + ip_bm_size/ip_base scaling landed) but not finished: a >32768-IP-block
+    // region needs multi-block ip bitmaps, which resize the ip-bitmap ring + the
+    // spaceman free-next array and force the cib-address array off offset 2568. Fail
+    // closed until that is Apple-fsck-validated.
+    const bool metadataFitsChunk0 = generatedSeedDataBlock(geometry.chunk_count,
+                                                           geometry.cib_count) <
+                                    kApfsSpacemanBlocksPerChunk;
+    if (geometry.cab_count == 0 && arrayFits && metadataFitsChunk0) {
         return QString();
     }
     return QStringLiteral(
-               "APFS %1 supports S.A.K.-generated single-CIB and multi-CIB (cab_count 0) "
-               "containers up to the point where the chunk-info-block address array and the "
-               "internal pool fit chunk 0; this %2-block target needs %3 chunk(s) across %4 "
-               "chunk-info block(s) (%5), which requires CAB-tier spaceman emission and Apple "
-               "fsck validation")
+               "APFS %1 supports S.A.K.-generated containers whose reserved prefix + internal pool "
+               "fit chunk 0 (~1.3 TiB); this %2-block target needs %3 chunk(s) across %4 "
+               "chunk-info "
+               "block(s) (%5), which requires multi-block ip-bitmap / CAB-tier spaceman emission "
+               "and Apple fsck validation")
         .arg(purpose)
         .arg(blockCount)
         .arg(geometry.chunk_count)
         .arg(geometry.cib_count)
-        .arg(geometry.cab_count > 0 ? QStringLiteral("CAB tier")
-                                    : QStringLiteral("metadata exceeds chunk 0"));
+        .arg(!arrayFits || geometry.cab_count > 0 ? QStringLiteral("CAB tier")
+                                                  : QStringLiteral("metadata overflow"));
 }
 
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
@@ -5324,7 +5428,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
-    const uint64_t ipDelta = 3 * (chunkCount + mcib.cibCount) - kApfsFormatIpBlockCount;
+    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount);
     const uint64_t ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
     const uint64_t ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
     const uint64_t ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
@@ -5471,9 +5575,14 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     // ONCE as immutable blocks. Single-CIB reduces to the certified {185,186} ghost
     // / {187,188} live blocks (no immutable cibs).
     const uint64_t cib0Span = std::min<uint64_t>(kApfsSpacemanChunksPerCib, chunkCount);
+    // ip allocation bitmaps: ring slot 0 = genesis, slot 1 = live, each ip_bm_size
+    // blocks (only the first holds usage bits; the IP usage is contiguous from
+    // ip_base so it stays inside the first bitmap block). Larger bitmaps shift the
+    // live slot from ip_bm_base + 1 to ip_bm_base + ip_bm_size.
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, mcib.cibCount);
     blocks.append({kApfsFormatIpBitmapBaseBlock,
                    buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
-    blocks.append({kApfsFormatIpBitmapBaseBlock + 1,
+    blocks.append({kApfsFormatIpBitmapBaseBlock + ipBmSize,
                    buildIpBitmapBlock(request.block_size_bytes, mcib.liveIpUsage)});
     blocks.append({mcib.ghostCibs.first(),
                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
@@ -5484,7 +5593,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                         .bitmapBlock = mcib.ghostBitmap,
                                         .chunkStart = 0,
                                         .chunkSpan = cib0Span,
-                                        .cibIndex = 0},
+                                        .cibIndex = 0,
+                                        .metadataChunks = mcib.metadataChunks,
+                                        .extraChunkBitmaps = mcib.extraChunkBitmaps},
                                        blockers)});
     blocks.append({mcib.liveCibs.first(),
                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
@@ -5495,7 +5606,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                         .bitmapBlock = mcib.liveBitmap,
                                         .chunkStart = 0,
                                         .chunkSpan = cib0Span,
-                                        .cibIndex = 0},
+                                        .cibIndex = 0,
+                                        .metadataChunks = mcib.metadataChunks,
+                                        .extraChunkBitmaps = mcib.extraChunkBitmaps},
                                        blockers)});
     for (qsizetype i = 0; i < mcib.immutableCibs.size(); ++i) {
         const uint64_t cibIndex = static_cast<uint64_t>(i) + 1;
@@ -5514,9 +5627,22 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                             .cibIndex = cibIndex},
                                            blockers)});
     }
+    // Chunk-0 allocation bitmaps mark only chunk 0's slice of the reserved prefix
+    // (clamped to 32768 so a multi-chunk prefix does not overrun the bitmap block).
     blocks.append(
-        {mcib.ghostBitmap, buildChunkBitmapBlock(request.block_size_bytes, ghostReserved)});
-    blocks.append({mcib.liveBitmap, buildChunkBitmapBlock(request.block_size_bytes, seedData)});
+        {mcib.ghostBitmap,
+         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(ghostReserved, 0))});
+    blocks.append(
+        {mcib.liveBitmap,
+         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(seedData, 0))});
+    // Metadata-overflow: immutable per-chunk bitmaps for chunks 1..M-1 (each marks
+    // that chunk's slice of the reserved prefix).
+    for (qsizetype i = 0; i < mcib.extraChunkBitmaps.size(); ++i) {
+        const uint64_t chunk = static_cast<uint64_t>(i) + 1;
+        blocks.append({mcib.extraChunkBitmaps.at(i),
+                       buildChunkBitmapBlock(request.block_size_bytes,
+                                             chunkReservedBlocks(seedData, chunk))});
+    }
     return blocks;
 }
 
