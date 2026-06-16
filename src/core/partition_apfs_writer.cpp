@@ -753,20 +753,96 @@ uint32_t crc32cWord(uint32_t crc, uint32_t word) {
     return crc;
 }
 
+// Unicode FULL case-folding expansions (CaseFolding.txt status F: the 1-to-many
+// mappings) that Apple applies but Qt's toCaseFolded does not. Generated from
+// Python str.casefold() (full folding): 104 BMP code points, each folding to at
+// most three. Qt already applies the 1-to-1 (common) folds correctly, so adding
+// these reproduces Apple's hash for every script (German eszett, the Greek
+// iota-subscript letters, the Latin/Armenian ligatures, ...).
+const QHash<char32_t, QVector<char32_t>>& fullCaseFoldExpansions() {
+    static const QHash<char32_t, QVector<char32_t>> table = {
+        {0x00DF, {0x0073, 0x0073}},         {0x0130, {0x0069, 0x0307}},
+        {0x0149, {0x02BC, 0x006E}},         {0x01F0, {0x006A, 0x030C}},
+        {0x0390, {0x03B9, 0x0308, 0x0301}}, {0x03B0, {0x03C5, 0x0308, 0x0301}},
+        {0x0587, {0x0565, 0x0582}},         {0x1E96, {0x0068, 0x0331}},
+        {0x1E97, {0x0074, 0x0308}},         {0x1E98, {0x0077, 0x030A}},
+        {0x1E99, {0x0079, 0x030A}},         {0x1E9A, {0x0061, 0x02BE}},
+        {0x1E9E, {0x0073, 0x0073}},         {0x1F50, {0x03C5, 0x0313}},
+        {0x1F52, {0x03C5, 0x0313, 0x0300}}, {0x1F54, {0x03C5, 0x0313, 0x0301}},
+        {0x1F56, {0x03C5, 0x0313, 0x0342}}, {0x1F80, {0x1F00, 0x03B9}},
+        {0x1F81, {0x1F01, 0x03B9}},         {0x1F82, {0x1F02, 0x03B9}},
+        {0x1F83, {0x1F03, 0x03B9}},         {0x1F84, {0x1F04, 0x03B9}},
+        {0x1F85, {0x1F05, 0x03B9}},         {0x1F86, {0x1F06, 0x03B9}},
+        {0x1F87, {0x1F07, 0x03B9}},         {0x1F88, {0x1F00, 0x03B9}},
+        {0x1F89, {0x1F01, 0x03B9}},         {0x1F8A, {0x1F02, 0x03B9}},
+        {0x1F8B, {0x1F03, 0x03B9}},         {0x1F8C, {0x1F04, 0x03B9}},
+        {0x1F8D, {0x1F05, 0x03B9}},         {0x1F8E, {0x1F06, 0x03B9}},
+        {0x1F8F, {0x1F07, 0x03B9}},         {0x1F90, {0x1F20, 0x03B9}},
+        {0x1F91, {0x1F21, 0x03B9}},         {0x1F92, {0x1F22, 0x03B9}},
+        {0x1F93, {0x1F23, 0x03B9}},         {0x1F94, {0x1F24, 0x03B9}},
+        {0x1F95, {0x1F25, 0x03B9}},         {0x1F96, {0x1F26, 0x03B9}},
+        {0x1F97, {0x1F27, 0x03B9}},         {0x1F98, {0x1F20, 0x03B9}},
+        {0x1F99, {0x1F21, 0x03B9}},         {0x1F9A, {0x1F22, 0x03B9}},
+        {0x1F9B, {0x1F23, 0x03B9}},         {0x1F9C, {0x1F24, 0x03B9}},
+        {0x1F9D, {0x1F25, 0x03B9}},         {0x1F9E, {0x1F26, 0x03B9}},
+        {0x1F9F, {0x1F27, 0x03B9}},         {0x1FA0, {0x1F60, 0x03B9}},
+        {0x1FA1, {0x1F61, 0x03B9}},         {0x1FA2, {0x1F62, 0x03B9}},
+        {0x1FA3, {0x1F63, 0x03B9}},         {0x1FA4, {0x1F64, 0x03B9}},
+        {0x1FA5, {0x1F65, 0x03B9}},         {0x1FA6, {0x1F66, 0x03B9}},
+        {0x1FA7, {0x1F67, 0x03B9}},         {0x1FA8, {0x1F60, 0x03B9}},
+        {0x1FA9, {0x1F61, 0x03B9}},         {0x1FAA, {0x1F62, 0x03B9}},
+        {0x1FAB, {0x1F63, 0x03B9}},         {0x1FAC, {0x1F64, 0x03B9}},
+        {0x1FAD, {0x1F65, 0x03B9}},         {0x1FAE, {0x1F66, 0x03B9}},
+        {0x1FAF, {0x1F67, 0x03B9}},         {0x1FB2, {0x1F70, 0x03B9}},
+        {0x1FB3, {0x03B1, 0x03B9}},         {0x1FB4, {0x03AC, 0x03B9}},
+        {0x1FB6, {0x03B1, 0x0342}},         {0x1FB7, {0x03B1, 0x0342, 0x03B9}},
+        {0x1FBC, {0x03B1, 0x03B9}},         {0x1FC2, {0x1F74, 0x03B9}},
+        {0x1FC3, {0x03B7, 0x03B9}},         {0x1FC4, {0x03AE, 0x03B9}},
+        {0x1FC6, {0x03B7, 0x0342}},         {0x1FC7, {0x03B7, 0x0342, 0x03B9}},
+        {0x1FCC, {0x03B7, 0x03B9}},         {0x1FD2, {0x03B9, 0x0308, 0x0300}},
+        {0x1FD3, {0x03B9, 0x0308, 0x0301}}, {0x1FD6, {0x03B9, 0x0342}},
+        {0x1FD7, {0x03B9, 0x0308, 0x0342}}, {0x1FE2, {0x03C5, 0x0308, 0x0300}},
+        {0x1FE3, {0x03C5, 0x0308, 0x0301}}, {0x1FE4, {0x03C1, 0x0313}},
+        {0x1FE6, {0x03C5, 0x0342}},         {0x1FE7, {0x03C5, 0x0308, 0x0342}},
+        {0x1FF2, {0x1F7C, 0x03B9}},         {0x1FF3, {0x03C9, 0x03B9}},
+        {0x1FF4, {0x03CE, 0x03B9}},         {0x1FF6, {0x03C9, 0x0342}},
+        {0x1FF7, {0x03C9, 0x0342, 0x03B9}}, {0x1FFC, {0x03C9, 0x03B9}},
+        {0xFB00, {0x0066, 0x0066}},         {0xFB01, {0x0066, 0x0069}},
+        {0xFB02, {0x0066, 0x006C}},         {0xFB03, {0x0066, 0x0066, 0x0069}},
+        {0xFB04, {0x0066, 0x0066, 0x006C}}, {0xFB05, {0x0073, 0x0074}},
+        {0xFB06, {0x0073, 0x0074}},         {0xFB13, {0x0574, 0x0576}},
+        {0xFB14, {0x0574, 0x0565}},         {0xFB15, {0x0574, 0x056B}},
+        {0xFB16, {0x057E, 0x0576}},         {0xFB17, {0x0574, 0x056D}},
+    };
+    return table;
+}
+
+// Apple's case-insensitive dirent hash case-folds (FULL Unicode folding) then
+// NFD-normalizes the name. Qt's toCaseFolded handles the 1-to-1 folds; the 1-to-
+// many ones come from fullCaseFoldExpansions().
+QString appleCaseFold(const QString& name) {
+    QString folded;
+    for (char32_t codePoint : name.toStdU32String()) {
+        const auto expansion = fullCaseFoldExpansions().constFind(codePoint);
+        if (expansion != fullCaseFoldExpansions().constEnd()) {
+            for (char32_t out : *expansion) {
+                folded += QString::fromUcs4(&out, 1);
+            }
+        } else {
+            folded += QString::fromUcs4(&codePoint, 1).toCaseFolded();
+        }
+    }
+    return folded;
+}
+
 // j_drec_hashed_key name_len_and_hash: low 10 bits hold the name length
-// (including the trailing NUL); the high 22 bits hold a CRC-32C over the
-// name's UTF-32LE code points (seed ~0, no final inversion), verified against
-// names written by Apple's own APFS driver ('root', 'private-dir',
-// 'proof.txt'). The S.A.K. volume sets APFS_INCOMPAT_CASE_INSENSITIVE, so Apple
-// (and apfsck) case-fold each code point before hashing - for ASCII that is
-// A-Z -> a-z (NFD is identity). Non-ASCII names need full Unicode normalization
-// and are rejected upstream (isSupportedApfsFileName), so this stays exact.
+// (including the trailing NUL); the high 22 bits hold a CRC-32C over the UTF-32
+// code points of the name's FULL-case-folded NFD form (seed ~0, no final
+// inversion). The S.A.K. volume sets APFS_INCOMPAT_CASE_INSENSITIVE, so Apple and
+// apfsck normalize the name this way before hashing; ASCII decomposes to itself
+// and folds A-Z -> a-z, so ASCII names stay byte-identical.
 uint32_t drecNameLenAndHash(const QString& name) {
-    // Apple hashes the case-folded canonical (NFD) decomposition of the name's code
-    // points. Qt's toCaseFolded + NFD normalization reproduces that for the stable
-    // Unicode ranges isSupportedApfsFileName admits; ASCII decomposes to itself and
-    // folds A-Z -> a-z, so ASCII names stay byte-identical.
-    const QString normalized = name.toCaseFolded().normalized(QString::NormalizationForm_D);
+    const QString normalized = appleCaseFold(name).normalized(QString::NormalizationForm_D);
     uint32_t crc = 0xFF'FF'FF'FFu;
     for (char32_t codePoint : normalized.toStdU32String()) {
         crc = crc32cWord(crc, static_cast<uint32_t>(codePoint));
@@ -775,16 +851,6 @@ uint32_t drecNameLenAndHash(const QString& name) {
     // normalized form.
     const uint32_t nameLength = static_cast<uint32_t>(name.toUtf8().size() + 1) & 0x3FF;
     return ((crc & 0x3F'FF'FF) << 10) | nameLength;
-}
-
-// Apple's case-insensitive dirent hash folds + NFD-normalizes each code point.
-// drecNameLenAndHash reproduces that with Qt for ASCII, Latin-1 Supplement, and
-// Latin Extended-A (< U+0180) - ranges whose decomposition + case-folding are
-// frozen across Unicode versions, so Qt and Apple agree. Other scripts can diverge
-// between Qt's and Apple's Unicode versions (an unfindable file), so they fail
-// closed until Apple's exact normalization tables are ported.
-bool isSupportedApfsFileName(const QString& name) {
-    return std::all_of(name.cbegin(), name.cend(), [](QChar ch) { return ch.unicode() < 0x0180; });
 }
 
 QByteArray fsKey(uint64_t objectId,
@@ -3348,13 +3414,6 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     if (!readApfsRepairBlock(in.image, in.geometry, in.chain.volSb, &volSb, blockers)) {
         return false;
     }
-    if (!isSupportedApfsFileName(in.request.fileName.trimmed())) {
-        blockers->append(
-            QStringLiteral("APFS file-insert-commit: only ASCII, Latin-1, and Latin Extended-A "
-                           "file names are supported (the case-insensitive "
-                           "dirent hash needs Unicode normalization for non-ASCII names)"));
-        return false;
-    }
     const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
@@ -3926,13 +3985,6 @@ struct ApfsRenameListInput {
 bool buildRenameFileList(const ApfsRenameListInput& in,
                          QVector<ApfsRootFilePayload>* files,
                          QStringList* blockers) {
-    if (!isSupportedApfsFileName(in.newName)) {
-        blockers->append(
-            QStringLiteral("APFS file-rename-commit: only ASCII, Latin-1, and Latin Extended-A "
-                           "file names are supported (the case-insensitive "
-                           "dirent hash needs Unicode normalization for non-ASCII names)"));
-        return false;
-    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     bool found = false;
