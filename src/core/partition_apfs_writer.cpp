@@ -2505,34 +2505,6 @@ QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
     return owners;
 }
 
-// True if any file owns more than one physical-extent record (its data is
-// fragmented across several runs). Preserving such a file in a chained commit
-// needs its file-extent records (logical order), which parseExtentRefOwners does
-// not recover, so the chained insert/delete paths fail closed on it for now.
-bool extentRefHasMultiExtentOwner(QIODevice* image,
-                                  const ApfsRepairGeometry& geometry,
-                                  uint64_t extentRefBlock,
-                                  QStringList* blockers) {
-    QByteArray node(geometry.blockSize, '\0');
-    if (extentRefBlock == 0 ||
-        !readApfsRepairBlock(image, geometry, extentRefBlock, &node, blockers)) {
-        return false;
-    }
-    // More physical-extent records than distinct owners means some file is
-    // fragmented across multiple runs (parseExtentRefOwners dedups by owner).
-    const uint32_t recordCount = le32(node, kApfsBtreeNodeCountOffset);
-    const auto owners = parseExtentRefOwners(image, geometry, extentRefBlock, blockers);
-    return recordCount > static_cast<uint32_t>(owners.size());
-}
-
-QString multiExtentPreserveBlocker(QLatin1StringView purpose) {
-    return QStringLiteral(
-               "APFS %1: an existing file is fragmented across multiple extents; preserving it in "
-               "a "
-               "chained commit is unsupported in this increment")
-        .arg(purpose);
-}
-
 // Number of chunk-info blocks a device of `chunkCount` chunks needs: one cib per
 // chunks_per_cib (126) chunks. A container of <=126 chunks is single-CIB.
 uint64_t cibCountForChunks(uint64_t chunkCount) {
@@ -2851,6 +2823,61 @@ bool collectOldFsTreeNodePaddrs(QIODevice* image,
         paddrs->append(omap.value(le64(root, valueAreaEnd - valueOffset)));
     }
     return true;
+}
+
+// Recover a file's data extents in logical order from the live fs-tree's
+// j_file_extent records (key = {fileId, logical byte offset}, value = {length,
+// physical block}). parseExtentRefOwners only yields one paddr per owner, so a file
+// fragmented across several runs must be rebuilt from these records to be preserved
+// across a chained commit. Returns the runs sorted by logical block (empty for an
+// empty file - no extent records).
+QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
+                                               const ApfsRepairGeometry& geometry,
+                                               const ApfsLiveFsChain& chain,
+                                               uint64_t fileId,
+                                               QStringList* blockers) {
+    QVector<uint64_t> nodes;
+    if (!collectOldFsTreeNodePaddrs(image, geometry, chain, &nodes, blockers)) {
+        return {};
+    }
+    QVector<ApfsDataExtent> extents;
+    const uint64_t oidMask = (1ULL << kApfsObjTypeShift) - 1;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint64_t nodeBlock : nodes) {
+        QByteArray node(geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, geometry, nodeBlock, &node, blockers)) {
+            return {};
+        }
+        if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
+            continue;  // internal node carries child pointers, not file records
+        }
+        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
+                                       le16(node, kApfsBtreeNodeTableLengthOffset);
+        for (uint32_t index = 0; index < nkeys; ++index) {
+            const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                                  static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+            const uint16_t keyOffset = le16(node, toc);
+            const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+            const uint64_t keyHeader = le64(node, keyAreaStart + keyOffset);
+            if ((keyHeader >> kApfsObjTypeShift) != kApfsRecordFileExtent ||
+                (keyHeader & oidMask) != fileId) {
+                continue;
+            }
+            const uint64_t logicalBytes =
+                le64(node, keyAreaStart + keyOffset + kApfsFileExtentKeyLogicalOffset);
+            const qsizetype value = valueAreaEnd - valueOffset;
+            const uint64_t lengthBytes = le64(node, value);
+            const uint64_t paddr = le64(node, value + kApfsFileExtentValuePhysicalBlockOffset);
+            extents.append({logicalBytes / kSupportedApfsBlockSizeBytes,
+                            paddr,
+                            lengthBytes / kSupportedApfsBlockSizeBytes});
+        }
+    }
+    std::sort(extents.begin(), extents.end(), [](const ApfsDataExtent& a, const ApfsDataExtent& b) {
+        return a.logicalBlock < b.logicalBlock;
+    });
+    return extents;
 }
 
 struct ApfsCowFileInsert {
@@ -3302,17 +3329,20 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
         return false;
     }
     const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
-    if (!in.request.existingFiles.isEmpty() &&
-        extentRefHasMultiExtentOwner(in.image, in.geometry, in.chain.extentRef, blockers)) {
-        blockers->append(multiExtentPreserveBlocker(QLatin1StringView("file-insert-commit")));
-        return false;
-    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     for (ApfsRootFilePayload existing : in.request.existingFiles) {
         existing.parentDirectoryId = kApfsRootDirectoryId;
         existing.privateId = existing.fileId;
         existing.dataStartBlock = owners.value(existing.fileId);
+        // A fragmented existing file needs its runs recovered from the fs-tree
+        // (logical order); a single-extent file keeps the dataStartBlock fast path
+        // so its records stay byte-identical.
+        const QVector<ApfsDataExtent> recovered =
+            recoverFileDataExtents(in.image, in.geometry, in.chain, existing.fileId, blockers);
+        if (recovered.size() > 1) {
+            existing.dataExtents = recovered;
+        }
         files->append(existing);
     }
     files->append({.fileName = in.request.fileName.trimmed(),
@@ -3526,6 +3556,16 @@ QVector<uint64_t> dataBlockRange(uint64_t start, uint64_t count) {
     QVector<uint64_t> blocks;
     for (uint64_t index = 0; index < count; ++index) {
         blocks.append(start + index);
+    }
+    return blocks;
+}
+
+// Every data block a file occupies across all its runs (for the freed list on
+// delete). A single-extent file reduces to one contiguous dataBlockRange.
+QVector<uint64_t> fileFreedDataBlocks(const ApfsRootFilePayload& file, uint32_t blockSize) {
+    QVector<uint64_t> blocks;
+    for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
+        blocks += dataBlockRange(extent.paddr, extent.blockCount);
     }
     return blocks;
 }
@@ -3760,10 +3800,6 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
                          QVector<ApfsRootFilePayload>* remaining,
                          ApfsRootFilePayload* target,
                          QStringList* blockers) {
-    if (extentRefHasMultiExtentOwner(in.image, in.geometry, in.chain.extentRef, blockers)) {
-        blockers->append(multiExtentPreserveBlocker(QLatin1StringView("file-delete-commit")));
-        return false;
-    }
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     bool found = false;
@@ -3771,6 +3807,14 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         file.parentDirectoryId = kApfsRootDirectoryId;
         file.privateId = file.fileId;
         file.dataStartBlock = owners.value(file.fileId);
+        // Recover a fragmented file's runs (logical order) so the target frees every
+        // extent on delete and a preserved file keeps all of them; single-extent
+        // files keep the dataStartBlock fast path (byte-identical).
+        const QVector<ApfsDataExtent> recovered =
+            recoverFileDataExtents(in.image, in.geometry, in.chain, file.fileId, blockers);
+        if (recovered.size() > 1) {
+            file.dataExtents = recovered;
+        }
         if (file.fileName == in.targetName) {
             *target = file;
             found = true;
@@ -3833,7 +3877,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              .newBlocks = newBlocks,
                              .files = remaining,
                              .extentRefNew = extentRefNew,
-                             .freedDataBlocks = dataBlockRange(target.dataStartBlock, targetBlocks),
+                             .freedDataBlocks = fileFreedDataBlocks(target, ctx.geometry.blockSize),
                              .dataBlocksNew = 0,
                              .fileCountDelta = -1,
                              .nextObjIdDelta = 0},
@@ -3863,6 +3907,11 @@ bool buildRenameFileList(const ApfsRenameListInput& in,
         file.parentDirectoryId = kApfsRootDirectoryId;
         file.privateId = file.fileId;
         file.dataStartBlock = owners.value(file.fileId);
+        const QVector<ApfsDataExtent> recovered =
+            recoverFileDataExtents(in.image, in.geometry, in.chain, file.fileId, blockers);
+        if (recovered.size() > 1) {
+            file.dataExtents = recovered;
+        }
         duplicate = duplicate || file.fileName == in.newName;
         if (file.fileName == in.oldName) {
             file.fileName = in.newName;
