@@ -1,0 +1,22 @@
+{
+    "schema_version": 1,
+    "gate_id": "harvest.multi-cib-kernel-rotation",
+    "milestone": "Harvest the macOS kernel's multi-CIB chunk-info-block rotation (to make S.A.K.'s multi-CIB in-place commit kernel-continuation-safe)",
+    "status": "Harvested - the kernel's multi-CIB rotation scheme is fully decoded; implementation is the next focused step.",
+    "why": "S.A.K.'s multi-CIB in-place commit (whole-slot rotation) is apfsck-clean but the macOS kernel cannot continue its checkpoint (fsck_apfs: 'failed to read spaceman cib 1'). Commit 922c13f fails multi-CIB commits closed until the rotation matches the kernel; this harvest specifies that rotation.",
+    "method": "Formatted a 2-cib 16 GiB image (volume MC16H, baseline xid 2, array [188,189]), attached it to the macOS Sequoia VM as sata.0, booted recovery, in Terminal ran touch+sync x3 on /Volumes/MC16H to force kernel checkpoint commits, diskutil unmountDisk, killed the VM, decoded the image host-side.",
+    "findings": {
+        "baseline_xid2_array": "[188, 189] (cib0 @188 o_xid2, cib1 @189 o_xid1) - S.A.K. format live cibs, consecutive",
+        "kernel_xid4_array": "[194, 189] - cib0 MOVED 188->194 (a fresh IP block, o_xid 4); cib1 STAYED at 189 (o_xid 1, untouched)",
+        "rule_cib0": "the kernel rotates ONLY cib0 - COWs it to a fresh IP block at ip_base + 3*slot_stride (194 = 185 + 3*3 for slot_stride 3), growing into the 194,195,196 region",
+        "rule_cib1_plus": "cib1..N-1 are IMMUTABLE - the kernel never moves them; they stay at the format's live positions (189)",
+        "rule_chunk0_bitmap": "the chunk-0 allocation bitmap stays at 190 (the format live bitmap)",
+        "sm_ip_bitmap_live": "marks 185-196 CONTIGUOUS (no holes): the 3 cib/bitmap rotation slots (185-193) plus the cib0 growth region (194-196)",
+        "sm_fq_ip": "count 7, oldest_xid 2 (the freed old-cib0 ghosts)",
+        "sm_fq_main": "count 8, oldest_xid 2",
+        "ip_bm_ring": "ip_bm_base 169, in-use ring slots [2,3] -> blocks 171,172 (172 = live xid4), head 4 tail 2 seq 3"
+    },
+    "fix_plan": "FORMAT: lay cib1..N-1 as a contiguous fixed run (never moved) + a cib0 growth/rotation region right after ip_base + 3*slot_stride. COMMIT: read the live cib array and PRESERVE entries 1..N-1 (revert writeRotatedCib's cib-copy loop + applySpacemanCommitMutations' full-array write to entry-0-only); rotate ONLY cib0 + chunk0 bitmap; the IP free-queue frees only the 2 old cib0/bitmap blocks (the whole-slot free was the bug that let the kernel reuse cib1..N-1); keep sm_ip_bitmap contiguous (match the kernel). RE-CERT: commit on the USB -> VM mount RW (kernel continues) -> fsck_apfs must be clean.",
+    "guard": "Multi-CIB in-place commits fail closed (loadFsCommitContext, commit 922c13f) until this is implemented. Multi-CIB FORMAT is kernel-safe and Apple-certified; single-CIB commits are certified.",
+    "error": ""
+}
