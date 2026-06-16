@@ -1,0 +1,26 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.multi-cib-usb-flip",
+    "milestone": "Multi-CIB (>15.75 GiB) APFS container on physical Apple media (A-b matrix flip)",
+    "status": "Passed - Apple-certified. macOS Sequoia kernel synthesized + mounted the 16-CIB multi-CIB container written to a physical 238 GB USB read-write; fsck_apfs -n reports the container appears to be OK with zero warnings after the tier2 cib-address-offset overlap was fixed.",
+    "capability": "S.A.K. emits and the macOS kernel accepts multi-CIB containers (cib_count > 1, cab_count 0) on real hardware. The container spans the whole 256060514304-byte (62514774-block, 1908-chunk, 16-cib) USB. The spaceman lists the 16 cib addresses inline at offset 2568 (128 bytes); the internal-pool rotation slots scale to slot_stride = cib_count + 1.",
+    "host_verify": "apfsprogs apfsck -cw clean on the raw USB device (/dev/sde via wsl --mount) and on 256 MiB / 16 GiB / 32 GiB / 100 GiB image containers. NOTE: apfsck did NOT catch the tier2 spaceman-offset overlap that fsck_apfs did - Apple's tool is stricter here.",
+    "vm_external_gate": {
+        "status": "Passed",
+        "performed_at_utc": "2026-06-15T23:55:00Z",
+        "environment": "qemu/KVM macOS Sequoia recovery; the physical Best Buy NS-PCNVMEHDE 238.5 GB USB (Windows Disk 1) attached raw to WSL2 via wsl --mount --bare and hot-routed to the VM as a SATA disk (sata.0)",
+        "method": [
+            "1. Elevated PowerShell: Set-Disk -IsOffline; format-raw \\\\.\\PhysicalDrive1 --size-bytes 256060514304 (16-cib multi-CIB container) -> ok.",
+            "2. wsl --mount --bare the USB; relaunch the macOS VM with /dev/sde as sata.0; OpenCore -> macOS Base System recovery -> Terminal.",
+            "3. fsck_apfs -n /dev/rdisk0: first run errored 'spaceman struct ranges 2568+128 and 2576+0 overlap' (the tier2 cib-address offset was hardcoded 2568+8, valid only for a single-entry array). Fixed: tier2 offset = 2568 + cib_count*8.",
+            "4. Re-format the USB with the fixed writer; re-fsck. macOS auto-mounted the container read-write (/dev/rdisk1); diskutil unmountDisk force disk1; fsck_apfs -n /dev/rdisk0 -> the container appears to be OK."
+        ],
+        "kernel_behavior": "The macOS Sequoia APFS kernel synthesized an APFS container from the bare on-disk NXSB (no GPT) and mounted the volume SAKMCIB read-write - direct kernel-mount proof on physical media for a 16-cib multi-CIB container.",
+        "apple_fsck_apfs": "Checking the container superblock; Checking the space manager (no overlap, clean); Checking the object map; volume SAKMCIB formatted by S.A.K. Utility APFS writer; fsroot tree / extent ref tree / snapshot metadata tree / object map space checked; The container /dev/rdisk0 appears to be OK - zero warnings.",
+        "evidence_png": "apfs-multicib-usb-fsck-PASS.png (clean fsck after the fix); apfs-multicib-usb-tier2overlap-CAUGHT.png (the spaceman overlap fsck_apfs caught before the fix)"
+    },
+    "residual": "In-place COW commits on the raw USB device are not exposed via the CLI (commit-* is image-only); multi-CIB commit is host-apfsck-certified on images (insert/rename/delete chain). Multi-CIB containers above the chunk-0 internal-pool / inline-array limit (~1.3 TiB) and the CAB tier (cib_count > 507) still fail closed.",
+    "gates": "clang-format + lizard + cppcheck clean; format commit 5cbf572, commit-path 4a7d191, tier2 fix pending.",
+    "next": "Optional: raw-device in-place commit command for on-hardware commit/crash tests; CAB tier for >7.8 TiB.",
+    "error": ""
+}

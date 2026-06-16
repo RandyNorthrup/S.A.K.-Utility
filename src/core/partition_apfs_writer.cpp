@@ -1581,9 +1581,13 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     writeLe32(&block, kApfsSpacemanIpBmBlockCountOffset, kApfsFormatIpBitmapBlocks);
     writeLe64(&block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
     writeLe64(&block, kApfsSpacemanIpBaseOffset, kApfsFormatIpBaseBlock);
+    // The secondary (tier2) device's cib-address offset sits immediately after the
+    // main device's inline cib-address array. fsck_apfs rejects overlapping
+    // spaceman structs, so this must clear the whole main array (cib_count entries),
+    // not a single entry - single-CIB keeps the certified 2576.
     writeLe32(&block,
               kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(kApfsSpacemanCibAddrArrayOffset + 8));
+              static_cast<uint32_t>(kApfsSpacemanCibAddrArrayOffset + cibCount * 8));
     writeLe16(&block, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(chunkCount));
     writeLe16(&block, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(blockCount));
     // Internal-offset table and bitmap ring state mirrored from the reference
