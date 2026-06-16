@@ -280,7 +280,7 @@ the artifact.**
 | MS | Name | Unlocks | Exit gate |
 |---|---|---|---|
 | A1 ✅ | Multi-CIB / multi-chunk space manager (A-a) | Arbitrary size > 128 MiB | `fsck_apfs` + kernel mount on a multi-GB generated container (closes the 51 GB `spaceman_sanity_check` rejection) — **DONE 2026-06-14** (64 MiB/256 MiB/1 GiB Apple `fsck_apfs` + kernel rw mount + write round-trip + crash/rollback + physical-USB; also flips the matrix's general crash/rollback/physical-USB lanes to proven). Writer UUIDs are now random v4 with read-back; HFS catalog metadata stamped |
-| A2 | In-place COW checkpoint mutation of arbitrary Apple containers (A-b) | Mutate real Apple media without full rewrite | `fsck_apfs` + kernel RW mount after each in-place commit; crash-interruption proof |
+| A2 🟡 | In-place COW checkpoint mutation of arbitrary Apple containers (A-b) | Mutate real Apple media without full rewrite | `fsck_apfs` + kernel RW mount after each in-place commit; crash-interruption proof — **SUBSTANTIALLY DONE, CIRCLE BACK after H2**: in-place insert/delete/rename Apple-certified across single-CIB → multi-CIB → metadata-overflow (>1.3 TiB) FORMAT+COMMIT (kernel RW-mount + `fsck_apfs` clean on physical 238 GB + 2 TiB-on-4 TB USB); multi-leaf fs-tree, multi-extent/fragmented-file preservation, main+IP free-queues/crash-rollback, arbitrary file sizes, and **full-Unicode filenames** (case-fold + NFD + 104-char full-fold table) all done + host/Apple-validated. **REMAINING (needs a 12 TB disposable USB to kernel-cert — all FORMAT changes):** (1) 2-block (multi-block) spaceman = full 4 TB single container, ~3–8.57 TiB tier; (2) boundary-chunk bitmap rotation so overflow supports REPEATED commits (currently guarded fail-closed to one commit per overflow container); (3) CAB tier (cib_count > 507, >8.57 TiB); (4) harvest Apple's DSTREAM xfield flags (0x08 vs apfsck 0x20 — the lone cosmetic apfsck note) while the VM is up. See [[apfs-a2-inplace-commit-status]] memory for the full state + the 12 TB session plan |
 | A3 | Snapshots create/delete/revert (A-c) | Snapshotted containers writable | `fsck_apfs` snapshot checks; kernel mount; `tmutil`/`diskutil` cross-check |
 | A4 | Multi-volume containers (A-d) | Multi-volume Apple media | `fsck_apfs` multi-volume; kernel mount of each volume |
 | A5 | APFS compression read+write (A-e) | Compressed files | Apple kernel reads S.A.K.-written compressed file; byte-match decode |
@@ -300,6 +300,12 @@ Suggested global order (interleave so external-validation VM time is shared):
 **A1 → H1 → A2 → H2 → H3 → A3 → H4 → A4 → H5 → A5 → H6/H7 → A6 → A7 → H8/A8 → I2.**
 A1 and A2 are the highest-value APFS unlocks and gate everything else on that
 track; H1–H4 are the HFS-driver core.
+
+> **Status (2026-06-16): A2 is paused at 🟡 (substantially done; the remaining
+> items all need a 12 TB disposable USB to kernel-cert — see the A2 row). Active
+> milestone is now H2 (streaming HFS+ B-tree engine). CIRCLE BACK to finish A2's
+> 12 TB-gated items (multi-block spaceman, repeated-overflow commits, CAB tier,
+> dstream-xfield harvest) once that drive arrives.**
 
 ---
 
