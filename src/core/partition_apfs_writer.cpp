@@ -3123,6 +3123,19 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
+    // Multi-CIB in-place commits fail closed: the whole-slot cib rotation is
+    // apfsck-clean but the macOS kernel rotates only cib 0 (COW to a fresh block)
+    // and keeps cib 1..N-1 fixed, so it cannot continue a S.A.K. multi-CIB commit's
+    // checkpoint (fsck_apfs "failed to read spaceman cib 1"). The multi-CIB FORMAT
+    // is kernel-safe; only the commit's rotation is not, pending the kernel's
+    // single-cib-0 rotation scheme (see docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md).
+    if (ctx->layout.cibCount > 1) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit on a multi-CIB container (>15.75 GiB) is not yet kernel-safe; "
+            "the macOS kernel rotates only chunk-info block 0 and cannot continue a whole-slot "
+            "rotation - use a single-CIB container for in-place commits"));
+        return false;
+    }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
     }
