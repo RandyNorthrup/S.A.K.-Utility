@@ -1558,6 +1558,62 @@ uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount) {
            ipBitmapSizeBlocks(chunkCount, cibCount) * kApfsSpacemanIpBmTxMultiplier;
 }
 
+// Apple's spaceman packs three variable-length inline arrays ahead of the
+// cib-address array, each scaled by ip_bm_size, exactly as apfsprogs mkapfs does
+// (off its base 0x150). Apple's base is 2520: the per-bitmap xid array (u64) at
+// 2520, the active-bitmap index array (u16) next, then the 16*ip_bm_size free-next
+// ring (u16), 8-byte aligned. With ip_bm_size == 1 this collapses to the certified
+// 2520 / 2528 / 2536 / 2568 byte-for-byte.
+constexpr qsizetype kApfsSpacemanBitmapXidOffset = 2520;
+
+uint64_t spacemanBmAddrOffset(uint64_t ipBmSize) {
+    return static_cast<uint64_t>(kApfsSpacemanBitmapXidOffset) + 8 * ipBmSize;
+}
+uint64_t spacemanFreeNextOffset(uint64_t ipBmSize) {
+    const uint64_t ringBytes = 2 * ipBmSize;
+    return spacemanBmAddrOffset(ipBmSize) + (ringBytes + 7) / 8 * 8;
+}
+uint64_t spacemanCibArrayOffset(uint64_t ipBmSize) {
+    return spacemanFreeNextOffset(ipBmSize) + 16 * ipBmSize * 2;
+}
+
+// Lay out the ip-bitmap free-next ring for a checkpoint: the in-use checkpoint's
+// ip_bm_size blocks (slots 0 for genesis, ip_bm_size for live) are marked 0xFFFF;
+// the rest form a linked free list (the genesis slots trail the live free list as
+// the most-recently-freed copies). apfsck requires the used count == ip_bm_size.
+void setupIpBitmapRing(QByteArray* block, uint64_t ipBmSize, bool genesis) {
+    const uint64_t ring = spacemanFreeNextOffset(ipBmSize);
+    const uint64_t bmapCount = 16 * ipBmSize;
+    const auto set = [&](uint64_t i, uint16_t v) {
+        writeLe16(block, static_cast<qsizetype>(ring + i * 2), v);
+    };
+    const uint64_t inUseStart = genesis ? 0 : ipBmSize;
+    for (uint64_t i = 0; i < ipBmSize; ++i) {
+        set(inUseStart + i, kApfsSpacemanIpBmRingInUse);
+    }
+    if (genesis) {
+        writeLe16(block, kApfsSpacemanIpBmFreeHeadOffset, static_cast<uint16_t>(ipBmSize));
+        writeLe16(block, kApfsSpacemanIpBmFreeTailOffset, static_cast<uint16_t>(bmapCount - 1));
+        for (uint64_t i = ipBmSize; i < bmapCount - 1; ++i) {
+            set(i, static_cast<uint16_t>(i + 1));
+        }
+        set(bmapCount - 1, kApfsSpacemanIpBmRingInUse);
+        return;
+    }
+    // Live: free list runs 2*ip_bm_size .. bmapCount-1, then wraps through the
+    // freed genesis slot 0 .. ip_bm_size-1 (the free tail).
+    writeLe16(block, kApfsSpacemanIpBmFreeHeadOffset, static_cast<uint16_t>(2 * ipBmSize));
+    writeLe16(block, kApfsSpacemanIpBmFreeTailOffset, static_cast<uint16_t>(ipBmSize - 1));
+    for (uint64_t i = 2 * ipBmSize; i < bmapCount - 1; ++i) {
+        set(i, static_cast<uint16_t>(i + 1));
+    }
+    set(bmapCount - 1, 0);
+    for (uint64_t i = 0; i + 1 < ipBmSize; ++i) {
+        set(i, static_cast<uint16_t>(i + 1));
+    }
+    set(ipBmSize - 1, kApfsSpacemanIpBmRingInUse);
+}
+
 QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blockers) {
     const auto& [blockSize, blockCount, reservedBlocks, xid, genesis, cibAddrs] = params;
     const uint64_t cibCount = static_cast<uint64_t>(cibAddrs.size());
@@ -1566,6 +1622,8 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     const uint64_t freeBlocks = blockCount > reservedBlocks ? blockCount - reservedBlocks : 0;
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount);
+    const uint64_t cibArrayOffset = spacemanCibArrayOffset(ipBmSize);
     writeLe32(&block, kApfsSpacemanBlockSizeOffset, blockSize);
     writeLe32(&block, kApfsSpacemanBlocksPerChunkOffset, kApfsSpacemanBlocksPerChunk);
     writeLe32(&block, kApfsSpacemanChunksPerCibOffset, kApfsSpacemanChunksPerCib);
@@ -1584,7 +1642,7 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
               freeBlocks);
     writeLe32(&block,
               kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(kApfsSpacemanCibAddrArrayOffset));
+              static_cast<uint32_t>(cibArrayOffset));
     writeLe32(&block, kApfsSpacemanFlagsOffset, kApfsSpacemanFlagVersioned);
     writeLe32(&block, kApfsSpacemanIpBmTxMultiplierOffset, kApfsSpacemanIpBmTxMultiplier);
     // Internal-pool size scales with the allocator structures apfsck/fsck_apfs
@@ -1596,7 +1654,6 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     writeLe64(&block, kApfsSpacemanIpBlockCountOffset, ipBlockCount);
     // Each ip allocation bitmap is ip_bm_size blocks (one 4096-byte block per 32768
     // IP blocks); the 16-slot ring is ip_bm_size * 16 blocks and ip_base follows it.
-    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount);
     writeLe32(&block, kApfsSpacemanIpBmSizeOffset, static_cast<uint32_t>(ipBmSize));
     writeLe32(&block,
               kApfsSpacemanIpBmBlockCountOffset,
@@ -1604,49 +1661,39 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     writeLe64(&block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
     writeLe64(&block, kApfsSpacemanIpBaseOffset, generatedIpBaseBlock(chunkCount, cibCount));
     // The secondary (tier2) device's cib-address offset sits immediately after the
-    // main device's inline cib-address array. fsck_apfs rejects overlapping
-    // spaceman structs, so this must clear the whole main array (cib_count entries),
-    // not a single entry - single-CIB keeps the certified 2576.
+    // main device's inline cib-address array. fsck_apfs rejects overlapping spaceman
+    // structs, so this clears the whole main array (cib_count entries) past the
+    // cib-array offset - single-CIB keeps the certified 2576.
     writeLe32(&block,
               kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(kApfsSpacemanCibAddrArrayOffset + cibCount * 8));
+              static_cast<uint32_t>(cibArrayOffset + cibCount * 8));
     writeLe16(&block, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(chunkCount));
     writeLe16(&block, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(blockCount));
-    // Internal-offset table and bitmap ring state mirrored from the reference
-    // container (sm_ip_bitmap_offset 2520, free-next offset 2528, ring array
-    // at 2536 with 0xFFFF in-use markers; ring version entry carries the xid).
-    writeLe32(&block, 0x144, 2520);
-    writeLe32(&block, 0x148, 2528);
-    writeLe32(&block, 0x14C, 2536);
+    // Internal-offset table: sm_ip_bm_xid_offset / sm_ip_bitmap_offset /
+    // sm_ip_bm_free_next_offset point at the three inline arrays, each scaled by
+    // ip_bm_size (single-block bitmaps keep the certified 2520 / 2528 / 2536).
+    const uint64_t bmAddrOffset = spacemanBmAddrOffset(ipBmSize);
+    const uint64_t freeNextOffset = spacemanFreeNextOffset(ipBmSize);
+    writeLe32(&block, 0x144, static_cast<uint32_t>(kApfsSpacemanBitmapXidOffset));
+    writeLe32(&block, 0x148, static_cast<uint32_t>(bmAddrOffset));
+    writeLe32(&block, 0x14C, static_cast<uint32_t>(freeNextOffset));
     writeLe32(&block, 0x150, 1);
     writeLe32(&block, 0x154, 2520);
-    writeLe16(&block, 2520, static_cast<uint16_t>(xid));
-    if (genesis) {
-        // One bitmap-ring slot in use; free chain starts at slot 1 and the
-        // tail wraps to the final slot.
-        writeLe16(&block, kApfsSpacemanIpBmFreeHeadOffset, 1);
-        writeLe16(&block, kApfsSpacemanIpBmFreeTailOffset, 15);
-        writeLe16(&block, 2528, 0);
-        writeLe16(&block, 2536, 0xFFFF);
-        for (uint16_t index = 1; index < 15; ++index) {
-            writeLe16(&block, 2536 + index * 2, static_cast<uint16_t>(index + 1));
-        }
-        writeLe16(&block, 2536 + 15 * 2, 0xFFFF);
-        for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
-            writeLe64(&block, kApfsSpacemanCibAddrArrayOffset + i * 8, cibAddrs.at(i));
-        }
-    } else {
-        // Two ring slots in use (genesis + live transactions); the live free
-        // queues reference their ephemeral B-trees and carry the counts of
-        // ghost blocks pending reclamation.
-        writeLe16(&block, kApfsSpacemanIpBmFreeHeadOffset, 2);
-        writeLe16(&block, kApfsSpacemanIpBmFreeTailOffset, 0);
-        writeLe16(&block, 2528, 1);
-        writeLe16(&block, 2536, 0xFFFF);
-        writeLe16(&block, 2538, 0xFFFF);
-        for (uint16_t index = 2; index < 15; ++index) {
-            writeLe16(&block, 2536 + index * 2, static_cast<uint16_t>(index + 1));
-        }
+    // Per-bitmap xid array: one u64 per active bitmap block, all the checkpoint xid.
+    for (uint64_t i = 0; i < ipBmSize; ++i) {
+        writeLe64(&block, kApfsSpacemanBitmapXidOffset + static_cast<qsizetype>(i) * 8, xid);
+    }
+    // Active-bitmap index array: the live checkpoint's ip_bm_size bitmap blocks sit
+    // at ring slots 0..ip_bm_size-1 (genesis) or ip_bm_size..2*ip_bm_size-1 (rotated).
+    // Each entry must be a distinct ring slot or apfsck reports "same bitmap twice".
+    const uint64_t activeBase = genesis ? 0 : ipBmSize;
+    for (uint64_t i = 0; i < ipBmSize; ++i) {
+        writeLe16(&block,
+                  static_cast<qsizetype>(bmAddrOffset + i * 2),
+                  static_cast<uint16_t>(activeBase + i));
+    }
+    setupIpBitmapRing(&block, ipBmSize, genesis);
+    if (!genesis) {
         // sm_fq[IP] holds the genesis cib-0 slot pending reclamation: the two
         // ghost blocks (cib 0 + chunk-0 bitmap). Only cib 0 rotates, so this is 2
         // regardless of cib_count (the immutable cibs are never freed).
@@ -1656,9 +1703,9 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
         writeLe64(&block, 0xF0, 2);
         writeLe64(&block, 0xF8, kApfsFormatFqMainTreeOid);
         writeLe64(&block, 0x100, kApfsFormatXid);
-        for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
-            writeLe64(&block, kApfsSpacemanCibAddrArrayOffset + i * 8, cibAddrs.at(i));
-        }
+    }
+    for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
+        writeLe64(&block, static_cast<qsizetype>(cibArrayOffset) + i * 8, cibAddrs.at(i));
     }
     stampApfsObjectBlock(&block, blockers);
     return block;
@@ -3937,33 +3984,27 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                                             uint32_t blockSize) {
     const PartitionApfsContainerGeometry geometry =
         PartitionApfsWriter::computeContainerGeometry(blockCount, blockSize);
-    const bool arrayFits = kApfsSpacemanCibAddrArrayOffset +
+    // The inline cib-address array sits just past the ip-bitmap free-next ring (which
+    // grows with ip_bm_size); both must fit the spaceman block. Once the array would
+    // overflow it the CAB tier is required (not yet emitted). S.A.K. emits single-CIB,
+    // multi-CIB, and the metadata-overflow tier (reserved prefix spans chunks,
+    // multi-block ip bitmaps) below that.
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(geometry.chunk_count, geometry.cib_count);
+    const bool arrayFits = static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)) +
                                static_cast<qsizetype>(geometry.cib_count) * 8 <=
                            static_cast<qsizetype>(blockSize);
-    // The metadata-overflow tier (>~1.3 TiB) - where the reserved prefix and the
-    // internal pool no longer fit chunk 0 - is partially built (per-chunk metadata
-    // bitmaps + ip_bm_size/ip_base scaling landed) but not finished: a >32768-IP-block
-    // region needs multi-block ip bitmaps, which resize the ip-bitmap ring + the
-    // spaceman free-next array and force the cib-address array off offset 2568. Fail
-    // closed until that is Apple-fsck-validated.
-    const bool metadataFitsChunk0 = generatedSeedDataBlock(geometry.chunk_count,
-                                                           geometry.cib_count) <
-                                    kApfsSpacemanBlocksPerChunk;
-    if (geometry.cab_count == 0 && arrayFits && metadataFitsChunk0) {
+    if (geometry.cab_count == 0 && arrayFits) {
         return QString();
     }
     return QStringLiteral(
-               "APFS %1 supports S.A.K.-generated containers whose reserved prefix + internal pool "
-               "fit chunk 0 (~1.3 TiB); this %2-block target needs %3 chunk(s) across %4 "
-               "chunk-info "
-               "block(s) (%5), which requires multi-block ip-bitmap / CAB-tier spaceman emission "
-               "and Apple fsck validation")
+               "APFS %1 supports S.A.K.-generated containers whose inline cib-address array fits "
+               "the spaceman block (~3 TiB); this %2-block target needs %3 chunk(s) across %4 "
+               "chunk-info block(s) (CAB tier), which requires CAB-tier spaceman emission and "
+               "Apple fsck validation")
         .arg(purpose)
         .arg(blockCount)
         .arg(geometry.chunk_count)
-        .arg(geometry.cib_count)
-        .arg(!arrayFits || geometry.cab_count > 0 ? QStringLiteral("CAB tier")
-                                                  : QStringLiteral("metadata overflow"));
+        .arg(geometry.cib_count);
 }
 
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
