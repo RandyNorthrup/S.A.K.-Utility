@@ -3395,6 +3395,18 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
             "boundary chunk falls outside cib 0"));
         return false;
     }
+    // Overflow tier: a SINGLE in-place commit on a freshly formatted container is
+    // certified, but the boundary chunk's copy-on-write bitmap currently lands at a
+    // fixed internal-pool block (firstFreeIpBlock), so a second commit would re-COW
+    // the same block and corrupt the allocator after the kernel reclaims it. Until
+    // that bitmap rotates through its own slots (a format + commit change), fail
+    // closed on any commit past genesis.
+    if (ctx->layout.allocChunk != 0 && ctx->live.xid > kApfsFormatXid) {
+        blockers->append(QStringLiteral(
+            "APFS repeated in-place commits on a metadata-overflow container are not yet "
+            "supported; the boundary-chunk bitmap rotation is single-commit only"));
+        return false;
+    }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
     }
