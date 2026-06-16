@@ -32,10 +32,10 @@ constexpr uint64_t kDefaultMaxApfsPayloadBytes = 64ULL * 1024ULL * 1024ULL;
 // In-place checkpoint commits run on any single-CIB or multi-CIB container
 // (computeGeneratedLayout + the cib-rotation are layout-general): apfsck-clean at
 // 64 MiB / 256 MiB / 1 GiB single-CIB and 16 GiB (2 cib) multi-CIB, Apple fsck_apfs
-// + kernel mount certified through 256 MiB. The cap covers the multi-CIB range up to
-// the chunk-0 internal-pool / inline cib-array limit (~1.3 TiB); 1 TiB is a round
-// ceiling safely inside it, large enough for any external disk the A-b flip targets.
-constexpr uint64_t kApfsInPlaceCommitMaxBytes = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+// + kernel mount certified through 256 MiB. The cap covers the multi-CIB range and
+// the metadata-overflow tier (boundary-chunk allocator); 3 TiB is a round ceiling
+// inside the inline cib-array / spaceman-block limit (~3 TiB) the format enforces.
+constexpr uint64_t kApfsInPlaceCommitMaxBytes = 3ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumApfsContainerBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 constexpr qsizetype kMaximumApfsVolumeNameChars = 255;
@@ -2097,7 +2097,10 @@ uint64_t readLiveSpacemanCibAddr(QIODevice* image,
             return 0;
         }
         if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            return le64(object, kApfsSpacemanCibAddrArrayOffset);
+            // The cib-address array offset scales with ip_bm_size (overflow tier);
+            // single-block bitmaps keep the certified 2568.
+            const uint64_t ipBmSize = le32(object, kApfsSpacemanIpBmSizeOffset);
+            return le64(object, static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)));
         }
     }
     return 0;
@@ -2128,25 +2131,57 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
                          const ApfsCheckpointCommitContext& ctx,
                          QStringList* blockers) {
     const uint64_t base = le64(*spaceman, kApfsSpacemanIpBmBaseOffset);
-    const uint16_t allocIndex = le16(*spaceman, kApfsSpacemanIpBmFreeHeadOffset);
-    const uint16_t freeIndex = le16(*spaceman, kApfsSpacemanIpBmFreeTailOffset);
-    const uint16_t nextFree = le16(*spaceman, kApfsSpacemanIpBmRingArrayOffset + allocIndex * 2);
-    const uint16_t newTail = static_cast<uint16_t>((freeIndex + 1) % kApfsSpacemanIpBmTxMultiplier);
-    writeLe16(spaceman,
-              kApfsSpacemanIpBmRingArrayOffset + allocIndex * 2,
-              kApfsSpacemanIpBmRingInUse);
-    writeLe16(spaceman, kApfsSpacemanIpBmRingArrayOffset + freeIndex * 2, newTail);
-    writeLe16(spaceman, kApfsSpacemanIpBmFreeHeadOffset, nextFree);
-    writeLe16(spaceman, kApfsSpacemanIpBmFreeTailOffset, newTail);
-    writeLe64(spaceman, kApfsSpacemanIpBmRingXidOffset, ctx.newXid);
-    writeLe16(spaceman,
-              kApfsSpacemanIpBmRingSeqOffset,
-              static_cast<uint16_t>(le16(*spaceman, kApfsSpacemanIpBmRingSeqOffset) + 1));
-    return writeApfsRepairBlock(ctx.image,
-                                ctx.geometry,
-                                base + allocIndex,
-                                buildIpBitmapBlock(ctx.geometry.blockSize, ctx.ipBitmapUsage),
-                                blockers);
+    const uint64_t bmSize = le32(*spaceman, kApfsSpacemanIpBmSizeOffset);
+    const uint64_t bmCount = le32(*spaceman, kApfsSpacemanIpBmBlockCountOffset);
+    const qsizetype xidOff = kApfsSpacemanBitmapXidOffset;
+    const qsizetype bmAddrOff = static_cast<qsizetype>(spacemanBmAddrOffset(bmSize));
+    const qsizetype ringOff = static_cast<qsizetype>(spacemanFreeNextOffset(bmSize));
+    const auto ringNext = [&](uint16_t i) {
+        return le16(*spaceman, ringOff + i * 2);
+    };
+    const auto setRing = [&](uint16_t i, uint16_t v) {
+        writeLe16(spaceman, ringOff + i * 2, v);
+    };
+    // Allocate bmSize fresh slots off the free-list head for the new ip-bitmap copy,
+    // marking each in-use; the old active slots (the live bitmap copy) are released
+    // back onto the free-list tail. With bmSize == 1 this is byte-identical to the
+    // certified single-block ring advance.
+    QVector<uint16_t> newSlots;
+    uint16_t head = le16(*spaceman, kApfsSpacemanIpBmFreeHeadOffset);
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        newSlots.append(head);
+        const uint16_t next = ringNext(head);
+        setRing(head, kApfsSpacemanIpBmRingInUse);
+        head = next;
+    }
+    uint16_t tail = le16(*spaceman, kApfsSpacemanIpBmFreeTailOffset);
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        const uint16_t oldActive = le16(*spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2);
+        setRing(tail, oldActive);
+        tail = oldActive;
+    }
+    setRing(tail, kApfsSpacemanIpBmRingInUse);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeHeadOffset, head);
+    writeLe16(spaceman, kApfsSpacemanIpBmFreeTailOffset, tail);
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        writeLe16(spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2, newSlots.at(i));
+        writeLe64(spaceman, xidOff + static_cast<qsizetype>(i) * 8, ctx.newXid);
+    }
+    // The whole ip usage (ipBitmapUsage contiguous blocks) fits the first bitmap
+    // block; the remaining bmSize-1 copies are all-zero.
+    for (uint64_t i = 0; i < bmSize; ++i) {
+        const QByteArray bmp =
+            i == 0 ? buildIpBitmapBlock(ctx.geometry.blockSize, ctx.ipBitmapUsage)
+                   : QByteArray(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
+        if (!writeApfsRepairBlock(ctx.image, ctx.geometry, base + newSlots.at(i), bmp, blockers)) {
+            return false;
+        }
+    }
+    if (bmCount < bmSize) {
+        blockers->append(QStringLiteral("APFS commit: ip-bitmap ring smaller than ip_bm_size"));
+        return false;
+    }
+    return true;
 }
 
 // Apply this commit's mutations to the re-emitted spaceman: the net free-count
@@ -2166,7 +2201,8 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
         // Only cib 0 rotates, so just re-point array entry 0; cib 1..N-1 are
         // immutable and the rest of the array carries through from the previous
         // checkpoint's spaceman copy.
-        writeLe64(object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
+        const uint64_t ipBmSize = le32(*object, kApfsSpacemanIpBmSizeOffset);
+        writeLe64(object, static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)), ctx.newCibAddr);
     }
     if (!ctx.ipFqEntries.isEmpty()) {
         uint64_t pendingBlocks = 0;
@@ -2275,6 +2311,7 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t ipBitmapUsage{0};     // sm_ip_bitmap ring advance usage count (0 = leave)
     uint64_t freedCibSlot{0};      // cib slot freed this commit -> IP free-queue (0 = no update)
     uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
+    QVector<uint64_t> extraFreedIpBlocks;  // overflow: old boundary-chunk bitmap freed this commit
     QVector<ApfsFreeQueueEntry> mainFqEntries;  // rebuilt main free-queue (empty = leave it)
 };
 
@@ -2284,6 +2321,29 @@ struct ApfsCheckpointAdvanceRequest {
 // re-pointing nx_omap_oid at a freshly COW'd container object map), and
 // re-anchor block 0. Mirrors the Apple apfs.kext commit decoded in
 // docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md.
+// The rolling two-deep IP free-queue window: the slot freed the previous commit (or
+// the genesis seed at the first commit) plus what this commit freed - the cib-0
+// rotation slot (ip_slot_stride ghost blocks) and, on the overflow tier, the
+// boundary chunk's old bitmap block. Sorted ascending by (xid, paddr) for the tree.
+QVector<ApfsFreeQueueEntry> buildIpFreeQueueWindow(const ApfsCheckpointAdvanceRequest& request,
+                                                   uint64_t newXid) {
+    QVector<ApfsFreeQueueEntry> entries;
+    if (request.freedCibSlot == 0) {
+        return entries;
+    }
+    entries = {{newXid - 1, request.prevFreedCibSlot, request.ipSlotStride},
+               {newXid, request.freedCibSlot, request.ipSlotStride}};
+    for (uint64_t freedIpBlock : request.extraFreedIpBlocks) {
+        entries.append({newXid, freedIpBlock, 1});
+    }
+    std::sort(entries.begin(),
+              entries.end(),
+              [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                  return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+              });
+    return entries;
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -2304,15 +2364,7 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const uint64_t newXid = live.xid + 1;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
-    // The rolling two-deep IP free-queue window: the slot freed the previous commit
-    // (or the genesis seed at the first commit) plus the slot freed this commit,
-    // each one whole rotation slot of ip_slot_stride ghost blocks (cib_count cibs
-    // + chunk-0 bitmap), sorted ascending by xid.
-    QVector<ApfsFreeQueueEntry> ipFqEntries;
-    if (request.freedCibSlot != 0) {
-        ipFqEntries = {{newXid - 1, request.prevFreedCibSlot, request.ipSlotStride},
-                       {newXid, request.freedCibSlot, request.ipSlotStride}};
-    }
+    const QVector<ApfsFreeQueueEntry> ipFqEntries = buildIpFreeQueueWindow(request, newXid);
     const ApfsCheckpointCommitContext ctx{request.image,
                                           geometry,
                                           live.dataBase,
@@ -2582,6 +2634,18 @@ struct ApfsGeneratedLayout {
     uint64_t chunk0Blocks{0};
     uint64_t cibCount{1};        // chunk-info blocks per checkpoint slot (multi-CIB > 1)
     uint64_t metadataChunks{1};  // chunks the reserved prefix spans (overflow tier > 1)
+    // Metadata-overflow commit allocation. On the overflow tier chunk 0 is fully
+    // reserved, so a commit allocates from the boundary chunk (metadataChunks - 1),
+    // which holds the post-internal-pool free region (and the genesis fs chain).
+    // allocChunk's bitmap is copied-on-write to firstFreeIpBlock (the next
+    // contiguous free internal-pool block past the cib-0 rotation slots) each
+    // commit, keeping the internal-pool usage contiguous. Both 0 when M == 1.
+    uint64_t allocChunk{0};
+    uint64_t firstFreeIpBlock{0};
+    // First block of cib 0's three rotation slots = ip_base + (cib_count - 1)
+    // immutable cibs + (M - 1) chunk bitmaps. nextIpSlot rotates within this region;
+    // the single/multi-CIB tiers reduce it to kApfsFormatIpBaseBlock + (cib_count-1).
+    uint64_t cib0Base{kApfsFormatIpBaseBlock};
 };
 
 ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
@@ -2589,12 +2653,19 @@ ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
     const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount);
+    // The internal-pool prefix the overflow commit's fresh chunk bitmap follows:
+    // immutable cibs (cib_count - 1) + chunks 1..M-1 bitmaps (M - 1) + cib 0's three
+    // {cib0, chunk-0 bitmap} rotation slots (6 blocks). The next block is free.
+    const uint64_t ipPrefix = (mcib.cibCount - 1) + (mcib.metadataChunks - 1) + 6;
     return {.chunkBitmap = mcib.liveBitmap,
             .chunkInfo = mcib.liveCibs.first(),
             .seedData = kApfsFormatSeedFileDataBlock + ipDelta,
             .chunk0Blocks = std::min<uint64_t>(blockCount, kApfsSpacemanBlocksPerChunk),
             .cibCount = mcib.cibCount,
-            .metadataChunks = mcib.metadataChunks};
+            .metadataChunks = mcib.metadataChunks,
+            .allocChunk = mcib.metadataChunks > 1 ? mcib.metadataChunks - 1 : 0,
+            .firstFreeIpBlock = mcib.metadataChunks > 1 ? mcib.ipBase + ipPrefix : 0,
+            .cib0Base = mcib.cib0Base};
 }
 
 // One internal-pool cib/bitmap slot. A single-chunk generated container's IP
@@ -2615,9 +2686,10 @@ struct ApfsIpSlot {
 // (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
 ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
     constexpr int kIpSlotCount = 3;  // cib 0 rotates through 3 {cib0, bitmap} slots
-    // Only cib 0 rotates; cib 1..N-1 are immutable at ip_base .. ip_base+(N-2), so
-    // cib 0's three slots start right after them (single-CIB: cib0Base == ip_base).
-    const uint64_t cib0Base = kApfsFormatIpBaseBlock + (layout.cibCount - 1);
+    // Only cib 0 rotates; cib 1..N-1 are immutable, and on the overflow tier the
+    // chunks 1..M-1 bitmaps follow them, so cib 0's three slots start at the
+    // precomputed cib0Base (single/multi-CIB reduce to ip_base + (N-1)).
+    const uint64_t cib0Base = layout.cib0Base;
     const int liveIndex = static_cast<int>((liveCib - cib0Base) / 2);
     const uint64_t nextBase = cib0Base + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
     return {nextBase, nextBase + 1};
@@ -2937,6 +3009,29 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     if (!readApfsRepairBlock(alloc.image, alloc.geometry, alloc.rotation.liveCib, &cib, blockers)) {
         return false;
     }
+    if (alloc.layout.allocChunk != 0) {
+        // Overflow tier: chunk 0 stays full (free unchanged), its bitmap just moves to
+        // the new rotation slot. The boundary chunk (M-1) absorbs the allocation: its
+        // entry takes the fresh copy-on-write bitmap, the net free delta, and the new
+        // xid. M-1 < chunks_per_cib keeps it inside this (cib 0) block.
+        writeLe64(&cib,
+                  kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
+                  alloc.rotation.newBitmap);
+        const qsizetype entryM = kApfsChunkInfoEntriesOffset +
+                                 static_cast<qsizetype>(alloc.layout.allocChunk) *
+                                     kApfsChunkInfoEntryStride;
+        writeLe32(&cib,
+                  entryM + kApfsChunkInfoEntryFreeCountOffset,
+                  static_cast<uint32_t>(
+                      static_cast<int64_t>(le32(cib, entryM + kApfsChunkInfoEntryFreeCountOffset)) +
+                      alloc.cibFreeDelta));
+        writeLe64(&cib, entryM + kApfsChunkInfoEntryBitmapAddrOffset, alloc.chunk1BitmapBlock);
+        writeLe64(&cib, entryM, alloc.newXid);
+        writeLe64(&cib, kApfsObjectOidOffset, alloc.rotation.newCib);
+        writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
+        return stampAndWriteApfsBlock(
+            alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
+    }
     const int chunk1Count = static_cast<int>(chunk1AllocatedBlocks(alloc).size());
     // cibFreeDelta assumed every allocation hit chunk 0; move the chunk-1 data back
     // out of chunk 0's free count (chunk 1's bitmap is an internal-pool slot already
@@ -2979,7 +3074,49 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
 // so a container left on a non-genesis cib slot draws one cosmetic fsck
 // "internal-pool overallocation" warning when the kernel continues it - see
 // docs/APFS_A2_CRASH_SAFETY_DESIGN.md; fsck self-answers no and passes.)
+// Overflow-tier allocation swap. Chunk 0 stays fully reserved: its bitmap rotates
+// into the new cib-0 slot with its content unchanged. This commit's frees and
+// allocations all land in the boundary chunk (metadataChunks - 1), whose bitmap is
+// copied-on-write from its live block to firstFreeIpBlock (chunk1BitmapBlock). The
+// boundary chunk's updated cib entry is written by writeRotatedCib.
+bool applyOverflowAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
+    QByteArray chunk0(alloc.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            alloc.image, alloc.geometry, alloc.rotation.liveBitmap, &chunk0, blockers)) {
+        return false;
+    }
+    if (!writeApfsRepairBlock(
+            alloc.image, alloc.geometry, alloc.rotation.newBitmap, chunk0, blockers)) {
+        return false;
+    }
+    QByteArray liveCib(alloc.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            alloc.image, alloc.geometry, alloc.rotation.liveCib, &liveCib, blockers)) {
+        return false;
+    }
+    QByteArray allocBitmap = readChunkAllocationBitmap(
+        alloc.image, alloc.geometry, liveCib, alloc.layout.allocChunk, blockers);
+    const uint64_t chunkBase = alloc.layout.allocChunk * kApfsSpacemanBlocksPerChunk;
+    QVector<uint64_t> freedRel;
+    QVector<uint64_t> allocRel;
+    for (uint64_t block : alloc.freed) {
+        freedRel.append(block - chunkBase);
+    }
+    for (uint64_t block : alloc.allocated) {
+        allocRel.append(block - chunkBase);
+    }
+    flipChunkBitmapBits(&allocBitmap, freedRel, allocRel);
+    if (!writeApfsRepairBlock(
+            alloc.image, alloc.geometry, alloc.chunk1BitmapBlock, allocBitmap, blockers)) {
+        return false;
+    }
+    return writeRotatedCib(alloc, blockers);
+}
+
 bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringList* blockers) {
+    if (alloc.layout.allocChunk != 0) {
+        return applyOverflowAllocation(alloc, blockers);
+    }
     QByteArray bitmap(alloc.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
             alloc.image, alloc.geometry, alloc.rotation.liveBitmap, &bitmap, blockers)) {
@@ -3203,6 +3340,7 @@ struct ApfsFsCommitContext {
     uint64_t firstLeafOid{0};      // nx_next_oid - first oid a new leaf consumes
     uint64_t liveCib{0};           // live chunk-info block (rotates through IP slots)
     uint64_t liveBitmap{0};        // the live cib's allocation bitmap
+    uint64_t allocChunkBitmap{0};  // overflow: live bitmap of the boundary chunk (M-1); 0 = chunk-0
 };
 
 // Resolve the live chunk-info block (the spaceman cib_addr) and its bitmap. As
@@ -3217,6 +3355,14 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
         return false;
     }
     ctx->liveBitmap = le64(cib, kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset);
+    if (ctx->layout.allocChunk != 0) {
+        // Overflow tier: the boundary chunk (M-1) is the allocation chunk; read its
+        // live bitmap from the live cib (M-1 < 126 keeps it inside cib 0).
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(ctx->layout.allocChunk) *
+                                    kApfsChunkInfoEntryStride;
+        ctx->allocChunkBitmap = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+    }
     return true;
 }
 
@@ -3238,14 +3384,15 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
-    // In-place commits on the metadata-overflow tier (>~1.3 TiB) fail closed: chunk
-    // 0 is full of the reserved prefix, so the allocator would have to find the
-    // first free chunk and rotate that chunk's bitmap (not implemented). The FORMAT
-    // is valid + kernel-mountable; only the commit allocator is pending.
-    if (ctx->layout.metadataChunks > 1) {
+    // Metadata-overflow tier (>~1.3 TiB): chunk 0 is fully reserved, so the commit
+    // allocates from the boundary chunk (metadataChunks - 1). That chunk must live
+    // in cib 0 (index < chunks_per_cib) so the existing cib-0 rotation can carry its
+    // updated entry; a boundary chunk in an immutable cib (only past ~10 TiB, where
+    // M-1 >= 126) would need that cib to rotate too - not yet built.
+    if (ctx->layout.allocChunk >= kApfsSpacemanChunksPerCib) {
         blockers->append(QStringLiteral(
-            "APFS in-place commit on a metadata-overflow container (>1.3 TiB) is not yet "
-            "supported; chunk 0 is fully reserved - the allocator must use the first free chunk"));
+            "APFS in-place commit on this metadata-overflow container is not yet supported: the "
+            "boundary chunk falls outside cib 0"));
         return false;
     }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
@@ -3290,6 +3437,32 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     *chunk1BitmapBlock = 0;
     const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
     const int need = metaCount + static_cast<int>(sizing.dataBlocks);
+    if (ctx.layout.allocChunk != 0) {
+        // Overflow tier: chunk 0 is full; allocate the whole commit (metadata chain +
+        // data) from the boundary chunk's free region [seedData, end-of-chunk). Its
+        // bitmap is copied-on-write to firstFreeIpBlock by applyFileInsertAllocation.
+        const uint64_t chunkBase = ctx.layout.allocChunk * kApfsSpacemanBlocksPerChunk;
+        QByteArray cib(ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
+            return false;
+        }
+        const QByteArray allocBitmap = readChunkAllocationBitmap(
+            ctx.image, ctx.geometry, cib, ctx.layout.allocChunk, blockers);
+        QVector<uint64_t> free;
+        findFreeBlocksInBitmapContent(
+            allocBitmap,
+            {chunkBase, ctx.layout.seedData, chunkBase + kApfsSpacemanBlocksPerChunk},
+            need,
+            &free);
+        if (free.size() < need) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: not enough free space in the overflow boundary chunk"));
+            return false;
+        }
+        *newBlocks = free.mid(0, need);
+        *chunk1BitmapBlock = ctx.layout.firstFreeIpBlock;
+        return true;
+    }
     QByteArray chunk0Bitmap(ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveBitmap, &chunk0Bitmap, blockers)) {
         return false;
@@ -3415,7 +3588,11 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     // IP free-queue + the live slot). A multi-chunk overflow additionally marks
     // chunk 1's bitmap slot; the device free count is unchanged (that IP slot is
     // already reserved in chunk 0's bitmap). Single-CIB reduces to 6 (0x3f).
-    const uint64_t ipBitmapUsage = f.ctx.layout.cibCount + 5 + (f.chunk1BitmapBlock != 0 ? 1 : 0);
+    // On the overflow tier the chunks 1..M-1 immutable metadata bitmaps (M - 1) also
+    // sit in the internal pool ahead of the cib-0 rotation slots, and the boundary
+    // chunk's copy-on-write bitmap (chunk1BitmapBlock = firstFreeIpBlock) follows them.
+    const uint64_t ipBitmapUsage = f.ctx.layout.cibCount + 5 + (f.ctx.layout.metadataChunks - 1) +
+                                   (f.chunk1BitmapBlock != 0 ? 1 : 0);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3441,6 +3618,10 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
+                              .extraFreedIpBlocks = f.ctx.layout.allocChunk != 0 &&
+                                                            f.ctx.allocChunkBitmap != 0
+                                                        ? QVector<uint64_t>{f.ctx.allocChunkBitmap}
+                                                        : QVector<uint64_t>{},
                               .mainFqEntries = mainFq.entries},
                              result,
                              blockers);
