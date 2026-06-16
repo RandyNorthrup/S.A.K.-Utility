@@ -1625,10 +1625,10 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
         for (uint16_t index = 2; index < 15; ++index) {
             writeLe16(&block, 2536 + index * 2, static_cast<uint16_t>(index + 1));
         }
-        // sm_fq[IP] holds the genesis cib/bitmap slot pending reclamation: one
-        // run of slot_stride (cib_count + 1) blocks. The live ip allocation
-        // bitmap therefore marks the genesis slot used on top of the live slot.
-        writeLe64(&block, 0xC8, cibCount + 1);
+        // sm_fq[IP] holds the genesis cib-0 slot pending reclamation: the two
+        // ghost blocks (cib 0 + chunk-0 bitmap). Only cib 0 rotates, so this is 2
+        // regardless of cib_count (the immutable cibs are never freed).
+        writeLe64(&block, 0xC8, 2);
         writeLe64(&block, 0xD0, kApfsFormatFqIpTreeOid);
         writeLe64(&block, 0xD8, kApfsFormatXid);
         writeLe64(&block, 0xF0, 2);
@@ -2067,14 +2067,10 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
                   le64(*object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
     }
     if (ctx.newCibAddr != 0) {
-        // The whole rotation slot moves together, so the new cib addresses are
-        // consecutive from newCibAddr; rewrite the full inline cib-address array
-        // (single-CIB writes one entry, unchanged).
-        for (uint64_t i = 0; i < ctx.cibCount; ++i) {
-            writeLe64(object,
-                      kApfsSpacemanCibAddrArrayOffset + static_cast<qsizetype>(i) * 8,
-                      ctx.newCibAddr + i);
-        }
+        // Only cib 0 rotates, so just re-point array entry 0; cib 1..N-1 are
+        // immutable and the rest of the array carries through from the previous
+        // checkpoint's spaceman copy.
+        writeLe64(object, kApfsSpacemanCibAddrArrayOffset, ctx.newCibAddr);
     }
     if (!ctx.ipFqEntries.isEmpty()) {
         uint64_t pendingBlocks = 0;
@@ -2398,43 +2394,46 @@ uint64_t cibCountForChunks(uint64_t chunkCount) {
     return (chunkCount + kApfsSpacemanChunksPerCib - 1) / kApfsSpacemanChunksPerCib;
 }
 
-// Internal-pool placement of a generated container's chunk-info block(s) and the
-// chunk-0 allocation bitmap. The IP region (ip_base = 185) is laid out as three
-// crash-safe rotation slots, each holding cib_count chunk-info blocks followed by
-// one chunk-0 bitmap (slot stride = cib_count + 1): the genesis (xid 1) slot, the
-// live (xid 2) slot, and a spare the first commit rotates into. Single-CIB
-// (cib_count 1) reduces to the certified {185,186}/{187,188}/{189,190} layout.
-// Chunks 1+ are fully free on a fresh container (no bitmap), so only chunk 0 has a
-// bitmap block per slot. Multi-CIB places its later cibs in the same slot, right
-// after cib 0.
+// Internal-pool placement matching how the macOS kernel rotates a multi-CIB
+// container's chunk-info blocks (harvested 2026-06-15): the kernel rotates ONLY
+// cib 0 (chunk 0's allocation cib) and keeps cib 1..N-1 IMMUTABLE - those describe
+// the upper, all-free chunks and never change. So the IP region (ip_base = 185) is
+//   [cib 1 .. cib N-1] (N-1 immutable blocks, one each)
+//   then cib 0's three crash-safe rotation slots {cib0, chunk-0 bitmap}:
+//   genesis (xid 1), live (xid 2), and a spare the first commit rotates into.
+// This keeps the IP usage contiguous from ip_base and reduces to the certified
+// single-CIB {185,186}/{187,188}/{189,190} layout when cib_count is 1.
 struct ApfsMultiCibLayout {
     uint64_t cibCount{1};
     uint64_t ipBase{kApfsFormatIpBaseBlock};
-    uint64_t slotStride{2};       // cib_count + 1 blocks per rotation slot
-    QVector<uint64_t> ghostCibs;  // genesis (xid 1) chunk-info blocks
-    uint64_t ghostBitmap{0};      // genesis chunk-0 allocation bitmap
-    QVector<uint64_t> liveCibs;   // live (xid 2) chunk-info blocks
-    uint64_t liveBitmap{0};       // live chunk-0 allocation bitmap
-    uint64_t genesisIpUsage{2};   // IP blocks the genesis checkpoint marks used
-    uint64_t liveIpUsage{4};      // IP blocks the live checkpoint marks used
+    QVector<uint64_t> immutableCibs;            // cib 1..N-1, shared by every checkpoint
+    uint64_t cib0Base{kApfsFormatIpBaseBlock};  // first cib-0 rotation slot
+    uint64_t ghostBitmap{0};                    // genesis chunk-0 allocation bitmap
+    uint64_t liveBitmap{0};                     // live chunk-0 allocation bitmap
+    QVector<uint64_t> ghostCibs;                // the genesis cib-address array (cib0 + immutable)
+    QVector<uint64_t> liveCibs;                 // the live cib-address array (cib0 + immutable)
+    uint64_t genesisIpUsage{2};                 // IP blocks the genesis checkpoint marks used
+    uint64_t liveIpUsage{4};                    // IP blocks the live checkpoint marks used
 };
 
 ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
     const uint64_t cibCount = cibCountForChunks(chunkCount);
     ApfsMultiCibLayout layout;
     layout.cibCount = cibCount;
-    layout.slotStride = cibCount + 1;
-    uint64_t block = layout.ipBase;
-    for (uint64_t i = 0; i < cibCount; ++i) {
-        layout.ghostCibs.append(block++);
+    for (uint64_t i = 0; i + 1 < cibCount; ++i) {
+        layout.immutableCibs.append(layout.ipBase + i);
     }
-    layout.ghostBitmap = block++;
-    for (uint64_t i = 0; i < cibCount; ++i) {
-        layout.liveCibs.append(block++);
-    }
-    layout.liveBitmap = block;
-    layout.genesisIpUsage = layout.slotStride;   // one slot
-    layout.liveIpUsage = 2 * layout.slotStride;  // ghost + live slots
+    layout.cib0Base = layout.ipBase + (cibCount - 1);
+    const uint64_t ghostCib0 = layout.cib0Base;     // ghost cib 0
+    layout.ghostBitmap = layout.cib0Base + 1;
+    const uint64_t liveCib0 = layout.cib0Base + 2;  // live cib 0
+    layout.liveBitmap = layout.cib0Base + 3;
+    layout.ghostCibs = QVector<uint64_t>{ghostCib0} + layout.immutableCibs;
+    layout.liveCibs = QVector<uint64_t>{liveCib0} + layout.immutableCibs;
+    // Contiguous from ip_base: immutable cibs (N-1) + ghost cib-0 slot (2), then
+    // the live cib-0 slot (2) on top.
+    layout.genesisIpUsage = cibCount + 1;
+    layout.liveIpUsage = cibCount + 3;
     return layout;
 }
 
@@ -2482,13 +2481,13 @@ struct ApfsIpSlot {
 // last. Foundation for the crash-safe IP-region rotation
 // (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
 ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
-    constexpr int kIpSlotCount = 3;  // the IP region holds 3 rotation slots
-    const uint64_t ipBase = kApfsFormatIpBaseBlock;
-    const uint64_t stride = layout.cibCount + 1;
-    const int liveIndex = static_cast<int>((liveCib - ipBase) / stride);
-    const uint64_t nextBase = ipBase +
-                              static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * stride;
-    return {nextBase, nextBase + layout.cibCount};
+    constexpr int kIpSlotCount = 3;  // cib 0 rotates through 3 {cib0, bitmap} slots
+    // Only cib 0 rotates; cib 1..N-1 are immutable at ip_base .. ip_base+(N-2), so
+    // cib 0's three slots start right after them (single-CIB: cib0Base == ip_base).
+    const uint64_t cib0Base = kApfsFormatIpBaseBlock + (layout.cibCount - 1);
+    const int liveIndex = static_cast<int>((liveCib - cib0Base) / 2);
+    const uint64_t nextBase = cib0Base + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
+    return {nextBase, nextBase + 1};
 }
 
 // The full cib/bitmap rotation a crash-safe commit performs: read the live slot,
@@ -2829,30 +2828,13 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     }
     // The cib is a physical object: its o_oid must equal its block address, so it
     // has to move with the rotation (or a rolled-back checkpoint whose live cib is
-    // not the genesis slot fails fsck with "cib at address 0x0").
+    // not the genesis slot fails fsck with "cib at address 0x0"). Only cib 0
+    // rotates; cib 1..N-1 are immutable and stay where the live array already
+    // points them, so the rest of the array carries through unchanged.
     writeLe64(&cib, kApfsObjectOidOffset, alloc.rotation.newCib);
     writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
-    if (!stampAndWriteApfsBlock(
-            alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers)) {
-        return false;
-    }
-    // Multi-CIB: the whole rotation slot moves together. Copy cibs 1..N-1 from the
-    // live slot to the new slot unchanged except their physical o_oid - the chunks
-    // they describe did not change this commit, so their xid stays at the genesis
-    // transaction (apfsck requires a cib's xid to equal its newest chunk xid).
-    for (uint64_t i = 1; i < alloc.layout.cibCount; ++i) {
-        QByteArray other(alloc.geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(
-                alloc.image, alloc.geometry, alloc.rotation.liveCib + i, &other, blockers)) {
-            return false;
-        }
-        writeLe64(&other, kApfsObjectOidOffset, alloc.rotation.newCib + i);
-        if (!stampAndWriteApfsBlock(
-                alloc.image, alloc.geometry, alloc.rotation.newCib + i, &other, blockers)) {
-            return false;
-        }
-    }
-    return true;
+    return stampAndWriteApfsBlock(
+        alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
 }
 
 // Crash-safe allocation swap: copy the live allocation bitmap to the new (spare)
@@ -3123,19 +3105,6 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
-    // Multi-CIB in-place commits fail closed: the whole-slot cib rotation is
-    // apfsck-clean but the macOS kernel rotates only cib 0 (COW to a fresh block)
-    // and keeps cib 1..N-1 fixed, so it cannot continue a S.A.K. multi-CIB commit's
-    // checkpoint (fsck_apfs "failed to read spaceman cib 1"). The multi-CIB FORMAT
-    // is kernel-safe; only the commit's rotation is not, pending the kernel's
-    // single-cib-0 rotation scheme (see docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md).
-    if (ctx->layout.cibCount > 1) {
-        blockers->append(QStringLiteral(
-            "APFS in-place commit on a multi-CIB container (>15.75 GiB) is not yet kernel-safe; "
-            "the macOS kernel rotates only chunk-info block 0 and cannot continue a whole-slot "
-            "rotation - use a single-CIB container for in-place commits"));
-        return false;
-    }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
     }
@@ -3191,17 +3160,17 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     }
     // Overflow into chunk 1: keep the fs-tree/chain metadata in chunk 0, spill the
     // remaining data blocks into chunk 1. Chunk 1's allocation bitmap goes in chunk
-    // 1's reserved internal-pool slot (ip_base + 3 * slot_stride, i.e. the first
-    // slot after the three cib/bitmap rotation slots), as single-CIB containers do
-    // - no chunk-0 block is consumed and the slot is already reserved in the chunk-0
-    // bitmap.
+    // 1's reserved internal-pool slot, the first block after the immutable cibs
+    // (cib_count - 1) and cib 0's three rotation slots (6): ip_base + cib_count + 5
+    // (= ip_base + 6 single-CIB) - no chunk-0 block is consumed and the slot is
+    // already reserved in the chunk-0 bitmap.
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     if (chunkCount < 2 || chunk0Free.size() < metaCount) {
         blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
         return false;
     }
-    *chunk1BitmapBlock = kApfsFormatIpBaseBlock + 3 * (ctx.layout.cibCount + 1);
+    *chunk1BitmapBlock = kApfsFormatIpBaseBlock + ctx.layout.cibCount + 5;
     *newBlocks = chunk0Free;
     QByteArray cib(ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
@@ -3297,13 +3266,13 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = static_cast<int64_t>(freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    // Once the crash-safe rotation has touched the spare slot, all three rotation
-    // slots (3 * slot_stride blocks) are cumulatively marked used in the live IP
-    // bitmap (2 ghost slots held by the IP free-queue + 1 live slot). A multi-chunk
-    // overflow additionally marks chunk 1's bitmap slot; the device free count is
-    // unchanged (the IP slot is already reserved in chunk 0's bitmap).
-    const uint64_t slotStride = f.ctx.layout.cibCount + 1;
-    const uint64_t ipBitmapUsage = 3 * slotStride + (f.chunk1BitmapBlock != 0 ? 1 : 0);
+    // Once cib 0's rotation has touched the spare slot, the IP bitmap cumulatively
+    // marks the immutable cibs (cib_count - 1) plus all three cib-0 rotation slots
+    // (6 blocks) = cib_count + 5, contiguous from ip_base (2 ghost slots held by the
+    // IP free-queue + the live slot). A multi-chunk overflow additionally marks
+    // chunk 1's bitmap slot; the device free count is unchanged (that IP slot is
+    // already reserved in chunk 0's bitmap). Single-CIB reduces to 6 (0x3f).
+    const uint64_t ipBitmapUsage = f.ctx.layout.cibCount + 5 + (f.chunk1BitmapBlock != 0 ? 1 : 0);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3325,7 +3294,7 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
                               .newCibAddr = rotation.newCib,
                               .cibCount = f.ctx.layout.cibCount,
-                              .ipSlotStride = slotStride,
+                              .ipSlotStride = 2,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
@@ -5441,7 +5410,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
          buildFreeQueueTreeBlock(request.block_size_bytes,
                                  kApfsFormatFqIpTreeOid,
                                  mcib.ghostCibs.first(),
-                                 mcib.slotStride,
+                                 2,
                                  blockers)},
         {kApfsFormatFqMainTreeBlock,
          buildFreeQueueTreeBlock(
@@ -5496,43 +5465,54 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                  kApfsFormatXid,
                                  blockers)}};
 
-    // Internal-pool chunk-info blocks + chunk-0 allocation bitmaps. Each of the
-    // genesis (xid 1) and live (xid 2) checkpoints publishes cib_count chunk-info
-    // blocks (126 chunks each) followed by one chunk-0 bitmap; chunks 1+ are fully
-    // free on a fresh container (no per-chunk bitmap). Single-CIB reduces to the
-    // certified {185,186} ghost / {187,188} live blocks.
+    // Internal-pool chunk-info blocks + chunk-0 allocation bitmaps. cib 0 (chunk
+    // 0's allocation cib) gets a genesis (xid 1) and a live (xid 2) copy in its
+    // rotation slots; cib 1..N-1 describe the all-free upper chunks and are emitted
+    // ONCE as immutable blocks. Single-CIB reduces to the certified {185,186} ghost
+    // / {187,188} live blocks (no immutable cibs).
+    const uint64_t cib0Span = std::min<uint64_t>(kApfsSpacemanChunksPerCib, chunkCount);
     blocks.append({kApfsFormatIpBitmapBaseBlock,
                    buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
     blocks.append({kApfsFormatIpBitmapBaseBlock + 1,
                    buildIpBitmapBlock(request.block_size_bytes, mcib.liveIpUsage)});
-    for (uint64_t cib = 0; cib < mcib.cibCount; ++cib) {
-        const uint64_t chunkStart = cib * kApfsSpacemanChunksPerCib;
+    blocks.append({mcib.ghostCibs.first(),
+                   buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                        .blockCount = blockCount,
+                                        .reservedBlocks = ghostReserved,
+                                        .xid = kApfsFormatGenesisXid,
+                                        .selfBlock = mcib.ghostCibs.first(),
+                                        .bitmapBlock = mcib.ghostBitmap,
+                                        .chunkStart = 0,
+                                        .chunkSpan = cib0Span,
+                                        .cibIndex = 0},
+                                       blockers)});
+    blocks.append({mcib.liveCibs.first(),
+                   buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                        .blockCount = blockCount,
+                                        .reservedBlocks = seedData,
+                                        .xid = kApfsFormatXid,
+                                        .selfBlock = mcib.liveCibs.first(),
+                                        .bitmapBlock = mcib.liveBitmap,
+                                        .chunkStart = 0,
+                                        .chunkSpan = cib0Span,
+                                        .cibIndex = 0},
+                                       blockers)});
+    for (qsizetype i = 0; i < mcib.immutableCibs.size(); ++i) {
+        const uint64_t cibIndex = static_cast<uint64_t>(i) + 1;
+        const uint64_t chunkStart = cibIndex * kApfsSpacemanChunksPerCib;
         const uint64_t chunkSpan = std::min<uint64_t>(kApfsSpacemanChunksPerCib,
                                                       chunkCount - chunkStart);
-        blocks.append(
-            {mcib.ghostCibs.at(static_cast<qsizetype>(cib)),
-             buildChunkInfoBlock({.blockSize = request.block_size_bytes,
-                                  .blockCount = blockCount,
-                                  .reservedBlocks = ghostReserved,
-                                  .xid = kApfsFormatGenesisXid,
-                                  .selfBlock = mcib.ghostCibs.at(static_cast<qsizetype>(cib)),
-                                  .bitmapBlock = mcib.ghostBitmap,
-                                  .chunkStart = chunkStart,
-                                  .chunkSpan = chunkSpan,
-                                  .cibIndex = cib},
-                                 blockers)});
-        blocks.append(
-            {mcib.liveCibs.at(static_cast<qsizetype>(cib)),
-             buildChunkInfoBlock({.blockSize = request.block_size_bytes,
-                                  .blockCount = blockCount,
-                                  .reservedBlocks = seedData,
-                                  .xid = kApfsFormatXid,
-                                  .selfBlock = mcib.liveCibs.at(static_cast<qsizetype>(cib)),
-                                  .bitmapBlock = mcib.liveBitmap,
-                                  .chunkStart = chunkStart,
-                                  .chunkSpan = chunkSpan,
-                                  .cibIndex = cib},
-                                 blockers)});
+        blocks.append({mcib.immutableCibs.at(i),
+                       buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                            .blockCount = blockCount,
+                                            .reservedBlocks = 0,
+                                            .xid = kApfsFormatGenesisXid,
+                                            .selfBlock = mcib.immutableCibs.at(i),
+                                            .bitmapBlock = 0,
+                                            .chunkStart = chunkStart,
+                                            .chunkSpan = chunkSpan,
+                                            .cibIndex = cibIndex},
+                                           blockers)});
     }
     blocks.append(
         {mcib.ghostBitmap, buildChunkBitmapBlock(request.block_size_bytes, ghostReserved)});
