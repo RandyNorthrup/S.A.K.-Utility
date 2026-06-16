@@ -654,8 +654,19 @@ constexpr int kHfsRootLeafSplitHalves = 2;
 constexpr int kHfsSplitLeftNodeSlot = 0;
 constexpr int kHfsSplitRightNodeSlot = 1;
 constexpr int kHfsSplitIndexNodeSlot = 2;
-constexpr int kHfsMaxMutationLeaves = 256;
-constexpr uint16_t kHfsMaxMutationTreeDepth = 3;
+// The catalog/extents/attributes B-tree mutation engine loads the whole tree into
+// memory, edits leaf records, and rebuilds the index bottom-up; the load recursion
+// and the bottom-up emit both handle arbitrary depth, so these caps are safety
+// limits, not structural ones. They are sized to stay within a single header-node
+// allocation map (allocateBTreeNodesFromHeaderMap fails closed past the map's bit
+// capacity, ~node_size*8 nodes); map-node growth would lift them further.
+constexpr int kHfsMaxMutationLeaves = 16'384;
+constexpr uint16_t kHfsMaxMutationTreeDepth = 8;
+// Upper bound on the doubling free-node growth target (withCatalogNodePoolGrowth);
+// the whole index is rebuilt per mutation, so the pool can need ~index-node-count
+// free nodes, but never more than a few times kHfsMaxMutationLeaves. Past this the
+// mutation fails closed rather than grow the catalog file unboundedly.
+constexpr uint32_t kHfsMaxNodePoolGrowthTarget = 1U << 19;
 constexpr qsizetype kHfsCatalogRecordFlagsOffset = 2;
 constexpr uint16_t kHfsCatalogHasAttributesMask = 0x0004;
 constexpr uint64_t kHfsMinimumVolumeBytesForAlternateHeader = kHfsVolumeHeaderOffset * 2;

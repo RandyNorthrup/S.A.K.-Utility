@@ -4228,34 +4228,51 @@ private:
         return false;
     }
 
-    // H-a: runs a catalog-mutation "prepare" closure; if it fails purely because
-    // the B-tree node pool is exhausted, grows the pool once and retries. Building
-    // a prepare plan only stages in-memory/idempotent work, so the first failed
-    // attempt is safe to discard. prepareOnce(blockers, warnings) -> optional<Plan>.
+    // H-a/H-b: runs a catalog-mutation "prepare" closure; if it fails purely because
+    // the B-tree node pool is exhausted, grows the pool and retries. Building a
+    // prepare plan only stages in-memory/idempotent work, so a failed attempt is
+    // safe to discard. A mutation rebuilds the whole index level set, so a deep/wide
+    // tree needs far more free nodes than a single split path - the free-node target
+    // doubles each retry until the prepare fits or the volume cannot grow further.
+    // prepareOnce(blockers, warnings) -> optional<Plan>.
     template <typename PrepareOnce>
     [[nodiscard]] auto withCatalogNodePoolGrowth(PrepareOnce prepareOnce,
                                                  QStringList* blockers,
                                                  QStringList* warnings)
         -> decltype(prepareOnce(blockers, warnings)) {
         const QStringList savedBlockers = m_blockers;
-        QStringList firstAttempt;
-        QStringList firstWarnings;
-        auto plan = prepareOnce(&firstAttempt, &firstWarnings);
+        QStringList attempt;
+        QStringList attemptWarnings;
+        auto plan = prepareOnce(&attempt, &attemptWarnings);
         if (plan.has_value()) {
-            warnings->append(firstWarnings);
+            warnings->append(attemptWarnings);
             return plan;
         }
-        if (!blockersIndicateNodeExhaustion(firstAttempt)) {
-            blockers->append(firstAttempt);
+        if (!blockersIndicateNodeExhaustion(attempt)) {
+            blockers->append(attempt);
             return std::nullopt;
         }
-        m_blockers = savedBlockers;
-        if (!ensureCatalogFreeNodes(static_cast<uint32_t>(m_catalog.tree_depth) +
-                                        kHfsNodePoolGrowthReserve,
-                                    blockers)) {
-            return std::nullopt;
+        uint32_t target = m_catalog.free_nodes + static_cast<uint32_t>(m_catalog.tree_depth) +
+                          kHfsNodePoolGrowthReserve;
+        while (true) {
+            m_blockers = savedBlockers;
+            if (!ensureCatalogFreeNodes(target, blockers)) {
+                return std::nullopt;
+            }
+            m_blockers = savedBlockers;
+            QStringList retry;
+            QStringList retryWarnings;
+            plan = prepareOnce(&retry, &retryWarnings);
+            if (plan.has_value()) {
+                warnings->append(retryWarnings);
+                return plan;
+            }
+            if (!blockersIndicateNodeExhaustion(retry) || target > kHfsMaxNodePoolGrowthTarget) {
+                blockers->append(retry);
+                return std::nullopt;
+            }
+            target *= 2;
         }
-        return prepareOnce(blockers, warnings);
     }
 
     [[nodiscard]] std::optional<HfsCatalogTreeMutation> prepareCatalogTreeMutationOnce(
