@@ -2,15 +2,19 @@
 
 Status: Milestone A/B plus ext2/ext3/ext4 create/format/repair/grow/shrink, Linux swap create/format queue wiring, HFS+/HFSX bundled sparse-staged create/format/repair wiring, HFS+ image-only data-fork overwrite plus data/resource-fork allocated-block grow/shrink/truncate, bounded fork-backed-attribute allocation growth, constrained empty-file and empty-folder catalog create/delete, single-leaf catalog rename/move, bounded file create with data-fork allocation, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release, core support and helper bridge, APFS read-only browse/extract/export, APFS image-only format scratch-image generation, APFS image-only root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change with payload/read-back, directory-empty, label read-back, or negative-read-back proof, APFS image-only object-checksum repair, generated APFS create/format/repair queue wiring, and generated-layout APFS raw root-file write/patch/delete plus empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label Apply wiring are implemented; ext VM/Linux proof for ext2/ext3/ext4, Linux swap image-level compatibility proof, Linux swap raw-partition VM proof, HFS+/HFSX image-level tool proof, physical USB ext2/ext3/ext4 plus Linux swap destructive proof, physical HFS+/HFSX sparse-staged destructive proof, offset-based raw-probe helper proof, physical HFS+/APFS read-only plus HFS selected-attribute and APFS bounded export proof, HFS+ image-only same-size initial-extent and extents-overflow overwrite unit proof, HFS+ image-only data/resource-fork allocated-block grow/shrink/truncate replacement proof, HFS+ bounded initial-extent data/resource/fork-backed-attribute allocation-growth proof, HFS+ empty-file/non-empty-file/empty-folder create-delete plus single-leaf catalog rename/move, bounded folder-tree delete, and secure released-block wipe catalog mutation unit proof, HFS staged raw data/resource/inline/fork-backed-attribute plus single-leaf catalog rename/move and bounded secure delete physical Apply proof, HFS writer CLI fail-closed plus successful helper write/read-back, catalog rename, and bounded folder-tree delete CTest coverage, APFS generated-format-image plus multi-block seed-file certifier proof, APFS generated-image root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label proof, APFS generated-image checksum-repair proof, APFS raw format/write/patch/delete/empty-directory-create/delete/root-directory-child-file-write-patch-delete/volume-label-change/repair proof on pinned expendable media with non-empty directory delete blocked, APFS writer CLI self-test coverage for image format, image volume-label change, root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, repair, and raw-path refusal, APFS writer CLI physical format/repair proof, and APFS raw volume-label Apply proof are recorded.
 
-Current APFS raw-write boundary: the macOS recovery VM later rejected the
-previous 51 GB generated APFS raw partition at mount time with
-`spaceman_sanity_check` checkpoint/container corruption. That invalidates the
-Windows-only 51 GB generated-raw APFS certification claim. Until multi-CIB
-space-manager/chunk-info support is implemented and revalidated with Apple's
-kernel or `fsck_apfs`, generated APFS raw format/repair/mutation and File
-Management APFS writes are limited to one-spaceman-chunk generated targets
-from 64 MiB through 128 MiB. Larger APFS targets remain read-only unless they
-are handled by a future Apple-validated import/rewrite path.
+Current APFS raw-write boundary: the original 51 GB generated-raw claim was
+invalidated by a `spaceman_sanity_check` rejection, but the A1 multi-CIB
+space-manager work has since been implemented and Apple-certified (`fsck_apfs`
++ kernel mount, including the metadata-overflow tier on physical 2-4 TB USB).
+As of the I1 promotion (2026-06-17), generated APFS raw **format and repair**
+through the Partition Manager queue accept single-CIB, multi-CIB, and
+metadata-overflow targets from 64 MiB through ~2 TiB (the conservative
+production cap below the writer's non-CAB edge; the writer's geometry gate is
+the precise authority and CAB-tier targets above it remain fail-closed). In-place
+generated APFS **file writes** (root-file write/patch/delete and File Management
+APFS writes) stay bounded to one spaceman chunk (≤128 MiB) until the A2 multi-CIB
+in-place-commit path is wired into the production write commands. Arbitrary
+non-generated Apple APFS mutation remains blocked.
 
 2026-06-09 engine milestone update: the first certifiable slices of the
 2026-06-08 hard-boundary milestones are now implemented and test-proven.
@@ -186,6 +190,21 @@ generated-layout APFS.
   confirmed. Attribute-tree split, recursive extents-overflow attribute
   records, complex file delete, unbounded folder-tree delete, and broad
   allocation growth remain blocked.
+- **2026-06-17 — generated APFS multi-CIB format/repair promoted to the
+  production queue (I1, A1).** The A1 multi-CIB space manager (Apple-certified
+  format with `fsck_apfs` + kernel mount through the metadata-overflow tier)
+  is now reachable through Partition Manager: `PartitionScriptBuilder` raises
+  the generated APFS raw format and repair cap from one spaceman chunk
+  (128 MiB) to the certified multi-CIB / metadata-overflow range (64 MiB
+  through ~2 TiB, conservatively inside the writer's non-CAB edge), and the
+  `sak_apfs_writer_cli format-raw` command formats a true multi-CIB (20 GiB)
+  generated container ok. The registry capability matrix moves multi-CIB
+  format/repair to confirmed. In-place generated APFS root-file write/patch/
+  delete stay single-spaceman-chunk (≤128 MiB) because the production write
+  commands still use the single-chunk in-place path; wiring the A2 multi-CIB
+  in-place commit into them is the remaining APFS write-cap step (A2 is paused
+  on its 12 TB-gated tiers). CAB-tier format targets above ~2 TiB remain
+  fail-closed.
 - **2026-06-12 — generated APFS Apple-certified end to end.** The iteration
   loop above ran to completion: the generated layout was rebuilt to mirror a
   same-geometry `newfs_apfs` container (two-checkpoint genesis, ghost

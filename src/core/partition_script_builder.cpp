@@ -59,6 +59,15 @@ constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_by
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMaximumApfsGeneratedSingleChunkBytes = 128ULL * 1024ULL * 1024ULL;
+// A1 (multi-CIB spaceman) is Apple-certified for FORMAT: the writer emits single-CIB,
+// multi-CIB, and metadata-overflow generated containers and macOS fsck_apfs + kernel
+// validate them up to ~3 TiB (the inline cib-address-array / non-CAB edge). The CAB tier
+// above that is still fail-closed in the writer. This pre-check stays conservatively inside
+// the certified range; the writer's own geometry gate is the precise authority. In-place
+// root-file mutation stays single-chunk (kMaximumApfsGeneratedSingleChunkBytes) until the
+// A2 multi-CIB in-place commit path is wired into the production write commands.
+constexpr uint64_t kMaximumApfsGeneratedMultiCibFormatBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL *
+                                                              1024ULL;
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
 constexpr auto kHfsPathPayload = "hfs_path";
@@ -326,10 +335,10 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
             QStringLiteral("APFS format requires destructive confirmation"));
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
-        operation.target.size_bytes > kMaximumApfsGeneratedSingleChunkBytes) {
+        operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return invalidPartitionScript(QStringLiteral(
-            "APFS generated raw format currently supports one-spaceman-chunk targets "
-            "from 64 MiB through 128 MiB"));
+            "APFS generated raw format supports single-CIB, multi-CIB, and metadata-overflow "
+            "targets from 64 MiB through 2 TiB; CAB-tier targets above that remain blocked"));
     }
 
     const QString targetPath = rawPartitionTargetPath(operation);
@@ -368,10 +377,10 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
             QStringLiteral("APFS repair requires destructive confirmation"));
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
-        operation.target.size_bytes > kMaximumApfsGeneratedSingleChunkBytes) {
+        operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return invalidPartitionScript(QStringLiteral(
-            "APFS generated raw repair currently supports one-spaceman-chunk targets "
-            "from 64 MiB through 128 MiB"));
+            "APFS generated raw repair supports single-CIB, multi-CIB, and metadata-overflow "
+            "targets from 64 MiB through 2 TiB; CAB-tier targets above that remain blocked"));
     }
 
     const QString targetPath = rawPartitionTargetPath(operation);

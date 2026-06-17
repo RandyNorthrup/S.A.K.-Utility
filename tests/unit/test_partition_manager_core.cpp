@@ -2469,9 +2469,13 @@ void verifyApfsRegistryCapability() {
                           QStringLiteral("bounded recursive export"),
                           QStringLiteral("generated APFS create"),
                           QStringLiteral("generated APFS metadata-checksum repair")});
+    // A1 promotion: multi-CIB format/repair confirmed; in-place write still single-chunk.
+    QVERIFY(available.contains(QStringLiteral("multi-CIB")));
+    QVERIFY(available.contains(QStringLiteral("2 TiB")));
     const QString blocked = PartitionFileSystemRegistry::actionSummary(apfs.blocked_actions);
     QVERIFY(blocked.contains(QStringLiteral("Arbitrary existing Apple APFS mutation")));
     QVERIFY(blocked.contains(QStringLiteral("Encrypted/compressed files")));
+    QVERIFY(blocked.contains(QStringLiteral("single spaceman chunk")));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(apfs.required_tools)
                 .contains(QStringLiteral("sak_apfs_writer_cli")));
 }
@@ -2800,12 +2804,23 @@ void verifyApfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
     QVERIFY(apfsRepair.script.contains(QStringLiteral("ui.apfs-generated-raw-repair")));
     QVERIFY(apfsRepair.script.contains(extToolRawTargetPath()));
 
+    // A1 promotion: multi-CIB generated format targets above one spaceman chunk (128 MiB)
+    // are now accepted through the production script route up to the certified ~2 TiB edge.
+    PartitionTarget multiCibTarget = target;
+    multiCibTarget.size_bytes = 256ULL * 1024ULL * 1024ULL;
+    const auto multiCibFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, multiCibTarget, apfsPayload));
+    QVERIFY2(multiCibFormat.valid(),
+             qPrintable(multiCibFormat.blockers.join(QStringLiteral("; "))));
+    QVERIFY(multiCibFormat.script.contains(QStringLiteral("format-raw")));
+
+    // CAB-tier targets above the certified format edge remain blocked.
     PartitionTarget oversizedTarget = target;
-    oversizedTarget.size_bytes = 256ULL * 1024ULL * 1024ULL;
+    oversizedTarget.size_bytes = 3ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
     const auto oversizedFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Format, oversizedTarget, apfsPayload));
     QVERIFY(!oversizedFormat.valid());
-    QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("one-spaceman-chunk")));
+    QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("CAB-tier")));
 }
 
 void verifyExtRepairScript(PartitionScriptBuilder* builder, const PartitionTarget& target) {
