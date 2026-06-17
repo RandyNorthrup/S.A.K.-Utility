@@ -129,6 +129,9 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
                             "read-back verification"),
              QStringLiteral("Staged raw-partition HFS+ bounded folder-tree delete with allocation "
                             "bitmap release"),
+             QStringLiteral("Staged raw-partition HFS+ arbitrary-depth catalog B-tree split, "
+                            "rebalance, and node-pool growth (certified to depth-4 / >256 leaf "
+                            "nodes; Apple fsck_hfs + kernel RW mount)"),
              QStringLiteral("Staged raw-partition HFS+ inline attribute replacement through "
                             "Pending Operations"),
              QStringLiteral("Staged raw-partition HFS+ fork-backed attribute replacement within "
@@ -139,7 +142,7 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
              QStringLiteral("Confirmed sparse-staged HFS+/HFSX repair through bundled fsck_hfs")},
         .blocked_actions =
             {QStringLiteral("Raw-partition HFS+ complex file delete, unbounded folder-tree delete, "
-                            "B-tree split/rebalance, and broad allocation growth remain blocked "
+                            "and broad allocation growth remain blocked "
                             "pending operation-specific certification"),
              QStringLiteral(
                  "Inline/broad attribute growth and recursive extents-overflow-file overflow "

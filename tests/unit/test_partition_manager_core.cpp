@@ -2503,12 +2503,16 @@ void verifyHfsRegistryCapability() {
                           QStringLiteral("bounded fork-backed attribute allocation growth"),
                           QStringLiteral("bundled newfs_hfs"),
                           QStringLiteral("bundled fsck_hfs")});
+    const QString confirmed = PartitionFileSystemRegistry::actionSummary(hfs.available_actions);
+    QVERIFY(confirmed.contains(QStringLiteral("arbitrary-depth catalog B-tree split")));
     const QString blocked = PartitionFileSystemRegistry::actionSummary(hfs.blocked_actions);
     QVERIFY(blocked.contains(QStringLiteral("Raw-partition HFS+ complex file delete")));
     QVERIFY(blocked.contains(QStringLiteral("unbounded folder-tree delete")));
     QVERIFY(blocked.contains(QStringLiteral("complex file delete")));
     QVERIFY(blocked.contains(QStringLiteral("broad allocation growth")));
     QVERIFY(blocked.contains(QStringLiteral("Inline/broad attribute growth")));
+    // H2 promotion: catalog B-tree split/rebalance is no longer a blocked action.
+    QVERIFY(!blocked.contains(QStringLiteral("B-tree split/rebalance")));
     const QString requiredTools = PartitionFileSystemRegistry::actionSummary(hfs.required_tools);
     QVERIFY(requiredTools.contains(QStringLiteral("newfs_hfs")));
     QVERIFY(requiredTools.contains(QStringLiteral("fsck_hfs")));
