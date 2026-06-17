@@ -226,6 +226,27 @@ metadata, safety coverage, and certification evidence.
 
 ---
 
+## Apple HFS+ case-folding table
+
+**License:** APSL-2.0 (Apple Public Source License, version 2.0)
+**Website:** https://opensource.apple.com/apsl/
+**Source:** `CaseFolding.h` from Apple's open-source HFS implementation
+(https://github.com/apple-oss-distributions/hfs, `lib_fsck_hfs/dfalib/CaseFolding.h`)
+**Used for:** Reproducing the HFS+ catalog-key case-insensitive Unicode collation
+(`FastUnicodeCompare`) bit-exactly, so a catalog S.A.K. rebuilds during an HFS+
+file mutation sorts identically to what the macOS kernel and `fsck_hfs` require.
+**Bundled at:** `include/sak/partition_hfs_case_folding.h`
+
+The `gLowerCaseTable` lower-case mapping array (2816 `uint16_t` entries) is
+transcribed verbatim from Apple's `CaseFolding.h`; the accompanying
+`fastUnicodeCompare` function reimplements Apple's `FastUnicodeCompare` algorithm.
+The array carries Apple's copyright and is used under the terms of the Apple
+Public Source License, version 2.0. A copy of the APSL is available at
+https://opensource.apple.com/apsl/. No other portion of Apple's source is
+incorporated.
+
+---
+
 ## aria2
 
 **License:** GNU General Public License v2.0 (GPLv2)

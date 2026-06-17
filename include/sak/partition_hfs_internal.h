@@ -9434,9 +9434,11 @@ private:
         for (uint16_t index = 0; index < length; ++index) {
             name.append(QChar(be16(node, nameOffset + index * kUint16Size)));
         }
-        if (name.contains(QChar::Null) || name.contains(QLatin1Char('/'))) {
-            return std::nullopt;
-        }
+        // NUL and '/' are valid in an HFS+ on-disk catalog name: the kernel's POSIX
+        // layer maps on-disk '/' to ':' and back, and the reserved hard-link metadata
+        // directory is named with leading NULs ("\0\0\0\0HFS+ Private Data"). Rejecting
+        // them broke mutation of any Apple-written volume that has hard links. Keep them
+        // so existing records round-trip; callers that build host paths translate.
         return name;
     }
 

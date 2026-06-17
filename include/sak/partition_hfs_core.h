@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "sak/partition_hfs_case_folding.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -1106,27 +1107,27 @@ std::optional<QByteArray> decodeDecmpfsResourceFork(const QByteArray& fork,
 }
 
 int compareCatalogNames(QString left, QString right, uint8_t keyCompareType) {
-    if (keyCompareType != kHfsBinaryCompare) {
-        const int folded = QString::compare(left, right, Qt::CaseInsensitive);
-        if (folded != 0) {
-            return folded;
+    if (keyCompareType == kHfsBinaryCompare) {
+        // Case-sensitive HFSX volumes: raw code-unit comparison, no folding.
+        const int common = std::min(left.size(), right.size());
+        for (int index = 0; index < common; ++index) {
+            const ushort leftChar = left.at(index).unicode();
+            const ushort rightChar = right.at(index).unicode();
+            if (leftChar != rightChar) {
+                return leftChar < rightChar ? -1 : 1;
+            }
         }
-    }
-    const int common = std::min(left.size(), right.size());
-    for (int index = 0; index < common; ++index) {
-        const ushort leftChar = left.at(index).unicode();
-        const ushort rightChar = right.at(index).unicode();
-        if (leftChar < rightChar) {
-            return -1;
+        if (left.size() == right.size()) {
+            return 0;
         }
-        if (leftChar > rightChar) {
-            return 1;
-        }
+        return left.size() < right.size() ? -1 : 1;
     }
-    if (left.size() == right.size()) {
-        return 0;
-    }
-    return left.size() < right.size() ? -1 : 1;
+    // Standard case-folding HFS+ volume: defer to Apple's exact FastUnicodeCompare so a
+    // rebuilt catalog collates bit-identically to the kernel and fsck_hfs.
+    return fastUnicodeCompare(reinterpret_cast<const uint16_t*>(left.utf16()),
+                              static_cast<int>(left.size()),
+                              reinterpret_cast<const uint16_t*>(right.utf16()),
+                              static_cast<int>(right.size()));
 }
 
 int compareCatalogKeys(uint32_t leftParent,
