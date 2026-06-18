@@ -147,6 +147,10 @@ constexpr uint32_t kApfsObjectSubtypeSnapMeta = 0x00'00'00'10;
 constexpr uint32_t kApfsObjectTypeBtreeEphemeral = kApfsObjStorageEphemeral | 0x00'00'00'02;
 constexpr uint32_t kApfsObjectSubtypeFreeQueue = 0x00'00'00'09;
 constexpr uint32_t kApfsObjectTypeChunkInfoBlock = kApfsObjStoragePhysical | 0x00'00'00'07;
+// SPACEMAN_CAB: the chunk-info ADDRESS block (apfs_cib_addr_block) the CAB tier
+// uses when the inline cib-address array no longer fits the spaceman block. Each
+// holds up to cibs_per_cab (507) cib block numbers.
+constexpr uint32_t kApfsObjectTypeCibAddrBlock = kApfsObjStoragePhysical | 0x00'00'00'06;
 constexpr uint32_t kApfsObjectSubtypeFsTree = 0x00'00'00'0E;
 constexpr uint32_t kApfsMagicNxsb = 0x42'53'58'4E;
 constexpr uint32_t kApfsMagicApsb = 0x42'53'50'41;
@@ -344,6 +348,10 @@ constexpr qsizetype kApfsChunkInfoEntryBlockCountOffset = 16;
 constexpr qsizetype kApfsChunkInfoEntryFreeCountOffset = 20;
 constexpr qsizetype kApfsChunkInfoEntryBitmapAddrOffset = 24;
 constexpr qsizetype kApfsChunkInfoEntryStride = 32;
+// apfs_cib_addr_block (SPACEMAN_CAB) field offsets, past the 32-byte object header.
+constexpr qsizetype kApfsCibAddrIndexOffset = 0x20;
+constexpr qsizetype kApfsCibAddrCibCountOffset = 0x24;
+constexpr qsizetype kApfsCibAddrEntriesOffset = 0x28;
 constexpr qsizetype kApfsBtreeNodeHeaderBytes = 0x38;
 constexpr qsizetype kApfsBtreeNodeFlagsOffset = 0x20;
 constexpr qsizetype kApfsBtreeNodeLevelOffset = 0x22;
@@ -1637,8 +1645,8 @@ struct ApfsSpacemanParams {
 // Blocks each internal-pool allocation bitmap occupies: one 4096-byte block holds
 // 32768 bits (one IP block each), so a large IP region needs several. mkapfs at
 // 4 TB: ip_block_count 90138 -> 3 blocks.
-uint64_t ipBitmapSizeBlocks(uint64_t chunkCount, uint64_t cibCount) {
-    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount);
+uint64_t ipBitmapSizeBlocks(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
+    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount + cabCount);
     return std::max<uint64_t>(
         1, (ipBlockCount + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk);
 }
@@ -1646,9 +1654,9 @@ uint64_t ipBitmapSizeBlocks(uint64_t chunkCount, uint64_t cibCount) {
 // First block of the internal pool: the ip-bitmap ring (16 slots of
 // ip_bm_size_in_blocks blocks each) sits between ip_bm_base and ip_base, so a larger
 // ip bitmap pushes ip_base out. Single-block bitmaps keep the certified 185.
-uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount) {
+uint64_t generatedIpBaseBlock(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
     return kApfsFormatIpBitmapBaseBlock +
-           ipBitmapSizeBlocks(chunkCount, cibCount) * kApfsSpacemanIpBmTxMultiplier;
+           ipBitmapSizeBlocks(chunkCount, cibCount, cabCount) * kApfsSpacemanIpBmTxMultiplier;
 }
 
 // Apple's spaceman packs three variable-length inline arrays ahead of the
@@ -1722,7 +1730,7 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     const uint64_t freeBlocks = blockCount > reservedBlocks ? blockCount - reservedBlocks : 0;
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount);
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount, cabCount);
     const uint64_t cibArrayOffset = spacemanCibArrayOffset(ipBmSize);
     writeLe32(&block, kApfsSpacemanBlockSizeOffset, blockSize);
     writeLe32(&block, kApfsSpacemanBlocksPerChunkOffset, kApfsSpacemanBlocksPerChunk);
@@ -1762,7 +1770,9 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
               kApfsSpacemanIpBmBlockCountOffset,
               static_cast<uint32_t>(ipBmSize * kApfsSpacemanIpBmTxMultiplier));
     writeLe64(&block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
-    writeLe64(&block, kApfsSpacemanIpBaseOffset, generatedIpBaseBlock(chunkCount, cibCount));
+    writeLe64(&block,
+              kApfsSpacemanIpBaseOffset,
+              generatedIpBaseBlock(chunkCount, cibCount, cabCount));
     // The secondary (tier2) device's cib-address offset sits immediately after the
     // main device's inline cib-address array. fsck_apfs rejects overlapping spaceman
     // structs, so this clears the whole main array (cib_count entries) past the
@@ -1798,10 +1808,11 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     }
     setupIpBitmapRing(&block, ipBmSize, genesis);
     if (!genesis) {
-        // sm_fq[IP] holds the genesis cib-0 slot pending reclamation: the two
-        // ghost blocks (cib 0 + chunk-0 bitmap). Only cib 0 rotates, so this is 2
-        // regardless of cib_count (the immutable cibs are never freed).
-        writeLe64(&block, 0xC8, 2);
+        // sm_fq[IP] holds the genesis cib-0 slot pending reclamation: the ghost
+        // blocks (cib 0 + chunk-0 bitmap, and on the CAB tier the ghost cab 0).
+        // Only cib 0 / cab 0 rotate, so this is 2 (or 3 with a CAB) regardless of
+        // cib_count - the immutable cibs/cabs are never freed.
+        writeLe64(&block, 0xC8, cabCount > 0 ? 3 : 2);
         writeLe64(&block, 0xD0, kApfsFormatFqIpTreeOid);
         writeLe64(&block, 0xD8, kApfsFormatXid);
         writeLe64(&block, 0xF0, 2);
@@ -1914,6 +1925,29 @@ QByteArray buildChunkBitmapBlock(uint32_t blockSize, uint64_t reservedBlocks) {
     for (uint64_t index = 0; index < reservedBlocks; ++index) {
         block[static_cast<qsizetype>(index / 8)] |= static_cast<char>(1 << (index % 8));
     }
+    return block;
+}
+
+struct ApfsCibAddrParams {
+    uint32_t blockSize;
+    uint64_t selfBlock;
+    uint64_t xid;
+    uint32_t cabIndex;
+    QVector<uint64_t> cibAddrs;  // cib block numbers (ghost or live variant for cib 0)
+};
+
+// apfs_cib_addr_block (SPACEMAN_CAB): the CAB tier's chunk-info ADDRESS block. It
+// carries this CAB's index and up to cibs_per_cab (507) cib block numbers, letting
+// the spaceman address cib_count > 507 cibs through a two-level table.
+QByteArray buildCibAddrBlock(const ApfsCibAddrParams& params, QStringList* blockers) {
+    const auto& [blockSize, selfBlock, xid, cabIndex, cibAddrs] = params;
+    QByteArray block = newApfsObjectBlock(blockSize, selfBlock, xid, kApfsObjectTypeCibAddrBlock);
+    writeLe32(&block, kApfsCibAddrIndexOffset, cabIndex);
+    writeLe32(&block, kApfsCibAddrCibCountOffset, static_cast<uint32_t>(cibAddrs.size()));
+    for (qsizetype i = 0; i < cibAddrs.size(); ++i) {
+        writeLe64(&block, kApfsCibAddrEntriesOffset + i * 8, cibAddrs.at(i));
+    }
+    stampApfsObjectBlock(&block, blockers);
     return block;
 }
 
@@ -2065,7 +2099,8 @@ bool isCertifiedApfsObjectType(uint32_t objectType) {
                                                       kApfsObjectTypeCheckpointMap,
                                                       kApfsObjectTypeReaper,
                                                       kApfsObjectTypeBtreeEphemeral,
-                                                      kApfsObjectTypeChunkInfoBlock};
+                                                      kApfsObjectTypeChunkInfoBlock,
+                                                      kApfsObjectTypeCibAddrBlock};
     return std::ranges::find(kCertifiedObjectTypes, objectType) != kCertifiedObjectTypes.end();
 }
 
@@ -2621,6 +2656,16 @@ uint64_t cibCountForChunks(uint64_t chunkCount) {
     return (chunkCount + kApfsSpacemanChunksPerCib - 1) / kApfsSpacemanChunksPerCib;
 }
 
+// Number of chunk-info ADDRESS blocks (CABs) a device of `cibCount` cibs needs: one
+// CAB per cibs_per_cab (507) cibs, but only once the inline cib-address array would
+// overflow the spaceman block (cib_count > 507). At or below 507 cibs the spaceman
+// lists cib addresses inline and cab_count is 0 (the certified tiers).
+uint64_t cabCountForCibs(uint64_t cibCount) {
+    return cibCount > kApfsSpacemanCibsPerCab
+               ? (cibCount + kApfsSpacemanCibsPerCab - 1) / kApfsSpacemanCibsPerCab
+               : 0;
+}
+
 // Internal-pool placement matching how the macOS kernel rotates a multi-CIB
 // container's chunk-info blocks (harvested 2026-06-15): the kernel rotates ONLY
 // cib 0 (chunk 0's allocation cib) and keeps cib 1..N-1 IMMUTABLE - those describe
@@ -2646,56 +2691,91 @@ struct ApfsMultiCibLayout {
     // uses the rotating cib-0 bitmap; chunks 1..M-1 get immutable per-chunk bitmaps.
     uint64_t metadataChunks{1};
     QVector<uint64_t> extraChunkBitmaps;  // immutable bitmaps for chunks 1..M-1
+    // CAB tier (>~7.8 TiB, cib_count > 507): the spaceman publishes cab_count CAB
+    // (apfs_cib_addr_block) block numbers instead of the inline cib addresses; each
+    // CAB holds up to 507 cib block numbers. Like cib 0, only CAB 0 rotates (it
+    // references the rotating cib 0); cabs 1..N-1 are immutable. All 0/empty below
+    // the CAB tier so the certified inline-cib layout is byte-identical.
+    uint64_t cabCount{0};
+    QVector<uint64_t> immutableCabs;  // cab 1..N-1, shared by every checkpoint
+    uint64_t ghostCab0{0};            // genesis cab 0 (references ghost cib 0)
+    uint64_t liveCab0{0};             // live cab 0 (references live cib 0)
+    QVector<uint64_t> ghostCabs;      // genesis cab-address array ({ghostCab0} + immutable)
+    QVector<uint64_t> liveCabs;       // live cab-address array ({liveCab0} + immutable)
 };
 
 // The post-internal-pool metadata shift: the genesis omap and everything after it
 // move by this relative to the single-chunk layout. The post-pool region starts at
 // ip_base + ip_block_count; the original base is the ghost container omap (block
 // 191), so ipDelta is their difference (0 single-chunk).
-uint64_t generatedIpDelta(uint64_t chunkCount, uint64_t cibCount) {
-    return generatedIpBaseBlock(chunkCount, cibCount) + 3 * (chunkCount + cibCount) -
-           kApfsFormatGhostContainerOmapBlock;
+uint64_t generatedIpDelta(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
+    return generatedIpBaseBlock(chunkCount, cibCount, cabCount) +
+           3 * (chunkCount + cibCount + cabCount) - kApfsFormatGhostContainerOmapBlock;
 }
 
 // seedData (the reserved metadata prefix length) = the live allocation-region start
 // = the post-internal-pool seed-file block shifted by ipDelta.
-uint64_t generatedSeedDataBlock(uint64_t chunkCount, uint64_t cibCount) {
-    return kApfsFormatSeedFileDataBlock + generatedIpDelta(chunkCount, cibCount);
+uint64_t generatedSeedDataBlock(uint64_t chunkCount, uint64_t cibCount, uint64_t cabCount = 0) {
+    return kApfsFormatSeedFileDataBlock + generatedIpDelta(chunkCount, cibCount, cabCount);
 }
 
 ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
     const uint64_t cibCount = cibCountForChunks(chunkCount);
+    const uint64_t cabCount = cabCountForCibs(cibCount);
     ApfsMultiCibLayout layout;
     layout.cibCount = cibCount;
-    layout.ipBase = generatedIpBaseBlock(chunkCount, cibCount);
+    layout.cabCount = cabCount;
+    layout.ipBase = generatedIpBaseBlock(chunkCount, cibCount, cabCount);
     // Metadata-overflow (>~1.3 TiB): the reserved prefix spans metadataChunks
     // chunks, so chunks 1..M-1 need immutable per-chunk bitmaps.
-    const uint64_t seedData = generatedSeedDataBlock(chunkCount, cibCount);
+    const uint64_t seedData = generatedSeedDataBlock(chunkCount, cibCount, cabCount);
     layout.metadataChunks =
         std::max<uint64_t>(1,
                            std::min<uint64_t>(chunkCount,
                                               (seedData + kApfsSpacemanBlocksPerChunk - 1) /
                                                   kApfsSpacemanBlocksPerChunk));
     const uint64_t extraBitmaps = layout.metadataChunks - 1;
-    // Contiguous IP region from ip_base: immutable cibs (N-1), then the chunk
-    // 1..M-1 metadata bitmaps (M-1), then cib 0's three {cib0, chunk-0 bitmap}
-    // rotation slots. M == 1 (no overflow) keeps the certified single-CIB layout.
+    const uint64_t immutableCabCount = cabCount > 0 ? cabCount - 1 : 0;
+    // Contiguous IP region from ip_base: immutable cibs (N-1), immutable cabs (CAB
+    // tier only, cab_count-1), the chunk 1..M-1 metadata bitmaps (M-1), then cib 0's
+    // rotation slots {ghost cib0, ghost bitmap, (ghost cab0), live cib0, live bitmap,
+    // (live cab0)}. The ghost slots stay contiguous before the live slots so the IP
+    // usage bitmap is a single run. With cab_count 0 the cab terms vanish and this
+    // reduces to the certified single-/multi-CIB layout byte-for-byte.
     uint64_t block = layout.ipBase;
     for (uint64_t i = 0; i + 1 < cibCount; ++i) {
         layout.immutableCibs.append(block++);
+    }
+    for (uint64_t i = 0; i < immutableCabCount; ++i) {
+        layout.immutableCabs.append(block++);
     }
     for (uint64_t i = 0; i < extraBitmaps; ++i) {
         layout.extraChunkBitmaps.append(block++);
     }
     layout.cib0Base = block;
-    const uint64_t ghostCib0 = layout.cib0Base;     // ghost cib 0
-    layout.ghostBitmap = layout.cib0Base + 1;
-    const uint64_t liveCib0 = layout.cib0Base + 2;  // live cib 0
-    layout.liveBitmap = layout.cib0Base + 3;
+    const uint64_t ghostCib0 = block++;
+    layout.ghostBitmap = block++;
+    if (cabCount > 0) {
+        layout.ghostCab0 = block++;
+    }
+    const uint64_t liveCib0 = block++;
+    layout.liveBitmap = block++;
+    if (cabCount > 0) {
+        layout.liveCab0 = block++;
+    }
     layout.ghostCibs = QVector<uint64_t>{ghostCib0} + layout.immutableCibs;
     layout.liveCibs = QVector<uint64_t>{liveCib0} + layout.immutableCibs;
-    layout.genesisIpUsage = cibCount + extraBitmaps + 1;  // immutable + extra + ghost slot
-    layout.liveIpUsage = cibCount + extraBitmaps + 3;     // + live slot
+    if (cabCount > 0) {
+        layout.ghostCabs = QVector<uint64_t>{layout.ghostCab0} + layout.immutableCabs;
+        layout.liveCabs = QVector<uint64_t>{layout.liveCab0} + layout.immutableCabs;
+    }
+    // The genesis checkpoint marks every block up to and including its ghost slots;
+    // the live checkpoint additionally marks its live slots (it still references the
+    // ghost pair via the IP free queue). cabSlot widens both by the cab rotation.
+    const uint64_t cabSlot = cabCount > 0 ? 1 : 0;
+    layout.genesisIpUsage = (cibCount - 1) + immutableCabCount + extraBitmaps + 2 +
+                            cabSlot;                           // + ghost slots
+    layout.liveIpUsage = layout.genesisIpUsage + 2 + cabSlot;  // + live slots
     return layout;
 }
 
@@ -2731,7 +2811,7 @@ ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
-    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount);
+    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount, mcib.cabCount);
     // The internal-pool prefix the overflow commit's fresh chunk bitmap follows:
     // immutable cibs (cib_count - 1) + chunks 1..M-1 bitmaps (M - 1) + cib 0's three
     // {cib0, chunk-0 bitmap} rotation slots (6 blocks). The next block is free.
@@ -4321,39 +4401,51 @@ QString generatedApfsSingleChunkLimitBlocker(QLatin1StringView purpose, uint64_t
 }
 
 // Empty when S.A.K. can format a container of `blockCount` blocks, otherwise the
-// blocker. S.A.K. emits single-CIB and multi-CIB (cab_count 0) containers: the
-// cib-address array must fit inline in the spaceman after offset 2568, and the
-// whole internal pool + post-pool metadata prefix must fit inside chunk 0 (the
-// only chunk with an allocation bitmap on a fresh container) up to the
-// metadata-overflow tier, where the prefix spans several chunks (each gets a
-// per-chunk bitmap). The CAB tier (cab_count > 0, the cib-address array no longer
-// fits inline) is not yet emitted.
+// blocker. S.A.K. emits single-CIB, multi-CIB (cab_count 0), the metadata-overflow
+// tier (reserved prefix spans chunks, multi-block ip bitmaps), and the CAB tier
+// (cab_count > 0, >~7.8 TiB, the spaceman publishes a cab-address array pointing at
+// apfs_cib_addr_blocks). Two ceilings remain: the published address array must fit
+// the spaceman block, and the live checkpoint's IP usage must fit a single chunk-0
+// allocation bitmap (32768 blocks, ~553 TiB of cibs).
 QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                                             uint64_t blockCount,
                                             uint32_t blockSize) {
     const PartitionApfsContainerGeometry geometry =
         PartitionApfsWriter::computeContainerGeometry(blockCount, blockSize);
-    // The inline cib-address array sits just past the ip-bitmap free-next ring (which
-    // grows with ip_bm_size); both must fit the spaceman block. Once the array would
-    // overflow it the CAB tier is required (not yet emitted). S.A.K. emits single-CIB,
-    // multi-CIB, and the metadata-overflow tier (reserved prefix spans chunks,
-    // multi-block ip bitmaps) below that.
-    const uint64_t ipBmSize = ipBitmapSizeBlocks(geometry.chunk_count, geometry.cib_count);
+    // The published address array (inline cibs when cab_count 0, else the cab
+    // addresses) sits just past the ip-bitmap free-next ring (which grows with
+    // ip_bm_size); both must fit the spaceman block.
+    const uint64_t ipBmSize =
+        ipBitmapSizeBlocks(geometry.chunk_count, geometry.cib_count, geometry.cab_count);
+    const uint64_t addrEntries = geometry.cab_count > 0 ? geometry.cab_count : geometry.cib_count;
     const bool arrayFits = static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)) +
-                               static_cast<qsizetype>(geometry.cib_count) * 8 <=
+                               static_cast<qsizetype>(addrEntries) * 8 <=
                            static_cast<qsizetype>(blockSize);
-    if (geometry.cab_count == 0 && arrayFits) {
+    // The genesis/live IP usage bitmap is a single 4096-byte block; the live
+    // checkpoint marks every internal-pool block it owns (immutable cibs + cabs +
+    // metadata-chunk bitmaps + the six-block cib0/cab0 rotation), which must fit.
+    const uint64_t seedData =
+        generatedSeedDataBlock(geometry.chunk_count, geometry.cib_count, geometry.cab_count);
+    const uint64_t metadataChunks = std::min<uint64_t>(
+        geometry.chunk_count,
+        (seedData + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk);
+    const uint64_t liveIpUsage = geometry.cib_count + geometry.cab_count + metadataChunks + 6;
+    const bool ipUsageFits = liveIpUsage < kApfsSpacemanBlocksPerChunk;
+    if (arrayFits && ipUsageFits) {
         return QString();
     }
     return QStringLiteral(
-               "APFS %1 supports S.A.K.-generated containers whose inline cib-address array fits "
-               "the spaceman block (~3 TiB); this %2-block target needs %3 chunk(s) across %4 "
-               "chunk-info block(s) (CAB tier), which requires CAB-tier spaceman emission and "
-               "Apple fsck validation")
+               "APFS %1 supports S.A.K.-generated containers up to the CAB tier whose published "
+               "cib/cab-address array and single-block IP usage bitmap fit the spaceman (~553 "
+               "TiB); "
+               "this %2-block target needs %3 chunk(s) across %4 chunk-info block(s) and %5 "
+               "CAB(s), "
+               "which exceeds the certified ceiling")
         .arg(purpose)
         .arg(blockCount)
         .arg(geometry.chunk_count)
-        .arg(geometry.cib_count);
+        .arg(geometry.cib_count)
+        .arg(geometry.cab_count);
 }
 
 bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
@@ -5818,7 +5910,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
-    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount);
+    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount, mcib.cabCount);
     const uint64_t ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
     const uint64_t ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
     const uint64_t ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
@@ -5886,7 +5978,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                              .reservedBlocks = ghostReserved,
                              .xid = kApfsFormatGenesisXid,
                              .genesis = true,
-                             .cibAddrs = mcib.ghostCibs},
+                             .cibAddrs = mcib.ghostCibs,
+                             .cabCount = mcib.cabCount,
+                             .cabAddrs = mcib.ghostCabs},
                             blockers)},
         {kApfsFormatGenesisReaperBlock,
          buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
@@ -5896,7 +5990,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                              .reservedBlocks = seedData,
                              .xid = kApfsFormatXid,
                              .genesis = false,
-                             .cibAddrs = mcib.liveCibs},
+                             .cibAddrs = mcib.liveCibs,
+                             .cabCount = mcib.cabCount,
+                             .cabAddrs = mcib.liveCabs},
                             blockers)},
         {kApfsFormatReaperBlock,
          buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
@@ -5904,7 +6000,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
          buildFreeQueueTreeBlock(request.block_size_bytes,
                                  kApfsFormatFqIpTreeOid,
                                  mcib.ghostCibs.first(),
-                                 2,
+                                 mcib.cabCount > 0 ? 3 : 2,
                                  blockers)},
         {kApfsFormatFqMainTreeBlock,
          buildFreeQueueTreeBlock(
@@ -5969,7 +6065,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     // blocks (only the first holds usage bits; the IP usage is contiguous from
     // ip_base so it stays inside the first bitmap block). Larger bitmaps shift the
     // live slot from ip_bm_base + 1 to ip_bm_base + ip_bm_size.
-    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, mcib.cibCount);
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, mcib.cibCount, mcib.cabCount);
     blocks.append({kApfsFormatIpBitmapBaseBlock,
                    buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
     blocks.append({kApfsFormatIpBitmapBaseBlock + ipBmSize,
@@ -6033,6 +6129,42 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                        buildChunkBitmapBlock(request.block_size_bytes,
                                              chunkReservedBlocks(seedData, chunk))});
     }
+    // CAB tier (cib_count > 507): emit the chunk-info ADDRESS blocks the spaceman
+    // points at. cab 0 rotates with cib 0 (genesis + live copies); cabs 1..N-1 are
+    // immutable. Each CAB holds up to 507 cib block numbers from the matching
+    // checkpoint's cib list - only cib 0 differs genesis vs live, so the immutable
+    // cabs are identical in both lists and emitted once.
+    if (mcib.cabCount > 0) {
+        const auto cibSlice = [](const QVector<uint64_t>& cibs, uint64_t cabIndex) {
+            const qsizetype start = static_cast<qsizetype>(cabIndex) * kApfsSpacemanCibsPerCab;
+            const qsizetype len = std::min<qsizetype>(kApfsSpacemanCibsPerCab, cibs.size() - start);
+            return cibs.mid(start, len);
+        };
+        blocks.append({mcib.ghostCab0,
+                       buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                          .selfBlock = mcib.ghostCab0,
+                                          .xid = kApfsFormatGenesisXid,
+                                          .cabIndex = 0,
+                                          .cibAddrs = cibSlice(mcib.ghostCibs, 0)},
+                                         blockers)});
+        blocks.append({mcib.liveCab0,
+                       buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                          .selfBlock = mcib.liveCab0,
+                                          .xid = kApfsFormatXid,
+                                          .cabIndex = 0,
+                                          .cibAddrs = cibSlice(mcib.liveCibs, 0)},
+                                         blockers)});
+        for (qsizetype i = 0; i < mcib.immutableCabs.size(); ++i) {
+            const uint64_t cabIndex = static_cast<uint64_t>(i) + 1;
+            blocks.append({mcib.immutableCabs.at(i),
+                           buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                              .selfBlock = mcib.immutableCabs.at(i),
+                                              .xid = kApfsFormatGenesisXid,
+                                              .cabIndex = static_cast<uint32_t>(cabIndex),
+                                              .cibAddrs = cibSlice(mcib.liveCibs, cabIndex)},
+                                             blockers)});
+        }
+    }
     return blocks;
 }
 
@@ -6094,8 +6226,17 @@ bool zeroFormatStaleSignatureRanges(QIODevice* device,
 void finalizeBuildResult(PartitionApfsImageBuildResult* result) {
     result->ok = result->blockers.isEmpty();
     if (result->ok) {
-        result->image_sha256 = fileSha256Hex(result->image_path, &result->blockers);
-        result->ok = result->blockers.isEmpty();
+        // The whole-image SHA-256 scans the entire container. Above the single-chunk
+        // envelope (multi-CIB / metadata-overflow / CAB tiers, up to terabytes) that
+        // is a multi-minute read of mostly-sparse space and adds no certification
+        // value - those tiers are certified by Apple fsck_apfs, not the hash. Skip it
+        // for large targets; small image-only builds keep the integrity hash.
+        const qint64 imageBytes = QFileInfo(result->image_path).size();
+        if (imageBytes >= 0 &&
+            static_cast<uint64_t>(imageBytes) <= kGeneratedApfsSingleChunkMaxBytes) {
+            result->image_sha256 = fileSha256Hex(result->image_path, &result->blockers);
+            result->ok = result->blockers.isEmpty();
+        }
     }
     if (!result->ok) {
         QFile::remove(result->image_path);

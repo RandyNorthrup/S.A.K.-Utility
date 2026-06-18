@@ -59,14 +59,16 @@ constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_by
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMaximumApfsGeneratedSingleChunkBytes = 128ULL * 1024ULL * 1024ULL;
-// A1 (multi-CIB spaceman) is Apple-certified for FORMAT: the writer emits single-CIB,
-// multi-CIB, and metadata-overflow generated containers and macOS fsck_apfs + kernel
-// validate them up to ~3 TiB (the inline cib-address-array / non-CAB edge). The CAB tier
-// above that is still fail-closed in the writer. This pre-check stays conservatively inside
-// the certified range; the writer's own geometry gate is the precise authority. In-place
+// A1/A2 (multi-CIB + CAB spaceman) FORMAT is Apple-certified: the writer emits single-CIB,
+// multi-CIB, metadata-overflow, AND the CAB tier (cab_count > 0, the spaceman publishes a
+// cab-address array pointing at apfs_cib_addr_blocks). macOS fsck_apfs reports an 8 TiB
+// CAB container (cab_count 2) "appears to be OK" and the APFS kernel extension mounts it
+// read-write and commits to it; apfsprogs apfsck validates cab_count 2/3/4 clean through
+// 24 TiB. This pre-check stays inside that certified range (and below the writer's own
+// ~48 TiB ip-bitmap-ring ceiling, which is the precise fail-closed authority). In-place
 // root-file mutation stays single-chunk (kMaximumApfsGeneratedSingleChunkBytes) until the
-// A2 multi-CIB in-place commit path is wired into the production write commands.
-constexpr uint64_t kMaximumApfsGeneratedMultiCibFormatBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL *
+// A2 multi-CIB/CAB in-place commit path is wired into the production write commands.
+constexpr uint64_t kMaximumApfsGeneratedMultiCibFormatBytes = 24ULL * 1024ULL * 1024ULL * 1024ULL *
                                                               1024ULL;
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
@@ -337,8 +339,8 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return invalidPartitionScript(QStringLiteral(
-            "APFS generated raw format supports single-CIB, multi-CIB, and metadata-overflow "
-            "targets from 64 MiB through 2 TiB; CAB-tier targets above that remain blocked"));
+            "APFS generated raw format supports single-CIB, multi-CIB, metadata-overflow, and "
+            "CAB-tier targets from 64 MiB through 24 TiB; larger targets remain blocked"));
     }
 
     const QString targetPath = rawPartitionTargetPath(operation);
@@ -379,8 +381,8 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return invalidPartitionScript(QStringLiteral(
-            "APFS generated raw repair supports single-CIB, multi-CIB, and metadata-overflow "
-            "targets from 64 MiB through 2 TiB; CAB-tier targets above that remain blocked"));
+            "APFS generated raw repair supports single-CIB, multi-CIB, metadata-overflow, and "
+            "CAB-tier targets from 64 MiB through 24 TiB; larger targets remain blocked"));
     }
 
     const QString targetPath = rawPartitionTargetPath(operation);

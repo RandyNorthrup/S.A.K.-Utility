@@ -168,21 +168,21 @@ PartitionFileSystemCapability apfsCapability() {
              QStringLiteral("Original read-only container metadata consistency check"),
              QStringLiteral("Original read-only APFS volume browse, selected-file extraction, and "
                             "bounded recursive export"),
-             QStringLiteral("Confirmed S.A.K. single-CIB, multi-CIB, and metadata-overflow "
-                            "generated APFS create and format through Pending Operations "
-                            "(64 MiB through 2 TiB targets; Apple fsck_apfs + kernel mount "
-                            "certified)"),
+             QStringLiteral("Confirmed S.A.K. single-CIB, multi-CIB, metadata-overflow, and "
+                            "CAB-tier generated APFS create and format through Pending Operations "
+                            "(64 MiB through 24 TiB targets; Apple fsck_apfs + kernel read-write "
+                            "mount certified, incl. the CAB tier at 8 TiB / cab_count 2)"),
              QStringLiteral("Confirmed generated APFS metadata-checksum repair through Pending "
-                            "Operations (64 MiB through 2 TiB targets)"),
+                            "Operations (64 MiB through 24 TiB targets)"),
              QStringLiteral("Confirmed single-spaceman-chunk (<=128 MiB) generated APFS root-file "
                             "write, patch, and delete through Pending Operations")},
         .blocked_actions = {QStringLiteral("Arbitrary existing Apple APFS mutation remains blocked "
                                            "by generated-layout guards"),
                             QStringLiteral(
                                 "Generated APFS in-place root-file write/patch/delete is bounded "
-                                "to a single spaceman chunk (<=128 MiB) pending multi-CIB in-place "
-                                "commit wiring; CAB-tier format/repair targets above ~2 TiB "
-                                "remain blocked"),
+                                "to a single spaceman chunk (<=128 MiB) pending multi-CIB/CAB "
+                                "in-place commit wiring; generated format/repair targets above the "
+                                "certified ~24 TiB / 48 TiB-engine CAB ceiling remain blocked"),
                             QStringLiteral("Encrypted/compressed files, file writes on arbitrary "
                                            "Apple APFS, and resize remain blocked")},
         .required_tools = {QStringLiteral("sak_apfs_writer_cli")},

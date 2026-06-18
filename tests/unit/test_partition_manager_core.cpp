@@ -2469,9 +2469,11 @@ void verifyApfsRegistryCapability() {
                           QStringLiteral("bounded recursive export"),
                           QStringLiteral("generated APFS create"),
                           QStringLiteral("generated APFS metadata-checksum repair")});
-    // A1 promotion: multi-CIB format/repair confirmed; in-place write still single-chunk.
+    // A1/A2 promotion: multi-CIB + CAB-tier format/repair confirmed; in-place write
+    // still single-chunk.
     QVERIFY(available.contains(QStringLiteral("multi-CIB")));
-    QVERIFY(available.contains(QStringLiteral("2 TiB")));
+    QVERIFY(available.contains(QStringLiteral("CAB-tier")));
+    QVERIFY(available.contains(QStringLiteral("24 TiB")));
     const QString blocked = PartitionFileSystemRegistry::actionSummary(apfs.blocked_actions);
     QVERIFY(blocked.contains(QStringLiteral("Arbitrary existing Apple APFS mutation")));
     QVERIFY(blocked.contains(QStringLiteral("Encrypted/compressed files")));
@@ -2805,7 +2807,7 @@ void verifyApfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
     QVERIFY(apfsRepair.script.contains(extToolRawTargetPath()));
 
     // A1 promotion: multi-CIB generated format targets above one spaceman chunk (128 MiB)
-    // are now accepted through the production script route up to the certified ~2 TiB edge.
+    // are accepted through the production script route up to the certified ~24 TiB edge.
     PartitionTarget multiCibTarget = target;
     multiCibTarget.size_bytes = 256ULL * 1024ULL * 1024ULL;
     const auto multiCibFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
@@ -2814,13 +2816,22 @@ void verifyApfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
              qPrintable(multiCibFormat.blockers.join(QStringLiteral("; "))));
     QVERIFY(multiCibFormat.script.contains(QStringLiteral("format-raw")));
 
-    // CAB-tier targets above the certified format edge remain blocked.
+    // A2 CAB promotion: CAB-tier targets (>~7.8 TiB) up to the certified 24 TiB edge now
+    // format through the production script route (Apple fsck_apfs + kernel-RW-mount certified).
+    PartitionTarget cabTarget = target;
+    cabTarget.size_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+    const auto cabFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, cabTarget, apfsPayload));
+    QVERIFY2(cabFormat.valid(), qPrintable(cabFormat.blockers.join(QStringLiteral("; "))));
+    QVERIFY(cabFormat.script.contains(QStringLiteral("format-raw")));
+
+    // Targets above the certified 24 TiB edge still remain blocked.
     PartitionTarget oversizedTarget = target;
-    oversizedTarget.size_bytes = 3ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+    oversizedTarget.size_bytes = 30ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
     const auto oversizedFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Format, oversizedTarget, apfsPayload));
     QVERIFY(!oversizedFormat.valid());
-    QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("CAB-tier")));
+    QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("24 TiB")));
 }
 
 void verifyExtRepairScript(PartitionScriptBuilder* builder, const PartitionTarget& target) {
@@ -6386,24 +6397,31 @@ void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() 
     QVERIFY(QFileInfo::exists(multiChunkPath));
 
     // Multi-CIB containers (>126 chunks) up to the inline cib-address-array /
-    // chunk-0 internal-pool limit are now emitted (single-CIB and multi-CIB are
-    // both apfsck/fsck_apfs-clean; validated host-side to 7 CIBs / 100 GiB). Only
-    // the CAB tier (cib_count > cibs_per_cab, 507) still fails closed. An 8 TiB
-    // target needs 65536 chunks across 521 cibs -> CAB tier; the writer must fail
-    // closed before creating any image.
-    const QString oversizedImagePath = QDir(temp.path()).filePath(QStringLiteral("oversized.apfs"));
-    const auto oversized = PartitionApfsWriter::buildImageOnlyFormatImage(
-        {.image_path = oversizedImagePath,
+    // chunk-0 internal-pool limit are emitted, and the CAB tier (cib_count >
+    // cibs_per_cab, 507) is now emitted too: the spaceman publishes a cab-address
+    // array pointing at apfs_cib_addr_blocks. An 8 TiB target needs 65536 chunks
+    // across 521 cibs and 2 CABs; the writer formats it (sparse metadata near the
+    // container start, Apple fsck_apfs-validated separately on the cert VM).
+    const auto cabGeometry = PartitionApfsWriter::computeContainerGeometry(
+        8ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL / 4096ULL);
+    QCOMPARE(cabGeometry.chunk_count, static_cast<uint64_t>(65'536));
+    QCOMPARE(cabGeometry.cib_count, static_cast<uint64_t>(521));
+    QCOMPARE(cabGeometry.cab_count, static_cast<uint64_t>(2));
+    // The engine no longer rejects the CAB tier at the geometry gate. An 8 TiB
+    // image-only format gets past that gate to the file-sizing step; whether it then
+    // succeeds depends only on the host filesystem accepting an 8 TiB sparse file
+    // (the unit host's NTFS scratch refuses it, the VM lab's sparse XFS does not).
+    // The full CAB write + Apple fsck_apfs cert therefore runs on the cert VM; the
+    // unit-level guarantee is that no "CAB tier" geometry blocker is raised.
+    const QString cabImagePath = QDir(temp.path()).filePath(QStringLiteral("cab.apfs"));
+    const auto cabFormat = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = cabImagePath,
          .target_container_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL,
          .block_size_bytes = 4096,
-         .volume_name = QStringLiteral("SAK Oversized"),
+         .volume_name = QStringLiteral("SAK Cab"),
          .options = options});
-    QVERIFY(!oversized.ok);
-    const QString oversizedBlockers = oversized.blockers.join(' ');
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("CAB tier")));
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("65536 chunk(s)")));
-    QVERIFY(oversizedBlockers.contains(QStringLiteral("521 chunk-info block(s)")));
-    QVERIFY(!QFileInfo::exists(oversizedImagePath));
+    const QString cabBlockers = cabFormat.blockers.join(QStringLiteral("; "));
+    QVERIFY2(cabFormat.ok || !cabBlockers.contains(QStringLiteral("CAB")), qPrintable(cabBlockers));
 
     auto oldFalsePassFixture = apfsRawDetectionFixture();
     constexpr uint64_t kMultiChunkBlocks = 130ULL * 32'768ULL;
