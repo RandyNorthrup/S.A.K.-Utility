@@ -201,6 +201,22 @@ writer's ~48 TiB ip-bitmap-ring ceiling fail closed. Evidence:
 `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-cab-tier-cloud\report.json`
 plus `apfs-cab-fsck-apfs-clean.png`. The production format/repair cap is raised to 24 TiB
 (covering the A8 drive); the multi-CIB/CAB in-place-COW mutation lane stays single-chunk.
+Repeated in-place COMMIT on a metadata-overflow container (>~1.3 TiB) was Apple-certified on
+2026-06-18 UTC via a unified-group crash-safe rotation. On the overflow tier chunk 0 is fully
+reserved, so commits allocate from the boundary chunk (M-1) whose allocation bitmap changes
+every commit; cib 0, its chunk-0 bitmap, and that boundary bitmap therefore rotate together as
+one group through 3 crash-safe IP slots (stride 2 + 1), and the whole group frees as a single
+internal-pool free-queue run. (The single-/multi-CIB tiers reduce to the certified stride-2
+{cib0,bitmap} rotation byte-for-byte.) A 2 TiB overflow container (volume `OVF`) took four
+chained `commit-image-file-insert` commits (xid 2->6); attached to the qemu/KVM macOS Sequoia
+VM the kernel auto-mounted it read-write and CONTINUED it (apfs_kext 2332.101.1, xid 6->8 - the
+exact kernel-continuation that the earlier whole-slot multi-CIB rotation failed), and after
+unmount `fsck_apfs -n /dev/disk0` reported `The volume /dev/rdisk1s1 ... appears to be OK` and
+`The container /dev/disk0 appears to be OK` with the space manager, the space-manager free
+queue trees, and allocated space all clean. Evidence
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-cab-tier-cloud\apfs-overflow-repeated-commit-fsck-clean.png`.
+(The CAB-tier in-place commit is the same group rotation with cab 0 added and stays fail-closed
+until that follow-on cascade; CAB FORMAT remains certified.)
 The writer now also formats existing image targets in place only after explicit
 destructive wipe confirmation, clears stale edge signatures, writes generated
 APFS metadata through a seekable-device block writer, and proves post-format

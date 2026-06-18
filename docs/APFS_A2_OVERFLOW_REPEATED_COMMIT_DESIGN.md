@@ -1,6 +1,15 @@
 # APFS A2 — repeated metadata-overflow in-place commit (cascade 5+) design
 
-Status: **designing/implementing.** The metadata-overflow FORMAT tier (>~1.3 TiB) is
+Status: **DONE + Apple-certified 2026-06-18 (unified-group rotation).** A 2 TiB overflow
+container took 4 chained in-place commits (xid 2->6); the macOS kernel mounted it read-write
+and CONTINUED it (xid 6->8), and `fsck_apfs -n` reported the container + volume "appears to
+be OK" with the space manager, the space-manager free queue trees, and allocated space all
+clean. Evidence
+`artifacts/.../external.apfs-cab-tier-cloud/apfs-overflow-repeated-commit-fsck-clean.png`. The
+unified-group rotation (below) is the implementation. The CAB in-place commit is the same
+group rotation with cab 0 added (a follow-on); CAB in-place commit stays fail-closed for now.
+
+Original status: **designing/implementing.** The metadata-overflow FORMAT tier (>~1.3 TiB) is
 Apple-certified (single-CIB / multi-CIB / overflow / CAB FORMAT all `fsck_apfs`-clean, the
 CAB tier across cab_count 2/3/4). In-place COMMIT is certified through multi-CIB; on the
 overflow tier only a **single** commit past genesis is allowed (`loadFsCommitContext` fails

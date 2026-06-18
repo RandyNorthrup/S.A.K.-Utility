@@ -1640,6 +1640,10 @@ struct ApfsSpacemanParams {
     // CABs. cabAddrs is empty and cabCount 0 for every certified (cab_count 0) tier.
     uint64_t cabCount{0};
     QVector<uint64_t> cabAddrs;
+    // Contiguous ghost IP blocks the live checkpoint holds in sm_fq[IP] (the genesis
+    // rotation group: cib 0 + chunk-0 bitmap, plus the ghost cab 0 / ghost boundary
+    // bitmap). 2 for the certified single-/multi-CIB tiers.
+    uint64_t ghostIpFreeCount{2};
 };
 
 // Blocks each internal-pool allocation bitmap occupies: one 4096-byte block holds
@@ -1723,7 +1727,8 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
                  genesis,
                  cibAddrs,
                  cabCount,
-                 cabAddrs] = params;
+                 cabAddrs,
+                 ghostIpFreeCount] = params;
     const uint64_t cibCount = static_cast<uint64_t>(cibAddrs.size());
     QByteArray block =
         newApfsObjectBlock(blockSize, kApfsFormatSpacemanOid, xid, kApfsObjectTypeSpaceman);
@@ -1808,11 +1813,11 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     }
     setupIpBitmapRing(&block, ipBmSize, genesis);
     if (!genesis) {
-        // sm_fq[IP] holds the genesis cib-0 slot pending reclamation: the ghost
-        // blocks (cib 0 + chunk-0 bitmap, and on the CAB tier the ghost cab 0).
-        // Only cib 0 / cab 0 rotate, so this is 2 (or 3 with a CAB) regardless of
-        // cib_count - the immutable cibs/cabs are never freed.
-        writeLe64(&block, 0xC8, cabCount > 0 ? 3 : 2);
+        // sm_fq[IP] holds the genesis rotation group pending reclamation: cib 0 +
+        // chunk-0 bitmap, plus the ghost cab 0 (CAB tier) / ghost boundary bitmap
+        // (overflow tier). Only the group rotates, so ghostIpFreeCount is the group
+        // stride (2..4) regardless of cib_count - the immutable cibs are never freed.
+        writeLe64(&block, 0xC8, ghostIpFreeCount);
         writeLe64(&block, 0xD0, kApfsFormatFqIpTreeOid);
         writeLe64(&block, 0xD8, kApfsFormatXid);
         writeLe64(&block, 0xF0, 2);
@@ -1850,6 +1855,10 @@ struct ApfsChunkInfoParams {
     // {1, empty} and the entry below reduces to the certified single-chunk-0 form.
     uint64_t metadataChunks{1};
     QVector<uint64_t> extraChunkBitmaps;
+    // Non-CAB overflow tier: the boundary chunk (M-1) takes this rotating bitmap (ghost
+    // for the genesis cib, live for the live cib) instead of an immutable
+    // extraChunkBitmaps entry. 0 below that tier.
+    uint64_t boundaryBitmap{0};
 };
 
 // Blocks of chunk `chunkIndex` consumed by a reserved prefix of `reservedBlocks`
@@ -1863,6 +1872,23 @@ uint64_t chunkReservedBlocks(uint64_t reservedBlocks, uint64_t chunkIndex) {
     return std::min<uint64_t>(reservedBlocks - start, kApfsSpacemanBlocksPerChunk);
 }
 
+// The allocation bitmap a metadata chunk's chunk-info entry references: chunk 0's
+// rotating bitmap, the boundary chunk's rotating bitmap (non-CAB overflow), or an
+// immutable chunk 1..M-2 bitmap.
+uint64_t chunkEntryBitmap(uint64_t chunk,
+                          bool boundary,
+                          uint64_t bitmapBlock,
+                          uint64_t boundaryBitmap,
+                          const QVector<uint64_t>& extraChunkBitmaps) {
+    if (chunk == 0) {
+        return bitmapBlock;
+    }
+    if (boundary && boundaryBitmap != 0) {
+        return boundaryBitmap;
+    }
+    return extraChunkBitmaps.value(static_cast<qsizetype>(chunk) - 1);
+}
+
 QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* blockers) {
     const auto [blockSize,
                 blockCount,
@@ -1874,7 +1900,8 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
                 chunkSpan,
                 cibIndex,
                 metadataChunks,
-                extraChunkBitmaps] = params;
+                extraChunkBitmaps,
+                boundaryBitmap] = params;
     // apfsck requires a cib's object xid to equal the newest transaction id among
     // its chunks (a cib only advances when one of its chunks changes). The reserved
     // prefix changes genesis->live only in its boundary chunk (metadataChunks - 1,
@@ -1899,11 +1926,10 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
         const bool metadataChunk = chunkStart == 0 && chunk < metadataChunks;
         const uint64_t usedBlocks = metadataChunk ? chunkReservedBlocks(reservedBlocks, chunk) : 0;
         const bool boundary = chunkStart == 0 && chunk == boundaryChunk;
-        uint64_t entryBitmap = 0;
-        if (metadataChunk) {
-            entryBitmap = chunk == 0 ? bitmapBlock
-                                     : extraChunkBitmaps.value(static_cast<qsizetype>(chunk) - 1);
-        }
+        const uint64_t entryBitmap =
+            metadataChunk
+                ? chunkEntryBitmap(chunk, boundary, bitmapBlock, boundaryBitmap, extraChunkBitmaps)
+                : 0;
         writeLe64(&block, entry, boundary ? xid : kApfsFormatGenesisXid);
         writeLe64(&block, entry + kApfsChunkInfoEntryAddrOffset, chunkAddr);
         writeLe32(&block,
@@ -2702,6 +2728,17 @@ struct ApfsMultiCibLayout {
     uint64_t liveCab0{0};             // live cab 0 (references live cib 0)
     QVector<uint64_t> ghostCabs;      // genesis cab-address array ({ghostCab0} + immutable)
     QVector<uint64_t> liveCabs;       // live cab-address array ({liveCab0} + immutable)
+    // Unified crash-safe rotation group. cib 0, its chunk-0 bitmap, (the cab 0 on the
+    // CAB tier) and (the boundary-chunk bitmap on the non-CAB overflow tier) rotate
+    // together every commit, so the IP region holds 3 group slots of ipGroupStride
+    // blocks each. The boundary chunk (M-1) rotates inside the group only for the
+    // non-CAB overflow tier; the CAB tier keeps its certified format (boundary
+    // immutable in extraChunkBitmaps, in-place commit a later cascade). ipGroupStride
+    // is 2 for the certified single-/multi-CIB tiers (byte-identical).
+    uint64_t ipGroupStride{2};
+    uint64_t boundaryChunk{0};        // M-1 when the boundary rotates; 0 otherwise
+    uint64_t ghostBoundaryBitmap{0};  // genesis boundary-chunk bitmap (group offset 2)
+    uint64_t liveBoundaryBitmap{0};   // live boundary-chunk bitmap (next group, offset 2)
 };
 
 // The post-internal-pool metadata shift: the genesis omap and everything after it
@@ -2719,6 +2756,57 @@ uint64_t generatedSeedDataBlock(uint64_t chunkCount, uint64_t cibCount, uint64_t
     return kApfsFormatSeedFileDataBlock + generatedIpDelta(chunkCount, cibCount, cabCount);
 }
 
+// Precomputed counts that drive the internal-pool placement (derived in
+// computeMultiCibLayout so the placement helper stays branch-light).
+struct ApfsIpRegionPlan {
+    uint64_t cibCount{1};
+    uint64_t cabCount{0};
+    uint64_t immutableCabCount{0};  // cab 1..N-1
+    uint64_t extraBitmaps{0};       // immutable chunk 1..M-2 bitmaps
+    uint64_t boundaryRotates{0};    // boundary chunk M-1 rides cib 0's group (non-CAB overflow)
+};
+
+// Lay out the internal-pool prefix: immutable cibs (N-1), immutable cabs, the
+// fully-reserved overflow chunk bitmaps, then cib 0's ghost and live rotation groups
+// {cib0, bitmap, (cab0), (boundary)}. The spare group stays free for the first commit.
+void placeMultiCibIpRegion(ApfsMultiCibLayout* layout, const ApfsIpRegionPlan& plan) {
+    uint64_t block = layout->ipBase;
+    for (uint64_t i = 0; i + 1 < plan.cibCount; ++i) {
+        layout->immutableCibs.append(block++);
+    }
+    for (uint64_t i = 0; i < plan.immutableCabCount; ++i) {
+        layout->immutableCabs.append(block++);
+    }
+    for (uint64_t i = 0; i < plan.extraBitmaps; ++i) {
+        layout->extraChunkBitmaps.append(block++);
+    }
+    layout->cib0Base = block;
+    const uint64_t ghostCib0 = block++;  // ghost group: cib0, bitmap, (cab0), (boundary)
+    layout->ghostBitmap = block++;
+    if (plan.cabCount > 0) {
+        layout->ghostCab0 = block++;
+    }
+    if (plan.boundaryRotates > 0) {
+        layout->boundaryChunk = layout->metadataChunks - 1;
+        layout->ghostBoundaryBitmap = block++;
+    }
+    const uint64_t liveCib0 = block++;  // live group: cib0, bitmap, (cab0), (boundary)
+    layout->liveBitmap = block++;
+    if (plan.cabCount > 0) {
+        layout->liveCab0 = block++;
+    }
+    if (plan.boundaryRotates > 0) {
+        // Last block assigned; the spare group that follows is free (never written).
+        layout->liveBoundaryBitmap = block;
+    }
+    layout->ghostCibs = QVector<uint64_t>{ghostCib0} + layout->immutableCibs;
+    layout->liveCibs = QVector<uint64_t>{liveCib0} + layout->immutableCibs;
+    if (plan.cabCount > 0) {
+        layout->ghostCabs = QVector<uint64_t>{layout->ghostCab0} + layout->immutableCabs;
+        layout->liveCabs = QVector<uint64_t>{layout->liveCab0} + layout->immutableCabs;
+    }
+}
+
 ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
     const uint64_t cibCount = cibCountForChunks(chunkCount);
     const uint64_t cabCount = cabCountForCibs(cibCount);
@@ -2734,48 +2822,33 @@ ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
                            std::min<uint64_t>(chunkCount,
                                               (seedData + kApfsSpacemanBlocksPerChunk - 1) /
                                                   kApfsSpacemanBlocksPerChunk));
-    const uint64_t extraBitmaps = layout.metadataChunks - 1;
-    const uint64_t immutableCabCount = cabCount > 0 ? cabCount - 1 : 0;
-    // Contiguous IP region from ip_base: immutable cibs (N-1), immutable cabs (CAB
-    // tier only, cab_count-1), the chunk 1..M-1 metadata bitmaps (M-1), then cib 0's
-    // rotation slots {ghost cib0, ghost bitmap, (ghost cab0), live cib0, live bitmap,
-    // (live cab0)}. The ghost slots stay contiguous before the live slots so the IP
-    // usage bitmap is a single run. With cab_count 0 the cab terms vanish and this
-    // reduces to the certified single-/multi-CIB layout byte-for-byte.
-    uint64_t block = layout.ipBase;
-    for (uint64_t i = 0; i + 1 < cibCount; ++i) {
-        layout.immutableCibs.append(block++);
-    }
-    for (uint64_t i = 0; i < immutableCabCount; ++i) {
-        layout.immutableCabs.append(block++);
-    }
-    for (uint64_t i = 0; i < extraBitmaps; ++i) {
-        layout.extraChunkBitmaps.append(block++);
-    }
-    layout.cib0Base = block;
-    const uint64_t ghostCib0 = block++;
-    layout.ghostBitmap = block++;
-    if (cabCount > 0) {
-        layout.ghostCab0 = block++;
-    }
-    const uint64_t liveCib0 = block++;
-    layout.liveBitmap = block++;
-    if (cabCount > 0) {
-        layout.liveCab0 = block++;
-    }
-    layout.ghostCibs = QVector<uint64_t>{ghostCib0} + layout.immutableCibs;
-    layout.liveCibs = QVector<uint64_t>{liveCib0} + layout.immutableCibs;
-    if (cabCount > 0) {
-        layout.ghostCabs = QVector<uint64_t>{layout.ghostCab0} + layout.immutableCabs;
-        layout.liveCabs = QVector<uint64_t>{layout.liveCab0} + layout.immutableCabs;
-    }
-    // The genesis checkpoint marks every block up to and including its ghost slots;
-    // the live checkpoint additionally marks its live slots (it still references the
-    // ghost pair via the IP free queue). cabSlot widens both by the cab rotation.
     const uint64_t cabSlot = cabCount > 0 ? 1 : 0;
-    layout.genesisIpUsage = (cibCount - 1) + immutableCabCount + extraBitmaps + 2 +
-                            cabSlot;                           // + ghost slots
-    layout.liveIpUsage = layout.genesisIpUsage + 2 + cabSlot;  // + live slots
+    // The boundary chunk (M-1) joins cib 0's rotation group only on the non-CAB
+    // overflow tier; the CAB tier keeps its certified format (boundary immutable in
+    // extraChunkBitmaps), so its in-place commit is a later cascade.
+    const uint64_t boundaryRotates = (layout.metadataChunks > 1 && cabCount == 0) ? 1 : 0;
+    // Immutable per-chunk bitmaps cover chunks 1..M-1, minus the boundary chunk when it
+    // rotates inside the group.
+    const uint64_t extraBitmaps = layout.metadataChunks - 1 - boundaryRotates;
+    const uint64_t immutableCabCount = cabCount > 0 ? cabCount - 1 : 0;
+    // The rotation group = {cib0, chunk0-bitmap, (cab0), (boundary)}; 3 group slots of
+    // groupSize blocks rotate crash-safely (ghost / live / spare). The ghost slots stay
+    // contiguous before the live slots so the IP usage bitmap is a single run. With
+    // cab_count 0 and metadataChunks 1 the cab/boundary terms vanish (groupSize 2) and
+    // this reduces to the certified single-/multi-CIB layout byte-for-byte.
+    const uint64_t groupSize = 2 + cabSlot + boundaryRotates;
+    layout.ipGroupStride = groupSize;
+    placeMultiCibIpRegion(&layout,
+                          {.cibCount = cibCount,
+                           .cabCount = cabCount,
+                           .immutableCabCount = immutableCabCount,
+                           .extraBitmaps = extraBitmaps,
+                           .boundaryRotates = boundaryRotates});
+    // Genesis marks the ghost group; the live checkpoint additionally marks the live
+    // group (it still holds the ghost group via the IP free queue). The spare group
+    // stays free until the first commit rotates into it.
+    layout.genesisIpUsage = (cibCount - 1) + immutableCabCount + extraBitmaps + groupSize;
+    layout.liveIpUsage = layout.genesisIpUsage + groupSize;
     return layout;
 }
 
@@ -2805,6 +2878,11 @@ struct ApfsGeneratedLayout {
     // immutable cibs + (M - 1) chunk bitmaps. nextIpSlot rotates within this region;
     // the single/multi-CIB tiers reduce it to kApfsFormatIpBaseBlock + (cib_count-1).
     uint64_t cib0Base{kApfsFormatIpBaseBlock};
+    // Crash-safe rotation group stride (cib0 + bitmap, +1 on the non-CAB overflow tier
+    // for the boundary-chunk bitmap, which sits at group offset 2). 2 for the certified
+    // single-/multi-CIB tiers. boundaryChunk is the M-1 chunk that rotates (0 = none).
+    uint64_t ipGroupStride{2};
+    uint64_t boundaryChunk{0};
 };
 
 ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
@@ -2824,7 +2902,9 @@ ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
             .metadataChunks = mcib.metadataChunks,
             .allocChunk = mcib.metadataChunks > 1 ? mcib.metadataChunks - 1 : 0,
             .firstFreeIpBlock = mcib.metadataChunks > 1 ? mcib.ipBase + ipPrefix : 0,
-            .cib0Base = mcib.cib0Base};
+            .cib0Base = mcib.cib0Base,
+            .ipGroupStride = mcib.ipGroupStride,
+            .boundaryChunk = mcib.boundaryChunk};
 }
 
 // One internal-pool cib/bitmap slot. A single-chunk generated container's IP
@@ -2844,13 +2924,16 @@ struct ApfsIpSlot {
 // last. Foundation for the crash-safe IP-region rotation
 // (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
 ApfsIpSlot nextIpSlot(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
-    constexpr int kIpSlotCount = 3;  // cib 0 rotates through 3 {cib0, bitmap} slots
-    // Only cib 0 rotates; cib 1..N-1 are immutable, and on the overflow tier the
-    // chunks 1..M-1 bitmaps follow them, so cib 0's three slots start at the
-    // precomputed cib0Base (single/multi-CIB reduce to ip_base + (N-1)).
+    constexpr int kIpSlotCount = 3;  // cib 0 rotates through 3 group slots
+    // The rotation group spans ipGroupStride blocks (cib0 + chunk-0 bitmap, plus the
+    // boundary bitmap on the non-CAB overflow tier); the new group is the round-robin
+    // successor of the live group. cib0Base is the precomputed first group slot
+    // (single/multi-CIB reduce to ip_base + (N-1), stride 2).
     const uint64_t cib0Base = layout.cib0Base;
-    const int liveIndex = static_cast<int>((liveCib - cib0Base) / 2);
-    const uint64_t nextBase = cib0Base + static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * 2;
+    const uint64_t stride = layout.ipGroupStride;
+    const int liveIndex = static_cast<int>((liveCib - cib0Base) / stride);
+    const uint64_t nextBase = cib0Base +
+                              static_cast<uint64_t>((liveIndex + 1) % kIpSlotCount) * stride;
     return {nextBase, nextBase + 1};
 }
 
@@ -3612,18 +3695,19 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
             "boundary chunk falls outside cib 0"));
         return false;
     }
-    // Overflow tier: a SINGLE in-place commit on a freshly formatted container is
-    // certified, but the boundary chunk's copy-on-write bitmap currently lands at a
-    // fixed internal-pool block (firstFreeIpBlock), so a second commit would re-COW
-    // the same block and corrupt the allocator after the kernel reclaims it. Until
-    // that bitmap rotates through its own slots (a format + commit change), fail
-    // closed on any commit past genesis.
-    if (ctx->layout.allocChunk != 0 && ctx->live.xid > kApfsFormatXid) {
+    // CAB tier: an overflow container whose boundary does not rotate in cib 0's group
+    // (boundaryChunk 0 with allocChunk set) is the CAB tier; cab 0 also rotates in the
+    // group, which the in-place commit does not yet emit - a later cascade.
+    if (ctx->layout.allocChunk != 0 && ctx->layout.boundaryChunk == 0) {
         blockers->append(QStringLiteral(
-            "APFS repeated in-place commits on a metadata-overflow container are not yet "
-            "supported; the boundary-chunk bitmap rotation is single-commit only"));
+            "APFS in-place commit on a CAB-tier container is not yet supported (the cab-0 "
+            "rotation group is a later cascade)"));
         return false;
     }
+    // Repeated overflow commits are supported: the boundary-chunk bitmap rides in cib
+    // 0's rotation group (offset 2) and copies-on-writes into the next group's slot
+    // each commit, so a second commit never re-COWs the live bitmap the previous
+    // checkpoint still references.
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
     }
@@ -3689,7 +3773,10 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
             return false;
         }
         *newBlocks = free.mid(0, need);
-        *chunk1BitmapBlock = ctx.layout.firstFreeIpBlock;
+        // The boundary chunk's bitmap rides in cib 0's rotation group at offset 2, so
+        // it copies-on-writes into the NEXT group's offset-2 slot every commit - never
+        // re-COWing the live bitmap the previous checkpoint still references.
+        *chunk1BitmapBlock = nextIpSlot(ctx.liveCib, ctx.layout).cib + 2;
         return true;
     }
     QByteArray chunk0Bitmap(ctx.geometry.blockSize, '\0');
@@ -3821,17 +3908,18 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = static_cast<int64_t>(freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    // Once cib 0's rotation has touched the spare slot, the IP bitmap cumulatively
-    // marks the immutable cibs (cib_count - 1) plus all three cib-0 rotation slots
-    // (6 blocks) = cib_count + 5, contiguous from ip_base (2 ghost slots held by the
-    // IP free-queue + the live slot). A multi-chunk overflow additionally marks
-    // chunk 1's bitmap slot; the device free count is unchanged (that IP slot is
-    // already reserved in chunk 0's bitmap). Single-CIB reduces to 6 (0x3f).
-    // On the overflow tier the chunks 1..M-1 immutable metadata bitmaps (M - 1) also
-    // sit in the internal pool ahead of the cib-0 rotation slots, and the boundary
-    // chunk's copy-on-write bitmap (chunk1BitmapBlock = firstFreeIpBlock) follows them.
-    const uint64_t ipBitmapUsage = f.ctx.layout.cibCount + 5 + (f.ctx.layout.metadataChunks - 1) +
-                                   (f.chunk1BitmapBlock != 0 ? 1 : 0);
+    // Once the rotation has touched the spare slot, the IP bitmap cumulatively marks
+    // the immutable cibs (cib_count - 1), the fully-reserved overflow chunk bitmaps
+    // (M - 2 on the overflow tier, the boundary chunk now rides in the group), and all
+    // three rotation group slots (3 * groupSize, with 2 ghost groups held by the IP
+    // free-queue + the live group), contiguous from ip_base. A non-overflow multi-chunk
+    // spill additionally marks chunk 1's bitmap slot. Single-CIB reduces to 6 (0x3f).
+    const uint64_t groupSize = f.ctx.layout.ipGroupStride;
+    const uint64_t extraBitmaps = f.ctx.layout.metadataChunks > 1 ? f.ctx.layout.metadataChunks - 2
+                                                                  : 0;
+    const uint64_t ipBitmapUsage = (f.ctx.layout.cibCount - 1) + extraBitmaps + 3 * groupSize +
+                                   (f.ctx.layout.allocChunk == 0 && f.chunk1BitmapBlock != 0 ? 1
+                                                                                             : 0);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -3853,14 +3941,13 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
                               .newCibAddr = rotation.newCib,
                               .cibCount = f.ctx.layout.cibCount,
-                              .ipSlotStride = 2,
+                              // The whole rotation group (cib0 + bitmap + boundary)
+                              // frees as one stride-length run, so the IP free-queue
+                              // window covers the boundary bitmap - no separate entry.
+                              .ipSlotStride = groupSize,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
-                              .extraFreedIpBlocks = f.ctx.layout.allocChunk != 0 &&
-                                                            f.ctx.allocChunkBitmap != 0
-                                                        ? QVector<uint64_t>{f.ctx.allocChunkBitmap}
-                                                        : QVector<uint64_t>{},
                               .mainFqEntries = mainFq.entries},
                              result,
                              blockers);
@@ -5911,6 +5998,10 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
     const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount, mcib.cabCount);
+    // The genesis rotation group the live checkpoint holds in sm_fq[IP] = the group
+    // stride (cib0 + bitmap, +cab0/boundary). apfsck marks these used via the
+    // free-queue, so the count must match the ghost-group size emitted in the layout.
+    const uint64_t ghostIpFreeCount = mcib.ipGroupStride;
     const uint64_t ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
     const uint64_t ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
     const uint64_t ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
@@ -5992,7 +6083,8 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                              .genesis = false,
                              .cibAddrs = mcib.liveCibs,
                              .cabCount = mcib.cabCount,
-                             .cabAddrs = mcib.liveCabs},
+                             .cabAddrs = mcib.liveCabs,
+                             .ghostIpFreeCount = ghostIpFreeCount},
                             blockers)},
         {kApfsFormatReaperBlock,
          buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
@@ -6000,7 +6092,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
          buildFreeQueueTreeBlock(request.block_size_bytes,
                                  kApfsFormatFqIpTreeOid,
                                  mcib.ghostCibs.first(),
-                                 mcib.cabCount > 0 ? 3 : 2,
+                                 ghostIpFreeCount,
                                  blockers)},
         {kApfsFormatFqMainTreeBlock,
          buildFreeQueueTreeBlock(
@@ -6081,7 +6173,8 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                         .chunkSpan = cib0Span,
                                         .cibIndex = 0,
                                         .metadataChunks = mcib.metadataChunks,
-                                        .extraChunkBitmaps = mcib.extraChunkBitmaps},
+                                        .extraChunkBitmaps = mcib.extraChunkBitmaps,
+                                        .boundaryBitmap = mcib.ghostBoundaryBitmap},
                                        blockers)});
     blocks.append({mcib.liveCibs.first(),
                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
@@ -6094,7 +6187,8 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                         .chunkSpan = cib0Span,
                                         .cibIndex = 0,
                                         .metadataChunks = mcib.metadataChunks,
-                                        .extraChunkBitmaps = mcib.extraChunkBitmaps},
+                                        .extraChunkBitmaps = mcib.extraChunkBitmaps,
+                                        .boundaryBitmap = mcib.liveBoundaryBitmap},
                                        blockers)});
     for (qsizetype i = 0; i < mcib.immutableCibs.size(); ++i) {
         const uint64_t cibIndex = static_cast<uint64_t>(i) + 1;
@@ -6128,6 +6222,18 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
         blocks.append({mcib.extraChunkBitmaps.at(i),
                        buildChunkBitmapBlock(request.block_size_bytes,
                                              chunkReservedBlocks(seedData, chunk))});
+    }
+    // Non-CAB overflow: the boundary chunk (M-1) gets genesis + live rotating bitmaps
+    // (the spare group slot stays free for the first commit). Each marks the boundary
+    // chunk's slice of its checkpoint's reserved prefix.
+    if (mcib.ghostBoundaryBitmap != 0) {
+        blocks.append(
+            {mcib.ghostBoundaryBitmap,
+             buildChunkBitmapBlock(request.block_size_bytes,
+                                   chunkReservedBlocks(ghostReserved, mcib.boundaryChunk))});
+        blocks.append({mcib.liveBoundaryBitmap,
+                       buildChunkBitmapBlock(request.block_size_bytes,
+                                             chunkReservedBlocks(seedData, mcib.boundaryChunk))});
     }
     // CAB tier (cib_count > 507): emit the chunk-info ADDRESS blocks the spaceman
     // points at. cab 0 rotates with cib 0 (genesis + live copies); cabs 1..N-1 are
