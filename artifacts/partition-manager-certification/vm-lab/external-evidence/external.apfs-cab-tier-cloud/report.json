@@ -64,6 +64,35 @@
         "result": "macOS APFS kernel extension auto-mounted the CAB containers read-write and committed to them",
         "evidence": "the 8 TiB container's fsck_apfs first refused -n with 'container /dev/rdisk4 is mounted with write access'; the 8 TiB and 24 TB volume superblocks record 'last modified by apfs_kext (2332.101.1)' and their checkpoints advanced to transaction ID 4 (writer emits xid 2, the kernel commit advanced to 4)"
     },
+    "cab_inplace_commit": {
+        "tier": "A2-2 CAB-tier in-place copy-on-write commit (unified rotation group stride 4: cib0 + chunk0-bitmap + cab0 + boundary-chunk-bitmap)",
+        "container_image": "/xfs/cabA.apfs FORMAT (8 TiB, cab_count 2) then three chained commit-image-file-insert commits cabA->cabB->cabC->cabD (xid 2->3->4->5)",
+        "design": "the spaceman addresses cibs through a cab-address array, so cab 0 rotates with cib 0 every commit (cab_cib_addr[0] re-pointed at the rotated cib 0, the spaceman cab-array re-pointed at the rotated cab 0); the boundary chunk's bitmap rides at group offset 2 + cabSlot. Same unified-group machinery as the metadata-overflow tier, stride 4.",
+        "linux_apfsck": "apfsck -w clean on the CAB FORMAT and clean (only the pre-existing benign 'Data stream xfield: wrong flags.' apfsck-vs-Apple divergence) after each of the three chained CAB in-place commits",
+        "apple_fsck_apfs": {
+            "command": "fsck_apfs -n /dev/disk5 (cabD, unmounted after the kernel auto-mounted it read-write)",
+            "kernel_continuation": "writer emitted xid 5 (three chained commits); the macOS kernel auto-mounted the CAB container read-write and CONTINUED the checkpoint to transaction ID 7 (two kernel commits past the writer) - the authority apfsck cannot model",
+            "kernel_read_files": "the kernel read all three files inserted by the chained CAB in-place commits: a2cab1.txt (24 B), a2cab2.txt (26 B), a2cab3.txt (26 B 'cab-a2-cert-payload-three'), sizes and contents matching the payloads",
+            "container_verdict": "The container /dev/disk5 appears to be OK.",
+            "volume_verdict": "The volume /dev/rdisk5s1 (UUID 4BDBF6B5-AA21-466F-A09D-243669C517A2) appears to be OK.",
+            "volume_provenance": "The volume CABA was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1).",
+            "phases_clean": [
+                "container superblock",
+                "checkpoint (transaction ID 7)",
+                "space manager",
+                "space manager free queue trees",
+                "object map",
+                "APFS volume superblock",
+                "snapshot metadata tree",
+                "fsroot tree",
+                "extent ref tree",
+                "volume object map space",
+                "allocated space"
+            ],
+            "evidence": "apfs-cab-inplace-commit-fsck-clean.png (fsck verdict), apfs-cab-inplace-commit-kernel-read-files.png (kernel ls of the 3 inserted files)"
+        },
+        "completed_at_utc": "2026-06-18T05:10:00Z"
+    },
     "linux_apfsck_cross_check": {
         "tool": "apfsprogs apfsck v0.2.1 (linux-apfs reference checker)",
         "clean_sizes": {

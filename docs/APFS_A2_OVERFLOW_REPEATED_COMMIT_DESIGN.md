@@ -1,13 +1,25 @@
 # APFS A2 — repeated metadata-overflow in-place commit (cascade 5+) design
 
-Status: **DONE + Apple-certified 2026-06-18 (unified-group rotation).** A 2 TiB overflow
-container took 4 chained in-place commits (xid 2->6); the macOS kernel mounted it read-write
-and CONTINUED it (xid 6->8), and `fsck_apfs -n` reported the container + volume "appears to
-be OK" with the space manager, the space-manager free queue trees, and allocated space all
-clean. Evidence
-`artifacts/.../external.apfs-cab-tier-cloud/apfs-overflow-repeated-commit-fsck-clean.png`. The
-unified-group rotation (below) is the implementation. The CAB in-place commit is the same
-group rotation with cab 0 added (a follow-on); CAB in-place commit stays fail-closed for now.
+Status: **DONE + Apple-certified 2026-06-18 (unified-group rotation), overflow AND CAB tiers.**
+A 2 TiB overflow container took 4 chained in-place commits (xid 2->6); the macOS kernel
+mounted it read-write and CONTINUED it (xid 6->8), and `fsck_apfs -n` reported the container +
+volume "appears to be OK" with the space manager, the space-manager free queue trees, and
+allocated space all clean. Evidence
+`artifacts/.../external.apfs-cab-tier-cloud/apfs-overflow-repeated-commit-fsck-clean.png`.
+
+**A2-2 CAB in-place commit DONE + Apple-certified 2026-06-18.** An 8 TiB CAB container
+(cab_count 2) took three chained `commit-image-file-insert` commits (xid 2->5); the macOS
+kernel auto-mounted it read-write, read all three inserted files (a2cab1/2/3.txt, contents
+matching), and CONTINUED the checkpoint to xid 7, after which `fsck_apfs -n /dev/disk5`
+reported the container + volume "appears to be OK" (checkpoint xid 7, space manager, free
+queue trees, object map, fsroot/extent-ref trees, allocated space all clean). Evidence
+`apfs-cab-inplace-commit-fsck-clean.png` + `apfs-cab-inplace-commit-kernel-read-files.png`.
+The CAB commit is the unified-group rotation (below) with **cab 0** added to the group
+(stride 4 = cib0 + chunk0-bitmap + cab0 + boundary): the spaceman addresses cibs through a
+cab-address array, so each commit re-emits cab 0 into its rotated group slot with
+`cab_cib_addr[0]` re-pointed at the rotated cib 0, then re-points the spaceman cab-array at
+the rotated cab 0. `kApfsInPlaceCommitMaxBytes` was raised to 32 TiB so the in-place commit
+validator accepts CAB sources (the scratch copy stays cheap on reflink/sparse hosts).
 
 Original status: **designing/implementing.** The metadata-overflow FORMAT tier (>~1.3 TiB) is
 Apple-certified (single-CIB / multi-CIB / overflow / CAB FORMAT all `fsck_apfs`-clean, the
@@ -67,8 +79,10 @@ slots). Post-IP metadata (omaps, volume, fs-tree, seedData, ipDelta) is unchange
   thisFreedBoundary@xid}` (length-1 runs) alongside the cib-0 window.
 - `finalizeFsCommit.ipBitmapUsage`: mark the live + the 2 pending boundary slots used
   (matching the cib-0 accounting), and reclaim the aged-out slot.
-- `loadFsCommitContext`: drop the repeated-overflow-commit guard; keep the >~10 TiB
-  (boundary-chunk-outside-cib-0) guard for the next cascade (A2-2).
+- `loadFsCommitContext`: drop the repeated-overflow-commit guard AND the CAB-tier guard
+  (A2-2 done); keep only the >~10 TiB (boundary-chunk-outside-cib-0) guard, which fail-closes
+  the tier where M-1 leaves cib 0 and an immutable cib would have to rotate too (a later
+  cascade, beyond the Apple-certified CAB ceiling).
 
 ## CRITICAL FINDING (2026-06-18): the rotation must be a UNIFIED GROUP
 

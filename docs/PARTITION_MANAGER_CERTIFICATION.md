@@ -215,8 +215,26 @@ unmount `fsck_apfs -n /dev/disk0` reported `The volume /dev/rdisk1s1 ... appears
 `The container /dev/disk0 appears to be OK` with the space manager, the space-manager free
 queue trees, and allocated space all clean. Evidence
 `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-cab-tier-cloud\apfs-overflow-repeated-commit-fsck-clean.png`.
-(The CAB-tier in-place commit is the same group rotation with cab 0 added and stays fail-closed
-until that follow-on cascade; CAB FORMAT remains certified.)
+
+Repeated in-place COMMIT on a CAB-tier container (`cab_count > 0`, >~7.8 TiB) was Apple-certified
+on 2026-06-18 UTC by extending that unified group with cab 0. On the CAB tier the spaceman
+addresses cibs through a cab-address array, so cab 0 (whose `cab_cib_addr[0]` points at the
+rotating cib 0) rotates with the group too: each commit re-emits cab 0 into its rotated group
+slot pointing at the new cib 0 and re-points the spaceman cab-array at the new cab 0. The group
+is therefore {cib0, chunk-0 bitmap, cab0, boundary bitmap} of stride 4 through 3 crash-safe IP
+slots (the overflow tier keeps stride 3, single-/multi-CIB stride 2, byte-for-byte). An 8 TiB
+container (`cab_count 2`, volume `CABA`) took three chained `commit-image-file-insert` commits
+(xid 2->5); attached to the qemu/KVM macOS Sequoia VM the kernel auto-mounted it read-write, read
+all three inserted files (`a2cab1.txt`/`a2cab2.txt`/`a2cab3.txt`, contents matching), and
+CONTINUED the checkpoint to xid 7, after which `fsck_apfs -n /dev/disk5` reported
+`The volume /dev/rdisk5s1 ... appears to be OK` and `The container /dev/disk5 appears to be OK`
+(checkpoint xid 7, space manager, free queue trees, object map, fsroot/extent-ref trees, and
+allocated space all clean). `apfsck` independently validated the CAB FORMAT and each chained
+commit. Evidence
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-cab-tier-cloud\apfs-cab-inplace-commit-fsck-clean.png`
+and `...\apfs-cab-inplace-commit-kernel-read-files.png`. The in-place commit cap
+(`kApfsInPlaceCommitMaxBytes`) was raised to 32 TiB so the validator accepts CAB sources; the
+only remaining fail-closed tier is the >~10 TiB case where the boundary chunk leaves cib 0.
 The writer now also formats existing image targets in place only after explicit
 destructive wipe confirmation, clears stale edge signatures, writes generated
 APFS metadata through a seekable-device block writer, and proves post-format
