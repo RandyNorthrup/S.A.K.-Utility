@@ -8300,7 +8300,15 @@ PartitionApfsImageBuildResult PartitionApfsWriter::formatExistingContainerTarget
     }
     target->close();
     result.blockers.append(writeBlockers);
-    finalizeExistingFormatResult(&result, !isWindowsRawDevicePath(result.image_path));
+    // The whole-target SHA-256 reads the entire container; on a multi-CIB / metadata-overflow
+    // container (held as a sparse image) that means reading terabytes of free space and
+    // dominates the format. Skip it above the single-chunk size -- those tiers are certified
+    // via fsck_apfs + kernel mount, not a whole-image hash -- and keep it for the small
+    // generated containers whose evidence chain is the image hash.
+    const bool hashWholeTarget = !isWindowsRawDevicePath(result.image_path) &&
+                                 request.target_container_bytes <=
+                                     kGeneratedApfsSingleChunkMaxBytes;
+    finalizeExistingFormatResult(&result, hashWholeTarget);
     return result;
 }
 
