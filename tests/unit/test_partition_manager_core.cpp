@@ -1646,6 +1646,7 @@ private Q_SLOTS:
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
+    void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -2748,7 +2749,7 @@ QJsonObject baseHfsFileMutationPayload() {
     return payload;
 }
 
-void verifyExtFormatScript(PartitionScriptBuilder* builder, const PartitionTarget& target) {
+void verifyExtFormatScript(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
     const auto script = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Format, target, baseExtToolPayload()));
     QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
@@ -2759,7 +2760,7 @@ void verifyExtFormatScript(PartitionScriptBuilder* builder, const PartitionTarge
     QVERIFY(script.script.contains(extToolRawTargetPath()));
 }
 
-void verifyHfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
+void verifyHfsFormatAndRepairScripts(const PartitionScriptBuilder* builder,
                                      const PartitionTarget& target) {
     QJsonObject hfsFormatPayload = baseExtToolPayload();
     hfsFormatPayload[QStringLiteral("file_system")] = QStringLiteral("HFSX");
@@ -2783,7 +2784,7 @@ void verifyHfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
     QVERIFY(hfsRepair.script.contains(QStringLiteral("Copy-SakSparseImageToRawTarget")));
 }
 
-void verifyApfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
+void verifyApfsFormatAndRepairScripts(const PartitionScriptBuilder* builder,
                                       const PartitionTarget& target) {
     PartitionTarget apfsTarget = target;
     apfsTarget.size_bytes = 128ULL * 1024ULL * 1024ULL;
@@ -2834,7 +2835,7 @@ void verifyApfsFormatAndRepairScripts(PartitionScriptBuilder* builder,
     QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("24 TiB")));
 }
 
-void verifyExtRepairScript(PartitionScriptBuilder* builder, const PartitionTarget& target) {
+void verifyExtRepairScript(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
     const auto repair = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CheckFileSystem, target, baseExtToolPayload()));
     QVERIFY2(repair.valid(), qPrintable(repair.blockers.join(QStringLiteral("; "))));
@@ -2843,7 +2844,7 @@ void verifyExtRepairScript(PartitionScriptBuilder* builder, const PartitionTarge
     QVERIFY(!repair.script.contains(QStringLiteral("Repair-Volume -DriveLetter")));
 }
 
-void verifyExtResizeScripts(PartitionScriptBuilder* builder, const PartitionTarget& target) {
+void verifyExtResizeScripts(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
     QJsonObject resizePayload = baseExtToolPayload();
     resizePayload[QStringLiteral("target_size_bytes")] =
         QString::number(2ULL * 1024ULL * 1024ULL * 1024ULL);
@@ -2865,7 +2866,8 @@ void verifyExtResizeScripts(PartitionScriptBuilder* builder, const PartitionTarg
     QVERIFY(shrink.script.contains(QStringLiteral("Partition shrink did not reach target size")));
 }
 
-void verifyExtTargetPathGates(PartitionScriptBuilder* builder, const PartitionTarget& target) {
+void verifyExtTargetPathGates(const PartitionScriptBuilder* builder,
+                              const PartitionTarget& target) {
     QJsonObject forgedTargetPayload = baseExtToolPayload();
     forgedTargetPayload[QStringLiteral("target_path")] =
         QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition99");
@@ -6788,6 +6790,72 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     QCOMPARE(deviceFree(readBlock(out2, 15)) + 8ULL, deviceFree(readBlock(base2, 11)));
 }
 
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileWriteCreatesThenReplaces() {
+    // The production file-write primitive (commitImageOnly/RawFileWrite) is
+    // create-or-replace: a new name is a single insert commit; an existing name is a
+    // delete-then-insert replace. Both reuse the Apple-certified COW commit engine.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2fw-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2FW"),
+                 .options = options})
+                .ok);
+
+    // Create: a new name routes through a single insert commit (xid 2 -> 3).
+    const QByteArray v1 = QByteArrayLiteral("first version of the file");
+    const QString created = dir.filePath(QStringLiteral("a2fw-created.apfs"));
+    const auto create =
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = created,
+                                                       .file_name = QStringLiteral("doc.txt"),
+                                                       .file_data = v1,
+                                                       .options = options});
+    QVERIFY2(create.ok, qPrintable(create.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(create.new_xid, 3ULL);
+    {
+        const auto listing =
+            PartitionApfsFileSystemReader::listDirectoryFromImage(created, QStringLiteral("/"), 20);
+        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(listing.entries.size(), 1);
+        QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
+        QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(v1.size()));
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+            created, QStringLiteral("/doc.txt"), 4096);
+        QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, v1);
+    }
+
+    // Replace: writing the same name overwrites it (delete xid 3 -> 4, then insert
+    // xid 4 -> 5). Still one entry, the new (longer) content, the new size.
+    const QByteArray v2 = QByteArrayLiteral("second, longer version of the same file's content");
+    const QString replaced = dir.filePath(QStringLiteral("a2fw-replaced.apfs"));
+    const auto replace =
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = created,
+                                                       .written_image_path = replaced,
+                                                       .file_name = QStringLiteral("doc.txt"),
+                                                       .file_data = v2,
+                                                       .options = options});
+    QVERIFY2(replace.ok, qPrintable(replace.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(replace.new_xid, 5ULL);
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(replaced, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
+    QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(v2.size()));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(replaced,
+                                                                       QStringLiteral("/doc.txt"),
+                                                                       4096);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, v2);
+}
+
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
@@ -8770,7 +8838,7 @@ void verifyHfsAndSwapSafetyGates(const PartitionInventory& inventory,
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
 }
 
-void verifyExtShrinkUsageSafetyGate(PartitionInventory* inventory,
+void verifyExtShrinkUsageSafetyGate(const PartitionInventory* inventory,
                                     const PartitionTarget& target,
                                     PartitionInfoEx* partition,
                                     const QJsonObject& payload) {

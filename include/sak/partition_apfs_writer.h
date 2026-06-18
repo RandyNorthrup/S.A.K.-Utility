@@ -612,15 +612,23 @@ public:
         const PartitionApfsImageRepairRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyCheckpoint(
         const PartitionApfsImageCheckpointCommitRequest& request);
+    /// @brief Create-or-replace one root file with an in-place COW commit (the
+    ///        production file-write primitive): a new name is one insert commit, an
+    ///        existing name is a delete-then-insert replace. Reuses the insert request.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileWrite(
+        const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
         const PartitionApfsImageFileDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileRename(
         const PartitionApfsImageFileRenameCommitRequest& request);
-    /// @brief In-place COW file insert/delete/rename commit applied directly to a
+    /// @brief In-place COW file write/insert/delete/rename commit applied directly to a
     ///        generated APFS container on a confirmed raw device (the on-hardware
-    ///        analogue of the commitImageOnly* family; no scratch clone).
+    ///        analogue of the commitImageOnly* family; no scratch clone). commitRawFileWrite
+    ///        is create-or-replace; commitRawFileInsert fails closed on an existing name.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileWrite(
+        const PartitionApfsRawFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileInsert(
         const PartitionApfsRawFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileDelete(

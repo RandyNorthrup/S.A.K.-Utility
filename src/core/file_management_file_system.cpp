@@ -378,6 +378,20 @@ FileManagementMutationResult fromApfsDirectoryResult(
             .warnings = input.warnings};
 }
 
+// Map a raw in-place COW checkpoint commit result (the certified crash-safe engine,
+// shared by file write/delete/rename) onto a File Management mutation result.
+FileManagementMutationResult fromApfsCommitResult(
+    const PartitionApfsImageCheckpointCommitResult& input,
+    const QString& path,
+    uint64_t bytes_written) {
+    return {.ok = input.ok,
+            .file_system = QStringLiteral("APFS"),
+            .path = path,
+            .bytes_written = bytes_written,
+            .blockers = input.blockers,
+            .warnings = input.warnings};
+}
+
 }  // namespace
 
 QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
@@ -710,16 +724,19 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         }
         const auto parts = apfsParts(cleanPath);
         if (parts.size() == 1) {
-            return fromApfsWriteResult(
-                PartitionApfsWriter::writeRawRootFile(
+            // Root files use the certified crash-safe in-place COW engine
+            // (create-or-replace); directory children remain on the legacy raw writer.
+            return fromApfsCommitResult(
+                PartitionApfsWriter::commitRawFileWrite(
                     {.target_path = target.root_path,
                      .target_container_bytes = target.size_bytes,
                      .file_name = parts.value(0),
                      .file_data = data,
-                     .target_write_confirmed = true,
+                     .target_mutation_confirmed = true,
                      .allow_raw_device_target = isRawDevicePath(target.root_path),
                      .options = apfsRawWriteOptions()}),
-                cleanPath);
+                cleanPath,
+                static_cast<uint64_t>(data.size()));
         }
         return fromApfsWriteResult(
             PartitionApfsWriter::writeRawRootDirectoryFile(
@@ -767,15 +784,18 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
         }
         const auto parts = apfsParts(cleanPath);
         if (parts.size() == 1) {
-            return fromApfsDeleteResult(
-                PartitionApfsWriter::deleteRawRootFile(
+            // Root files use the certified crash-safe in-place COW engine; directory
+            // children remain on the legacy raw writer.
+            return fromApfsCommitResult(
+                PartitionApfsWriter::commitRawFileDelete(
                     {.target_path = target.root_path,
                      .target_container_bytes = target.size_bytes,
                      .file_name = parts.value(0),
-                     .target_write_confirmed = true,
+                     .target_mutation_confirmed = true,
                      .allow_raw_device_target = isRawDevicePath(target.root_path),
                      .options = apfsRawWriteOptions()}),
-                cleanPath);
+                cleanPath,
+                0);
         }
         return fromApfsDeleteResult(
             PartitionApfsWriter::deleteRawRootDirectoryFile(
@@ -814,6 +834,29 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
         return fromHfsWriteResult(PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
             target.root_path, cleanSource, cleanDestination, hfsWriteOptions(target)));
+    }
+    if (fs == QStringLiteral("apfs")) {
+        const auto sourceParts = apfsParts(cleanSource);
+        const auto destParts = apfsParts(cleanDestination);
+        // This increment routes only root-file renames onto the certified COW engine
+        // (same parent, both single-component); moving across directories is a follow-on.
+        if (sourceParts.size() != 1 || destParts.size() != 1) {
+            return mutationBlocked(fs,
+                                   cleanSource,
+                                   QStringLiteral(
+                                       "APFS File Management rename is limited to root files"));
+        }
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawFileRename(
+                {.target_path = target.root_path,
+                 .target_container_bytes = target.size_bytes,
+                 .file_name = sourceParts.value(0),
+                 .new_file_name = destParts.value(0),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .options = apfsRawWriteOptions()}),
+            cleanDestination,
+            0);
     }
     return mutationBlocked(
         fs,

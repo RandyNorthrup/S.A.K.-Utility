@@ -1224,6 +1224,39 @@ std::optional<QJsonObject> buildCommitFileRenameReport(const CliInvocation& invo
     return report;
 }
 
+std::optional<QJsonObject> buildCommitFileWriteReport(const CliInvocation& invocation,
+                                                      QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-write.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileWrite(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .file_name = invocation.file_name,
+         .file_data = invocation.payload,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"),
+                  QStringLiteral("APFS in-place file write (create-or-replace) commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("file_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invocation,
                                                        QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -1358,6 +1391,9 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
     if (invocation.command == QStringLiteral("commit-image-checkpoint")) {
         return buildCommitCheckpointReport(invocation, error);
     }
+    if (invocation.command == QStringLiteral("commit-image-file-write")) {
+        return buildCommitFileWriteReport(invocation, error);
+    }
     if (invocation.command == QStringLiteral("commit-image-file-insert")) {
         return buildCommitFileInsertReport(invocation, error);
     }
@@ -1419,6 +1455,7 @@ bool isFileNameCommand(const QString& command) {
                                                       "delete-image-root-directory-file"),
                                                   QStringLiteral("delete-raw-root-directory-file"),
                                                   QStringLiteral("delete-raw-root-file"),
+                                                  QStringLiteral("commit-image-file-write"),
                                                   QStringLiteral("commit-image-file-insert"),
                                                   QStringLiteral("commit-image-file-delete"),
                                                   QStringLiteral("commit-image-file-rename"),
@@ -1496,6 +1533,7 @@ std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
                                             const QString& command,
                                             QString* error) {
     if (command == QStringLiteral("import-image") ||
+        command == QStringLiteral("commit-image-file-write") ||
         command == QStringLiteral("commit-image-file-insert") ||
         command == QStringLiteral("commit-raw-file-insert")) {
         const QString payloadPath = parser.value(option).trimmed();

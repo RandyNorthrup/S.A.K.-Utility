@@ -4328,6 +4328,46 @@ bool commitInPlaceFileRename(QIODevice* image,
                             blockers);
 }
 
+// A2-3: create-or-replace one root file with a true in-place copy-on-write commit
+// (the production mutation route's file-write primitive). A new name is one insert
+// commit; an existing name is a faithful replace - a delete commit (frees the old
+// file's data and records) followed by an insert commit (adds the new payload) on the
+// same device handle, each individually crash-safe and Apple-certified. The replace is
+// two checkpoints; an interrupted replace leaves the file cleanly deleted, never
+// corrupt.
+struct ApfsRootFileWriteRequest {
+    QVector<ApfsRootFilePayload> allFiles;  // every root file currently on the device
+    QString fileName;
+    QByteArray fileData;
+};
+
+bool commitInPlaceRootFileWrite(QIODevice* image,
+                                const ApfsRootFileWriteRequest& request,
+                                ApfsInPlaceCheckpointResult* result,
+                                QStringList* blockers) {
+    const QString& fileName = request.fileName;
+    const bool exists = std::any_of(request.allFiles.cbegin(),
+                                    request.allFiles.cend(),
+                                    [&fileName](const ApfsRootFilePayload& file) {
+                                        return file.fileName == fileName;
+                                    });
+    QVector<ApfsRootFilePayload> existing;
+    if (exists) {
+        ApfsInPlaceCheckpointResult deleteResult;
+        if (!commitInPlaceFileDelete(image, request.allFiles, fileName, &deleteResult, blockers)) {
+            return false;
+        }
+        for (const ApfsRootFilePayload& file : request.allFiles) {
+            if (file.fileName != fileName) {
+                existing.append(file);
+            }
+        }
+    } else {
+        existing = request.allFiles;
+    }
+    return commitInPlaceFileInsert(image, {existing, fileName, request.fileData}, result, blockers);
+}
+
 // Enumerate the root regular files of a generated container (name + object id +
 // size as a sized-but-empty payload) so an in-place commit can preserve them.
 bool collectAllRootFiles(const QString& sourcePath,
@@ -10281,6 +10321,74 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
     return result;
 }
 
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
+    const PartitionApfsImageFileInsertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("file-write-commit"), &result.blockers)) {
+        return result;
+    }
+    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+        result.blockers.append(
+            QStringLiteral("APFS file-write-commit payload exceeds the current size cap"));
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-write-commit"),
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-write-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-write-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.source_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-write-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-write-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceRootFileWrite(
+            &image, {allFiles, cleanFileName, request.file_data}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileInsert(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -10520,6 +10628,50 @@ static std::unique_ptr<QIODevice> openRawInPlaceCommitTarget(
             QStringLiteral("Unable to open APFS raw commit target: %1").arg(openError));
     }
     return target;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite(
+    const PartitionApfsRawFileInsertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("raw file-write-commit"), &result.blockers)) {
+        return result;
+    }
+    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+        result.blockers.append(
+            QStringLiteral("APFS raw file-write-commit payload exceeds the current size cap"));
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    if (!collectAllRootFiles(result.written_image_path, &allFiles, &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-write-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceRootFileWrite(
+            target.get(), {allFiles, cleanFileName, request.file_data}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
 }
 
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInsert(

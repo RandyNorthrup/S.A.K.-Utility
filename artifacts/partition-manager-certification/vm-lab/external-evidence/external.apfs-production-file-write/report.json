@@ -1,0 +1,48 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-production-file-write",
+    "tier": "A2-3.1 production mutation route on the certified COW engine (root file write/delete/rename)",
+    "destructive": false,
+    "host": "Cherry Servers bare-metal Intel (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1)",
+    "summary": "The File Management bridge (FileManagementFileSystemBridge) now routes APFS root-file write/delete/rename onto the Apple-certified crash-safe in-place COW commit engine (commitRawFileWrite/Delete/Rename) instead of the legacy single-chunk raw writers. The file-write primitive is create-or-replace: a new name is one insert commit; an existing name is a delete-then-insert replace, both on the certified COW engine.",
+    "new_engine_entry_points": [
+        "commitInPlaceRootFileWrite (on-device create-or-replace helper)",
+        "PartitionApfsWriter::commitImageOnlyFileWrite (image-only, unit-tested + CLI commit-image-file-write)",
+        "PartitionApfsWriter::commitRawFileWrite (raw device, production)"
+    ],
+    "unit_tests": "125/125 partition-core tests pass, including apfsWriter_inPlaceFileWriteCreatesThenReplaces (create -> readable v1 at xid 3; replace -> readable v2 at xid 5, one entry, new size)",
+    "linux_apfsck": "apfsck -w clean on the create container (fw1, xid 2->3) and the replace container (fw2, xid 2->3 create then 3->4 delete + 4->5 insert) - only the pre-existing benign 'Data stream xfield: wrong flags.' apfsck-vs-Apple divergence",
+    "apple_fsck_apfs": {
+        "create": {
+            "container_image": "/xfs/fw1.apfs (64 MiB single-CIB, volume FWTEST)",
+            "operation": "commit-image-file-write doc.txt = 'version-one-content' (20 bytes), xid 2 -> 3",
+            "kernel_read": "the macOS kernel auto-mounted fw1 read-write and read /Volumes/FWTEST/doc.txt = 'version-one-content' (20 bytes), content + size matching",
+            "evidence": "apfs-production-file-write-create-kernel-read.png"
+        },
+        "replace": {
+            "container_image": "/xfs/fw2.apfs (64 MiB single-CIB, volume FWTEST)",
+            "operation": "commit-image-file-write doc.txt overwritten with 'version-two-which-is-noticeably-longer' (39 bytes): delete xid 3 -> 4 then insert xid 4 -> 5",
+            "kernel_continuation": "writer emitted xid 5; the macOS kernel auto-mounted fw2 read-write and CONTINUED the checkpoint to transaction ID 7 (two kernel commits past the writer)",
+            "command": "fsck_apfs -n /dev/disk4 (unmounted after the kernel auto-mounted it read-write)",
+            "container_verdict": "The container /dev/disk4 appears to be OK.",
+            "volume_verdict": "The volume /dev/rdisk4s1 (UUID 16A89DCD-487D-49E9-991B-29579FE44C72) appears to be OK.",
+            "volume_provenance": "The volume FWTEST was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1).",
+            "phases_clean": [
+                "container superblock",
+                "checkpoint (transaction ID 7)",
+                "space manager",
+                "space manager free queue trees",
+                "object map",
+                "APFS volume superblock",
+                "snapshot metadata tree",
+                "fsroot tree",
+                "extent ref tree",
+                "volume object map space",
+                "allocated space"
+            ],
+            "evidence": "apfs-production-file-write-replace-fsck-clean.png"
+        }
+    },
+    "scope_note": "This increment routes only ROOT FILE write/delete/rename onto the COW engine. Directory create/delete, directory-child file write/delete, patch, and change-label remain on the legacy raw writer pending COW parity (follow-on increments). The production mutation cap is raised by the switch (the COW engine container cap is 32 TiB vs the old single-chunk writer).",
+    "completed_at_utc": "2026-06-18T07:05:00Z"
+}
