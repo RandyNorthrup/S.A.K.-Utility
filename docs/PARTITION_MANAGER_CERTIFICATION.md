@@ -186,16 +186,18 @@ writer now emits the CAB tier (`cab_count > 0`), where the spaceman publishes a
 each holding up to 507 cib block numbers. Only `cab 0` rotates (it references the rotating
 `cib 0`); `cab 1..N-1` are immutable, mirroring the certified cib-0 rotation, and the CAB
 blocks live inside the (grown) internal-pool reserved prefix so the existing chunk-bitmap
-allocation accounting already covers them. An 8 TiB sparse container (`cab_count 2`, 65536
-chunks across 521 cibs, volume `CABTEST`) was formatted and attached to a qemu/KVM macOS
-Sequoia VM as a raw USB disk: the APFS kernel extension (`apfs_kext 2332.101.1`)
-auto-mounted it read-write and committed to it (volume superblock records `last modified by
-apfs_kext`, checkpoint advanced from the writer's xid 2 to xid 4), and after unmount
-`fsck_apfs -n /dev/disk4` reported `The volume /dev/rdisk5s1 ... appears to be OK` and
-`The container /dev/disk4 appears to be OK` with `Verifying allocated space` clean. The
-apfsprogs `apfsck` reference checker independently validated `cab_count` 2/3/4 clean at
-7.81 TiB, 8 TiB, 16 TiB, the 24 TB A8 drive size, and 24 TiB; targets past the writer's
-~48 TiB ip-bitmap-ring ceiling fail closed. Evidence:
+allocation accounting already covers them. Apple `fsck_apfs` was run on three CAB
+containers spanning the production range, each formatted, attached to a qemu/KVM macOS
+Sequoia VM, unmounted, and checked: 8 TiB (`cab_count 2`, 65536 chunks / 521 cibs, volume
+`CABTEST`, USB), the 24 TB A8 drive size (`cab_count 3`, volume `CAB24TB`, SATA), and 24 TiB
+(`cab_count 4`, the production ceiling and highest cab_count, volume `CAB24TIB`, SATA). Every
+run reported `The volume ... appears to be OK` and `The container ... appears to be OK` with
+`Verifying allocated space` clean. The APFS kernel extension (`apfs_kext 2332.101.1`)
+auto-mounted the containers read-write and committed to them (the 8 TiB and 24 TB volume
+superblocks record `last modified by apfs_kext`, checkpoint advanced from the writer's xid 2
+to xid 4). The apfsprogs `apfsck` reference checker independently validated `cab_count` 2/3/4
+clean at 7.81 TiB, 8 TiB, 16 TiB, the 24 TB A8 drive size, and 24 TiB; targets past the
+writer's ~48 TiB ip-bitmap-ring ceiling fail closed. Evidence:
 `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-cab-tier-cloud\report.json`
 plus `apfs-cab-fsck-apfs-clean.png`. The production format/repair cap is raised to 24 TiB
 (covering the A8 drive); the multi-CIB/CAB in-place-COW mutation lane stays single-chunk.
