@@ -1341,6 +1341,23 @@ QJsonObject commitResultReport(const sak::PartitionApfsImageCheckpointCommitResu
     return report;
 }
 
+std::optional<QJsonObject> buildCommitRawFileWriteReport(const CliInvocation& invocation,
+                                                         QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawFileWrite(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .file_name = invocation.file_name,
+         .file_data = invocation.payload,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(commit,
+                              QStringLiteral(
+                                  "APFS raw in-place file write (create-or-replace) commit"),
+                              invocation,
+                              error);
+}
+
 std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& invocation,
                                                           QString* error) {
     const auto commit = sak::PartitionApfsWriter::commitRawFileInsert(
@@ -1406,6 +1423,9 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
     if (invocation.command == QStringLiteral("commit-raw-file-insert")) {
         return buildCommitRawFileInsertReport(invocation, error);
     }
+    if (invocation.command == QStringLiteral("commit-raw-file-write")) {
+        return buildCommitRawFileWriteReport(invocation, error);
+    }
     if (invocation.command == QStringLiteral("commit-raw-file-delete")) {
         return buildCommitRawFileDeleteReport(invocation, error);
     }
@@ -1459,6 +1479,7 @@ bool isFileNameCommand(const QString& command) {
                                                   QStringLiteral("commit-image-file-insert"),
                                                   QStringLiteral("commit-image-file-delete"),
                                                   QStringLiteral("commit-image-file-rename"),
+                                                  QStringLiteral("commit-raw-file-write"),
                                                   QStringLiteral("commit-raw-file-insert"),
                                                   QStringLiteral("commit-raw-file-delete"),
                                                   QStringLiteral("commit-raw-file-rename")};
@@ -1535,6 +1556,7 @@ std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
     if (command == QStringLiteral("import-image") ||
         command == QStringLiteral("commit-image-file-write") ||
         command == QStringLiteral("commit-image-file-insert") ||
+        command == QStringLiteral("commit-raw-file-write") ||
         command == QStringLiteral("commit-raw-file-insert")) {
         const QString payloadPath = parser.value(option).trimmed();
         if (payloadPath.isEmpty()) {

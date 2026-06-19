@@ -1,0 +1,43 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-production-raw-physical",
+    "tier": "A2-3.1 production raw-device mutation path certified on physical hardware",
+    "destructive": true,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext) with the physical disk passed through (wsl --mount --bare -> /dev/sdf -> qemu -drive file=/dev/sdf)",
+    "device": "Seagate Expansion Desk, serial NAAA3QVK, 8 TB (8001563221504 bytes / 7.28 TiB), USB, disposable",
+    "container": "256 GiB (274877906944 bytes) Apple_APFS GPT partition (Disk 2 Partition 2 -> /dev/sdf2 -> macOS disk0s2 -> synthesized container disk1), multi-CIB tier, volume SAKPROD",
+    "production_path": "The actual shipping production code: PartitionApfsWriter::commitRawFileWrite / commitRawFileDelete / commitRawFileRename (what FileManagementFileSystemBridge calls), driven through the sak_apfs_writer_cli commit-raw-file-write / commit-raw-file-delete / commit-raw-file-rename commands on \\\\.\\Harddisk2Partition2 with --confirm-target --allow-raw-target.",
+    "operations": [
+        "format-raw (xid 2)",
+        "commit-raw-file-write doc.txt create 'prod-raw-write-v1' (xid 2->3)",
+        "commit-raw-file-write doc.txt replace 'prod-raw-write-v2-noticeably-longer-content' (delete xid 3->4, insert xid 4->5)",
+        "commit-raw-file-write note.txt create (xid 5->6)",
+        "commit-raw-file-delete note.txt (xid 6->7)",
+        "commit-raw-file-rename doc.txt -> renamed.txt (xid 7->8)"
+    ],
+    "linux_apfsck": "apfsck -w clean on /dev/sdf2 after all mutations - only the pre-existing benign 'Data stream xfield: wrong flags.' apfsck-vs-Apple divergence",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted the real-drive partition read-write at /Volumes/SAKPROD; ls showed the final state (renamed.txt present, note.txt deleted, doc.txt renamed away) and cat returned 'prod-raw-write-v2-noticeably-longer-content' (the replace payload, intact through write->replace->rename)",
+        "kernel_continuation": "writer emitted xid 8; the kernel mounted read-write and CONTINUED the checkpoint to transaction ID 10 (two kernel commits past the writer)",
+        "command": "fsck_apfs -n /dev/disk1 (the synthesized container, unmounted after the kernel auto-mounted it read-write)",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 (UUID 9FA952B3-78DA-46AA-B86B-7FB4FB3EE0DE) appears to be OK.",
+        "volume_provenance": "The volume SAKPROD was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext.",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 10)",
+            "space manager",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "fsroot tree",
+            "extent ref tree",
+            "volume object map space",
+            "allocated space"
+        ],
+        "evidence": "apfs-prod-raw-physical-fsck-clean.png (fsck verdict), apfs-prod-raw-physical-kernel-read.png (kernel ls + disk layout), apfs-prod-raw-physical-cat-unmount.png (cat renamed.txt + unmount)"
+    },
+    "writer_dead_zone_finding": "The full 7.28 TiB whole-disk geometry is currently unsupported (format-raw fail-closes): 474 inline cib-address entries overflow the spaceman block, but cib_count < 507 so the CAB tier does not engage. The 3-7.8 TiB whole-disk range is a writer dead zone; the CAB-tier threshold should engage on inline-array overflow rather than the fixed cibs_per_cab (507). This cert used a supported-size partition; the dead-zone fix is a separate follow-on.",
+    "completed_at_utc": "2026-06-19T13:35:00Z"
+}
