@@ -6132,6 +6132,20 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
              qPrintable(emptyDirectoryListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(emptyDirectoryListing.entries.size(), 0);
 
+    // Safety guard: the in-place COW commit rebuilds the fs-tree from root files only,
+    // so it must fail closed (rather than silently dropping the directory and its
+    // contents) when a container holds a root directory. The full-tree COW commit is a
+    // later increment.
+    const QString guardedInsertPath = QDir(temp.path()).filePath(QStringLiteral("dir-guard.apfs"));
+    const auto guardedInsert =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = directoryCreatePath,
+                                                        .written_image_path = guardedInsertPath,
+                                                        .file_name = QStringLiteral("blocked.txt"),
+                                                        .options = generatedOnlyOptions});
+    QVERIFY(!guardedInsert.ok);
+    QVERIFY(guardedInsert.blockers.join(QStringLiteral("; "))
+                .contains(QStringLiteral("does not yet preserve directories")));
+
     const QByteArray childFileData("APFS child file in generated root directory");
     const QString childFileWritePath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-write.apfs"));

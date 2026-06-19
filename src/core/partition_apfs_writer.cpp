@@ -4381,6 +4381,16 @@ bool collectAllRootFiles(const QString& sourcePath,
         return false;
     }
     for (const auto& entry : listing.entries) {
+        // The in-place COW commit rebuilds the fs-tree from the enumerated root files
+        // only; it does not yet round-trip directories or their children (the full-tree
+        // commit is a later increment). Fail closed if any directory is present so a
+        // root-file mutation never silently drops a directory and its contents.
+        if (entry.directory) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit does not yet preserve directories; refusing to mutate a "
+                "container that contains a root directory to avoid dropping its contents"));
+            return false;
+        }
         if (entry.regular_file) {
             files->append({.fileName = entry.name,
                            .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
