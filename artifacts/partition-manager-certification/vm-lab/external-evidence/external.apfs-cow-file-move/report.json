@@ -1,0 +1,21 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-file-move",
+    "tier": "A2 production parity: cross-directory APFS file move (reparent) on the COW engine",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB image passed through",
+    "change": "Generalized the in-place COW rename to a move: buildRenameFileList takes a destination parent id (0 = same parent, a plain rename); the matched file's name AND parent change, and the rebuilt fs-tree re-sorts the dirent and recomputes both parents' valences via the already-certified directChildCount. commitImageOnlyFileMove / commitRawFileMove resolve a source and destination parent (empty directory name = the container root) and reparent the file in place, preserving its object id and data extents. The File Management bridge's renameEntry routes every APFS rename/move through commitRawFileMove. Added the CLI commands commit-image-file-move / commit-raw-file-move with --new-file-name and --destination-directory-name options.",
+    "scenario": "From a 64 MiB container (volume MVT) holding root r1.txt='root-one-data', directory docs, and docs/a.txt='child-a-data': commit-image-file-move moved r1.txt (root) into docs as r1moved.txt, then moved docs/a.txt out to the root as top.txt (writer xid 7). Final tree: root = {docs, top.txt}, docs = {r1moved.txt}.",
+    "linux_apfsck": "apfsck -cw on both move results reports only the pre-existing benign 'Data stream xfield: wrong flags.' note (no structural error). Note: apfsck does not run the directory-valence check, so the kernel/fsck_apfs below is the authority for the reparent.",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted MVT read-write; cat /Volumes/MVT/docs/r1moved.txt returned 'root-one-data' (the former root file, moved into docs with its data intact) and cat /Volumes/MVT/top.txt returned 'child-a-data' (the former docs child, moved to the root)",
+        "kernel_continuation": "writer emitted xid 7 (two move commits); the kernel mounted read-write and continued the checkpoint to transaction ID 9",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID 8C8C5A3A-1F86-4CB0-9F47-F9FAFF9DA6B5 appears to be OK.",
+        "fsroot_valence": "The 'Checking the fsroot tree' phase passed - the kernel's directory-valence check accepted both reparents (source parent valence decremented, destination parent valence incremented).",
+        "evidence": "apfs-cow-file-move-fsck-clean.png (kernel cat of both moved files + fsck verdict at xid 9)"
+    },
+    "note": "A2 production parity for renames is complete: the File Management bridge and the Partition Manager queue both route APFS file/directory create/delete/write/rename/move through the certified COW engine. The remaining A2 parity item is COW byte-range patch (the commit engine is full-file write; patch stays on the legacy patch-raw-*). A8 out of scope.",
+    "completed_at_utc": "2026-06-20T06:30:00Z"
+}

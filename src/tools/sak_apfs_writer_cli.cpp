@@ -397,6 +397,8 @@ struct CliInvocation {
     QString output_image_path;
     QString file_name;
     QString directory_name;
+    QString new_file_name;
+    QString destination_directory_name;
     QByteArray payload;
     uint64_t patch_offset_bytes{0};
     QString patch_offset_error;
@@ -431,6 +433,8 @@ struct CliParserOptions {
     const QCommandLineOption* output_image{nullptr};
     const QCommandLineOption* file_name{nullptr};
     const QCommandLineOption* directory_name{nullptr};
+    const QCommandLineOption* new_file_name{nullptr};
+    const QCommandLineOption* destination_directory_name{nullptr};
     const QCommandLineOption* payload{nullptr};
     const QCommandLineOption* patch_offset{nullptr};
     const QCommandLineOption* evidence{nullptr};
@@ -536,6 +540,9 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .output_image_path = parser.value(*options.output_image).trimmed(),
                          .file_name = mutation->file_name,
                          .directory_name = mutation->directory_name,
+                         .new_file_name = parser.value(*options.new_file_name).trimmed(),
+                         .destination_directory_name =
+                             parser.value(*options.destination_directory_name).trimmed(),
                          .payload = mutation->payload,
                          .patch_offset_bytes = mutation->patch_offset,
                          .patch_offset_error = mutation->patch_offset_error,
@@ -1590,14 +1597,50 @@ std::optional<QJsonObject> buildCommitRawDirectoryChildDeleteReport(const CliInv
                               error);
 }
 
+std::optional<QJsonObject> buildCommitFileMoveReport(const CliInvocation& invocation,
+                                                     QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-move.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileMove(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .source_directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .destination_directory_name = invocation.destination_directory_name,
+         .new_file_name = invocation.new_file_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS in-place file move commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawFileMoveReport(const CliInvocation& invocation,
+                                                        QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawFileMove(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .source_directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .destination_directory_name = invocation.destination_directory_name,
+         .new_file_name = invocation.new_file_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place file move commit"), invocation, error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 17> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 19> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
+        {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
+        {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
         {QLatin1StringView("commit-image-file-write"), buildCommitFileWriteReport},
         {QLatin1StringView("commit-image-directory-create"), buildCommitDirectoryCreateReport},
         {QLatin1StringView("commit-image-directory-delete"), buildCommitDirectoryDeleteReport},
@@ -1679,7 +1722,9 @@ bool isFileNameCommand(const QString& command) {
         QStringLiteral("commit-image-directory-child-write"),
         QStringLiteral("commit-image-directory-child-delete"),
         QStringLiteral("commit-raw-directory-child-write"),
-        QStringLiteral("commit-raw-directory-child-delete")};
+        QStringLiteral("commit-raw-directory-child-delete"),
+        QStringLiteral("commit-image-file-move"),
+        QStringLiteral("commit-raw-file-move")};
     return isFileWriteCommand(command) || kFileNameCommands.contains(command);
 }
 
@@ -1740,6 +1785,11 @@ std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
                                                const QCommandLineOption& fileOption,
                                                const QString& command,
                                                QString* error) {
+    // File-move commands take an OPTIONAL source directory (empty = the container root).
+    if (command == QStringLiteral("commit-image-file-move") ||
+        command == QStringLiteral("commit-raw-file-move")) {
+        return parser.value(directoryOption).trimmed();
+    }
     if (!isDirectoryNameCommand(command)) {
         return QString();
     }
@@ -1844,6 +1894,14 @@ int main(int argc, char* argv[]) {
         {QStringLiteral("directory-name")},
         QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
         QStringLiteral("name"));
+    const QCommandLineOption newFileNameOption(
+        {QStringLiteral("new-file-name")},
+        QStringLiteral("Destination file name for a generated APFS file move."),
+        QStringLiteral("name"));
+    const QCommandLineOption destinationDirectoryNameOption(
+        {QStringLiteral("destination-directory-name")},
+        QStringLiteral("Destination directory (empty = root) for a generated APFS file move."),
+        QStringLiteral("name"));
     const QCommandLineOption payloadOption(
         {QStringLiteral("payload-file")},
         QStringLiteral("Payload file for generated APFS writes or patches."),
@@ -1869,6 +1927,8 @@ int main(int argc, char* argv[]) {
                        outputImageOption,
                        fileNameOption,
                        directoryNameOption,
+                       newFileNameOption,
+                       destinationDirectoryNameOption,
                        payloadOption,
                        patchOffsetOption,
                        outputJsonOption,
@@ -1890,20 +1950,23 @@ int main(int argc, char* argv[]) {
     parser.process(app);
 
     QString parseError;
-    const auto invocation = invocationFromParser(parser,
-                                                 {.target = &targetOption,
-                                                  .size = &sizeOption,
-                                                  .block_size = &blockSizeOption,
-                                                  .volume_name = &volumeNameOption,
-                                                  .output_image = &outputImageOption,
-                                                  .file_name = &fileNameOption,
-                                                  .directory_name = &directoryNameOption,
-                                                  .payload = &payloadOption,
-                                                  .patch_offset = &patchOffsetOption,
-                                                  .evidence = &evidenceOption,
-                                                  .confirm = &confirmOption,
-                                                  .allow_raw = &allowRawOption},
-                                                 &parseError);
+    const auto invocation =
+        invocationFromParser(parser,
+                             {.target = &targetOption,
+                              .size = &sizeOption,
+                              .block_size = &blockSizeOption,
+                              .volume_name = &volumeNameOption,
+                              .output_image = &outputImageOption,
+                              .file_name = &fileNameOption,
+                              .directory_name = &directoryNameOption,
+                              .new_file_name = &newFileNameOption,
+                              .destination_directory_name = &destinationDirectoryNameOption,
+                              .payload = &payloadOption,
+                              .patch_offset = &patchOffsetOption,
+                              .evidence = &evidenceOption,
+                              .confirm = &confirmOption,
+                              .allow_raw = &allowRawOption},
+                             &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;
         return kExitInvalidArguments;
