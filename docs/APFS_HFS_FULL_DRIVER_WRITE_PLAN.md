@@ -280,7 +280,7 @@ the artifact.**
 | MS | Name | Unlocks | Exit gate |
 |---|---|---|---|
 | A1 ✅ | Multi-CIB / multi-chunk space manager (A-a) | Arbitrary size > 128 MiB | `fsck_apfs` + kernel mount on a multi-GB generated container (closes the 51 GB `spaceman_sanity_check` rejection) — **DONE 2026-06-14** (64 MiB/256 MiB/1 GiB Apple `fsck_apfs` + kernel rw mount + write round-trip + crash/rollback + physical-USB; also flips the matrix's general crash/rollback/physical-USB lanes to proven). Writer UUIDs are now random v4 with read-back; HFS catalog metadata stamped |
-| A2 🟡 | In-place COW checkpoint mutation of arbitrary Apple containers (A-b) | Mutate real Apple media without full rewrite | **ENGINE Apple-certified; production parity IN PROGRESS.** The COW engine itself is done + certified: in-place insert/delete/rename/write across single-CIB → multi-CIB → metadata-overflow → CAB tier (cap 32 TiB) FORMAT+COMMIT (kernel RW-mount + `fsck_apfs` clean on physical 238 GB / 2 TiB-on-4 TB / 8 TB); full-tree round-trip + all 4 directory mutations; multi-leaf fs-tree, multi-extent, main+IP free-queues + crash rollback, repeated-overflow + CAB in-place commit, full-Unicode filenames; the **~2.9–7.8 TiB dead zone FULLY CLOSED** (FORMAT f604cd9 + in-place COMMIT 34d70d3, multi-block spaceman, 4 TiB Apple-certified). **Production-wired:** the File Management bridge AND the Partition Manager queue (`PartitionScriptBuilder`, 074c213) both route APFS file/directory create/delete/write/rename onto the certified `commit-raw-*` COW commands; same-dir child rename (61e1c6d) and **cross-directory reparent move (6a40adb + c556236, Apple-certified: kernel read both moved files + fsroot-valence + fsck_apfs clean)** are on the COW engine. **PARITY REMAINING:** COW byte-range **patch** — the commit engine is full-file write, so patch stays on the legacy `patch-raw-*` (a true in-place byte-range patch that preserves the object id but is not crash-safe). A crash-safe COW patch is either a read-modify-write rewrite (changes the object id) or a new true-in-place-patch engine path (preserves the id); design decision pending. A8 (arbitrary multi-volume + snapshot physical gate) out of scope per Randy 2026-06-18. See [[apfs-a2-inplace-commit-status]] |
+| A2 ✅ | In-place COW checkpoint mutation of arbitrary Apple containers (A-b) | Mutate real Apple media without full rewrite | **ENGINE + PRODUCTION PARITY Apple-certified.** The COW engine is certified across single-CIB → multi-CIB → metadata-overflow → CAB tier (cap 32 TiB) FORMAT+COMMIT (kernel RW-mount + `fsck_apfs` clean on physical 238 GB / 2 TiB-on-4 TB / 8 TB); full-tree round-trip + all 4 directory mutations; multi-leaf fs-tree, multi-extent, main+IP free-queues + crash rollback, repeated-overflow + CAB in-place commit, full-Unicode filenames; the **~2.9–7.8 TiB dead zone FULLY CLOSED** (FORMAT f604cd9 + in-place COMMIT 34d70d3, multi-block spaceman, 4 TiB Apple-certified). **Production parity COMPLETE:** the File Management bridge AND the Partition Manager queue (`PartitionScriptBuilder`, 074c213) both route **every** APFS file/directory mutation — create/delete/write, same-dir child rename (61e1c6d), cross-directory reparent **move** (6a40adb + c556236, Apple-certified), and a true in-place byte-range **patch** that preserves the object id (16d629f, Apple-certified: the VM caught a real alloc-count/overallocation bug apfsck missed, then clean) — onto the certified crash-safe `commit-raw-*` COW commands. Only volume-label change remains on the legacy raw writer (not a checkpoint mutation). A8 (arbitrary multi-volume + snapshot physical gate) out of scope per Randy 2026-06-18. See [[apfs-a2-inplace-commit-status]] |
 | A3 | Snapshots create/delete/revert (A-c) | Snapshotted containers writable | `fsck_apfs` snapshot checks; kernel mount; `tmutil`/`diskutil` cross-check |
 | A4 | Multi-volume containers (A-d) | Multi-volume Apple media | `fsck_apfs` multi-volume; kernel mount of each volume |
 | A5 | APFS compression read+write (A-e) | Compressed files | Apple kernel reads S.A.K.-written compressed file; byte-match decode |
@@ -301,19 +301,17 @@ Suggested global order (interleave so external-validation VM time is shared):
 A1 and A2 are the highest-value APFS unlocks and gate everything else on that
 track; H1–H4 are the HFS-driver core.
 
-> **Status (2026-06-20): A2 COW engine Apple-certified ✅; A2 production parity 🟡 IN
-> PROGRESS.** The in-place COW checkpoint engine is done and certified:
-> insert/delete/rename/write + full-tree round-trip + all 4 directory mutations,
-> single-CIB → multi-CIB → metadata-overflow → CAB tier (cap 32 TiB), repeated-overflow
-> + CAB in-place commit, crash-rollback + main/IP free-queues, the ~2.9–7.8 TiB dead
-> zone (FORMAT + commit), on physical 238 GB / 2 TiB / 8 TB media. The File Management
-> bridge's APFS file + directory routes (incl. same-dir child rename) run on it.
-> **A2 is NOT closed — production parity remains:** (1) the Partition Manager queue
-> (`PartitionScriptBuilder`) still emits the legacy single-chunk writers, not the
-> certified `commit-raw-*` COW commands — re-route + re-cert in progress; (2)
-> cross-directory (reparent) rename; (3) COW byte-range patch. **Also done: H2 exit
-> gate ✅.** Out of scope: A8 physical multi-volume + snapshot gate. HFS non-gate
-> follow-ons: map-node growth >~32000, streaming split.**
+> **Status (2026-06-20): A2 COMPLETE + Apple-certified ✅ (engine + full production
+> parity).** The in-place COW checkpoint engine is certified across single-CIB →
+> multi-CIB → metadata-overflow → CAB tier (cap 32 TiB) incl. the ~2.9–7.8 TiB dead
+> zone (FORMAT + commit), crash-rollback + free-queues, on physical 238 GB / 2 TiB /
+> 8 TB media. **Production parity done:** the File Management bridge AND the Partition
+> Manager queue both route every APFS file/directory mutation —
+> create/delete/write/rename/**move** (reparent)/**patch** (true in-place, object id
+> preserved) — onto the certified `commit-raw-*` COW commands; only volume-label change
+> stays on the legacy writer. **Also done: H2 exit gate ✅.** Out of scope: A8 physical
+> multi-volume + snapshot gate. HFS non-gate follow-ons: map-node growth >~32000,
+> streaming split. Next active milestone is H3 (or A3 snapshots / A4 multi-volume).**
 
 ---
 
