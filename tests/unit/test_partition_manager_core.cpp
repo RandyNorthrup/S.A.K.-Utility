@@ -1647,6 +1647,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
+    void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -6886,6 +6887,68 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileWriteCreatesThenReplaces()
                                                                        4096);
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, v2);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree() {
+    // The in-place COW directory-create commit adds an empty root directory while
+    // preserving the existing tree (Apple-certified: kernel reads the directory,
+    // fsck_apfs clean). A duplicate name fails closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2dc-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2DC"),
+                 .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("a2dc-file.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = withFile,
+                                                       .file_name = QStringLiteral("keep.txt"),
+                                                       .file_data = QByteArrayLiteral("keep me"),
+                                                       .options = options})
+            .ok);
+
+    const QString withDir = dir.filePath(QStringLiteral("a2dc-dir.apfs"));
+    const auto create = PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+        {.source_image_path = withFile,
+         .written_image_path = withDir,
+         .directory_name = QStringLiteral("folder"),
+         .options = options});
+    QVERIFY2(create.ok, qPrintable(create.blockers.join(QStringLiteral("; "))));
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(withDir, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    bool sawFile = false;
+    bool sawDir = false;
+    for (const auto& entry : listing.entries) {
+        if (entry.name == QStringLiteral("keep.txt") && entry.regular_file) {
+            sawFile = true;
+        }
+        if (entry.name == QStringLiteral("folder") && entry.directory) {
+            sawDir = true;
+        }
+    }
+    QVERIFY(sawFile);
+    QVERIFY(sawDir);
+    const auto emptyDir = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        withDir, QStringLiteral("/folder"), 20);
+    QVERIFY2(emptyDir.ok, qPrintable(emptyDir.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(emptyDir.entries.size(), 0);
+
+    // A duplicate directory name fails closed.
+    const auto dup = PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+        {.source_image_path = withDir,
+         .written_image_path = dir.filePath(QStringLiteral("a2dc-dup.apfs")),
+         .directory_name = QStringLiteral("folder"),
+         .options = options});
+    QVERIFY(!dup.ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

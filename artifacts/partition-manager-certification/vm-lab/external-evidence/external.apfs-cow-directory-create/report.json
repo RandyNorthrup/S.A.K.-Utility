@@ -1,0 +1,36 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-directory-create",
+    "tier": "A2-3.2 increment 4a: in-place COW create-directory",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB image passed through",
+    "change": "Added commitInPlaceDirectoryCreate: the full-tree COW analogue of the legacy rewrite-based createImageOnlyRootDirectory. The new directory takes the volume's next object id and is appended to the preserved full tree; the rebuilt fs-tree gains the directory inode + its dirent, root's valence grows by one, and the new volume directory count (0xC0) + next object id advance (no data, no extent-ref change). Threaded a directoryCountDelta through the COW chain and finalizeFsCommit. Extracted recoverPreservedFiles (shared by buildChainedFileList and the directory create). Exposed as commitImageOnlyDirectoryCreate + the CLI command commit-image-directory-create.",
+    "linux_apfsck": {
+        "with_content": "apfsck -cw clean on create-directory into a container that already holds a directory and child (only the pre-existing benign 'Data stream xfield: wrong flags.' note)",
+        "empty_container_divergence": "create-directory on a freshly-formatted (genesis) empty container draws an apfsck 'Chunk-info block: xid is too recent.' error, but the live spaceman, the chunk-info block, and the nx_superblock are byte-identical to the kernel-accepted file-insert case (which apfsck passes). This is a new apfsck-vs-Apple divergence (apfsck false-positive); the macOS kernel/fsck_apfs accept the container - see below."
+    },
+    "apple_fsck_apfs": {
+        "container": "64 MiB image, volume CDTEST: a single empty directory 'solo' created on a freshly formatted container (the apfsck-erroring case)",
+        "kernel_mount_read": "the macOS kernel mounted CDTEST read-write; ls -la /Volumes/CDTEST showed the created directory 'solo' (drwxr-xr-x), and listing /Volumes/CDTEST/solo was empty",
+        "kernel_continuation": "writer emitted xid 3; the kernel mounted read-write and continued the checkpoint to transaction ID 5",
+        "command": "fsck_apfs -n /dev/disk1 (unmounted after the kernel auto-mounted it read-write)",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 appears to be OK.",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 5)",
+            "space manager",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "fsroot tree (directory valence)",
+            "extent ref tree",
+            "volume object map space",
+            "allocated space"
+        ],
+        "evidence": "apfs-cow-dircreate-fsck-clean.png (fsck verdict), apfs-cow-dircreate-kernel-read.png (kernel ls showing the created directory)"
+    },
+    "note": "Remaining A2-3.2: the other three directory mutations on the COW engine (delete-directory, directory-child write, directory-child delete), the raw entry points, and wiring the File Management bridge's directory routes off the legacy raw writers.",
+    "completed_at_utc": "2026-06-19T16:30:00Z"
+}

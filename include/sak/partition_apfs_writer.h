@@ -617,6 +617,10 @@ public:
     ///        existing name is a delete-then-insert replace. Reuses the insert request.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileWrite(
         const PartitionApfsImageFileInsertCommitRequest& request);
+    /// @brief Create one empty root directory with an in-place COW commit (the
+    ///        full-tree analogue of the legacy rewrite-based createImageOnlyRootDirectory).
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyDirectoryCreate(
+        const PartitionApfsImageRootDirectoryMutationRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(

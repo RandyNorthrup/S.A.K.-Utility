@@ -1224,6 +1224,37 @@ std::optional<QJsonObject> buildCommitFileRenameReport(const CliInvocation& invo
     return report;
 }
 
+std::optional<QJsonObject> buildCommitDirectoryCreateReport(const CliInvocation& invocation,
+                                                            QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-directory-create.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .directory_name = invocation.directory_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"),
+                  QStringLiteral("APFS in-place directory create commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("directory_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    QJsonArray dirBlockers;
+    for (const auto& blocker : commit.blockers) {
+        dirBlockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), dirBlockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitFileWriteReport(const CliInvocation& invocation,
                                                       QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -1404,33 +1435,24 @@ std::optional<QJsonObject> buildCommitRawFileRenameReport(const CliInvocation& i
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
-    *handled = true;
-    if (invocation.command == QStringLiteral("commit-image-checkpoint")) {
-        return buildCommitCheckpointReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-image-file-write")) {
-        return buildCommitFileWriteReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-image-file-insert")) {
-        return buildCommitFileInsertReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-image-file-delete")) {
-        return buildCommitFileDeleteReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-image-file-rename")) {
-        return buildCommitFileRenameReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-raw-file-insert")) {
-        return buildCommitRawFileInsertReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-raw-file-write")) {
-        return buildCommitRawFileWriteReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-raw-file-delete")) {
-        return buildCommitRawFileDeleteReport(invocation, error);
-    }
-    if (invocation.command == QStringLiteral("commit-raw-file-rename")) {
-        return buildCommitRawFileRenameReport(invocation, error);
+    using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 10> kCommitBuilders = {{
+        {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
+        {QLatin1StringView("commit-image-file-write"), buildCommitFileWriteReport},
+        {QLatin1StringView("commit-image-directory-create"), buildCommitDirectoryCreateReport},
+        {QLatin1StringView("commit-image-file-insert"), buildCommitFileInsertReport},
+        {QLatin1StringView("commit-image-file-delete"), buildCommitFileDeleteReport},
+        {QLatin1StringView("commit-image-file-rename"), buildCommitFileRenameReport},
+        {QLatin1StringView("commit-raw-file-insert"), buildCommitRawFileInsertReport},
+        {QLatin1StringView("commit-raw-file-write"), buildCommitRawFileWriteReport},
+        {QLatin1StringView("commit-raw-file-delete"), buildCommitRawFileDeleteReport},
+        {QLatin1StringView("commit-raw-file-rename"), buildCommitRawFileRenameReport},
+    }};
+    for (const auto& [command, builder] : kCommitBuilders) {
+        if (invocation.command == command) {
+            *handled = true;
+            return builder(invocation, error);
+        }
     }
     *handled = false;
     return std::nullopt;
@@ -1500,6 +1522,7 @@ bool isDirectoryNameCommand(const QString& command) {
         QStringLiteral("delete-raw-root-directory"),
         QStringLiteral("commit-image-file-rename"),
         QStringLiteral("commit-raw-file-rename"),
+        QStringLiteral("commit-image-directory-create"),
     };
     return kDirectoryNameCommands.contains(command);
 }

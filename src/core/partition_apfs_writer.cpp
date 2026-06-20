@@ -282,6 +282,7 @@ constexpr qsizetype kApfsVolumeRevertToXidOffset = 0xA0;
 constexpr qsizetype kApfsVolumeRevertToSblockOidOffset = 0xA8;
 constexpr qsizetype kApfsVolumeNextObjectIdOffset = 0xB0;
 constexpr qsizetype kApfsVolumeFileCountOffset = 0xB8;
+constexpr qsizetype kApfsVolumeDirectoryCountOffset = 0xC0;
 constexpr qsizetype kApfsVolumeExtentRefTreeOidOffset = 0x90;
 constexpr qsizetype kApfsVolumeNumSnapshotsOffset = 0xD8;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
@@ -3181,10 +3182,11 @@ struct ApfsCowFileInsert {
     // [fs-tree nodes (K), volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
     QVector<uint64_t> newBlocks;
     QVector<ApfsRootFilePayload> files;
-    int64_t allocBlockDelta{0};  // change to the volume allocated-block count (data blocks)
-    uint64_t extentRefNew{0};    // new extent-ref tree block (0 = keep the existing tree)
-    int64_t fileCountDelta{1};   // +1 for insert, -1 for delete
-    uint64_t nextObjIdDelta{1};  // +1 for insert (consumes an object id), 0 for delete
+    int64_t allocBlockDelta{0};      // change to the volume allocated-block count (data blocks)
+    uint64_t extentRefNew{0};        // new extent-ref tree block (0 = keep the existing tree)
+    int64_t fileCountDelta{1};       // +1 for a file insert, -1 for a file delete
+    int64_t directoryCountDelta{0};  // +1 for a directory create, -1 for a directory delete
+    uint64_t nextObjIdDelta{1};      // +1 when the mutation consumes an object id, else 0
 };
 
 // Copy-on-write the file-system metadata chain to the newly allocated blocks
@@ -3254,6 +3256,10 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     writeLe64(&vol,
               kApfsVolumeFileCountOffset,
               le64(vol, kApfsVolumeFileCountOffset) + static_cast<uint64_t>(cow.fileCountDelta));
+    writeLe64(&vol,
+              kApfsVolumeDirectoryCountOffset,
+              le64(vol, kApfsVolumeDirectoryCountOffset) +
+                  static_cast<uint64_t>(cow.directoryCountDelta));
     writeLe64(&vol,
               kApfsVolumeNextObjectIdOffset,
               le64(vol, kApfsVolumeNextObjectIdOffset) + cow.nextObjIdDelta);
@@ -3639,9 +3645,37 @@ struct ApfsChainedListInput {
     QVector<ApfsDataExtent> newDataExtents;  // the new file's runs (one if contiguous)
 };
 
+struct ApfsLiveTreeSource {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    ApfsLiveFsChain chain;
+};
+
+// Preserve every existing file (root or directory child) in place: keep its parent,
+// fill in its data start, and recover a fragmented file's runs from the fs-tree so its
+// data is not moved. A single-extent file keeps the dataStartBlock fast path so its
+// records stay byte-identical.
+bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
+                           const QVector<ApfsRootFilePayload>& inputFiles,
+                           QVector<ApfsRootFilePayload>* files,
+                           QStringList* blockers) {
+    const QHash<uint64_t, uint64_t> owners =
+        parseExtentRefOwners(source.image, source.geometry, source.chain.extentRef, blockers);
+    for (ApfsRootFilePayload existing : inputFiles) {
+        existing.privateId = existing.fileId;
+        existing.dataStartBlock = owners.value(existing.fileId);
+        const QVector<ApfsDataExtent> recovered = recoverFileDataExtents(
+            source.image, source.geometry, source.chain, existing.fileId, blockers);
+        if (recovered.size() > 1) {
+            existing.dataExtents = recovered;
+        }
+        files->append(existing);
+    }
+    return true;
+}
+
 // Build the full root-file list for the commit: every existing file preserved
-// in place (its data extent recovered from the extent-ref tree so its data is
-// not moved) plus the new file, which is assigned the volume's next object id.
+// in place plus the new file, which is assigned the volume's next object id.
 bool buildChainedFileList(const ApfsChainedListInput& in,
                           QVector<ApfsRootFilePayload>* files,
                           QStringList* blockers) {
@@ -3650,23 +3684,9 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
         return false;
     }
     const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
-    const QHash<uint64_t, uint64_t> owners =
-        parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
-    for (ApfsRootFilePayload existing : in.request.existingFiles) {
-        // Keep each file's parent (root or a directory) so directory children survive;
-        // a flat-root container collected every file with parentDirectoryId == root, so
-        // this preserves the certified single-level behavior.
-        existing.privateId = existing.fileId;
-        existing.dataStartBlock = owners.value(existing.fileId);
-        // A fragmented existing file needs its runs recovered from the fs-tree
-        // (logical order); a single-extent file keeps the dataStartBlock fast path
-        // so its records stay byte-identical.
-        const QVector<ApfsDataExtent> recovered =
-            recoverFileDataExtents(in.image, in.geometry, in.chain, existing.fileId, blockers);
-        if (recovered.size() > 1) {
-            existing.dataExtents = recovered;
-        }
-        files->append(existing);
+    if (!recoverPreservedFiles(
+            {in.image, in.geometry, in.chain}, in.request.existingFiles, files, blockers)) {
+        return false;
     }
     files->append({.fileName = in.request.fileName.trimmed(),
                    .data = in.request.fileData,
@@ -3926,6 +3946,7 @@ struct ApfsFsCommitFinalize {
     QVector<uint64_t> freedDataBlocks;   // data blocks the commit releases
     int64_t dataBlocksNew{0};            // data blocks the commit allocates
     int64_t fileCountDelta{0};
+    int64_t directoryCountDelta{0};
     uint64_t nextObjIdDelta{0};
     uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
 };
@@ -3956,6 +3977,7 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                   .allocBlockDelta = netConsumed,
                                   .extentRefNew = f.extentRefNew,
                                   .fileCountDelta = f.fileCountDelta,
+                                  .directoryCountDelta = f.directoryCountDelta,
                                   .nextObjIdDelta = f.nextObjIdDelta},
                                  blockers)) {
         return false;
@@ -4370,6 +4392,68 @@ bool commitInPlaceFileRename(QIODevice* image,
                              .dataBlocksNew = 0,
                              .fileCountDelta = 0,
                              .nextObjIdDelta = 0},
+                            result,
+                            blockers);
+}
+
+struct ApfsDirectoryCreateRequest {
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> existingDirectories;
+    QString directoryName;
+};
+
+// A2-3.2: create one empty root directory with a true in-place copy-on-write commit.
+// The new directory takes the volume's next object id and is appended to the preserved
+// full tree (existing files and directories carried in place); the rebuilt fs-tree gains
+// the directory inode + its dirent under root, the root directory's valence grows by one,
+// and the volume directory count + next object id advance. No data blocks or extent-ref
+// change. Mirrors the file-insert commit with a directory in place of the file.
+bool commitInPlaceDirectoryCreate(QIODevice* image,
+                                  const ApfsDirectoryCreateRequest& request,
+                                  ApfsInPlaceCheckpointResult* result,
+                                  QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QByteArray volSb(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.chain.volSb, &volSb, blockers)) {
+        return false;
+    }
+    const uint64_t newDirId = le64(volSb, kApfsVolumeNextObjectIdOffset);
+    QVector<ApfsRootFilePayload> files;
+    if (!recoverPreservedFiles(
+            {ctx.image, ctx.geometry, ctx.chain}, request.existingFiles, &files, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootDirectoryPayload> directories = request.existingDirectories;
+    directories.append({.directoryName = request.directoryName.trimmed(),
+                        .directoryId = newDirId,
+                        .privateId = newDirId});
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes(
+            {ctx.geometry.blockSize, files, directories, ctx.firstLeafOid}, &fsNodes, blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
+    QVector<uint64_t> newBlocks;
+    uint64_t directoryChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
+        return false;
+    }
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = files,
+                             .extentRefNew = 0,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = 0,
+                             .directoryCountDelta = 1,
+                             .nextObjIdDelta = 1,
+                             .chunk1BitmapBlock = directoryChunk1Bitmap},
                             result,
                             blockers);
 }
@@ -10408,6 +10492,74 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceCheckpoint(&image, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+    const PartitionApfsImageRootDirectoryMutationRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    if (!appendRootDirectoryNameBlockers(
+            cleanDirectoryName, QLatin1StringView("directory-create-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("directory-create-commit"),
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("directory-create-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("directory-create-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(result.source_image_path,
+                                   cleanDirectoryName,
+                                   &existingFiles,
+                                   &directories,
+                                   &result.blockers)) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("directory-create-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("directory-create-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceDirectoryCreate(
+            &image, {existingFiles, directories, cleanDirectoryName}, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
