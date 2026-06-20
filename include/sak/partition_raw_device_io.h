@@ -21,6 +21,15 @@ namespace sak {
 ///        already sparse via ftruncate. @p fileDescriptor is QFile::handle().
 void markFileSparse(int fileDescriptor);
 
+/// @brief Copy @p source to @p destination preserving sparseness, so a multi-TiB
+///        container with mostly-hole content (only its metadata written) copies in the
+///        size of its allocated data, not its logical size. On Windows this reads only
+///        the source's allocated ranges into a sparse destination; elsewhere it falls
+///        back to a hole-preserving file copy. @p destination must not already exist.
+[[nodiscard]] bool copyFileSparse(const QString& source,
+                                  const QString& destination,
+                                  QString* errorMessage = nullptr);
+
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(
     const QString& path, QString* errorMessage = nullptr);
 

@@ -22,6 +22,10 @@
 
 #include <io.h>
 #include <winioctl.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace sak {
@@ -289,6 +293,205 @@ private:
 #endif
 
 }  // namespace
+
+#ifdef Q_OS_WIN
+namespace {
+
+// Copy a byte range from src to dst in chunks; the destination is sparse, so ranges we
+// never write stay holes. Returns false on any short read/write.
+bool copyHandleRange(HANDLE src, HANDLE dst, qint64 offset, qint64 length) {
+    constexpr DWORD kChunk = 4u * 1024u * 1024u;
+    std::vector<char> buffer(kChunk);
+    qint64 remaining = length;
+    qint64 position = offset;
+    while (remaining > 0) {
+        LARGE_INTEGER seek{};
+        seek.QuadPart = position;
+        if (!SetFilePointerEx(src, seek, nullptr, FILE_BEGIN) ||
+            !SetFilePointerEx(dst, seek, nullptr, FILE_BEGIN)) {
+            return false;
+        }
+        const DWORD want =
+            static_cast<DWORD>(std::min<qint64>(remaining, static_cast<qint64>(kChunk)));
+        DWORD got = 0;
+        if (!ReadFile(src, buffer.data(), want, &got, nullptr) || got == 0) {
+            return false;
+        }
+        DWORD wrote = 0;
+        if (!WriteFile(dst, buffer.data(), got, &wrote, nullptr) || wrote != got) {
+            return false;
+        }
+        position += got;
+        remaining -= got;
+    }
+    return true;
+}
+
+bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
+    FILE_ALLOCATED_RANGE_BUFFER query{};
+    query.FileOffset.QuadPart = 0;
+    query.Length.QuadPart = size;
+    std::vector<FILE_ALLOCATED_RANGE_BUFFER> ranges(1024);
+    qint64 scanStart = 0;
+    while (scanStart < size) {
+        query.FileOffset.QuadPart = scanStart;
+        query.Length.QuadPart = size - scanStart;
+        DWORD returned = 0;
+        const BOOL ok = DeviceIoControl(src,
+                                        FSCTL_QUERY_ALLOCATED_RANGES,
+                                        &query,
+                                        sizeof(query),
+                                        ranges.data(),
+                                        static_cast<DWORD>(ranges.size() * sizeof(ranges[0])),
+                                        &returned,
+                                        nullptr);
+        const DWORD error = GetLastError();
+        if (!ok && error != ERROR_MORE_DATA) {
+            return false;
+        }
+        const size_t count = returned / sizeof(FILE_ALLOCATED_RANGE_BUFFER);
+        if (count == 0) {
+            break;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            if (!copyHandleRange(
+                    src, dst, ranges[i].FileOffset.QuadPart, ranges[i].Length.QuadPart)) {
+                return false;
+            }
+        }
+        const auto& last = ranges[count - 1];
+        scanStart = last.FileOffset.QuadPart + last.Length.QuadPart;
+        if (ok) {
+            break;
+        }
+    }
+    return true;
+}
+
+bool copyFileSparseWindows(const QString& source,
+                           const QString& destination,
+                           QString* errorMessage) {
+    const HANDLE src = CreateFileW(reinterpret_cast<LPCWSTR>(source.utf16()),
+                                   GENERIC_READ,
+                                   FILE_SHARE_READ,
+                                   nullptr,
+                                   OPEN_EXISTING,
+                                   FILE_ATTRIBUTE_NORMAL,
+                                   nullptr);
+    LARGE_INTEGER size{};
+    if (src == INVALID_HANDLE_VALUE || !GetFileSizeEx(src, &size)) {
+        setError(errorMessage, win32ErrorMessage(GetLastError()));
+        if (src != INVALID_HANDLE_VALUE) {
+            CloseHandle(src);
+        }
+        return false;
+    }
+    const HANDLE dst = CreateFileW(reinterpret_cast<LPCWSTR>(destination.utf16()),
+                                   GENERIC_READ | GENERIC_WRITE,
+                                   0,
+                                   nullptr,
+                                   CREATE_NEW,
+                                   FILE_ATTRIBUTE_NORMAL,
+                                   nullptr);
+    if (dst == INVALID_HANDLE_VALUE) {
+        setError(errorMessage, win32ErrorMessage(GetLastError()));
+        CloseHandle(src);
+        return false;
+    }
+    DWORD returned = 0;
+    DeviceIoControl(dst, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
+    const bool ok = SetFilePointerEx(dst, size, nullptr, FILE_BEGIN) && SetEndOfFile(dst) &&
+                    copyAllocatedRanges(src, dst, size.QuadPart);
+    if (!ok) {
+        setError(errorMessage, win32ErrorMessage(GetLastError()));
+    }
+    CloseHandle(src);
+    CloseHandle(dst);
+    if (!ok) {
+        DeleteFileW(reinterpret_cast<LPCWSTR>(destination.utf16()));
+    }
+    return ok;
+}
+
+}  // namespace
+#elif defined(SEEK_DATA) && defined(SEEK_HOLE)
+namespace {
+
+// Copy one source data region [offset, offset+length) to the destination at the same
+// offset (the rest of the destination stays a hole).
+bool copyDataRegionPosix(int in, int out, off_t offset, off_t length) {
+    std::vector<char> buffer(4u * 1024u * 1024u);
+    off_t done = 0;
+    while (done < length) {
+        const size_t want =
+            static_cast<size_t>(std::min<off_t>(length - done, static_cast<off_t>(buffer.size())));
+        const ssize_t got = ::pread(in, buffer.data(), want, offset + done);
+        if (got <= 0 ||
+            ::pwrite(out, buffer.data(), static_cast<size_t>(got), offset + done) != got) {
+            return false;
+        }
+        done += got;
+    }
+    return true;
+}
+
+bool copyFileSparsePosix(const QString& source, const QString& destination, QString* errorMessage) {
+    const QByteArray sourceName = QFile::encodeName(source);
+    const QByteArray destName = QFile::encodeName(destination);
+    const int in = ::open(sourceName.constData(), O_RDONLY);
+    struct stat info{};
+    if (in < 0 || ::fstat(in, &info) != 0) {
+        setError(errorMessage, QStringLiteral("Unable to read %1").arg(source));
+        if (in >= 0) {
+            ::close(in);
+        }
+        return false;
+    }
+    const int out = ::open(destName.constData(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (out < 0) {
+        ::close(in);
+        setError(errorMessage, QStringLiteral("Unable to create %1").arg(destination));
+        return false;
+    }
+    bool ok = ::ftruncate(out, info.st_size) == 0;
+    off_t position = 0;
+    while (ok && position < info.st_size) {
+        const off_t dataStart = ::lseek(in, position, SEEK_DATA);
+        if (dataStart < 0) {
+            break;  // ENXIO: no more data before EOF
+        }
+        off_t dataEnd = ::lseek(in, dataStart, SEEK_HOLE);
+        if (dataEnd < 0) {
+            dataEnd = info.st_size;
+        }
+        ok = copyDataRegionPosix(in, out, dataStart, dataEnd - dataStart);
+        position = dataEnd;
+    }
+    ::close(in);
+    ::close(out);
+    if (!ok) {
+        ::unlink(destName.constData());
+        setError(errorMessage, QStringLiteral("Unable to copy %1 to %2").arg(source, destination));
+    }
+    return ok;
+}
+
+}  // namespace
+#endif
+
+bool copyFileSparse(const QString& source, const QString& destination, QString* errorMessage) {
+#ifdef Q_OS_WIN
+    return copyFileSparseWindows(source, destination, errorMessage);
+#elif defined(SEEK_DATA) && defined(SEEK_HOLE)
+    return copyFileSparsePosix(source, destination, errorMessage);
+#else
+    if (QFile::copy(source, destination)) {
+        return true;
+    }
+    setError(errorMessage, QStringLiteral("Unable to copy %1 to %2").arg(source, destination));
+    return false;
+#endif
+}
 
 void markFileSparse(int fileDescriptor) {
 #ifdef Q_OS_WIN

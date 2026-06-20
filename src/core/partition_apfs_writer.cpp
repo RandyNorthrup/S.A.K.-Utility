@@ -2486,43 +2486,90 @@ bool isFreeQueueTreeWithOid(const QByteArray& object, uint64_t oid) {
 // new transaction id, and rewrite the checkpoint-map paddrs to the new slots.
 // The spaceman gains this commit's free/cib/free-queue mutations; the IP
 // free-queue tree is rebuilt with the rolling freed-slot window.
+// Block span of one checkpoint-map ephemeral object (cpm_size / block_size). The
+// spaceman spills past one block in the metadata-overflow dead zone; every other
+// ephemeral is a single block.
+uint64_t checkpointEntryBlockSpan(const QByteArray& map, qsizetype entry, uint32_t blockSize) {
+    const uint32_t cpmSize = le32(map, entry + kApfsCheckpointMapEntrySizeOffset);
+    const uint32_t bytes = cpmSize != 0 ? cpmSize : blockSize;
+    return (bytes + blockSize - 1) / blockSize;
+}
+
+// Total block span of every ephemeral in the checkpoint (the data-ring length the
+// checkpoint consumes, which exceeds the entry count once the spaceman is multi-block).
+uint64_t checkpointDataBlockSpan(const QByteArray& map, uint32_t blockSize) {
+    const uint32_t count = le32(map, kApfsCheckpointMapCountOffset);
+    uint64_t total = 0;
+    for (uint32_t index = 0; index < count; ++index) {
+        total += checkpointEntryBlockSpan(map,
+                                          kApfsCheckpointMapEntriesOffset +
+                                              static_cast<qsizetype>(index) *
+                                                  kApfsCheckpointMapEntryBytes,
+                                          blockSize);
+    }
+    return total;
+}
+
+// Read a (possibly multi-block) ephemeral object contiguously from paddr.
+bool readEphemeralObject(const ApfsCheckpointCommitContext& ctx,
+                         uint64_t paddr,
+                         uint64_t span,
+                         QByteArray* object,
+                         QStringList* blockers) {
+    object->clear();
+    for (uint64_t block = 0; block < span; ++block) {
+        QByteArray slice(ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(ctx.image, ctx.geometry, paddr + block, &slice, blockers)) {
+            return false;
+        }
+        object->append(slice);
+    }
+    return true;
+}
+
+// Apply this commit's mutations to one re-emitted ephemeral object: restamp the xid,
+// fold the spaceman's free/cib/free-queue changes, and rebuild either free-queue tree.
+bool mutateEphemeralObject(const ApfsCheckpointCommitContext& ctx,
+                           QByteArray* object,
+                           QStringList* blockers) {
+    writeLe64(object, kApfsObjectXidOffset, ctx.newXid);
+    if (le32(*object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
+        return applySpacemanCommitMutations(ctx, object, blockers);
+    }
+    if (!ctx.ipFqEntries.isEmpty() && isFreeQueueTreeWithOid(*object, kApfsFormatFqIpTreeOid)) {
+        *object = buildFreeQueueLeaf(
+            ctx.geometry.blockSize, kApfsFormatFqIpTreeOid, ctx.newXid, ctx.ipFqEntries, blockers);
+    } else if (!ctx.mainFqEntries.isEmpty() &&
+               isFreeQueueTreeWithOid(*object, kApfsFormatFqMainTreeOid)) {
+        *object = buildFreeQueueLeaf(ctx.geometry.blockSize,
+                                     kApfsFormatFqMainTreeOid,
+                                     ctx.newXid,
+                                     ctx.mainFqEntries,
+                                     blockers);
+    }
+    return true;
+}
+
 bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
                                 QByteArray* checkpointMap,
                                 QStringList* blockers) {
     const uint32_t count = le32(*checkpointMap, kApfsCheckpointMapCountOffset);
+    uint64_t dataOffset = ctx.newDataIndex;
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
                                 static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
         const uint64_t oldPaddr = le64(*checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
-        const uint64_t newPaddr = ctx.dataBase + ctx.newDataIndex + index;
-        QByteArray object(ctx.geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(ctx.image, ctx.geometry, oldPaddr, &object, blockers)) {
-            return false;
-        }
-        writeLe64(&object, kApfsObjectXidOffset, ctx.newXid);
-        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            if (!applySpacemanCommitMutations(ctx, &object, blockers)) {
-                return false;
-            }
-        } else if (!ctx.ipFqEntries.isEmpty() &&
-                   isFreeQueueTreeWithOid(object, kApfsFormatFqIpTreeOid)) {
-            object = buildFreeQueueLeaf(ctx.geometry.blockSize,
-                                        kApfsFormatFqIpTreeOid,
-                                        ctx.newXid,
-                                        ctx.ipFqEntries,
-                                        blockers);
-        } else if (!ctx.mainFqEntries.isEmpty() &&
-                   isFreeQueueTreeWithOid(object, kApfsFormatFqMainTreeOid)) {
-            object = buildFreeQueueLeaf(ctx.geometry.blockSize,
-                                        kApfsFormatFqMainTreeOid,
-                                        ctx.newXid,
-                                        ctx.mainFqEntries,
-                                        blockers);
-        }
-        if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
+        const uint64_t span =
+            checkpointEntryBlockSpan(*checkpointMap, entry, ctx.geometry.blockSize);
+        const uint64_t newPaddr = ctx.dataBase + dataOffset;
+        QByteArray object;
+        if (!readEphemeralObject(ctx, oldPaddr, span, &object, blockers) ||
+            !mutateEphemeralObject(ctx, &object, blockers) ||
+            !stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
         }
         writeLe64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset, newPaddr);
+        dataOffset += span;
     }
     return true;
 }
@@ -2608,8 +2655,10 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
             request.image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
         return false;
     }
-    const uint32_t ephemeralCount = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    if (live.dataNext + ephemeralCount > live.dataBlocks) {
+    // The data-ring length is the total block span of the ephemerals, which exceeds the
+    // entry count once the spaceman is multi-block (the metadata-overflow dead zone).
+    const uint64_t ephemeralBlocks = checkpointDataBlockSpan(checkpointMap, geometry.blockSize);
+    if (live.dataNext + ephemeralBlocks > live.dataBlocks) {
         blockers->append(
             QStringLiteral("APFS in-place commit: checkpoint data ring would wrap (unsupported in "
                            "this increment)"));
@@ -2638,7 +2687,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     if (!stampAndWriteApfsBlock(request.image, geometry, cpmBlock, &checkpointMap, blockers)) {
         return false;
     }
-    advanceNxSuperblockCheckpoint(&request.nxsb, live, newXid, ephemeralCount);
+    advanceNxSuperblockCheckpoint(
+        &request.nxsb, live, newXid, static_cast<uint32_t>(ephemeralBlocks));
     if (request.newContainerOmap != 0) {
         writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
     }
@@ -3850,17 +3900,6 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
-    // The in-place commit re-emits the spaceman as a single block. A metadata-overflow
-    // container whose inline cib-address array overflows into a second spaceman block
-    // (the ~2.9-7.8 TiB dead zone) formats and mounts cleanly (Apple-certified) but its
-    // in-place mutation is a follow-on; fail closed here rather than re-emit a truncated
-    // single-block spaceman over the two-block object.
-    if (apfsFormatEphemeralLayoutForBlockCount(blockSize, blockCount).spacemanBlocks > 1) {
-        blockers->append(
-            QStringLiteral("APFS in-place commit on this metadata-overflow container is not yet "
-                           "supported: the spaceman spans more than one block"));
-        return false;
-    }
     // Metadata-overflow tier (>~1.3 TiB): chunk 0 is fully reserved, so the commit
     // allocates from the boundary chunk (metadataChunks - 1). That chunk must live
     // in cib 0 (index < chunks_per_cib) so the existing cib-0 rotation can carry its
@@ -7145,10 +7184,14 @@ bool copyToScratchImage(const QString& sourcePath,
                         const QString& outputPath,
                         QLatin1StringView purpose,
                         QStringList* blockers) {
-    if (QFile::copy(sourcePath, outputPath)) {
+    // Preserve sparseness: a multi-TiB container has only its metadata written, so the
+    // scratch copies in the size of its allocated data, not its logical size.
+    QString copyError;
+    if (copyFileSparse(sourcePath, outputPath, &copyError)) {
         return true;
     }
-    blockers->append(QStringLiteral("Unable to create APFS %1 scratch image").arg(purpose));
+    blockers->append(
+        QStringLiteral("Unable to create APFS %1 scratch image: %2").arg(purpose, copyError));
     return false;
 }
 
