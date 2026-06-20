@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <optional>
 #include <utility>
 
@@ -8822,13 +8823,29 @@ struct RawTargetMutationBlockersContext {
     QLatin1StringView purpose;
 };
 
+// Test-only seam (installed via PartitionApfsWriter::setRawDeviceTargetPredicateForTesting):
+// when set, this predicate replaces isWindowsRawDevicePath for classifying a raw-device
+// commit target, so unit tests can drive the production commitRaw* orchestration against a
+// temporary file while every other production guard (explicit confirmation, raw opt-in,
+// non-image-only options, size alignment, APFS detection) still runs unchanged. Null in
+// production, where the real Windows raw-device rule is the sole classifier.
+std::function<bool(const QString&)>& rawDeviceTargetPredicate() {
+    static std::function<bool(const QString&)> predicate;
+    return predicate;
+}
+
+bool rawTargetPathAccepted(const QString& path) {
+    const auto& predicate = rawDeviceTargetPredicate();
+    return predicate ? predicate(path) : isWindowsRawDevicePath(path);
+}
+
 void appendRawTargetMutationBlockers(const RawTargetMutationBlockersContext& context,
                                      QStringList* blockers) {
     if (context.targetPath.trimmed().isEmpty()) {
         blockers->append(
             QStringLiteral("APFS raw %1 target path is required").arg(context.purpose));
     }
-    if (!isWindowsRawDevicePath(context.targetPath)) {
+    if (!rawTargetPathAccepted(context.targetPath)) {
         blockers->append(
             QStringLiteral("APFS raw %1 requires a Windows raw-device path").arg(context.purpose));
     }
@@ -11150,6 +11167,11 @@ static std::unique_ptr<QIODevice> openRawInPlaceCommitTarget(
             QStringLiteral("Unable to open APFS raw commit target: %1").arg(openError));
     }
     return target;
+}
+
+void PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+    std::function<bool(const QString&)> predicate) {
+    rawDeviceTargetPredicate() = std::move(predicate);
 }
 
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite(

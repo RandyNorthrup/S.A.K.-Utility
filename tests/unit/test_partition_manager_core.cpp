@@ -1649,6 +1649,8 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
+    void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
+    void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -5431,6 +5433,16 @@ PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
     return options;
 }
 
+// Options for the on-hardware raw commit path: non-image-only with raw-media hardware
+// certification evidence (the production commitRaw* family requires both).
+PartitionApfsWriteOptions certifiedApfsRawCommitOptions() {
+    PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    options.image_only = false;
+    options.raw_media_hardware_certification_evidence = true;
+    options.evidence_id = QStringLiteral("external.apfs-raw-commit-fixture");
+    return options;
+}
+
 constexpr qsizetype kTestApfsTamperBlockSize = 4096;
 constexpr qsizetype kTestApfsTamperMagicOffset = 0x20;
 
@@ -7078,6 +7090,186 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
                   .file_data = QByteArrayLiteral("nope"),
                   .options = options})
                  .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersMutateConfirmedTarget() {
+    // The on-hardware raw commitRaw* wrappers run the same certified COW core as the
+    // image-only twins. A test seam classifies a temporary container file as an acceptable
+    // raw-device target so the full production orchestration (guard + open + commit +
+    // readback) is exercised end to end, while the explicit-confirmation, raw-opt-in,
+    // non-image-only, size, and APFS-detection guards still run. The real device-path rule
+    // is restored on scope exit even if an assertion returns early.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString container = dir.filePath(QStringLiteral("a2raw.apfs"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = container,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("A2RAW"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+
+    struct RawTargetPredicateGuard {
+        ~RawTargetPredicateGuard() {
+            PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+        }
+    } guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [container](const QString& path) { return path == container; });
+
+    const auto insert =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = container,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("seed.txt"),
+                                                  .file_data = QByteArrayLiteral("seed-data"),
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = rawOptions});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+
+    QVERIFY(PartitionApfsWriter::commitRawFileWrite(
+                {.target_path = container,
+                 .target_container_bytes = bytes,
+                 .file_name = QStringLiteral("seed.txt"),
+                 .file_data = QByteArrayLiteral("seed-data-replaced"),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = true,
+                 .options = rawOptions})
+                .ok);
+
+    QVERIFY2(PartitionApfsWriter::commitRawDirectoryCreate(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .directory_name = QStringLiteral("docs"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw create docs");
+    QVERIFY(PartitionApfsWriter::commitRawDirectoryChildWrite(
+                {.target_path = container,
+                 .target_container_bytes = bytes,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .file_data = QByteArrayLiteral("child-data"),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = true,
+                 .options = rawOptions})
+                .ok);
+
+    const auto docsListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        container, QStringLiteral("/docs"), 20);
+    QVERIFY2(docsListing.ok, qPrintable(docsListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docsListing.entries.size(), 1);
+    QCOMPARE(docsListing.entries.first().name, QStringLiteral("a.txt"));
+
+    QVERIFY(PartitionApfsWriter::commitRawDirectoryChildDelete(
+                {.target_path = container,
+                 .target_container_bytes = bytes,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = true,
+                 .options = rawOptions})
+                .ok);
+    QVERIFY(
+        PartitionApfsWriter::commitRawFileRename({.target_path = container,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("seed.txt"),
+                                                  .new_file_name = QStringLiteral("renamed.txt"),
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = rawOptions})
+            .ok);
+    QVERIFY(PartitionApfsWriter::commitRawFileDelete({.target_path = container,
+                                                      .target_container_bytes = bytes,
+                                                      .file_name = QStringLiteral("renamed.txt"),
+                                                      .target_mutation_confirmed = true,
+                                                      .allow_raw_device_target = true,
+                                                      .options = rawOptions})
+                .ok);
+    QVERIFY2(PartitionApfsWriter::commitRawDirectoryDelete(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .directory_name = QStringLiteral("docs"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw delete empty docs");
+
+    const auto rootListing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(container, QStringLiteral("/"), 20);
+    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(rootListing.entries.size(), 0);
+}
+
+void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice() {
+    // Defense in depth: the raw commit wrappers fail closed on a non-raw image-file path,
+    // and even on an accepted raw path still independently require explicit confirmation
+    // and non-image-only options. The directory routes reach the same guard as the file
+    // routes.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString container = dir.filePath(QStringLiteral("a2rawfc.apfs"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = container,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("A2RFC"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+
+    // No predicate installed: a plain file path is not a raw device.
+    const auto noDevice =
+        PartitionApfsWriter::commitRawDirectoryCreate({.target_path = container,
+                                                       .target_container_bytes = bytes,
+                                                       .directory_name = QStringLiteral("docs"),
+                                                       .target_mutation_confirmed = true,
+                                                       .allow_raw_device_target = true,
+                                                       .options = rawOptions});
+    QVERIFY(!noDevice.ok);
+    QVERIFY(noDevice.blockers.join(QLatin1Char(' '))
+                .contains(QStringLiteral("requires a Windows raw-device path")));
+
+    struct RawTargetPredicateGuard {
+        ~RawTargetPredicateGuard() {
+            PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+        }
+    } guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [container](const QString& path) { return path == container; });
+
+    const auto unconfirmed =
+        PartitionApfsWriter::commitRawDirectoryCreate({.target_path = container,
+                                                       .target_container_bytes = bytes,
+                                                       .directory_name = QStringLiteral("docs"),
+                                                       .target_mutation_confirmed = false,
+                                                       .allow_raw_device_target = true,
+                                                       .options = rawOptions});
+    QVERIFY(!unconfirmed.ok);
+    QVERIFY(unconfirmed.blockers.join(QLatin1Char(' '))
+                .contains(QStringLiteral("explicit target confirmation")));
+
+    PartitionApfsWriteOptions imageOnly = rawOptions;
+    imageOnly.image_only = true;
+    const auto imageOnlyReject =
+        PartitionApfsWriter::commitRawDirectoryCreate({.target_path = container,
+                                                       .target_container_bytes = bytes,
+                                                       .directory_name = QStringLiteral("docs"),
+                                                       .target_mutation_confirmed = true,
+                                                       .allow_raw_device_target = true,
+                                                       .options = imageOnly});
+    QVERIFY(!imageOnlyReject.ok);
+    QVERIFY(
+        imageOnlyReject.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("non-image-only")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

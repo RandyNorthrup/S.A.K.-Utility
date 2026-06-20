@@ -14,6 +14,7 @@
 #include <QVector>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 namespace sak {
@@ -697,6 +698,14 @@ public:
         const PartitionApfsRawDirectoryChildWriteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryChildDelete(
         const PartitionApfsRawDirectoryChildDeleteCommitRequest& request);
+    /// @brief Test-only seam: override the predicate that classifies a path as an
+    ///        acceptable raw-device commit target, so unit tests can drive the production
+    ///        @c commitRaw* orchestration against a temporary file while every other
+    ///        production guard (explicit confirmation, raw opt-in, non-image-only options,
+    ///        size alignment, APFS detection) still runs. Pass a null predicate to restore
+    ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
+    static void setRawDeviceTargetPredicateForTesting(
+        std::function<bool(const QString&)> predicate);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(
