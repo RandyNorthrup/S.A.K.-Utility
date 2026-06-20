@@ -486,16 +486,15 @@ bool hfsFileMutationSupportsSecureWipe(PartitionOperationType type) {
 
 QString apfsRootFileMutationCommand(PartitionOperationType type) {
     switch (type) {
-    // File/directory create/delete route onto the certified crash-safe COW engine
-    // (commit-raw-*). Byte-range patch has no COW primitive yet (full-file write only),
-    // and volume-label change is not a checkpoint mutation, so both stay on the legacy
-    // raw writers.
+    // File/directory create/delete/patch route onto the certified crash-safe COW engine
+    // (commit-raw-*); the COW patch is a true in-place byte-range patch that preserves the
+    // file's object id. Volume-label change is not a checkpoint mutation, so it stays on
+    // the legacy raw writer.
     case PartitionOperationType::ApfsWriteRootFile:
         return QStringLiteral("commit-raw-file-write");
     case PartitionOperationType::ApfsPatchRootFile:
-        return QStringLiteral("patch-raw-root-file");
     case PartitionOperationType::ApfsPatchRootDirectoryFile:
-        return QStringLiteral("patch-raw-root-directory-file");
+        return QStringLiteral("commit-raw-file-patch");
     case PartitionOperationType::ApfsDeleteRootFile:
         return QStringLiteral("commit-raw-file-delete");
     case PartitionOperationType::ApfsWriteRootDirectoryFile:
@@ -1200,10 +1199,14 @@ QString apfsWriterCliFunctionScript() {
                "'delete-raw-root-file', 'write-raw-root-directory-file', "
                "'delete-raw-root-directory-file', 'commit-raw-file-write', "
                "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
-               "'commit-raw-directory-child-delete')) {\n"
+               "'commit-raw-directory-child-delete', 'commit-raw-file-patch')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
                "required' }\n"
                "    $args += @('--file-name', $FileName)\n"
+               "  }\n"
+               "  if ($Command -eq 'commit-raw-file-patch' -and "
+               "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
+               "    $args += @('--directory-name', $DirectoryName)\n"
                "  }\n"
                "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
                "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
@@ -1217,13 +1220,15 @@ QString apfsWriterCliFunctionScript() {
                "  }\n"
                "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
                "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
-               "'commit-raw-file-write', 'commit-raw-directory-child-write')) {\n"
+               "'commit-raw-file-write', 'commit-raw-directory-child-write', "
+               "'commit-raw-file-patch')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
                "payload "
                "is required' }\n"
                "    $args += @('--payload-file', $PayloadFile)\n"
                "  }\n"
-               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file')) {\n"
+               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
+               "'commit-raw-file-patch')) {\n"
                "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
                "  }\n"
                "  Write-Output ('Running S.A.K. APFS writer helper: {0} {1}' -f $cliPath, "

@@ -3760,6 +3760,10 @@ struct ApfsFileInsertRequest {
     // The new file's parent directory (the root directory for a root file, or a
     // directory's object id for a directory child).
     uint64_t newFileParentId{kApfsRootDirectoryId};
+    // Object id for the written file. 0 = take the volume's next object id (a fresh
+    // insert); non-zero reuses an existing id (an in-place patch that keeps the file's
+    // identity while replacing its data extents).
+    uint64_t explicitFileId{0};
 };
 
 struct ApfsChainedListInput {
@@ -3809,7 +3813,9 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     if (!readApfsRepairBlock(in.image, in.geometry, in.chain.volSb, &volSb, blockers)) {
         return false;
     }
-    const uint64_t newFileId = le64(volSb, kApfsVolumeNextObjectIdOffset);
+    const uint64_t newFileId = in.request.explicitFileId != 0
+                                   ? in.request.explicitFileId
+                                   : le64(volSb, kApfsVolumeNextObjectIdOffset);
     if (!recoverPreservedFiles(
             {in.image, in.geometry, in.chain}, in.request.existingFiles, files, blockers)) {
         return false;
@@ -4300,6 +4306,167 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .chunk1BitmapBlock = chunk1BitmapBlock},
                             result,
                             blockers);
+}
+
+struct ApfsFilePatchRequest {
+    QVector<ApfsRootFilePayload> otherFiles;  // every file except the patched one (preserved)
+    QString fileName;
+    QByteArray patchedData;  // the target's full data after applying the byte-range patch
+    QVector<ApfsRootDirectoryPayload> directories;
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};
+    uint64_t targetFileId{0};  // the patched file's existing object id (preserved)
+};
+
+// The on-disk data blocks a file currently owns (its extents), recovered from the live
+// extent-ref tree - the blocks an in-place patch frees once the new data is written.
+QVector<uint64_t> recoverFileExtentBlocks(const ApfsFsCommitContext& ctx,
+                                          uint64_t fileId,
+                                          QStringList* blockers) {
+    ApfsRootFilePayload file;
+    file.fileId = fileId;
+    // Take the file's on-disk extents directly (paddr + length per run), so the freed
+    // list is correct without the file's byte data: a single-extent file needs its real
+    // extent here, not the data.size() fallback fileDataExtents uses for preserved files.
+    file.dataExtents = recoverFileDataExtents(ctx.image, ctx.geometry, ctx.chain, fileId, blockers);
+    return fileFreedDataBlocks(file, ctx.geometry.blockSize);
+}
+
+// A2: patch one file's data in place. Re-COW the file's data extents to new blocks
+// holding the patched content while preserving the file's object id, name, parent, and
+// the rest of the tree; the old extents are freed (net-zero file count and next-oid).
+// Mirrors commitInPlaceFileInsert but reuses the target's id (explicitFileId) and frees
+// the old data blocks - a true byte-range patch that is also crash-safe (the new data
+// and the COW'd fs-tree/extent-ref publish atomically at the checkpoint).
+bool commitInPlaceFilePatch(QIODevice* image,
+                            const ApfsFilePatchRequest& request,
+                            ApfsInPlaceCheckpointResult* result,
+                            QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    const ApfsFileInsertRequest insert{.existingFiles = request.otherFiles,
+                                       .fileName = request.fileName,
+                                       .fileData = request.patchedData,
+                                       .directories = request.directories,
+                                       .newFileParentId = request.parentDirectoryId,
+                                       .explicitFileId = request.targetFileId};
+    const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
+                                                  ctx.geometry.blockSize);
+    qsizetype nodeCount = 0;
+    if (!sizeInsertFsTree(ctx, insert, &nodeCount, blockers)) {
+        return false;
+    }
+    const int extentRefSlots = static_cast<int>(dataBlocks > 0);
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, extentRefSlots, dataBlocks},
+                                &newBlocks,
+                                &chunk1BitmapBlock,
+                                blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
+    ApfsInsertFsNodes built;
+    if (!buildInsertFsNodes(ctx, insert, dataBlockList, &built, blockers)) {
+        return false;
+    }
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = built.nodes,
+                             .newBlocks = newBlocks,
+                             .files = built.files,
+                             .extentRefNew = extentRefNew,
+                             .freedDataBlocks =
+                                 recoverFileExtentBlocks(ctx, request.targetFileId, blockers),
+                             .dataBlocksNew = static_cast<int64_t>(dataBlocks),
+                             .fileCountDelta = 0,
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = chunk1BitmapBlock},
+                            result,
+                            blockers);
+}
+
+// Overwrite [offset, offset+patch.size()) of @p data with @p patch, growing the file
+// (zero-padded) if the patch extends past the current end.
+QByteArray applyBytePatch(QByteArray data, uint64_t offset, const QByteArray& patch) {
+    const qsizetype end = static_cast<qsizetype>(offset) + patch.size();
+    if (end > data.size()) {
+        data.resize(end);
+    }
+    for (qsizetype i = 0; i < patch.size(); ++i) {
+        data[static_cast<qsizetype>(offset) + i] = patch.at(i);
+    }
+    return data;
+}
+
+// Split the collected tree into the patch target (matched by parent + name) and the
+// other files (preserved). Returns false if the target is absent.
+bool selectPatchTarget(const QVector<ApfsRootFilePayload>& allFiles,
+                       uint64_t parentId,
+                       const QString& fileName,
+                       uint64_t* targetFileId,
+                       QVector<ApfsRootFilePayload>* otherFiles) {
+    bool found = false;
+    for (const ApfsRootFilePayload& file : allFiles) {
+        if (!found && file.parentDirectoryId == parentId && file.fileName == fileName) {
+            *targetFileId = file.fileId;
+            found = true;
+        } else {
+            otherFiles->append(file);
+        }
+    }
+    return found;
+}
+
+uint64_t resolveParentId(const QVector<ApfsRootDirectoryPayload>& directories,
+                         const QString& directoryName);
+
+struct ApfsPatchPrep {
+    QString sourcePath;     // image or raw-device path to read the current data from
+    QString directoryName;  // empty = root
+    QString fileName;
+    uint64_t offset{0};
+    QByteArray patchBytes;
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+};
+
+// Read the target file's current data, apply the byte-range patch, and split the tree
+// into the patch request (target id + preserved others). Fails closed if the directory
+// or file is absent.
+bool buildFilePatchRequest(const ApfsPatchPrep& in,
+                           ApfsFilePatchRequest* out,
+                           QStringList* blockers) {
+    const uint64_t parentId = resolveParentId(in.directories, in.directoryName);
+    if (parentId == 0) {
+        blockers->append(QStringLiteral("APFS file-patch-commit: directory '%1' was not found")
+                             .arg(in.directoryName));
+        return false;
+    }
+    const QString path = in.directoryName.isEmpty()
+                             ? QStringLiteral("/%1").arg(in.fileName)
+                             : QStringLiteral("/%1/%2").arg(in.directoryName, in.fileName);
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(in.sourcePath,
+                                                                       path,
+                                                                       kApfsMaximumSeedFileBytes);
+    uint64_t targetFileId = 0;
+    QVector<ApfsRootFilePayload> otherFiles;
+    if (!read.ok ||
+        !selectPatchTarget(in.allFiles, parentId, in.fileName, &targetFileId, &otherFiles)) {
+        blockers->append(
+            QStringLiteral("APFS file-patch-commit: file '%1' was not found").arg(in.fileName));
+        return false;
+    }
+    *out = {.otherFiles = otherFiles,
+            .fileName = in.fileName,
+            .patchedData = applyBytePatch(read.data, in.offset, in.patchBytes),
+            .directories = in.directories,
+            .parentDirectoryId = parentId,
+            .targetFileId = targetFileId};
+    return true;
 }
 
 struct ApfsDeleteListInput {
@@ -11181,6 +11348,63 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     return result;
 }
 
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFilePatch(
+    const PartitionApfsImageFilePatchCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    const QLatin1StringView purpose("file-patch-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    ApfsFilePatchRequest patch;
+    if (!buildFilePatchRequest({result.source_image_path,
+                                cleanDirectoryName,
+                                cleanFileName,
+                                request.patch_offset_bytes,
+                                request.patch_data,
+                                allFiles,
+                                directories},
+                               &patch,
+                               &result.blockers) ||
+        !copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFilePatch(&image, patch, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -11989,6 +12213,58 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileMove(
                                 {allFiles, oldName, newName, directories, sourceParent, destParent},
                                 &commit,
                                 &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFilePatch(
+    const PartitionApfsRawFilePatchCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cleanFileName, QLatin1StringView("raw file-patch-commit"), &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    ApfsFilePatchRequest patch;
+    if (!buildFilePatchRequest({result.written_image_path,
+                                cleanDirectoryName,
+                                cleanFileName,
+                                request.patch_offset_bytes,
+                                request.patch_data,
+                                allFiles,
+                                directories},
+                               &patch,
+                               &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-patch-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFilePatch(target.get(), patch, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

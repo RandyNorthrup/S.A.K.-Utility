@@ -1,0 +1,22 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-file-patch",
+    "tier": "A2 production parity: true in-place COW byte-range file patch (preserves object id)",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB image passed through",
+    "change": "Replaced the legacy non-crash-safe patch-raw-* with a true in-place COW byte-range patch. commitInPlaceFilePatch re-COWs the file's data extents to new blocks holding the patched content while preserving the file's object id, name, parent, and the rest of the tree (it reuses the insert machinery with an explicit existing object id and frees the old extents); fileCountDelta and nextObjIdDelta stay 0. Read-modify-write at the entry point (read current data, splice the byte range, grow if it extends) feeds commitInPlaceFilePatch. Exposed as commitImageOnlyFilePatch / commitRawFilePatch + the CLI commands commit-image-file-patch / commit-raw-file-patch; the Partition Manager queue's ApfsPatchRootFile / ApfsPatchRootDirectoryFile now emit commit-raw-file-patch.",
+    "bug_caught_by_vm": "First VM run flagged a real accounting bug the apfsck oracle missed: fsck_apfs reported 'apfs_fs_alloc_count expected 6, actual 7' and 'overallocation ... bitmap address'. Root cause: recoverFileExtentBlocks built a bare payload with no byte data, so fileDataExtents (which derives a single-extent block count from data.size()) freed nothing and netConsumed was +1. Fixed by taking the file's real on-disk extents from recoverFileDataExtents directly. The second VM run is clean.",
+    "scenario": "From a 64 MiB container (volume PTT) holding doc.txt='AAAAAAAAAA': commit-image-file-patch at offset 3 with 'ZZ' produced 'AAAZZAAAAA' (writer xid 4). The unit test apfsWriter_inPlaceFilePatchPreservesObjectId additionally asserts the file's object_id is unchanged after the patch.",
+    "linux_apfsck": "apfsck -cw on the patched container reports only the pre-existing benign 'Data stream xfield: wrong flags.' note (apfsck does not check apfs_fs_alloc_count / overallocation, so the kernel/fsck_apfs below is the authority for the free accounting).",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted PTT read-write; cat /Volumes/PTT/doc.txt returned 'AAAZZAAAAA' (the byte range [3,5) replaced by 'ZZ')",
+        "kernel_continuation": "writer emitted xid 4; the kernel mounted read-write and continued the checkpoint to transaction ID 6",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID E3587563-... appears to be OK.",
+        "accounting_clean": "After the fix, 'Verifying volume object map space' and 'Verifying allocated space' are both clean (no alloc_count mismatch, no overallocation) - the old data block is freed and the new one allocated, object id preserved.",
+        "evidence": "apfs-cow-file-patch-fsck-clean.png (kernel cat of the patched content + warning-free fsck verdict at xid 6)"
+    },
+    "note": "A2 production parity is complete: the File Management bridge and the Partition Manager queue route every APFS file/directory create/delete/write/rename/move/patch through the certified crash-safe COW engine. Only volume-label change remains on the legacy raw writer (not a checkpoint mutation). A8 out of scope.",
+    "completed_at_utc": "2026-06-20T08:30:00Z"
+}

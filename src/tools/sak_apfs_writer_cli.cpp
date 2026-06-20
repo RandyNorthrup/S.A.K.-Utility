@@ -1631,16 +1631,52 @@ std::optional<QJsonObject> buildCommitRawFileMoveReport(const CliInvocation& inv
         commit, QStringLiteral("APFS raw in-place file move commit"), invocation, error);
 }
 
+std::optional<QJsonObject> buildCommitFilePatchReport(const CliInvocation& invocation,
+                                                      QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-patch.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFilePatch(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .patch_offset_bytes = invocation.patch_offset_bytes,
+         .patch_data = invocation.payload,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS in-place file patch commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawFilePatchReport(const CliInvocation& invocation,
+                                                         QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawFilePatch(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .patch_offset_bytes = invocation.patch_offset_bytes,
+         .patch_data = invocation.payload,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place file patch commit"), invocation, error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 19> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 21> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
+        {QLatin1StringView("commit-image-file-patch"), buildCommitFilePatchReport},
+        {QLatin1StringView("commit-raw-file-patch"), buildCommitRawFilePatchReport},
         {QLatin1StringView("commit-image-file-write"), buildCommitFileWriteReport},
         {QLatin1StringView("commit-image-directory-create"), buildCommitDirectoryCreateReport},
         {QLatin1StringView("commit-image-directory-delete"), buildCommitDirectoryDeleteReport},
@@ -1724,7 +1760,9 @@ bool isFileNameCommand(const QString& command) {
         QStringLiteral("commit-raw-directory-child-write"),
         QStringLiteral("commit-raw-directory-child-delete"),
         QStringLiteral("commit-image-file-move"),
-        QStringLiteral("commit-raw-file-move")};
+        QStringLiteral("commit-raw-file-move"),
+        QStringLiteral("commit-image-file-patch"),
+        QStringLiteral("commit-raw-file-patch")};
     return isFileWriteCommand(command) || kFileNameCommands.contains(command);
 }
 
@@ -1785,9 +1823,11 @@ std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
                                                const QCommandLineOption& fileOption,
                                                const QString& command,
                                                QString* error) {
-    // File-move commands take an OPTIONAL source directory (empty = the container root).
+    // File-move and file-patch commands take an OPTIONAL directory (empty = the root).
     if (command == QStringLiteral("commit-image-file-move") ||
-        command == QStringLiteral("commit-raw-file-move")) {
+        command == QStringLiteral("commit-raw-file-move") ||
+        command == QStringLiteral("commit-image-file-patch") ||
+        command == QStringLiteral("commit-raw-file-patch")) {
         return parser.value(directoryOption).trimmed();
     }
     if (!isDirectoryNameCommand(command)) {
@@ -1815,7 +1855,9 @@ bool commandTakesOptionalPayload(const QString& command) {
         QStringLiteral("commit-image-directory-child-write"),
         QStringLiteral("commit-raw-directory-child-write"),
         QStringLiteral("commit-raw-file-write"),
-        QStringLiteral("commit-raw-file-insert")};
+        QStringLiteral("commit-raw-file-insert"),
+        QStringLiteral("commit-image-file-patch"),
+        QStringLiteral("commit-raw-file-patch")};
     return kOptionalPayloadCommands.contains(command);
 }
 
@@ -1845,7 +1887,13 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
                                               const QCommandLineOption& option,
                                               const QString& command,
                                               QString* error) {
-    if (!isFilePatchCommand(command)) {
+    // The COW patch commands take an optional offset (default 0 = patch from the start).
+    const bool cowPatch = command == QStringLiteral("commit-image-file-patch") ||
+                          command == QStringLiteral("commit-raw-file-patch");
+    if (cowPatch && !parser.isSet(option)) {
+        return 0ULL;
+    }
+    if (!isFilePatchCommand(command) && !cowPatch) {
         return 0ULL;
     }
     if (!parser.isSet(option)) {

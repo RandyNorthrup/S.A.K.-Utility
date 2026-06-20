@@ -1651,6 +1651,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
+    void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7166,6 +7167,72 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryChildRename() {
                  .ok);
 }
 
+void PartitionManagerCoreTests::apfsWriter_inPlaceFilePatchPreservesObjectId() {
+    // The true in-place COW patch replaces a byte range while preserving the file's object
+    // id (it re-COWs the data extents, not the inode): the object id is unchanged, the
+    // content is patched, and no new file/object id is consumed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2pt-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2PT"),
+                 .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("a2pt-file.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = withFile,
+                                                       .file_name = QStringLiteral("doc.txt"),
+                                                       .file_data = QByteArrayLiteral("AAAAAAAAAA"),
+                                                       .options = options})
+            .ok);
+    const auto before =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(withFile, QStringLiteral("/"), 20);
+    QVERIFY(before.ok);
+    QCOMPARE(before.entries.size(), 1);
+    const uint64_t idBefore = before.entries.first().object_id;
+
+    // Patch bytes [3,5) -> "ZZ".
+    const QString patched = dir.filePath(QStringLiteral("a2pt-patched.apfs"));
+    const auto patch =
+        PartitionApfsWriter::commitImageOnlyFilePatch({.source_image_path = withFile,
+                                                       .written_image_path = patched,
+                                                       .directory_name = QString(),
+                                                       .file_name = QStringLiteral("doc.txt"),
+                                                       .patch_offset_bytes = 3,
+                                                       .patch_data = QByteArrayLiteral("ZZ"),
+                                                       .options = options});
+    QVERIFY2(patch.ok, qPrintable(patch.blockers.join(QStringLiteral("; "))));
+
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(patched,
+                                                                       QStringLiteral("/doc.txt"),
+                                                                       64ULL * 1024ULL);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, QByteArrayLiteral("AAAZZAAAAA"));
+
+    const auto after =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(patched, QStringLiteral("/"), 20);
+    QVERIFY(after.ok);
+    QCOMPARE(after.entries.size(), 1);                    // no new file
+    QCOMPARE(after.entries.first().object_id, idBefore);  // identity preserved
+
+    // A missing file fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyFilePatch(
+                 {.source_image_path = patched,
+                  .written_image_path = dir.filePath(QStringLiteral("a2pt-x.apfs")),
+                  .directory_name = QString(),
+                  .file_name = QStringLiteral("ghost.txt"),
+                  .patch_offset_bytes = 0,
+                  .patch_data = QByteArrayLiteral("x"),
+                  .options = options})
+                 .ok);
+}
+
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
     // Cross-parent move (root <-> directory) on the COW engine: the file keeps its data,
     // both parents' valences update, and a missing source/destination fails closed.
@@ -8385,7 +8452,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     const auto patchScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsPatchRootFile, target, baseApfsRootFileMutationPayload()));
     QVERIFY2(patchScript.valid(), qPrintable(patchScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(patchScript.script.contains(QStringLiteral("patch-raw-root-file")));
+    QVERIFY(patchScript.script.contains(QStringLiteral("commit-raw-file-patch")));
     QVERIFY(patchScript.script.contains(QStringLiteral("-PatchOffsetBytes 6")));
     QVERIFY(patchScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-patch")));
 
@@ -8420,8 +8487,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
             PartitionOperationType::ApfsPatchRootDirectoryFile, target, directoryFilePayload));
     QVERIFY2(directoryFilePatchScript.valid(),
              qPrintable(directoryFilePatchScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(
-        directoryFilePatchScript.script.contains(QStringLiteral("patch-raw-root-directory-file")));
+    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("commit-raw-file-patch")));
     QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-DirectoryName")));
     QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-FileName")));
     QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-PayloadFile $payloadPath")));

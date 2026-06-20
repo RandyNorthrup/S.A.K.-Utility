@@ -509,6 +509,19 @@ struct PartitionApfsImageFileMoveCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to patch one file's byte range in a generated APFS container with a
+///        true in-place copy-on-write commit (preserves the file's object id; crash-safe).
+///        An empty directory name means the container root.
+struct PartitionApfsImageFilePatchCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString directory_name;  // empty = root
+    QString file_name;
+    uint64_t patch_offset_bytes{0};
+    QByteArray patch_data;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to insert one file into a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A2). The
 ///        commit is applied to the device in place (no scratch clone), so it is
@@ -605,6 +618,21 @@ struct PartitionApfsRawFileMoveCommitRequest {
     QString file_name;
     QString destination_directory_name;  // empty = root
     QString new_file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to patch one file's byte range in a generated APFS container on a raw
+///        device with a true in-place copy-on-write commit (A2). An empty directory name
+///        means the container root.
+struct PartitionApfsRawFilePatchCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString directory_name;  // empty = root
+    QString file_name;
+    uint64_t patch_offset_bytes{0};
+    QByteArray patch_data;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
@@ -728,6 +756,9 @@ public:
     /// @brief Move one file between parents (root or a root directory) with an in-place COW commit.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileMove(
         const PartitionApfsImageFileMoveCommitRequest& request);
+    /// @brief Patch one file's byte range with a true in-place COW commit (keeps the object id).
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFilePatch(
+        const PartitionApfsImageFilePatchCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
@@ -761,6 +792,8 @@ public:
         const PartitionApfsRawDirectoryChildRenameCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileMove(
         const PartitionApfsRawFileMoveCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFilePatch(
+        const PartitionApfsRawFilePatchCommitRequest& request);
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other
