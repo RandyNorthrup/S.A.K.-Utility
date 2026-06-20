@@ -324,10 +324,16 @@ Central action registry:
 | Local Windows | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | ext2/ext3/ext4 raw/image | Yes | Yes | Yes | No | No | No | No | Yes | No |
 | HFS+/HFSX raw/image | Yes | Yes | Yes | Certified slices | Certified slices | Certified slices | Certified slices | Yes | Certified slices |
-| APFS raw/image generated 64-128 MiB | Yes | Yes | Yes | Certified slices | Certified slices | Limited | Certified slices | Yes | Certified slices |
-| APFS large/generated >128 MiB | Yes | Yes | Yes | No | No | No | No | Yes | No |
+| APFS raw/image generated (≤32 TiB) | Yes | Yes | Yes | Yes¹ | Yes¹ | Yes¹ | Yes¹ | Yes | Yes¹ |
 | APFS arbitrary Apple media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
 | XFS/Btrfs current | Metadata only | No | No | No | No | No | No | No | No |
+
+¹ Certified crash-safe in-place COW engine (milestone A2 — see the single
+capability-matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
+driver matrix A-b). Scope: root files + empty root directories + one level of
+root-directory children, on generated containers 64 MiB through a 32 TiB cap; the
+~2.9–7.8 TiB metadata-overflow band and arbitrary non-generated Apple media
+remain fail-closed.
 
 UI must never hide unsupported write commands for raw targets. It should disable them and show exact blocker text in tooltip/details pane.
 
