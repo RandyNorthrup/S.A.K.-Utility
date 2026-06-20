@@ -1029,12 +1029,14 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
 }
 
 void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
-                                const ApfsRootDirectoryPayload& directory) {
+                                const ApfsRootDirectoryPayload& directory,
+                                int32_t childCount) {
     records->append({fsKey(directory.directoryId, kApfsRecordInode),
                      inodeValue({.parentId = kApfsRootDirectoryId,
                                  .privateId = directory.privateId,
                                  .mode = kApfsModeDirectory,
-                                 .name = directory.directoryName})});
+                                 .name = directory.directoryName,
+                                 .childOrLinkCount = childCount})});
     records->append({directoryEntryKey(kApfsRootDirectoryId, directory.directoryName),
                      directoryEntryValue(directory.directoryId, kApfsDirTypeDirectory)});
 }
@@ -1082,6 +1084,22 @@ void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
 // Sorted file-system record set: the base volume entities (tree-root entity
 // oid 1 dirents, root + private directory inodes) plus one record group per
 // file/directory.
+// Count the direct children a directory inode reports: files whose parent is that
+// directory id. The root directory (id 2) additionally parents every top-level
+// directory. A flat root (every file parented to root, no directories) reduces to
+// files.size(), byte-identical to the certified single-level layout.
+int32_t directChildCount(uint64_t directoryId,
+                         const QVector<ApfsRootFilePayload>& files,
+                         qsizetype extraSubdirectories) {
+    int32_t count = static_cast<int32_t>(extraSubdirectories);
+    for (const auto& file : files) {
+        if (file.parentDirectoryId == directoryId) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
     const QVector<ApfsRootFilePayload>& files,
     const QVector<ApfsRootDirectoryPayload>& directories) {
@@ -1095,7 +1113,8 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
                      .privateId = kApfsRootDirectoryId,
                      .mode = kApfsModeDirectory,
                      .name = QStringLiteral("root"),
-                     .childOrLinkCount = static_cast<int32_t>(files.size() + directories.size())})},
+                     .childOrLinkCount =
+                         directChildCount(kApfsRootDirectoryId, files, directories.size())})},
         {fsKey(kApfsPrivateDirectoryId, kApfsRecordInode),
          inodeValue({.parentId = kApfsTreeRootEntityId,
                      .privateId = kApfsPrivateDirectoryId,
@@ -1106,7 +1125,9 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
         appendRootFileRecords(&records, file);
     }
     for (const auto& directory : directories) {
-        appendRootDirectoryRecords(&records, directory);
+        appendRootDirectoryRecords(&records,
+                                   directory,
+                                   directChildCount(directory.directoryId, files, 0));
     }
     sortFsTreeRecords(&records);
     return records;

@@ -1,0 +1,36 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-directory-child-counts",
+    "tier": "APFS directory/inode child-count (valence) correctness in the fs-tree record builder",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB dir+child image passed through",
+    "bug": "buildFsTreeRecords mis-counted directory children: the root inode's nchildren counted every file (including files nested in subdirectories), and every directory inode reported nchildren 0 regardless of its actual children. This is the foundation the full-tree COW commit (A2-3.2) builds on, and it also corrupts the legacy createRawRootDirectory / writeRawRootDirectoryFile production directory path.",
+    "fix": "Added directChildCount(directoryId, files, extraSubdirectories) - counts files whose parentDirectoryId is that directory; the root additionally parents the top-level directories. buildFsTreeRecords now sets the root inode's nchildren to (root files + directories) and each directory inode's nchildren to its own children; appendRootDirectoryRecords takes the child count. A flat root (no directories, every file parented to root) reduces to files.size(), byte-identical to the certified single-level layout.",
+    "container": "64 MiB single-CIB image, volume DCTEST: root directory 'docs' containing child file 'a.txt' (18 bytes 'child-file-content'), built via the CLI create-image-root-directory + write-image-root-directory-file (which rewrite through buildFsTreeRecords)",
+    "linux_apfsck": "apfsck -cw clean (only the pre-existing benign 'Data stream xfield: wrong flags.' note) both before and after the fix - apfsck does not perform the directory valence check, so it could not catch this bug.",
+    "apple_fsck_apfs": {
+        "before_fix": "fsck_apfs -n reported 'error: directory valence check: directory ... nchildren (2) does not match' and 'nchildren of inode ... does not match expected value (1)' - The container could not be verified completely. Evidence apfs-dir-child-counts-before-fix-fsck-errors.png.",
+        "after_fix": {
+            "kernel_mount_read": "the macOS kernel auto-mounted DCTEST read-write; ls showed /Volumes/DCTEST/docs and cat /Volumes/DCTEST/docs/a.txt returned 'child-file-content'",
+            "command": "fsck_apfs -n /dev/disk1 (unmounted after the kernel auto-mounted it read-write)",
+            "container_verdict": "The container /dev/disk1 appears to be OK.",
+            "volume_verdict": "The volume /dev/rdisk1s1 appears to be OK.",
+            "phases_clean": [
+                "container superblock",
+                "checkpoint",
+                "space manager",
+                "space manager free queue trees",
+                "object map",
+                "APFS volume superblock",
+                "snapshot metadata tree",
+                "fsroot tree (directory valence now passes)",
+                "extent ref tree",
+                "volume object map space",
+                "allocated space"
+            ],
+            "evidence": "apfs-dir-child-counts-fsck-clean.png (fsck verdict), apfs-dir-child-counts-kernel-read.png (kernel ls + cat of the directory child)"
+        }
+    },
+    "note": "Caught only by the macOS kernel-fsck valence check that apfsck does not model. This is increment 1 of the full-tree COW commit (A2-3.2); the remaining work threads the full tree (root files + directories + children) through the COW commit so an in-place mutation preserves directories instead of failing closed.",
+    "completed_at_utc": "2026-06-19T14:30:00Z"
+}
