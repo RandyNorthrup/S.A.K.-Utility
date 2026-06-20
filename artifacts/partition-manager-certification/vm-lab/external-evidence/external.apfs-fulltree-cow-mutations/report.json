@@ -1,0 +1,35 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-fulltree-cow-mutations",
+    "tier": "A2-3.2 increment 3: in-place COW delete, rename, and write (create-or-replace) round-trip directories and their children",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB dir+child image passed through",
+    "change": "Extended the full-tree round-trip from the insert commit (increment 2) to the delete, rename, and write (create-or-replace) commits. buildDeleteFileList and buildRenameFileList no longer hardcode the root parent and match the target among root files only (a directory child of the same name is untouched); commitInPlaceFileDelete takes an ApfsDeleteRequest carrying directories; ApfsRenameRequest and ApfsRootFileWriteRequest carry directories; all thread through buildFsTreeNodes. The image and raw delete/rename/write entry points use collectFullFsTree. Every in-place COW file mutation now preserves directories, so the temporary directory fail-closed guard (and the now-unused collectAllRootFiles / collectExistingRootFiles) were removed. Flat-root containers are byte-identical to the certified single-level layout.",
+    "scenarios": "From a container with directory 'docs'/child 'a.txt' (data) plus root files r1.txt and r2.txt: commit-image-file-delete r1.txt, commit-image-file-rename r2.txt->r2x.txt, and commit-image-file-write (replace) r2.txt - each preserves the directory and its child.",
+    "linux_apfsck": "apfsck -cw clean (only the pre-existing benign 'Data stream xfield: wrong flags.' note) on the delete, rename, and write/replace results",
+    "apple_fsck_apfs": {
+        "certified_path": "the write/replace path (commitImageOnlyFileWrite = delete + insert, the production File Management write primitive)",
+        "kernel_mount_read": "the macOS kernel auto-mounted DCTEST read-write; cat /Volumes/DCTEST/docs/a.txt returned 'child-file-content' (the directory child preserved through the replace) and cat /Volumes/DCTEST/r2.txt returned 'r2-REPLACED-longer' (the replaced content)",
+        "kernel_continuation": "writer emitted xid 6 (insert into dir+child x2 then delete + insert for the replace); the kernel mounted read-write and continued the checkpoint to transaction ID 8",
+        "command": "fsck_apfs -n /dev/disk1 (unmounted after the kernel auto-mounted it read-write)",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 appears to be OK.",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 8)",
+            "space manager",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "fsroot tree (directory valence)",
+            "extent ref tree (preserved child extent + replaced file extent)",
+            "volume object map space",
+            "allocated space"
+        ],
+        "rename_note": "rename does not change any directory's child count, so its valence is identical to the source; apfsck-clean plus the shared buildFsTreeRecords/buildFsTreeNodes path the write cert exercises cover it.",
+        "evidence": "apfs-fulltree-write-replace-fsck-clean.png"
+    },
+    "note": "With insert/delete/rename/write all round-tripping directories, the remaining A2-3.2 work is the four directory mutations themselves on the COW engine (create-directory, delete-directory, directory-child write, directory-child delete) plus wiring the File Management bridge's directory routes off the legacy raw writer.",
+    "completed_at_utc": "2026-06-19T15:45:00Z"
+}
