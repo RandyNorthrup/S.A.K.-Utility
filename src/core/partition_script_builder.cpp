@@ -486,22 +486,26 @@ bool hfsFileMutationSupportsSecureWipe(PartitionOperationType type) {
 
 QString apfsRootFileMutationCommand(PartitionOperationType type) {
     switch (type) {
+    // File/directory create/delete route onto the certified crash-safe COW engine
+    // (commit-raw-*). Byte-range patch has no COW primitive yet (full-file write only),
+    // and volume-label change is not a checkpoint mutation, so both stay on the legacy
+    // raw writers.
     case PartitionOperationType::ApfsWriteRootFile:
-        return QStringLiteral("write-raw-root-file");
+        return QStringLiteral("commit-raw-file-write");
     case PartitionOperationType::ApfsPatchRootFile:
         return QStringLiteral("patch-raw-root-file");
     case PartitionOperationType::ApfsPatchRootDirectoryFile:
         return QStringLiteral("patch-raw-root-directory-file");
     case PartitionOperationType::ApfsDeleteRootFile:
-        return QStringLiteral("delete-raw-root-file");
+        return QStringLiteral("commit-raw-file-delete");
     case PartitionOperationType::ApfsWriteRootDirectoryFile:
-        return QStringLiteral("write-raw-root-directory-file");
+        return QStringLiteral("commit-raw-directory-child-write");
     case PartitionOperationType::ApfsDeleteRootDirectoryFile:
-        return QStringLiteral("delete-raw-root-directory-file");
+        return QStringLiteral("commit-raw-directory-child-delete");
     case PartitionOperationType::ApfsCreateRootDirectory:
-        return QStringLiteral("create-raw-root-directory");
+        return QStringLiteral("commit-raw-directory-create");
     case PartitionOperationType::ApfsDeleteRootDirectory:
-        return QStringLiteral("delete-raw-root-directory");
+        return QStringLiteral("commit-raw-directory-delete");
     case PartitionOperationType::ApfsChangeVolumeLabel:
         return QStringLiteral("change-raw-volume-label");
     default:
@@ -1194,21 +1198,26 @@ QString apfsWriterCliFunctionScript() {
                "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
                "'patch-raw-root-directory-file', "
                "'delete-raw-root-file', 'write-raw-root-directory-file', "
-               "'delete-raw-root-directory-file')) {\n"
+               "'delete-raw-root-directory-file', 'commit-raw-file-write', "
+               "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
                "required' }\n"
                "    $args += @('--file-name', $FileName)\n"
                "  }\n"
                "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
                "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
-               "'delete-raw-root-directory-file')) {\n"
+               "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
+               "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
                "name is "
                "required' }\n"
                "    $args += @('--directory-name', $DirectoryName)\n"
                "  }\n"
                "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-               "'patch-raw-root-directory-file', 'write-raw-root-directory-file')) {\n"
+               "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
+               "'commit-raw-file-write', 'commit-raw-directory-child-write')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
                "payload "
                "is required' }\n"
@@ -4171,7 +4180,6 @@ PartitionScript PartitionScriptBuilder::buildBitLockerScript(
 
 PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation& operation) const {
     PartitionScript out;
-    out.preview = toDisplayString(operation.type);
     if (operation.type == PartitionOperationType::WipeFreeSpace) {
         const QString letter = operation.target.drive_letter.left(1);
         if (!isValidDriveLetter(letter)) {

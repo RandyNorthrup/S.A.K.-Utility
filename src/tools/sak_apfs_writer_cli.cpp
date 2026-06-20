@@ -1530,13 +1530,73 @@ std::optional<QJsonObject> buildCommitRawFileRenameReport(const CliInvocation& i
         commit, QStringLiteral("APFS raw in-place file rename commit"), invocation, error);
 }
 
+std::optional<QJsonObject> buildCommitRawDirectoryCreateReport(const CliInvocation& invocation,
+                                                               QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawDirectoryCreate(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .directory_name = invocation.directory_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place directory create commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawDirectoryDeleteReport(const CliInvocation& invocation,
+                                                               QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawDirectoryDelete(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .directory_name = invocation.directory_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place directory delete commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawDirectoryChildWriteReport(const CliInvocation& invocation,
+                                                                   QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawDirectoryChildWrite(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .file_data = invocation.payload,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit,
+        QStringLiteral("APFS raw in-place directory-child write (create-or-replace) commit"),
+        invocation,
+        error);
+}
+
+std::optional<QJsonObject> buildCommitRawDirectoryChildDeleteReport(const CliInvocation& invocation,
+                                                                    QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawDirectoryChildDelete(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .directory_name = invocation.directory_name,
+         .file_name = invocation.file_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(commit,
+                              QStringLiteral("APFS raw in-place directory-child delete commit"),
+                              invocation,
+                              error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 13> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 17> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-write"), buildCommitFileWriteReport},
         {QLatin1StringView("commit-image-directory-create"), buildCommitDirectoryCreateReport},
@@ -1552,6 +1612,12 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-raw-file-write"), buildCommitRawFileWriteReport},
         {QLatin1StringView("commit-raw-file-delete"), buildCommitRawFileDeleteReport},
         {QLatin1StringView("commit-raw-file-rename"), buildCommitRawFileRenameReport},
+        {QLatin1StringView("commit-raw-directory-create"), buildCommitRawDirectoryCreateReport},
+        {QLatin1StringView("commit-raw-directory-delete"), buildCommitRawDirectoryDeleteReport},
+        {QLatin1StringView("commit-raw-directory-child-write"),
+         buildCommitRawDirectoryChildWriteReport},
+        {QLatin1StringView("commit-raw-directory-child-delete"),
+         buildCommitRawDirectoryChildDeleteReport},
     }};
     for (const auto& [command, builder] : kCommitBuilders) {
         if (invocation.command == command) {
@@ -1611,7 +1677,9 @@ bool isFileNameCommand(const QString& command) {
         QStringLiteral("commit-raw-file-delete"),
         QStringLiteral("commit-raw-file-rename"),
         QStringLiteral("commit-image-directory-child-write"),
-        QStringLiteral("commit-image-directory-child-delete")};
+        QStringLiteral("commit-image-directory-child-delete"),
+        QStringLiteral("commit-raw-directory-child-write"),
+        QStringLiteral("commit-raw-directory-child-delete")};
     return isFileWriteCommand(command) || kFileNameCommands.contains(command);
 }
 
@@ -1633,6 +1701,10 @@ bool isDirectoryNameCommand(const QString& command) {
         QStringLiteral("commit-image-directory-delete"),
         QStringLiteral("commit-image-directory-child-write"),
         QStringLiteral("commit-image-directory-child-delete"),
+        QStringLiteral("commit-raw-directory-create"),
+        QStringLiteral("commit-raw-directory-delete"),
+        QStringLiteral("commit-raw-directory-child-write"),
+        QStringLiteral("commit-raw-directory-child-delete"),
     };
     return kDirectoryNameCommands.contains(command);
 }
@@ -1682,16 +1754,26 @@ std::optional<QString> directoryNameForCommand(const QCommandLineParser& parser,
     return directoryName;
 }
 
+// Commands that accept an OPTIONAL payload (an empty payload is valid - e.g. import
+// without an added file, or a zero-byte file). Required-payload commands fall through
+// to the isFileWriteCommand path below.
+bool commandTakesOptionalPayload(const QString& command) {
+    static const QStringList kOptionalPayloadCommands = {
+        QStringLiteral("import-image"),
+        QStringLiteral("commit-image-file-write"),
+        QStringLiteral("commit-image-file-insert"),
+        QStringLiteral("commit-image-directory-child-write"),
+        QStringLiteral("commit-raw-directory-child-write"),
+        QStringLiteral("commit-raw-file-write"),
+        QStringLiteral("commit-raw-file-insert")};
+    return kOptionalPayloadCommands.contains(command);
+}
+
 std::optional<QByteArray> payloadForCommand(const QCommandLineParser& parser,
                                             const QCommandLineOption& option,
                                             const QString& command,
                                             QString* error) {
-    if (command == QStringLiteral("import-image") ||
-        command == QStringLiteral("commit-image-file-write") ||
-        command == QStringLiteral("commit-image-file-insert") ||
-        command == QStringLiteral("commit-image-directory-child-write") ||
-        command == QStringLiteral("commit-raw-file-write") ||
-        command == QStringLiteral("commit-raw-file-insert")) {
+    if (commandTakesOptionalPayload(command)) {
         const QString payloadPath = parser.value(option).trimmed();
         if (payloadPath.isEmpty()) {
             return QByteArray();

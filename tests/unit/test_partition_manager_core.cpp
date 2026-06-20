@@ -8282,7 +8282,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
         PartitionOperationType::ApfsWriteRootFile, target, baseApfsRootFileMutationPayload()));
     QVERIFY2(writeScript.valid(), qPrintable(writeScript.blockers.join(QStringLiteral("; "))));
     QVERIFY(writeScript.script.contains(QStringLiteral("sak_apfs_writer_cli.exe")));
-    QVERIFY(writeScript.script.contains(QStringLiteral("write-raw-root-file")));
+    QVERIFY(writeScript.script.contains(QStringLiteral("commit-raw-file-write")));
     QVERIFY(writeScript.script.contains(QStringLiteral("--payload-file")));
     QVERIFY(writeScript.script.contains(QStringLiteral("FromBase64String")));
     QVERIFY(writeScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-write")));
@@ -8301,7 +8301,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     const auto deleteScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsDeleteRootFile, target, deletePayload));
     QVERIFY2(deleteScript.valid(), qPrintable(deleteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteScript.script.contains(QStringLiteral("delete-raw-root-file")));
+    QVERIFY(deleteScript.script.contains(QStringLiteral("commit-raw-file-delete")));
     QVERIFY(!deleteScript.script.contains(QStringLiteral("FromBase64String")));
     QVERIFY(deleteScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-delete")));
 
@@ -8313,8 +8313,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
             PartitionOperationType::ApfsWriteRootDirectoryFile, target, directoryFilePayload));
     QVERIFY2(directoryFileWriteScript.valid(),
              qPrintable(directoryFileWriteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(
-        directoryFileWriteScript.script.contains(QStringLiteral("write-raw-root-directory-file")));
+    QVERIFY(directoryFileWriteScript.script.contains(
+        QStringLiteral("commit-raw-directory-child-write")));
     QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-DirectoryName")));
     QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-FileName")));
     QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-PayloadFile $payloadPath")));
@@ -8346,7 +8346,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     QVERIFY2(directoryFileDeleteScript.valid(),
              qPrintable(directoryFileDeleteScript.blockers.join(QStringLiteral("; "))));
     QVERIFY(directoryFileDeleteScript.script.contains(
-        QStringLiteral("delete-raw-root-directory-file")));
+        QStringLiteral("commit-raw-directory-child-delete")));
     QVERIFY(directoryFileDeleteScript.script.contains(QStringLiteral("-DirectoryName")));
     QVERIFY(directoryFileDeleteScript.script.contains(QStringLiteral("-FileName")));
     QVERIFY(!directoryFileDeleteScript.script.contains(QStringLiteral("FromBase64String")));
@@ -8361,7 +8361,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
         PartitionOperationType::ApfsCreateRootDirectory, target, createDirectoryPayload));
     QVERIFY2(createDirectoryScript.valid(),
              qPrintable(createDirectoryScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(createDirectoryScript.script.contains(QStringLiteral("create-raw-root-directory")));
+    QVERIFY(createDirectoryScript.script.contains(QStringLiteral("commit-raw-directory-create")));
     QVERIFY(createDirectoryScript.script.contains(QStringLiteral("-DirectoryName")));
     QVERIFY(createDirectoryScript.script.contains(
         QStringLiteral("ui.apfs-generated-raw-root-directory-create")));
@@ -8371,7 +8371,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
         PartitionOperationType::ApfsDeleteRootDirectory, target, createDirectoryPayload));
     QVERIFY2(deleteDirectoryScript.valid(),
              qPrintable(deleteDirectoryScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteDirectoryScript.script.contains(QStringLiteral("delete-raw-root-directory")));
+    QVERIFY(deleteDirectoryScript.script.contains(QStringLiteral("commit-raw-directory-delete")));
     QVERIFY(deleteDirectoryScript.script.contains(
         QStringLiteral("ui.apfs-generated-raw-root-directory-delete")));
 
