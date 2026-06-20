@@ -1651,6 +1651,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
+    void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -7270,6 +7271,46 @@ void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersFailClosedWithoutRaw
     QVERIFY(!imageOnlyReject.ok);
     QVERIFY(
         imageOnlyReject.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("non-image-only")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman() {
+    // The ~2.9-7.8 TiB metadata-overflow "dead zone" (cib_count 182-507) overflows the
+    // spaceman's inline cib-address array; the spaceman object spans a second block
+    // instead of failing closed, and Apple forbids the CAB tier below 508 cibs. This is
+    // Apple-certified (kernel auto-mount + fsck_apfs container/volume clean on a 4 TiB
+    // container). The image is created sparse, so the 4 TiB logical size is cheap.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString image = QDir(temp.path()).filePath(QStringLiteral("a2ddz.apfs"));
+    const uint64_t bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;  // 4 TiB -> 261 cibs
+    const auto build =
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = image,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("A2DDZ"),
+                                                        .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // The geometry sits in the dead zone: more cibs than fit one inline array, but still
+    // at or below the 507-cib CAB threshold (cab_count stays 0).
+    const auto geometry = PartitionApfsWriter::computeContainerGeometry(bytes / 4096, 4096);
+    QVERIFY(geometry.cib_count > 181);
+    QVERIFY(geometry.cib_count <= 507);
+    QVERIFY(geometry.cab_count == 0);
+
+    // The live checkpoint map (block 3) resolves the spaceman; its first entry is the
+    // space manager, whose cpm_size must report a two-block object (the overflow spill).
+    QFile file(image);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(file.seek(3 * 4096));
+    const QByteArray map = file.read(4096);
+    file.close();
+    QCOMPARE(map.size(), static_cast<qsizetype>(4096));
+    constexpr qsizetype kMapEntriesOffset = 0x28;
+    constexpr qsizetype kMapEntrySizeOffset = 8;
+    const uint32_t spacemanCpmSize = readTestApfsLe32(map, kMapEntriesOffset + kMapEntrySizeOffset);
+    QCOMPARE(spacemanCpmSize, 2u * 4096u);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

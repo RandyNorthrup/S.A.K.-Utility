@@ -16,10 +16,15 @@ namespace sak {
 
 [[nodiscard]] bool isWindowsRawDevicePath(const QString& path);
 
+/// @brief Best-effort mark an open file (by descriptor) sparse so a large logical size
+///        materializes only written regions. No-op where unsupported; POSIX files are
+///        already sparse via ftruncate. @p fileDescriptor is QFile::handle().
+void markFileSparse(int fileDescriptor);
+
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(
-    const QString& path, QString* error_message = nullptr);
+    const QString& path, QString* errorMessage = nullptr);
 
 [[nodiscard]] std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(
-    const QString& path, QString* error_message = nullptr);
+    const QString& path, QString* errorMessage = nullptr);
 
 }  // namespace sak

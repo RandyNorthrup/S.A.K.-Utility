@@ -19,6 +19,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#include <io.h>
+#include <winioctl.h>
 #endif
 
 namespace sak {
@@ -286,6 +289,22 @@ private:
 #endif
 
 }  // namespace
+
+void markFileSparse(int fileDescriptor) {
+#ifdef Q_OS_WIN
+    if (fileDescriptor < 0) {
+        return;
+    }
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileDescriptor));
+    if (handle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    DWORD returned = 0;
+    DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
+#else
+    Q_UNUSED(fileDescriptor);
+#endif
+}
 
 bool isWindowsRawDevicePath(const QString& path) {
 #ifdef Q_OS_WIN

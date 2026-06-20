@@ -1404,6 +1404,7 @@ struct ApfsCheckpointMapEntry {
     uint32_t subtype{0};
     uint64_t oid{0};
     uint64_t paddr{0};
+    uint32_t size{0};  // object byte size; 0 means a single block (cpm_size = blockSize)
 };
 
 QByteArray buildCheckpointMapBlock(uint32_t blockSize,
@@ -1420,7 +1421,9 @@ QByteArray buildCheckpointMapBlock(uint32_t blockSize,
     for (const auto& mapping : entries) {
         writeLe32(&block, entry, mapping.type);
         writeLe32(&block, entry + 4, mapping.subtype);
-        writeLe32(&block, entry + kApfsCheckpointMapEntrySizeOffset, blockSize);
+        writeLe32(&block,
+                  entry + kApfsCheckpointMapEntrySizeOffset,
+                  mapping.size != 0 ? mapping.size : blockSize);
         writeLe64(&block, entry + kApfsCheckpointMapEntryOidOffset, mapping.oid);
         writeLe64(&block, entry + kApfsCheckpointMapEntryPaddrOffset, mapping.paddr);
         entry += kApfsCheckpointMapEntryBytes;
@@ -1707,6 +1710,56 @@ uint64_t spacemanCibArrayOffset(uint64_t ipBmSize) {
     return spacemanFreeNextOffset(ipBmSize) + 16 * ipBmSize * 2;
 }
 
+// Number of blocks the spaceman ephemeral object spans. The inline cib/cab-address
+// array sits at spacemanCibArrayOffset; when cib_count * 8 overflows the first block
+// (the versioned layout overflows at ~181 cibs, i.e. the ~2.9 TiB metadata-overflow
+// band), Apple/mkapfs grow the spaceman object into a second block rather than forcing
+// a CAB (Apple forbids CAB for cib_count <= 507). At or below the overflow point this is
+// 1, so every certified single-block tier stays byte-identical; cibs_per_cab (507)
+// bounds it to 2 before the CAB tier takes over.
+uint64_t spacemanBlockSpan(uint64_t blockSize, uint64_t ipBmSize, uint64_t addrEntries) {
+    const uint64_t bytes = spacemanCibArrayOffset(ipBmSize) + addrEntries * 8;
+    return (bytes + blockSize - 1) / blockSize;
+}
+
+// Placement of the genesis + live checkpoint-data ephemerals, accounting for a spaceman
+// object that spills past one block. The genesis spaceman + reaper, then the live
+// spaceman + reaper + the two free-queue trees, occupy contiguous checkpoint-data ring
+// segments; a multi-block spaceman shifts everything after it by spacemanBlocks-1. For a
+// single-block spaceman these are the certified constants (9/10/11/12/13/14, data
+// index 2, len 4) so every existing tier stays byte-identical.
+struct ApfsFormatEphemeralLayout {
+    uint64_t spacemanBlocks{1};
+    uint64_t genesisSpaceman{kApfsFormatGenesisSpacemanBlock};
+    uint64_t genesisReaper{kApfsFormatGenesisReaperBlock};
+    uint64_t liveSpaceman{kApfsFormatSpacemanBlock};
+    uint64_t liveReaper{kApfsFormatReaperBlock};
+    uint64_t fqIpTree{kApfsFormatFqIpTreeBlock};
+    uint64_t fqMainTree{kApfsFormatFqMainTreeBlock};
+    uint32_t liveDataIndex{2};
+    uint32_t liveDataLen{4};
+};
+
+ApfsFormatEphemeralLayout apfsFormatEphemeralLayout(uint32_t blockSize,
+                                                    uint64_t chunkCount,
+                                                    uint64_t cibCount,
+                                                    uint64_t cabCount) {
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount, cabCount);
+    const uint64_t addrEntries = cabCount > 0 ? cabCount : cibCount;
+    const uint64_t span = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
+    ApfsFormatEphemeralLayout layout;
+    layout.spacemanBlocks = span;
+    layout.genesisSpaceman = kApfsFormatGenesisSpacemanBlock;
+    layout.genesisReaper = layout.genesisSpaceman + span;
+    layout.liveSpaceman = layout.genesisReaper + 1;
+    layout.liveReaper = layout.liveSpaceman + span;
+    layout.fqIpTree = layout.liveReaper + 1;
+    layout.fqMainTree = layout.fqIpTree + 1;
+    layout.liveDataIndex = static_cast<uint32_t>(span + 1);
+    layout.liveDataLen = static_cast<uint32_t>(span + 3);
+    return layout;
+}
+
 // Lay out the ip-bitmap free-next ring for a checkpoint: the in-use checkpoint's
 // ip_bm_size blocks (slots 0 for genesis, ip_bm_size for live) are marked 0xFFFF;
 // the rest form a linked free list (the genesis slots trail the live free list as
@@ -1755,13 +1808,21 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
                  cabAddrs,
                  ghostIpFreeCount] = params;
     const uint64_t cibCount = static_cast<uint64_t>(cibAddrs.size());
-    QByteArray block =
-        newApfsObjectBlock(blockSize, kApfsFormatSpacemanOid, xid, kApfsObjectTypeSpaceman);
     const uint64_t freeBlocks = blockCount > reservedBlocks ? blockCount - reservedBlocks : 0;
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, cibCount, cabCount);
     const uint64_t cibArrayOffset = spacemanCibArrayOffset(ipBmSize);
+    // The spaceman is one block until its inline cib/cab-address array overflows, then it
+    // spans a second block (the dead-zone fix); the object header lives in block 0 and the
+    // fletcher64 covers the whole object.
+    const uint64_t addrEntries = cabCount > 0 ? cabCount : cibCount;
+    const uint64_t spacemanBlocks = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
+    QByteArray block(static_cast<qsizetype>(blockSize) * static_cast<qsizetype>(spacemanBlocks),
+                     '\0');
+    writeLe64(&block, kApfsObjectOidOffset, kApfsFormatSpacemanOid);
+    writeLe64(&block, kApfsObjectXidOffset, xid);
+    writeLe32(&block, kApfsObjectTypeOffset, kApfsObjectTypeSpaceman);
     writeLe32(&block, kApfsSpacemanBlockSizeOffset, blockSize);
     writeLe32(&block, kApfsSpacemanBlocksPerChunkOffset, kApfsSpacemanBlocksPerChunk);
     writeLe32(&block, kApfsSpacemanChunksPerCibOffset, kApfsSpacemanChunksPerCib);
@@ -2715,6 +2776,17 @@ uint64_t cabCountForCibs(uint64_t cibCount) {
     return cibCount > kApfsSpacemanCibsPerCab
                ? (cibCount + kApfsSpacemanCibsPerCab - 1) / kApfsSpacemanCibsPerCab
                : 0;
+}
+
+// Checkpoint-data ephemeral layout derived from a container's block count (the form the
+// post-format validator has, which only carries block size + count).
+ApfsFormatEphemeralLayout apfsFormatEphemeralLayoutForBlockCount(uint32_t blockSize,
+                                                                 uint64_t blockCount) {
+    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    const uint64_t cibCount = cibCountForChunks(chunkCount);
+    const uint64_t cabCount = cabCountForCibs(cibCount);
+    return apfsFormatEphemeralLayout(blockSize, chunkCount, cibCount, cabCount);
 }
 
 // Internal-pool placement matching how the macOS kernel rotates a multi-CIB
@@ -3778,6 +3850,17 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
+    // The in-place commit re-emits the spaceman as a single block. A metadata-overflow
+    // container whose inline cib-address array overflows into a second spaceman block
+    // (the ~2.9-7.8 TiB dead zone) formats and mounts cleanly (Apple-certified) but its
+    // in-place mutation is a follow-on; fail closed here rather than re-emit a truncated
+    // single-block spaceman over the two-block object.
+    if (apfsFormatEphemeralLayoutForBlockCount(blockSize, blockCount).spacemanBlocks > 1) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit on this metadata-overflow container is not yet "
+                           "supported: the spaceman spans more than one block"));
+        return false;
+    }
     // Metadata-overflow tier (>~1.3 TiB): chunk 0 is fully reserved, so the commit
     // allocates from the boundary chunk (metadataChunks - 1). That chunk must live
     // in cib 0 (index < chunks_per_cib) so the existing cib-0 rotation can carry its
@@ -4883,15 +4966,19 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
                                             uint32_t blockSize) {
     const PartitionApfsContainerGeometry geometry =
         PartitionApfsWriter::computeContainerGeometry(blockCount, blockSize);
-    // The published address array (inline cibs when cab_count 0, else the cab
-    // addresses) sits just past the ip-bitmap free-next ring (which grows with
-    // ip_bm_size); both must fit the spaceman block.
+    // The published address array (inline cibs when cab_count 0, else the cab addresses)
+    // sits just past the ip-bitmap free-next ring (which grows with ip_bm_size). When it
+    // overflows one block the spaceman object spills into more blocks (Apple/mkapfs size
+    // the object to fit, since Apple forbids CAB for cib_count <= 507), so the real ceiling
+    // is that the genesis + live spaceman objects and the live checkpoint's reaper + two
+    // free-queue trees all fit the fixed checkpoint-data ring.
     const uint64_t ipBmSize =
         ipBitmapSizeBlocks(geometry.chunk_count, geometry.cib_count, geometry.cab_count);
     const uint64_t addrEntries = geometry.cab_count > 0 ? geometry.cab_count : geometry.cib_count;
-    const bool arrayFits = static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)) +
-                               static_cast<qsizetype>(addrEntries) * 8 <=
-                           static_cast<qsizetype>(blockSize);
+    const uint64_t spacemanBlocks = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
+    const uint64_t liveEphemeralEnd = kApfsFormatGenesisSpacemanBlock + 2 * spacemanBlocks + 3;
+    const bool arrayFits = liveEphemeralEnd <
+                           kApfsFormatCheckpointDataBaseBlock + kApfsFormatCheckpointDataBlocks;
     // The genesis/live IP usage bitmap is a single 4096-byte block; the live
     // checkpoint marks every internal-pool block it owns (immutable cibs + cabs +
     // metadata-chunk bitmaps + the six-block cib0/cab0 rotation), which must fit.
@@ -4937,6 +5024,8 @@ bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
 
 bool readGeneratedApfsLayoutBlocks(const GeneratedApfsLayoutContext& context,
                                    GeneratedApfsLayoutBlocks* blocks) {
+    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayoutForBlockCount(
+        context.geometry.blockSize, context.geometry.blockCount);
     const std::array<std::pair<uint64_t, QByteArray*>, 12> targets{{
         {kApfsFormatNxsbBlock, &blocks->nxsb},
         {kApfsFormatCheckpointMapBlock, &blocks->checkpointMap},
@@ -4947,8 +5036,8 @@ bool readGeneratedApfsLayoutBlocks(const GeneratedApfsLayoutContext& context,
         {kApfsFormatVolumeOmapBlock, &blocks->volumeOmap},
         {kApfsFormatVolumeOmapTreeBlock, &blocks->volumeOmapTree},
         {kApfsFormatRootTreeBlock, &blocks->rootTree},
-        {kApfsFormatSpacemanBlock, &blocks->spaceman},
-        {kApfsFormatReaperBlock, &blocks->reaper},
+        {ephemeral.liveSpaceman, &blocks->spaceman},
+        {ephemeral.liveReaper, &blocks->reaper},
         {kApfsFormatChunkInfoBlock, &blocks->chunkInfo},
     }};
     for (const auto& [blockIndex, target] : targets) {
@@ -5018,6 +5107,8 @@ void appendCheckpointMapEntryBlocker(const GeneratedApfsLayoutContext& context,
 
 void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context,
                                        const GeneratedApfsLayoutBlocks& blocks) {
+    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayoutForBlockCount(
+        context.geometry.blockSize, context.geometry.blockCount);
     appendGeneratedLayoutBlocker(
         le32(blocks.nxsb, kApfsNxXpDescBlocksOffset) == kApfsFormatCheckpointDescBlocks &&
             le64(blocks.nxsb, kApfsNxXpDescBaseOffset) == kApfsFormatCheckpointDescBaseBlock &&
@@ -5028,8 +5119,8 @@ void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context
     appendGeneratedLayoutBlocker(
         le32(blocks.nxsb, kApfsNxXpDataBlocksOffset) == kApfsFormatCheckpointDataBlocks &&
             le64(blocks.nxsb, kApfsNxXpDataBaseOffset) == kApfsFormatCheckpointDataBaseBlock &&
-            le32(blocks.nxsb, kApfsNxXpDataIndexOffset) == 2 &&
-            le32(blocks.nxsb, kApfsNxXpDataLenOffset) == 4,
+            le32(blocks.nxsb, kApfsNxXpDataIndexOffset) == ephemeral.liveDataIndex &&
+            le32(blocks.nxsb, kApfsNxXpDataLenOffset) == ephemeral.liveDataLen,
         QStringLiteral("APFS generated/minimal checkpoint data geometry mismatch"),
         context.blockers);
     appendGeneratedLayoutBlocker(le64(blocks.nxsb, kApfsNxReaperOidOffset) == kApfsFormatReaperOid,
@@ -5058,18 +5149,16 @@ void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context
         entry,
         {.type = kApfsObjectTypeSpaceman,
          .oid = kApfsFormatSpacemanOid,
-         .paddr = kApfsFormatSpacemanBlock},
+         .paddr = ephemeral.liveSpaceman},
         QStringLiteral("APFS generated/minimal checkpoint map must resolve the space manager"));
     appendCheckpointMapEntryBlocker(
         context,
         blocks.checkpointMap,
         entry + kApfsCheckpointMapEntryBytes,
-        {.type = kApfsObjectTypeReaper,
-         .oid = kApfsFormatReaperOid,
-         .paddr = kApfsFormatReaperBlock},
+        {.type = kApfsObjectTypeReaper, .oid = kApfsFormatReaperOid, .paddr = ephemeral.liveReaper},
         QStringLiteral("APFS generated/minimal checkpoint map must resolve the reaper"));
     appendGeneratedHeaderBlockers({.block = &blocks.reaper,
-                                   .blockIndex = kApfsFormatReaperBlock,
+                                   .blockIndex = ephemeral.liveReaper,
                                    .expectedOid = kApfsFormatReaperOid,
                                    .expectedType = kApfsObjectTypeReaper,
                                    .allowChecksumRepair = context.allowChecksumRepair,
@@ -6351,6 +6440,15 @@ bool appendExistingFormatTargetBlockers(const PartitionApfsImageFormatRequest& r
            appendFormatWipeConfirmationBlocker(request, result);
 }
 
+// Mark the freshly created image file sparse where the platform supports it, so a
+// large container (the metadata-overflow/CAB tiers reach multiple TiB) materializes
+// only the metadata blocks actually written rather than its full logical size. Best
+// effort: on a file system without sparse support the subsequent resize still works
+// when the volume has room. On POSIX, ftruncate already produces a sparse file.
+void markImageSparse(QFile* image) {
+    markFileSparse(image->handle());
+}
+
 bool createSizedApfsImage(const QString& path,
                           uint64_t sizeBytes,
                           QFile* image,
@@ -6361,6 +6459,7 @@ bool createSizedApfsImage(const QString& path,
             QStringLiteral("Unable to create APFS image: %1").arg(image->errorString()));
         return false;
     }
+    markImageSparse(image);
     if (!image->resize(static_cast<qint64>(sizeBytes))) {
         blockers->append(QStringLiteral("Unable to size APFS image: %1").arg(image->errorString()));
         return false;
@@ -6382,6 +6481,21 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                 kApfsSpacemanBlocksPerChunk;
     const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
     const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount, mcib.cabCount);
+    // The spaceman ephemeral object spans one block until its inline cib-address array
+    // overflows (the ~2.9 TiB metadata-overflow band), then a second; the genesis and
+    // live checkpoint-data ephemerals after each spaceman shift by spacemanBlocks-1 so
+    // every certified single-block tier stays byte-identical.
+    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayout(
+        request.block_size_bytes, chunkCount, mcib.cibCount, mcib.cabCount);
+    const uint64_t spacemanBlocks = ephemeral.spacemanBlocks;
+    const uint32_t spacemanByteSize =
+        static_cast<uint32_t>(request.block_size_bytes * spacemanBlocks);
+    const uint64_t genesisSpacemanBlock = ephemeral.genesisSpaceman;
+    const uint64_t genesisReaperBlock = ephemeral.genesisReaper;
+    const uint64_t liveSpacemanBlock = ephemeral.liveSpaceman;
+    const uint64_t liveReaperBlock = ephemeral.liveReaper;
+    const uint64_t fqIpTreeBlock = ephemeral.fqIpTree;
+    const uint64_t fqMainTreeBlock = ephemeral.fqMainTree;
     // The genesis rotation group the live checkpoint holds in sm_fq[IP] = the group
     // stride (cib0 + bitmap, +cab0/boundary). apfsck marks these used via the
     // free-queue, so the count must match the ghost-group size emitted in the layout.
@@ -6402,8 +6516,21 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
         {kApfsFormatVolumeOid, kApfsFormatXid, volSuper}};
     const QVector<ApfsObjectMapEntry> volumeMappings{
         {kApfsFormatRootTreeOid, kApfsFormatXid, rootTree}};
-    const QByteArray nxsb = buildNxSuperblock(
-        request.block_size_bytes, blockCount, containerUuid, {.omapOid = containerOmap}, blockers);
+    // Checkpoint-data ring: genesis holds spacemanBlocks + 1 (reaper) blocks; live holds
+    // spacemanBlocks + 3 (reaper + the two free-queue trees) right after it. For a
+    // single-block spaceman these reduce to the certified 0/2/2 and 2/4/6.
+    const uint32_t genesisDataLen = static_cast<uint32_t>(spacemanBlocks + 1);
+    const uint32_t liveDataIndex = static_cast<uint32_t>(spacemanBlocks + 1);
+    const uint32_t liveDataLen = static_cast<uint32_t>(spacemanBlocks + 3);
+    const uint32_t liveDataNext = static_cast<uint32_t>(2 * spacemanBlocks + 4);
+    const QByteArray nxsb = buildNxSuperblock(request.block_size_bytes,
+                                              blockCount,
+                                              containerUuid,
+                                              {.dataIndex = liveDataIndex,
+                                               .dataLen = liveDataLen,
+                                               .dataNext = liveDataNext,
+                                               .omapOid = containerOmap},
+                                              blockers);
     const QByteArray genesisNxsb = buildNxSuperblock(request.block_size_bytes,
                                                      blockCount,
                                                      containerUuid,
@@ -6411,26 +6538,52 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                                       .descIndex = 0,
                                                       .descNext = 2,
                                                       .dataIndex = 0,
-                                                      .dataLen = 2,
-                                                      .dataNext = 2,
+                                                      .dataLen = genesisDataLen,
+                                                      .dataNext = genesisDataLen,
                                                       .omapOid = ghostOmap,
                                                       .fsOid = 0,
                                                       .nextOid = kApfsFormatGenesisNextOid},
                                                      blockers);
     const QVector<ApfsCheckpointMapEntry> genesisMappings{
-        {kApfsObjectTypeSpaceman, 0, kApfsFormatSpacemanOid, kApfsFormatGenesisSpacemanBlock},
-        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, kApfsFormatGenesisReaperBlock}};
+        {kApfsObjectTypeSpaceman,
+         0,
+         kApfsFormatSpacemanOid,
+         genesisSpacemanBlock,
+         spacemanByteSize},
+        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, genesisReaperBlock}};
     const QVector<ApfsCheckpointMapEntry> liveMappings{
-        {kApfsObjectTypeSpaceman, 0, kApfsFormatSpacemanOid, kApfsFormatSpacemanBlock},
-        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, kApfsFormatReaperBlock},
+        {kApfsObjectTypeSpaceman, 0, kApfsFormatSpacemanOid, liveSpacemanBlock, spacemanByteSize},
+        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, liveReaperBlock},
         {kApfsObjectTypeBtreeEphemeral,
          kApfsObjectSubtypeFreeQueue,
          kApfsFormatFqIpTreeOid,
-         kApfsFormatFqIpTreeBlock},
+         fqIpTreeBlock},
         {kApfsObjectTypeBtreeEphemeral,
          kApfsObjectSubtypeFreeQueue,
          kApfsFormatFqMainTreeOid,
-         kApfsFormatFqMainTreeBlock}};
+         fqMainTreeBlock}};
+    // The spaceman objects span spacemanBlocks blocks; the first block goes in the block
+    // list here and any continuation block is appended after (writeBlock takes one block
+    // at a time, but the object header + fletcher64 already cover the whole object).
+    const QByteArray genesisSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                                                              .blockCount = blockCount,
+                                                              .reservedBlocks = ghostReserved,
+                                                              .xid = kApfsFormatGenesisXid,
+                                                              .genesis = true,
+                                                              .cibAddrs = mcib.ghostCibs,
+                                                              .cabCount = mcib.cabCount,
+                                                              .cabAddrs = mcib.ghostCabs},
+                                                             blockers);
+    const QByteArray liveSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                                                           .blockCount = blockCount,
+                                                           .reservedBlocks = seedData,
+                                                           .xid = kApfsFormatXid,
+                                                           .genesis = false,
+                                                           .cibAddrs = mcib.liveCibs,
+                                                           .cabCount = mcib.cabCount,
+                                                           .cabAddrs = mcib.liveCabs,
+                                                           .ghostIpFreeCount = ghostIpFreeCount},
+                                                          blockers);
     QVector<ApfsImageBlock> blocks{
         {kApfsFormatNxsbBlock, nxsb},
         {kApfsFormatGenesisMapBlock,
@@ -6447,38 +6600,19 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                  liveMappings,
                                  blockers)},
         {kApfsFormatCheckpointNxsbCopyBlock, nxsb},
-        {kApfsFormatGenesisSpacemanBlock,
-         buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                             .blockCount = blockCount,
-                             .reservedBlocks = ghostReserved,
-                             .xid = kApfsFormatGenesisXid,
-                             .genesis = true,
-                             .cibAddrs = mcib.ghostCibs,
-                             .cabCount = mcib.cabCount,
-                             .cabAddrs = mcib.ghostCabs},
-                            blockers)},
-        {kApfsFormatGenesisReaperBlock,
+        {genesisSpacemanBlock,
+         genesisSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
+        {genesisReaperBlock,
          buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
-        {kApfsFormatSpacemanBlock,
-         buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                             .blockCount = blockCount,
-                             .reservedBlocks = seedData,
-                             .xid = kApfsFormatXid,
-                             .genesis = false,
-                             .cibAddrs = mcib.liveCibs,
-                             .cabCount = mcib.cabCount,
-                             .cabAddrs = mcib.liveCabs,
-                             .ghostIpFreeCount = ghostIpFreeCount},
-                            blockers)},
-        {kApfsFormatReaperBlock,
-         buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
-        {kApfsFormatFqIpTreeBlock,
+        {liveSpacemanBlock, liveSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
+        {liveReaperBlock, buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
+        {fqIpTreeBlock,
          buildFreeQueueTreeBlock(request.block_size_bytes,
                                  kApfsFormatFqIpTreeOid,
                                  mcib.ghostCibs.first(),
                                  ghostIpFreeCount,
                                  blockers)},
-        {kApfsFormatFqMainTreeBlock,
+        {fqMainTreeBlock,
          buildFreeQueueTreeBlock(
              request.block_size_bytes, kApfsFormatFqMainTreeOid, ghostOmap, 2, blockers)},
         {ghostOmap,
@@ -6530,6 +6664,18 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                  containerMappings,
                                  kApfsFormatXid,
                                  blockers)}};
+
+    // Continuation blocks of any multi-block (overflow) spaceman object. The header +
+    // fletcher64 stamped over the whole object live in the first block (already in the
+    // list above); these are the raw remaining blocks of the same contiguous object.
+    for (uint64_t i = 1; i < spacemanBlocks; ++i) {
+        const qsizetype off = static_cast<qsizetype>(i * request.block_size_bytes);
+        blocks.append(
+            {genesisSpacemanBlock + i,
+             genesisSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
+        blocks.append({liveSpacemanBlock + i,
+                       liveSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
+    }
 
     // Internal-pool chunk-info blocks + chunk-0 allocation bitmaps. cib 0 (chunk
     // 0's allocation cib) gets a genesis (xid 1) and a live (xid 2) copy in its

@@ -1,0 +1,34 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-metadata-overflow-deadzone",
+    "tier": "APFS ~2.9-7.8 TiB metadata-overflow dead zone: multi-block spaceman FORMAT",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a sparse 4 TiB image passed through",
+    "change": "Closed the ~2.9-7.8 TiB FORMAT 'dead zone'. In this band the spaceman's inline cib-address array overflows one 4096-byte block, but Apple forbids the CAB tier for cib_count <= 507, so the writer previously failed closed. The fix matches Apple/mkapfs: the spaceman ephemeral object spans more than one block (spaceman_size = roundup(cibArrayOffset + cib_count*8, blockSize)) and the inline array spills into the second block. spacemanBlockSpan + apfsFormatEphemeralLayout compute the span and shift the genesis + live checkpoint-data ephemerals (reaper, the two free-queue trees) after each spaceman by spacemanBlocks-1; buildSpacemanBlock emits the multi-block object (object header + fletcher64 cover the whole object); the live checkpoint map records cpm_size = spacemanBlocks * blockSize and the nx_superblock data-ring (data_index/len/next) accounts for the extra blocks. For a single-block spaceman everything reduces to the certified constants (9/10/11/12/13/14, data index 2 / len 4), so all existing tiers stay byte-identical. The writer also marks the created image file sparse (markFileSparse via FSCTL_SET_SPARSE on Windows; POSIX ftruncate is already sparse) so a multi-TiB container materializes only its written metadata.",
+    "scenario": "S.A.K. format-image of a 4 TiB container (1073741824 blocks -> 32768 chunks -> 261 cib_count, cab_count 0) named DDZ4T. 261 cibs overflow the inline array, so the spaceman spans 2 blocks.",
+    "linux_apfsck": "apfsck -cw clean (exit 0, no findings) on the S.A.K.-formatted 4 TiB container. Cross-checked: apfsprogs mkapfs also produces an apfsck-clean multi-block spaceman at 4 TiB.",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted DDZ4T; diskutil info /Volumes/DDZ4T reported APFS Container disk1, APFS Physical Store disk0, Container Free Space 4.4 TB, Allocation Block Size 4096",
+        "kernel_continuation": "the volume superblock records 'formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1)'; the kernel mounted read-write and continued the checkpoint to transaction ID 4",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID 412613A0-40F1-48DC-9722-56CD6D8C3139 appears to be OK.",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 4)",
+            "space manager (the multi-block spaceman is accepted)",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "snapshot metadata",
+            "fsroot tree",
+            "extent ref tree",
+            "volume object map space",
+            "allocated space"
+        ],
+        "evidence": "apfs-deadzone-fsck-clean.png (fsck verdict + kernel continuation), apfs-deadzone-kernel-mount.png (diskutil info showing the auto-mounted 4 TiB DDZ4T)"
+    },
+    "note": "FORMAT for the dead zone is now Apple-certified, so the writer supports the full single-CIB -> multi-CIB -> metadata-overflow -> CAB range with no fail-closed band below 32 TiB. Unit test apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman asserts the 4 TiB spaceman cpm_size is two blocks. In-place COW mutation of a dead-zone container (re-emitting the two-block spaceman) is the follow-on; the engine currently keeps in-place commits below the overflow band.",
+    "completed_at_utc": "2026-06-20T03:30:00Z"
+}
