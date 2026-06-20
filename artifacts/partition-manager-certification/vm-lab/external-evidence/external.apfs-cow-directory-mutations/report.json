@@ -1,0 +1,35 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-directory-mutations",
+    "tier": "A2-3.2 increment 4b: in-place COW delete-directory, directory-child write, and directory-child delete",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB image passed through",
+    "change": "Completed the four directory mutations on the full-tree COW engine. Added commitInPlaceDirectoryDelete (drops one empty root directory from the preserved tree, root valence falls by one, volume directory count 0xC0 decreases, fails closed on a missing or non-empty directory). Generalized commitInPlaceRootFileWrite with a parentDirectoryId so the same create-or-replace primitive serves both root files and directory children; threaded a parentDirectoryId through ApfsFileInsertRequest (buildChainedFileList new-file append) and a targetParentId through ApfsDeleteListInput/ApfsDeleteRequest (buildDeleteFileList match), so a same-named file under a different parent is untouched. Exposed image entry points commitImageOnlyDirectoryDelete / commitImageOnlyDirectoryChildWrite / commitImageOnlyDirectoryChildDelete plus the on-hardware raw analogues commitRawDirectoryCreate / commitRawDirectoryDelete / commitRawDirectoryChildWrite / commitRawDirectoryChildDelete (resolveDirectoryId maps a directory name to its object id). New CLI commands commit-image-directory-delete / commit-image-directory-child-write / commit-image-directory-child-delete. Wired the File Management bridge's four directory routes (createDirectory, deleteDirectory, writeFile child, deleteFile child) off the legacy raw writers onto the certified COW engine; removed the now-unused fromApfsWriteResult / fromApfsDeleteResult / fromApfsDirectoryResult mappers.",
+    "scenario": "From an empty 64 MiB container formatted DC4B: commit-image-file-insert r1.txt, commit-image-directory-create docs, commit-image-directory-child-write docs/a.txt, commit-image-directory-child-write docs/b.txt (docs valence 2), commit-image-directory-child-delete docs/a.txt (docs valence 1, only b.txt), commit-image-directory-create tmp, commit-image-directory-delete tmp (empty directory removed). Each commit a separate crash-safe COW checkpoint on the prior output; writer emitted final xid 9.",
+    "linux_apfsck": "apfsck -cw on the child-write, second child-write, child-delete, create-tmp, and delete-tmp results reports only the pre-existing benign 'Data stream xfield: wrong flags.' note - no directory-valence error and no 'Chunk-info block: xid is too recent.' (the container is non-genesis once r1.txt is inserted).",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted DC4B read-write; ls /Volumes/DC4B showed 'docs' and 'r1.txt' with no 'tmp' (delete-directory), ls /Volumes/DC4B/docs showed only 'b.txt' with no 'a.txt' (directory-child delete), cat /Volumes/DC4B/docs/b.txt returned 'child-b-content' (directory-child write), and cat /Volumes/DC4B/r1.txt returned 'root-file-one'",
+        "kernel_continuation": "writer emitted xid 9 (the delete-tmp commit, previous_xid 8 -> new_xid 9); the kernel mounted read-write and continued the checkpoint to transaction ID 11",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1 (the kernel auto-mounted the container read-write first)",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID 5C1E0067-6314-42CB-9399-F6C6E5B432D5 appears to be OK.",
+        "volume_provenance": "The volume DC4B was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1).",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 11)",
+            "space manager",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "snapshot metadata",
+            "fsroot tree (directory valence after delete-directory + child write/delete)",
+            "extent ref tree",
+            "volume object map space",
+            "allocated space"
+        ],
+        "evidence": "apfs-cow-dirmut-fsck-clean.png (fsck verdict + kernel continuation), apfs-cow-dirmut-kernel-read.png (kernel ls/cat showing tmp removed, a.txt removed, b.txt readable)"
+    },
+    "note": "A2-3.2 is now complete: all four directory mutations (create, delete, child write, child delete) plus the file insert/delete/rename/write primitives run on the certified full-tree COW engine, and the File Management bridge's directory routes are wired off the legacy raw writers. Remaining A2 = production parity follow-ons only (patch/create-file-via-write/change-label already route through the COW write primitive). A8 OUT of scope.",
+    "completed_at_utc": "2026-06-20T01:40:00Z"
+}

@@ -3634,6 +3634,9 @@ struct ApfsFileInsertRequest {
     // parentDirectoryId) preserved across the commit. Empty on a flat-root container,
     // keeping the certified single-level layout byte-identical.
     QVector<ApfsRootDirectoryPayload> directories;
+    // The new file's parent directory (the root directory for a root file, or a
+    // directory's object id for a directory child).
+    uint64_t newFileParentId{kApfsRootDirectoryId};
 };
 
 struct ApfsChainedListInput {
@@ -3690,7 +3693,7 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     }
     files->append({.fileName = in.request.fileName.trimmed(),
                    .data = in.request.fileData,
-                   .parentDirectoryId = kApfsRootDirectoryId,
+                   .parentDirectoryId = in.request.newFileParentId,
                    .fileId = newFileId,
                    .privateId = newFileId,
                    .dataStartBlock = in.newDataStart,
@@ -4182,6 +4185,7 @@ struct ApfsDeleteListInput {
     ApfsLiveFsChain chain;
     QVector<ApfsRootFilePayload> allFiles;
     QString targetName;
+    uint64_t targetParentId{kApfsRootDirectoryId};  // root for a root file, else a directory id
 };
 
 // Split the container's root files into the delete target (matched by name,
@@ -4207,9 +4211,10 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         if (recovered.size() > 1) {
             file.dataExtents = recovered;
         }
-        // The delete target is a root file (a directory child is removed through the
-        // child-delete path), so only a root file matches the requested name.
-        if (file.parentDirectoryId == kApfsRootDirectoryId && file.fileName == in.targetName) {
+        // Match the target in its requested parent only (the root directory for a root
+        // file, or a directory id for a directory child), so a same-named file under a
+        // different parent is left untouched.
+        if (file.parentDirectoryId == in.targetParentId && file.fileName == in.targetName) {
             *target = file;
             found = true;
         } else {
@@ -4228,6 +4233,7 @@ struct ApfsDeleteRequest {
     QVector<ApfsRootFilePayload> allFiles;
     QVector<ApfsRootDirectoryPayload> directories;  // preserved across the commit
     QString targetName;
+    uint64_t targetParentId{kApfsRootDirectoryId};  // root for a root file, else a directory id
 };
 
 // A2: delete one file from a generated container with a true in-place
@@ -4247,11 +4253,15 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     QVector<ApfsRootFilePayload> remaining;
     ApfsRootFilePayload target;
-    if (!buildDeleteFileList(
-            {ctx.image, ctx.geometry, ctx.chain, request.allFiles, request.targetName},
-            &remaining,
-            &target,
-            blockers)) {
+    if (!buildDeleteFileList({ctx.image,
+                              ctx.geometry,
+                              ctx.chain,
+                              request.allFiles,
+                              request.targetName,
+                              request.targetParentId},
+                             &remaining,
+                             &target,
+                             blockers)) {
         return false;
     }
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
@@ -4458,6 +4468,75 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                             blockers);
 }
 
+// A2-3.2: delete one empty root directory with a true in-place copy-on-write commit.
+// The directory is dropped from the preserved full tree, root's valence falls by one,
+// and the volume directory count decreases. Fails closed if the directory is missing or
+// still holds children (a non-empty directory is emptied through the child paths first).
+bool commitInPlaceDirectoryDelete(QIODevice* image,
+                                  const ApfsDirectoryCreateRequest& request,
+                                  ApfsInPlaceCheckpointResult* result,
+                                  QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    const QString name = request.directoryName.trimmed();
+    uint64_t targetDirId = 0;
+    QVector<ApfsRootDirectoryPayload> remainingDirectories;
+    for (const auto& directory : request.existingDirectories) {
+        if (directory.directoryName == name) {
+            targetDirId = directory.directoryId;
+        } else {
+            remainingDirectories.append(directory);
+        }
+    }
+    if (targetDirId == 0) {
+        blockers->append(
+            QStringLiteral("APFS directory-delete-commit: directory '%1' was not found").arg(name));
+        return false;
+    }
+    for (const auto& file : request.existingFiles) {
+        if (file.parentDirectoryId == targetDirId) {
+            blockers->append(
+                QStringLiteral("APFS directory-delete-commit: directory '%1' is not empty")
+                    .arg(name));
+            return false;
+        }
+    }
+    QVector<ApfsRootFilePayload> files;
+    if (!recoverPreservedFiles(
+            {ctx.image, ctx.geometry, ctx.chain}, request.existingFiles, &files, blockers)) {
+        return false;
+    }
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes({ctx.geometry.blockSize, files, remainingDirectories, ctx.firstLeafOid},
+                          &fsNodes,
+                          blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
+    QVector<uint64_t> newBlocks;
+    uint64_t directoryChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
+        return false;
+    }
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = files,
+                             .extentRefNew = 0,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = 0,
+                             .directoryCountDelta = -1,
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = directoryChunk1Bitmap},
+                            result,
+                            blockers);
+}
+
 // A2-3: create-or-replace one root file with a true in-place copy-on-write commit
 // (the production mutation route's file-write primitive). A new name is one insert
 // commit; an existing name is a faithful replace - a delete commit (frees the old
@@ -4469,7 +4548,8 @@ struct ApfsRootFileWriteRequest {
     QVector<ApfsRootFilePayload> allFiles;  // every file on the device (root + children)
     QString fileName;
     QByteArray fileData;
-    QVector<ApfsRootDirectoryPayload> directories;  // preserved across the commit
+    QVector<ApfsRootDirectoryPayload> directories;     // preserved across the commit
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};  // root for a root file, else a directory id
 };
 
 bool commitInPlaceRootFileWrite(QIODevice* image,
@@ -4477,24 +4557,25 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
                                 ApfsInPlaceCheckpointResult* result,
                                 QStringList* blockers) {
     const QString& fileName = request.fileName;
-    // The write target is a root file; a directory child of the same name does not
-    // collide with it (the root file is the one replaced).
-    const auto isReplacedRootFile = [&fileName](const ApfsRootFilePayload& file) {
-        return file.parentDirectoryId == kApfsRootDirectoryId && file.fileName == fileName;
+    const uint64_t parentId = request.parentDirectoryId;
+    // The write target lives in one parent (root, or a directory); a same-named file
+    // under a different parent does not collide with it (only the matching one replaced).
+    const auto isReplacedFile = [&fileName, parentId](const ApfsRootFilePayload& file) {
+        return file.parentDirectoryId == parentId && file.fileName == fileName;
     };
     const bool exists =
-        std::any_of(request.allFiles.cbegin(), request.allFiles.cend(), isReplacedRootFile);
+        std::any_of(request.allFiles.cbegin(), request.allFiles.cend(), isReplacedFile);
     QVector<ApfsRootFilePayload> existing;
     if (exists) {
         ApfsInPlaceCheckpointResult deleteResult;
         if (!commitInPlaceFileDelete(image,
-                                     {request.allFiles, request.directories, fileName},
+                                     {request.allFiles, request.directories, fileName, parentId},
                                      &deleteResult,
                                      blockers)) {
             return false;
         }
         for (const ApfsRootFilePayload& file : request.allFiles) {
-            if (!isReplacedRootFile(file)) {
+            if (!isReplacedFile(file)) {
                 existing.append(file);
             }
         }
@@ -4502,7 +4583,10 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
         existing = request.allFiles;
     }
     return commitInPlaceFileInsert(
-        image, {existing, fileName, request.fileData, request.directories}, result, blockers);
+        image,
+        {existing, fileName, request.fileData, request.directories, parentId},
+        result,
+        blockers);
 }
 
 
@@ -4565,6 +4649,17 @@ bool collectFullFsTree(const QString& sourcePath,
 
 // Full one-level tree for a chained insert; fails closed if the new root file name
 // already exists as a root file or directory.
+// The object id of the named root directory in a collected tree, or 0 if absent.
+uint64_t resolveDirectoryId(const QVector<ApfsRootDirectoryPayload>& directories,
+                            const QString& directoryName) {
+    for (const auto& directory : directories) {
+        if (directory.directoryName == directoryName) {
+            return directory.directoryId;
+        }
+    }
+    return 0;
+}
+
 bool collectExistingFullFsTree(const QString& sourcePath,
                                const QString& newFileName,
                                QVector<ApfsRootFilePayload>* files,
@@ -10571,6 +10666,170 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     return result;
 }
 
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+    const PartitionApfsImageRootDirectoryMutationRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QLatin1StringView purpose("directory-delete-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(
+            result.source_image_path, &existingFiles, &directories, &result.blockers) ||
+        !copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceDirectoryDelete(
+            &image, {existingFiles, directories, cleanDirectoryName}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+    const PartitionApfsImageRootDirectoryFileWriteRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    const QLatin1StringView purpose("directory-child-write-commit");
+    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+        result.blockers.append(QStringLiteral(
+            "APFS directory-child-write-commit payload exceeds the current size cap"));
+        return result;
+    }
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    if (parentId == 0) {
+        result.blockers.append(
+            QStringLiteral("APFS directory-child-write-commit: directory '%1' was not found")
+                .arg(cleanDirectoryName));
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceRootFileWrite(
+            &image,
+            {allFiles, cleanFileName, request.file_data, directories, parentId},
+            &commit,
+            &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDirectoryChildDelete(
+    const PartitionApfsImageRootDirectoryFileDeleteRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    const QLatin1StringView purpose("directory-child-delete-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    if (parentId == 0) {
+        result.blockers.append(
+            QStringLiteral("APFS directory-child-delete-commit: directory '%1' was not found")
+                .arg(cleanDirectoryName));
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileDelete(
+            &image, {allFiles, directories, cleanFileName, parentId}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -11063,6 +11322,209 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRenam
     QStringList commitBlockers;
     if (commitInPlaceFileRename(
             target.get(), {allFiles, oldName, newName, directories}, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectoryCreate(
+    const PartitionApfsRawDirectoryMutationCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    if (!appendRootDirectoryNameBlockers(cleanDirectoryName,
+                                         QLatin1StringView("raw directory-create-commit"),
+                                         &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(result.written_image_path,
+                                   cleanDirectoryName,
+                                   &existingFiles,
+                                   &directories,
+                                   &result.blockers)) {
+        return result;
+    }
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("directory-create-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceDirectoryCreate(target.get(),
+                                     {existingFiles, directories, cleanDirectoryName},
+                                     &commit,
+                                     &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectoryDelete(
+    const PartitionApfsRawDirectoryMutationCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    if (!appendRootDirectoryNameBlockers(cleanDirectoryName,
+                                         QLatin1StringView("raw directory-delete-commit"),
+                                         &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(
+            result.written_image_path, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("directory-delete-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceDirectoryDelete(target.get(),
+                                     {existingFiles, directories, cleanDirectoryName},
+                                     &commit,
+                                     &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectoryChildWrite(
+    const PartitionApfsRawDirectoryChildWriteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(cleanFileName,
+                                    QLatin1StringView("raw directory-child-write-commit"),
+                                    &result.blockers)) {
+        return result;
+    }
+    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+        result.blockers.append(QStringLiteral(
+            "APFS raw directory-child-write-commit payload exceeds the current size cap"));
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    if (parentId == 0) {
+        result.blockers.append(
+            QStringLiteral("APFS raw directory-child-write-commit: directory '%1' was not found")
+                .arg(cleanDirectoryName));
+        return result;
+    }
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("directory-child-write-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceRootFileWrite(
+            target.get(),
+            {allFiles, cleanFileName, request.file_data, directories, parentId},
+            &commit,
+            &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectoryChildDelete(
+    const PartitionApfsRawDirectoryChildDeleteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanDirectoryName = request.directory_name.trimmed();
+    const QString cleanFileName = request.file_name.trimmed();
+    if (!appendRootFileNameBlockers(cleanFileName,
+                                    QLatin1StringView("raw directory-child-delete-commit"),
+                                    &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    if (parentId == 0) {
+        result.blockers.append(
+            QStringLiteral("APFS raw directory-child-delete-commit: directory '%1' was not found")
+                .arg(cleanDirectoryName));
+        return result;
+    }
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("directory-child-delete-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileDelete(target.get(),
+                                {allFiles, directories, cleanFileName, parentId},
+                                &commit,
+                                &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

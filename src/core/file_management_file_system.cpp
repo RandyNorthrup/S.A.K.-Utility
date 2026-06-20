@@ -347,37 +347,6 @@ FileManagementMutationResult fromHfsWriteResult(const PartitionHfsFileWriteResul
             .warnings = input.warnings};
 }
 
-FileManagementMutationResult fromApfsWriteResult(const PartitionApfsRawFileWriteResult& input,
-                                                 const QString& path) {
-    return {.ok = input.ok,
-            .file_system = QStringLiteral("APFS"),
-            .path = path,
-            .bytes_written = input.file_bytes,
-            .after_sha256 = input.readback_sha256,
-            .blockers = input.blockers,
-            .warnings = input.warnings};
-}
-
-FileManagementMutationResult fromApfsDeleteResult(const PartitionApfsRawFileDeleteResult& input,
-                                                  const QString& path) {
-    return {.ok = input.ok,
-            .file_system = QStringLiteral("APFS"),
-            .path = path,
-            .bytes_written = input.deleted_file_bytes,
-            .before_sha256 = input.deleted_file_sha256,
-            .blockers = input.blockers,
-            .warnings = input.warnings};
-}
-
-FileManagementMutationResult fromApfsDirectoryResult(
-    const PartitionApfsRawDirectoryMutationResult& input, const QString& path) {
-    return {.ok = input.ok,
-            .file_system = QStringLiteral("APFS"),
-            .path = path,
-            .blockers = input.blockers,
-            .warnings = input.warnings};
-}
-
 // Map a raw in-place COW checkpoint commit result (the certified crash-safe engine,
 // shared by file write/delete/rename) onto a File Management mutation result.
 FileManagementMutationResult fromApfsCommitResult(
@@ -625,15 +594,17 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
                                                   "limited to root directories"));
         }
         const auto parts = apfsParts(cleanPath);
-        return fromApfsDirectoryResult(
-            PartitionApfsWriter::createRawRootDirectory(
+        // Root directories use the certified crash-safe in-place COW engine.
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawDirectoryCreate(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
                  .directory_name = parts.value(0),
-                 .target_write_confirmed = true,
+                 .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
-            cleanPath);
+            cleanPath,
+            0);
     }
     return mutationBlocked(
         fs,
@@ -669,15 +640,18 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                                                   "limited to root directories"));
         }
         const auto parts = apfsParts(cleanPath);
-        return fromApfsDirectoryResult(
-            PartitionApfsWriter::deleteRawRootDirectory(
+        // Root directories use the certified crash-safe in-place COW engine
+        // (fails closed on a non-empty directory; empty children first).
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawDirectoryDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
                  .directory_name = parts.value(0),
-                 .target_write_confirmed = true,
+                 .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
-            cleanPath);
+            cleanPath,
+            0);
     }
     return mutationBlocked(
         fs,
@@ -725,7 +699,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         const auto parts = apfsParts(cleanPath);
         if (parts.size() == 1) {
             // Root files use the certified crash-safe in-place COW engine
-            // (create-or-replace); directory children remain on the legacy raw writer.
+            // (create-or-replace).
             return fromApfsCommitResult(
                 PartitionApfsWriter::commitRawFileWrite(
                     {.target_path = target.root_path,
@@ -738,17 +712,19 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
                 cleanPath,
                 static_cast<uint64_t>(data.size()));
         }
-        return fromApfsWriteResult(
-            PartitionApfsWriter::writeRawRootDirectoryFile(
+        // Directory children use the same COW engine (create-or-replace under a parent).
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawDirectoryChildWrite(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
                  .directory_name = parts.value(0),
                  .file_name = parts.value(1),
                  .file_data = data,
-                 .target_write_confirmed = true,
+                 .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
-            cleanPath);
+            cleanPath,
+            static_cast<uint64_t>(data.size()));
     }
     return mutationBlocked(
         fs,
@@ -784,8 +760,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
         }
         const auto parts = apfsParts(cleanPath);
         if (parts.size() == 1) {
-            // Root files use the certified crash-safe in-place COW engine; directory
-            // children remain on the legacy raw writer.
+            // Root files use the certified crash-safe in-place COW engine.
             return fromApfsCommitResult(
                 PartitionApfsWriter::commitRawFileDelete(
                     {.target_path = target.root_path,
@@ -797,16 +772,18 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
                 cleanPath,
                 0);
         }
-        return fromApfsDeleteResult(
-            PartitionApfsWriter::deleteRawRootDirectoryFile(
+        // Directory children use the same COW engine (delete under a parent).
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawDirectoryChildDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
                  .directory_name = parts.value(0),
                  .file_name = parts.value(1),
-                 .target_write_confirmed = true,
+                 .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
-            cleanPath);
+            cleanPath,
+            0);
     }
     return mutationBlocked(
         fs,

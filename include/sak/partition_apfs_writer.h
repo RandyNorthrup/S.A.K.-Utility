@@ -521,6 +521,42 @@ struct PartitionApfsRawFileRenameCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to create or delete one empty root directory in a generated APFS
+///        container on a raw device with an in-place copy-on-write commit (A2-3.2).
+struct PartitionApfsRawDirectoryMutationCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString directory_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to create-or-replace one file inside a root directory in a generated
+///        APFS container on a raw device with an in-place copy-on-write commit (A2-3.2).
+struct PartitionApfsRawDirectoryChildWriteCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString directory_name;
+    QString file_name;
+    QByteArray file_data;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to delete one file inside a root directory in a generated APFS
+///        container on a raw device with an in-place copy-on-write commit (A2-3.2).
+struct PartitionApfsRawDirectoryChildDeleteCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString directory_name;
+    QString file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -621,6 +657,17 @@ public:
     ///        full-tree analogue of the legacy rewrite-based createImageOnlyRootDirectory).
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyDirectoryCreate(
         const PartitionApfsImageRootDirectoryMutationRequest& request);
+    /// @brief Delete one empty root directory with an in-place COW commit.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyDirectoryDelete(
+        const PartitionApfsImageRootDirectoryMutationRequest& request);
+    /// @brief Create-or-replace one file inside a root directory with an in-place COW commit.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult
+    commitImageOnlyDirectoryChildWrite(
+        const PartitionApfsImageRootDirectoryFileWriteRequest& request);
+    /// @brief Delete one file inside a root directory with an in-place COW commit.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult
+    commitImageOnlyDirectoryChildDelete(
+        const PartitionApfsImageRootDirectoryFileDeleteRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
@@ -639,6 +686,17 @@ public:
         const PartitionApfsRawFileDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileRename(
         const PartitionApfsRawFileRenameCommitRequest& request);
+    /// @brief In-place COW directory mutations applied directly to a generated APFS
+    ///        container on a confirmed raw device (the on-hardware analogue of the
+    ///        commitImageOnlyDirectory* family; no scratch clone).
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryCreate(
+        const PartitionApfsRawDirectoryMutationCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryDelete(
+        const PartitionApfsRawDirectoryMutationCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryChildWrite(
+        const PartitionApfsRawDirectoryChildWriteCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryChildDelete(
+        const PartitionApfsRawDirectoryChildDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
         const PartitionApfsImageRootFileWriteRequest& request);
     [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(

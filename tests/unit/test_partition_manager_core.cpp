@@ -1648,6 +1648,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
+    void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -6949,6 +6950,134 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree()
          .directory_name = QStringLiteral("folder"),
          .options = options});
     QVERIFY(!dup.ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() {
+    // The in-place COW directory-child write/delete and empty-directory delete commits
+    // preserve the rest of the tree (Apple-certified: kernel reads docs/b.txt, tmp and
+    // docs/a.txt removed, fsck_apfs clean). Non-empty / missing targets fail closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2dm-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2DM"),
+                 .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("a2dm-file.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = withFile,
+                                                       .file_name = QStringLiteral("root.txt"),
+                                                       .file_data = QByteArrayLiteral("root me"),
+                                                       .options = options})
+            .ok);
+    const QString withDir = dir.filePath(QStringLiteral("a2dm-dir.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = withFile,
+                 .written_image_path = withDir,
+                 .directory_name = QStringLiteral("docs"),
+                 .options = options})
+                .ok);
+
+    // Two children -> docs valence 2.
+    const QString withA = dir.filePath(QStringLiteral("a2dm-a.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                 {.source_image_path = withDir,
+                  .written_image_path = withA,
+                  .directory_name = QStringLiteral("docs"),
+                  .file_name = QStringLiteral("a.txt"),
+                  .file_data = QByteArrayLiteral("child-a"),
+                  .options = options})
+                 .ok,
+             "child write a.txt");
+    const QString withB = dir.filePath(QStringLiteral("a2dm-b.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                {.source_image_path = withA,
+                 .written_image_path = withB,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("b.txt"),
+                 .file_data = QByteArrayLiteral("child-b"),
+                 .options = options})
+                .ok);
+    const auto docsTwo =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(withB, QStringLiteral("/docs"), 20);
+    QVERIFY2(docsTwo.ok, qPrintable(docsTwo.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docsTwo.entries.size(), 2);
+
+    // Delete a.txt -> docs holds only b.txt.
+    const QString withDelA = dir.filePath(QStringLiteral("a2dm-dela.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryChildDelete(
+                {.source_image_path = withB,
+                 .written_image_path = withDelA,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .options = options})
+                .ok);
+    const auto docsOne = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        withDelA, QStringLiteral("/docs"), 20);
+    QVERIFY2(docsOne.ok, qPrintable(docsOne.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docsOne.entries.size(), 1);
+    QCOMPARE(docsOne.entries.first().name, QStringLiteral("b.txt"));
+
+    // Create then delete an empty directory.
+    const QString withTmp = dir.filePath(QStringLiteral("a2dm-tmp.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = withDelA,
+                 .written_image_path = withTmp,
+                 .directory_name = QStringLiteral("tmp"),
+                 .options = options})
+                .ok);
+    const QString withDelTmp = dir.filePath(QStringLiteral("a2dm-deltmp.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+                 {.source_image_path = withTmp,
+                  .written_image_path = withDelTmp,
+                  .directory_name = QStringLiteral("tmp"),
+                  .options = options})
+                 .ok,
+             "delete empty tmp");
+    const auto rootListing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(withDelTmp, QStringLiteral("/"), 20);
+    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(rootListing.entries.size(), 2);
+    bool sawDocs = false;
+    bool sawRoot = false;
+    bool sawTmp = false;
+    for (const auto& entry : rootListing.entries) {
+        sawDocs = sawDocs || (entry.name == QStringLiteral("docs") && entry.directory);
+        sawRoot = sawRoot || (entry.name == QStringLiteral("root.txt"));
+        sawTmp = sawTmp || (entry.name == QStringLiteral("tmp"));
+    }
+    QVERIFY(sawDocs);
+    QVERIFY(sawRoot);
+    QVERIFY(!sawTmp);
+
+    // Fail-closed: deleting a non-empty directory, a missing directory, and writing a
+    // child into a missing directory are all rejected.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+                 {.source_image_path = withDelTmp,
+                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x1.apfs")),
+                  .directory_name = QStringLiteral("docs"),
+                  .options = options})
+                 .ok);
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+                 {.source_image_path = withDelTmp,
+                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x2.apfs")),
+                  .directory_name = QStringLiteral("ghost"),
+                  .options = options})
+                 .ok);
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                 {.source_image_path = withDelTmp,
+                  .written_image_path = dir.filePath(QStringLiteral("a2dm-x3.apfs")),
+                  .directory_name = QStringLiteral("ghost"),
+                  .file_name = QStringLiteral("c.txt"),
+                  .file_data = QByteArrayLiteral("nope"),
+                  .options = options})
+                 .ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
