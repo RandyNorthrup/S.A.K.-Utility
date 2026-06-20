@@ -1649,6 +1649,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
+    void apfsWriter_inPlaceDirectoryChildRename();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7089,6 +7090,77 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
                   .directory_name = QStringLiteral("ghost"),
                   .file_name = QStringLiteral("c.txt"),
                   .file_data = QByteArrayLiteral("nope"),
+                  .options = options})
+                 .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryChildRename() {
+    // Same-directory child rename routes onto the certified COW engine (the production
+    // parity follow-on to the directory write/delete generalization): the renamed child
+    // keeps its data, the rest of the tree is preserved, and a missing child fails closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2dr-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2DR"),
+                 .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("a2dr-file.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = withFile,
+                                                       .file_name = QStringLiteral("root.txt"),
+                                                       .file_data = QByteArrayLiteral("root me"),
+                                                       .options = options})
+            .ok);
+    const QString withDir = dir.filePath(QStringLiteral("a2dr-dir.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = withFile,
+                 .written_image_path = withDir,
+                 .directory_name = QStringLiteral("docs"),
+                 .options = options})
+                .ok);
+    const QString withChild = dir.filePath(QStringLiteral("a2dr-child.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                {.source_image_path = withDir,
+                 .written_image_path = withChild,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .file_data = QByteArrayLiteral("child-data"),
+                 .options = options})
+                .ok);
+
+    const QString renamed = dir.filePath(QStringLiteral("a2dr-renamed.apfs"));
+    const auto rename = PartitionApfsWriter::commitImageOnlyDirectoryChildRename(
+        {.source_image_path = withChild,
+         .written_image_path = renamed,
+         .directory_name = QStringLiteral("docs"),
+         .file_name = QStringLiteral("a.txt"),
+         .new_file_name = QStringLiteral("b.txt"),
+         .options = options});
+    QVERIFY2(rename.ok, qPrintable(rename.blockers.join(QStringLiteral("; "))));
+    const auto docs =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(renamed, QStringLiteral("/docs"), 20);
+    QVERIFY2(docs.ok, qPrintable(docs.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docs.entries.size(), 1);
+    QCOMPARE(docs.entries.first().name, QStringLiteral("b.txt"));
+    const auto root =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(renamed, QStringLiteral("/"), 20);
+    QVERIFY(root.ok);
+    QCOMPARE(root.entries.size(), 2);  // docs + root.txt
+
+    // Renaming a missing child fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryChildRename(
+                 {.source_image_path = renamed,
+                  .written_image_path = dir.filePath(QStringLiteral("a2dr-x.apfs")),
+                  .directory_name = QStringLiteral("docs"),
+                  .file_name = QStringLiteral("ghost.txt"),
+                  .new_file_name = QStringLiteral("z.txt"),
                   .options = options})
                  .ok);
 }

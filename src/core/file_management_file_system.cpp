@@ -791,6 +791,52 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
         QStringLiteral("File delete is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// Route an APFS rename onto the certified COW engine: a root-file rename or a
+// same-directory child rename. Moving across directories (a reparent) is a follow-on.
+FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
+                                             const QString& cleanSource,
+                                             const QString& cleanDestination) {
+    const auto sourceParts = apfsParts(cleanSource);
+    const auto destParts = apfsParts(cleanDestination);
+    if (sourceParts.size() == 1 && destParts.size() == 1) {
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawFileRename(
+                {.target_path = target.root_path,
+                 .target_container_bytes = target.size_bytes,
+                 .file_name = sourceParts.value(0),
+                 .new_file_name = destParts.value(0),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .options = apfsRawWriteOptions()}),
+            cleanDestination,
+            0);
+    }
+    if (sourceParts.size() == 2 && destParts.size() == 2 &&
+        sourceParts.value(0) == destParts.value(0)) {
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawDirectoryChildRename(
+                {.target_path = target.root_path,
+                 .target_container_bytes = target.size_bytes,
+                 .directory_name = sourceParts.value(0),
+                 .file_name = sourceParts.value(1),
+                 .new_file_name = destParts.value(1),
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .options = apfsRawWriteOptions()}),
+            cleanDestination,
+            0);
+    }
+    return mutationBlocked(
+        QStringLiteral("apfs"),
+        cleanSource,
+        QStringLiteral("APFS File Management rename is limited to a root file or a same-directory "
+                       "child (moving across directories is not yet supported)"));
+}
+
+}  // namespace
+
 FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
     const FileManagementTarget& target,
     const QString& source_path,
@@ -813,27 +859,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
             target.root_path, cleanSource, cleanDestination, hfsWriteOptions(target)));
     }
     if (fs == QStringLiteral("apfs")) {
-        const auto sourceParts = apfsParts(cleanSource);
-        const auto destParts = apfsParts(cleanDestination);
-        // This increment routes only root-file renames onto the certified COW engine
-        // (same parent, both single-component); moving across directories is a follow-on.
-        if (sourceParts.size() != 1 || destParts.size() != 1) {
-            return mutationBlocked(fs,
-                                   cleanSource,
-                                   QStringLiteral(
-                                       "APFS File Management rename is limited to root files"));
-        }
-        return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawFileRename(
-                {.target_path = target.root_path,
-                 .target_container_bytes = target.size_bytes,
-                 .file_name = sourceParts.value(0),
-                 .new_file_name = destParts.value(0),
-                 .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
-            cleanDestination,
-            0);
+        return renameApfsEntry(target, cleanSource, cleanDestination);
     }
     return mutationBlocked(
         fs,
