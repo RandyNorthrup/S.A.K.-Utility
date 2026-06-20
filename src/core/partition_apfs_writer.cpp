@@ -3621,9 +3621,13 @@ ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
 }
 
 struct ApfsFileInsertRequest {
-    QVector<ApfsRootFilePayload> existingFiles;  // {fileName, fileId, data sized for size only}
+    QVector<ApfsRootFilePayload> existingFiles;  // {fileName, fileId, parentDirectoryId, size}
     QString fileName;
     QByteArray fileData;
+    // Existing directories (with their children carried in existingFiles via
+    // parentDirectoryId) preserved across the commit. Empty on a flat-root container,
+    // keeping the certified single-level layout byte-identical.
+    QVector<ApfsRootDirectoryPayload> directories;
 };
 
 struct ApfsChainedListInput {
@@ -3649,7 +3653,9 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     for (ApfsRootFilePayload existing : in.request.existingFiles) {
-        existing.parentDirectoryId = kApfsRootDirectoryId;
+        // Keep each file's parent (root or a directory) so directory children survive;
+        // a flat-root container collected every file with parentDirectoryId == root, so
+        // this preserves the certified single-level behavior.
         existing.privateId = existing.fileId;
         existing.dataStartBlock = owners.value(existing.fileId);
         // A fragmented existing file needs its runs recovered from the fs-tree
@@ -4050,8 +4056,9 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsFsTreeNode> probe;
     if (!buildChainedFileList({ctx.image, ctx.geometry, ctx.chain, request, 0}, &files, blockers) ||
-        !buildFsTreeNodes(
-            {ctx.geometry.blockSize, files, {}, ctx.firstLeafOid}, &probe, blockers)) {
+        !buildFsTreeNodes({ctx.geometry.blockSize, files, request.directories, ctx.firstLeafOid},
+                          &probe,
+                          blockers)) {
         return false;
     }
     *nodeCount = probe.size();
@@ -4081,9 +4088,10 @@ bool buildInsertFsNodes(const ApfsFsCommitContext& ctx,
                                 blockers) &&
            writeApfsFileDataBlocks(
                ctx.image, ctx.geometry, dataBlockList, request.fileData, blockers) &&
-           buildFsTreeNodes({ctx.geometry.blockSize, out->files, {}, ctx.firstLeafOid},
-                            &out->nodes,
-                            blockers);
+           buildFsTreeNodes(
+               {ctx.geometry.blockSize, out->files, request.directories, ctx.firstLeafOid},
+               &out->nodes,
+               blockers);
 }
 
 // A2: insert one file into a generated container with a true in-place
@@ -4434,6 +4442,92 @@ bool collectExistingRootFiles(const QString& sourcePath,
         if (file.fileName == newFileName) {
             blockers->append(
                 QStringLiteral("APFS file-insert-commit: a file named '%1' already exists")
+                    .arg(newFileName));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Enumerate the full one-level tree of a generated container - root regular files plus
+// each root directory and the regular files it contains - so an in-place commit can
+// round-trip directories and their children instead of dropping them. Files carry their
+// parentDirectoryId (the root directory id, or the owning directory's object id);
+// directories carry their object id. Nested subdirectories are not supported yet and
+// fail closed. A flat-root container yields an empty directory list, byte-identical to
+// the certified single-level layout.
+bool collectFullFsTree(const QString& sourcePath,
+                       QVector<ApfsRootFilePayload>* files,
+                       QVector<ApfsRootDirectoryPayload>* directories,
+                       QStringList* blockers) {
+    const auto rootListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        sourcePath, QStringLiteral("/"), kApfsWriteRootListingMaxEntries);
+    if (!rootListing.ok) {
+        blockers->append(rootListing.blockers.value(
+            0, QStringLiteral("APFS in-place commit: unable to read the existing tree")));
+        return false;
+    }
+    for (const auto& entry : rootListing.entries) {
+        if (entry.directory) {
+            directories->append({.directoryName = entry.name,
+                                 .directoryId = entry.object_id,
+                                 .privateId = entry.object_id});
+            const auto childListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+                sourcePath, QStringLiteral("/") + entry.name, kApfsWriteRootListingMaxEntries);
+            if (!childListing.ok) {
+                blockers->append(childListing.blockers.value(
+                    0,
+                    QStringLiteral("APFS in-place commit: unable to read directory '%1'")
+                        .arg(entry.name)));
+                return false;
+            }
+            for (const auto& child : childListing.entries) {
+                if (child.directory) {
+                    blockers->append(
+                        QStringLiteral("APFS in-place commit does not yet preserve nested "
+                                       "subdirectories (in '%1')")
+                            .arg(entry.name));
+                    return false;
+                }
+                if (child.regular_file) {
+                    files->append(
+                        {.fileName = child.name,
+                         .data = QByteArray(static_cast<qsizetype>(child.size_bytes), '\0'),
+                         .parentDirectoryId = entry.object_id,
+                         .fileId = child.object_id});
+                }
+            }
+        } else if (entry.regular_file) {
+            files->append({.fileName = entry.name,
+                           .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
+                           .fileId = entry.object_id});
+        }
+    }
+    return true;
+}
+
+// Full one-level tree for a chained insert; fails closed if the new root file name
+// already exists as a root file or directory.
+bool collectExistingFullFsTree(const QString& sourcePath,
+                               const QString& newFileName,
+                               QVector<ApfsRootFilePayload>* files,
+                               QVector<ApfsRootDirectoryPayload>* directories,
+                               QStringList* blockers) {
+    if (!collectFullFsTree(sourcePath, files, directories, blockers)) {
+        return false;
+    }
+    for (const auto& file : *files) {
+        if (file.parentDirectoryId == kApfsRootDirectoryId && file.fileName == newFileName) {
+            blockers->append(
+                QStringLiteral("APFS file-insert-commit: a file named '%1' already exists")
+                    .arg(newFileName));
+            return false;
+        }
+    }
+    for (const auto& directory : *directories) {
+        if (directory.directoryName == newFileName) {
+            blockers->append(
+                QStringLiteral("APFS file-insert-commit: a directory named '%1' already exists")
                     .arg(newFileName));
             return false;
         }
@@ -10468,8 +10562,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
 
     QVector<ApfsRootFilePayload> existingFiles;
-    if (!collectExistingRootFiles(
-            result.source_image_path, cleanFileName, &existingFiles, &result.blockers)) {
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(result.source_image_path,
+                                   cleanFileName,
+                                   &existingFiles,
+                                   &directories,
+                                   &result.blockers)) {
         return result;
     }
 
@@ -10482,8 +10580,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileInsert(
-            &image, {existingFiles, cleanFileName, request.file_data}, &commit, &commitBlockers)) {
+    if (commitInPlaceFileInsert(&image,
+                                {existingFiles, cleanFileName, request.file_data, directories},
+                                &commit,
+                                &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -10721,8 +10821,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
         return result;
     }
     QVector<ApfsRootFilePayload> existingFiles;
-    if (!collectExistingRootFiles(
-            result.written_image_path, cleanFileName, &existingFiles, &result.blockers)) {
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(result.written_image_path,
+                                   cleanFileName,
+                                   &existingFiles,
+                                   &directories,
+                                   &result.blockers)) {
         return result;
     }
     auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
@@ -10738,7 +10842,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceFileInsert(target.get(),
-                                {existingFiles, cleanFileName, request.file_data},
+                                {existingFiles, cleanFileName, request.file_data, directories},
                                 &commit,
                                 &commitBlockers)) {
         result.previous_xid = commit.previous_xid;

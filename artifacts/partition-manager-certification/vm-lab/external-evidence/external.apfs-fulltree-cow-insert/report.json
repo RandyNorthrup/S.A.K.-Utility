@@ -1,0 +1,33 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-fulltree-cow-insert",
+    "tier": "A2-3.2 increment 2: in-place COW file insert round-trips directories and their children",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 64 MiB dir+child image passed through",
+    "change": "The in-place COW insert previously rebuilt the fs-tree from root files only and dropped any directory and its children (guarded fail-closed in 7f805aa). collectFullFsTree now enumerates the full one-level tree (root files + each root directory + the regular files it contains, each carrying its parentDirectoryId); buildChainedFileList keeps each file's collected parent instead of hardcoding root; the directories thread through ApfsFileInsertRequest -> sizeInsertFsTree / buildInsertFsNodes -> buildFsTreeNodes. The image and raw insert entry points use collectExistingFullFsTree. Flat-root containers collect an empty directory list, byte-identical to the certified single-level layout. Delete, rename, and write still use collectAllRootFiles and remain guarded against directories pending their own increment.",
+    "container": "64 MiB single-CIB image, volume DCTEST: directory 'docs' holding child 'a.txt' (data 'child-file-content'); a new root file 'rootd.txt' with data 'root-file-data-payload' inserted via commit-image-file-insert (xid 3)",
+    "linux_apfsck": "apfsck -cw clean (only the pre-existing benign 'Data stream xfield: wrong flags.' note) on both an empty-file insert and a data-file insert into the dir+child container",
+    "apple_fsck_apfs": {
+        "kernel_mount_read": "the macOS kernel auto-mounted DCTEST read-write; ls /Volumes/DCTEST showed 'docs' and 'rootd.txt'; cat /Volumes/DCTEST/docs/a.txt returned 'child-file-content' (the preserved child + extent) and cat /Volumes/DCTEST/rootd.txt returned 'root-file-data-payload' (the inserted file)",
+        "kernel_continuation": "writer emitted xid 3; the kernel mounted read-write and continued the checkpoint to transaction ID 5",
+        "command": "fsck_apfs -n /dev/disk1 (unmounted after the kernel auto-mounted it read-write)",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 appears to be OK.",
+        "phases_clean": [
+            "container superblock",
+            "checkpoint (transaction ID 5)",
+            "space manager",
+            "space manager free queue trees",
+            "object map",
+            "APFS volume superblock",
+            "snapshot metadata tree",
+            "fsroot tree (directory valence: root has 2 children, docs has 1)",
+            "extent ref tree (preserved child extent + new file extent)",
+            "volume object map space",
+            "allocated space"
+        ],
+        "evidence": "apfs-fulltree-insert-fsck-clean.png (fsck verdict), apfs-fulltree-insert-kernel-read.png (kernel ls + cat of directory child and new file)"
+    },
+    "note": "Remaining A2-3.2 increments: extend the same full-tree round-trip to the delete, rename, and write (create-or-replace) commits; add create-directory / delete-directory / directory-child write / directory-child delete COW mutations; wire the File Management bridge's directory routes; then relax the directory fail-closed guard once every path round-trips.",
+    "completed_at_utc": "2026-06-19T15:05:00Z"
+}

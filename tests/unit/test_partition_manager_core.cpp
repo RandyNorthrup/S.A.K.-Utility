@@ -6132,19 +6132,37 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
              qPrintable(emptyDirectoryListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(emptyDirectoryListing.entries.size(), 0);
 
-    // Safety guard: the in-place COW commit rebuilds the fs-tree from root files only,
-    // so it must fail closed (rather than silently dropping the directory and its
-    // contents) when a container holds a root directory. The full-tree COW commit is a
-    // later increment.
-    const QString guardedInsertPath = QDir(temp.path()).filePath(QStringLiteral("dir-guard.apfs"));
-    const auto guardedInsert =
+    // Full-tree round-trip: the in-place COW insert preserves the existing directory
+    // while adding the new root file (it no longer drops directories).
+    const QString roundTripInsertPath =
+        QDir(temp.path()).filePath(QStringLiteral("dir-roundtrip.apfs"));
+    const auto roundTripInsert =
         PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = directoryCreatePath,
-                                                        .written_image_path = guardedInsertPath,
-                                                        .file_name = QStringLiteral("blocked.txt"),
+                                                        .written_image_path = roundTripInsertPath,
+                                                        .file_name = QStringLiteral("added.txt"),
                                                         .options = generatedOnlyOptions});
-    QVERIFY(!guardedInsert.ok);
-    QVERIFY(guardedInsert.blockers.join(QStringLiteral("; "))
-                .contains(QStringLiteral("does not yet preserve directories")));
+    QVERIFY2(roundTripInsert.ok, qPrintable(roundTripInsert.blockers.join(QStringLiteral("; "))));
+    const auto roundTripListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        roundTripInsertPath, QStringLiteral("/"), 20);
+    QVERIFY2(roundTripListing.ok, qPrintable(roundTripListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(roundTripListing.entries.size(), 2);
+    bool roundTripSawDir = false;
+    bool roundTripSawFile = false;
+    for (const auto& entry : roundTripListing.entries) {
+        if (entry.name == QStringLiteral("Proof Folder") && entry.directory) {
+            roundTripSawDir = true;
+        }
+        if (entry.name == QStringLiteral("added.txt") && entry.regular_file) {
+            roundTripSawFile = true;
+        }
+    }
+    QVERIFY(roundTripSawDir);
+    QVERIFY(roundTripSawFile);
+    const auto preservedDirListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        roundTripInsertPath, QStringLiteral("/Proof Folder"), 20);
+    QVERIFY2(preservedDirListing.ok,
+             qPrintable(preservedDirListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(preservedDirListing.entries.size(), 0);
 
     const QByteArray childFileData("APFS child file in generated root directory");
     const QString childFileWritePath =
