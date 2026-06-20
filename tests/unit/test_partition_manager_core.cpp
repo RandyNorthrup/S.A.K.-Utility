@@ -1650,6 +1650,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
+    void apfsWriter_inPlaceFileMoveAcrossDirectories();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7160,6 +7161,99 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryChildRename() {
                   .written_image_path = dir.filePath(QStringLiteral("a2dr-x.apfs")),
                   .directory_name = QStringLiteral("docs"),
                   .file_name = QStringLiteral("ghost.txt"),
+                  .new_file_name = QStringLiteral("z.txt"),
+                  .options = options})
+                 .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
+    // Cross-parent move (root <-> directory) on the COW engine: the file keeps its data,
+    // both parents' valences update, and a missing source/destination fails closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a2mv-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2MV"),
+                 .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("a2mv-file.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = withFile,
+                                                       .file_name = QStringLiteral("root.txt"),
+                                                       .file_data = QByteArrayLiteral("root me"),
+                                                       .options = options})
+            .ok);
+    const QString withDir = dir.filePath(QStringLiteral("a2mv-dir.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = withFile,
+                 .written_image_path = withDir,
+                 .directory_name = QStringLiteral("docs"),
+                 .options = options})
+                .ok);
+    const QString withChild = dir.filePath(QStringLiteral("a2mv-child.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                {.source_image_path = withDir,
+                 .written_image_path = withChild,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .file_data = QByteArrayLiteral("child-a"),
+                 .options = options})
+                .ok);
+
+    // Move root.txt (root) into docs, renamed to moved.txt.
+    const QString intoDir = dir.filePath(QStringLiteral("a2mv-into.apfs"));
+    const auto moveIn = PartitionApfsWriter::commitImageOnlyFileMove(
+        {.source_image_path = withChild,
+         .written_image_path = intoDir,
+         .source_directory_name = QString(),
+         .file_name = QStringLiteral("root.txt"),
+         .destination_directory_name = QStringLiteral("docs"),
+         .new_file_name = QStringLiteral("moved.txt"),
+         .options = options});
+    QVERIFY2(moveIn.ok, qPrintable(moveIn.blockers.join(QStringLiteral("; "))));
+    auto docs =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(intoDir, QStringLiteral("/docs"), 20);
+    QVERIFY2(docs.ok, qPrintable(docs.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docs.entries.size(), 2);  // a.txt + moved.txt
+    auto root =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(intoDir, QStringLiteral("/"), 20);
+    QVERIFY(root.ok);
+    QCOMPARE(root.entries.size(), 1);  // docs (root.txt moved out)
+
+    // Move docs/a.txt out to the root as top.txt.
+    const QString outToRoot = dir.filePath(QStringLiteral("a2mv-out.apfs"));
+    const auto moveOut = PartitionApfsWriter::commitImageOnlyFileMove(
+        {.source_image_path = intoDir,
+         .written_image_path = outToRoot,
+         .source_directory_name = QStringLiteral("docs"),
+         .file_name = QStringLiteral("a.txt"),
+         .destination_directory_name = QString(),
+         .new_file_name = QStringLiteral("top.txt"),
+         .options = options});
+    QVERIFY2(moveOut.ok, qPrintable(moveOut.blockers.join(QStringLiteral("; "))));
+    root =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(outToRoot, QStringLiteral("/"), 20);
+    QVERIFY(root.ok);
+    QCOMPARE(root.entries.size(), 2);  // docs + top.txt
+    docs = PartitionApfsFileSystemReader::listDirectoryFromImage(outToRoot,
+                                                                 QStringLiteral("/docs"),
+                                                                 20);
+    QVERIFY(docs.ok);
+    QCOMPARE(docs.entries.size(), 1);  // moved.txt
+
+    // A missing source directory fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyFileMove(
+                 {.source_image_path = outToRoot,
+                  .written_image_path = dir.filePath(QStringLiteral("a2mv-x.apfs")),
+                  .source_directory_name = QStringLiteral("ghost"),
+                  .file_name = QStringLiteral("top.txt"),
+                  .destination_directory_name = QString(),
                   .new_file_name = QStringLiteral("z.txt"),
                   .options = options})
                  .ok);

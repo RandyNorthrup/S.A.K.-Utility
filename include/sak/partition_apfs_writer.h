@@ -496,6 +496,19 @@ struct PartitionApfsImageRootDirectoryFileRenameRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to move one file between parents (root or a root directory) in a
+///        generated APFS container with an in-place copy-on-write commit (A2-3.2). An
+///        empty directory name means the container root.
+struct PartitionApfsImageFileMoveCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString source_directory_name;       // empty = root
+    QString file_name;
+    QString destination_directory_name;  // empty = root
+    QString new_file_name;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to insert one file into a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A2). The
 ///        commit is applied to the device in place (no scratch clone), so it is
@@ -576,6 +589,21 @@ struct PartitionApfsRawDirectoryChildRenameCommitRequest {
     uint64_t target_container_bytes{0};
     QString directory_name;
     QString file_name;
+    QString new_file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to move one file between parents (root or a root directory) in a
+///        generated APFS container on a raw device with an in-place commit (A2-3.2). An
+///        empty directory name means the container root.
+struct PartitionApfsRawFileMoveCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString source_directory_name;       // empty = root
+    QString file_name;
+    QString destination_directory_name;  // empty = root
     QString new_file_name;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
@@ -697,6 +725,9 @@ public:
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult
     commitImageOnlyDirectoryChildRename(
         const PartitionApfsImageRootDirectoryFileRenameRequest& request);
+    /// @brief Move one file between parents (root or a root directory) with an in-place COW commit.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileMove(
+        const PartitionApfsImageFileMoveCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
@@ -728,6 +759,8 @@ public:
         const PartitionApfsRawDirectoryChildDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawDirectoryChildRename(
         const PartitionApfsRawDirectoryChildRenameCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileMove(
+        const PartitionApfsRawFileMoveCommitRequest& request);
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other

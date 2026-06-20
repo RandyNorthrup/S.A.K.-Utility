@@ -4428,33 +4428,48 @@ struct ApfsRenameListInput {
     QVector<ApfsRootFilePayload> allFiles;
     QString oldName;
     QString newName;
-    uint64_t targetParentId{kApfsRootDirectoryId};  // root for a root file, else a directory id
+    uint64_t targetParentId{kApfsRootDirectoryId};  // source parent (root, or a directory id)
+    uint64_t destinationParentId{0};  // move target parent; 0 = same parent (rename, not move)
 };
 
-// Build the root-file list with one file renamed (data extents preserved). Fails
-// closed if the old name is missing or the new name already exists.
+// Build the root-file list with one file renamed or moved (data extents + object id
+// preserved; the rebuilt fs-tree re-sorts dirents and recomputes parent valences). Fails
+// closed if the source is missing or the destination name already exists in its parent.
+// Restore a file's private id + data extents (the rename/move keeps them in place).
+void restoreRenamePayload(ApfsRootFilePayload* file,
+                          const ApfsRenameListInput& in,
+                          const QHash<uint64_t, uint64_t>& owners,
+                          QStringList* blockers) {
+    file->privateId = file->fileId;
+    file->dataStartBlock = owners.value(file->fileId);
+    const QVector<ApfsDataExtent> recovered =
+        recoverFileDataExtents(in.image, in.geometry, in.chain, file->fileId, blockers);
+    if (recovered.size() > 1) {
+        file->dataExtents = recovered;
+    }
+}
+
 bool buildRenameFileList(const ApfsRenameListInput& in,
                          QVector<ApfsRootFilePayload>* files,
                          QStringList* blockers) {
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
+    const uint64_t destParent = in.destinationParentId != 0 ? in.destinationParentId
+                                                            : in.targetParentId;
     bool found = false;
     bool duplicate = false;
     for (ApfsRootFilePayload file : in.allFiles) {
-        // Keep each file's parent so directory children survive; the rename target and
-        // any name collision are matched within the target parent only (root, or one
-        // directory), so a same-named file under a different parent is left alone.
-        file.privateId = file.fileId;
-        file.dataStartBlock = owners.value(file.fileId);
-        const QVector<ApfsDataExtent> recovered =
-            recoverFileDataExtents(in.image, in.geometry, in.chain, file.fileId, blockers);
-        if (recovered.size() > 1) {
-            file.dataExtents = recovered;
-        }
-        const bool inTargetParent = file.parentDirectoryId == in.targetParentId;
-        duplicate = duplicate || (inTargetParent && file.fileName == in.newName);
-        if (inTargetParent && file.fileName == in.oldName) {
+        // Keep each file's parent so the rest of the tree survives; the source is matched
+        // in its parent and any name collision in the DESTINATION parent (excluding the
+        // moved file itself), so a same-named file under a different parent is left alone.
+        restoreRenamePayload(&file, in, owners, blockers);
+        const bool isSource = file.parentDirectoryId == in.targetParentId &&
+                              file.fileName == in.oldName;
+        duplicate = duplicate || (!isSource && file.parentDirectoryId == destParent &&
+                                  file.fileName == in.newName);
+        if (isSource) {
             file.fileName = in.newName;
+            file.parentDirectoryId = destParent;
             found = true;
         }
         files->append(file);
@@ -4477,7 +4492,8 @@ struct ApfsRenameRequest {
     QString oldName;
     QString newName;
     QVector<ApfsRootDirectoryPayload> directories;     // preserved across the commit
-    uint64_t parentDirectoryId{kApfsRootDirectoryId};  // root for a root file, else a directory id
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};  // source parent (root, or a directory id)
+    uint64_t destinationParentDirectoryId{0};  // move target; 0 = same parent (rename, not move)
 };
 
 // A2: rename one root file in place. The renamed dirent/inode are rebuilt into
@@ -4500,7 +4516,8 @@ bool commitInPlaceFileRename(QIODevice* image,
                               request.allFiles,
                               request.oldName,
                               request.newName,
-                              request.parentDirectoryId},
+                              request.parentDirectoryId,
+                              request.destinationParentDirectoryId},
                              &files,
                              blockers)) {
         return false;
@@ -4784,6 +4801,14 @@ uint64_t resolveDirectoryId(const QVector<ApfsRootDirectoryPayload>& directories
         }
     }
     return 0;
+}
+
+// Resolve a parent component to its object id: an empty name is the container root, a
+// non-empty name resolves to its directory id (0 if that directory is absent).
+uint64_t resolveParentId(const QVector<ApfsRootDirectoryPayload>& directories,
+                         const QString& directoryName) {
+    return directoryName.isEmpty() ? kApfsRootDirectoryId
+                                   : resolveDirectoryId(directories, directoryName);
 }
 
 bool collectExistingFullFsTree(const QString& sourcePath,
@@ -11097,6 +11122,65 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     return result;
 }
 
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileMove(
+    const PartitionApfsImageFileMoveCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString sourceDir = request.source_directory_name.trimmed();
+    const QString destDir = request.destination_directory_name.trimmed();
+    const QString oldName = request.file_name.trimmed();
+    const QString newName = request.new_file_name.trimmed();
+    const QLatin1StringView purpose("file-move-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t sourceParent = resolveParentId(directories, sourceDir);
+    const uint64_t destParent = resolveParentId(directories, destDir);
+    if (sourceParent == 0 || destParent == 0) {
+        result.blockers.append(QStringLiteral(
+            "APFS file-move-commit: a source or destination directory was not found"));
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileRename(&image,
+                                {allFiles, oldName, newName, directories, sourceParent, destParent},
+                                &commit,
+                                &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -11849,6 +11933,60 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     QStringList commitBlockers;
     if (commitInPlaceFileRename(target.get(),
                                 {allFiles, oldName, newName, directories, parentId},
+                                &commit,
+                                &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileMove(
+    const PartitionApfsRawFileMoveCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString sourceDir = request.source_directory_name.trimmed();
+    const QString destDir = request.destination_directory_name.trimmed();
+    const QString oldName = request.file_name.trimmed();
+    const QString newName = request.new_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            oldName, QLatin1StringView("raw file-move-commit"), &result.blockers) ||
+        !appendRootFileNameBlockers(
+            newName, QLatin1StringView("raw file-move-commit"), &result.blockers)) {
+        return result;
+    }
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t sourceParent = resolveParentId(directories, sourceDir);
+    const uint64_t destParent = resolveParentId(directories, destDir);
+    if (sourceParent == 0 || destParent == 0) {
+        result.blockers.append(QStringLiteral(
+            "APFS raw file-move-commit: a source or destination directory was not found"));
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-move-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileRename(target.get(),
+                                {allFiles, oldName, newName, directories, sourceParent, destParent},
                                 &commit,
                                 &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
