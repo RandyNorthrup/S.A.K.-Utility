@@ -1,0 +1,39 @@
+{
+    "schema_version": 1,
+    "gate_id": "driver.h-c-btree-underflow-merge-rebalance",
+    "milestone": "H3 (H-c): catalog B-tree underflow merge / rebalance",
+    "status": "Exit gate met (unit + adversarial review + bundled Apple fsck_hfs clean after randomized create/delete churn with extensive merge + a depth collapse). macOS-kernel-RW-mount flourish pending a VM HID-input fix (see vm_external_gate).",
+    "performed_at_utc": "2026-06-21T12:00:00Z",
+    "capability": "Heavy-delete stability for the HFS+ catalog B-tree. Deletes previously only freed leaves that became fully empty, so repeated create/delete churn grew the leaf count monotonically (splits were never undone) and the tree never shrank in depth from deletions. mergeUnderfullCatalogLeaves now coalesces adjacent leaves whenever one is underfull (used bytes < node_size/2) and their records fit a single node; the absorbed node is freed back to the pool. Because the rebuild-everything engine already rewrites every leaf's forward/backward sibling links and rebuilds the index bottom-up on each mutation, the merge also lets the tree collapse in depth (e.g. 4 -> 3 -> ... -> 1) as deletes empty it out. A single surviving leaf becomes a valid depth-1 root (root_node == first_leaf == last_leaf, height-1 leaf), with the old index nodes freed and zeroed post-commit.",
+    "hysteresis": "Merge fires only when a leaf is below half full, while a split fires only on overflow (> node_size). The half-full merge floor sits a full band below the overflow split threshold, so a leaf that was just split (~half full) is not immediately re-merged. This breaks split<->merge thrash under alternating create/delete at one key boundary: re-triggering a merge requires a delete to push a leaf back below half. Proven non-thrashing and terminating by the adversarial review (the merge loop's no-advance branch strictly shrinks leaves.size()).",
+    "code": [
+        "include/sak/partition_hfs_internal.h: catalogLeafUsedBytes (shared byte accounting), catalogLeafRecordsFit (refactored onto it), catalogLeafUnderfull (used*2 < node_size), freeWorkingLeafNode (is_new -> clear map bit; existing -> freeCatalogModelNode for post-commit zeroing), mergeUnderfullCatalogLeaves (left-to-right greedy coalesce), called from rebalanceCatalogModel after the empty-leaf-removal pass.",
+        "Records in the left leaf all sort before the right leaf's, so the concatenation stays ordered with no re-sort."
+    ],
+    "adversarial_review": {
+        "method": "5 independent lens-reviewers (sibling-chain, node-accounting, termination/hysteresis, root-collapse, record-order), each with a verify pass for any medium+ finding.",
+        "confirmed_defects": 0,
+        "notable": "The root-collapse reviewer byte-verified catalogLeafUsedBytes against the real node serializer (kHfsNodeOffsetTableReservedEntries=2 reconciles to count+1 offset slots; no per-record padding). The sibling-chain reviewer confirmed fLink/bLink and header first/last-leaf are recomputed entirely from the final leaf order, so merge cannot leave a dangling pointer, cycle, or first/last mismatch -- the literal 'Invalid sibling link' gate."
+    },
+    "unit_tests": {
+        "hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete": "Grows a multi-leaf depth-2 catalog, then deletes every file except the extreme keys. The surviving first/last leaves each keep a single underfull record and become adjacent. Asserts the tree collapses to depth 1 with freeNodes == total - 2 (header + single root leaf) -- which can ONLY happen if the merge coalesced the two stranded survivor leaves (empty-leaf removal alone never fires here since no leaf is fully emptied). Asserts both survivors read back and consistency is clean.",
+        "hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn": "300 deterministic seeded-LCG create/delete operations oscillating the live set across the depth-2 split/merge boundary. Every 50 ops and at the end it cross-checks the index traversal (listDirectory) count against the live model and runs checkConsistency, whose leaf-chain (firstLeafNode -> forward-link) walk is an in-process analog of the fsck 'Invalid sibling link' check -- the two independent traversals agreeing across the whole churn. Asserts peak depth >= 2 (splits + merges actually exercised) and a final drain back to the fixture at depth 1.",
+        "regression": "135/135 test_partition_manager_core pass (was 133; +2 new), including the existing depth-2/depth-3 mutation + full-drain tests."
+    },
+    "bundled_apple_fsck": {
+        "tool": "tools/filesystem/hfsprogs/fsck_hfs.exe (fsck_hfs 540.1 = Apple diskdev_cmds, the authoritative HFS+ structural checker that implements the catalog / catalog-hierarchy / sibling-link checks named in the exit gate) + newfs_hfs.exe -J",
+        "method": "newfs_hfs -J a 256 MB journaled HFS+ volume (SAKH3); create-empty-files-image --file-count 900 --name-pad 240 grew the catalog to depth 4; then deleted 810 of 900 files (every index not a multiple of 10) via delete-empty-file-image, driving extensive underfull-leaf merges; fsck_hfs -n -f after create and after the heavy delete.",
+        "after_create": "tree_depth 4, leafRecords 1806, files 902, usedNodes 577, freeNodes 55",
+        "after_delete": "tree_depth 3, leafRecords 186, files 92, usedNodes 47, freeNodes 585",
+        "merge_effect": "depth 4 -> 3 and usedNodes 577 -> 47: the merge reclaimed 530 catalog nodes for the 92 surviving files. Without delete-side merge, deleting non-emptying records frees no nodes and the depth would not drop.",
+        "fsck_result": "The volume SAKH3 appears to be OK. (Checked: extents overflow, catalog file, multi-linked files, catalog hierarchy, extended attributes, volume bitmap, volume information -- all clean; no 'Invalid sibling link'.)"
+    },
+    "vm_external_gate": {
+        "status": "Pending (VM HID-input regression this session)",
+        "intended": "Match the H1/H2 standard: attach the churned SAKH3 image to the qemu/KVM macOS Sequoia VM, kernel RW-mount, and run Apple fsck_hfs (hfs-683.100.9).",
+        "blocker": "macOS Sequoia recovery under the now-installed qemu 11.0 does not accept injected USB HID input (neither HMP sendkey nor QMP input-send-event reaches the guest; OpenCore/UEFI receives keys fine, so the injection path works up to firmware). Reproduced across two cold boots and both the qemu-xhci and default ich9 USB-HID controllers; the cursor never moves and arrow/return/menu input is ignored. The H1/H2 cert sessions (2026-06-14..17) ran an older qemu where macOS HID worked. This is a VM-environment issue, not an elevation/permissions issue, and is independent of the H3 code.",
+        "resolution_options": "Downgrade qemu in the WSL archlinux distro to the version used for H1/H2, or rebuild the macOS VM with a HID controller config compatible with qemu 11, then re-run the kernel-mount + Apple fsck_hfs on SAKH3."
+    },
+    "gates": "clang-format + lizard (CCN<=10) + cppcheck clean (verified via pre-commit on the changed files); no --no-verify.",
+    "error": ""
+}

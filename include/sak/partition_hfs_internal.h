@@ -3291,14 +3291,29 @@ private:
 
     // ---- Unified HFS+ catalog tree mutation engine (one- and two-level trees) ----
 
-    [[nodiscard]] bool catalogLeafRecordsFit(const QVector<HfsRawCatalogRecord>& records) const {
+    [[nodiscard]] qsizetype catalogLeafUsedBytes(
+        const QVector<HfsRawCatalogRecord>& records) const {
         qsizetype total = kBTreeNodeDescriptorBytes;
         for (const auto& record : records) {
             total += record.bytes.size();
         }
+        // Descriptor + every record's bytes + one record-offset slot per record
+        // plus the trailing free-space offset slot.
+        return total + (records.size() + 1) * kUint16Size;
+    }
+
+    [[nodiscard]] bool catalogLeafRecordsFit(const QVector<HfsRawCatalogRecord>& records) const {
         return records.size() <= std::numeric_limits<uint16_t>::max() &&
-               total + (records.size() + 1) * kUint16Size <=
-                   static_cast<qsizetype>(m_catalog.node_size);
+               catalogLeafUsedBytes(records) <= static_cast<qsizetype>(m_catalog.node_size);
+    }
+
+    // A leaf whose used bytes fall below half the node is a merge candidate. The
+    // half-full floor sits a full band below the overflow split threshold, so a
+    // leaf that was just split (~half full) is not immediately re-merged: this
+    // hysteresis keeps create/delete churn from thrashing between split and
+    // merge at a key boundary.
+    [[nodiscard]] bool catalogLeafUnderfull(const QVector<HfsRawCatalogRecord>& records) const {
+        return catalogLeafUsedBytes(records) * 2 < static_cast<qsizetype>(m_catalog.node_size);
     }
 
     [[nodiscard]] std::optional<QVector<QPair<QByteArray, uint32_t>>> parseCatalogIndexEntries(
@@ -3685,6 +3700,45 @@ private:
         model->freed_nodes.append(nodeNumber);
     }
 
+    // Reclaims a working leaf's node. A node allocated earlier in this same
+    // mutation (is_new) was never written to the live tree, so its map bit is
+    // simply cleared; an existing on-disk node is queued for the post-commit
+    // erase by freeCatalogModelNode.
+    void freeWorkingLeafNode(HfsCatalogTreeModel* model, const HfsCatalogWorkingLeaf& leaf) {
+        if (leaf.is_new) {
+            writeHeaderMapBit(&model->header, leaf.node_number, false);
+            ++model->working_free_nodes;
+        } else {
+            freeCatalogModelNode(model, leaf.node_number);
+        }
+    }
+
+    // Delete-side rebalance: coalesces adjacent leaves when one is underfull and
+    // their records fit a single node, then frees the absorbed node. Records in
+    // the left leaf all sort before the right leaf's, so concatenation stays
+    // ordered. The whole leaf set is rewritten with fresh sibling links and the
+    // index is rebuilt bottom-up afterwards, so merging here also lets the tree
+    // shrink in depth as heavy deletes empty it out.
+    void mergeUnderfullCatalogLeaves(HfsCatalogTreeModel* model) {
+        for (int index = 0; index + 1 < model->leaves.size();) {
+            const auto& left = model->leaves.at(index);
+            const auto& right = model->leaves.at(index + 1);
+            QVector<HfsRawCatalogRecord> combined = left.records;
+            combined.append(right.records);
+            const bool eitherUnderfull = catalogLeafUnderfull(left.records) ||
+                                         catalogLeafUnderfull(right.records);
+            if (!eitherUnderfull || !catalogLeafRecordsFit(combined)) {
+                ++index;
+                continue;
+            }
+            model->leaves[index].records = combined;
+            model->leaves[index].dirty = true;
+            freeWorkingLeafNode(model, right);
+            model->leaves.removeAt(index + 1);
+            // Stay on the merged leaf so it can keep absorbing further siblings.
+        }
+    }
+
     [[nodiscard]] bool splitCatalogModelLeaf(HfsCatalogTreeModel* model,
                                              int leafIndex,
                                              QStringList* blockers) {
@@ -3747,14 +3801,10 @@ private:
                 // A one-level catalog keeps its (now empty) root leaf in place.
                 break;
             }
-            if (!model->leaves.at(index).is_new) {
-                freeCatalogModelNode(model, model->leaves.at(index).node_number);
-            } else {
-                writeHeaderMapBit(&model->header, model->leaves.at(index).node_number, false);
-                ++model->working_free_nodes;
-            }
+            freeWorkingLeafNode(model, model->leaves.at(index));
             model->leaves.removeAt(index);
         }
+        mergeUnderfullCatalogLeaves(model);
         if (model->leaves.size() > kHfsMaxMutationLeaves) {
             blockers->append(QStringLiteral("HFS+ catalog mutation supports at most %1 leaf nodes")
                                  .arg(kHfsMaxMutationLeaves));

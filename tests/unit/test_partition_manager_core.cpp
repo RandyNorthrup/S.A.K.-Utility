@@ -1629,6 +1629,8 @@ private Q_SLOTS:
     void hfsFileSystemWriter_splitsCatalogRootLeafOnCreate();
     void hfsFileSystemWriter_mutatesDepthTwoCatalogs();
     void hfsFileSystemWriter_mutatesDepthThreeCatalogs();
+    void hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete();
+    void hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn();
     void hfsFileSystemWriter_replaysJournalTransactions();
     void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
@@ -4226,6 +4228,158 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthThreeCatalogs() 
     const auto finalConsistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
                                                                                           4000);
     QVERIFY2(finalConsistency.ok, qPrintable(finalConsistency.blockers.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-underfull-leaf-merge");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-merge.img"));
+    QVERIFY(writeBytes(imagePath, hfsDeepCatalogFixture()));
+
+    const qsizetype headerOffset = static_cast<qsizetype>(kTestHfsDeepCatalogStartBlock) *
+                                       kTestHfsBlockSize +
+                                   kTestHfsBTreeHeaderRecordOffset;
+    const auto treeDepth = [&]() {
+        return readBe16(readBytes(imagePath), headerOffset + kTestHfsBTreeHeaderTreeDepthOffset);
+    };
+    const auto freeNodes = [&]() {
+        return readBe32(readBytes(imagePath), headerOffset + kTestHfsBTreeHeaderFreeNodesOffset);
+    };
+
+    // Grow the catalog to a multi-leaf depth-2 tree.
+    const QString namePad(48, QLatin1Char('x'));
+    QStringList created;
+    while ((treeDepth() < 2 || created.size() < 20) && created.size() < 400) {
+        const QString name = QStringLiteral("/m-%1-%2.txt")
+                                 .arg(created.size(), 4, 10, QLatin1Char('0'))
+                                 .arg(namePad);
+        const auto result =
+            PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath, name, options);
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        created.append(name);
+    }
+    QVERIFY(treeDepth() >= 2);
+
+    // Delete everything except the extreme keys. The middle leaves empty out and
+    // are freed; the surviving first and last leaves are each left holding a
+    // single underfull record and become adjacent. Without delete-side merge
+    // they would remain two separate leaves under a root index node (depth 2);
+    // the merge coalesces them and the whole set of survivors into one leaf, so
+    // the tree must collapse to depth 1 with only the header and root-leaf nodes
+    // in use.
+    for (int index = 1; index + 1 < created.size(); ++index) {
+        const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+            imagePath, created.at(index), options);
+        QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
+    }
+
+    QCOMPARE(treeDepth(), static_cast<uint16_t>(1));
+    QCOMPARE(freeNodes(), kTestHfsDeepCatalogTotalNodes - 2);
+
+    const auto listing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 2000);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2 + kTestHfsDeepFixtureFileCount);
+    for (const QString& survivor : {created.first(), created.last()}) {
+        const auto readBack =
+            PartitionHfsFileSystemReader::readFileFromImage(imagePath, survivor, 1);
+        QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    }
+
+    const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
+                                                                                     4000);
+    QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-create-delete-churn");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-churn.img"));
+    QVERIFY(writeBytes(imagePath, hfsDeepCatalogFixture()));
+
+    const qsizetype headerOffset = static_cast<qsizetype>(kTestHfsDeepCatalogStartBlock) *
+                                       kTestHfsBlockSize +
+                                   kTestHfsBTreeHeaderRecordOffset;
+    const auto treeDepth = [&]() {
+        return readBe16(readBytes(imagePath), headerOffset + kTestHfsBTreeHeaderTreeDepthOffset);
+    };
+
+    // Deterministic LCG so the churn is reproducible across runs and platforms.
+    uint32_t rng = 0x12'34'56'7Bu;
+    const auto nextRandom = [&]() {
+        rng = rng * 1'664'525u + 1'013'904'223u;
+        return rng;
+    };
+
+    const QString namePad(32, QLatin1Char('z'));
+    QStringList live;
+    uint32_t createCounter = 0;
+    uint16_t peakDepth = treeDepth();
+
+    const auto verifyTree = [&]() {
+        const auto listing = PartitionHfsFileSystemReader::listDirectoryFromImage(
+            imagePath, QStringLiteral("/"), 4000);
+        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(listing.entries.size(), live.size() + kTestHfsDeepFixtureFileCount);
+        const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
+                                                                                         8000);
+        QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
+    };
+
+    constexpr int kChurnOperations = 300;
+    for (int op = 0; op < kChurnOperations; ++op) {
+        // Keep the live set oscillating across the depth-2 split/merge boundary
+        // so both directions of the rebalance get exercised repeatedly.
+        const bool doCreate = live.size() < 8 || (live.size() <= 90 && (nextRandom() & 1u) == 0u);
+        if (doCreate) {
+            const QString name = QStringLiteral("/c-%1-%2.txt")
+                                     .arg(createCounter++, 6, 10, QLatin1Char('0'))
+                                     .arg(namePad);
+            const auto created =
+                PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath, name, options);
+            QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
+            live.append(name);
+        } else {
+            const int index = static_cast<int>(nextRandom() % static_cast<uint32_t>(live.size()));
+            const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+                imagePath, live.at(index), options);
+            QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
+            live.removeAt(index);
+        }
+        peakDepth = std::max(peakDepth, treeDepth());
+        if ((op % 50) == 49) {
+            verifyTree();
+        }
+    }
+
+    // The churn must have actually grown the tree past a single leaf, otherwise
+    // it never exercised the split/merge paths this test is here to cover.
+    QVERIFY(peakDepth >= 2);
+    verifyTree();
+
+    // Drain the remaining churn files; the tree collapses back to the fixture.
+    for (const QString& name : live) {
+        const auto deleted =
+            PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(imagePath, name, options);
+        QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
+    }
+    live.clear();
+    QCOMPARE(treeDepth(), static_cast<uint16_t>(1));
+    verifyTree();
 }
 
 namespace {
