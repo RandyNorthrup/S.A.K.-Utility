@@ -1,0 +1,23 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-snapshot-delete",
+    "tier": "A3: APFS snapshot delete on the certified crash-safe in-place COW checkpoint engine",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 256 MiB generated container passed through on SATA (disk0, bare APFS container; kernel synthesised /dev/disk1)",
+    "change": "Implemented APFS snapshot DELETE as the inverse of create (commitInPlaceSnapshotDelete + commitImageOnlySnapshotDelete / commitRawSnapshotDelete + CLI commit-image-snapshot-delete / commit-raw-snapshot-delete). readSnapshotFrozenRefs recovers the snapshot's frozen superblock + extent-ref tree addresses from the j_snap_metadata record; the commit rewrites the snap-meta tree empty, clears the volume omap header's snapshot state (om_snap_count / om_snapshot_tree_oid / om_most_recent_snap all back to 0), drops num_snapshots, restores apfs_fs_alloc_count = (current + 3) / 2 (inverse of create's 2*before - 3), and frees the three snapshot-exclusive blocks (omap-snapshot tree, frozen superblock, frozen extent-ref tree) plus the five COW'd chain blocks. The shared root fs-tree, volume omap tree, and live extent-ref tree stay in place. Refactored the shared snapshot-commit checkpoint tail (commitSnapshotCheckpointTail) so create and delete reuse it.",
+    "byte_perfect_inverse": "A create-then-delete round-trip restores the container exactly to its snapshot-free shape: the delete result's APSB has num_snapshots 0, apfs_fs_alloc_count 5, and omap om_snap_count / om_snapshot_tree_oid / om_most_recent_snap all 0 - identical to the base container before the snapshot was created.",
+    "linux_apfsck": "apfsprogs apfsck on the delete result is CLEAN (snapshot-free container; block-count and chunk-info-xid checks pass).",
+    "scenario": "Format a 256 MiB container (volume SAKSNAP) -> commit-image-snapshot-create (xid 2 -> 3) -> commit-image-snapshot-delete (xid 3 -> 4) -> pass the bare-container delete result through to macOS recovery on SATA disk0.",
+    "apple_fsck_apfs": {
+        "kernel_mount_rw": "The macOS kernel auto-mounted the synthesised container /dev/disk1 read-write ('last modified by apfs_kext 2332.101.1') and continued the checkpoint to transaction ID 6.",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1",
+        "snapshot_gone": "fsck_apfs checks 'the snapshot metadata tree' and 'the snapshot metadata' but prints NO 'Checking snapshot N of M' line (contrast the create cert, which enumerated 'snapshot 1 of 1 (sak.refactor.check, transaction ID 3)') - the snapshot was removed cleanly.",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID 1198B31C-4EDE-4CAE-ACF1-78745F775C64 appears to be OK.",
+        "accounting_clean": "'Verifying volume object map space' and 'Verifying allocated space' both clean.",
+        "diskutil_cross_check": "diskutil mount disk1s1 (Volume SAKSNAP mounted) then diskutil apfs listSnapshots disk1s1 reports 'No snapshots for disk1s1'.",
+        "evidence": "fsck_apfs-snapshot-free-clean.png (warning-free verdict with no snapshot enumerated); diskutil-no-snapshots.png ('No snapshots for disk1s1')"
+    },
+    "note": "Certifies A3 snapshot DELETE. Snapshot revert is the remaining A3 increment; the A3 matrix lane flips to Yes once create + delete + revert are all certified. Unit test apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState; full local suite green.",
+    "completed_at_utc": "2026-06-21T22:05:00Z"
+}
