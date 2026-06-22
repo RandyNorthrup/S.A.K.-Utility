@@ -11,6 +11,7 @@
 
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -286,6 +287,37 @@ constexpr qsizetype kApfsVolumeFileCountOffset = 0xB8;
 constexpr qsizetype kApfsVolumeDirectoryCountOffset = 0xC0;
 constexpr qsizetype kApfsVolumeExtentRefTreeOidOffset = 0x90;
 constexpr qsizetype kApfsVolumeNumSnapshotsOffset = 0xD8;
+// j_snap_metadata value layout (snapshot-metadata tree leaf record, A3 create).
+constexpr qsizetype kApfsSnapMetaExtentRefOidOffset = 0x00;
+constexpr qsizetype kApfsSnapMetaSblockOidOffset = 0x08;
+constexpr qsizetype kApfsSnapMetaCreateTimeOffset = 0x10;
+constexpr qsizetype kApfsSnapMetaChangeTimeOffset = 0x18;
+constexpr qsizetype kApfsSnapMetaInumOffset = 0x20;
+constexpr qsizetype kApfsSnapMetaExtentRefTypeOffset = 0x28;
+constexpr qsizetype kApfsSnapMetaFlagsOffset = 0x2C;
+constexpr qsizetype kApfsSnapMetaNameLenOffset = 0x30;
+constexpr qsizetype kApfsSnapMetaNameOffset = 0x32;
+constexpr qsizetype kApfsSnapMetaValueHeaderBytes = 0x32;  // 50-byte fixed header before the name
+// omap-snapshot tree node: fixed-kv, subtype 0x13, 8-byte xid key + 16-byte omap_snapshot value.
+constexpr uint32_t kApfsObjectSubtypeOmapSnapshot = 0x00'00'00'13;
+constexpr qsizetype kApfsOmapSnapshotTreeTocBytes = 576;
+constexpr qsizetype kApfsOmapSnapshotKeyBytes = 8;
+constexpr qsizetype kApfsOmapSnapshotValueBytes = 16;
+// j_snap key obj_id_and_type record types (high nibble of the 8-byte key header).
+constexpr uint64_t kApfsJObjTypeSnapMetadata = 1;
+constexpr uint64_t kApfsJObjTypeSnapName = 11;
+constexpr uint64_t kApfsJObjIdMask = (1ULL << kApfsObjTypeShift) - 1;
+constexpr uint32_t kApfsVolumePhysicalSblockType =
+    kApfsObjStoragePhysical | kApfsObjectTypeFs;            // 0x4000000d (frozen sblock object)
+constexpr uint32_t kApfsExtentRefTreeType = 0x40'00'00'02;  // physical btree (j_snap_metadata)
+// apfs_fs_alloc_count is a LOGICAL count: a snapshot re-walks the volume's catalog,
+// its frozen extent-ref tree (a copy of the live one), and the file extents, but NOT
+// the live volume superblock, its single-node object-map tree, or its single-node
+// snap-meta tree. So creating the first snapshot adds (alloc_count - these 3) to the
+// count -> new alloc_count = 2*before - 3. Verified against apfsck's walk (empty
+// container: 5 -> 7) and confirmed by fsck_apfs. The 3 assumes the object-map tree is
+// single-node (level 0); snapshot create fails closed on a multi-level object map.
+constexpr uint64_t kApfsSnapshotLiveOnlyBlocks = 3;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
 constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
@@ -1634,6 +1666,233 @@ QByteArray buildEmptyVariableTreeBlock(uint32_t blockSize,
     writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'52);
     writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
     writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+// A3: one snapshot's entry in the volume omap-snapshot tree (a fixed-kv physical
+// B-tree, subtype 0x13). Key = snapshot xid; value = omap_snapshot{flags, pad, oid}.
+struct ApfsOmapSnapshotEntry {
+    uint64_t xid{0};
+    uint32_t flags{0};  // oms_flags (0 for a normal snapshot)
+    uint64_t oid{0};    // oms_oid (0 on a real macOS sealed-system snapshot)
+};
+
+// Build the volume omap-snapshot tree root/leaf. Byte-matched against a real macOS
+// sealed-system snapshot: subtype 0x13, ROOT|LEAF|FIXED_KV node flags, 576-byte TOC,
+// info flags 0x10, 8-byte xid keys and 16-byte omap_snapshot values.
+QByteArray buildOmapSnapshotTreeBlock(uint32_t blockSize,
+                                      uint64_t paddrOid,
+                                      uint64_t xid,
+                                      const QVector<ApfsOmapSnapshotEntry>& entries,
+                                      QStringList* blockers) {
+    QByteArray block = newApfsObjectBlock(blockSize, paddrOid, xid, kApfsObjectTypeBtreePhysical);
+    writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeOmapSnapshot);
+    writeLe16(&block,
+              kApfsBtreeNodeFlagsOffset,
+              kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf | kApfsBtreeNodeFixedKvSize);
+    writeLe16(&block, kApfsBtreeNodeLevelOffset, 0);
+    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(entries.size()));
+    writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(&block,
+              kApfsBtreeNodeTableLengthOffset,
+              static_cast<uint16_t>(kApfsOmapSnapshotTreeTocBytes));
+
+    const qsizetype tableStart = kApfsBtreeNodeHeaderBytes;
+    const qsizetype keyAreaStart = tableStart + kApfsOmapSnapshotTreeTocBytes;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    const qsizetype keyBytesUsed = static_cast<qsizetype>(entries.size()) *
+                                   kApfsOmapSnapshotKeyBytes;
+    const qsizetype valueBytesUsed = static_cast<qsizetype>(entries.size()) *
+                                     kApfsOmapSnapshotValueBytes;
+    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
+    writeLe16(&block,
+              0x2E,
+              static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyBytesUsed - valueBytesUsed));
+    writeLe16(&block, 0x30, 0xFFFF);
+    writeLe16(&block, 0x32, 0);
+    writeLe16(&block, 0x34, 0xFFFF);
+    writeLe16(&block, 0x36, 0);
+    for (qsizetype index = 0; index < entries.size(); ++index) {
+        const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype keyOffset = index * kApfsOmapSnapshotKeyBytes;
+        const qsizetype valueBackOffset = (index + 1) * kApfsOmapSnapshotValueBytes;
+        writeLe16(&block, toc, static_cast<uint16_t>(keyOffset));
+        writeLe16(&block,
+                  toc + kApfsBtreeFixedTocValueOffset,
+                  static_cast<uint16_t>(valueBackOffset));
+        const qsizetype key = keyAreaStart + keyOffset;
+        const qsizetype value = valueAreaEnd - valueBackOffset;
+        writeLe64(&block, key, entries.at(index).xid);
+        writeLe32(&block, value, entries.at(index).flags);    // oms_flags
+        writeLe32(&block, value + 4, 0);                      // oms_pad
+        writeLe64(&block, value + 8, entries.at(index).oid);  // oms_oid
+    }
+    const qsizetype infoOffset = valueAreaEnd;
+    writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'10);
+    writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
+    writeLe32(&block,
+              infoOffset + kApfsBtreeInfoKeySizeOffset,
+              static_cast<uint32_t>(kApfsOmapSnapshotKeyBytes));
+    writeLe32(&block,
+              infoOffset + kApfsBtreeInfoValueSizeOffset,
+              static_cast<uint32_t>(kApfsOmapSnapshotValueBytes));
+    if (!entries.isEmpty()) {
+        writeLe32(&block, infoOffset + 16, static_cast<uint32_t>(kApfsOmapSnapshotKeyBytes));
+        writeLe32(&block, infoOffset + 20, static_cast<uint32_t>(kApfsOmapSnapshotValueBytes));
+    }
+    writeLe64(&block,
+              infoOffset + kApfsBtreeInfoKeyCountOffset,
+              static_cast<uint64_t>(entries.size()));
+    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+struct ApfsVariableKvRecord {
+    QByteArray key;
+    QByteArray value;
+};
+
+// Build a variable-kv physical B-tree root/leaf (info flags 0x52, kvloc_t TOC)
+// holding the given {key, value} records in their given order. Generalises
+// buildExtentRefTreeBlock for the snapshot-metadata tree (subtype 0x10), whose keys
+// and values are variable length; longest-key/longest-value are tracked per record.
+struct ApfsVariableKvTree {
+    uint32_t blockSize{0};
+    uint64_t paddrOid{0};
+    uint64_t xid{0};
+    uint32_t subtype{0};
+    QVector<ApfsVariableKvRecord> records;
+};
+
+QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList* blockers) {
+    const uint32_t blockSize = tree.blockSize;
+    const QVector<ApfsVariableKvRecord>& records = tree.records;
+    QByteArray block =
+        newApfsObjectBlock(blockSize, tree.paddrOid, tree.xid, kApfsObjectTypeBtreePhysical);
+    writeLe32(&block, kApfsObjectSubtypeOffset, tree.subtype);
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf);
+    const qsizetype tocLength = std::max<qsizetype>(
+        64, ((records.size() * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
+    writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    qsizetype keyCursor = 0;
+    qsizetype valueBackCursor = 0;
+    uint32_t longestKey = 0;
+    uint32_t longestValue = 0;
+    for (qsizetype index = 0; index < records.size(); ++index) {
+        const QByteArray& key = records.at(index).key;
+        const QByteArray& value = records.at(index).value;
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        writeLe16(&block, toc, static_cast<uint16_t>(keyCursor));
+        writeLe16(&block,
+                  toc + kApfsBtreeVariableTocKeyLengthOffset,
+                  static_cast<uint16_t>(key.size()));
+        valueBackCursor += value.size();
+        writeLe16(&block,
+                  toc + kApfsBtreeVariableTocValueOffset,
+                  static_cast<uint16_t>(valueBackCursor));
+        writeLe16(&block,
+                  toc + kApfsBtreeVariableTocValueLengthOffset,
+                  static_cast<uint16_t>(value.size()));
+        std::copy(key.cbegin(), key.cend(), block.begin() + keyAreaStart + keyCursor);
+        std::copy(value.cbegin(), value.cend(), block.begin() + valueAreaEnd - valueBackCursor);
+        keyCursor += key.size();
+        longestKey = std::max<uint32_t>(longestKey, static_cast<uint32_t>(key.size()));
+        longestValue = std::max<uint32_t>(longestValue, static_cast<uint32_t>(value.size()));
+    }
+    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyCursor));
+    writeLe16(&block,
+              0x2E,
+              static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyCursor - valueBackCursor));
+    writeLe16(&block, 0x30, 0xFFFF);
+    writeLe16(&block, 0x32, 0);
+    writeLe16(&block, 0x34, 0xFFFF);
+    writeLe16(&block, 0x36, 0);
+    const qsizetype infoOffset = valueAreaEnd;
+    writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'52);
+    writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
+    if (!records.isEmpty()) {
+        writeLe32(&block, infoOffset + 16, longestKey);
+        writeLe32(&block, infoOffset + 20, longestValue);
+    }
+    writeLe64(&block,
+              infoOffset + kApfsBtreeInfoKeyCountOffset,
+              static_cast<uint64_t>(records.size()));
+    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+// A3: the metadata describing one snapshot, used to emit its snap-meta tree records.
+struct ApfsSnapshotMetadata {
+    uint64_t snapXid{0};
+    uint64_t extentRefTreeOid{0};  // paddr of the snapshot's frozen extent-ref tree
+    uint64_t sblockOid{0};         // paddr of the snapshot's frozen superblock copy
+    uint64_t createTimeNs{0};
+    uint64_t changeTimeNs{0};
+    uint64_t inum{0};
+    QByteArray name;  // UTF-8 snapshot name (no trailing NUL; added on emit)
+};
+
+// Build the two snap-meta tree records for one snapshot: j_snap_metadata (keyed by
+// (SNAP_METADATA<<60)|xid) and j_snap_name (keyed by (SNAP_NAME<<60)|OBJ_ID_MASK +
+// the name). Returned in ascending key-header order (metadata before name), the
+// order the snapshot-metadata tree stores them.
+QVector<ApfsVariableKvRecord> buildSnapMetaRecords(const ApfsSnapshotMetadata& snap) {
+    const QByteArray nameZ = snap.name + QByteArray(1, '\0');  // NUL-terminated
+    const uint16_t nameLen = static_cast<uint16_t>(nameZ.size());
+
+    QByteArray metaKey(8, '\0');
+    writeLe64(&metaKey, 0, (kApfsJObjTypeSnapMetadata << kApfsObjTypeShift) | snap.snapXid);
+    QByteArray metaVal(kApfsSnapMetaValueHeaderBytes + nameZ.size(), '\0');
+    writeLe64(&metaVal, kApfsSnapMetaExtentRefOidOffset, snap.extentRefTreeOid);
+    writeLe64(&metaVal, kApfsSnapMetaSblockOidOffset, snap.sblockOid);
+    writeLe64(&metaVal, kApfsSnapMetaCreateTimeOffset, snap.createTimeNs);
+    writeLe64(&metaVal, kApfsSnapMetaChangeTimeOffset, snap.changeTimeNs);
+    writeLe64(&metaVal, kApfsSnapMetaInumOffset, snap.inum);
+    writeLe32(&metaVal, kApfsSnapMetaExtentRefTypeOffset, kApfsExtentRefTreeType);
+    writeLe32(&metaVal, kApfsSnapMetaFlagsOffset, 0);
+    writeLe16(&metaVal, kApfsSnapMetaNameLenOffset, nameLen);
+    std::copy(nameZ.cbegin(), nameZ.cend(), metaVal.begin() + kApfsSnapMetaNameOffset);
+
+    QByteArray nameKey(10 + nameZ.size(), '\0');
+    writeLe64(&nameKey, 0, (kApfsJObjTypeSnapName << kApfsObjTypeShift) | kApfsJObjIdMask);
+    writeLe16(&nameKey, 8, nameLen);
+    std::copy(nameZ.cbegin(), nameZ.cend(), nameKey.begin() + 10);
+    QByteArray nameVal(8, '\0');
+    writeLe64(&nameVal, 0, snap.snapXid);
+
+    QVector<ApfsVariableKvRecord> records;
+    records.append({metaKey, metaVal});
+    records.append({nameKey, nameVal});
+    return records;
+}
+
+// A3: build a snapshot's frozen superblock copy from the live APSB. It freezes the
+// tree pointers as the snapshot sees them: keeps root_tree_oid, zeros the live-only
+// object-map / extent-ref / snap-meta tree oids (the snapshot resolves virtual oids
+// through the volume omap filtered by its xid) and the revert fields, and is a
+// PHYSICAL object (o_oid == its own paddr, o_type carries the physical flag).
+QByteArray buildFrozenSnapshotSuperblock(const QByteArray& liveVolSb,
+                                         uint64_t frozenPaddr,
+                                         uint64_t snapXid,
+                                         uint64_t newSnapshotCount,
+                                         QStringList* blockers) {
+    QByteArray block = liveVolSb;
+    writeLe64(&block, kApfsObjectOidOffset, frozenPaddr);
+    writeLe64(&block, kApfsObjectXidOffset, snapXid);
+    writeLe32(&block, kApfsObjectTypeOffset, kApfsVolumePhysicalSblockType);
+    writeLe64(&block, kApfsVolumeOmapOidOffset, 0);
+    writeLe64(&block, kApfsVolumeExtentRefTreeOidOffset, 0);
+    writeLe64(&block, kApfsVolumeSnapMetaTreeOidOffset, 0);
+    writeLe64(&block, kApfsVolumeRevertToXidOffset, 0);
+    writeLe64(&block, kApfsVolumeRevertToSblockOidOffset, 0);
+    writeLe64(&block, kApfsVolumeNumSnapshotsOffset, newSnapshotCount);
     stampApfsObjectBlock(&block, blockers);
     return block;
 }
@@ -3492,6 +3751,10 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     writeLe64(&cib,
               kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
               alloc.rotation.newBitmap);
+    // Chunk 0's allocation state changes every commit (its bitmap rotates), so stamp
+    // its ci_xid at the commit xid: fsck requires the cib's object xid to equal the
+    // most recent chunk xid (cib only changes if a chunk changes).
+    writeLe64(&cib, kApfsChunkInfoEntriesOffset, alloc.newXid);
     if (alloc.chunk1BitmapBlock != 0) {
         const qsizetype entry1 = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryStride;
         writeLe32(&cib,
@@ -4517,6 +4780,316 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         return false;
     }
     return true;
+}
+
+// A3: request to create one snapshot of a generated APFS volume.
+struct ApfsSnapshotCreateRequest {
+    QString snapshotName;
+    uint64_t createTimeNs{0};  // APFS time (ns since 1970-01-01 UTC); 0 = caller fills it in
+};
+
+// COW inputs for a snapshot create. newBlocks layout (8 freshly allocated blocks):
+//   [0]=frozenExtentRef [1]=frozenSblock  [2]=omapSnapTree [3]=snapMetaTree
+//   [4]=volOmapHdr      [5]=volSb          [6]=ctrOmapTree  [7]=ctrOmapHdr
+struct ApfsSnapshotCreateCow {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    uint64_t newXid{0};
+    ApfsLiveFsChain live;
+    QVector<uint64_t> newBlocks;
+    ApfsSnapshotCreateRequest request;
+};
+
+// Per-commit snapshot-create scalars derived from the live volume superblock.
+struct ApfsSnapshotCowState {
+    QByteArray liveVol;
+    uint64_t newSnapCount{0};
+    uint64_t snapInum{0};
+    uint64_t newAllocCount{0};
+};
+
+// Write the four snapshot structures (newBlocks[0..3]): the frozen extent-ref tree
+// copy, the frozen physical superblock copy, the omap-snapshot tree, and the
+// snap-meta tree (j_snap_metadata + j_snap_name).
+bool writeSnapshotFrozenBlocks(const ApfsSnapshotCreateCow& cow,
+                               const ApfsSnapshotCowState& st,
+                               QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t frozenExtentRef = cow.newBlocks.at(0);
+    const uint64_t frozenSblock = cow.newBlocks.at(1);
+    const uint64_t omapSnapTree = cow.newBlocks.at(2);
+    const uint64_t snapMetaTree = cow.newBlocks.at(3);
+    const uint64_t snapXid = cow.newXid;
+    // (A) frozen extent-ref tree: byte copy of the live tree, re-stamped at the new xid.
+    QByteArray extentRef(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.extentRef, &extentRef, blockers)) {
+        return false;
+    }
+    writeLe64(&extentRef, kApfsObjectOidOffset, frozenExtentRef);
+    writeLe64(&extentRef, kApfsObjectXidOffset, snapXid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, frozenExtentRef, &extentRef, blockers)) {
+        return false;
+    }
+    // (B) frozen superblock copy (physical object; o_oid == its own paddr).
+    QByteArray frozen =
+        buildFrozenSnapshotSuperblock(st.liveVol, frozenSblock, snapXid, st.newSnapCount, blockers);
+    if (!writeApfsRepairBlock(cow.image, cow.geometry, frozenSblock, frozen, blockers)) {
+        return false;
+    }
+    // (C) omap-snapshot tree (one entry: this snapshot's xid; oms value all-zero).
+    QByteArray omapSnap =
+        buildOmapSnapshotTreeBlock(bs, omapSnapTree, snapXid, {{snapXid, 0, 0}}, blockers);
+    if (!writeApfsRepairBlock(cow.image, cow.geometry, omapSnapTree, omapSnap, blockers)) {
+        return false;
+    }
+    // (D) snap-meta tree (j_snap_metadata + j_snap_name).
+    const ApfsSnapshotMetadata meta{.snapXid = snapXid,
+                                    .extentRefTreeOid = frozenExtentRef,
+                                    .sblockOid = frozenSblock,
+                                    .createTimeNs = cow.request.createTimeNs,
+                                    .changeTimeNs = cow.request.createTimeNs,
+                                    .inum = st.snapInum,
+                                    .name = cow.request.snapshotName.toUtf8()};
+    QByteArray snapMeta = buildVariableKvLeafBlock(
+        {bs, snapMetaTree, snapXid, kApfsObjectSubtypeSnapMeta, buildSnapMetaRecords(meta)},
+        blockers);
+    return writeApfsRepairBlock(cow.image, cow.geometry, snapMetaTree, snapMeta, blockers);
+}
+
+// Write the volume + container chain (newBlocks[4..7]): the volume omap header (with
+// the snapshot-tree pointer and counters), the live volume superblock (re-pointed at
+// the new omap + snap-meta tree), and the container object map re-pointed at it.
+bool writeSnapshotVolumeChain(const ApfsSnapshotCreateCow& cow,
+                              const ApfsSnapshotCowState& st,
+                              QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t omapSnapTree = cow.newBlocks.at(2);
+    const uint64_t snapMetaTree = cow.newBlocks.at(3);
+    const uint64_t volOmapHdr = cow.newBlocks.at(4);
+    const uint64_t volSb = cow.newBlocks.at(5);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(6);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(7);
+    const uint64_t snapXid = cow.newXid;
+    // (E) volume omap header: COW the live omap_phys, keep its object-map tree
+    // (unchanged), add the snapshot-tree pointer + counters.
+    QByteArray volOmap(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    writeLe64(&volOmap, kApfsObjectOidOffset, volOmapHdr);
+    writeLe64(&volOmap, kApfsObjectXidOffset, snapXid);
+    writeLe32(&volOmap,
+              kApfsOmapSnapshotCountOffset,
+              le32(volOmap, kApfsOmapSnapshotCountOffset) + 1);
+    writeLe64(&volOmap, kApfsOmapSnapshotTreeOidOffset, omapSnapTree);
+    writeLe64(&volOmap, kApfsOmapMostRecentSnapshotOffset, snapXid);
+    writeLe64(&volOmap, kApfsOmapPendingRevertMinOffset, 0);
+    writeLe64(&volOmap, kApfsOmapPendingRevertMaxOffset, 0);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    // (F) volume superblock: COW the live APSB, re-point its object map + snap-meta
+    // tree, bump num_snapshots + next_obj_id + allocated-block count.
+    QByteArray vol = st.liveVol;
+    writeLe64(&vol, kApfsObjectXidOffset, snapXid);
+    writeLe64(&vol, kApfsVolumeOmapOidOffset, volOmapHdr);
+    writeLe64(&vol, kApfsVolumeSnapMetaTreeOidOffset, snapMetaTree);
+    writeLe64(&vol, kApfsVolumeNumSnapshotsOffset, st.newSnapCount);
+    writeLe64(&vol, kApfsVolumeNextObjectIdOffset, st.snapInum + 1);
+    writeLe64(&vol, kApfsVolumeAllocatedBlockCountOffset, st.newAllocCount);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
+        return false;
+    }
+    // (G) container object map (tree + header) re-pointed at the new volume superblock.
+    QByteArray ctrTree = buildObjectMapTreeBlock(
+        bs, ctrOmapTree, {{kApfsFormatVolumeOid, snapXid, volSb}}, snapXid, blockers);
+    QByteArray ctrHdr = buildObjectMapBlock({bs, ctrOmapHdr, ctrOmapTree, snapXid, 1}, blockers);
+    return writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapTree, ctrTree, blockers) &&
+           writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapHdr, ctrHdr, blockers);
+}
+
+// Copy-on-write chain for a snapshot create. The root fs-tree, the volume object-map
+// tree, and the live extent-ref tree are left in place (shared with the snapshot until
+// a later write diverges); only the snapshot structures and the volume/container
+// superblock + object-map headers are written. Byte recipe harvested from a real
+// macOS sealed-system snapshot (temp/snapshot-recipe-resolved.txt).
+bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    ApfsSnapshotCowState st;
+    st.liveVol = QByteArray(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volSb, &st.liveVol, blockers)) {
+        return false;
+    }
+    st.newSnapCount = le64(st.liveVol, kApfsVolumeNumSnapshotsOffset) + 1;
+    st.snapInum = le64(st.liveVol, kApfsVolumeNextObjectIdOffset);
+    const uint64_t beforeAlloc = le64(st.liveVol, kApfsVolumeAllocatedBlockCountOffset);
+    // The logical alloc-count formula (2*before - 3) holds only for a single-node
+    // volume object-map tree; a multi-level omap would not re-walk to a known count.
+    QByteArray volOmapTreeNode(bs, '\0');
+    if (!readApfsRepairBlock(
+            cow.image, cow.geometry, cow.live.volOmapTree, &volOmapTreeNode, blockers)) {
+        return false;
+    }
+    if (le16(volOmapTreeNode, kApfsBtreeNodeLevelOffset) != 0) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-create: multi-level volume object map is not yet supported"));
+        return false;
+    }
+    if (beforeAlloc < kApfsSnapshotLiveOnlyBlocks) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-create: implausible volume allocated-block count"));
+        return false;
+    }
+    st.newAllocCount = 2 * beforeAlloc - kApfsSnapshotLiveOnlyBlocks;
+    return writeSnapshotFrozenBlocks(cow, st, blockers) &&
+           writeSnapshotVolumeChain(cow, st, blockers);
+}
+
+// Inputs to the shared snapshot-create commit tail.
+struct ApfsSnapshotCreateFinalize {
+    ApfsFsCommitContext ctx;
+    ApfsSnapshotCreateRequest request;
+    uint64_t oldSnapMetaTree{0};
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock{0};
+};
+
+// Shared snapshot-create commit tail: write the COW chain, then thread the net block
+// change through the main free-queue, the allocation bitmap (freed old chain blocks
+// out, the eight new blocks in), the CIB/spaceman free counts, and the checkpoint -
+// the same crash-safe machinery the file-mutating commits use. Five old chain blocks
+// are freed (old volume superblock, volume omap header, snap-meta tree, container
+// omap tree + header); the root fs-tree, volume omap tree, and live extent-ref tree
+// stay in place, shared with the snapshot.
+bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
+                            ApfsInPlaceCheckpointResult* result,
+                            QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const QVector<uint64_t>& newBlocks = f.newBlocks;
+    const uint64_t chunk1BitmapBlock = f.chunk1BitmapBlock;
+    const uint64_t newXid = ctx.live.xid + 1;
+    const QVector<uint64_t> freed = {ctx.chain.volSb,
+                                     ctx.chain.volOmapHdr,
+                                     f.oldSnapMetaTree,
+                                     ctx.chain.ctrOmapTree,
+                                     ctx.chain.ctrOmapHdr};
+    const int64_t netConsumed = static_cast<int64_t>(newBlocks.size()) -
+                                static_cast<int64_t>(freed.size());
+    if (!writeSnapshotCreateCowChain({.image = ctx.image,
+                                      .geometry = ctx.geometry,
+                                      .newXid = newXid,
+                                      .live = ctx.chain,
+                                      .newBlocks = newBlocks,
+                                      .request = f.request},
+                                     blockers)) {
+        return false;
+    }
+    const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
+        ctx.image,
+        ctx.geometry,
+        findEphemeralPaddrByOid(
+            ctx.image, ctx.geometry, ctx.live, kApfsFormatFqMainTreeOid, blockers),
+        blockers);
+    const ApfsMainFqAdvance mainFq =
+        advanceMainFreeQueue(liveMainFq, freed, newXid, kMainFqRollbackWindow);
+    const int64_t netQueued = static_cast<int64_t>(freed.size()) -
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t freeDelta = -netConsumed - netQueued;
+    const uint64_t groupSize = ctx.layout.ipGroupStride;
+    const uint64_t extraBitmaps = ctx.layout.metadataChunks > 1 ? ctx.layout.metadataChunks - 2 : 0;
+    const uint64_t immutableCabCount = ctx.layout.cabCount > 0 ? ctx.layout.cabCount - 1 : 0;
+    const uint64_t ipBitmapUsage = (ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps +
+                                   3 * groupSize +
+                                   (ctx.layout.allocChunk == 0 && chunk1BitmapBlock != 0 ? 1 : 0);
+    if (!applyFileInsertAllocation({.image = ctx.image,
+                                    .geometry = ctx.geometry,
+                                    .layout = ctx.layout,
+                                    .rotation = rotation,
+                                    .freed = mainFq.reclaimed,
+                                    .allocated = newBlocks,
+                                    .cibFreeDelta = freeDelta,
+                                    .newXid = newXid,
+                                    .chunk1BitmapBlock = chunk1BitmapBlock},
+                                   blockers)) {
+        return false;
+    }
+    uint64_t newAddr0 = rotation.newCib;
+    if (ctx.layout.cabCount > 0) {
+        const uint64_t newCab0 = rotation.newCib + 2;
+        if (!writeRotatedCab0({.image = ctx.image,
+                               .geometry = ctx.geometry,
+                               .liveCab0 = ctx.liveCab0,
+                               .newCab0 = newCab0,
+                               .newCib0 = rotation.newCib,
+                               .newXid = newXid},
+                              blockers)) {
+            return false;
+        }
+        newAddr0 = newCab0;
+    }
+    return advanceCheckpoint({.image = ctx.image,
+                              .geometry = ctx.geometry,
+                              .nxsb = ctx.nxsb,
+                              .live = ctx.live,
+                              .newContainerOmap = newBlocks.at(7),
+                              .spacemanFreeDelta = freeDelta,
+                              .nextOidAdvance = 0,
+                              .newCibAddr = newAddr0,
+                              .cibCount = ctx.layout.cibCount,
+                              .ipSlotStride = groupSize,
+                              .ipBitmapUsage = ipBitmapUsage,
+                              .freedCibSlot = rotation.liveCib,
+                              .prevFreedCibSlot = rotation.freeCib,
+                              .mainFqEntries = mainFq.entries},
+                             result,
+                             blockers);
+}
+
+// A3: create one snapshot of a generated APFS volume with a true in-place
+// copy-on-write checkpoint commit. Freezes the volume's current tree pointers into a
+// physical superblock copy + frozen extent-ref tree, records the snapshot in a new
+// omap-snapshot tree and the snap-meta tree (j_snap_metadata + j_snap_name), and
+// re-points the volume omap header / superblock / container omap - all published
+// atomically at the checkpoint. Fails closed on a volume that already carries a
+// snapshot (multi-snapshot create is a later increment).
+bool commitInPlaceSnapshotCreate(QIODevice* image,
+                                 const ApfsSnapshotCreateRequest& request,
+                                 ApfsInPlaceCheckpointResult* result,
+                                 QStringList* blockers) {
+    if (request.snapshotName.trimmed().isEmpty()) {
+        blockers->append(QStringLiteral("APFS snapshot-create: the snapshot name is empty"));
+        return false;
+    }
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QByteArray liveVol(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
+        return false;
+    }
+    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) != 0) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-create: the volume already carries a snapshot "
+                           "(multi-snapshot create is a later increment)"));
+        return false;
+    }
+    const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock = 0;
+    if (!allocateFsCommitBlocks(ctx, {3, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
+        return false;
+    }
+    ApfsSnapshotCreateRequest clean = request;
+    clean.snapshotName = request.snapshotName.trimmed();
+    return finalizeSnapshotCreate({.ctx = ctx,
+                                   .request = clean,
+                                   .oldSnapMetaTree = oldSnapMetaTree,
+                                   .newBlocks = newBlocks,
+                                   .chunk1BitmapBlock = chunk1BitmapBlock},
+                                  result,
+                                  blockers);
 }
 
 struct ApfsDeleteRequest {
@@ -12265,6 +12838,108 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFilePatch
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceFilePatch(target.get(), patch, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+namespace {
+// APFS snapshot timestamps are nanoseconds since 1970-01-01 UTC. A request that
+// supplies 0 is stamped with the current wall-clock time.
+uint64_t resolveSnapshotCreateTimeNs(uint64_t requested) {
+    if (requested != 0) {
+        return requested;
+    }
+    const qint64 msecs = QDateTime::currentMSecsSinceEpoch();
+    return static_cast<uint64_t>(msecs) * 1'000'000ULL;
+}
+}  // namespace
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySnapshotCreate(
+    const PartitionApfsImageSnapshotCreateCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QString cleanName = request.snapshot_name.trimmed();
+    const QLatin1StringView purpose("snapshot-create-commit");
+    if (cleanName.isEmpty()) {
+        result.blockers.append(
+            QStringLiteral("APFS snapshot-create-commit: the snapshot name is empty"));
+        return result;
+    }
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotCreate(&image,
+                                    {cleanName,
+                                     resolveSnapshotCreateTimeNs(request.create_time_ns)},
+                                    &commit,
+                                    &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotCreate(
+    const PartitionApfsRawSnapshotCreateCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString cleanName = request.snapshot_name.trimmed();
+    if (cleanName.isEmpty()) {
+        result.blockers.append(
+            QStringLiteral("APFS raw snapshot-create-commit: the snapshot name is empty"));
+        return result;
+    }
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("snapshot-create-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotCreate(target.get(),
+                                    {cleanName,
+                                     resolveSnapshotCreateTimeNs(request.create_time_ns)},
+                                    &commit,
+                                    &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

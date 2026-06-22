@@ -402,6 +402,7 @@ struct CliInvocation {
     QByteArray payload;
     uint64_t patch_offset_bytes{0};
     QString patch_offset_error;
+    QString snapshot_name;
     QString evidence_id;
     bool confirm_target{false};
     bool allow_raw_target{false};
@@ -437,6 +438,7 @@ struct CliParserOptions {
     const QCommandLineOption* destination_directory_name{nullptr};
     const QCommandLineOption* payload{nullptr};
     const QCommandLineOption* patch_offset{nullptr};
+    const QCommandLineOption* snapshot_name{nullptr};
     const QCommandLineOption* evidence{nullptr};
     const QCommandLineOption* confirm{nullptr};
     const QCommandLineOption* allow_raw{nullptr};
@@ -546,6 +548,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .payload = mutation->payload,
                          .patch_offset_bytes = mutation->patch_offset,
                          .patch_offset_error = mutation->patch_offset_error,
+                         .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
                          .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw)};
@@ -1665,13 +1668,41 @@ std::optional<QJsonObject> buildCommitRawFilePatchReport(const CliInvocation& in
         commit, QStringLiteral("APFS raw in-place file patch commit"), invocation, error);
 }
 
+std::optional<QJsonObject> buildCommitSnapshotCreateReport(const CliInvocation& invocation,
+                                                           QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-snapshot-create.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .snapshot_name = invocation.snapshot_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS in-place snapshot create commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawSnapshotCreateReport(const CliInvocation& invocation,
+                                                              QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawSnapshotCreate(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .snapshot_name = invocation.snapshot_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place snapshot create commit"), invocation, error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 21> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 23> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
@@ -1697,6 +1728,8 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
          buildCommitRawDirectoryChildWriteReport},
         {QLatin1StringView("commit-raw-directory-child-delete"),
          buildCommitRawDirectoryChildDeleteReport},
+        {QLatin1StringView("commit-image-snapshot-create"), buildCommitSnapshotCreateReport},
+        {QLatin1StringView("commit-raw-snapshot-create"), buildCommitRawSnapshotCreateReport},
     }};
     for (const auto& [command, builder] : kCommitBuilders) {
         if (invocation.command == command) {
@@ -1958,6 +1991,10 @@ int main(int argc, char* argv[]) {
         {QStringLiteral("patch-offset-bytes")},
         QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
         QStringLiteral("bytes"));
+    const QCommandLineOption snapshotNameOption(
+        {QStringLiteral("snapshot-name")},
+        QStringLiteral("Snapshot name for a generated APFS snapshot create."),
+        QStringLiteral("name"));
     const QCommandLineOption outputJsonOption({QStringLiteral("output-json")},
                                               QStringLiteral("Optional report JSON path."),
                                               QStringLiteral("path"));
@@ -1979,6 +2016,7 @@ int main(int argc, char* argv[]) {
                        destinationDirectoryNameOption,
                        payloadOption,
                        patchOffsetOption,
+                       snapshotNameOption,
                        outputJsonOption,
                        evidenceOption,
                        confirmOption,
@@ -2011,6 +2049,7 @@ int main(int argc, char* argv[]) {
                               .destination_directory_name = &destinationDirectoryNameOption,
                               .payload = &payloadOption,
                               .patch_offset = &patchOffsetOption,
+                              .snapshot_name = &snapshotNameOption,
                               .evidence = &evidenceOption,
                               .confirm = &confirmOption,
                               .allow_raw = &allowRawOption},

@@ -638,6 +638,31 @@ struct PartitionApfsRawFilePatchCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to create one snapshot of a generated APFS container with a true
+///        in-place copy-on-write checkpoint commit (A3). Freezes the volume's current
+///        tree state into a snapshot the kernel and fsck_apfs can enumerate; the live
+///        volume keeps writing. Fails closed if the volume already carries a snapshot.
+struct PartitionApfsImageSnapshotCreateCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString snapshot_name;
+    uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to create one snapshot of a generated APFS container on a raw device
+///        with a true in-place copy-on-write checkpoint commit (A3). Applied to the
+///        device in place, so gated by destructive-target confirmation and raw opt-in.
+struct PartitionApfsRawSnapshotCreateCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString snapshot_name;
+    uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -794,6 +819,13 @@ public:
         const PartitionApfsRawFileMoveCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFilePatch(
         const PartitionApfsRawFilePatchCommitRequest& request);
+    /// @brief Create one snapshot of a generated APFS container with a true in-place COW
+    ///        checkpoint commit (A3). commitImageOnlySnapshotCreate clones to a scratch
+    ///        image; commitRawSnapshotCreate applies to a confirmed raw device in place.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlySnapshotCreate(
+        const PartitionApfsImageSnapshotCreateCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotCreate(
+        const PartitionApfsRawSnapshotCreateCommitRequest& request);
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other

@@ -1654,6 +1654,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceDirectoryChildRename();
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
+    void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7383,6 +7384,128 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFilePatchPreservesObjectId() {
                   .file_name = QStringLiteral("ghost.txt"),
                   .patch_offset_bytes = 0,
                   .patch_data = QByteArrayLiteral("x"),
+                  .options = options})
+                 .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
+    // A3: creating a snapshot freezes the volume's tree pointers into a snapshot the
+    // kernel + fsck_apfs enumerate. Verifies the on-disk structures: the volume gains
+    // num_snapshots=1, an omap snapshot tree (subtype 0x13, one record), a snap-meta
+    // tree (two records: j_snap_metadata + j_snap_name), a physical frozen superblock
+    // copy that keeps the root tree, and the logical alloc_count grows to 2*before - 3.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a3-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A3SNAP"),
+                 .options = options})
+                .ok);
+
+    const auto readBlock = [](const QString& path, quint64 block) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le16 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le32 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le64 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    // Walk nx_superblock -> container omap header -> container omap tree -> volume APSB.
+    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
+        const QByteArray nxsb = readBlock(path, 0);
+        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
+        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
+        return le64(tree, 4096 - 40 - 16 + 8);  // single omap entry, paddr at value+8
+    };
+
+    const quint64 baseApsb = apsbBlockOf(base);
+    const QByteArray baseVol = readBlock(base, baseApsb);
+    const quint64 beforeAlloc = le64(baseVol, 0x58);
+    QCOMPARE(le64(baseVol, 0xD8), 0ULL);  // no snapshots yet
+
+    const QString snap = dir.filePath(QStringLiteral("a3-snap.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = base,
+         .written_image_path = snap,
+         .snapshot_name = QStringLiteral("sak.a3.snapshot"),
+         .create_time_ns = 1'782'096'003'133'454'505ULL,
+         .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.previous_xid, 2ULL);
+    QCOMPARE(commit.new_xid, 3ULL);
+
+    // The live tree is shared and untouched: the reader still lists the volume.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(snap, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("A3SNAP"));
+
+    const QByteArray vol = readBlock(snap, apsbBlockOf(snap));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(le64(vol, 0xD8), 1ULL);                 // num_snapshots
+    QCOMPARE(le64(vol, 0x58), 2 * beforeAlloc - 3);  // logical alloc count
+    const quint64 snapMetaTree = le64(vol, 0x98);
+    const QByteArray volOmap = readBlock(snap, le64(vol, 0x80));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(volOmap));
+    QCOMPARE(le32(volOmap, 0x24), 1U);    // om_snap_count
+    QCOMPARE(le64(volOmap, 0x40), 3ULL);  // om_most_recent_snap = new xid
+    const quint64 omapSnapTree = le64(volOmap, 0x38);
+    QVERIFY(omapSnapTree != 0);
+
+    // Omap snapshot tree: subtype 0x13, one fixed-kv record keyed by the snapshot xid.
+    const QByteArray omapSnap = readBlock(snap, omapSnapTree);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omapSnap));
+    QCOMPARE(le32(omapSnap, 0x1C), 0x13U);       // subtype
+    QCOMPARE(le32(omapSnap, 0x24), 1U);          // nkeys
+    QCOMPARE(le64(omapSnap, 0x38 + 576), 3ULL);  // key = snapshot xid
+
+    // Snap-meta tree: two records (j_snap_metadata then j_snap_name).
+    const QByteArray snapMeta = readBlock(snap, snapMetaTree);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(snapMeta));
+    QCOMPARE(le32(snapMeta, 0x1C), 0x10U);  // subtype SNAP_META
+    QCOMPARE(le32(snapMeta, 0x24), 2U);     // nkeys
+
+    // Record 0 (j_snap_metadata) -> physical frozen superblock copy that keeps the root.
+    const quint16 keyOff = le16(snapMeta, 0x38);
+    const quint16 valBack = le16(snapMeta, 0x38 + 4);
+    const quint64 metaKey = le64(snapMeta, 0x38 + 64 + keyOff);
+    QCOMPARE(metaKey >> 60, 1ULL);  // SNAP_METADATA type
+    const quint64 sblockOid = le64(snapMeta, (4096 - 40) - valBack + 0x08);
+    const QByteArray frozen = readBlock(snap, sblockOid);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(frozen));
+    QCOMPARE(le64(frozen, 0x08), sblockOid);            // physical object: oid == paddr
+    QCOMPARE(le32(frozen, 0x18), 0x40'00'00'0DU);       // OBJ_PHYSICAL | OBJECT_TYPE_FS
+    QCOMPARE(frozen.mid(0x20, 4), QByteArrayLiteral("APSB"));
+    QCOMPARE(le64(frozen, 0x88), le64(baseVol, 0x88));  // root tree kept
+    QCOMPARE(le64(frozen, 0x80), 0ULL);                 // omap zeroed
+    QCOMPARE(le64(frozen, 0x90), 0ULL);                 // extentref zeroed
+    QCOMPARE(le64(frozen, 0x98), 0ULL);                 // snap-meta zeroed
+    QCOMPARE(le64(frozen, 0xD8), 1ULL);                 // frozen num_snapshots
+
+    // A volume that already carries a snapshot fails closed (multi-snapshot is later).
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                 {.source_image_path = snap,
+                  .written_image_path = dir.filePath(QStringLiteral("a3-x.apfs")),
+                  .snapshot_name = QStringLiteral("second"),
+                  .options = options})
+                 .ok);
+    // An empty snapshot name fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                 {.source_image_path = base,
+                  .written_image_path = dir.filePath(QStringLiteral("a3-y.apfs")),
+                  .snapshot_name = QString(),
                   .options = options})
                  .ok);
 }
