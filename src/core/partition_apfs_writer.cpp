@@ -4954,36 +4954,26 @@ struct ApfsSnapshotCreateFinalize {
     uint64_t chunk1BitmapBlock{0};
 };
 
-// Shared snapshot-create commit tail: write the COW chain, then thread the net block
-// change through the main free-queue, the allocation bitmap (freed old chain blocks
-// out, the eight new blocks in), the CIB/spaceman free counts, and the checkpoint -
-// the same crash-safe machinery the file-mutating commits use. Five old chain blocks
-// are freed (old volume superblock, volume omap header, snap-meta tree, container
-// omap tree + header); the root fs-tree, volume omap tree, and live extent-ref tree
-// stay in place, shared with the snapshot.
-bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
-                            ApfsInPlaceCheckpointResult* result,
-                            QStringList* blockers) {
-    const ApfsFsCommitContext& ctx = f.ctx;
-    const QVector<uint64_t>& newBlocks = f.newBlocks;
-    const uint64_t chunk1BitmapBlock = f.chunk1BitmapBlock;
-    const uint64_t newXid = ctx.live.xid + 1;
-    const QVector<uint64_t> freed = {ctx.chain.volSb,
-                                     ctx.chain.volOmapHdr,
-                                     f.oldSnapMetaTree,
-                                     ctx.chain.ctrOmapTree,
-                                     ctx.chain.ctrOmapHdr};
-    const int64_t netConsumed = static_cast<int64_t>(newBlocks.size()) -
-                                static_cast<int64_t>(freed.size());
-    if (!writeSnapshotCreateCowChain({.image = ctx.image,
-                                      .geometry = ctx.geometry,
-                                      .newXid = newXid,
-                                      .live = ctx.chain,
-                                      .newBlocks = newBlocks,
-                                      .request = f.request},
-                                     blockers)) {
-        return false;
-    }
+// Inputs to the shared snapshot-commit checkpoint tail.
+struct ApfsSnapshotCheckpointTail {
+    ApfsFsCommitContext ctx;
+    uint64_t newXid{0};
+    QVector<uint64_t> freed;      // old chain + snapshot-exclusive blocks released this commit
+    QVector<uint64_t> allocated;  // the newly written blocks
+    uint64_t containerOmapBlock{0};
+    uint64_t chunk1BitmapBlock{0};
+};
+
+// Shared snapshot commit tail (create + delete): thread the freed/allocated block sets
+// through the main free-queue, the allocation bitmap, the CIB/spaceman free counts, and
+// the checkpoint - the same crash-safe machinery the file-mutating commits use. The COW
+// chain must already be written; this advances the checkpoint that publishes it.
+bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
+                                  ApfsInPlaceCheckpointResult* result,
+                                  QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = t.ctx;
+    const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
+                                static_cast<int64_t>(t.freed.size());
     const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
     const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
         ctx.image,
@@ -4992,8 +4982,8 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
             ctx.image, ctx.geometry, ctx.live, kApfsFormatFqMainTreeOid, blockers),
         blockers);
     const ApfsMainFqAdvance mainFq =
-        advanceMainFreeQueue(liveMainFq, freed, newXid, kMainFqRollbackWindow);
-    const int64_t netQueued = static_cast<int64_t>(freed.size()) -
+        advanceMainFreeQueue(liveMainFq, t.freed, t.newXid, kMainFqRollbackWindow);
+    const int64_t netQueued = static_cast<int64_t>(t.freed.size()) -
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
     const uint64_t groupSize = ctx.layout.ipGroupStride;
@@ -5001,16 +4991,16 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
     const uint64_t immutableCabCount = ctx.layout.cabCount > 0 ? ctx.layout.cabCount - 1 : 0;
     const uint64_t ipBitmapUsage = (ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps +
                                    3 * groupSize +
-                                   (ctx.layout.allocChunk == 0 && chunk1BitmapBlock != 0 ? 1 : 0);
+                                   (ctx.layout.allocChunk == 0 && t.chunk1BitmapBlock != 0 ? 1 : 0);
     if (!applyFileInsertAllocation({.image = ctx.image,
                                     .geometry = ctx.geometry,
                                     .layout = ctx.layout,
                                     .rotation = rotation,
                                     .freed = mainFq.reclaimed,
-                                    .allocated = newBlocks,
+                                    .allocated = t.allocated,
                                     .cibFreeDelta = freeDelta,
-                                    .newXid = newXid,
-                                    .chunk1BitmapBlock = chunk1BitmapBlock},
+                                    .newXid = t.newXid,
+                                    .chunk1BitmapBlock = t.chunk1BitmapBlock},
                                    blockers)) {
         return false;
     }
@@ -5022,7 +5012,7 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                                .liveCab0 = ctx.liveCab0,
                                .newCab0 = newCab0,
                                .newCib0 = rotation.newCib,
-                               .newXid = newXid},
+                               .newXid = t.newXid},
                               blockers)) {
             return false;
         }
@@ -5032,7 +5022,7 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                               .geometry = ctx.geometry,
                               .nxsb = ctx.nxsb,
                               .live = ctx.live,
-                              .newContainerOmap = newBlocks.at(7),
+                              .newContainerOmap = t.containerOmapBlock,
                               .spacemanFreeDelta = freeDelta,
                               .nextOidAdvance = 0,
                               .newCibAddr = newAddr0,
@@ -5044,6 +5034,39 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                               .mainFqEntries = mainFq.entries},
                              result,
                              blockers);
+}
+
+// Snapshot-create commit tail: write the COW chain (eight new blocks), then advance the
+// checkpoint. Five old chain blocks are freed (old volume superblock, volume omap header,
+// snap-meta tree, container omap tree + header); the root fs-tree, volume omap tree, and
+// live extent-ref tree stay in place, shared with the snapshot.
+bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
+                            ApfsInPlaceCheckpointResult* result,
+                            QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const uint64_t newXid = ctx.live.xid + 1;
+    if (!writeSnapshotCreateCowChain({.image = ctx.image,
+                                      .geometry = ctx.geometry,
+                                      .newXid = newXid,
+                                      .live = ctx.chain,
+                                      .newBlocks = f.newBlocks,
+                                      .request = f.request},
+                                     blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> freed = {ctx.chain.volSb,
+                                     ctx.chain.volOmapHdr,
+                                     f.oldSnapMetaTree,
+                                     ctx.chain.ctrOmapTree,
+                                     ctx.chain.ctrOmapHdr};
+    return commitSnapshotCheckpointTail({.ctx = ctx,
+                                         .newXid = newXid,
+                                         .freed = freed,
+                                         .allocated = f.newBlocks,
+                                         .containerOmapBlock = f.newBlocks.at(7),
+                                         .chunk1BitmapBlock = f.chunk1BitmapBlock},
+                                        result,
+                                        blockers);
 }
 
 // A3: create one snapshot of a generated APFS volume with a true in-place
@@ -5086,6 +5109,208 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
     return finalizeSnapshotCreate({.ctx = ctx,
                                    .request = clean,
                                    .oldSnapMetaTree = oldSnapMetaTree,
+                                   .newBlocks = newBlocks,
+                                   .chunk1BitmapBlock = chunk1BitmapBlock},
+                                  result,
+                                  blockers);
+}
+
+// A snapshot's frozen block addresses, recovered from the snap-meta tree so a delete
+// can free them.
+struct ApfsSnapshotFrozenRefs {
+    uint64_t sblockOid{0};
+    uint64_t extentRefOid{0};
+    bool found{false};
+};
+
+// Read the j_snap_metadata record from the snap-meta tree and recover the snapshot's
+// frozen superblock + extent-ref tree block addresses.
+ApfsSnapshotFrozenRefs readSnapshotFrozenRefs(QIODevice* image,
+                                              const ApfsRepairGeometry& geometry,
+                                              uint64_t snapMetaTree,
+                                              QStringList* blockers) {
+    ApfsSnapshotFrozenRefs refs;
+    QByteArray node(geometry.blockSize, '\0');
+    if (snapMetaTree == 0 || !readApfsRepairBlock(image, geometry, snapMetaTree, &node, blockers)) {
+        return refs;
+    }
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype keyArea = kApfsBtreeNodeHeaderBytes +
+                              le16(node, kApfsBtreeNodeTableLengthOffset);
+    const qsizetype valArea = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const uint64_t keyHdr = le64(node, keyArea + le16(node, toc));
+        if ((keyHdr >> kApfsObjTypeShift) != kApfsJObjTypeSnapMetadata) {
+            continue;
+        }
+        const qsizetype val = valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        refs.extentRefOid = le64(node, val + kApfsSnapMetaExtentRefOidOffset);
+        refs.sblockOid = le64(node, val + kApfsSnapMetaSblockOidOffset);
+        refs.found = true;
+        return refs;
+    }
+    return refs;
+}
+
+// COW inputs for a snapshot delete. newBlocks layout (5 freshly allocated blocks):
+//   [0]=snapMetaTree(empty) [1]=volOmapHdr [2]=volSb [3]=ctrOmapTree [4]=ctrOmapHdr
+struct ApfsSnapshotDeleteCow {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    uint64_t newXid{0};
+    ApfsLiveFsChain live;
+    QVector<uint64_t> newBlocks;
+};
+
+// Copy-on-write chain for deleting the last snapshot: rewrite the snap-meta tree empty,
+// clear the volume omap header's snapshot state (count/tree/most-recent all back to the
+// snapshot-free zero), drop num_snapshots and restore the logical alloc count, and
+// re-point the container omap. The frozen superblock, frozen extent-ref tree, and
+// omap-snapshot tree are freed by the finalize step (they are snapshot-exclusive).
+bool writeSnapshotDeleteCowChain(const ApfsSnapshotDeleteCow& cow, QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t snapMetaTree = cow.newBlocks.at(0);
+    const uint64_t volOmapHdr = cow.newBlocks.at(1);
+    const uint64_t volSb = cow.newBlocks.at(2);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(3);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(4);
+    const uint64_t xid = cow.newXid;
+
+    QByteArray liveVol(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volSb, &liveVol, blockers)) {
+        return false;
+    }
+    const uint64_t curAlloc = le64(liveVol, kApfsVolumeAllocatedBlockCountOffset);
+    // Inverse of create's 2*before - 3 (single snapshot, single-node trees).
+    const uint64_t newAlloc = (curAlloc + kApfsSnapshotLiveOnlyBlocks) / 2;
+
+    QByteArray emptyMeta =
+        buildVariableKvLeafBlock({bs, snapMetaTree, xid, kApfsObjectSubtypeSnapMeta, {}}, blockers);
+    if (!writeApfsRepairBlock(cow.image, cow.geometry, snapMetaTree, emptyMeta, blockers)) {
+        return false;
+    }
+    QByteArray volOmap(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    writeLe64(&volOmap, kApfsObjectOidOffset, volOmapHdr);
+    writeLe64(&volOmap, kApfsObjectXidOffset, xid);
+    writeLe32(&volOmap,
+              kApfsOmapSnapshotCountOffset,
+              le32(volOmap, kApfsOmapSnapshotCountOffset) - 1);
+    writeLe64(&volOmap, kApfsOmapSnapshotTreeOidOffset, 0);
+    writeLe64(&volOmap, kApfsOmapMostRecentSnapshotOffset, 0);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    QByteArray vol = liveVol;
+    writeLe64(&vol, kApfsObjectXidOffset, xid);
+    writeLe64(&vol, kApfsVolumeOmapOidOffset, volOmapHdr);
+    writeLe64(&vol, kApfsVolumeSnapMetaTreeOidOffset, snapMetaTree);
+    writeLe64(&vol, kApfsVolumeNumSnapshotsOffset, le64(vol, kApfsVolumeNumSnapshotsOffset) - 1);
+    writeLe64(&vol, kApfsVolumeAllocatedBlockCountOffset, newAlloc);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
+        return false;
+    }
+    QByteArray ctrTree = buildObjectMapTreeBlock(
+        bs, ctrOmapTree, {{kApfsFormatVolumeOid, xid, volSb}}, xid, blockers);
+    QByteArray ctrHdr = buildObjectMapBlock({bs, ctrOmapHdr, ctrOmapTree, xid, 1}, blockers);
+    return writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapTree, ctrTree, blockers) &&
+           writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapHdr, ctrHdr, blockers);
+}
+
+// Inputs to the snapshot-delete commit tail.
+struct ApfsSnapshotDeleteFinalize {
+    ApfsFsCommitContext ctx;
+    uint64_t oldSnapMetaTree{0};
+    uint64_t omapSnapTree{0};       // live om_snapshot_tree_oid (freed)
+    ApfsSnapshotFrozenRefs frozen;  // frozen superblock + extent-ref tree (freed)
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock{0};
+};
+
+// Snapshot-delete commit tail: write the COW chain (five new blocks), then advance the
+// checkpoint. Eight blocks are freed - the five COW'd chain blocks (old volume
+// superblock, volume omap header, snap-meta tree, container omap tree + header) plus the
+// three snapshot-exclusive blocks (omap-snapshot tree, frozen superblock, frozen
+// extent-ref tree); the shared root fs-tree, volume omap tree, and live extent-ref tree
+// stay in place.
+bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
+                            ApfsInPlaceCheckpointResult* result,
+                            QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const uint64_t newXid = ctx.live.xid + 1;
+    if (!writeSnapshotDeleteCowChain({.image = ctx.image,
+                                      .geometry = ctx.geometry,
+                                      .newXid = newXid,
+                                      .live = ctx.chain,
+                                      .newBlocks = f.newBlocks},
+                                     blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> freed = {ctx.chain.volSb,
+                                     ctx.chain.volOmapHdr,
+                                     f.oldSnapMetaTree,
+                                     ctx.chain.ctrOmapTree,
+                                     ctx.chain.ctrOmapHdr,
+                                     f.omapSnapTree,
+                                     f.frozen.sblockOid,
+                                     f.frozen.extentRefOid};
+    return commitSnapshotCheckpointTail({.ctx = ctx,
+                                         .newXid = newXid,
+                                         .freed = freed,
+                                         .allocated = f.newBlocks,
+                                         .containerOmapBlock = f.newBlocks.at(4),
+                                         .chunk1BitmapBlock = f.chunk1BitmapBlock},
+                                        result,
+                                        blockers);
+}
+
+// A3: delete the (single) snapshot of a generated APFS volume with a true in-place
+// copy-on-write checkpoint commit. Strips the j_snap_metadata + j_snap_name records and
+// the omap-snapshot entry, frees the snapshot-exclusive frozen blocks, and restores the
+// volume to its snapshot-free state. Fails closed unless the volume carries exactly one
+// snapshot (multi-snapshot delete is a later increment).
+bool commitInPlaceSnapshotDelete(QIODevice* image,
+                                 ApfsInPlaceCheckpointResult* result,
+                                 QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QByteArray liveVol(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
+        return false;
+    }
+    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) != 1) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-delete: the volume must carry exactly one snapshot "
+                           "(multi-snapshot delete is a later increment)"));
+        return false;
+    }
+    const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
+    QByteArray liveOmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &liveOmap, blockers)) {
+        return false;
+    }
+    const uint64_t omapSnapTree = le64(liveOmap, kApfsOmapSnapshotTreeOidOffset);
+    const ApfsSnapshotFrozenRefs frozen =
+        readSnapshotFrozenRefs(image, ctx.geometry, oldSnapMetaTree, blockers);
+    if (!frozen.found || frozen.sblockOid == 0 || omapSnapTree == 0) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-delete: could not recover the snapshot's frozen blocks"));
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock = 0;
+    if (!allocateFsCommitBlocks(ctx, {0, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
+        return false;
+    }
+    return finalizeSnapshotDelete({.ctx = ctx,
+                                   .oldSnapMetaTree = oldSnapMetaTree,
+                                   .omapSnapTree = omapSnapTree,
+                                   .frozen = frozen,
                                    .newBlocks = newBlocks,
                                    .chunk1BitmapBlock = chunk1BitmapBlock},
                                   result,
@@ -12940,6 +13165,76 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotC
                                      resolveSnapshotCreateTimeNs(request.create_time_ns)},
                                     &commit,
                                     &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySnapshotDelete(
+    const PartitionApfsImageSnapshotDeleteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QLatin1StringView purpose("snapshot-delete-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotDelete(&image, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotDelete(
+    const PartitionApfsRawSnapshotDeleteCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("snapshot-delete-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotDelete(target.get(), &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

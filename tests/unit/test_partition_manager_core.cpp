@@ -1655,6 +1655,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
+    void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7506,6 +7507,80 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
                  {.source_image_path = base,
                   .written_image_path = dir.filePath(QStringLiteral("a3-y.apfs")),
                   .snapshot_name = QString(),
+                  .options = options})
+                 .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState() {
+    // A3: deleting the single snapshot frees its frozen blocks and restores the volume
+    // exactly to its snapshot-free state (num_snapshots 0, omap snapshot fields 0,
+    // alloc_count back to the pre-create value). A delete with no snapshot fails closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a3d-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A3DEL"),
+                 .options = options})
+                .ok);
+
+    const auto readBlock = [](const QString& path, quint64 block) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le32 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le64 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
+        const QByteArray nxsb = readBlock(path, 0);
+        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
+        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
+        return le64(tree, 4096 - 40 - 16 + 8);
+    };
+
+    const quint64 baseAlloc = le64(readBlock(base, apsbBlockOf(base)), 0x58);
+
+    const QString snap = dir.filePath(QStringLiteral("a3d-snap.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                {.source_image_path = base,
+                 .written_image_path = snap,
+                 .snapshot_name = QStringLiteral("to-delete"),
+                 .options = options})
+                .ok);
+    const QString del = dir.filePath(QStringLiteral("a3d-del.apfs"));
+    const auto d = PartitionApfsWriter::commitImageOnlySnapshotDelete(
+        {.source_image_path = snap, .written_image_path = del, .options = options});
+    QVERIFY2(d.ok, qPrintable(d.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(d.previous_xid, 3ULL);
+    QCOMPARE(d.new_xid, 4ULL);
+
+    // The volume still lists; the snapshot-free state is restored exactly.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(del, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("A3DEL"));
+    const QByteArray vol = readBlock(del, apsbBlockOf(del));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(le64(vol, 0xD8), 0ULL);       // num_snapshots back to 0
+    QCOMPARE(le64(vol, 0x58), baseAlloc);  // alloc_count restored
+    const QByteArray omap = readBlock(del, le64(vol, 0x80));
+    QCOMPARE(le32(omap, 0x24), 0U);        // om_snap_count 0
+    QCOMPARE(le64(omap, 0x38), 0ULL);      // om_snapshot_tree_oid 0
+    QCOMPARE(le64(omap, 0x40), 0ULL);      // om_most_recent_snap 0
+
+    // A delete with no snapshot fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotDelete(
+                 {.source_image_path = base,
+                  .written_image_path = dir.filePath(QStringLiteral("a3d-x.apfs")),
                   .options = options})
                  .ok);
 }

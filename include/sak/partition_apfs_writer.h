@@ -663,6 +663,26 @@ struct PartitionApfsRawSnapshotCreateCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to delete the (single) snapshot of a generated APFS container with a
+///        true in-place copy-on-write checkpoint commit (A3). Restores the volume to its
+///        snapshot-free state. Fails closed unless the volume carries exactly one snapshot.
+struct PartitionApfsImageSnapshotDeleteCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to delete the (single) snapshot of a generated APFS container on a raw
+///        device with a true in-place copy-on-write checkpoint commit (A3). Applied to the
+///        device in place, so gated by destructive-target confirmation and raw opt-in.
+struct PartitionApfsRawSnapshotDeleteCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -826,6 +846,13 @@ public:
         const PartitionApfsImageSnapshotCreateCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotCreate(
         const PartitionApfsRawSnapshotCreateCommitRequest& request);
+    /// @brief Delete the (single) snapshot of a generated APFS container with a true
+    ///        in-place COW checkpoint commit (A3). Image-only clones to scratch; raw
+    ///        applies to a confirmed raw device in place.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlySnapshotDelete(
+        const PartitionApfsImageSnapshotDeleteCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotDelete(
+        const PartitionApfsRawSnapshotDeleteCommitRequest& request);
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other
