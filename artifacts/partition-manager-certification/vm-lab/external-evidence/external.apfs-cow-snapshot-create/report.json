@@ -1,0 +1,25 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-snapshot-create",
+    "tier": "A3: APFS snapshot create on the certified crash-safe in-place COW checkpoint engine",
+    "destructive": false,
+    "host": "Local WSL2 archlinux (qemu-system-x86_64 -enable-kvm, macOS Sequoia recovery, apfs_kext 2332.101.1) with a 256 MiB generated container passed through on SATA (disk0, bare APFS container; kernel synthesised /dev/disk1)",
+    "change": "Implemented APFS snapshot CREATE as a true in-place crash-safe COW checkpoint commit (commitInPlaceSnapshotCreate + commitImageOnlySnapshotCreate / commitRawSnapshotCreate + CLI commit-image-snapshot-create / commit-raw-snapshot-create). Byte recipe harvested from a real macOS Sequoia sealed-system snapshot host-side (every previously-UNSURE field resolved against the live container). The commit freezes the live volume into a PHYSICAL superblock copy (o_oid == its own paddr, o_type OBJ_PHYSICAL|FS; keeps root_tree_oid, zeros omap/extentref/snap_meta), copies the extent-ref tree (frozen), emits a new omap-snapshot tree (subtype 0x13, fixed-kv, oms value all-zero) and snap-meta tree records (j_snap_metadata + j_snap_name), and re-points the volume omap header (om_snap_count / om_snapshot_tree_oid / om_most_recent_snap), volume superblock (num_snapshots, next_obj_id, apfs_fs_alloc_count) and container omap. The root fs-tree, the volume object-map tree, and the live extent-ref tree are left in place, shared with the snapshot. Fails closed on a volume that already carries a snapshot or a multi-level volume object map.",
+    "alloc_count_logic": "apfs_fs_alloc_count is a LOGICAL count: a snapshot re-walks the catalog + frozen extent-ref + extents but not the live-only superblock / single-node object-map tree / single-node snap-meta tree, so the first snapshot grows the count to 2*before - 3. Decoupled from the physical spaceman delta (+3 new blocks). Verified against apfsck's walk (empty container 5 -> 7).",
+    "shared_fix": "apfsck caught a latent shared bug: writeRotatedCib never stamped chunk 0's ci_xid, so the rotated cib violated 'cib xid == max chunk xid'. The A2 file paths masked it (their apfsck runs die earlier on a benign 'Data stream xfield: wrong flags' strictness). Fixed for every commit path; full unit suite stays green (no A2 regression).",
+    "linux_apfsck": "apfsprogs apfsck on the generated snapshot is CLEAN: the snapshot is enumerated, the volume superblock block-count check (apfs_fs_alloc_count 7 == walked 7) passes, and the chunk-info xid check passes.",
+    "scenario": "Format a 256 MiB container (volume SAKSNAP) -> commit-image-snapshot-create --snapshot-name sak.refactor.check (writer xid 2 -> 3) -> pass the bare-container image through to macOS recovery on SATA disk0.",
+    "apple_fsck_apfs": {
+        "kernel_mount_rw": "The macOS kernel auto-mounted the synthesised container /dev/disk1 read-write; fsck_apfs first reported 'container /dev/rdisk1 is mounted with write access'. fsck_apfs confirms 'The volume SAKSNAP was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1)' - the Apple kernel parsed and modified our snapshot-bearing container.",
+        "kernel_continuation": "writer emitted xid 3; the kernel mounted read-write and continued the checkpoint to transaction ID 5 with the snapshot (xid 3) intact.",
+        "command": "diskutil unmountDisk force /dev/disk1 then fsck_apfs -n /dev/disk1",
+        "snapshot_checked": "** Checking the snapshot metadata tree. ** Checking the snapshot metadata. ** Checking snapshot 1 of 1 (sak.refactor.check, transaction ID 3) - Apple's checker enumerated our snapshot by name and xid and validated its metadata tree.",
+        "container_verdict": "The container /dev/disk1 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk1s1 with UUID 1298B31C-4EDE-4CAE-ACF1-78745F775C64 appears to be OK.",
+        "accounting_clean": "'Verifying volume object map space' and 'Verifying allocated space' both clean (no alloc_count mismatch, no overallocation).",
+        "diskutil_cross_check": "diskutil mount disk1s1 (Volume SAKSNAP mounted) then diskutil apfs listSnapshots disk1s1 reports 'Snapshot for disk1s1 (1 found)' -> Name: sak.refactor.check, XID: 3, Purgeable: Yes.",
+        "evidence": "fsck_apfs-snapshot-clean.png (snapshot enumerated + warning-free container/volume verdict); diskutil-listSnapshots.png (snapshot enumerated by name + xid); diskutil-list-physical.png (the 268 MB bare container on disk0)"
+    },
+    "note": "Certifies A3 snapshot CREATE. Snapshot delete + revert are later A3 increments; the A3 matrix lane flips to Yes only when create/delete/revert are all certified. Unit test apfsWriter_inPlaceSnapshotCreateAddsSnapshot; full local suite green.",
+    "completed_at_utc": "2026-06-21T21:45:00Z"
+}
