@@ -1,0 +1,24 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-cow-snapshot-revert",
+    "tier": "A3: APFS snapshot revert on the certified crash-safe in-place COW checkpoint engine",
+    "destructive": false,
+    "host": "Real Mac (Apple hardware) - MacBookPro, macOS 15.7.4 (24G517), apfs_kext 2332.140.13. The revert candidate image (a 67,108,864-byte bare APFS container, volume A3REV, produced by the S.A.K. APFS writer CLI on Windows) was attached with 'hdiutil attach -imagekey diskimage-class=CRawDiskImage' (kernel synthesised /dev/disk3, volume /dev/disk3s1) and mounted, then checked with Apple fsck_apfs.",
+    "ground_truth": "The deferred-revert on-disk encoding was harvested byte-exact from a real macOS 15.7.4 revert (temp/a3cert/revert-recipe-decoded.txt). On a throwaway 2 GB sparse image, an ad-hoc-codesigned helper carrying com.apple.developer.vfs.snapshot called the libSystem __fs_snapshot stub with op 5 (revert) after create + a divergent write; raw 12 MiB container captures at create / diverge / revert-tag / remount decoded the mechanism.",
+    "mechanism": "APFS revert is DEFERRED. fs_snapshot op 5 only writes a TAG on a copy-on-written live volume superblock - revert_to_xid (0xA0) = the snapshot xid, revert_to_sblock_oid (0xA8) = the snapshot's frozen physical-superblock paddr - leaving everything else (omap, root tree, extentref, snap-meta, alloc_count, num_snapshots, next_obj_id) identical and KEEPING the snapshot. The kernel completes the revert (discarding post-snapshot divergence) on the next mount.",
+    "change": "Implemented APFS snapshot REVERT (commitInPlaceSnapshotRevert + commitImageOnlySnapshotRevert / commitRawSnapshotRevert + CLI commit-image-snapshot-revert / commit-raw-snapshot-revert). Mirrors the delete commit's five-block COW chain but re-emits the snap-meta tree identical (a revert keeps the snapshot), COWs the volume omap header identical, and sets the two deferred-revert fields on the COW'd volume superblock (revert_to_xid from the omap's om_most_recent_snap, revert_to_sblock_oid from readSnapshotFrozenRefs); the container omap is re-pointed and the checkpoint advanced. Net block change is zero (alloc_count unchanged). Fails closed unless the volume carries exactly one snapshot and no revert is already pending.",
+    "byte_exact_to_apple": "The S.A.K. revert result's new live APSB matches the harvested Apple op-5 tag exactly: revert_to_xid = snapshot xid, revert_to_sblock_oid = frozen-superblock paddr, and omap_oid / root_tree / extentref / snap_meta / alloc_count / num_snapshots / next_obj_id all unchanged from the pre-revert live superblock.",
+    "scenario": "Format a 64 MiB container (volume A3REV) -> commit-image-snapshot-create (snapshot 'to-revert', xid 2 -> 3) -> commit-image-snapshot-revert (xid 3 -> 4, writes the deferred tag) -> attach the bare-container result on a real Mac so the kernel completes the revert on mount, then fsck_apfs.",
+    "apple_fsck_apfs": {
+        "kernel_completed_revert": "diskutil mount A3REV mounted the volume; the kernel (apfs_kext 2332.140.13) completed the deferred revert and continued the checkpoint to transaction ID 8 ('last modified by apfs_kext (2332.140.13)').",
+        "command": "hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount revsimple.img; diskutil mount A3REV; diskutil umount A3REV; fsck_apfs -n /dev/rdisk3",
+        "snapshot_kept": "fsck_apfs enumerates 'Checking snapshot 1 of 1 (to-revert, transaction ID 3)' - a revert KEEPS the snapshot (contrast the delete cert, which removes it).",
+        "container_verdict": "The container /dev/rdisk3 appears to be OK.",
+        "volume_verdict": "The volume /dev/rdisk3s1 with UUID A97133D0-4E7D-4F24-A503-641C569BAC34 appears to be OK.",
+        "accounting_clean": "'Verifying volume object map space' and 'Verifying allocated space' both clean.",
+        "diskutil_cross_check": "diskutil apfs listSnapshots disk3s1 reports 'Snapshot for disk3s1 (1 found) ... Name: to-revert XID: 3'.",
+        "evidence": "cert.log (full fsck_apfs + diskutil transcript); image sha256 c11daa45d88e8160e046c9004c1312fc53c3b7ee8d238542cbb69e84c2a69d80"
+    },
+    "note": "Certifies A3 snapshot REVERT - the final A3 increment. With create + delete + revert all Apple-certified (fsck_apfs + kernel mount), the A3 matrix lane flips to Yes. Unit test apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert; full local suite green; clang-format / lizard / cppcheck clean. Diverge-then-revert (a file insert between snapshot and revert) needs a snapshot-aware file-insert (the current insert engine drops snapshot metadata) - a non-gating follow-on; the kernel's discard-divergence behaviour is already proven in the harvest.",
+    "completed_at_utc": "2026-06-26T03:31:00Z"
+}

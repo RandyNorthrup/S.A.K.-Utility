@@ -1656,6 +1656,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
+    void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
@@ -7581,6 +7582,105 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshot
     QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotDelete(
                  {.source_image_path = base,
                   .written_image_path = dir.filePath(QStringLiteral("a3d-x.apfs")),
+                  .options = options})
+                 .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert() {
+    // A3: reverting the single snapshot writes Apple's deferred-revert tag - the volume
+    // superblock gains revert_to_xid (the snapshot xid) + revert_to_sblock_oid (its frozen
+    // superblock paddr) while everything else (num_snapshots, alloc_count, root tree,
+    // next_obj_id) is unchanged and the snapshot is kept; a kernel mount then completes the
+    // revert. A revert with no snapshot, or one already pending, fails closed. Byte recipe
+    // harvested from a real macOS revert (temp/a3cert/revert-recipe-decoded.txt).
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a3r-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A3REV"),
+                 .options = options})
+                .ok);
+
+    const auto readBlock = [](const QString& path, quint64 block) {
+        QFile file(path);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le16 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le32 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto le64 = [](const QByteArray& b, int o) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
+    };
+    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
+        const QByteArray nxsb = readBlock(path, 0);
+        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
+        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
+        return le64(tree, 4096 - 40 - 16 + 8);
+    };
+
+    const QString snap = dir.filePath(QStringLiteral("a3r-snap.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                {.source_image_path = base,
+                 .written_image_path = snap,
+                 .snapshot_name = QStringLiteral("to-revert"),
+                 .options = options})
+                .ok);
+
+    // The snapshot state to revert to: its xid (== om_most_recent_snap) and the frozen
+    // physical superblock paddr recorded in the j_snap_metadata record.
+    const QByteArray snapVol = readBlock(snap, apsbBlockOf(snap));
+    const quint64 snapAlloc = le64(snapVol, 0x58);
+    const quint64 snapRoot = le64(snapVol, 0x88);
+    const quint64 snapNextObj = le64(snapVol, 0xB0);
+    const QByteArray snapMeta = readBlock(snap, le64(snapVol, 0x98));
+    const quint16 valBack = le16(snapMeta, 0x38 + 4);
+    const quint64 frozenSblock = le64(snapMeta, (4096 - 40) - valBack + 0x08);
+    QVERIFY(frozenSblock != 0);
+
+    const QString rev = dir.filePath(QStringLiteral("a3r-rev.apfs"));
+    const auto r = PartitionApfsWriter::commitImageOnlySnapshotRevert(
+        {.source_image_path = snap, .written_image_path = rev, .options = options});
+    QVERIFY2(r.ok, qPrintable(r.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(r.previous_xid, 3ULL);
+    QCOMPARE(r.new_xid, 4ULL);
+
+    // The volume still lists; the deferred-revert tag is set and everything else is intact.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(rev, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("A3REV"));
+    const QByteArray vol = readBlock(rev, apsbBlockOf(rev));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(le64(vol, 0xA0), 3ULL);          // revert_to_xid == snapshot xid
+    QCOMPARE(le64(vol, 0xA8), frozenSblock);  // revert_to_sblock_oid == frozen paddr
+    QCOMPARE(le64(vol, 0xD8), 1ULL);          // snapshot kept (num_snapshots)
+    QCOMPARE(le64(vol, 0x58), snapAlloc);     // alloc_count unchanged
+    QCOMPARE(le64(vol, 0x88), snapRoot);      // root tree unchanged
+    QCOMPARE(le64(vol, 0xB0), snapNextObj);   // next_obj_id unchanged (monotonic)
+    const QByteArray omap = readBlock(rev, le64(vol, 0x80));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omap));
+    QCOMPARE(le32(omap, 0x24), 1U);  // om_snap_count still 1 (snapshot survives)
+
+    // A revert with no snapshot fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                 {.source_image_path = base,
+                  .written_image_path = dir.filePath(QStringLiteral("a3r-x.apfs")),
+                  .options = options})
+                 .ok);
+    // A second revert (one already pending) fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                 {.source_image_path = rev,
+                  .written_image_path = dir.filePath(QStringLiteral("a3r-y.apfs")),
                   .options = options})
                  .ok);
 }

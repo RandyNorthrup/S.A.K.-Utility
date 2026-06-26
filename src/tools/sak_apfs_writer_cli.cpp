@@ -1722,13 +1722,39 @@ std::optional<QJsonObject> buildCommitRawSnapshotDeleteReport(const CliInvocatio
         commit, QStringLiteral("APFS raw in-place snapshot delete commit"), invocation, error);
 }
 
+std::optional<QJsonObject> buildCommitSnapshotRevertReport(const CliInvocation& invocation,
+                                                           QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-snapshot-revert.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotRevert(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS in-place snapshot revert commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawSnapshotRevertReport(const CliInvocation& invocation,
+                                                              QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawSnapshotRevert(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place snapshot revert commit"), invocation, error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 25> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 27> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
@@ -1758,6 +1784,8 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-raw-snapshot-create"), buildCommitRawSnapshotCreateReport},
         {QLatin1StringView("commit-image-snapshot-delete"), buildCommitSnapshotDeleteReport},
         {QLatin1StringView("commit-raw-snapshot-delete"), buildCommitRawSnapshotDeleteReport},
+        {QLatin1StringView("commit-image-snapshot-revert"), buildCommitSnapshotRevertReport},
+        {QLatin1StringView("commit-raw-snapshot-revert"), buildCommitRawSnapshotRevertReport},
     }};
     for (const auto& [command, builder] : kCommitBuilders) {
         if (invocation.command == command) {

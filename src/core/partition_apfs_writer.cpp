@@ -5317,6 +5317,182 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
                                   blockers);
 }
 
+// COW inputs for a snapshot revert. newBlocks layout (5 freshly allocated blocks):
+//   [0]=snapMetaTree(re-emitted identical) [1]=volOmapHdr [2]=volSb [3]=ctrOmapTree [4]=ctrOmapHdr
+struct ApfsSnapshotRevertCow {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    uint64_t newXid{0};
+    ApfsLiveFsChain live;
+    QVector<uint64_t> newBlocks;
+    uint64_t snapshotXid{0};      // the snapshot to revert to (== om_most_recent_snap)
+    uint64_t frozenSblockOid{0};  // the snapshot's frozen physical-superblock paddr
+    uint64_t oldSnapMetaTree{0};
+};
+
+// Copy-on-write chain for a snapshot revert: write the deferred-revert TAG that Apple's
+// fs_snapshot op 5 lays down. The live volume superblock is COW'd with two fields set -
+// revert_to_xid (the snapshot's xid) and revert_to_sblock_oid (its frozen superblock
+// paddr) - and EVERYTHING else (omap, root tree, extent-ref, snap-meta, allocated count,
+// num_snapshots, next_obj_id) left identical: the snapshot is kept, the divergence is
+// discarded by the kernel when it completes the revert on the next mount. The snap-meta
+// tree and volume omap header are re-emitted byte-identical (the revert does not change
+// their content); only their block xid moves with the new checkpoint. Byte recipe
+// harvested from a real macOS revert (temp/a3cert/revert-recipe-decoded.txt).
+bool writeSnapshotRevertCowChain(const ApfsSnapshotRevertCow& cow, QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t snapMetaTree = cow.newBlocks.at(0);
+    const uint64_t volOmapHdr = cow.newBlocks.at(1);
+    const uint64_t volSb = cow.newBlocks.at(2);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(3);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(4);
+    const uint64_t xid = cow.newXid;
+
+    // (A) snap-meta tree: re-emit identical - a revert keeps the snapshot.
+    QByteArray snapMeta(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.oldSnapMetaTree, &snapMeta, blockers)) {
+        return false;
+    }
+    writeLe64(&snapMeta, kApfsObjectOidOffset, snapMetaTree);
+    writeLe64(&snapMeta, kApfsObjectXidOffset, xid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, snapMetaTree, &snapMeta, blockers)) {
+        return false;
+    }
+    // (B) volume omap header: COW identical, keep all snapshot state.
+    QByteArray volOmap(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    writeLe64(&volOmap, kApfsObjectOidOffset, volOmapHdr);
+    writeLe64(&volOmap, kApfsObjectXidOffset, xid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volOmapHdr, &volOmap, blockers)) {
+        return false;
+    }
+    // (C) volume superblock: COW the live APSB, set the deferred-revert tag; re-point its
+    // object map + snap-meta tree at the COW'd blocks; leave alloc/num_snapshots/next_obj_id
+    // and the root + extent-ref pointers untouched.
+    QByteArray vol(bs, '\0');
+    if (!readApfsRepairBlock(cow.image, cow.geometry, cow.live.volSb, &vol, blockers)) {
+        return false;
+    }
+    writeLe64(&vol, kApfsObjectXidOffset, xid);
+    writeLe64(&vol, kApfsVolumeOmapOidOffset, volOmapHdr);
+    writeLe64(&vol, kApfsVolumeSnapMetaTreeOidOffset, snapMetaTree);
+    writeLe64(&vol, kApfsVolumeRevertToXidOffset, cow.snapshotXid);
+    writeLe64(&vol, kApfsVolumeRevertToSblockOidOffset, cow.frozenSblockOid);
+    if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
+        return false;
+    }
+    // (D) container object map (tree + header) re-pointed at the new volume superblock.
+    QByteArray ctrTree = buildObjectMapTreeBlock(
+        bs, ctrOmapTree, {{kApfsFormatVolumeOid, xid, volSb}}, xid, blockers);
+    QByteArray ctrHdr = buildObjectMapBlock({bs, ctrOmapHdr, ctrOmapTree, xid, 1}, blockers);
+    return writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapTree, ctrTree, blockers) &&
+           writeApfsRepairBlock(cow.image, cow.geometry, ctrOmapHdr, ctrHdr, blockers);
+}
+
+// Inputs to the snapshot-revert commit tail.
+struct ApfsSnapshotRevertFinalize {
+    ApfsFsCommitContext ctx;
+    uint64_t snapshotXid{0};
+    uint64_t frozenSblockOid{0};
+    uint64_t oldSnapMetaTree{0};
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock{0};
+};
+
+// Snapshot-revert commit tail: write the COW chain (five new blocks), then advance the
+// checkpoint. Five old chain blocks are freed (old volume superblock, volume omap header,
+// snap-meta tree, container omap tree + header); the snapshot-exclusive blocks (frozen
+// superblock, frozen extent-ref tree, omap-snapshot tree) are NOT freed - the snapshot
+// survives a revert. Net block change is zero (alloc count unchanged).
+bool finalizeSnapshotRevert(const ApfsSnapshotRevertFinalize& f,
+                            ApfsInPlaceCheckpointResult* result,
+                            QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const uint64_t newXid = ctx.live.xid + 1;
+    if (!writeSnapshotRevertCowChain({.image = ctx.image,
+                                      .geometry = ctx.geometry,
+                                      .newXid = newXid,
+                                      .live = ctx.chain,
+                                      .newBlocks = f.newBlocks,
+                                      .snapshotXid = f.snapshotXid,
+                                      .frozenSblockOid = f.frozenSblockOid,
+                                      .oldSnapMetaTree = f.oldSnapMetaTree},
+                                     blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> freed = {ctx.chain.volSb,
+                                     ctx.chain.volOmapHdr,
+                                     f.oldSnapMetaTree,
+                                     ctx.chain.ctrOmapTree,
+                                     ctx.chain.ctrOmapHdr};
+    return commitSnapshotCheckpointTail({.ctx = ctx,
+                                         .newXid = newXid,
+                                         .freed = freed,
+                                         .allocated = f.newBlocks,
+                                         .containerOmapBlock = f.newBlocks.at(4),
+                                         .chunk1BitmapBlock = f.chunk1BitmapBlock},
+                                        result,
+                                        blockers);
+}
+
+// A3: revert a generated APFS volume to its (single) snapshot with a true in-place
+// copy-on-write checkpoint commit. Writes the deferred-revert tag exactly as Apple's
+// fs_snapshot op 5 does - sets revert_to_xid + revert_to_sblock_oid on a COW'd volume
+// superblock and leaves the rest untouched - so a kernel mount completes the revert
+// (discarding the post-snapshot divergence) and fsck_apfs validates it. Fails closed
+// unless the volume carries exactly one snapshot and no revert is already pending.
+bool commitInPlaceSnapshotRevert(QIODevice* image,
+                                 ApfsInPlaceCheckpointResult* result,
+                                 QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QByteArray liveVol(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
+        return false;
+    }
+    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) != 1) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-revert: the volume must carry exactly one snapshot "
+                           "(multi-snapshot revert is a later increment)"));
+        return false;
+    }
+    if (le64(liveVol, kApfsVolumeRevertToXidOffset) != 0) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-revert: a revert is already pending on this volume"));
+        return false;
+    }
+    const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
+    QByteArray liveOmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &liveOmap, blockers)) {
+        return false;
+    }
+    const uint64_t snapshotXid = le64(liveOmap, kApfsOmapMostRecentSnapshotOffset);
+    const ApfsSnapshotFrozenRefs frozen =
+        readSnapshotFrozenRefs(image, ctx.geometry, oldSnapMetaTree, blockers);
+    if (!frozen.found || frozen.sblockOid == 0 || snapshotXid == 0) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-revert: could not recover the snapshot to revert to"));
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock = 0;
+    if (!allocateFsCommitBlocks(ctx, {0, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
+        return false;
+    }
+    return finalizeSnapshotRevert({.ctx = ctx,
+                                   .snapshotXid = snapshotXid,
+                                   .frozenSblockOid = frozen.sblockOid,
+                                   .oldSnapMetaTree = oldSnapMetaTree,
+                                   .newBlocks = newBlocks,
+                                   .chunk1BitmapBlock = chunk1BitmapBlock},
+                                  result,
+                                  blockers);
+}
+
 struct ApfsDeleteRequest {
     QVector<ApfsRootFilePayload> allFiles;
     QVector<ApfsRootDirectoryPayload> directories;  // preserved across the commit
@@ -13235,6 +13411,76 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotD
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceSnapshotDelete(target.get(), &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySnapshotRevert(
+    const PartitionApfsImageSnapshotRevertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    const QLatin1StringView purpose("snapshot-revert-commit");
+    const auto source = validateImageOnlySource(
+        result.source_image_path, purpose, &result.blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok ||
+        !appendSeparateOutputBlockers(
+            source.info, result.written_image_path, purpose, &result.blockers) ||
+        !detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               purpose,
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    if (!copyToScratchImage(
+            result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path, purpose, &image, &result.blockers)) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotRevert(&image, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotRevert(
+    const PartitionApfsRawSnapshotRevertCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    auto target =
+        openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                    .targetBytes = request.target_container_bytes,
+                                    .confirmed = request.target_mutation_confirmed,
+                                    .allowRawTarget = request.allow_raw_device_target,
+                                    .options = &request.options,
+                                    .purpose = QLatin1StringView("snapshot-revert-commit")},
+                                   &result.blockers);
+    if (!target) {
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceSnapshotRevert(target.get(), &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

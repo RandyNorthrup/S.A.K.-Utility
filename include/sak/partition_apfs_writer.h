@@ -683,6 +683,27 @@ struct PartitionApfsRawSnapshotDeleteCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to revert a generated APFS container's volume to its (single) snapshot
+///        in a separate output image with a true in-place copy-on-write checkpoint commit
+///        (A3). Writes Apple's deferred-revert tag (revert_to_xid + revert_to_sblock_oid);
+///        a kernel mount completes the revert, discarding the post-snapshot divergence.
+struct PartitionApfsImageSnapshotRevertCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to revert a generated APFS container's volume to its (single) snapshot on
+///        a raw device with a true in-place copy-on-write checkpoint commit (A3). Applied to
+///        the device in place, so gated by destructive-target confirmation and raw opt-in.
+struct PartitionApfsRawSnapshotRevertCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Derived geometry of an APFS container's space-manager device:
 ///        how many spaceman chunks, chunk-info blocks (CIBs), chunk-info
 ///        address blocks (CABs), per-chunk allocation bitmaps, and internal-pool
@@ -853,6 +874,14 @@ public:
         const PartitionApfsImageSnapshotDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotDelete(
         const PartitionApfsRawSnapshotDeleteCommitRequest& request);
+    /// @brief A3: revert a generated APFS volume to its (single) snapshot in a separate
+    ///        output image with a true in-place copy-on-write checkpoint commit.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlySnapshotRevert(
+        const PartitionApfsImageSnapshotRevertCommitRequest& request);
+    /// @brief A3: revert a generated APFS volume to its (single) snapshot on a raw device
+    ///        with a true in-place copy-on-write checkpoint commit (destructive, gated).
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotRevert(
+        const PartitionApfsRawSnapshotRevertCommitRequest& request);
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other
