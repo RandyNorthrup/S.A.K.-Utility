@@ -1,0 +1,19 @@
+{
+    "status": "Passed",
+    "gate_id": "external.hfs-multi-leaf-extents",
+    "tier": "H4 / H-d: HFS+ general fragmenting allocator + multi-leaf extents-overflow B-tree + recursive extents-file guard",
+    "destructive": false,
+    "host": "Windows build of Apple diskdev_cmds 540.1 fsck_hfs (the Linux/portable source Apple ships, compiled with gcc 16 in WSL Arch). newfs_hfs (same source) formatted the volume; the S.A.K. HFS+ writer CLI (sak_hfs_writer_cli.exe) produced the fragmentation; fsck_hfs validated. macOS-kernel mount + native-Apple fsck_hfs read-back is the follow-on confirmation (mac_kernel_mount_cert.sh).",
+    "change": "Implemented the H-d driver core: (1) a streaming multi-leaf extents-overflow B-tree mutation engine mirroring the certified catalog model (load whole tree -> apply per-leaf insert/remove edits -> split overfull / merge underfull leaves -> rebuild index levels bottom-up -> compose header), replacing the bounded 'empty or single-leaf, one root-leaf split' engine; (2) the existing first-fit fragmenting allocation-bitmap allocator now threads an arbitrary number of fragments through the inline 8 extents plus an unbounded set of extents-overflow records across multiple leaves; (3) the extents-overflow file's own fork is held to the eight volume-header extents (TN1150: the extents file has no overflow extents - confirmed in SVerify1.c:3835 / SExtents.c:922), failing closed with a clear message at a ninth.",
+    "scenario": "newfs_hfs -b 512 -n e=1024 formats a 16 MiB HFS+ volume (512-byte allocation blocks, 1024-byte extents B-tree node = 12 overflow records per leaf). Two files are created, then grown one 512-byte block at a time for 130 interleaved rounds; the first-fit allocator interleaves their blocks so each file ends with ~131 single-block extents. Each grow re-mutates the extents-overflow tree (remove the file's old records, re-insert the recomputed set), so the multi-leaf engine is exercised ~260 times. The result is a DEPTH-2 extents-overflow B-tree with 32 leaf records across three leaves.",
+    "evidence_fsck": {
+        "extents_tree": "depth=2 leafRecords=32 nodeSize=1024 blockSize=512 (parsed from the on-disk extents B-tree header node)",
+        "fsck_command": "fsck_hfs -fn (forced, no-write) version 540.1-Linux",
+        "fsck_result": "** Checking extents overflow file. ... ** The volume SAKH4 appears to be OK.",
+        "delete_collapse": "Deleting one fragmented file removes its 16 records from the depth-2 tree (leafRecords 32 -> 16); fsck_hfs stays clean - proves multi-leaf record removal + merge on a real volume.",
+        "note": "fsck_hfs's 'Checking extents overflow file', 'Checking catalog file' and 'Checking volume bitmap' phases validate every inline and overflow extent of every file against the allocation bitmap and the catalog with zero defects."
+    },
+    "evidence_unit": "tests/unit/test_partition_manager_core.cpp: hfsFileSystemWriter_collapsesDepthTwoExtentsTreeOnDelete (depth-2 load + multi-leaf remove + merge + depth collapse) and hfsFileSystemWriter_splitsLeafBelowExistingIndexNode (leaf split below an existing index node -> three-leaf tree, root index has three children). Full local suite 140/140 green. clang-format / lizard (CCN<=10, params<=5) / cppcheck (exhaustive) all clean.",
+    "kernel_mount": "PENDING - mac_kernel_mount_cert.sh gunzips sakh4-frag.img.gz (sha256 57EF87E46FE8CFB31E3DAE151B17AB7F3599AD65A112B9820B51D5495C2B4A31), runs native Apple fsck_hfs, hdiutil-attaches so the macOS kernel mounts SAKH4, reads frag_a.bin + frag_b.bin back byte-perfect (67072 bytes, single fill char) across the multi-leaf extents tree, detaches, re-fscks. This is the macOS-kernel confirmation that flips the H4 lane to Yes.",
+    "completed_at_utc": "2026-06-25T00:00:00Z"
+}

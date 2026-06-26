@@ -860,6 +860,24 @@ private:
         QVector<HfsOverflowExtentRecord> final_records;
     };
 
+    // H-d: working model for the multi-leaf extents-overflow B-tree, mirroring the
+    // catalog tree model. Records are fixed-size, so leaf packing/splitting is by
+    // record count; the extents tree collapses to depth 0 (no leaf) when emptied,
+    // unlike the catalog tree which keeps an empty root leaf.
+    struct HfsExtentsWorkingLeaf {
+        uint32_t node_number{0};
+        QVector<HfsOverflowExtentRecord> records;
+        bool is_new{false};
+    };
+
+    struct HfsExtentsTreeModel {
+        HfsBTreeHeaderNodeContext header;
+        QVector<HfsExtentsWorkingLeaf> leaves;
+        QVector<uint32_t> old_index_nodes;
+        int working_free_nodes{0};
+        QVector<uint32_t> freed_nodes;
+    };
+
     struct HfsCatalogWorkingLeaf {
         uint32_t node_number{0};
         QVector<HfsRawCatalogRecord> records;
@@ -4112,6 +4130,21 @@ private:
         return true;
     }
 
+    // The extents-overflow file cannot describe its own overflow extents (TN1150)
+    // - it is permanently capped at the eight volume-header extents. Other special
+    // files could spill into the extents tree, but that growth is not implemented.
+    [[nodiscard]] static QString specialTreeForkOverflowBlocker(const HfsSpecialTreeTarget& tree) {
+        if (tree.file_id == kHfsExtentsFileId) {
+            return QStringLiteral(
+                "HFS+ extents overflow file fork would need a ninth extent; the "
+                "extents file is capped at eight volume-header extents");
+        }
+        return QStringLiteral(
+                   "HFS+ %1 node-pool growth needs an extents-overflow record; not yet "
+                   "supported")
+            .arg(tree.label);
+    }
+
     // H-a: plans how many allocation blocks to add to a special-file B-tree so it
     // gains at least minNewNodes free nodes, keeping the fork byte size a whole
     // multiple of the node size and staying inside the header node's map record.
@@ -4158,9 +4191,7 @@ private:
         QVector<HfsExtent> combined = tree.fork->extents;
         appendExtentsCoalesced(&combined, *newExtents);
         if (combined.size() > kHfsExtentCount) {
-            blockers->append(QStringLiteral("HFS+ %1 node-pool growth needs an extents-overflow "
-                                            "record; not yet supported")
-                                 .arg(tree.label));
+            blockers->append(specialTreeForkOverflowBlocker(tree));
             return std::nullopt;
         }
         const auto allocationBytes = prepareAllocationBitmapSet(*newExtents, blockers);
@@ -4480,23 +4511,50 @@ private:
         return node;
     }
 
-    [[nodiscard]] std::optional<QVector<HfsOverflowExtentRecord>>
-    loadSingleExtentsLeafRecordsForMutation(uint32_t nodeNumber, QStringList* blockers) {
+    // ---- H-d: multi-leaf extents-overflow B-tree mutation engine ----
+    // Fixed-size records, so leaf-fit and split are by serialized record bytes,
+    // mirroring the catalog tree model (load -> edit -> split/merge -> rebuild
+    // index levels bottom-up -> compose header).
+
+    [[nodiscard]] qsizetype extentsLeafUsedBytes(
+        const QVector<HfsOverflowExtentRecord>& records) const {
+        qsizetype total = kBTreeNodeDescriptorBytes;
+        for (const auto& record : records) {
+            total += overflowExtentRecordBytes(record).size();
+        }
+        // Descriptor + every record's bytes + one record-offset slot per record
+        // plus the trailing free-space offset slot.
+        return total + (records.size() + 1) * kUint16Size;
+    }
+
+    [[nodiscard]] bool extentsLeafRecordsFit(
+        const QVector<HfsOverflowExtentRecord>& records) const {
+        return records.size() <= std::numeric_limits<uint16_t>::max() &&
+               extentsLeafUsedBytes(records) <= static_cast<qsizetype>(m_extents.node_size);
+    }
+
+    [[nodiscard]] bool extentsLeafUnderfull(const QVector<HfsOverflowExtentRecord>& records) const {
+        return extentsLeafUsedBytes(records) * 2 < static_cast<qsizetype>(m_extents.node_size);
+    }
+
+    [[nodiscard]] bool loadExtentsModelLeaf(uint32_t nodeNumber,
+                                            HfsExtentsTreeModel* model,
+                                            QStringList* blockers) {
         const auto node = readExtentsNode(nodeNumber);
         if (!node.has_value()) {
             blockers->append(m_blockers);
-            return std::nullopt;
+            return false;
         }
         if (static_cast<int8_t>(node->at(kBTreeKindOffset)) != kBTreeLeafNode ||
             static_cast<uint8_t>(node->at(kBTreeHeightOffset)) != kHfsLeafNodeHeight) {
             blockers->append(QStringLiteral("Invalid HFS+ extents overflow leaf node"));
-            return std::nullopt;
+            return false;
         }
         const uint16_t numRecords = be16(*node, kBTreeNumRecordsOffset);
         const auto offsets = recordOffsets(*node, numRecords);
         if (!offsets.has_value()) {
             blockers->append(m_blockers);
-            return std::nullopt;
+            return false;
         }
         QVector<HfsOverflowExtentRecord> records;
         records.reserve(offsets->size());
@@ -4505,73 +4563,535 @@ private:
             const qsizetype end = recordEnd(*node, *offsets, index);
             if (end <= start || end > node->size()) {
                 blockers->append(QStringLiteral("Invalid HFS+ extents overflow record length"));
-                return std::nullopt;
+                return false;
             }
             const auto record = parseOverflowExtentRecord(*node, start, end);
             if (!record.has_value()) {
                 blockers->append(
                     QStringLiteral("HFS+ extents overflow mutation requires only supported "
                                    "data/resource records"));
-                return std::nullopt;
+                return false;
             }
             records.append(*record);
         }
-        return records;
-    }
-
-    [[nodiscard]] bool extentsTreeShapeSupportsMutation(bool treeIsEmpty,
-                                                        QStringList* blockers) const {
-        if (m_extents.node_size < kMinimumHfsBTreeNodeSize) {
-            blockers->append(QStringLiteral("HFS+ extents overflow B-tree header is unavailable"));
+        if (!headerMapBitSet(model->header, nodeNumber)) {
+            blockers->append(QStringLiteral(
+                "HFS+ extents overflow B-tree node map is inconsistent with allocated nodes"));
             return false;
         }
-        if (!treeIsEmpty &&
-            (m_extents.tree_depth != 1 || m_extents.first_leaf_node != m_extents.last_leaf_node ||
-             m_extents.root_node != m_extents.first_leaf_node)) {
+        model->leaves.append(HfsExtentsWorkingLeaf{.node_number = nodeNumber, .records = records});
+        return true;
+    }
+
+    [[nodiscard]] bool loadExtentsModelChild(uint32_t childNode,
+                                             uint8_t parentHeight,
+                                             HfsExtentsTreeModel* model,
+                                             QStringList* blockers) {
+        if (model->leaves.size() > kHfsMaxMutationLeaves) {
             blockers->append(
-                QStringLiteral("HFS+ extents overflow mutation currently requires an empty or "
-                               "single-leaf B-tree"));
+                QStringLiteral("HFS+ extents overflow mutation supports at most %1 leaf nodes")
+                    .arg(kHfsMaxMutationLeaves));
+            return false;
+        }
+        return parentHeight == kHfsRootIndexNodeHeight
+                   ? loadExtentsModelLeaf(childNode, model, blockers)
+                   : loadExtentsModelIndexLevel(childNode, parentHeight - 1, model, blockers);
+    }
+
+    [[nodiscard]] bool loadExtentsModelIndexLevel(uint32_t nodeNumber,
+                                                  uint8_t expectedHeight,
+                                                  HfsExtentsTreeModel* model,
+                                                  QStringList* blockers) {
+        const auto indexNode = readExtentsNode(nodeNumber);
+        if (!indexNode.has_value()) {
+            blockers->append(m_blockers);
+            return false;
+        }
+        if (static_cast<int8_t>(indexNode->at(kBTreeKindOffset)) != kBTreeIndexNode ||
+            static_cast<uint8_t>(indexNode->at(kBTreeHeightOffset)) != expectedHeight) {
+            blockers->append(QStringLiteral("Invalid HFS+ extents overflow index node"));
+            return false;
+        }
+        if (!headerMapBitSet(model->header, nodeNumber)) {
+            blockers->append(QStringLiteral(
+                "HFS+ extents overflow B-tree node map is inconsistent with allocated nodes"));
+            return false;
+        }
+        const auto entries = parseCatalogIndexEntries(*indexNode, blockers);
+        if (!entries.has_value() || entries->isEmpty()) {
+            if (entries.has_value()) {
+                blockers->append(QStringLiteral("Invalid HFS+ extents overflow index node"));
+            }
+            return false;
+        }
+        model->old_index_nodes.append(nodeNumber);
+        for (const auto& entry : *entries) {
+            if (!loadExtentsModelChild(entry.second, expectedHeight, model, blockers)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool validateExtentsModelMap(const HfsExtentsTreeModel& model,
+                                               QStringList* blockers) const {
+        const uint64_t mapCapacityBits =
+            static_cast<uint64_t>(model.header.map_end - model.header.map_offset) * kBitsPerByte;
+        if (static_cast<uint64_t>(m_extents.total_nodes) > mapCapacityBits) {
+            blockers->append(QStringLiteral(
+                "HFS+ extents overflow B-tree node map spans multiple map nodes; mutation is "
+                "blocked"));
+            return false;
+        }
+        if (!headerMapBitSet(model.header, 0)) {
+            blockers->append(QStringLiteral(
+                "HFS+ extents overflow B-tree node map is inconsistent with allocated nodes"));
             return false;
         }
         return true;
     }
 
-    [[nodiscard]] bool applyExtentsRecordEdits(QVector<HfsOverflowExtentRecord>* records,
-                                               const QVector<QPair<uint32_t, uint8_t>>& removeForks,
-                                               const QVector<HfsOverflowExtentRecord>& insertions,
-                                               QStringList* blockers) const {
-        for (const auto& removal : removeForks) {
-            records->erase(std::remove_if(records->begin(),
-                                          records->end(),
-                                          [&removal](const HfsOverflowExtentRecord& record) {
-                                              return record.file_id == removal.first &&
-                                                     record.fork_type == removal.second;
-                                          }),
-                           records->end());
+    [[nodiscard]] bool loadExtentsDepthOneLeaf(HfsExtentsTreeModel* model, QStringList* blockers) {
+        if (m_extents.root_node != m_extents.first_leaf_node ||
+            m_extents.first_leaf_node != m_extents.last_leaf_node) {
+            blockers->append(QStringLiteral("Invalid HFS+ extents overflow B-tree geometry"));
+            return false;
         }
-        for (const auto& insertion : insertions) {
-            if (insertion.extents.isEmpty() || insertion.extents.size() > kHfsExtentCount ||
-                (insertion.fork_type != kHfsDataForkType &&
-                 insertion.fork_type != kHfsResourceForkType)) {
-                blockers->append(
-                    QStringLiteral("HFS+ extents overflow insertion record is invalid"));
-                return false;
+        return loadExtentsModelLeaf(m_extents.root_node, model, blockers);
+    }
+
+    [[nodiscard]] bool loadExtentsDeepLevels(HfsExtentsTreeModel* model, QStringList* blockers) {
+        if (!loadExtentsModelIndexLevel(
+                m_extents.root_node, static_cast<uint8_t>(m_extents.tree_depth), model, blockers)) {
+            return false;
+        }
+        if (model->leaves.isEmpty() || model->leaves.size() > kHfsMaxMutationLeaves ||
+            model->leaves.first().node_number != m_extents.first_leaf_node ||
+            model->leaves.last().node_number != m_extents.last_leaf_node) {
+            blockers->append(QStringLiteral("Invalid HFS+ extents overflow B-tree geometry"));
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool loadExtentsModelLevels(HfsExtentsTreeModel* model, QStringList* blockers) {
+        const bool treeIsEmpty = m_extents.tree_depth == 0 || m_extents.leaf_records == 0 ||
+                                 m_extents.first_leaf_node == 0;
+        if (treeIsEmpty) {
+            return true;
+        }
+        if (m_extents.tree_depth == 1) {
+            return loadExtentsDepthOneLeaf(model, blockers);
+        }
+        return loadExtentsDeepLevels(model, blockers);
+    }
+
+    [[nodiscard]] std::optional<HfsExtentsTreeModel> loadExtentsTreeForMutation(
+        QStringList* blockers) {
+        if (m_extents.node_size < kMinimumHfsBTreeNodeSize) {
+            blockers->append(QStringLiteral("HFS+ extents overflow B-tree header is unavailable"));
+            return std::nullopt;
+        }
+        if (m_extents.tree_depth > kHfsMaxMutationTreeDepth) {
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow mutation supports B-trees up to %1 levels "
+                               "deep")
+                    .arg(kHfsMaxMutationTreeDepth));
+            return std::nullopt;
+        }
+        auto header = loadExtentsHeaderNodeForMutation(blockers);
+        if (!header.has_value()) {
+            return std::nullopt;
+        }
+        HfsExtentsTreeModel model;
+        model.header = *header;
+        model.working_free_nodes = static_cast<int>(m_extents.free_nodes);
+        if (!validateExtentsModelMap(model, blockers)) {
+            return std::nullopt;
+        }
+        if (!loadExtentsModelLevels(&model, blockers)) {
+            return std::nullopt;
+        }
+        return model;
+    }
+
+    [[nodiscard]] int extentsModelLeafForKey(const HfsExtentsTreeModel& model,
+                                             const HfsOverflowExtentRecord& key) const {
+        int target = 0;
+        for (int index = 1; index < model.leaves.size(); ++index) {
+            const auto& records = model.leaves.at(index).records;
+            if (records.isEmpty()) {
+                continue;
             }
-            for (const auto& existing : *records) {
-                if (compareOverflowExtentKeys(existing, insertion) == 0) {
-                    blockers->append(
-                        QStringLiteral("HFS+ extents overflow insertion key already exists"));
-                    return false;
+            if (compareOverflowExtentKeys(records.first(), key) <= 0) {
+                target = index;
+            }
+        }
+        return target;
+    }
+
+    [[nodiscard]] int extentsModelLeafContainingKey(const HfsExtentsTreeModel& model,
+                                                    const HfsOverflowExtentRecord& key) const {
+        for (int index = 0; index < model.leaves.size(); ++index) {
+            for (const auto& record : model.leaves.at(index).records) {
+                if (compareOverflowExtentKeys(record, key) == 0) {
+                    return index;
                 }
             }
-            records->append(insertion);
         }
-        std::sort(records->begin(),
-                  records->end(),
+        return -1;
+    }
+
+    [[nodiscard]] std::optional<uint32_t> allocateExtentsModelNode(HfsExtentsTreeModel* model,
+                                                                   QStringList* blockers) const {
+        if (model->working_free_nodes < 1) {
+            blockers->append(QStringLiteral(
+                "HFS+ extents overflow B-tree does not have enough free nodes for a split"));
+            return std::nullopt;
+        }
+        for (uint32_t nodeNumber = 1; nodeNumber < m_extents.total_nodes; ++nodeNumber) {
+            if (!headerMapBitSet(model->header, nodeNumber) &&
+                !model->freed_nodes.contains(nodeNumber)) {
+                writeHeaderMapBit(&model->header, nodeNumber, true);
+                --model->working_free_nodes;
+                return nodeNumber;
+            }
+        }
+        blockers->append(
+            model->freed_nodes.isEmpty()
+                ? QStringLiteral("HFS+ extents overflow B-tree node map is inconsistent with the "
+                                 "free-node counter")
+                : QStringLiteral("HFS+ extents overflow B-tree does not have enough free nodes for "
+                                 "this mutation"));
+        return std::nullopt;
+    }
+
+    void freeExtentsModelNode(HfsExtentsTreeModel* model, uint32_t nodeNumber) {
+        writeHeaderMapBit(&model->header, nodeNumber, false);
+        ++model->working_free_nodes;
+        model->freed_nodes.append(nodeNumber);
+    }
+
+    void freeWorkingExtentsLeaf(HfsExtentsTreeModel* model, const HfsExtentsWorkingLeaf& leaf) {
+        if (leaf.is_new) {
+            writeHeaderMapBit(&model->header, leaf.node_number, false);
+            ++model->working_free_nodes;
+        } else {
+            freeExtentsModelNode(model, leaf.node_number);
+        }
+    }
+
+    void removeExtentsModelForks(HfsExtentsTreeModel* model,
+                                 const QVector<QPair<uint32_t, uint8_t>>& removeForks) const {
+        for (const auto& removal : removeForks) {
+            for (auto& leaf : model->leaves) {
+                leaf.records.erase(
+                    std::remove_if(leaf.records.begin(),
+                                   leaf.records.end(),
+                                   [&removal](const HfsOverflowExtentRecord& record) {
+                                       return record.file_id == removal.first &&
+                                              record.fork_type == removal.second;
+                                   }),
+                    leaf.records.end());
+            }
+        }
+    }
+
+    [[nodiscard]] static bool extentsInsertionValid(const HfsOverflowExtentRecord& insertion) {
+        return !insertion.extents.isEmpty() && insertion.extents.size() <= kHfsExtentCount &&
+               (insertion.fork_type == kHfsDataForkType ||
+                insertion.fork_type == kHfsResourceForkType);
+    }
+
+    [[nodiscard]] bool applyExtentsModelInsertion(HfsExtentsTreeModel* model,
+                                                  const HfsOverflowExtentRecord& insertion,
+                                                  QStringList* blockers) const {
+        if (!extentsInsertionValid(insertion)) {
+            blockers->append(QStringLiteral("HFS+ extents overflow insertion record is invalid"));
+            return false;
+        }
+        if (extentsModelLeafContainingKey(*model, insertion) >= 0) {
+            blockers->append(QStringLiteral("HFS+ extents overflow insertion key already exists"));
+            return false;
+        }
+        if (model->leaves.isEmpty()) {
+            const auto node = allocateExtentsModelNode(model, blockers);
+            if (!node.has_value()) {
+                return false;
+            }
+            model->leaves.append(
+                HfsExtentsWorkingLeaf{.node_number = *node, .records = {}, .is_new = true});
+        }
+        auto& leaf = (*model).leaves[extentsModelLeafForKey(*model, insertion)];
+        leaf.records.append(insertion);
+        std::sort(leaf.records.begin(),
+                  leaf.records.end(),
                   [](const HfsOverflowExtentRecord& left, const HfsOverflowExtentRecord& right) {
                       return compareOverflowExtentKeys(left, right) < 0;
                   });
         return true;
+    }
+
+    [[nodiscard]] bool applyExtentsEditToModel(HfsExtentsTreeModel* model,
+                                               const QVector<QPair<uint32_t, uint8_t>>& removeForks,
+                                               const QVector<HfsOverflowExtentRecord>& insertions,
+                                               QStringList* blockers) const {
+        removeExtentsModelForks(model, removeForks);
+        for (const auto& insertion : insertions) {
+            if (!applyExtentsModelInsertion(model, insertion, blockers)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::optional<int> extentsRootLeafSplitIndex(
+        const QVector<HfsOverflowExtentRecord>& records, QStringList* blockers) const {
+        if (records.size() < kHfsRootLeafSplitMinimumRecords) {
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow root-leaf split needs at least two records"));
+            return std::nullopt;
+        }
+        const int split = static_cast<int>(records.size()) / kHfsRootLeafSplitHalves;
+        return std::max(1, std::min(split, static_cast<int>(records.size()) - 1));
+    }
+
+    [[nodiscard]] bool splitExtentsModelLeaf(HfsExtentsTreeModel* model,
+                                             int leafIndex,
+                                             QStringList* blockers) {
+        auto& leaf = (*model).leaves[leafIndex];
+        if (model->old_index_nodes.isEmpty() && !leaf.is_new) {
+            // Splitting the depth-1 root leaf: relocate the surviving half to a
+            // fresh node so the old root leaf stays intact until the header-node
+            // commit write switches the tree to the new root index node.
+            const auto newLeft = allocateExtentsModelNode(model, blockers);
+            if (!newLeft.has_value()) {
+                return false;
+            }
+            freeExtentsModelNode(model, leaf.node_number);
+            leaf.node_number = *newLeft;
+            leaf.is_new = true;
+        }
+        const auto splitIndex = extentsRootLeafSplitIndex(leaf.records, blockers);
+        if (!splitIndex.has_value()) {
+            return false;
+        }
+        const auto rightNode = allocateExtentsModelNode(model, blockers);
+        if (!rightNode.has_value()) {
+            return false;
+        }
+        HfsExtentsWorkingLeaf right;
+        right.node_number = *rightNode;
+        right.records = leaf.records.mid(*splitIndex);
+        right.is_new = true;
+        (*model).leaves[leafIndex].records = (*model).leaves[leafIndex].records.mid(0, *splitIndex);
+        model->leaves.insert(leafIndex + 1, right);
+        return true;
+    }
+
+    // Coalesces adjacent leaves when one is underfull and their records fit a
+    // single node, then frees the absorbed node. Records in the left leaf all
+    // sort before the right leaf's, so concatenation stays ordered.
+    void mergeUnderfullExtentsLeaves(HfsExtentsTreeModel* model) {
+        for (int index = 0; index + 1 < model->leaves.size();) {
+            const auto& left = model->leaves.at(index);
+            const auto& right = model->leaves.at(index + 1);
+            QVector<HfsOverflowExtentRecord> combined = left.records;
+            combined.append(right.records);
+            const bool eitherUnderfull = extentsLeafUnderfull(left.records) ||
+                                         extentsLeafUnderfull(right.records);
+            if (!eitherUnderfull || !extentsLeafRecordsFit(combined)) {
+                ++index;
+                continue;
+            }
+            model->leaves[index].records = combined;
+            freeWorkingExtentsLeaf(model, right);
+            model->leaves.removeAt(index + 1);
+        }
+    }
+
+    [[nodiscard]] bool rebalanceExtentsModel(HfsExtentsTreeModel* model, QStringList* blockers) {
+        for (int index = 0; index < model->leaves.size(); ++index) {
+            int guard = 0;
+            while (!extentsLeafRecordsFit(model->leaves.at(index).records)) {
+                if (++guard > kHfsMaxMutationLeaves) {
+                    blockers->append(
+                        QStringLiteral("HFS+ extents overflow leaf split limit reached"));
+                    return false;
+                }
+                if (!splitExtentsModelLeaf(model, index, blockers)) {
+                    return false;
+                }
+            }
+        }
+        // The extents tree collapses fully when emptied: drop every empty leaf,
+        // including the last one (unlike the catalog tree).
+        for (int index = model->leaves.size() - 1; index >= 0; --index) {
+            if (model->leaves.at(index).records.isEmpty()) {
+                freeWorkingExtentsLeaf(model, model->leaves.at(index));
+                model->leaves.removeAt(index);
+            }
+        }
+        mergeUnderfullExtentsLeaves(model);
+        if (model->leaves.size() > kHfsMaxMutationLeaves) {
+            blockers->append(
+                QStringLiteral("HFS+ extents overflow mutation supports at most %1 leaf nodes")
+                    .arg(kHfsMaxMutationLeaves));
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emitExtentsLeafWrites(HfsExtentsTreeModel* model,
+                                             HfsExtentsTreeMutation* mutation) const {
+        for (int index = 0; index < model->leaves.size(); ++index) {
+            const auto& leaf = model->leaves.at(index);
+            const uint32_t forward =
+                index + 1 < model->leaves.size() ? model->leaves.at(index + 1).node_number : 0;
+            const uint32_t backward = index > 0 ? model->leaves.at(index - 1).node_number : 0;
+            const auto bytes = buildExtentsLeafNodeBytes(forward, backward, leaf.records);
+            if (!bytes.has_value()) {
+                return false;
+            }
+            mutation->node_writes.append(HfsBTreeNodeWrite{leaf.node_number, *bytes});
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::optional<QVector<QPair<QByteArray, uint32_t>>> emitExtentsIndexLevel(
+        HfsExtentsTreeModel* model,
+        const QVector<QPair<QByteArray, uint32_t>>& entries,
+        uint8_t height,
+        HfsExtentsTreeMutation* mutation,
+        QStringList* blockers) const {
+        QVector<QPair<QByteArray, uint32_t>> parents;
+        QVector<HfsBTreeNodeWrite> levelWrites;
+        int cursor = 0;
+        while (cursor < entries.size()) {
+            qsizetype usedBytes = kBTreeNodeDescriptorBytes + kUint16Size;
+            int count = 0;
+            while (cursor + count < entries.size()) {
+                const auto& entry = entries.at(cursor + count);
+                const qsizetype entryBytes = entry.first.size() + kUint32Size + kUint16Size;
+                if (count > 0 && usedBytes + entryBytes > m_extents.node_size) {
+                    break;
+                }
+                usedBytes += entryBytes;
+                ++count;
+            }
+            const QVector<QPair<QByteArray, uint32_t>> group = entries.mid(cursor, count);
+            const auto indexBytes = buildIndexNodeBytes(
+                m_extents.node_size, group, height, QStringLiteral("extents overflow"), blockers);
+            if (!indexBytes.has_value()) {
+                return std::nullopt;
+            }
+            const auto nodeNumber = allocateExtentsModelNode(model, blockers);
+            if (!nodeNumber.has_value()) {
+                return std::nullopt;
+            }
+            levelWrites.append(HfsBTreeNodeWrite{*nodeNumber, *indexBytes});
+            parents.append({group.first().first, *nodeNumber});
+            cursor += count;
+        }
+        for (int index = 0; index < levelWrites.size(); ++index) {
+            writeBe32(&levelWrites[index].bytes,
+                      kBTreeNodeForwardLinkOffset,
+                      index + 1 < levelWrites.size() ? levelWrites.at(index + 1).node_number : 0);
+            writeBe32(&levelWrites[index].bytes,
+                      kBTreeNodeBackwardLinkOffset,
+                      index > 0 ? levelWrites.at(index - 1).node_number : 0);
+            mutation->node_writes.append(levelWrites.at(index));
+        }
+        return parents;
+    }
+
+    [[nodiscard]] std::optional<HfsCatalogTreeShape> emitExtentsIndexLevels(
+        HfsExtentsTreeModel* model, HfsExtentsTreeMutation* mutation, QStringList* blockers) const {
+        QVector<QPair<QByteArray, uint32_t>> entries;
+        entries.reserve(model->leaves.size());
+        for (const auto& leaf : model->leaves) {
+            entries.append({overflowExtentKeyBytes(leaf.records.first()), leaf.node_number});
+        }
+        uint8_t height = kHfsRootIndexNodeHeight;
+        while (true) {
+            if (height > kHfsMaxMutationTreeDepth) {
+                blockers->append(
+                    QStringLiteral("HFS+ extents overflow mutation supports B-trees up to %1 "
+                                   "levels deep")
+                        .arg(kHfsMaxMutationTreeDepth));
+                return std::nullopt;
+            }
+            const auto parents = emitExtentsIndexLevel(model, entries, height, mutation, blockers);
+            if (!parents.has_value()) {
+                return std::nullopt;
+            }
+            if (parents->size() == 1) {
+                return HfsCatalogTreeShape{parents->first().second, height};
+            }
+            entries = *parents;
+            ++height;
+        }
+    }
+
+    void composeExtentsTreeHeader(const HfsExtentsTreeModel& model,
+                                  const HfsCatalogTreeShape& shape,
+                                  uint32_t leafRecords,
+                                  HfsExtentsTreeMutation* mutation) const {
+        const bool empty = model.leaves.isEmpty();
+        HfsBTreeHeaderNodeContext updatedHeader = model.header;
+        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
+        const uint16_t treeDepth = empty ? 0 : shape.tree_depth;
+        const uint32_t rootNode = empty ? 0 : shape.root_node;
+        const uint32_t firstLeaf = empty ? 0 : model.leaves.first().node_number;
+        const uint32_t lastLeaf = empty ? 0 : model.leaves.last().node_number;
+        writeBe16(&updatedHeader.node, headerRecord + kBTreeHeaderTreeDepthOffset, treeDepth);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderRootNodeOffset, rootNode);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderLeafRecordsOffset, leafRecords);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, firstLeaf);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, lastLeaf);
+        writeBe32(&updatedHeader.node,
+                  headerRecord + kBTreeHeaderFreeNodesOffset,
+                  static_cast<uint32_t>(model.working_free_nodes));
+        mutation->header_node = updatedHeader.node;
+        mutation->updated_header = m_extents;
+        mutation->updated_header.tree_depth = treeDepth;
+        mutation->updated_header.root_node = rootNode;
+        mutation->updated_header.leaf_records = leafRecords;
+        mutation->updated_header.first_leaf_node = firstLeaf;
+        mutation->updated_header.last_leaf_node = lastLeaf;
+        mutation->updated_header.free_nodes = static_cast<uint32_t>(model.working_free_nodes);
+    }
+
+    [[nodiscard]] std::optional<HfsExtentsTreeMutation> emitExtentsTreeMutation(
+        HfsExtentsTreeModel* model, QStringList* blockers) {
+        HfsExtentsTreeMutation mutation;
+        for (uint32_t oldIndexNode : model->old_index_nodes) {
+            freeExtentsModelNode(model, oldIndexNode);
+        }
+        uint32_t leafRecords = 0;
+        for (const auto& leaf : model->leaves) {
+            leafRecords += static_cast<uint32_t>(leaf.records.size());
+            mutation.final_records.append(leaf.records);
+        }
+        if (!emitExtentsLeafWrites(model, &mutation)) {
+            blockers->append(QStringLiteral("HFS+ extents overflow leaf rebuild failed"));
+            return std::nullopt;
+        }
+        HfsCatalogTreeShape shape{model->leaves.isEmpty() ? 0 : model->leaves.first().node_number,
+                                  1};
+        if (model->leaves.size() > 1) {
+            const auto indexShape = emitExtentsIndexLevels(model, &mutation, blockers);
+            if (!indexShape.has_value()) {
+                return std::nullopt;
+            }
+            shape = *indexShape;
+        }
+        for (uint32_t freed : model->freed_nodes) {
+            mutation.post_commit_writes.append(
+                HfsBTreeNodeWrite{freed, QByteArray(m_extents.node_size, '\0')});
+        }
+        composeExtentsTreeHeader(*model, shape, leafRecords, &mutation);
+        return mutation;
     }
 
     [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareExtentsTreeMutation(
@@ -4601,226 +5121,17 @@ private:
         const QVector<QPair<uint32_t, uint8_t>>& removeForks,
         const QVector<HfsOverflowExtentRecord>& insertions,
         QStringList* blockers) {
-        const bool treeIsEmpty = m_extents.leaf_records == 0 || m_extents.first_leaf_node == 0;
-        if (!extentsTreeShapeSupportsMutation(treeIsEmpty, blockers)) {
+        auto model = loadExtentsTreeForMutation(blockers);
+        if (!model.has_value()) {
             return std::nullopt;
         }
-
-        QVector<HfsOverflowExtentRecord> records;
-        if (!treeIsEmpty) {
-            const auto existing = loadSingleExtentsLeafRecordsForMutation(m_extents.first_leaf_node,
-                                                                          blockers);
-            if (!existing.has_value()) {
-                return std::nullopt;
-            }
-            records = *existing;
-        }
-        if (!applyExtentsRecordEdits(&records, removeForks, insertions, blockers)) {
+        if (!applyExtentsEditToModel(&*model, removeForks, insertions, blockers)) {
             return std::nullopt;
         }
-
-        HfsExtentsTreeMutation mutation;
-        mutation.final_records = records;
-        mutation.updated_header = m_extents;
-
-        auto header = loadExtentsHeaderNodeForMutation(blockers);
-        if (!header.has_value()) {
+        if (!rebalanceExtentsModel(&*model, blockers)) {
             return std::nullopt;
         }
-
-        if (records.isEmpty()) {
-            return buildExtentsTreeFree(treeIsEmpty, *header, mutation, blockers);
-        }
-        if (treeIsEmpty) {
-            return buildExtentsTreeMaterialize(*header, mutation, blockers);
-        }
-        return buildExtentsTreeRebuildOrSplit(*header, mutation, blockers);
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildExtentsTreeFree(
-        bool treeIsEmpty,
-        const HfsBTreeHeaderNodeContext& header,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        if (treeIsEmpty) {
-            return mutation;
-        }
-        HfsBTreeHeaderNodeContext updated = header;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        if (!headerMapBitSet(updated, m_extents.first_leaf_node)) {
-            blockers->append(QStringLiteral(
-                "HFS+ extents overflow B-tree node map is inconsistent with allocated nodes"));
-            return std::nullopt;
-        }
-        writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 0);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, 0);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset, 0);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, 0);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, 0);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderFreeNodesOffset,
-                  m_extents.free_nodes + 1);
-        writeHeaderMapBit(&updated, m_extents.first_leaf_node, false);
-        mutation.free_tree = true;
-        mutation.post_commit_writes.append(
-            HfsBTreeNodeWrite{m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
-        mutation.header_node = updated.node;
-        mutation.updated_header.tree_depth = 0;
-        mutation.updated_header.root_node = 0;
-        mutation.updated_header.leaf_records = 0;
-        mutation.updated_header.first_leaf_node = 0;
-        mutation.updated_header.last_leaf_node = 0;
-        mutation.updated_header.free_nodes = m_extents.free_nodes + 1;
-        return mutation;
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildExtentsTreeMaterialize(
-        const HfsBTreeHeaderNodeContext& header,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) const {
-        const auto allocated =
-            allocateBTreeNodesFromHeaderMap({.header = &header,
-                                             .tree = &m_extents,
-                                             .must_be_allocated = {0},
-                                             .count = 1,
-                                             .label = QStringLiteral("extents overflow")},
-                                            blockers);
-        if (!allocated.has_value()) {
-            return std::nullopt;
-        }
-        const uint32_t leafNode = allocated->first();
-        const auto leafBytes = buildExtentsLeafNodeBytes(0, 0, mutation.final_records);
-        if (!leafBytes.has_value()) {
-            blockers->append(
-                QStringLiteral("HFS+ extents overflow records do not fit a single new leaf node"));
-            return std::nullopt;
-        }
-        HfsBTreeHeaderNodeContext updated = header;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 1);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, leafNode);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderLeafRecordsOffset,
-                  static_cast<uint32_t>(mutation.final_records.size()));
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, leafNode);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderFreeNodesOffset,
-                  m_extents.free_nodes - 1);
-        writeHeaderMapBit(&updated, leafNode, true);
-        mutation.materialize = true;
-        mutation.node_writes.append(HfsBTreeNodeWrite{leafNode, *leafBytes});
-        mutation.header_node = updated.node;
-        mutation.updated_header.tree_depth = 1;
-        mutation.updated_header.root_node = leafNode;
-        mutation.updated_header.leaf_records = static_cast<uint32_t>(mutation.final_records.size());
-        mutation.updated_header.first_leaf_node = leafNode;
-        mutation.updated_header.last_leaf_node = leafNode;
-        mutation.updated_header.free_nodes = m_extents.free_nodes - 1;
-        return mutation;
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildExtentsTreeRebuildOrSplit(
-        const HfsBTreeHeaderNodeContext& header,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        const auto singleLeaf = buildExtentsLeafNodeBytes(0, 0, mutation.final_records);
-        if (singleLeaf.has_value()) {
-            HfsBTreeHeaderNodeContext updated = header;
-            const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-            writeBe32(&updated.node,
-                      headerRecord + kBTreeHeaderLeafRecordsOffset,
-                      static_cast<uint32_t>(mutation.final_records.size()));
-            mutation.leaf_rewrite = HfsBTreeNodeWrite{m_extents.first_leaf_node, *singleLeaf};
-            mutation.header_node = updated.node;
-            mutation.updated_header.leaf_records =
-                static_cast<uint32_t>(mutation.final_records.size());
-            return mutation;
-        }
-        return buildExtentsTreeRootLeafSplit(header, std::move(mutation), blockers);
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildExtentsTreeRootLeafSplit(
-        const HfsBTreeHeaderNodeContext& header,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        const auto allocated =
-            allocateBTreeNodesFromHeaderMap({.header = &header,
-                                             .tree = &m_extents,
-                                             .must_be_allocated = {0, m_extents.first_leaf_node},
-                                             .count = kHfsRootLeafSplitNodesNeeded,
-                                             .label = QStringLiteral("extents overflow")},
-                                            blockers);
-        if (!allocated.has_value()) {
-            return std::nullopt;
-        }
-        const uint32_t leftNode = allocated->at(kHfsSplitLeftNodeSlot);
-        const uint32_t rightNode = allocated->at(kHfsSplitRightNodeSlot);
-        const uint32_t indexNode = allocated->at(kHfsSplitIndexNodeSlot);
-        const int splitIndex =
-            std::max(1, static_cast<int>(mutation.final_records.size()) / kHfsRootLeafSplitHalves);
-        if (splitIndex >= mutation.final_records.size()) {
-            blockers->append(
-                QStringLiteral("HFS+ extents overflow root-leaf split needs at least two records"));
-            return std::nullopt;
-        }
-        const QVector<HfsOverflowExtentRecord> leftRecords = mutation.final_records.mid(0,
-                                                                                        splitIndex);
-        const QVector<HfsOverflowExtentRecord> rightRecords =
-            mutation.final_records.mid(splitIndex);
-        const auto leftBytes = buildExtentsLeafNodeBytes(rightNode, 0, leftRecords);
-        const auto rightBytes = buildExtentsLeafNodeBytes(0, leftNode, rightRecords);
-        if (!leftBytes.has_value() || !rightBytes.has_value()) {
-            blockers->append(QStringLiteral(
-                "HFS+ extents overflow root-leaf split could not fit records into two leaf nodes"));
-            return std::nullopt;
-        }
-        const auto indexBytes =
-            buildIndexNodeBytes(m_extents.node_size,
-                                {{overflowExtentKeyBytes(leftRecords.first()), leftNode},
-                                 {overflowExtentKeyBytes(rightRecords.first()), rightNode}},
-                                kHfsRootIndexNodeHeight,
-                                QStringLiteral("extents overflow"),
-                                blockers);
-        if (!indexBytes.has_value()) {
-            return std::nullopt;
-        }
-
-        HfsBTreeHeaderNodeContext updated = header;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        const uint32_t newFreeNodes =
-            m_extents.free_nodes -
-            std::min<uint32_t>(m_extents.free_nodes,
-                               static_cast<uint32_t>(-kHfsRootLeafSplitFreeNodeDelta));
-        writeBe16(&updated.node,
-                  headerRecord + kBTreeHeaderTreeDepthOffset,
-                  kHfsRootLeafSplitTreeDepth);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, indexNode);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderLeafRecordsOffset,
-                  static_cast<uint32_t>(mutation.final_records.size()));
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leftNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, rightNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFreeNodesOffset, newFreeNodes);
-        writeHeaderMapBit(&updated, m_extents.first_leaf_node, false);
-        writeHeaderMapBit(&updated, leftNode, true);
-        writeHeaderMapBit(&updated, rightNode, true);
-        writeHeaderMapBit(&updated, indexNode, true);
-
-        mutation.split = true;
-        mutation.node_writes.append(HfsBTreeNodeWrite{leftNode, *leftBytes});
-        mutation.node_writes.append(HfsBTreeNodeWrite{rightNode, *rightBytes});
-        mutation.node_writes.append(HfsBTreeNodeWrite{indexNode, *indexBytes});
-        mutation.post_commit_writes.append(
-            HfsBTreeNodeWrite{m_extents.first_leaf_node, QByteArray(m_extents.node_size, '\0')});
-        mutation.header_node = updated.node;
-        mutation.updated_header.tree_depth = kHfsRootLeafSplitTreeDepth;
-        mutation.updated_header.root_node = indexNode;
-        mutation.updated_header.leaf_records = static_cast<uint32_t>(mutation.final_records.size());
-        mutation.updated_header.first_leaf_node = leftNode;
-        mutation.updated_header.last_leaf_node = rightNode;
-        mutation.updated_header.free_nodes = newFreeNodes;
-        return mutation;
+        return emitExtentsTreeMutation(&*model, blockers);
     }
 
     // ---- Bounded HFS+ attributes B-tree insertion (new inline attributes) ----

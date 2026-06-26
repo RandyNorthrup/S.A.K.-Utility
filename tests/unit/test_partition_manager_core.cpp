@@ -973,6 +973,11 @@ void writeHfsExtentsHeaderNode(QByteArray* image, uint32_t leafRecords) {
     writeBe16(&node, header + kTestHfsBTreeHeaderNodeSizeOffset, kTestHfsExtentsNodeSize);
     writeBe32(&node, header + kTestHfsBTreeHeaderTotalNodesOffset, 2);
     writeHfsNodeOffsets(&node, {14, 120, 248}, 256);
+    // A real extents B-tree header marks its allocated nodes (header node 0 and
+    // the single leaf node 1) in the node-allocation map record; the streaming
+    // mutation engine validates these bits when it loads the tree.
+    setFixtureMapBit(&node, 0, true);
+    setFixtureMapBit(&node, 1, true);
 
     std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
 }
@@ -1599,6 +1604,119 @@ QByteArray hfsExtentsSplitFixture() {
     return image;
 }
 
+struct HfsFixtureExtentsNode {
+    int8_t kind{0};
+    uint8_t height{0};
+    uint32_t forward_link{0};
+    uint32_t backward_link{0};
+};
+
+void writeHfsExtentsNodeBytesAt(QByteArray* image,
+                                uint32_t nodeNumber,
+                                const HfsFixtureExtentsNode& meta,
+                                const QVector<QByteArray>& records) {
+    const qsizetype nodeOffset =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize) +
+        static_cast<qsizetype>(nodeNumber) * kTestHfsExtentsNodeSize;
+    QByteArray node(kTestHfsExtentsNodeSize, '\0');
+    writeBe32(&node, 0, meta.forward_link);
+    writeBe32(&node, 4, meta.backward_link);
+    node[kTestHfsBTreeKindOffset] = static_cast<char>(meta.kind);
+    node[kTestHfsBTreeHeightOffset] = static_cast<char>(meta.height);
+    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, static_cast<uint16_t>(records.size()));
+    QVector<qsizetype> offsets;
+    qsizetype cursor = 14;
+    for (const auto& record : records) {
+        offsets.append(cursor);
+        std::copy(record.cbegin(), record.cend(), node.begin() + cursor);
+        cursor += record.size();
+    }
+    writeHfsNodeOffsets(&node, offsets, cursor);
+    std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
+}
+
+void writeHfsExtentsLeafNodeAt(QByteArray* image,
+                               uint32_t nodeNumber,
+                               uint32_t forwardLink,
+                               uint32_t backwardLink,
+                               const QVector<QByteArray>& records) {
+    writeHfsExtentsNodeBytesAt(image,
+                               nodeNumber,
+                               HfsFixtureExtentsNode{.kind = static_cast<int8_t>(0xFF),
+                                                     .height = 1,
+                                                     .forward_link = forwardLink,
+                                                     .backward_link = backwardLink},
+                               records);
+}
+
+void writeHfsExtentsIndexNodeAt(QByteArray* image,
+                                uint32_t nodeNumber,
+                                const QVector<QByteArray>& records) {
+    writeHfsExtentsNodeBytesAt(
+        image, nodeNumber, HfsFixtureExtentsNode{.kind = 0, .height = 2}, records);
+}
+
+void setExtentsHeaderMapBitInImage(QByteArray* image, uint32_t nodeNumber) {
+    const qsizetype headerNodeOffset =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize);
+    const qsizetype offset = headerNodeOffset + kTestHfsBTreeHeaderMapRecordOffset + nodeNumber / 8;
+    const auto mask = static_cast<char>(0x80U >> (nodeNumber % 8U));
+    (*image)[offset] = static_cast<char>((*image)[offset] | mask);
+}
+
+QByteArray hfsExtentsIndexRecord(uint32_t fileId, uint32_t logicalStartBlock, uint32_t childNode) {
+    QByteArray record =
+        hfsExtentsOverflowRecord(fileId, kTestHfsDataForkType, logicalStartBlock, 0, 0)
+            .left(2 + kTestHfsExtentsKeyLength);
+    record.append(QByteArray(4, '\0'));
+    writeBe32(&record, 2 + kTestHfsExtentsKeyLength, childNode);
+    return record;
+}
+
+// A depth-2 extents tree whose first leaf (node 1) is full: a single inserted
+// record splits it, exercising the streaming engine's leaf split below an
+// existing index node (the non-root split branch the bounded engine never had).
+QByteArray hfsExtentsTwoLeafFixture() {
+    QByteArray image = hfsExtentsGrowthFixture();
+    writeHfsFork(&image,
+                 kTestHfsHeaderOffset + kTestHfsExtentsForkOffset,
+                 kTestHfsExtentsNodeSize * 8,
+                 2,
+                 kTestHfsExtentsStartBlock);
+    setHfsAllocationBit(&image, kTestHfsExtentsStartBlock + 1);
+    // total_nodes 8, used 0/1/2/3 -> free_nodes 4 (room for one split: a new leaf
+    // and a rebuilt index), root index node 3, leaves 1 and 2, 20 leaf records.
+    // Leaf 2 holds eight records so it is not underfull and survives the split
+    // (an underfull neighbour would merge away and hide the three-leaf result).
+    writeHfsExtentsMutationHeaderNode(&image, 8, 4, 20, 3);
+    // The mutation-header helper assumes a depth-1 tree (root == sole leaf); patch
+    // the header for the real depth-2 shape: index root 3 over leaves 1 and 2.
+    const qsizetype extentsHeaderRecord =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize) +
+        kTestHfsBTreeHeaderRecordOffset;
+    writeBe16(&image, extentsHeaderRecord + kTestHfsBTreeHeaderTreeDepthOffset, 2);
+    writeBe32(&image, extentsHeaderRecord + kTestHfsBTreeHeaderFirstLeafNodeOffset, 1);
+    writeBe32(&image, extentsHeaderRecord + kTestHfsBTreeHeaderLastLeafNodeOffset, 2);
+    setExtentsHeaderMapBitInImage(&image, 1);
+    setExtentsHeaderMapBitInImage(&image, 2);
+
+    QVector<QByteArray> leafOne;
+    for (int index = 0; index < 12; ++index) {
+        leafOne.append(hfsExtentsOverflowRecord(
+            99, kTestHfsDataForkType, static_cast<uint32_t>(index) * 8U, 45U, 1));
+    }
+    QVector<QByteArray> leafTwo;
+    for (int index = 12; index < 20; ++index) {
+        leafTwo.append(hfsExtentsOverflowRecord(
+            99, kTestHfsDataForkType, static_cast<uint32_t>(index) * 8U, 45U, 1));
+    }
+    writeHfsExtentsLeafNodeAt(&image, 1, 2, 0, leafOne);
+    writeHfsExtentsLeafNodeAt(&image, 2, 0, 1, leafTwo);
+    writeHfsExtentsIndexNodeAt(
+        &image, 3, {hfsExtentsIndexRecord(99, 0U, 1U), hfsExtentsIndexRecord(99, 96U, 2U)});
+    return image;
+}
+
 }  // namespace
 
 class PartitionManagerCoreTests : public QObject {
@@ -1636,6 +1754,8 @@ private Q_SLOTS:
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
     void hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords();
     void hfsFileSystemWriter_splitsExtentsOverflowRootLeaf();
+    void hfsFileSystemWriter_collapsesDepthTwoExtentsTreeOnDelete();
+    void hfsFileSystemWriter_splitsLeafBelowExistingIndexNode();
     void hfsFileSystemWriter_truncatesResourceForkWithinAllocatedBlocks();
     void hfsFileSystemWriter_replacesInlineAttributesWithReadback();
     void hfsFileSystemWriter_createsAndDeletesEmptyFilesWithCatalogReadback();
@@ -4762,6 +4882,104 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_splitsExtentsOverflowRootLea
     QCOMPARE(lastLeaf, 3U);
     QCOMPARE(readBe32(after, extentsHeaderOffset + kTestHfsBTreeHeaderRootNodeOffset), 4U);
     QCOMPARE(readBe32(after, extentsHeaderOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 13U);
+
+    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
+        imagePath, QStringLiteral("/hello.txt"), 16 * kTestHfsBlockSize);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, payload);
+}
+
+// H-d: the old extents engine rejected any tree that was not empty or a single
+// leaf. The streaming model engine loads a real depth-2 tree (here built by the
+// split above), removes records across its leaves, merges the survivors, and
+// collapses the depth back to one - none of which the bounded engine could do.
+void PartitionManagerCoreTests::hfsFileSystemWriter_collapsesDepthTwoExtentsTreeOnDelete() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-extents-depth-two-collapse");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-extents-depth-two-collapse.img"));
+    QVERIFY(writeBytes(imagePath, hfsExtentsSplitFixture()));
+
+    // Grow /hello.txt so the engine splits the single leaf into a depth-2 tree.
+    QByteArray payload(static_cast<int>(9 * kTestHfsBlockSize + 64), 'S');
+    const auto grown = PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowthFromImage(
+        imagePath, QStringLiteral("/hello.txt"), payload, options);
+    QVERIFY2(grown.ok, qPrintable(grown.blockers.join(QStringLiteral("; "))));
+
+    const qsizetype extentsHeaderOffset =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize) +
+        kTestHfsBTreeHeaderRecordOffset;
+    const QByteArray afterGrow = readBytes(imagePath);
+    QCOMPARE(readBe16(afterGrow, extentsHeaderOffset + kTestHfsBTreeHeaderTreeDepthOffset), 2);
+    QCOMPARE(readBe32(afterGrow, extentsHeaderOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 13U);
+
+    // Deleting /hello.txt removes its record from the depth-2 tree; the twelve
+    // remaining filler records merge back into a single leaf and the depth
+    // collapses to one.
+    const auto deleted = PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
+        imagePath, QStringLiteral("/hello.txt"), options);
+    QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
+
+    const QByteArray afterDelete = readBytes(imagePath);
+    QCOMPARE(readBe16(afterDelete, extentsHeaderOffset + kTestHfsBTreeHeaderTreeDepthOffset), 1);
+    QCOMPARE(readBe32(afterDelete, extentsHeaderOffset + kTestHfsBTreeHeaderLeafRecordsOffset),
+             12U);
+    const uint32_t firstLeaf =
+        readBe32(afterDelete, extentsHeaderOffset + kTestHfsBTreeHeaderFirstLeafNodeOffset);
+    QCOMPARE(firstLeaf,
+             readBe32(afterDelete, extentsHeaderOffset + kTestHfsBTreeHeaderLastLeafNodeOffset));
+    QCOMPARE(readBe32(afterDelete, extentsHeaderOffset + kTestHfsBTreeHeaderRootNodeOffset),
+             firstLeaf);
+
+    const auto missing =
+        PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/hello.txt"), 1);
+    QVERIFY(!missing.ok);
+}
+
+// H-d: splitting a leaf that sits below an existing index node - the streaming
+// engine allocates a sibling leaf in place (no root relocation) and rebuilds the
+// index level with three children. The bounded engine only ever split the root
+// leaf of a depth-1 tree.
+void PartitionManagerCoreTests::hfsFileSystemWriter_splitsLeafBelowExistingIndexNode() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-extents-multi-leaf-split");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-extents-multi-leaf-split.img"));
+    QVERIFY(writeBytes(imagePath, hfsExtentsTwoLeafFixture()));
+
+    QByteArray payload(static_cast<int>(9 * kTestHfsBlockSize + 64), 'M');
+    const auto grown = PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowthFromImage(
+        imagePath, QStringLiteral("/hello.txt"), payload, options);
+    QVERIFY2(grown.ok, qPrintable(grown.blockers.join(QStringLiteral("; "))));
+
+    const QByteArray after = readBytes(imagePath);
+    const qsizetype extentsHeaderOffset =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize) +
+        kTestHfsBTreeHeaderRecordOffset;
+    QCOMPARE(readBe16(after, extentsHeaderOffset + kTestHfsBTreeHeaderTreeDepthOffset), 2);
+    QCOMPARE(readBe32(after, extentsHeaderOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 21U);
+    QCOMPARE(readBe32(after, extentsHeaderOffset + kTestHfsBTreeHeaderFirstLeafNodeOffset), 1U);
+    QCOMPARE(readBe32(after, extentsHeaderOffset + kTestHfsBTreeHeaderLastLeafNodeOffset), 2U);
+
+    // The rebuilt root index node must now reference three leaf children.
+    const uint32_t rootNode = readBe32(after,
+                                       extentsHeaderOffset + kTestHfsBTreeHeaderRootNodeOffset);
+    const qsizetype rootNodeOffset =
+        static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize) +
+        static_cast<qsizetype>(rootNode) * kTestHfsExtentsNodeSize;
+    QCOMPARE(readBe16(after, rootNodeOffset + kTestHfsBTreeNumRecordsOffset), 3);
 
     const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
         imagePath, QStringLiteral("/hello.txt"), 16 * kTestHfsBlockSize);
