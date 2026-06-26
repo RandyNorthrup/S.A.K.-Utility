@@ -394,6 +394,7 @@ struct CliInvocation {
     uint64_t target_size_bytes{0};
     uint32_t block_size_bytes{kDefaultApfsBlockSizeBytes};
     QString volume_name;
+    QStringList additional_volume_names;
     QString output_image_path;
     QString file_name;
     QString directory_name;
@@ -431,6 +432,7 @@ struct CliParserOptions {
     const QCommandLineOption* size{nullptr};
     const QCommandLineOption* block_size{nullptr};
     const QCommandLineOption* volume_name{nullptr};
+    const QCommandLineOption* additional_volume_name{nullptr};
     const QCommandLineOption* output_image{nullptr};
     const QCommandLineOption* file_name{nullptr};
     const QCommandLineOption* directory_name{nullptr};
@@ -539,6 +541,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .target_size_bytes = numeric->size,
                          .block_size_bytes = numeric->block_size,
                          .volume_name = parser.value(*options.volume_name),
+                         .additional_volume_names = parser.values(*options.additional_volume_name),
                          .output_image_path = parser.value(*options.output_image).trimmed(),
                          .file_name = mutation->file_name,
                          .directory_name = mutation->directory_name,
@@ -561,6 +564,7 @@ QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
                              .target_container_bytes = invocation.target_size_bytes,
                              .block_size_bytes = invocation.block_size_bytes,
                              .volume_name = invocation.volume_name,
+                             .additional_volume_names = invocation.additional_volume_names,
                              .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
@@ -583,6 +587,7 @@ QJsonObject buildFormatRawReport(const CliInvocation& invocation) {
                              .target_container_bytes = invocation.target_size_bytes,
                              .block_size_bytes = invocation.block_size_bytes,
                              .volume_name = invocation.volume_name,
+                             .additional_volume_names = invocation.additional_volume_names,
                              .target_wipe_confirmed = invocation.confirm_target,
                              .allow_raw_device_target = invocation.allow_raw_target,
                              .options = rawWriteOptions(invocation.evidence_id)}));
@@ -2020,6 +2025,10 @@ int main(int argc, char* argv[]) {
                                               QStringLiteral("APFS volume name."),
                                               QStringLiteral("name"),
                                               QStringLiteral("SAK APFS"));
+    const QCommandLineOption additionalVolumeNameOption(
+        {QStringLiteral("additional-volume-name")},
+        QStringLiteral("Name of an additional APFS volume (repeatable; multi-volume format)."),
+        QStringLiteral("name"));
     const QCommandLineOption outputImageOption({QStringLiteral("output-image")},
                                                QStringLiteral("Image repair output path."),
                                                QStringLiteral("path"));
@@ -2065,6 +2074,7 @@ int main(int argc, char* argv[]) {
                        sizeOption,
                        blockSizeOption,
                        volumeNameOption,
+                       additionalVolumeNameOption,
                        outputImageOption,
                        fileNameOption,
                        directoryNameOption,
@@ -2098,6 +2108,7 @@ int main(int argc, char* argv[]) {
                               .size = &sizeOption,
                               .block_size = &blockSizeOption,
                               .volume_name = &volumeNameOption,
+                              .additional_volume_name = &additionalVolumeNameOption,
                               .output_image = &outputImageOption,
                               .file_name = &fileNameOption,
                               .directory_name = &directoryNameOption,

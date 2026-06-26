@@ -264,6 +264,10 @@ struct PartitionApfsImageFormatRequest {
     uint64_t target_container_bytes{0};
     uint32_t block_size_bytes{0};
     QString volume_name;
+    // Extra APFS volumes beyond the first (A4 multi-volume containers). One name
+    // per additional volume; each gets its own omap, root/extent-ref/snap-meta
+    // trees, superblock, fs_index, and UUID, all sharing the container spaceman.
+    QStringList additional_volume_names;
     QString seed_file_name;
     QByteArray seed_file_data;
     bool target_wipe_confirmed{false};

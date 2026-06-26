@@ -96,6 +96,9 @@ constexpr uint64_t kApfsFormatGhostReservedBlocks = kApfsFormatGhostContainerOma
 // object-map tree, extent-ref tree, snapshot-metadata tree, root tree, and
 // volume superblock.
 constexpr uint64_t kApfsFormatVolumeBaseAllocatedBlocks = 5;
+// Multi-volume (A4): physical blocks each additional volume consumes -- its object
+// map + that map's tree, extent-ref tree, snap-meta tree, root tree, and superblock.
+constexpr uint64_t kApfsExtraVolumeBlockSpan = 6;
 constexpr uint64_t kApfsFormatStaleSignatureClearBytes = 8ULL * 1024ULL * 1024ULL;
 constexpr qsizetype kApfsFormatZeroChunkBytes = 1024 * 1024;
 constexpr uint64_t kApfsMaximumSeedFileBytes = 256ULL * 1024ULL * 1024ULL;
@@ -1278,6 +1281,19 @@ QByteArray buildEmptyRootTreeBlock(uint32_t blockSize, QStringList* blockers) {
     return buildRootTreeBlock(blockSize, {}, blockers);
 }
 
+// Multi-volume (A4): an empty root file-system tree published under a non-default
+// virtual OID. Each extra volume's object map resolves its own root-tree OID to this
+// block, so the object's stored OID must equal that omap key. Re-stamp after patching
+// the OID so the fletcher64 covers the new value.
+QByteArray buildEmptyRootTreeBlockForVolume(uint32_t blockSize,
+                                            uint64_t rootTreeOid,
+                                            QStringList* blockers) {
+    QByteArray block = buildEmptyRootTreeBlock(blockSize, blockers);
+    writeLe64(&block, kApfsObjectOidOffset, rootTreeOid);
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
 struct ApfsFsTreeNode {
     uint64_t oid{0};
     QByteArray block;
@@ -1393,6 +1409,10 @@ struct ApfsCheckpointPosition {
     uint32_t dataNext{6};
     uint64_t omapOid{kApfsFormatContainerOmapBlock};
     uint64_t fsOid{kApfsFormatVolumeOid};
+    // Multi-volume (A4): every volume superblock OID, written across the nx_fs_oid
+    // array (slot i = volume i). Empty keeps the single-volume layout byte-identical
+    // (only nx_fs_oid[0] = fsOid is written).
+    QVector<uint64_t> fsOids;
     uint64_t nextOid{kApfsNxMinimumNextOid};
 };
 
@@ -1425,8 +1445,20 @@ QByteArray buildNxSuperblock(uint32_t blockSize,
     writeLe64(&block, kApfsNxReaperOidOffset, kApfsFormatReaperOid);
     writeLe64(&block, kApfsNxEphemeralInfoOffset, apfsNxEphemeralInfoValue(blockCount, blockSize));
     writeLe64(&block, kApfsNxOmapOidOffset, position.omapOid);
+    // nx_max_file_systems is the size-derived volume capacity; fsck_apfs/the Apple
+    // reference require it to equal DIV_ROUND_UP(container_bytes, 512 MiB) exactly, so
+    // multi-volume containers are sized large enough that this covers every volume
+    // rather than overriding the field.
     writeLe32(&block, kApfsNxMaxFileSystemsOffset, apfsMaxFileSystems(blockCount, blockSize));
-    writeLe64(&block, kApfsNxFsOidArrayOffset, position.fsOid);
+    if (position.fsOids.isEmpty()) {
+        writeLe64(&block, kApfsNxFsOidArrayOffset, position.fsOid);
+    } else {
+        for (qsizetype i = 0; i < position.fsOids.size(); ++i) {
+            writeLe64(&block,
+                      kApfsNxFsOidArrayOffset + i * static_cast<qsizetype>(sizeof(uint64_t)),
+                      position.fsOids.at(i));
+        }
+    }
     stampApfsObjectBlock(&block, blockers);
     return block;
 }
@@ -2352,12 +2384,21 @@ struct ApfsVolumeSuperblockFields {
     uint64_t volumeOmapBlock{kApfsFormatVolumeOmapBlock};
     uint64_t extentRefTreeBlock{kApfsFormatExtentRefTreeBlock};
     uint64_t snapMetaTreeBlock{kApfsFormatSnapMetaTreeBlock};
+    // Multi-volume (A4): the virtual OID this volume superblock is published under
+    // in the container object map + nx_fs_oid array, its slot index in that array
+    // (apfs_fs_index), and the virtual OID its own object map resolves the root
+    // file-system tree to. The first volume keeps the certified single-volume OIDs.
+    uint64_t volumeOid{kApfsFormatVolumeOid};
+    uint32_t fsIndex{0};
+    uint64_t rootTreeOid{kApfsFormatRootTreeOid};
 };
 
 QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStringList* blockers) {
-    QByteArray block = newApfsObjectBlock(
-        fields.blockSize, kApfsFormatVolumeOid, kApfsFormatXid, kApfsObjectTypeFs);
+    QByteArray block =
+        newApfsObjectBlock(fields.blockSize, fields.volumeOid, kApfsFormatXid, kApfsObjectTypeFs);
     writeLe32(&block, kApfsObjectMagicOffset, kApfsMagicApsb);
+    // apfs_fs_index: this volume's slot in the container's nx_fs_oid array.
+    writeLe32(&block, 0x24, fields.fsIndex);
     // Feature words, meta-crypto state, and tree-type fields byte-matched
     // against newfs_apfs output (case-insensitive incompatible flag, defrag
     // features, physical omap/extent-ref tree types).
@@ -2387,7 +2428,7 @@ QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStri
     writeLe64(&block, 0x450, 0x2);
     writeLe64(&block, kApfsVolumeAllocatedBlockCountOffset, fields.allocatedBlocks);
     writeLe64(&block, kApfsVolumeOmapOidOffset, fields.volumeOmapBlock);
-    writeLe64(&block, kApfsVolumeRootTreeOidOffset, kApfsFormatRootTreeOid);
+    writeLe64(&block, kApfsVolumeRootTreeOidOffset, fields.rootTreeOid);
     writeLe64(&block, 0x90, fields.extentRefTreeBlock);
     writeLe64(&block, kApfsVolumeSnapMetaTreeOidOffset, fields.snapMetaTreeBlock);
     std::copy(fields.volumeUuid.cbegin(),
@@ -7566,6 +7607,64 @@ PartitionApfsImageBuildResult formatBuildResult(const PartitionApfsImageFormatRe
     return result;
 }
 
+// Multi-volume (A4): every name must be non-empty, the count is bounded by the
+// container superblock's nx_fs_oid capacity, and the container must be large enough
+// that fsck_apfs's required nx_max_file_systems = ceil(bytes / 512 MiB) covers every
+// volume (so 2 volumes need > 512 MiB, etc.). The additional volumes' six-block sets
+// share chunk 0's reserved prefix, so the metadata-overflow tier (whose prefix spills
+// past chunk 0) is fail-closed for multi-volume until separately certified.
+bool appendMultiVolumeFormatBlockers(const PartitionApfsImageFormatRequest& request,
+                                     PartitionApfsImageBuildResult* result) {
+    const qsizetype extraVolumes = request.additional_volume_names.size();
+    if (extraVolumes == 0) {
+        return true;
+    }
+    if (request.block_size_bytes == 0 || request.target_container_bytes == 0) {
+        return true;  // size/geometry already rejected upstream
+    }
+    if (request.block_size_bytes != kSupportedApfsBlockSizeBytes) {
+        result->blockers.append(
+            QStringLiteral("APFS multi-volume containers require the 4096-byte generated layout"));
+        return false;
+    }
+    for (const QString& name : request.additional_volume_names) {
+        if (name.trimmed().isEmpty()) {
+            result->blockers.append(
+                QStringLiteral("APFS additional volume names must each be non-empty"));
+            return false;
+        }
+    }
+    const uint64_t blockCount = request.target_container_bytes / request.block_size_bytes;
+    const uint64_t totalVolumes = 1 + static_cast<uint64_t>(extraVolumes);
+    if (totalVolumes > kApfsNxMaxFileSystemsCap) {
+        result->blockers.append(QStringLiteral("APFS containers support at most %1 volumes")
+                                    .arg(kApfsNxMaxFileSystemsCap));
+        return false;
+    }
+    const uint32_t maxFileSystems = apfsMaxFileSystems(blockCount, request.block_size_bytes);
+    if (totalVolumes > maxFileSystems) {
+        result->blockers.append(
+            QStringLiteral("APFS container is too small for %1 volumes: fsck_apfs requires "
+                           "nx_max_file_systems = ceil(size / 512 MiB) (%2 here) to cover every "
+                           "volume, so %1 volumes need a container of at least %1 x 512 MiB")
+                .arg(totalVolumes)
+                .arg(maxFileSystems));
+        return false;
+    }
+    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
+    const uint64_t reservedSeed = generatedSeedDataBlock(chunkCount, mcib.cibCount, mcib.cabCount) +
+                                  kApfsExtraVolumeBlockSpan * static_cast<uint64_t>(extraVolumes);
+    if (reservedSeed >= kApfsSpacemanBlocksPerChunk) {
+        result->blockers.append(QStringLiteral(
+            "APFS multi-volume containers are not certified on the metadata-overflow "
+            "tier (the additional volumes' metadata must fit chunk 0)"));
+        return false;
+    }
+    return true;
+}
+
 bool appendFormatGeometryBlockers(const PartitionApfsImageFormatRequest& request,
                                   PartitionApfsImageBuildResult* result) {
     if (request.target_container_bytes % request.block_size_bytes != 0) {
@@ -7578,7 +7677,7 @@ bool appendFormatGeometryBlockers(const PartitionApfsImageFormatRequest& request
         result->blockers.append(QStringLiteral("APFS format image is too large for this platform"));
         return false;
     }
-    return true;
+    return appendMultiVolumeFormatBlockers(request, result);
 }
 
 bool appendFormatCreateBlockers(const PartitionApfsImageFormatRequest& request,
@@ -7675,6 +7774,53 @@ bool createSizedApfsImage(const QString& path,
     return true;
 }
 
+// Multi-volume (A4): the placement + identity of one additional APFS volume.
+struct ExtraApfsVolume {
+    QString name;
+    QByteArray uuid;
+    uint32_t fsIndex{0};    // slot in nx_fs_oid (1, 2, ... -- the first volume is 0)
+    uint64_t volumeOid{0};  // virtual OID published in the container omap + nx_fs_oid
+    uint64_t rootTreeOid{0};
+    uint64_t volOmap{0};
+    uint64_t volOmapTree{0};
+    uint64_t extentRef{0};
+    uint64_t snapMeta{0};
+    uint64_t rootTree{0};
+    uint64_t volSuper{0};
+};
+
+struct ExtraApfsVolumes {
+    QVector<ExtraApfsVolume> volumes;
+    uint64_t blockCount{0};  // total blocks consumed by all additional volumes
+};
+
+// Place each additional volume's six metadata blocks contiguously from baseBlock
+// (the first volume's reserved-prefix end) and assign its virtual OIDs. The first
+// volume owns OIDs 1026 (superblock) and 1028 (root tree); each additional volume k
+// (1-based) takes superblock OID 1030+2*(k-1) and root-tree OID one above it, keeping
+// every assigned OID below nx_next_oid.
+ExtraApfsVolumes layOutExtraApfsVolumes(const QStringList& names, uint64_t baseBlock) {
+    ExtraApfsVolumes out;
+    uint64_t block = baseBlock;
+    for (qsizetype i = 0; i < names.size(); ++i) {
+        ExtraApfsVolume v;
+        v.name = names.at(i);
+        v.uuid = randomApfsUuid();
+        v.fsIndex = static_cast<uint32_t>(i + 1);
+        v.volumeOid = kApfsNxMinimumNextOid + 2 * static_cast<uint64_t>(i);
+        v.rootTreeOid = v.volumeOid + 1;
+        v.volOmap = block++;
+        v.volOmapTree = block++;
+        v.extentRef = block++;
+        v.snapMeta = block++;
+        v.rootTree = block++;
+        v.volSuper = block++;
+        out.volumes.append(v);
+    }
+    out.blockCount = block - baseBlock;
+    return out;
+}
+
 QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
                                           uint64_t blockCount,
                                           const QString& volumeName,
@@ -7720,10 +7866,26 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     const uint64_t containerOmap = kApfsFormatContainerOmapBlock + ipDelta;
     const uint64_t containerOmapTree = kApfsFormatContainerOmapTreeBlock + ipDelta;
     const uint64_t seedData = kApfsFormatSeedFileDataBlock + ipDelta;
-    const QVector<ApfsObjectMapEntry> containerMappings{
-        {kApfsFormatVolumeOid, kApfsFormatXid, volSuper}};
     const QVector<ApfsObjectMapEntry> volumeMappings{
         {kApfsFormatRootTreeOid, kApfsFormatXid, rootTree}};
+    // Multi-volume (A4): each additional volume gets its own six-block set placed in
+    // the previously-free region right after the first volume's reserved prefix
+    // (volume object map + its tree, extent-ref tree, snap-meta tree, root tree, and
+    // volume superblock), plus its own virtual superblock/root-tree OIDs and a unique
+    // UUID. They share the container space manager; the reserved prefix grows to cover
+    // them. The first volume keeps the certified single-volume OIDs/positions, so an
+    // empty additional_volume_names list is byte-identical to the prior layout.
+    const ExtraApfsVolumes extras = layOutExtraApfsVolumes(request.additional_volume_names,
+                                                           seedData);
+    const uint64_t reservedSeed = seedData + extras.blockCount;
+    const uint64_t containerNextOid = kApfsNxMinimumNextOid +
+                                      2 * static_cast<uint64_t>(extras.volumes.size());
+    QVector<ApfsObjectMapEntry> containerMappings{{kApfsFormatVolumeOid, kApfsFormatXid, volSuper}};
+    QVector<uint64_t> fsOids{kApfsFormatVolumeOid};
+    for (const auto& extra : extras.volumes) {
+        containerMappings.append({extra.volumeOid, kApfsFormatXid, extra.volSuper});
+        fsOids.append(extra.volumeOid);
+    }
     // Checkpoint-data ring: genesis holds spacemanBlocks + 1 (reaper) blocks; live holds
     // spacemanBlocks + 3 (reaper + the two free-queue trees) right after it. For a
     // single-block spaceman these reduce to the certified 0/2/2 and 2/4/6.
@@ -7737,7 +7899,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                               {.dataIndex = liveDataIndex,
                                                .dataLen = liveDataLen,
                                                .dataNext = liveDataNext,
-                                               .omapOid = containerOmap},
+                                               .omapOid = containerOmap,
+                                               .fsOids = fsOids,
+                                               .nextOid = containerNextOid},
                                               blockers);
     const QByteArray genesisNxsb = buildNxSuperblock(request.block_size_bytes,
                                                      blockCount,
@@ -7784,7 +7948,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                                              blockers);
     const QByteArray liveSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
                                                            .blockCount = blockCount,
-                                                           .reservedBlocks = seedData,
+                                                           .reservedBlocks = reservedSeed,
                                                            .xid = kApfsFormatXid,
                                                            .genesis = false,
                                                            .cibAddrs = mcib.liveCibs,
@@ -7873,6 +8037,53 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                  kApfsFormatXid,
                                  blockers)}};
 
+    // Multi-volume (A4): each additional volume's six metadata blocks. Mirror the
+    // first volume's structures with this volume's own OIDs/UUID/index. Each volume's
+    // object map (a physical object, OID = block) resolves its own root-tree OID to
+    // its empty root tree; the extent-ref and snap-meta trees are physical objects.
+    for (const auto& extra : extras.volumes) {
+        const QVector<ApfsObjectMapEntry> extraVolumeMappings{
+            {extra.rootTreeOid, kApfsFormatXid, extra.rootTree}};
+        blocks.append({extra.volOmap,
+                       buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                                            .oid = extra.volOmap,
+                                            .treeBlock = extra.volOmapTree,
+                                            .xid = kApfsFormatXid,
+                                            .omapFlags = 0},
+                                           blockers)});
+        blocks.append({extra.volOmapTree,
+                       buildObjectMapTreeBlock(request.block_size_bytes,
+                                               extra.volOmapTree,
+                                               extraVolumeMappings,
+                                               kApfsFormatXid,
+                                               blockers)});
+        blocks.append({extra.extentRef,
+                       buildEmptyVariableTreeBlock(request.block_size_bytes,
+                                                   extra.extentRef,
+                                                   kApfsObjectSubtypeExtentRef,
+                                                   blockers)});
+        blocks.append(
+            {extra.snapMeta,
+             buildEmptyVariableTreeBlock(
+                 request.block_size_bytes, extra.snapMeta, kApfsObjectSubtypeSnapMeta, blockers)});
+        blocks.append({extra.rootTree,
+                       buildEmptyRootTreeBlockForVolume(
+                           request.block_size_bytes, extra.rootTreeOid, blockers)});
+        blocks.append(
+            {extra.volSuper,
+             buildVolumeSuperblock({.blockSize = request.block_size_bytes,
+                                    .volumeName = extra.name,
+                                    .volumeUuid = extra.uuid,
+                                    .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
+                                    .volumeOmapBlock = extra.volOmap,
+                                    .extentRefTreeBlock = extra.extentRef,
+                                    .snapMetaTreeBlock = extra.snapMeta,
+                                    .volumeOid = extra.volumeOid,
+                                    .fsIndex = extra.fsIndex,
+                                    .rootTreeOid = extra.rootTreeOid},
+                                   blockers)});
+    }
+
     // Continuation blocks of any multi-block (overflow) spaceman object. The header +
     // fletcher64 stamped over the whole object live in the first block (already in the
     // list above); these are the raw remaining blocks of the same contiguous object.
@@ -7917,7 +8128,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     blocks.append({mcib.liveCibs.first(),
                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
                                         .blockCount = blockCount,
-                                        .reservedBlocks = seedData,
+                                        .reservedBlocks = reservedSeed,
                                         .xid = kApfsFormatXid,
                                         .selfBlock = mcib.liveCibs.first(),
                                         .bitmapBlock = mcib.liveBitmap,
@@ -7952,7 +8163,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
          buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(ghostReserved, 0))});
     blocks.append(
         {mcib.liveBitmap,
-         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(seedData, 0))});
+         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(reservedSeed, 0))});
     // Metadata-overflow: immutable per-chunk bitmaps for chunks 1..M-1 (each marks
     // that chunk's slice of the reserved prefix).
     for (qsizetype i = 0; i < mcib.extraChunkBitmaps.size(); ++i) {

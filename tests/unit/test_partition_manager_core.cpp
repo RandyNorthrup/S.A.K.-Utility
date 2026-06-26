@@ -1780,6 +1780,7 @@ private Q_SLOTS:
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
+    void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8214,6 +8215,96 @@ void PartitionManagerCoreTests::apfsWriter_formatsMetadataOverflowDeadZoneMultiB
     constexpr qsizetype kMapEntrySizeOffset = 8;
     const uint32_t spacemanCpmSize = readTestApfsLe32(map, kMapEntriesOffset + kMapEntrySizeOffset);
     QCOMPARE(spacemanCpmSize, 2u * 4096u);
+}
+
+void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
+    // A4 multi-volume containers: a second volume gets its own omap, root/extent-ref/
+    // snap-meta trees, superblock, fs_index, virtual OIDs, and UUID, all sharing the
+    // container space manager. fsck_apfs requires nx_max_file_systems = ceil(bytes /
+    // 512 MiB), so two volumes need a > 512 MiB container; 1 GiB yields max_fs 2.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString image = dir.filePath(QStringLiteral("a4-multivol.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = image,
+         .target_container_bytes = 1024ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKVOL1"),
+         .additional_volume_names = {QStringLiteral("SAKVOL2")},
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    const auto readBlock = [&](quint64 block) {
+        QFile file(image);
+        file.open(QIODevice::ReadOnly);
+        file.seek(static_cast<qint64>(block * 4096));
+        return file.read(4096);
+    };
+    const auto le32 = [](const QByteArray& bytes, int offset) {
+        return qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar*>(bytes.constData() + offset));
+    };
+    const auto le64 = [](const QByteArray& bytes, int offset) {
+        return qFromLittleEndian<quint64>(
+            reinterpret_cast<const uchar*>(bytes.constData() + offset));
+    };
+
+    // Container superblock: nx_max_file_systems = 2 (1 GiB), nx_fs_oid carries both
+    // volume OIDs (1026, 1030) with the rest of the array zero, and nx_next_oid clears
+    // every assigned virtual OID (superblock + root tree per volume).
+    const QByteArray nxsb = readBlock(0);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    QCOMPARE(le32(nxsb, 0xB4), 2U);
+    QCOMPARE(le64(nxsb, 0xB8), 1026ULL);
+    QCOMPARE(le64(nxsb, 0xC0), 1030ULL);
+    QCOMPARE(le64(nxsb, 0xC8), 0ULL);
+    QCOMPARE(le64(nxsb, 0x58), 1032ULL);  // nx_next_oid
+
+    // Locate both volume superblocks by their APSB magic in the reserved prefix.
+    QList<quint64> apsbBlocks;
+    for (quint64 block = 185; block < 1024; ++block) {
+        const QByteArray candidate = readBlock(block);
+        if (candidate.size() == 4096 && le32(candidate, 0x20) == 0x42'53'50'41U /* 'APSB' */) {
+            apsbBlocks.append(block);
+        }
+    }
+    QCOMPARE(apsbBlocks.size(), 2);
+
+    const QByteArray vol1 = readBlock(apsbBlocks.at(0));
+    const QByteArray vol2 = readBlock(apsbBlocks.at(1));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol1));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol2));
+    // fs_index @0x24, superblock OID @0x08, root-tree OID @0x88 are distinct per volume.
+    QCOMPARE(le32(vol1, 0x24), 0U);
+    QCOMPARE(le32(vol2, 0x24), 1U);
+    QCOMPARE(le64(vol1, 0x08), 1026ULL);
+    QCOMPARE(le64(vol2, 0x08), 1030ULL);
+    QCOMPARE(le64(vol1, 0x88), 1028ULL);
+    QCOMPARE(le64(vol2, 0x88), 1031ULL);
+    QCOMPARE(QString::fromUtf8(QByteArray(vol1.constData() + 0x2C0)), QStringLiteral("SAKVOL1"));
+    QCOMPARE(QString::fromUtf8(QByteArray(vol2.constData() + 0x2C0)), QStringLiteral("SAKVOL2"));
+    // Each volume carries its own UUID (@0xF0).
+    QVERIFY(vol1.mid(0xF0, 16) != vol2.mid(0xF0, 16));
+
+    // The reader still walks the first volume by default.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(image, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("SAKVOL1"));
+
+    // Too-small container for the requested volume count is fail-closed: 64 MiB yields
+    // nx_max_file_systems 1, which cannot cover two volumes.
+    const auto tooSmall = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = dir.filePath(QStringLiteral("a4-small.apfs")),
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKVOL1"),
+         .additional_volume_names = {QStringLiteral("SAKVOL2")},
+         .options = options});
+    QVERIFY(!tooSmall.ok);
+    QVERIFY(tooSmall.blockers.join(' ').contains(QStringLiteral("nx_max_file_systems")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
