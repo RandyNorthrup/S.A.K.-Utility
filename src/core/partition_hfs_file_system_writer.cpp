@@ -488,6 +488,133 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithDataFrom
     return createFileWithData(image.get(), path, data, options);
 }
 
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlink(
+    QIODevice* device,
+    const QString& path,
+    const QString& target,
+    const PartitionHfsFileWriteOptions& options) {
+    HfsReader reader(device);
+    if (!reader.load()) {
+        PartitionHfsFileWriteResult result;
+        result.path = path.trimmed();
+        result.evidence_id = options.evidence_id;
+        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for symlink create"));
+        return result;
+    }
+    return reader.createSymlink(path, target, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlinkFromImage(
+    const QString& image_path,
+    const QString& path,
+    const QString& target,
+    const PartitionHfsFileWriteOptions& options) {
+    PartitionHfsFileWriteResult result;
+    result.path = path.trimmed();
+    result.evidence_id = options.evidence_id;
+    if (image_path.trimmed().isEmpty()) {
+        result.blockers.append(QStringLiteral("Image path is required"));
+        return result;
+    }
+    if (options.image_only && isWindowsRawDevicePath(image_path)) {
+        result.blockers.append(QStringLiteral(
+            "HFS+ symlink create is image-only; raw targets require a separate hardware gate"));
+        return result;
+    }
+    QString openError;
+    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    if (!image) {
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
+        return result;
+    }
+    return createSymlink(image.get(), path, target, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlink(
+    QIODevice* device,
+    const QString& existing_path,
+    const QString& link_path,
+    const PartitionHfsFileWriteOptions& options) {
+    HfsReader reader(device);
+    if (!reader.load()) {
+        PartitionHfsFileWriteResult result;
+        result.path = link_path.trimmed();
+        result.evidence_id = options.evidence_id;
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ filesystem for hard-link create"));
+        return result;
+    }
+    return reader.createHardlink(existing_path, link_path, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlinkFromImage(
+    const QString& image_path,
+    const QString& existing_path,
+    const QString& link_path,
+    const PartitionHfsFileWriteOptions& options) {
+    PartitionHfsFileWriteResult result;
+    result.path = link_path.trimmed();
+    result.evidence_id = options.evidence_id;
+    if (image_path.trimmed().isEmpty()) {
+        result.blockers.append(QStringLiteral("Image path is required"));
+        return result;
+    }
+    if (options.image_only && isWindowsRawDevicePath(image_path)) {
+        result.blockers.append(QStringLiteral(
+            "HFS+ hard-link create is image-only; raw targets require a separate hardware gate"));
+        return result;
+    }
+    QString openError;
+    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    if (!image) {
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
+        return result;
+    }
+    return createHardlink(image.get(), existing_path, link_path, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlink(
+    QIODevice* device, const QString& link_path, const PartitionHfsFileWriteOptions& options) {
+    HfsReader reader(device);
+    if (!reader.load()) {
+        PartitionHfsFileWriteResult result;
+        result.path = link_path.trimmed();
+        result.evidence_id = options.evidence_id;
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ filesystem for hard-link delete"));
+        return result;
+    }
+    return reader.deleteHardlink(link_path, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+    const QString& image_path,
+    const QString& link_path,
+    const PartitionHfsFileWriteOptions& options) {
+    PartitionHfsFileWriteResult result;
+    result.path = link_path.trimmed();
+    result.evidence_id = options.evidence_id;
+    if (image_path.trimmed().isEmpty()) {
+        result.blockers.append(QStringLiteral("Image path is required"));
+        return result;
+    }
+    if (options.image_only && isWindowsRawDevicePath(image_path)) {
+        result.blockers.append(QStringLiteral(
+            "HFS+ hard-link delete is image-only; raw targets require a separate hardware gate"));
+        return result;
+    }
+    QString openError;
+    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    if (!image) {
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
+        return result;
+    }
+    return deleteHardlink(image.get(), link_path, options);
+}
+
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFile(
     QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options) {
     HfsReader reader(device);

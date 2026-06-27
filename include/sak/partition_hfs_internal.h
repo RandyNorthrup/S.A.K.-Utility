@@ -247,6 +247,168 @@ public:
         return result;
     }
 
+    // H5: create an HFS+ symbolic link at `path` whose target is the `target` path
+    // string. Implemented as a file whose data fork holds the target bytes, with the
+    // S_IFLNK / 'slnk':'rhap' catalog record macOS writes.
+    [[nodiscard]] PartitionHfsFileWriteResult createSymlink(
+        const QString& path, const QString& target, const PartitionHfsFileWriteOptions& options) {
+        PartitionHfsFileWriteResult result;
+        result.file_system = m_volume.file_system;
+        result.path = normalizedDisplayPath(path);
+        result.evidence_id = options.evidence_id;
+        const QByteArray targetBytes = target.toUtf8();
+        appendWriterOptionBlockers(targetBytes, options, &result.blockers);
+        if (!result.blockers.isEmpty()) {
+            return result;
+        }
+        if (targetBytes.isEmpty()) {
+            result.blockers.append(QStringLiteral("HFS+ symbolic link target must not be empty"));
+            return result;
+        }
+        const auto plan =
+            prepareSymlinkCreate(path, targetBytes, &result.blockers, &result.warnings);
+        if (!plan.has_value()) {
+            return result;
+        }
+        result.catalog_id = plan->file_id;
+        result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
+        const auto chunks = writeCreatedFileDataAndMetadata(*plan, targetBytes, &result.blockers);
+        if (!chunks.has_value()) {
+            return result;
+        }
+        const auto readBack =
+            readBackCreatedFileData(*plan, targetBytes, options.max_write_bytes, &result.blockers);
+        if (!readBack.has_value()) {
+            return result;
+        }
+        if (!appendForkGrowthCounterReadBack(plan->allocated_blocks, &result)) {
+            return result;
+        }
+        result.after_sha256 = sha256Hex(*readBack);
+        result.bytes_written = static_cast<uint64_t>(targetBytes.size());
+        result.chunks_written = *chunks;
+        result.warnings.append(m_warnings);
+        result.warnings.append(
+            QStringLiteral("HFS+ symbolic link created with target \"%1\"").arg(target));
+        syncAlternateVolumeHeader(&result);
+        result.ok = result.blockers.isEmpty();
+        return result;
+    }
+
+    // H5: create a hard link at `link_path` to the existing file `existing_path`. The
+    // first link converts the file into an inode in the private metadata directory and
+    // turns its original name into an alias; further links extend the chain.
+    [[nodiscard]] PartitionHfsFileWriteResult createHardlink(
+        const QString& existingPath,
+        const QString& linkPath,
+        const PartitionHfsFileWriteOptions& options) {
+        PartitionHfsFileWriteResult result;
+        result.file_system = m_volume.file_system;
+        result.path = normalizedDisplayPath(linkPath);
+        result.evidence_id = options.evidence_id;
+        appendCatalogMutationOptionBlockers(options, &result.blockers);
+        if (!result.blockers.isEmpty()) {
+            return result;
+        }
+        const auto plan =
+            prepareHardlinkCreate(existingPath, linkPath, &result.blockers, &result.warnings);
+        if (!plan.has_value()) {
+            return result;
+        }
+        result.catalog_id = plan->inode_cnid;
+        result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
+        const auto chunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             plan->file_count_delta,
+                                                             plan->folder_count_delta,
+                                                             plan->next_catalog_id},
+                                     &result.blockers);
+        if (!chunks.has_value()) {
+            result.blockers.append(m_blockers);
+            return result;
+        }
+        const auto resolved = resolveCatalogPath(plan->link_target.path);
+        if (!resolved.has_value() || !resolved->regularFile()) {
+            result.blockers.append(QStringLiteral("HFS+ hard-link create read-back failed"));
+            result.blockers.append(m_blockers);
+            return result;
+        }
+        if (!appendCatalogLeafAfterHash(plan->mutation.insert_node_number, &result)) {
+            return result;
+        }
+        result.chunks_written = *chunks;
+        result.warnings.append(m_warnings);
+        result.warnings.append(
+            QStringLiteral("HFS+ hard link created (inode CNID %1, link count %2)")
+                .arg(plan->inode_cnid)
+                .arg(plan->link_count));
+        syncAlternateVolumeHeader(&result);
+        result.ok = result.blockers.isEmpty();
+        return result;
+    }
+
+    // H5: delete a hard-link alias. Decrements the inode link count and stitches the
+    // link chain; when the last alias is removed, the inode and its data blocks go too.
+    [[nodiscard]] PartitionHfsFileWriteResult deleteHardlink(
+        const QString& linkPath, const PartitionHfsFileWriteOptions& options) {
+        PartitionHfsFileWriteResult result;
+        result.file_system = m_volume.file_system;
+        result.path = normalizedDisplayPath(linkPath);
+        result.evidence_id = options.evidence_id;
+        appendCatalogMutationOptionBlockers(options, &result.blockers);
+        if (!result.blockers.isEmpty()) {
+            return result;
+        }
+        const auto plan =
+            prepareHardlinkDelete(linkPath, options, &result.blockers, &result.warnings);
+        if (!plan.has_value()) {
+            return result;
+        }
+        result.catalog_id = plan->alias_record.catalog_id;
+        result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
+        const auto catalogChunks =
+            applyCatalogTreeMutation(plan->mutation,
+                                     HfsCatalogCounterUpdate{plan->mutation.leaf_record_delta,
+                                                             plan->file_count_delta,
+                                                             0,
+                                                             m_volume.next_catalog_id},
+                                     &result.blockers);
+        if (!catalogChunks.has_value()) {
+            result.blockers.append(m_blockers);
+            return result;
+        }
+        int extraChunks = 0;
+        if (plan->inode_removed) {
+            const auto reclaimed = writeHardlinkInodeReclaim(*plan, &result.blockers);
+            if (!reclaimed.has_value()) {
+                return result;
+            }
+            extraChunks = *reclaimed;
+        }
+        if (findChild(plan->alias_record.parent_id, plan->alias_record.name).has_value()) {
+            result.blockers.append(QStringLiteral("HFS+ hard-link delete read-back failed"));
+            return result;
+        }
+        if (!appendCatalogLeafAfterHash(plan->mutation.insert_node_number, &result)) {
+            return result;
+        }
+        result.chunks_written = *catalogChunks + extraChunks;
+        result.warnings.append(m_warnings);
+        result.warnings.append(
+            plan->inode_removed
+                ? QStringLiteral("HFS+ hard link deleted; inode CNID %1 and its %2 data block(s) "
+                                 "were reclaimed (link count 0)")
+                      .arg(plan->inode_cnid)
+                      .arg(plan->released_blocks)
+                : QStringLiteral("HFS+ hard link deleted; inode CNID %1 link count is now %2")
+                      .arg(plan->inode_cnid)
+                      .arg(plan->link_count));
+        syncAlternateVolumeHeader(&result);
+        result.ok = result.blockers.isEmpty();
+        return result;
+    }
+
     [[nodiscard]] PartitionHfsFileWriteResult deleteEmptyFile(
         const QString& path, const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
@@ -1496,6 +1658,585 @@ private:
         return plan;
     }
 
+    [[nodiscard]] std::optional<HfsFileCreatePlan> prepareSymlinkCreate(const QString& path,
+                                                                        const QByteArray& target,
+                                                                        QStringList* blockers,
+                                                                        QStringList* warnings) {
+        return withCatalogNodePoolGrowth(
+            [&](QStringList* b, QStringList* w) {
+                return prepareSymlinkCreateOnce(path, target, b, w);
+            },
+            blockers,
+            warnings);
+    }
+
+    [[nodiscard]] std::optional<HfsFileCreatePlan> prepareSymlinkCreateOnce(
+        const QString& path,
+        const QByteArray& target,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const auto allocation = prepareFileCreateAllocation(target, blockers);
+        if (!allocation.has_value()) {
+            return std::nullopt;
+        }
+        auto context = prepareCatalogCreateContext(path, blockers);
+        if (!context.has_value()) {
+            return std::nullopt;
+        }
+        HfsCatalogTreeEdit edit;
+        appendSymlinkCatalogRecords(&edit.insertions,
+                                    context->parent_id,
+                                    context->target.name,
+                                    context->new_id,
+                                    allocation->data_fork);
+        edit.valence_updates.append({context->parent_id, 1});
+        edit.read_back_parent_id = context->parent_id;
+        edit.read_back_name = context->target.name;
+        const auto mutation = finishCatalogTreeMutation(&context->model, edit, blockers, warnings);
+        if (!mutation.has_value()) {
+            return std::nullopt;
+        }
+        HfsFileCreatePlan plan;
+        plan.target = context->target;
+        plan.mutation = *mutation;
+        plan.data_fork = allocation->data_fork;
+        plan.allocation_bytes = allocation->allocation_bytes;
+        plan.file_id = context->new_id;
+        plan.allocated_blocks = allocation->allocated_blocks;
+        return plan;
+    }
+
+    // ---- H5: hard links -------------------------------------------------------
+    struct HfsHardlinkPlan {
+        HfsCatalogTreeMutation mutation;
+        int file_count_delta{0};
+        int folder_count_delta{0};
+        uint32_t next_catalog_id{0};
+        uint32_t inode_cnid{0};
+        uint32_t link_count{0};
+        HfsCatalogMutationTarget link_target;
+    };
+
+    // The 248-byte file payload for the catalog key (parent, name) in the model.
+    [[nodiscard]] std::optional<QByteArray> catalogModelFilePayloadByKey(
+        const HfsCatalogTreeModel& model,
+        uint32_t parentId,
+        const QString& name,
+        QStringList* blockers) const {
+        const int leaf = catalogModelLeafContainingKey(model, parentId, name);
+        if (leaf < 0) {
+            blockers->append(QStringLiteral("HFS+ hard-link catalog record was not found"));
+            return std::nullopt;
+        }
+        const auto& records = model.leaves.at(leaf).records;
+        const int index = findRawCatalogRecord(records, parentId, name);
+        if (index < 0) {
+            blockers->append(QStringLiteral("HFS+ hard-link catalog record was not found"));
+            return std::nullopt;
+        }
+        return catalogRecordPayload(records.at(index), kHfsCatalogFileRecord, blockers);
+    }
+
+    // Resolve a file CNID to its catalog key (parent, name) through its thread record.
+    [[nodiscard]] std::optional<QPair<uint32_t, QString>> catalogModelKeyForCnid(
+        const HfsCatalogTreeModel& model, uint32_t cnid, QStringList* blockers) const {
+        const int leaf = catalogModelLeafContainingKey(model, cnid, QString());
+        if (leaf < 0) {
+            blockers->append(QStringLiteral("HFS+ hard-link thread record was not found"));
+            return std::nullopt;
+        }
+        const auto& records = model.leaves.at(leaf).records;
+        const int index = findRawCatalogRecord(records, cnid, QString());
+        if (index < 0) {
+            blockers->append(QStringLiteral("HFS+ hard-link thread record was not found"));
+            return std::nullopt;
+        }
+        const QByteArray& bytes = records.at(index).bytes;
+        const qsizetype payload = kUint16Size + be16(bytes, 0);
+        if (!hasBytes(bytes, payload + kHfsCatalogThreadNameOffset, 0)) {
+            blockers->append(QStringLiteral("HFS+ hard-link thread record is truncated"));
+            return std::nullopt;
+        }
+        const uint32_t parentId = be32(bytes, payload + kHfsCatalogThreadParentIdOffset);
+        const uint16_t nameLength = be16(bytes, payload + kHfsCatalogThreadNameLengthOffset);
+        QString name;
+        name.reserve(nameLength);
+        for (uint16_t i = 0; i < nameLength; ++i) {
+            name.append(
+                QChar(be16(bytes, payload + kHfsCatalogThreadNameOffset + i * kUint16Size)));
+        }
+        return QPair<uint32_t, QString>{parentId, name};
+    }
+
+    struct HfsHardlinkAliasParams {
+        uint32_t parent_id{0};
+        QString name;
+        uint32_t alias_id{0};
+        uint32_t inode_id{0};
+        uint16_t inode_mode{0};
+        uint32_t prev_link_id{0};
+        uint32_t next_link_id{0};
+    };
+
+    struct HfsHardlinkBuildContext {
+        HfsCatalogTreeModel* model{nullptr};
+        uint32_t link_parent{0};
+        QString link_name;
+        uint32_t base_id{0};
+    };
+
+    struct HfsChainFieldUpdate {
+        uint32_t cnid{0};
+        qsizetype field_offset{0};
+        uint32_t value{0};
+    };
+
+    struct HfsHardlinkCreateInputs {
+        HfsCatalogRecord existing;
+        HfsCatalogMutationTarget link_target;
+        uint32_t link_parent{0};
+    };
+
+    void appendHardLinkAliasRecords(QVector<HfsRawCatalogRecord>* records,
+                                    const HfsHardlinkAliasParams& p) const {
+        records->append(HfsRawCatalogRecord{
+            .parent_id = p.parent_id,
+            .name = p.name,
+            .record_type = kHfsCatalogFileRecord,
+            .catalog_id = p.alias_id,
+            .bytes = hfsCatalogRecordBytes(
+                p.parent_id,
+                p.name,
+                hfsCatalogHardLinkAliasRecord(
+                    p.alias_id, p.inode_id, p.inode_mode, p.prev_link_id, p.next_link_id))});
+        records->append(HfsRawCatalogRecord{
+            .parent_id = p.alias_id,
+            .name = QString(),
+            .record_type = kHfsCatalogFileThreadRecord,
+            .catalog_id = 0,
+            .bytes = hfsCatalogRecordBytes(
+                p.alias_id, QString(), hfsCatalogFileThreadRecord(p.parent_id, p.name))});
+    }
+
+    // Set a be32 chain field (hl_prevLinkID @32 / hl_nextLinkID @36) of the file
+    // record with CNID update.cnid to update.value, queued as a replacement.
+    [[nodiscard]] bool appendHardlinkChainFieldUpdate(const HfsCatalogTreeModel& model,
+                                                      const HfsChainFieldUpdate& update,
+                                                      HfsCatalogTreeEdit* edit,
+                                                      QStringList* blockers) const {
+        const auto key = catalogModelKeyForCnid(model, update.cnid, blockers);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto payload = catalogModelFilePayloadByKey(model, key->first, key->second, blockers);
+        if (!payload.has_value()) {
+            return false;
+        }
+        writeBe32(&*payload, update.field_offset, update.value);
+        edit->replacements.append(
+            HfsRawCatalogRecord{.parent_id = key->first,
+                                .name = key->second,
+                                .record_type = kHfsCatalogFileRecord,
+                                .catalog_id = update.cnid,
+                                .bytes = hfsCatalogRecordBytes(key->first, key->second, *payload)});
+        return true;
+    }
+
+    void appendPrivateDirRecords(QVector<HfsRawCatalogRecord>* records,
+                                 uint32_t privDirCnid,
+                                 uint32_t valence) const {
+        const QString privName = hfsPrivateDataDirName();
+        records->append(HfsRawCatalogRecord{
+            .parent_id = kHfsRootFolderId,
+            .name = privName,
+            .record_type = kHfsCatalogFolderRecord,
+            .catalog_id = privDirCnid,
+            .bytes = hfsCatalogRecordBytes(
+                kHfsRootFolderId, privName, hfsCatalogPrivateDirRecord(privDirCnid, valence))});
+        records->append(HfsRawCatalogRecord{
+            .parent_id = privDirCnid,
+            .name = QString(),
+            .record_type = kHfsCatalogFolderThreadRecord,
+            .catalog_id = 0,
+            .bytes = hfsCatalogRecordBytes(
+                privDirCnid, QString(), hfsCatalogFolderThreadRecord(kHfsRootFolderId, privName))});
+    }
+
+    // First hard link to a regular file: keep its CNID but move it into the private
+    // metadata directory as iNode<CNID> (the data blocks stay put), turn the original
+    // name into an alias, and add the new link. Inode link count becomes 2.
+    [[nodiscard]] std::optional<HfsHardlinkPlan> prepareHardlinkFirstLink(
+        const HfsHardlinkBuildContext& ctx,
+        const HfsCatalogRecord& existing,
+        const QByteArray& existingPayload,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const uint16_t mode = be16(existingPayload, kHfsCatalogBsdFileModeOffset);
+        const auto existingPriv = findChild(kHfsRootFolderId, hfsPrivateDataDirName());
+        const bool createPriv = !existingPriv.has_value();
+        uint32_t nextId = ctx.base_id;
+        const uint32_t privDirCnid = createPriv ? nextId++ : existingPriv->catalog_id;
+        const uint32_t inodeCnid = existing.catalog_id;
+        const uint32_t aliasA = nextId++;  // original name becomes this alias
+        const uint32_t aliasB = nextId++;  // the new link
+        const QString inodeName = QStringLiteral("iNode%1").arg(inodeCnid);
+        QByteArray inodePayload = existingPayload;
+        hfsStampHardLinkInodeFields(&inodePayload, aliasB, 2);  // firstLink = aliasB
+
+        HfsCatalogTreeEdit edit;
+        edit.removals.append({existing.parent_id, existing.name});
+        edit.insertions.append(HfsRawCatalogRecord{
+            .parent_id = privDirCnid,
+            .name = inodeName,
+            .record_type = kHfsCatalogFileRecord,
+            .catalog_id = inodeCnid,
+            .bytes = hfsCatalogRecordBytes(privDirCnid, inodeName, inodePayload)});
+        edit.replacements.append(HfsRawCatalogRecord{
+            .parent_id = inodeCnid,
+            .name = QString(),
+            .record_type = kHfsCatalogFileThreadRecord,
+            .catalog_id = 0,
+            .bytes = hfsCatalogRecordBytes(
+                inodeCnid, QString(), hfsCatalogFileThreadRecord(privDirCnid, inodeName))});
+        // chain: aliasB(prev 0, next aliasA) -> aliasA(prev aliasB, next 0)
+        appendHardLinkAliasRecords(
+            &edit.insertions,
+            {existing.parent_id, existing.name, aliasA, inodeCnid, mode, aliasB, 0});
+        appendHardLinkAliasRecords(
+            &edit.insertions, {ctx.link_parent, ctx.link_name, aliasB, inodeCnid, mode, 0, aliasA});
+        if (createPriv) {
+            appendPrivateDirRecords(&edit.insertions, privDirCnid, 1);
+            edit.valence_updates.append({kHfsRootFolderId, 1});
+        } else {
+            edit.valence_updates.append({privDirCnid, 1});
+        }
+        edit.valence_updates.append({ctx.link_parent, 1});
+        edit.read_back_parent_id = ctx.link_parent;
+        edit.read_back_name = ctx.link_name;
+        const auto mutation = finishCatalogTreeMutation(ctx.model, edit, blockers, warnings);
+        if (!mutation.has_value()) {
+            return std::nullopt;
+        }
+        return HfsHardlinkPlan{
+            *mutation, 2, createPriv ? 1 : 0, nextId, inodeCnid, 2, HfsCatalogMutationTarget{}};
+    }
+
+    // Additional hard link to an existing inode: prepend a new alias to the chain and
+    // bump the inode's link count.
+    [[nodiscard]] std::optional<HfsHardlinkPlan> prepareHardlinkAddLink(
+        const HfsHardlinkBuildContext& ctx,
+        const QByteArray& aliasPayload,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const uint32_t inodeCnid = be32(aliasPayload, kHfsCatalogBsdSpecialOffset);
+        const auto priv = findChild(kHfsRootFolderId, hfsPrivateDataDirName());
+        if (!priv.has_value()) {
+            blockers->append(QStringLiteral("HFS+ hard-link metadata directory is missing"));
+            return std::nullopt;
+        }
+        const uint32_t privDirCnid = priv->catalog_id;
+        const QString inodeName = QStringLiteral("iNode%1").arg(inodeCnid);
+        auto inodePayload =
+            catalogModelFilePayloadByKey(*ctx.model, privDirCnid, inodeName, blockers);
+        if (!inodePayload.has_value()) {
+            return std::nullopt;
+        }
+        const uint16_t inodeMode = be16(*inodePayload, kHfsCatalogBsdFileModeOffset);
+        const uint32_t oldFirst = be32(*inodePayload, kHfsCatalogFirstLinkIdOffset);
+        const uint32_t oldCount = be32(*inodePayload, kHfsCatalogBsdSpecialOffset);
+        const uint32_t newAlias = ctx.base_id;
+        hfsStampHardLinkInodeFields(&*inodePayload, newAlias, oldCount + 1);
+
+        HfsCatalogTreeEdit edit;
+        edit.replacements.append(HfsRawCatalogRecord{
+            .parent_id = privDirCnid,
+            .name = inodeName,
+            .record_type = kHfsCatalogFileRecord,
+            .catalog_id = inodeCnid,
+            .bytes = hfsCatalogRecordBytes(privDirCnid, inodeName, *inodePayload)});
+        if (oldFirst != 0 &&
+            !appendHardlinkChainFieldUpdate(
+                *ctx.model, {oldFirst, kHfsCatalogBsdOwnerIdOffset, newAlias}, &edit, blockers)) {
+            return std::nullopt;
+        }
+        appendHardLinkAliasRecords(
+            &edit.insertions,
+            {ctx.link_parent, ctx.link_name, newAlias, inodeCnid, inodeMode, 0, oldFirst});
+        edit.valence_updates.append({ctx.link_parent, 1});
+        edit.read_back_parent_id = ctx.link_parent;
+        edit.read_back_name = ctx.link_name;
+        const auto mutation = finishCatalogTreeMutation(ctx.model, edit, blockers, warnings);
+        if (!mutation.has_value()) {
+            return std::nullopt;
+        }
+        return HfsHardlinkPlan{
+            *mutation, 1, 0, ctx.base_id + 1, inodeCnid, oldCount + 1, HfsCatalogMutationTarget{}};
+    }
+
+    [[nodiscard]] std::optional<HfsHardlinkCreateInputs> resolveHardlinkCreateInputs(
+        const QString& existingPath, const QString& linkPath, QStringList* blockers) {
+        const auto existing = resolveCatalogPath(existingPath);
+        if (!existing.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        if (!existing->regularFile()) {
+            blockers->append(QStringLiteral("HFS+ hard-link source must be a file"));
+            return std::nullopt;
+        }
+        const auto linkTarget = catalogMutationTarget(linkPath, blockers);
+        if (!linkTarget.has_value()) {
+            return std::nullopt;
+        }
+        const auto linkParent = resolveFolderPath(linkTarget->parent_path);
+        if (!linkParent.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        if (findChild(*linkParent, linkTarget->name).has_value()) {
+            blockers->append(QStringLiteral("HFS+ hard-link destination already exists"));
+            return std::nullopt;
+        }
+        return HfsHardlinkCreateInputs{*existing, *linkTarget, *linkParent};
+    }
+
+    [[nodiscard]] std::optional<HfsHardlinkPlan> prepareHardlinkCreate(const QString& existingPath,
+                                                                       const QString& linkPath,
+                                                                       QStringList* blockers,
+                                                                       QStringList* warnings) {
+        return withCatalogNodePoolGrowth(
+            [&](QStringList* b, QStringList* w) {
+                return prepareHardlinkCreateOnce(existingPath, linkPath, b, w);
+            },
+            blockers,
+            warnings);
+    }
+
+    [[nodiscard]] std::optional<HfsHardlinkPlan> prepareHardlinkCreateOnce(
+        const QString& existingPath,
+        const QString& linkPath,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const auto inputs = resolveHardlinkCreateInputs(existingPath, linkPath, blockers);
+        if (!inputs.has_value()) {
+            return std::nullopt;
+        }
+        auto model = loadCatalogTreeForMutation(blockers);
+        if (!model.has_value()) {
+            return std::nullopt;
+        }
+        const uint32_t baseId = nextSafeCatalogId(flattenedCatalogModelRecords(*model), blockers);
+        if (!blockers->isEmpty()) {
+            return std::nullopt;
+        }
+        const auto payload = catalogModelFilePayloadByKey(
+            *model, inputs->existing.parent_id, inputs->existing.name, blockers);
+        if (!payload.has_value()) {
+            return std::nullopt;
+        }
+        const bool isAlias =
+            (be16(*payload, kHfsCatalogRecordFlagsOffset) & kHfsCatalogHasLinkChainMask) != 0 &&
+            be32(*payload, kHfsCatalogFileTypeOffset) == kHfsHardLinkFileType;
+        const HfsHardlinkBuildContext ctx{
+            &*model, inputs->link_parent, inputs->link_target.name, baseId};
+        auto plan =
+            isAlias ? prepareHardlinkAddLink(ctx, *payload, blockers, warnings)
+                    : prepareHardlinkFirstLink(ctx, inputs->existing, *payload, blockers, warnings);
+        if (plan.has_value()) {
+            plan->link_target = inputs->link_target;
+        }
+        return plan;
+    }
+
+    // ---- H5: hard-link delete -------------------------------------------------
+    struct HfsHardlinkDeletePlan {
+        HfsCatalogTreeMutation mutation;
+        int file_count_delta{0};
+        bool inode_removed{false};
+        QVector<HfsExtent> released_extents;
+        QVector<HfsAllocationBitmapByte> allocation_bytes;
+        uint32_t released_blocks{0};
+        uint32_t inode_cnid{0};
+        uint32_t link_count{0};
+        HfsCatalogRecord alias_record;
+    };
+
+    struct HfsHardlinkDeleteSource {
+        HfsCatalogRecord alias;
+        QByteArray alias_payload;
+    };
+
+    // Inode rewrite/removal step inputs for a hard-link delete.
+    struct HfsInodeDeleteStep {
+        uint32_t priv_dir_cnid{0};
+        QString inode_name;
+        QByteArray inode_payload;
+        uint32_t link_count{0};
+        uint32_t first_link{0};
+    };
+
+    [[nodiscard]] std::optional<HfsHardlinkDeletePlan> prepareHardlinkDelete(
+        const QString& linkPath,
+        const PartitionHfsFileWriteOptions& options,
+        QStringList* blockers,
+        QStringList* warnings) {
+        return withCatalogNodePoolGrowth(
+            [&](QStringList* b, QStringList* w) {
+                return prepareHardlinkDeleteOnce(linkPath, options, b, w);
+            },
+            blockers,
+            warnings);
+    }
+
+    [[nodiscard]] std::optional<HfsHardlinkDeletePlan> prepareHardlinkDeleteOnce(
+        const QString& linkPath,
+        const PartitionHfsFileWriteOptions& options,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const auto alias = resolveCatalogPath(linkPath);
+        if (!alias.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        if (!alias->regularFile()) {
+            blockers->append(QStringLiteral("HFS+ hard-link delete target must be a file"));
+            return std::nullopt;
+        }
+        auto model = loadCatalogTreeForMutation(blockers);
+        if (!model.has_value()) {
+            return std::nullopt;
+        }
+        const auto aliasPayload =
+            catalogModelFilePayloadByKey(*model, alias->parent_id, alias->name, blockers);
+        if (!aliasPayload.has_value()) {
+            return std::nullopt;
+        }
+        const uint16_t flags = be16(*aliasPayload, kHfsCatalogRecordFlagsOffset);
+        const uint32_t fdType = be32(*aliasPayload, kHfsCatalogFileTypeOffset);
+        if ((flags & kHfsCatalogHasLinkChainMask) == 0 || fdType != kHfsHardLinkFileType) {
+            blockers->append(QStringLiteral("HFS+ hard-link delete target is not a hard link"));
+            return std::nullopt;
+        }
+        return buildHardlinkDeletePlan(
+            &*model, {*alias, *aliasPayload}, options, blockers, warnings);
+    }
+
+    [[nodiscard]] std::optional<HfsHardlinkDeletePlan> buildHardlinkDeletePlan(
+        HfsCatalogTreeModel* model,
+        const HfsHardlinkDeleteSource& source,
+        const PartitionHfsFileWriteOptions& options,
+        QStringList* blockers,
+        QStringList* warnings) {
+        const uint32_t inodeCnid = be32(source.alias_payload, kHfsCatalogBsdSpecialOffset);
+        const uint32_t prev = be32(source.alias_payload, kHfsCatalogBsdOwnerIdOffset);
+        const uint32_t next = be32(source.alias_payload, kHfsCatalogBsdGroupIdOffset);
+        const auto priv = findChild(kHfsRootFolderId, hfsPrivateDataDirName());
+        if (!priv.has_value()) {
+            blockers->append(QStringLiteral("HFS+ hard-link metadata directory is missing"));
+            return std::nullopt;
+        }
+        const uint32_t privDirCnid = priv->catalog_id;
+        const QString inodeName = QStringLiteral("iNode%1").arg(inodeCnid);
+        auto inodePayload = catalogModelFilePayloadByKey(*model, privDirCnid, inodeName, blockers);
+        if (!inodePayload.has_value()) {
+            return std::nullopt;
+        }
+        const uint32_t newCount = be32(*inodePayload, kHfsCatalogBsdSpecialOffset) - 1;
+        const uint32_t firstLink = be32(*inodePayload, kHfsCatalogFirstLinkIdOffset);
+
+        HfsHardlinkDeletePlan plan;
+        plan.inode_cnid = inodeCnid;
+        plan.link_count = newCount;
+        plan.alias_record = source.alias;
+        plan.file_count_delta = -1;
+
+        HfsCatalogTreeEdit edit;
+        edit.removals.append({source.alias.parent_id, source.alias.name});
+        edit.optional_removals.append({source.alias.catalog_id, QString()});
+        edit.valence_updates.append({source.alias.parent_id, -1});
+        if (next != 0 && !appendHardlinkChainFieldUpdate(
+                             *model, {next, kHfsCatalogBsdOwnerIdOffset, prev}, &edit, blockers)) {
+            return std::nullopt;
+        }
+        if (prev != 0 && !appendHardlinkChainFieldUpdate(
+                             *model, {prev, kHfsCatalogBsdGroupIdOffset, next}, &edit, blockers)) {
+            return std::nullopt;
+        }
+        if (!appendHardlinkInodeDeleteStep(
+                {privDirCnid, inodeName, *inodePayload, newCount, prev == 0 ? next : firstLink},
+                options,
+                &edit,
+                &plan,
+                blockers)) {
+            return std::nullopt;
+        }
+        edit.read_back_parent_id = source.alias.parent_id;
+        edit.read_back_name = source.alias.name;
+        const auto mutation = finishCatalogTreeMutation(model, edit, blockers, warnings);
+        if (!mutation.has_value()) {
+            return std::nullopt;
+        }
+        plan.mutation = *mutation;
+        return plan;
+    }
+
+    // When the deleted alias was not the last link, rewrite the inode's link count and
+    // chain head; otherwise remove the inode and release its data blocks.
+    [[nodiscard]] bool appendHardlinkInodeDeleteStep(const HfsInodeDeleteStep& step,
+                                                     const PartitionHfsFileWriteOptions& options,
+                                                     HfsCatalogTreeEdit* edit,
+                                                     HfsHardlinkDeletePlan* plan,
+                                                     QStringList* blockers) {
+        if (step.link_count >= 1) {
+            QByteArray ip = step.inode_payload;
+            hfsStampHardLinkInodeFields(&ip, step.first_link, step.link_count);
+            edit->replacements.append(HfsRawCatalogRecord{
+                .parent_id = step.priv_dir_cnid,
+                .name = step.inode_name,
+                .record_type = kHfsCatalogFileRecord,
+                .catalog_id = plan->inode_cnid,
+                .bytes = hfsCatalogRecordBytes(step.priv_dir_cnid, step.inode_name, ip)});
+            return true;
+        }
+        edit->removals.append({step.priv_dir_cnid, step.inode_name});
+        edit->optional_removals.append({plan->inode_cnid, QString()});
+        edit->valence_updates.append({step.priv_dir_cnid, -1});
+        plan->inode_removed = true;
+        plan->file_count_delta = -2;
+        HfsCatalogRecord inodeRecord;
+        inodeRecord.catalog_id = plan->inode_cnid;
+        inodeRecord.record_type = kHfsCatalogFileRecord;
+        inodeRecord.data_fork = parseFork(step.inode_payload, kHfsCatalogFileDataForkOffset);
+        inodeRecord.resource_fork = parseFork(step.inode_payload,
+                                              kHfsCatalogFileResourceForkOffset);
+        const auto release = prepareFileReleaseAllocation(inodeRecord, options, blockers);
+        if (!release.has_value()) {
+            return false;
+        }
+        plan->released_extents = release->extents;
+        plan->allocation_bytes = release->allocation_bytes;
+        plan->released_blocks = release->released_blocks;
+        return true;
+    }
+
+    [[nodiscard]] std::optional<int> writeHardlinkInodeReclaim(const HfsHardlinkDeletePlan& plan,
+                                                               QStringList* blockers) {
+        const auto bitmapChunks = writeUpdatedAllocationBitmapBytes(plan.allocation_bytes);
+        if (!bitmapChunks.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        const auto freeBlockChunks =
+            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
+                                     m_volume.free_blocks,
+                                     static_cast<int>(plan.released_blocks),
+                                     blockers);
+        if (!freeBlockChunks.has_value()) {
+            return std::nullopt;
+        }
+        return *bitmapChunks + *freeBlockChunks;
+    }
+
     [[nodiscard]] std::optional<HfsFileCreateAllocationPlan> prepareFileCreateAllocation(
         const QByteArray& data, QStringList* blockers) {
         appendAllocationForkGrowthBlockers(blockers);
@@ -1617,6 +2358,29 @@ private:
             .catalog_id = fileId,
             .bytes = hfsCatalogRecordBytes(
                 parentId, name, hfsCatalogFileRecordWithDataFork(fileId, dataFork))});
+        records->append(HfsRawCatalogRecord{
+            .parent_id = fileId,
+            .name = QString(),
+            .record_type = kHfsCatalogFileThreadRecord,
+            .catalog_id = 0,
+            .bytes = hfsCatalogRecordBytes(
+                fileId, QString(), hfsCatalogFileThreadRecord(parentId, name))});
+    }
+
+    // H5: symlink records — a file record carrying the S_IFLNK/'slnk' bytes plus its
+    // thread record. The target path lives in the data fork (written separately).
+    void appendSymlinkCatalogRecords(QVector<HfsRawCatalogRecord>* records,
+                                     uint32_t parentId,
+                                     const QString& name,
+                                     uint32_t fileId,
+                                     const HfsForkData& dataFork) const {
+        records->append(
+            HfsRawCatalogRecord{.parent_id = parentId,
+                                .name = name,
+                                .record_type = kHfsCatalogFileRecord,
+                                .catalog_id = fileId,
+                                .bytes = hfsCatalogRecordBytes(
+                                    parentId, name, hfsCatalogSymlinkRecord(fileId, dataFork))});
         records->append(HfsRawCatalogRecord{
             .parent_id = fileId,
             .name = QString(),

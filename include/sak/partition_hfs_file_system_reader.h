@@ -276,6 +276,32 @@ public:
         const QString& path,
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createSymlink(
+        QIODevice* device,
+        const QString& path,
+        const QString& target,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createSymlinkFromImage(
+        const QString& image_path,
+        const QString& path,
+        const QString& target,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createHardlink(
+        QIODevice* device,
+        const QString& existing_path,
+        const QString& link_path,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createHardlinkFromImage(
+        const QString& image_path,
+        const QString& existing_path,
+        const QString& link_path,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult deleteHardlink(
+        QIODevice* device, const QString& link_path, const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult deleteHardlinkFromImage(
+        const QString& image_path,
+        const QString& link_path,
+        const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFile(
         QIODevice* device, const QString& path, const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult deleteEmptyFileFromImage(

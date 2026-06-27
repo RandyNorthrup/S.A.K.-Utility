@@ -110,6 +110,7 @@ constexpr uint16_t kHfsCatalogFileRecord = 2;
 constexpr uint16_t kHfsCatalogFolderThreadRecord = 3;
 constexpr uint16_t kHfsCatalogFileThreadRecord = 4;
 constexpr qsizetype kHfsCatalogRecordTypeOffset = 0;
+constexpr qsizetype kHfsCatalogRecordFlagsOffset = 2;
 constexpr qsizetype kHfsCatalogFolderValenceOffset = 4;
 constexpr qsizetype kHfsCatalogRecordIdOffset = 8;
 constexpr qsizetype kHfsCatalogCreateDateOffset = 12;
@@ -119,10 +120,38 @@ constexpr qsizetype kHfsCatalogAccessDateOffset = 24;
 constexpr qsizetype kHfsCatalogBackupDateOffset = 28;
 constexpr qsizetype kHfsCatalogBsdOwnerIdOffset = 32;
 constexpr qsizetype kHfsCatalogBsdGroupIdOffset = 36;
+constexpr qsizetype kHfsCatalogBsdOwnerFlagsOffset = 41;
 constexpr qsizetype kHfsCatalogBsdFileModeOffset = 42;
+// HFSPlusBSDInfo.special union @44: iNodeNum (hard-link alias), linkCount (inode).
+constexpr qsizetype kHfsCatalogBsdSpecialOffset = 44;
+// FileInfo userInfo @48: fdType @48, fdCreator @52, fdFlags @56.
+constexpr qsizetype kHfsCatalogFileTypeOffset = 48;
+constexpr qsizetype kHfsCatalogFileCreatorOffset = 52;
+constexpr qsizetype kHfsCatalogFileFinderFlagsOffset = 56;
+// HFSPlusCatalogFolder userInfo (FolderInfo) @48 (16 bytes: window rect + flags).
+constexpr qsizetype kHfsCatalogFolderInfoOffset = 48;
 constexpr uint32_t kHfsToUnixEpochSeconds = 2'082'844'800U;
-constexpr uint16_t kHfsFileModeRegular = 0x81A4;    // S_IFREG | 0644
-constexpr uint16_t kHfsFileModeDirectory = 0x41ED;  // S_IFDIR | 0755
+constexpr uint16_t kHfsFileModeRegular = 0x81A4;     // S_IFREG | 0644
+constexpr uint16_t kHfsFileModeDirectory = 0x41ED;   // S_IFDIR | 0755
+constexpr uint16_t kHfsFileModeSymlink = 0xA1ED;     // S_IFLNK | 0755
+constexpr uint16_t kHfsFileModePrivateDir = 0x4000;  // S_IFDIR | 0000 (metadata dir)
+constexpr uint16_t kHfsFileModeWriteBits = 0x0092;   // S_IWUSR|S_IWGRP|S_IWOTH (0222)
+// H5 hard-link / symlink record flags + type/creator (TN1150, harvested from macOS).
+constexpr uint16_t kHfsCatalogThreadExistsMask = 0x0002;
+constexpr uint16_t kHfsCatalogHasLinkChainMask = 0x0020;
+constexpr uint32_t kHfsHardLinkFileType = 0x68'6C'6E'6B;     // 'hlnk'
+constexpr uint32_t kHfsHardLinkFileCreator = 0x68'66'73'2B;  // 'hfs+'
+constexpr uint32_t kHfsSymlinkFileType = 0x73'6C'6E'6B;      // 'slnk'
+constexpr uint32_t kHfsSymlinkFileCreator = 0x72'68'61'70;   // 'rhap'
+constexpr uint16_t kHfsHardLinkAliasFinderFlags = 0x0100;    // kHasBeenInited
+constexpr uint8_t kHfsHardLinkAliasOwnerFlags = 0x02;
+// HFSPlusCatalogFile.reserved1 @4 holds hl_firstLinkID on a hard-link inode.
+constexpr qsizetype kHfsCatalogFirstLinkIdOffset = 4;
+constexpr uint16_t kHfsPrivateDirFlags = 0x0010;
+// FolderInfo magic macOS stamps on the private metadata directory (bytes @56..63 of
+// the folder record: frFlags 0x5000 + frLocation {0x4000, 0x0000}).
+constexpr uint16_t kHfsPrivateDirFinderFlags = 0x5000;
+constexpr uint16_t kHfsPrivateDirFinderLocV = 0x4000;
 constexpr qsizetype kHfsCatalogFileDataForkOffset = 88;
 constexpr qsizetype kHfsForkDataBytes = kHfsForkExtentsOffset + kHfsExtentBytes * kHfsExtentCount;
 constexpr qsizetype kHfsCatalogFileResourceForkOffset = kHfsCatalogFileDataForkOffset +
@@ -581,6 +610,93 @@ QByteArray hfsCatalogEmptyFolderRecord(uint32_t folderId) {
     return record;
 }
 
+// H5: the metadata directory `\0\0\0\0HFS+ Private Data` that stores hard-link
+// inodes. QStringLiteral truncates at the first NUL, so build it from QChars.
+QString hfsPrivateDataDirName() {
+    QString name(4, QChar(u'\0'));
+    name += QStringLiteral("HFS+ Private Data");
+    return name;
+}
+
+// H5: a symlink catalog file record (S_IFLNK, type/creator 'slnk'/'rhap'); the data
+// fork holds the target path string. Byte layout harvested from macOS Sequoia.
+QByteArray hfsCatalogSymlinkRecord(uint32_t fileId, const HfsForkData& fork) {
+    QByteArray record(kHfsCatalogFileRecordBytes, '\0');
+    writeBe16(&record, kHfsCatalogRecordTypeOffset, kHfsCatalogFileRecord);
+    writeBe16(&record, kHfsCatalogRecordFlagsOffset, kHfsCatalogThreadExistsMask);
+    writeBe32(&record, kHfsCatalogRecordIdOffset, fileId);
+    hfsStampCommonCatalogFields(&record, kHfsFileModeSymlink);
+    writeBe32(&record, kHfsCatalogBsdSpecialOffset, 1);
+    writeBe32(&record, kHfsCatalogFileTypeOffset, kHfsSymlinkFileType);
+    writeBe32(&record, kHfsCatalogFileCreatorOffset, kHfsSymlinkFileCreator);
+    const QByteArray forkBytes = hfsForkDataRecordBytes(fork);
+    record.replace(kHfsCatalogFileDataForkOffset, forkBytes.size(), forkBytes);
+    return record;
+}
+
+// H5: turn an existing regular-file catalog payload (248 bytes) into a hard-link
+// inode in place: keep its mode, type/creator, dates, and fork data (so the inode
+// owns the original blocks), and only set the link-chain flag, hl_firstLinkID @4,
+// and the BSDInfo.special @44 = linkCount. Byte layout harvested from macOS Sequoia.
+void hfsStampHardLinkInodeFields(QByteArray* payload, uint32_t firstLinkId, uint32_t linkCount) {
+    writeBe16(payload,
+              kHfsCatalogRecordFlagsOffset,
+              kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
+    writeBe32(payload, kHfsCatalogFirstLinkIdOffset, firstLinkId);
+    writeBe32(payload, kHfsCatalogBsdSpecialOffset, linkCount);
+}
+
+// H5: a hard-link alias catalog file record (the user-visible name). The BSDInfo
+// owner/group fields @32/@36 are repurposed as hl_prevLinkID / hl_nextLinkID, the
+// special @44 = the inode's CNID (iNodeNum), type/creator 'hlnk'/'hfs+'; forks empty.
+QByteArray hfsCatalogHardLinkAliasRecord(uint32_t aliasId,
+                                         uint32_t inodeId,
+                                         uint16_t inodeFileMode,
+                                         uint32_t prevLinkId,
+                                         uint32_t nextLinkId) {
+    QByteArray record(kHfsCatalogFileRecordBytes, '\0');
+    writeBe16(&record, kHfsCatalogRecordTypeOffset, kHfsCatalogFileRecord);
+    writeBe16(&record,
+              kHfsCatalogRecordFlagsOffset,
+              kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
+    writeBe32(&record, kHfsCatalogRecordIdOffset, aliasId);
+    const uint32_t now = hfsCurrentTimestamp();
+    writeBe32(&record, kHfsCatalogCreateDateOffset, now);
+    writeBe32(&record, kHfsCatalogContentModDateOffset, now);
+    writeBe32(&record, kHfsCatalogAttributeModDateOffset, now);
+    writeBe32(&record, kHfsCatalogAccessDateOffset, now);
+    writeBe32(&record, kHfsCatalogBsdOwnerIdOffset, prevLinkId);
+    writeBe32(&record, kHfsCatalogBsdGroupIdOffset, nextLinkId);
+    record[kHfsCatalogBsdOwnerFlagsOffset] = static_cast<char>(kHfsHardLinkAliasOwnerFlags);
+    writeBe16(&record,
+              kHfsCatalogBsdFileModeOffset,
+              static_cast<uint16_t>(inodeFileMode & ~kHfsFileModeWriteBits));
+    writeBe32(&record, kHfsCatalogBsdSpecialOffset, inodeId);
+    writeBe32(&record, kHfsCatalogFileTypeOffset, kHfsHardLinkFileType);
+    writeBe32(&record, kHfsCatalogFileCreatorOffset, kHfsHardLinkFileCreator);
+    writeBe16(&record, kHfsCatalogFileFinderFlagsOffset, kHfsHardLinkAliasFinderFlags);
+    return record;
+}
+
+// H5: the private metadata directory's folder record (mode 0000, invisible, with the
+// FolderInfo magic macOS stamps so Finder hides it). valence = inode count.
+QByteArray hfsCatalogPrivateDirRecord(uint32_t folderId, uint32_t valence) {
+    QByteArray record(kHfsCatalogFolderRecordBytes, '\0');
+    writeBe16(&record, kHfsCatalogRecordTypeOffset, kHfsCatalogFolderRecord);
+    writeBe16(&record, kHfsCatalogRecordFlagsOffset, kHfsPrivateDirFlags);
+    writeBe32(&record, kHfsCatalogFolderValenceOffset, valence);
+    writeBe32(&record, kHfsCatalogRecordIdOffset, folderId);
+    const uint32_t now = hfsCurrentTimestamp();
+    writeBe32(&record, kHfsCatalogCreateDateOffset, now);
+    writeBe16(&record, kHfsCatalogBsdFileModeOffset, kHfsFileModePrivateDir);
+    writeBe32(&record, kHfsCatalogBsdSpecialOffset, 1);
+    // FolderInfo @48: frRect zero, frFlags @56 = 0x5000, frLocation @58 = {0x4000,0x4000}.
+    writeBe16(&record, kHfsCatalogFolderInfoOffset + 8, kHfsPrivateDirFinderFlags);
+    writeBe16(&record, kHfsCatalogFolderInfoOffset + 10, kHfsPrivateDirFinderLocV);
+    writeBe16(&record, kHfsCatalogFolderInfoOffset + 12, kHfsPrivateDirFinderLocV);
+    return record;
+}
+
 QByteArray hfsCatalogThreadRecord(uint16_t recordType, uint32_t parentId, const QString& name) {
     QByteArray record(kHfsCatalogThreadNameOffset + name.size() * kUint16Size, '\0');
     writeBe16(&record, kHfsCatalogRecordTypeOffset, recordType);
@@ -668,7 +784,6 @@ constexpr uint16_t kHfsMaxMutationTreeDepth = 8;
 // free nodes, but never more than a few times kHfsMaxMutationLeaves. Past this the
 // mutation fails closed rather than grow the catalog file unboundedly.
 constexpr uint32_t kHfsMaxNodePoolGrowthTarget = 1U << 19;
-constexpr qsizetype kHfsCatalogRecordFlagsOffset = 2;
 constexpr uint16_t kHfsCatalogHasAttributesMask = 0x0004;
 constexpr uint64_t kHfsMinimumVolumeBytesForAlternateHeader = kHfsVolumeHeaderOffset * 2;
 const char* const kHfsDecmpfsAttributeName = "com.apple.decmpfs";

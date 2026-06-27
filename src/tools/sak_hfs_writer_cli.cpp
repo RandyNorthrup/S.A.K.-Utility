@@ -179,6 +179,27 @@ const QHash<QString, FileCommandRunner>& fileCommandRunners() {
              return sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
                  invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
          }},
+        {QStringLiteral("create-symlink-image"),
+         [](const CliInvocation& invocation) {
+             return sak::PartitionHfsFileSystemWriter::createSymlinkFromImage(
+                 invocation.target_image_path,
+                 invocation.hfs_path,
+                 invocation.destination_hfs_path,
+                 writeOptions(invocation));
+         }},
+        {QStringLiteral("create-hardlink-image"),
+         [](const CliInvocation& invocation) {
+             return sak::PartitionHfsFileSystemWriter::createHardlinkFromImage(
+                 invocation.target_image_path,
+                 invocation.hfs_path,
+                 invocation.destination_hfs_path,
+                 writeOptions(invocation));
+         }},
+        {QStringLiteral("delete-hardlink-image"),
+         [](const CliInvocation& invocation) {
+             return sak::PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+         }},
         {QStringLiteral("replay-journal-image"),
          [](const CliInvocation& invocation) {
              return sak::PartitionHfsFileSystemWriter::replayJournalFromImage(
@@ -385,6 +406,13 @@ bool isRenameMoveCommand(const QString& command) {
     return command == QStringLiteral("rename-catalog-entry-image");
 }
 
+// H5: symlink/hardlink creates take --hfs-path plus --destination-hfs-path (the
+// target string / new link) and no payload file, like a rename/move.
+bool isLinkCommand(const QString& command) {
+    return command == QStringLiteral("create-symlink-image") ||
+           command == QStringLiteral("create-hardlink-image");
+}
+
 bool isJournalCommand(const QString& command) {
     return command == QStringLiteral("replay-journal-image");
 }
@@ -399,9 +427,10 @@ bool isNoPayloadFileCommand(const QString& command) {
         QStringLiteral("create-empty-folder-image"),
         QStringLiteral("delete-empty-folder-image"),
         QStringLiteral("delete-folder-tree-image"),
+        QStringLiteral("delete-hardlink-image"),
     };
     return isTruncateCommand(command) || kNoPayloadCommands.contains(command) ||
-           isJournalCommand(command) || isRenameMoveCommand(command);
+           isJournalCommand(command) || isRenameMoveCommand(command) || isLinkCommand(command);
 }
 
 bool isSupportedCommand(const QString& command) {
@@ -499,7 +528,7 @@ std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
     const QString payloadPath = parser.value(options.payload).trimmed();
     const bool attributeCommand = isAttributeCommand(*command);
     const bool noPayloadFileCommand = isNoPayloadFileCommand(*command);
-    const bool renameMoveCommand = isRenameMoveCommand(*command);
+    const bool renameMoveCommand = isRenameMoveCommand(*command) || isLinkCommand(*command);
     if (!validatePathArguments({.target_path = targetPath,
                                 .hfs_path = hfsPath,
                                 .destination_hfs_path = destinationHfsPath,

@@ -1760,6 +1760,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_replacesInlineAttributesWithReadback();
     void hfsFileSystemWriter_createsAndDeletesEmptyFilesWithCatalogReadback();
     void hfsFileSystemWriter_deletesAllocatedFilesAndReleasesBitmap();
+    void hfsFileSystemWriter_createsHardlinksAndSymlinks();
     void apfsFileSystemReader_rejectsCorruptMetadataChecksum();
     void apfsWriter_computesAndVerifiesObjectChecksums();
     void apfsWriter_computesMultiChunkContainerGeometry();
@@ -5670,6 +5671,93 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndRele
         overflowImagePath, QStringLiteral("/hello.txt"), 1);
     QVERIFY(!overflowMissing.ok);
     QVERIFY(overflowMissing.blockers.join(' ').contains(QStringLiteral("not found")));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks() {
+    // H5: symlink + hard-link create/delete. Byte layout harvested from macOS and
+    // certified clean by Apple fsck_hfs (multi-linked files + catalog hierarchy).
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-h5.img"));
+    QVERIFY(writeBytes(imagePath, hfsReaderFixture()));
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-h5-links");
+
+    const QByteArray payload(200, 'H');
+    QVERIFY2(PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+                 imagePath, QStringLiteral("/hl.txt"), payload, options)
+                 .ok,
+             "create base file");
+
+    // Symbolic link: a file with the S_IFLNK / 'slnk':'rhap' record whose data fork
+    // holds the target path.
+    const auto symlink = PartitionHfsFileSystemWriter::createSymlinkFromImage(
+        imagePath, QStringLiteral("/sym.txt"), QStringLiteral("hl.txt"), options);
+    QVERIFY2(symlink.ok, qPrintable(symlink.blockers.join(QStringLiteral("; "))));
+    QVERIFY(symlink.warnings.join(' ').contains(QStringLiteral("symbolic link")));
+    const auto symReadBack =
+        PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/sym.txt"), 64);
+    QVERIFY2(symReadBack.ok, qPrintable(symReadBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(symReadBack.data, QByteArrayLiteral("hl.txt"));
+
+    // First hard link converts /hl.txt into an inode (link count 2); a second extends
+    // the chain (link count 3). Both aliases resolve to the inode's shared data.
+    const auto link1 = PartitionHfsFileSystemWriter::createHardlinkFromImage(
+        imagePath, QStringLiteral("/hl.txt"), QStringLiteral("/a.txt"), options);
+    QVERIFY2(link1.ok, qPrintable(link1.blockers.join(QStringLiteral("; "))));
+    QVERIFY(link1.warnings.join(' ').contains(QStringLiteral("link count 2")));
+    const auto link2 = PartitionHfsFileSystemWriter::createHardlinkFromImage(
+        imagePath, QStringLiteral("/a.txt"), QStringLiteral("/b.txt"), options);
+    QVERIFY2(link2.ok, qPrintable(link2.blockers.join(QStringLiteral("; "))));
+    QVERIFY(link2.warnings.join(' ').contains(QStringLiteral("link count 3")));
+
+    // All three aliases plus the hidden private metadata directory are present, and
+    // the catalog is self-consistent (fsck_hfs multi-linked-files is exercised in the
+    // Apple cert; the shared-data resolution is performed by the macOS kernel).
+    const auto rootListing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 50);
+    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
+    for (const QString& name : {QStringLiteral("hl.txt"),
+                                QStringLiteral("a.txt"),
+                                QStringLiteral("b.txt"),
+                                QStringLiteral("sym.txt")}) {
+        QVERIFY2(std::any_of(rootListing.entries.cbegin(),
+                             rootListing.entries.cend(),
+                             [&](const auto& e) { return e.name == name; }),
+                 qPrintable(QStringLiteral("missing entry %1").arg(name)));
+    }
+    QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 50).ok,
+             "consistency after hard-link create");
+
+    // A non-hard-link cannot be deleted via the hard-link path.
+    const auto notLink = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+        imagePath, QStringLiteral("/sym.txt"), options);
+    QVERIFY(!notLink.ok);
+    QVERIFY(notLink.blockers.join(' ').contains(QStringLiteral("not a hard link")));
+
+    // Delete the links one by one: count 3 -> 2 -> 1 -> 0 (inode + block reclaimed).
+    const auto del1 = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+        imagePath, QStringLiteral("/b.txt"), options);
+    QVERIFY2(del1.ok, qPrintable(del1.blockers.join(QStringLiteral("; "))));
+    QVERIFY(del1.warnings.join(' ').contains(QStringLiteral("link count is now 2")));
+    const auto del2 = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+        imagePath, QStringLiteral("/hl.txt"), options);
+    QVERIFY2(del2.ok, qPrintable(del2.blockers.join(QStringLiteral("; "))));
+    QVERIFY(del2.warnings.join(' ').contains(QStringLiteral("link count is now 1")));
+    const auto del3 = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+        imagePath, QStringLiteral("/a.txt"), options);
+    QVERIFY2(del3.ok, qPrintable(del3.blockers.join(QStringLiteral("; "))));
+    QVERIFY(del3.warnings.join(' ').contains(QStringLiteral("reclaimed")));
+
+    // The last surviving alias's data is gone and the volume is still consistent.
+    QVERIFY(!PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/a.txt"), 1)
+                 .ok);
+    QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 50).ok,
+             "consistency after hard-link delete");
 }
 
 void PartitionManagerCoreTests::apfsFileSystemReader_rejectsCorruptMetadataChecksum() {
