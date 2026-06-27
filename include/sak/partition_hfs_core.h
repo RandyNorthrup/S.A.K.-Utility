@@ -300,10 +300,28 @@ struct HfsCatalogRecord {
     uint64_t resource_size{0};
     HfsForkData data_fork;
     HfsForkData resource_fork;
+    // FileInfo.userInfo fdType @48 / fdCreator @52 and HFSPlusBSDInfo.special @44.
+    // On a hard-link alias these carry 'hlnk' / 'hfs+' and the inode number; on a
+    // symlink fdType is 'slnk'. Zero for folders/threads (only filled for files).
+    uint32_t file_type{0};
+    uint32_t file_creator{0};
+    uint32_t bsd_special{0};
 
     [[nodiscard]] bool directory() const noexcept { return record_type == kHfsCatalogFolderRecord; }
 
     [[nodiscard]] bool regularFile() const noexcept { return record_type == kHfsCatalogFileRecord; }
+
+    // A hard-link alias is a 'hlnk'/'hfs+' file record whose special @44 is the
+    // iNodeNum of the real data in the `␄␄␄␄HFS+ Private Data` metadata directory.
+    [[nodiscard]] bool hardLinkAlias() const noexcept {
+        return regularFile() && file_type == kHfsHardLinkFileType &&
+               file_creator == kHfsHardLinkFileCreator;
+    }
+
+    [[nodiscard]] bool symlink() const noexcept {
+        return regularFile() && file_type == kHfsSymlinkFileType &&
+               file_creator == kHfsSymlinkFileCreator;
+    }
 };
 
 struct HfsRawCatalogRecord {

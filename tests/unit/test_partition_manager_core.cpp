@@ -1782,6 +1782,7 @@ private Q_SLOTS:
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
     void apfsWriter_formatsMultiVolumeContainer();
+    void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -5715,9 +5716,22 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
     QVERIFY2(link2.ok, qPrintable(link2.blockers.join(QStringLiteral("; "))));
     QVERIFY(link2.warnings.join(' ').contains(QStringLiteral("link count 3")));
 
-    // All three aliases plus the hidden private metadata directory are present, and
-    // the catalog is self-consistent (fsck_hfs multi-linked-files is exercised in the
-    // Apple cert; the shared-data resolution is performed by the macOS kernel).
+    // The reader follows each 'hlnk' alias to the shared inode in the private
+    // metadata directory and returns the inode's data -- the same indirection the
+    // macOS kernel performs. All three names read back the identical payload.
+    for (const QString& alias :
+         {QStringLiteral("/hl.txt"), QStringLiteral("/a.txt"), QStringLiteral("/b.txt")}) {
+        const auto aliasRead =
+            PartitionHfsFileSystemReader::readFileFromImage(imagePath, alias, 4096);
+        QVERIFY2(aliasRead.ok,
+                 qPrintable(QStringLiteral("%1: %2").arg(
+                     alias, aliasRead.blockers.join(QStringLiteral("; ")))));
+        QCOMPARE(aliasRead.data, payload);
+    }
+
+    // All three aliases plus the hidden private metadata directory are present; the
+    // listing resolves each alias's shared inode so size_bytes reports the inode's
+    // 200-byte fork (not the alias's empty fork) and the hard-link flag is set.
     const auto rootListing =
         PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 50);
     QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
@@ -5729,6 +5743,18 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
                              rootListing.entries.cend(),
                              [&](const auto& e) { return e.name == name; }),
                  qPrintable(QStringLiteral("missing entry %1").arg(name)));
+    }
+    for (const auto& entry : rootListing.entries) {
+        if (entry.name == QStringLiteral("hl.txt") || entry.name == QStringLiteral("a.txt") ||
+            entry.name == QStringLiteral("b.txt")) {
+            QVERIFY2(entry.hard_link,
+                     qPrintable(QStringLiteral("%1 not flagged hard link").arg(entry.name)));
+            QCOMPARE(entry.size_bytes, static_cast<uint64_t>(payload.size()));
+            QVERIFY(entry.link_target_id != 0);
+        }
+        if (entry.name == QStringLiteral("sym.txt")) {
+            QVERIFY(entry.symbolic_link);
+        }
     }
     QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 50).ok,
              "consistency after hard-link create");
@@ -5748,6 +5774,11 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
         imagePath, QStringLiteral("/hl.txt"), options);
     QVERIFY2(del2.ok, qPrintable(del2.blockers.join(QStringLiteral("; "))));
     QVERIFY(del2.warnings.join(' ').contains(QStringLiteral("link count is now 1")));
+    // One alias remains (count 1); it still resolves through the inode to the data.
+    const auto lastLinkRead =
+        PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/a.txt"), 4096);
+    QVERIFY2(lastLinkRead.ok, qPrintable(lastLinkRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(lastLinkRead.data, payload);
     const auto del3 = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
         imagePath, QStringLiteral("/a.txt"), options);
     QVERIFY2(del3.ok, qPrintable(del3.blockers.join(QStringLiteral("; "))));
@@ -8393,6 +8424,97 @@ void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
          .options = options});
     QVERIFY(!tooSmall.ok);
     QVERIFY(tooSmall.blockers.join(' ').contains(QStringLiteral("nx_max_file_systems")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
+    // A5: insert a transparently-compressed file (inline zlib com.apple.decmpfs)
+    // and prove the byte-match round trip the macOS kernel performs: the writer
+    // stores the content in an embedded decmpfs xattr with no data stream, and the
+    // reader decodes that attribute back to the exact original bytes.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a5-base.apfs"));
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = base,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKA5"),
+                  .options = options})
+                 .ok,
+             "format A5 base");
+
+    // A compressible payload (>1 block uncompressed) that still fits an embedded
+    // decmpfs attribute once zlib-deflated.
+    QByteArray payload;
+    for (int line = 0; line < 400; ++line) {
+        payload.append(
+            QStringLiteral("APFS transparent compression round-trip line %1\n").arg(line).toUtf8());
+    }
+    QVERIFY(payload.size() > 4096);
+
+    const QString out = dir.filePath(QStringLiteral("a5-out.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = out,
+                                                        .file_name = QStringLiteral("doc.txt"),
+                                                        .file_data = payload,
+                                                        .compress_zlib = true,
+                                                        .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.new_xid, 3ULL);
+
+    // The listing reports the file's logical (uncompressed) size from the decmpfs
+    // header even though the inode carries no data stream.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
+    QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(payload.size()));
+
+    // Byte-match decode: the reader follows the decmpfs attribute and returns the
+    // exact uncompressed content.
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/doc.txt"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+
+    // A truncated read still decodes and returns just the requested prefix.
+    const auto partial =
+        PartitionApfsFileSystemReader::readFileFromImage(out, QStringLiteral("/doc.txt"), 100);
+    QVERIFY2(partial.ok, qPrintable(partial.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(partial.data, payload.left(100));
+
+    // The image's container superblock is self-consistent (object checksum intact,
+    // COW xid advanced); the inserted file allocated no data block (compressed
+    // inline, so the commit copied only the metadata chain).
+    QFile outImage(out);
+    QVERIFY(outImage.open(QIODevice::ReadOnly));
+    const QByteArray nxsb = outImage.read(4096);
+    outImage.close();
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    QCOMPARE(qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(nxsb.constData() + 0x10)),
+             3ULL);
+
+    // Fail-closed: an incompressible payload whose decmpfs value would exceed the
+    // embedded-xattr limit is rejected (resource-fork compression is a follow-on).
+    QByteArray incompressible(8192, '\0');
+    uint32_t state = 0x12'34'56'78U;
+    for (int i = 0; i < incompressible.size(); ++i) {
+        state = state * 1'103'515'245U + 12'345U;  // high-entropy LCG: zlib cannot shrink it
+        incompressible[i] = static_cast<char>(state >> 16);
+    }
+    const auto tooBig = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = base,
+         .written_image_path = dir.filePath(QStringLiteral("a5-toobig.apfs")),
+         .file_name = QStringLiteral("big.bin"),
+         .file_data = incompressible,
+         .compress_zlib = true,
+         .options = options});
+    QVERIFY(!tooBig.ok);
+    QVERIFY(tooBig.blockers.join(' ').contains(QStringLiteral("embedded-xattr limit")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

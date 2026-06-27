@@ -59,7 +59,11 @@ public:
             return result;
         }
         for (const auto& record : *records) {
-            result.entries.append(entryFor(record, parent));
+            PartitionHfsFileEntry entry = entryFor(record, parent);
+            if (record.hardLinkAlias()) {
+                enrichHardLinkEntrySize(record, &entry);
+            }
+            result.entries.append(entry);
         }
         result.blockers = m_blockers;
         result.warnings.append(m_warnings);
@@ -8071,25 +8075,78 @@ public:
     }
 
 private:
+    // Resolve a hard-link alias ('hlnk'/'hfs+') to the inode that holds the real
+    // data. The inode is the file named iNode<special> inside the reserved
+    // `␄␄␄␄HFS+ Private Data` metadata directory at the volume root. Mirrors the
+    // macOS kernel, which reads every alias's content through this indirection.
+    [[nodiscard]] std::optional<HfsCatalogRecord> resolveHardLinkInode(
+        const HfsCatalogRecord& alias) {
+        const auto privateDir = findChild(kHfsRootFolderId, hfsPrivateDataDirName());
+        if (!privateDir.has_value() || !privateDir->directory()) {
+            m_blockers.append(
+                QStringLiteral("HFS+ hard-link metadata directory is missing for alias %1")
+                    .arg(alias.name));
+            return std::nullopt;
+        }
+        const QString inodeName = QStringLiteral("iNode%1").arg(alias.bsd_special);
+        const auto inode = findChild(privateDir->catalog_id, inodeName);
+        if (!inode.has_value()) {
+            m_blockers.append(
+                QStringLiteral("HFS+ hard-link inode %1 referenced by alias %2 was not found")
+                    .arg(inodeName, alias.name));
+            return std::nullopt;
+        }
+        if (!inode->regularFile()) {
+            m_blockers.append(
+                QStringLiteral("HFS+ hard-link inode %1 is not a regular file").arg(inodeName));
+            return std::nullopt;
+        }
+        return inode;
+    }
+
+    // Resolve a path to the record whose fork a read should return: the file
+    // itself, or - for a hard-link alias, which carries no data of its own - the
+    // shared inode in the private metadata directory (the same indirection the
+    // macOS kernel follows). Sets result blockers and returns nullopt on failure.
+    [[nodiscard]] std::optional<HfsCatalogRecord> resolveReadTargetRecord(
+        const QString& path, PartitionHfsFileReadResult* result) {
+        const auto record = resolveCatalogPath(path);
+        if (!record.has_value()) {
+            result->blockers = m_blockers;
+            return std::nullopt;
+        }
+        if (!record->regularFile()) {
+            result->blockers.append(QStringLiteral("Selected HFS+ path is not a regular file"));
+            result->blockers.append(m_blockers);
+            return std::nullopt;
+        }
+        if (!record->hardLinkAlias()) {
+            return record;
+        }
+        const auto inode = resolveHardLinkInode(*record);
+        if (!inode.has_value()) {
+            result->blockers = m_blockers;
+            return std::nullopt;
+        }
+        return inode;
+    }
+
     [[nodiscard]] PartitionHfsFileReadResult readCatalogFileFork(const QString& path,
                                                                  uint64_t maxBytes,
                                                                  HfsForkSelector selector) {
         PartitionHfsFileReadResult result = baseResult();
-        const auto record = resolveCatalogPath(path);
-        if (!record.has_value()) {
-            result.blockers = m_blockers;
+        // The effective record may be the inode behind a hard-link alias; it can
+        // itself be decmpfs-compressed, so run the normal compression + fork path.
+        const auto target = resolveReadTargetRecord(path, &result);
+        if (!target.has_value()) {
             return result;
         }
-        if (!record->regularFile()) {
-            result.blockers.append(QStringLiteral("Selected HFS+ path is not a regular file"));
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        if (maybeReadCompressedCatalogFile(*record, selector, maxBytes, &result)) {
+        const HfsCatalogRecord& effective = *target;
+        if (maybeReadCompressedCatalogFile(effective, selector, maxBytes, &result)) {
             return result;
         }
         const bool resource = selector == HfsForkSelector::Resource;
-        const uint64_t forkSize = resource ? record->resource_size : record->data_size;
+        const uint64_t forkSize = resource ? effective.resource_size : effective.data_size;
         if (forkSize > maxBytes) {
             result.blockers.append(
                 QStringLiteral("Selected HFS+ %1 is larger than the read cap (%2 > %3 bytes)")
@@ -8099,8 +8156,8 @@ private:
             result.blockers.append(m_blockers);
             return result;
         }
-        const auto bytes = readForkBytes(resource ? record->resource_fork : record->data_fork,
-                                         record->catalog_id,
+        const auto bytes = readForkBytes(resource ? effective.resource_fork : effective.data_fork,
+                                         effective.catalog_id,
                                          resource ? kHfsResourceForkType : kHfsDataForkType,
                                          0,
                                          forkSize);
@@ -10638,6 +10695,13 @@ private:
             record.data_size = record.data_fork.logical_size;
             record.resource_fork = parseFork(node, resourceForkOffset);
             record.resource_size = record.resource_fork.logical_size;
+            // userInfo fdType/fdCreator @48/@52 and BSDInfo.special @44 identify
+            // hard-link aliases ('hlnk'/'hfs+', special = iNodeNum) and symlinks
+            // ('slnk'). All three offsets are < kHfsCatalogFileDataForkOffset (88),
+            // which the fork bounds check above already validated as present.
+            record.bsd_special = be32(node, key.data_offset + kHfsCatalogBsdSpecialOffset);
+            record.file_type = be32(node, key.data_offset + kHfsCatalogFileTypeOffset);
+            record.file_creator = be32(node, key.data_offset + kHfsCatalogFileCreatorOffset);
         }
         return record;
     }
@@ -10794,7 +10858,26 @@ private:
                 .size_bytes = record.data_size,
                 .resource_fork_size_bytes = record.resource_size,
                 .directory = record.directory(),
-                .regular_file = record.regularFile()};
+                .regular_file = record.regularFile(),
+                .hard_link = record.hardLinkAlias(),
+                .symbolic_link = record.symlink(),
+                .link_target_id = record.hardLinkAlias() ? record.bsd_special : 0};
+    }
+
+    // Fill a hard-link alias entry's size from its shared inode. A dangling alias
+    // must not fail the whole listing, so a failed resolution downgrades to a
+    // warning rather than a blocker.
+    void enrichHardLinkEntrySize(const HfsCatalogRecord& alias, PartitionHfsFileEntry* entry) {
+        const qsizetype blockerMark = m_blockers.size();
+        const auto inode = resolveHardLinkInode(alias);
+        if (inode.has_value()) {
+            entry->size_bytes = inode->data_size;
+            entry->resource_fork_size_bytes = inode->resource_size;
+            return;
+        }
+        while (m_blockers.size() > blockerMark) {
+            m_warnings.append(m_blockers.takeLast());
+        }
     }
 
     QIODevice* m_device{nullptr};

@@ -35,6 +35,12 @@ struct PartitionHfsFileEntry {
     uint64_t resource_fork_size_bytes{0};
     bool directory{false};
     bool regular_file{false};
+    // A hard-link alias resolves to a shared inode in the HFS+ private metadata
+    // directory; size_bytes then reflects the inode's fork, and link_target_id is
+    // the iNodeNum. symbolic_link marks an 'slnk' file whose data fork is a path.
+    bool hard_link{false};
+    bool symbolic_link{false};
+    uint32_t link_target_id{0};
 };
 
 struct PartitionHfsFileReadResult {

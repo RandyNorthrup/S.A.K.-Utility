@@ -6,6 +6,7 @@
 
 #include "sak/partition_apfs_writer.h"
 
+#include "sak/apfs_compression.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -167,9 +168,16 @@ constexpr uint16_t kApfsBtreeNodeLeaf = 0x0002;
 constexpr uint16_t kApfsBtreeNodeFixedKvSize = 0x0004;
 constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
 constexpr uint8_t kApfsRecordInode = 3;
+constexpr uint8_t kApfsRecordXattr = 4;
 constexpr uint8_t kApfsRecordDstreamId = 6;
 constexpr uint8_t kApfsRecordFileExtent = 8;
 constexpr uint8_t kApfsRecordDirectoryEntry = 9;
+// apfs_inode_val.bsd_flags @0x44 and apfs_inode_val.uncompressed_size @0x54; a
+// compressed file sets UF_COMPRESSED in the former and pairs a non-zero size in
+// the latter with APFS_INODE_HAS_UNCOMPRESSED_SIZE in internal_flags @0x30.
+constexpr qsizetype kApfsInodeBsdFlagsOffset = 0x44;
+constexpr qsizetype kApfsInodeUncompressedSizeOffset = 0x54;
+constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
 // Fixed timestamp written into generated records (an Apple-epoch nanosecond
 // value captured from newfs_apfs output; deterministic images need a
 // constant).
@@ -421,6 +429,7 @@ constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
 constexpr qsizetype kApfsFormattedRootInodeValueBytes = 0x60;
 constexpr qsizetype kApfsFormattedFileInodeValueBytes = 0x90;
 constexpr qsizetype kApfsFormattedRootInodeKeyBytes = 8;
+constexpr qsizetype kUint16Size = 2;
 constexpr qsizetype kApfsFileExtentKeyBytes = 16;
 constexpr qsizetype kApfsFileExtentValueBytes = 24;
 constexpr qsizetype kApfsFileExtentKeyLogicalOffset = 8;
@@ -767,6 +776,13 @@ struct ApfsRootFilePayload {
     // Empty: the data is the single contiguous run at dataStartBlock (the original
     // path, byte-identical). Non-empty: an explicit multi-run extent list.
     QVector<ApfsDataExtent> dataExtents;
+    // Transparent compression (A5): when set, the file carries no data stream;
+    // its logical content lives in an embedded com.apple.decmpfs xattr
+    // (decmpfsXattr) and its inode is UF_COMPRESSED with uncompressedSize bytes.
+    // `data` is empty for a compressed file (no extents are allocated).
+    bool compressed{false};
+    QByteArray decmpfsXattr;
+    uint64_t uncompressedSize{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -919,19 +935,51 @@ struct ApfsInodeParams {
     QString name;
     uint64_t sizeBytes = 0;
     int32_t childOrLinkCount = 1;
+    // A5: a transparently-compressed regular file keeps its content in a
+    // com.apple.decmpfs xattr, so it has no data-stream xfield. The inode is
+    // stamped UF_COMPRESSED and reports uncompressedSize via the dedicated field.
+    bool compressed = false;
+    uint64_t uncompressedSize = 0;
 };
 
+// internal_flags base (0x8000) plus APFS_INODE_HAS_UNCOMPRESSED_SIZE when the
+// inode reports an uncompressed_size (compressed files only).
+uint64_t inodeInternalFlags(bool compressed) {
+    return 0x8000ULL | (compressed ? kApfsInodeHasUncompressedSize : 0ULL);
+}
+
+// Stamp the compressed-file accounting onto a j_inode_val: UF_COMPRESSED routes
+// reads through the decmpfs xattr and uncompressed_size carries the logical size
+// (paired with APFS_INODE_HAS_UNCOMPRESSED_SIZE set in internal_flags).
+void stampCompressedInodeFields(QByteArray* value, bool compressed, uint64_t uncompressedSize) {
+    if (!compressed) {
+        return;
+    }
+    writeLe32(value, kApfsInodeBsdFlagsOffset, kApfsInodeBsdCompressed);
+    writeLe64(value, kApfsInodeUncompressedSizeOffset, uncompressedSize);
+}
+
 QByteArray inodeValue(const ApfsInodeParams& params) {
-    const auto& [parentId, privateId, mode, name, sizeBytes, childOrLinkCount] = params;
+    const auto& [parentId,
+                 privateId,
+                 mode,
+                 name,
+                 sizeBytes,
+                 childOrLinkCount,
+                 compressed,
+                 uncompressedSize] = params;
+    // A compressed regular file carries the NAME xfield only (its bytes live in the
+    // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM.
     const bool regularFile = (mode & kApfsModeRegularFile) == kApfsModeRegularFile;
+    const bool hasDstream = regularFile && !compressed;
     const QByteArray nameBytes = name.toUtf8() + '\0';
-    const qsizetype xfieldCount = regularFile ? 2 : 1;
+    const qsizetype xfieldCount = hasDstream ? 2 : 1;
     const qsizetype tocBytes = kApfsXfieldHeaderBytes + xfieldCount * kApfsXfieldTocEntryBytes;
     const qsizetype namePadded =
         ((nameBytes.size() + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
         kApfsXfieldAlignment;
     const qsizetype valueBytes = kApfsInodeXfieldsOffset + tocBytes + namePadded +
-                                 (regularFile ? kApfsDstreamMinBytes : 0);
+                                 (hasDstream ? kApfsDstreamMinBytes : 0);
     QByteArray value(valueBytes, '\0');
     writeLe64(&value, 0, parentId);
     writeLe64(&value, kApfsInodePrivateIdOffset, privateId);
@@ -939,19 +987,20 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     writeLe64(&value, 0x18, kApfsGeneratedTimestamp);
     writeLe64(&value, 0x20, kApfsGeneratedTimestamp);
     writeLe64(&value, 0x28, kApfsGeneratedTimestamp);
-    writeLe64(&value, 0x30, 0x8000);
+    writeLe64(&value, kApfsInodeInternalFlagsOffset, inodeInternalFlags(compressed));
     writeLe32(&value, 0x38, static_cast<uint32_t>(childOrLinkCount));
     const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
     writeLe16(&value, kApfsInodeModeOffset, mode | permissions);
+    stampCompressedInodeFields(&value, compressed, uncompressedSize);
     writeLe16(&value, kApfsInodeXfieldsOffset, static_cast<uint16_t>(xfieldCount));
     writeLe16(&value,
               kApfsInodeXfieldsOffset + kApfsXfieldDataBytesOffset,
-              static_cast<uint16_t>(namePadded + (regularFile ? kApfsDstreamMinBytes : 0)));
+              static_cast<uint16_t>(namePadded + (hasDstream ? kApfsDstreamMinBytes : 0)));
     qsizetype toc = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
     value[toc] = static_cast<char>(kApfsInodeNameField);
     value[toc + 1] = 0x02;
     writeLe16(&value, toc + kApfsXfieldSizeOffset, static_cast<uint16_t>(nameBytes.size()));
-    if (regularFile) {
+    if (hasDstream) {
         toc += kApfsXfieldTocEntryBytes;
         value[toc] = static_cast<char>(kApfsInodeDstreamField);
         value[toc + 1] = 0x08;
@@ -959,7 +1008,7 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     }
     const qsizetype dataStart = kApfsInodeXfieldsOffset + tocBytes;
     std::copy(nameBytes.cbegin(), nameBytes.cend(), value.begin() + dataStart);
-    if (regularFile) {
+    if (hasDstream) {
         const qsizetype dstream = dataStart + namePadded;
         writeLe64(&value, dstream, sizeBytes);
         writeLe64(&value,
@@ -991,6 +1040,29 @@ QByteArray directoryEntryValue(uint64_t fileId, uint16_t entryType) {
 QByteArray dstreamIdValue() {
     QByteArray value(4, '\0');
     writeLe32(&value, 0, 1);
+    return value;
+}
+
+// j_xattr_key: 8-byte key header (inode id | XATTR<<60), then le16 name_len (the
+// NUL-terminated name's byte count) and the name bytes including the NUL.
+QByteArray xattrKey(uint64_t inodeId, const QByteArray& name) {
+    const QByteArray nameBytes = name + '\0';
+    QByteArray key = fsKey(inodeId,
+                           kApfsRecordXattr,
+                           kApfsFormattedRootInodeKeyBytes + kUint16Size + nameBytes.size());
+    writeLe16(&key, kApfsFormattedRootInodeKeyBytes, static_cast<uint16_t>(nameBytes.size()));
+    std::copy(nameBytes.cbegin(),
+              nameBytes.cend(),
+              key.begin() + kApfsFormattedRootInodeKeyBytes + kUint16Size);
+    return key;
+}
+
+// j_xattr_val for an embedded attribute: le16 flags + le16 xdata_len + xdata.
+QByteArray xattrEmbeddedValue(uint16_t flags, const QByteArray& xdata) {
+    QByteArray value(2 * kUint16Size + xdata.size(), '\0');
+    writeLe16(&value, 0, flags);
+    writeLe16(&value, kUint16Size, static_cast<uint16_t>(xdata.size()));
+    std::copy(xdata.cbegin(), xdata.cend(), value.begin() + 2 * kUint16Size);
     return value;
 }
 
@@ -1049,9 +1121,18 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                                  .privateId = file.privateId,
                                  .mode = kApfsModeRegularFile,
                                  .name = file.fileName,
-                                 .sizeBytes = static_cast<uint64_t>(file.data.size())})});
+                                 .sizeBytes = static_cast<uint64_t>(file.data.size()),
+                                 .compressed = file.compressed,
+                                 .uncompressedSize = file.uncompressedSize})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)});
+    if (file.compressed) {
+        // A transparently-compressed file has no data stream: its content lives
+        // in an embedded com.apple.decmpfs xattr, and the inode is UF_COMPRESSED.
+        records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameCompressed)),
+                         xattrEmbeddedValue(kApfsXattrDataEmbedded, file.decmpfsXattr)});
+        return;
+    }
     records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
     // A zero-length file has a size-0 data stream and no allocated blocks, so it
     // carries no file-extent record; emitting one produces a zero-length extent
@@ -4068,6 +4149,12 @@ struct ApfsFileInsertRequest {
     // insert); non-zero reuses an existing id (an in-place patch that keeps the file's
     // identity while replacing its data extents).
     uint64_t explicitFileId{0};
+    // A5: insert the file transparently compressed. fileData stays empty (no data
+    // blocks are allocated); the content rides in decmpfsXattr (an embedded
+    // com.apple.decmpfs value) and the inode is UF_COMPRESSED / uncompressedSize.
+    bool compressed{false};
+    QByteArray decmpfsXattr;
+    uint64_t uncompressedSize{0};
 };
 
 struct ApfsChainedListInput {
@@ -4130,7 +4217,50 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
                    .fileId = newFileId,
                    .privateId = newFileId,
                    .dataStartBlock = in.newDataStart,
-                   .dataExtents = in.newDataExtents});
+                   .dataExtents = in.newDataExtents,
+                   .compressed = in.request.compressed,
+                   .decmpfsXattr = in.request.decmpfsXattr,
+                   .uncompressedSize = in.request.uncompressedSize});
+    return true;
+}
+
+// The inputs an in-place file-insert commit needs: the preserved tree, the new
+// file, and whether to store it transparently compressed (inline zlib decmpfs).
+struct ApfsFileInsertBuildInputs {
+    QVector<ApfsRootFilePayload> existingFiles;
+    QString fileName;
+    QByteArray fileData;
+    QVector<ApfsRootDirectoryPayload> directories;
+    bool compress{false};
+};
+
+// Build the in-place insert request for a (possibly compressed) file. When
+// compress is set the payload is stored as an inline zlib com.apple.decmpfs
+// xattr and no data blocks are allocated; the inode is UF_COMPRESSED. Fails
+// closed if the compressed attribute would exceed the embedded-xattr limit
+// (resource-fork compression for larger files is a documented follow-on).
+bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
+                            ApfsFileInsertRequest* request,
+                            QStringList* blockers) {
+    *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
+    if (!in.compress) {
+        return true;
+    }
+    bool fits = false;
+    const QByteArray decmpfs = apfsBuildInlineZlibDecmpfs(in.fileData, &fits);
+    if (!fits) {
+        blockers->append(
+            QStringLiteral("APFS inline zlib compression: the compressed com.apple.decmpfs "
+                           "attribute (%1 bytes) exceeds the embedded-xattr limit (%2 bytes); "
+                           "resource-fork compression for larger files is not yet supported")
+                .arg(decmpfs.size())
+                .arg(kApfsXattrMaxEmbeddedSize));
+        return false;
+    }
+    request->fileData.clear();
+    request->compressed = true;
+    request->decmpfsXattr = decmpfs;
+    request->uncompressedSize = static_cast<uint64_t>(in.fileData.size());
     return true;
 }
 
@@ -4610,6 +4740,28 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .chunk1BitmapBlock = chunk1BitmapBlock},
                             result,
                             blockers);
+}
+
+// Build a (possibly compressed) file-insert request and run the in-place
+// checkpoint commit against @device, recording the resulting xids/blocks on the
+// public result. Shared by the image-only and raw-device insert entry points so
+// the compression preflight + commit live in one place.
+void runInPlaceFileInsertCommit(QIODevice* device,
+                                const ApfsFileInsertBuildInputs& inputs,
+                                PartitionApfsImageCheckpointCommitResult* result) {
+    ApfsFileInsertRequest request;
+    if (!buildFileInsertRequest(inputs, &request, &result->blockers)) {
+        return;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceFileInsert(device, request, &commit, &commitBlockers)) {
+        result->previous_xid = commit.previous_xid;
+        result->new_xid = commit.new_xid;
+        result->checkpoint_map_block = commit.checkpoint_map_block;
+        result->superblock_block = commit.superblock_block;
+    }
+    result->blockers.append(commitBlockers);
 }
 
 struct ApfsFilePatchRequest {
@@ -12725,19 +12877,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                           &result.blockers)) {
         return result;
     }
-    ApfsInPlaceCheckpointResult commit;
-    QStringList commitBlockers;
-    if (commitInPlaceFileInsert(&image,
-                                {existingFiles, cleanFileName, request.file_data, directories},
-                                &commit,
-                                &commitBlockers)) {
-        result.previous_xid = commit.previous_xid;
-        result.new_xid = commit.new_xid;
-        result.checkpoint_map_block = commit.checkpoint_map_block;
-        result.superblock_block = commit.superblock_block;
-    }
+    runInPlaceFileInsertCommit(
+        &image,
+        {existingFiles, cleanFileName, request.file_data, directories, request.compress_zlib},
+        &result);
     image.close();
-    result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -12998,19 +13142,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
     if (!target) {
         return result;
     }
-    ApfsInPlaceCheckpointResult commit;
-    QStringList commitBlockers;
-    if (commitInPlaceFileInsert(target.get(),
-                                {existingFiles, cleanFileName, request.file_data, directories},
-                                &commit,
-                                &commitBlockers)) {
-        result.previous_xid = commit.previous_xid;
-        result.new_xid = commit.new_xid;
-        result.checkpoint_map_block = commit.checkpoint_map_block;
-        result.superblock_block = commit.superblock_block;
-    }
+    runInPlaceFileInsertCommit(
+        target.get(),
+        {existingFiles, cleanFileName, request.file_data, directories, request.compress_zlib},
+        &result);
     target->close();
-    result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }

@@ -407,6 +407,7 @@ struct CliInvocation {
     QString evidence_id;
     bool confirm_target{false};
     bool allow_raw_target{false};
+    bool compress_zlib{false};
 };
 
 std::optional<QString> fileNameForCommand(const QCommandLineParser& parser,
@@ -444,6 +445,7 @@ struct CliParserOptions {
     const QCommandLineOption* evidence{nullptr};
     const QCommandLineOption* confirm{nullptr};
     const QCommandLineOption* allow_raw{nullptr};
+    const QCommandLineOption* compress_zlib{nullptr};
 };
 
 struct CliNumericInputs {
@@ -554,7 +556,8 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
                          .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
                          .confirm_target = parser.isSet(*options.confirm),
-                         .allow_raw_target = parser.isSet(*options.allow_raw)};
+                         .allow_raw_target = parser.isSet(*options.allow_raw),
+                         .compress_zlib = parser.isSet(*options.compress_zlib)};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
@@ -1414,6 +1417,7 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
          .written_image_path = invocation.output_image_path,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .compress_zlib = invocation.compress_zlib,
          .options = imageWriteOptions(invocation.evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -1511,6 +1515,7 @@ std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& i
          .target_container_bytes = invocation.target_size_bytes,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .compress_zlib = invocation.compress_zlib,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -2070,6 +2075,10 @@ int main(int argc, char* argv[]) {
                                            QStringLiteral("Confirm destructive target mutation."));
     const QCommandLineOption allowRawOption({QStringLiteral("allow-raw-target")},
                                             QStringLiteral("Permit Windows raw-device mutation."));
+    const QCommandLineOption compressZlibOption(
+        {QStringLiteral("compress-zlib")},
+        QStringLiteral("Store the inserted file transparently compressed (inline zlib "
+                       "com.apple.decmpfs); for commit-image/raw-file-insert."));
     parser.addOptions({targetOption,
                        sizeOption,
                        blockSizeOption,
@@ -2086,7 +2095,8 @@ int main(int argc, char* argv[]) {
                        outputJsonOption,
                        evidenceOption,
                        confirmOption,
-                       allowRawOption});
+                       allowRawOption,
+                       compressZlibOption});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -2119,7 +2129,8 @@ int main(int argc, char* argv[]) {
                               .snapshot_name = &snapshotNameOption,
                               .evidence = &evidenceOption,
                               .confirm = &confirmOption,
-                              .allow_raw = &allowRawOption},
+                              .allow_raw = &allowRawOption,
+                              .compress_zlib = &compressZlibOption},
                              &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;

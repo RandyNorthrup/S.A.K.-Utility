@@ -6,6 +6,7 @@
 
 #include "sak/partition_apfs_file_system_reader.h"
 
+#include "sak/apfs_compression.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -76,8 +77,16 @@ constexpr uint64_t kApfsObjIdMask = 0x0F'FF'FF'FF'FF'FF'FF'FFULL;
 constexpr uint64_t kApfsObjTypeMask = 0xF0'00'00'00'00'00'00'00ULL;
 constexpr int kApfsObjTypeShift = 60;
 constexpr uint8_t kApfsRecordInode = 3;
+constexpr uint8_t kApfsRecordXattr = 4;
 constexpr uint8_t kApfsRecordFileExtent = 8;
 constexpr uint8_t kApfsRecordDirectoryEntry = 9;
+// j_xattr_key: 8-byte header then le16 name_len; j_xattr_val: le16 flags + le16
+// xdata_len + xdata.
+constexpr qsizetype kApfsXattrKeyNameLenOffset = 8;
+constexpr qsizetype kApfsXattrKeyNameOffset = 10;
+constexpr qsizetype kApfsXattrValueFlagsOffset = 0;
+constexpr qsizetype kApfsXattrValueXdataLenOffset = 2;
+constexpr qsizetype kApfsXattrValueXdataOffset = 4;
 constexpr uint16_t kApfsDirTypeDirectory = 4;
 constexpr uint16_t kApfsDirTypeRegularFile = 8;
 constexpr uint16_t kApfsDirTypeSymlink = 10;
@@ -372,6 +381,10 @@ struct FileExtentRecord {
 struct FileReadTarget {
     InodeRecord inode;
     uint64_t bytes_to_read{0};
+    // A5: a transparently-compressed file's content comes from its decmpfs
+    // attribute (decmpfs_xattr), not data-stream extents.
+    bool compressed{false};
+    QByteArray decmpfs_xattr;
 };
 
 struct FsTreeScanState {
@@ -585,12 +598,56 @@ private:
 
         const uint64_t effectiveMax =
             maxBytes == 0 ? kMaxFileReadBytes : std::min<uint64_t>(maxBytes, kMaxFileReadBytes);
+        // A compressed file has no data stream; its logical size is the decmpfs
+        // header's uncompressed_size, decoded from the attribute on read.
+        const auto decmpfs = decmpfsByInode_.constFind(record->file_id);
+        if (decmpfs != decmpfsByInode_.cend()) {
+            const auto header = apfsParseDecmpfsHeader(*decmpfs);
+            if (!header.has_value()) {
+                result->blockers.append(QStringLiteral("APFS decmpfs attribute is malformed"));
+                return std::nullopt;
+            }
+            const uint64_t logical = header->uncompressed_size;
+            const uint64_t bytesToRead = std::min<uint64_t>(logical, effectiveMax);
+            if (logical > bytesToRead) {
+                result->warnings.append(
+                    QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
+            }
+            return FileReadTarget{*inode, bytesToRead, true, *decmpfs};
+        }
         const uint64_t bytesToRead = std::min<uint64_t>(inode->size, effectiveMax);
         if (inode->size > bytesToRead) {
             result->warnings.append(
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
         }
         return FileReadTarget{*inode, bytesToRead};
+    }
+
+    // Decode a transparently-compressed file's content from its inline decmpfs
+    // attribute and append the requested prefix. The macOS kernel performs the
+    // identical reconstruction; this is the reader's byte-match decode (A5).
+    [[nodiscard]] bool appendCompressedFileData(const FileReadTarget& target,
+                                                PartitionApfsFileReadResult* result) {
+        const auto header = apfsParseDecmpfsHeader(target.decmpfs_xattr);
+        if (!header.has_value()) {
+            result->blockers.append(QStringLiteral("APFS decmpfs attribute is malformed"));
+            return false;
+        }
+        if (!apfsDecmpfsAlgoIsInline(header->algo)) {
+            result->blockers.append(
+                QStringLiteral("APFS resource-fork compression (algorithm %1) read is not yet "
+                               "supported; the inline decmpfs path is certified")
+                    .arg(header->algo));
+            return false;
+        }
+        const auto decoded = apfsDecodeInlineDecmpfs(target.decmpfs_xattr);
+        if (!decoded.has_value()) {
+            result->blockers.append(
+                QStringLiteral("APFS decmpfs decode failed for algorithm %1").arg(header->algo));
+            return false;
+        }
+        result->data = decoded->left(static_cast<qsizetype>(target.bytes_to_read));
+        return true;
     }
 
     [[nodiscard]] QVector<FileExtentRecord> sortedExtents(uint64_t privateId) const {
@@ -603,6 +660,9 @@ private:
 
     [[nodiscard]] bool appendFileData(const FileReadTarget& target,
                                       PartitionApfsFileReadResult* result) {
+        if (target.compressed) {
+            return appendCompressedFileData(target, result);
+        }
         const auto extents = sortedExtents(target.inode.private_id);
         if (target.bytes_to_read > 0 && extents.isEmpty()) {
             result->blockers.append(QStringLiteral("APFS file has no readable extents"));
@@ -1014,7 +1074,46 @@ private:
             parseInodeRecord(node, entry, objectId);
         } else if (recordType == kApfsRecordFileExtent) {
             parseFileExtentRecord(node, entry, objectId);
+        } else if (recordType == kApfsRecordXattr) {
+            parseXattrRecord(node, entry, objectId);
         }
+    }
+
+    // Capture an embedded com.apple.decmpfs attribute so a compressed file's
+    // logical content can be reconstructed from the attribute instead of the
+    // (absent) data stream. Resource-fork compression (dstream-backed) is a
+    // documented read follow-on; this handles the inline-xattr case.
+    void parseXattrRecord(const QByteArray& node, const BtreeEntryView& entry, uint64_t objectId) {
+        if (entry.key_length < kApfsXattrKeyNameOffset ||
+            entry.value_length < kApfsXattrValueXdataOffset) {
+            return;
+        }
+        const uint16_t nameLen = le16(node, entry.key_offset + kApfsXattrKeyNameLenOffset);
+        if (nameLen == 0 || entry.key_offset + kApfsXattrKeyNameOffset + nameLen >
+                                entry.key_offset + entry.key_length) {
+            return;
+        }
+        const qsizetype payloadLen = std::max<qsizetype>(0, nameLen - 1);
+        const QString name = QString::fromUtf8(
+            node.mid(entry.key_offset + kApfsXattrKeyNameOffset,
+                     std::min<qsizetype>(
+                         payloadLen, node.size() - (entry.key_offset + kApfsXattrKeyNameOffset))));
+        if (name != QLatin1StringView(kApfsXattrNameCompressed)) {
+            return;
+        }
+        const uint16_t flags = le16(node, entry.value_offset + kApfsXattrValueFlagsOffset);
+        const uint16_t xdataLen = le16(node, entry.value_offset + kApfsXattrValueXdataLenOffset);
+        if ((flags & kApfsXattrDataEmbedded) == 0) {
+            // Dstream-backed (resource-fork) decmpfs is a documented follow-on; the
+            // inline-embedded case below is the certified A5 read path.
+            return;
+        }
+        if (entry.value_offset + kApfsXattrValueXdataOffset + xdataLen >
+            entry.value_offset + entry.value_length) {
+            return;
+        }
+        decmpfsByInode_.insert(objectId,
+                               node.mid(entry.value_offset + kApfsXattrValueXdataOffset, xdataLen));
     }
 
     void parseDirectoryRecord(const QByteArray& node,
@@ -1198,6 +1297,15 @@ private:
         entry.path = childPath(parentPath, record.name);
         entry.object_id = record.file_id;
         entry.size_bytes = inode == inodeById_.cend() ? 0 : inode->size;
+        // A compressed file has no data stream (inode size 0); report its logical
+        // size from the decmpfs header so listings show the real size.
+        const auto decmpfs = decmpfsByInode_.constFind(record.file_id);
+        if (decmpfs != decmpfsByInode_.cend()) {
+            const auto header = apfsParseDecmpfsHeader(*decmpfs);
+            if (header.has_value()) {
+                entry.size_bytes = header->uncompressed_size;
+            }
+        }
         entry.directory = record.directory_type == kApfsDirTypeDirectory ||
                           (mode & kApfsModeTypeMask) == kApfsModeDirectory;
         entry.regular_file = record.directory_type == kApfsDirTypeRegularFile ||
@@ -1398,6 +1506,9 @@ private:
     QVector<DirectoryRecord> directoryRecords_;
     QHash<uint64_t, InodeRecord> inodeById_;
     QMultiHash<uint64_t, FileExtentRecord> extentsByOwner_;
+    // Embedded com.apple.decmpfs attribute value (16-byte header + inline payload)
+    // keyed by inode object id, for transparently-compressed files (A5).
+    QHash<uint64_t, QByteArray> decmpfsByInode_;
 };
 
 struct ApfsExportFrame {

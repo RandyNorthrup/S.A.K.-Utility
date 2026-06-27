@@ -467,6 +467,11 @@ struct PartitionApfsImageFileInsertCommitRequest {
     QString written_image_path;
     QString file_name;
     QByteArray file_data;
+    // A5: insert the file transparently compressed (inline zlib decmpfs). file_data
+    // is the uncompressed content; the writer stores it in a com.apple.decmpfs
+    // xattr and flags the inode UF_COMPRESSED. Requires the compressed value to fit
+    // an embedded xattr (<= 3804 bytes); larger files fail closed.
+    bool compress_zlib{false};
     PartitionApfsWriteOptions options;
 };
 
@@ -535,6 +540,9 @@ struct PartitionApfsRawFileInsertCommitRequest {
     uint64_t target_container_bytes{0};
     QString file_name;
     QByteArray file_data;
+    // A5: insert the file transparently compressed (inline zlib decmpfs). See
+    // PartitionApfsImageFileInsertCommitRequest::compress_zlib.
+    bool compress_zlib{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
