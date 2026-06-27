@@ -4753,42 +4753,64 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsAttributesNodePoolOnRoo
     const qsizetype attrHeader = static_cast<qsizetype>(kTestHfsAttributesStartBlock) *
                                      kTestHfsBlockSize +
                                  kTestHfsBTreeHeaderRecordOffset;
-    const uint32_t totalBefore = readBe32(readBytes(imagePath),
-                                          attrHeader + kTestHfsBTreeHeaderTotalNodesOffset);
 
-    // The attributes B-tree starts with free_nodes=0, so once the single leaf
-    // fills and a create forces a root-leaf split, the split must grow the
-    // attributes node pool (H-a) instead of failing closed.
-    bool grew = false;
+    // H-f: the streaming attributes B-tree engine grows the tree to arbitrary
+    // depth/width. Every inline create succeeds (no single-leaf cap), splitting
+    // leaves and growing the node pool as needed; the tree reaches depth >= 2.
     const QByteArray value(96, 'a');
-    for (int index = 0; index < 200 && !grew; ++index) {
-        const auto created = PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
+    const int created = 50;
+    for (int index = 0; index < created; ++index) {
+        const auto result = PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
             imagePath,
             18,
             QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
             value,
             options);
-        if (!created.ok) {
-            // After the root-leaf split the tree is depth 2; the current attributes
-            // engine inserts only into an empty/single-leaf tree, which is the
-            // expected stop condition once growth + the split have happened.
-            QVERIFY2(created.blockers.join(' ').contains(QStringLiteral("single-leaf")),
-                     qPrintable(created.blockers.join(QStringLiteral("; "))));
-            break;
-        }
-        grew = readBe32(readBytes(imagePath), attrHeader + kTestHfsBTreeHeaderTotalNodesOffset) >
-               totalBefore;
+        QVERIFY2(result.ok,
+                 qPrintable(QStringLiteral("attr%1: %2")
+                                .arg(index)
+                                .arg(result.blockers.join(QStringLiteral("; ")))));
     }
-    QVERIFY2(grew, "attributes B-tree node pool did not grow during the root-leaf split");
+    const uint16_t depth = readBe16(readBytes(imagePath),
+                                    attrHeader + kTestHfsBTreeHeaderTreeDepthOffset);
+    const uint32_t leafRecords = readBe32(readBytes(imagePath),
+                                          attrHeader + kTestHfsBTreeHeaderLeafRecordsOffset);
+    QVERIFY2(depth >= 2,
+             qPrintable(QStringLiteral("attributes tree depth %1 is not multi-leaf").arg(depth)));
+    QVERIFY2(leafRecords >= static_cast<uint32_t>(created),
+             qPrintable(
+                 QStringLiteral("leafRecords %1 < created %2").arg(leafRecords).arg(created)));
 
-    const uint32_t freeBlocksAfter = readBe32(readBytes(imagePath),
-                                              kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset);
-    QVERIFY(freeBlocksAfter < 37U);
+    // Every attribute reads back across the multi-leaf tree (the reader walks the
+    // leaf fLink chain).
+    for (int index : {0, created / 2, created - 1}) {
+        const auto readBack = PartitionHfsFileSystemReader::readAttributeValueFromImage(
+            imagePath,
+            18,
+            QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
+            1024);
+        QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(readBack.data, value);
+    }
+    QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath).ok,
+             "attributes tree consistency after multi-leaf create");
 
-    const auto readBack = PartitionHfsFileSystemReader::readAttributeValueFromImage(
-        imagePath, 18, QStringLiteral("org.sak.attr0000"), 1024);
-    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBack.data, value);
+    // Deleting attributes drains the multi-leaf tree (merge/collapse) and stays
+    // consistent; survivors still read back.
+    for (int index = 0; index < created; index += 2) {
+        const auto del = PartitionHfsFileSystemWriter::deleteAttributeValueFromImage(
+            imagePath,
+            18,
+            QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
+            options);
+        QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+    }
+    QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath).ok,
+             "attributes tree consistency after multi-leaf delete");
+    const auto survivor = PartitionHfsFileSystemReader::readAttributeValueFromImage(
+        imagePath, 18, QStringLiteral("org.sak.attr0001"), 1024);
+    QVERIFY2(survivor.ok, qPrintable(survivor.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(survivor.data, value);
 }
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords() {

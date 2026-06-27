@@ -3934,58 +3934,6 @@ private:
                                                          : (value & static_cast<quint8>(~mask)));
     }
 
-    struct HfsBTreeNodeAllocationRequest {
-        const HfsBTreeHeaderNodeContext* header{nullptr};
-        const HfsBTreeHeader* tree{nullptr};
-        QVector<uint32_t> must_be_allocated;
-        int count{0};
-        QString label;
-    };
-
-    [[nodiscard]] std::optional<QVector<uint32_t>> allocateBTreeNodesFromHeaderMap(
-        const HfsBTreeNodeAllocationRequest& request, QStringList* blockers) const {
-        const HfsBTreeHeaderNodeContext& header = *request.header;
-        const HfsBTreeHeader& tree = *request.tree;
-        const uint64_t mapCapacityBits = static_cast<uint64_t>(header.map_end - header.map_offset) *
-                                         kBitsPerByte;
-        if (static_cast<uint64_t>(tree.total_nodes) > mapCapacityBits) {
-            blockers->append(
-                QStringLiteral("HFS+ %1 B-tree node map spans multiple map nodes; split is blocked")
-                    .arg(request.label));
-            return std::nullopt;
-        }
-        if (tree.free_nodes < static_cast<uint32_t>(request.count)) {
-            blockers->append(
-                QStringLiteral("HFS+ %1 B-tree does not have enough free nodes for a split")
-                    .arg(request.label));
-            return std::nullopt;
-        }
-        for (uint32_t nodeNumber : request.must_be_allocated) {
-            if (!headerMapBitSet(header, nodeNumber)) {
-                blockers->append(
-                    QStringLiteral("HFS+ %1 B-tree node map is inconsistent with allocated nodes")
-                        .arg(request.label));
-                return std::nullopt;
-            }
-        }
-        QVector<uint32_t> allocated;
-        allocated.reserve(request.count);
-        for (uint32_t nodeNumber = 1;
-             nodeNumber < tree.total_nodes && allocated.size() < request.count;
-             ++nodeNumber) {
-            if (!headerMapBitSet(header, nodeNumber)) {
-                allocated.append(nodeNumber);
-            }
-        }
-        if (allocated.size() < request.count) {
-            blockers->append(
-                QStringLiteral("HFS+ %1 B-tree node map is inconsistent with the free-node counter")
-                    .arg(request.label));
-            return std::nullopt;
-        }
-        return allocated;
-    }
-
     [[nodiscard]] static std::optional<QByteArray> rawRecordKeyBytes(
         const QByteArray& recordBytes) {
         const uint16_t keyLength = be16(recordBytes, 0);
@@ -5907,9 +5855,14 @@ private:
     struct HfsAttributeRawRecord {
         uint32_t file_id{0};
         QString name;
+        // The attribute key's startBlock: 0 for inline/fork-data records, and the
+        // cumulative block offset for each kHFSPlusAttrExtents overflow record of a
+        // fork-backed attribute. Orders records within one (file_id, name).
+        uint32_t start_block{0};
         QByteArray bytes;
     };
 
+    // Mirrors Apple's CompareAttributeKeys: fileID, then attrName (binary Unicode).
     [[nodiscard]] static int compareAttributeRawKeys(uint32_t leftId,
                                                      const QString& leftName,
                                                      uint32_t rightId,
@@ -5920,13 +5873,659 @@ private:
         return compareCatalogNames(leftName, rightName, kHfsBinaryCompare);
     }
 
-    [[nodiscard]] static QByteArray attributeKeyBytes(uint32_t fileId, const QString& name) {
+    // Full record order: the attribute key, then startBlock (so a fork-data record
+    // at startBlock 0 sorts before its overflow extents records).
+    [[nodiscard]] static int compareAttributeRawRecords(const HfsAttributeRawRecord& left,
+                                                        const HfsAttributeRawRecord& right) {
+        const int byKey =
+            compareAttributeRawKeys(left.file_id, left.name, right.file_id, right.name);
+        if (byKey != 0) {
+            return byKey;
+        }
+        if (left.start_block != right.start_block) {
+            return left.start_block < right.start_block ? -1 : 1;
+        }
+        return 0;
+    }
+
+    // ---- H-f: multi-leaf attributes B-tree mutation engine ----
+    // Mirrors the extents-overflow engine (load -> edit -> split/merge -> rebuild
+    // index levels bottom-up -> compose header). Records are variable length, so
+    // leaf fit/split is by serialized record bytes (like the catalog tree). The
+    // engine carries the attributes B-tree header in the model, and reuses the
+    // HfsExtentsTreeMutation output type + applyAttributesTreeMutation writer.
+
+    struct HfsAttributesWorkingLeaf {
+        uint32_t node_number{0};
+        QVector<HfsAttributeRawRecord> records;
+        bool is_new{false};
+    };
+
+    struct HfsAttributesTreeModel {
+        HfsBTreeHeader tree;
+        HfsBTreeHeaderNodeContext header;
+        QVector<HfsAttributesWorkingLeaf> leaves;
+        QVector<uint32_t> old_index_nodes;
+        int working_free_nodes{0};
+        QVector<uint32_t> freed_nodes;
+    };
+
+    struct HfsAttributesTreeEdit {
+        // Remove every record for these (file_id, name) attributes (the fork-data
+        // record plus any overflow-extents records), then insert these records.
+        QVector<QPair<uint32_t, QString>> removals;
+        QVector<HfsAttributeRawRecord> insertions;
+    };
+
+    [[nodiscard]] qsizetype attributesLeafUsedBytes(
+        const QVector<HfsAttributeRawRecord>& records) const {
+        qsizetype total = kBTreeNodeDescriptorBytes;
+        for (const auto& record : records) {
+            total += record.bytes.size();
+        }
+        return total + (records.size() + 1) * kUint16Size;
+    }
+
+    [[nodiscard]] bool attributesLeafRecordsFit(
+        const HfsBTreeHeader& tree, const QVector<HfsAttributeRawRecord>& records) const {
+        return records.size() <= std::numeric_limits<uint16_t>::max() &&
+               attributesLeafUsedBytes(records) <= static_cast<qsizetype>(tree.node_size);
+    }
+
+    [[nodiscard]] bool attributesLeafUnderfull(
+        const HfsBTreeHeader& tree, const QVector<HfsAttributeRawRecord>& records) const {
+        return attributesLeafUsedBytes(records) * 2 < static_cast<qsizetype>(tree.node_size);
+    }
+
+    [[nodiscard]] bool loadAttributesModelLeaf(uint32_t nodeNumber,
+                                               HfsAttributesTreeModel* model,
+                                               QStringList* blockers) {
+        const auto records = loadSingleAttributesLeafRecords(model->tree, nodeNumber, blockers);
+        if (!records.has_value()) {
+            return false;
+        }
+        if (!headerMapBitSet(model->header, nodeNumber)) {
+            blockers->append(QStringLiteral(
+                "HFS+ attributes B-tree node map is inconsistent with allocated nodes"));
+            return false;
+        }
+        model->leaves.append(
+            HfsAttributesWorkingLeaf{.node_number = nodeNumber, .records = *records});
+        return true;
+    }
+
+    [[nodiscard]] bool loadAttributesModelChild(uint32_t childNode,
+                                                uint8_t parentHeight,
+                                                HfsAttributesTreeModel* model,
+                                                QStringList* blockers) {
+        if (model->leaves.size() > kHfsMaxMutationLeaves) {
+            blockers->append(
+                QStringLiteral("HFS+ attributes mutation supports at most %1 leaf nodes")
+                    .arg(kHfsMaxMutationLeaves));
+            return false;
+        }
+        return parentHeight == kHfsRootIndexNodeHeight
+                   ? loadAttributesModelLeaf(childNode, model, blockers)
+                   : loadAttributesModelIndexLevel(childNode, parentHeight - 1, model, blockers);
+    }
+
+    [[nodiscard]] bool loadAttributesModelIndexLevel(uint32_t nodeNumber,
+                                                     uint8_t expectedHeight,
+                                                     HfsAttributesTreeModel* model,
+                                                     QStringList* blockers) {
+        const auto indexNode = readAttributesNode(model->tree, nodeNumber);
+        if (!indexNode.has_value()) {
+            blockers->append(m_blockers);
+            return false;
+        }
+        if (static_cast<int8_t>(indexNode->at(kBTreeKindOffset)) != kBTreeIndexNode ||
+            static_cast<uint8_t>(indexNode->at(kBTreeHeightOffset)) != expectedHeight) {
+            blockers->append(QStringLiteral("Invalid HFS+ attributes index node"));
+            return false;
+        }
+        if (!headerMapBitSet(model->header, nodeNumber)) {
+            blockers->append(QStringLiteral(
+                "HFS+ attributes B-tree node map is inconsistent with allocated nodes"));
+            return false;
+        }
+        const auto entries = parseCatalogIndexEntries(*indexNode, blockers);
+        if (!entries.has_value() || entries->isEmpty()) {
+            if (entries.has_value()) {
+                blockers->append(QStringLiteral("Invalid HFS+ attributes index node"));
+            }
+            return false;
+        }
+        model->old_index_nodes.append(nodeNumber);
+        for (const auto& entry : *entries) {
+            if (!loadAttributesModelChild(entry.second, expectedHeight, model, blockers)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool loadAttributesDepthOneLeaf(HfsAttributesTreeModel* model,
+                                                  QStringList* blockers) {
+        const HfsBTreeHeader& tree = model->tree;
+        if (tree.root_node != tree.first_leaf_node || tree.first_leaf_node != tree.last_leaf_node) {
+            blockers->append(QStringLiteral("Invalid HFS+ attributes B-tree geometry"));
+            return false;
+        }
+        return loadAttributesModelLeaf(tree.root_node, model, blockers);
+    }
+
+    [[nodiscard]] bool loadAttributesDeepLevels(HfsAttributesTreeModel* model,
+                                                QStringList* blockers) {
+        const HfsBTreeHeader& tree = model->tree;
+        if (!loadAttributesModelIndexLevel(
+                tree.root_node, static_cast<uint8_t>(tree.tree_depth), model, blockers)) {
+            return false;
+        }
+        if (model->leaves.isEmpty() || model->leaves.size() > kHfsMaxMutationLeaves ||
+            model->leaves.first().node_number != tree.first_leaf_node ||
+            model->leaves.last().node_number != tree.last_leaf_node) {
+            blockers->append(QStringLiteral("Invalid HFS+ attributes B-tree geometry"));
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool loadAttributesModelLevels(HfsAttributesTreeModel* model,
+                                                 QStringList* blockers) {
+        const HfsBTreeHeader& tree = model->tree;
+        if (tree.tree_depth == 0 || tree.leaf_records == 0 || tree.first_leaf_node == 0) {
+            return true;
+        }
+        return tree.tree_depth == 1 ? loadAttributesDepthOneLeaf(model, blockers)
+                                    : loadAttributesDeepLevels(model, blockers);
+    }
+
+    [[nodiscard]] std::optional<HfsAttributesTreeModel> loadAttributesTreeForMutation(
+        const HfsBTreeHeader& tree, QStringList* blockers) {
+        if (tree.node_size < kMinimumHfsBTreeNodeSize) {
+            blockers->append(QStringLiteral("HFS+ attributes B-tree header is unavailable"));
+            return std::nullopt;
+        }
+        if (tree.tree_depth > kHfsMaxMutationTreeDepth) {
+            blockers->append(
+                QStringLiteral("HFS+ attributes mutation supports B-trees up to %1 levels deep")
+                    .arg(kHfsMaxMutationTreeDepth));
+            return std::nullopt;
+        }
+        auto header = loadAttributesHeaderNodeForMutation(tree, blockers);
+        if (!header.has_value()) {
+            return std::nullopt;
+        }
+        HfsAttributesTreeModel model;
+        model.tree = tree;
+        model.header = *header;
+        model.working_free_nodes = static_cast<int>(tree.free_nodes);
+        const uint64_t mapCapacityBits =
+            static_cast<uint64_t>(model.header.map_end - model.header.map_offset) * kBitsPerByte;
+        if (static_cast<uint64_t>(tree.total_nodes) > mapCapacityBits) {
+            blockers->append(QStringLiteral(
+                "HFS+ attributes B-tree node map spans multiple map nodes; mutation is blocked"));
+            return std::nullopt;
+        }
+        if (!headerMapBitSet(model.header, 0)) {
+            blockers->append(QStringLiteral(
+                "HFS+ attributes B-tree node map is inconsistent with allocated nodes"));
+            return std::nullopt;
+        }
+        if (!loadAttributesModelLevels(&model, blockers)) {
+            return std::nullopt;
+        }
+        return model;
+    }
+
+    [[nodiscard]] int attributesModelLeafForKey(const HfsAttributesTreeModel& model,
+                                                const HfsAttributeRawRecord& key) const {
+        int target = 0;
+        for (int index = 1; index < model.leaves.size(); ++index) {
+            const auto& records = model.leaves.at(index).records;
+            if (records.isEmpty()) {
+                continue;
+            }
+            if (compareAttributeRawRecords(records.first(), key) <= 0) {
+                target = index;
+            }
+        }
+        return target;
+    }
+
+    [[nodiscard]] int attributesModelLeafContainingKey(const HfsAttributesTreeModel& model,
+                                                       const HfsAttributeRawRecord& key) const {
+        for (int index = 0; index < model.leaves.size(); ++index) {
+            for (const auto& record : model.leaves.at(index).records) {
+                if (compareAttributeRawRecords(record, key) == 0) {
+                    return index;
+                }
+            }
+        }
+        return -1;
+    }
+
+    [[nodiscard]] std::optional<uint32_t> allocateAttributesModelNode(HfsAttributesTreeModel* model,
+                                                                      QStringList* blockers) const {
+        if (model->working_free_nodes < 1) {
+            blockers->append(QStringLiteral(
+                "HFS+ attributes B-tree does not have enough free nodes for a split"));
+            return std::nullopt;
+        }
+        for (uint32_t nodeNumber = 1; nodeNumber < model->tree.total_nodes; ++nodeNumber) {
+            if (!headerMapBitSet(model->header, nodeNumber) &&
+                !model->freed_nodes.contains(nodeNumber)) {
+                writeHeaderMapBit(&model->header, nodeNumber, true);
+                --model->working_free_nodes;
+                return nodeNumber;
+            }
+        }
+        // The free-node counter is positive but every unset map bit belongs to a
+        // node freed earlier in this same mutation (not reusable until commit), so
+        // the rebuild needs more total nodes -- phrased as exhaustion to trigger the
+        // node-pool growth retry.
+        blockers->append(QStringLiteral(
+            "HFS+ attributes B-tree does not have enough free nodes for the rebuild"));
+        return std::nullopt;
+    }
+
+    void freeAttributesModelNode(HfsAttributesTreeModel* model, uint32_t nodeNumber) {
+        writeHeaderMapBit(&model->header, nodeNumber, false);
+        ++model->working_free_nodes;
+        model->freed_nodes.append(nodeNumber);
+    }
+
+    void freeWorkingAttributesLeaf(HfsAttributesTreeModel* model,
+                                   const HfsAttributesWorkingLeaf& leaf) {
+        if (leaf.is_new) {
+            writeHeaderMapBit(&model->header, leaf.node_number, false);
+            ++model->working_free_nodes;
+        } else {
+            freeAttributesModelNode(model, leaf.node_number);
+        }
+    }
+
+    void removeAttributesModelAttrs(HfsAttributesTreeModel* model,
+                                    const QVector<QPair<uint32_t, QString>>& removals) const {
+        for (const auto& removal : removals) {
+            for (auto& leaf : model->leaves) {
+                leaf.records.erase(std::remove_if(leaf.records.begin(),
+                                                  leaf.records.end(),
+                                                  [&removal](const HfsAttributeRawRecord& record) {
+                                                      return record.file_id == removal.first &&
+                                                             record.name == removal.second;
+                                                  }),
+                                   leaf.records.end());
+            }
+        }
+    }
+
+    [[nodiscard]] bool applyAttributesModelInsertion(HfsAttributesTreeModel* model,
+                                                     const HfsAttributeRawRecord& insertion,
+                                                     QStringList* blockers) const {
+        if (attributesModelLeafContainingKey(*model, insertion) >= 0) {
+            blockers->append(QStringLiteral("HFS+ attribute insertion key already exists"));
+            return false;
+        }
+        if (model->leaves.isEmpty()) {
+            const auto node = allocateAttributesModelNode(model, blockers);
+            if (!node.has_value()) {
+                return false;
+            }
+            model->leaves.append(
+                HfsAttributesWorkingLeaf{.node_number = *node, .records = {}, .is_new = true});
+        }
+        auto& leaf = (*model).leaves[attributesModelLeafForKey(*model, insertion)];
+        leaf.records.append(insertion);
+        std::sort(leaf.records.begin(),
+                  leaf.records.end(),
+                  [](const HfsAttributeRawRecord& left, const HfsAttributeRawRecord& right) {
+                      return compareAttributeRawRecords(left, right) < 0;
+                  });
+        return true;
+    }
+
+    [[nodiscard]] bool applyAttributesEditToModel(HfsAttributesTreeModel* model,
+                                                  const HfsAttributesTreeEdit& edit,
+                                                  QStringList* blockers) const {
+        removeAttributesModelAttrs(model, edit.removals);
+        for (const auto& insertion : edit.insertions) {
+            if (!applyAttributesModelInsertion(model, insertion, blockers)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::optional<int> attributesRootLeafSplitIndex(
+        const QVector<HfsAttributeRawRecord>& records, QStringList* blockers) const {
+        if (records.size() < kHfsRootLeafSplitMinimumRecords) {
+            blockers->append(
+                QStringLiteral("HFS+ attributes root-leaf split needs at least two records"));
+            return std::nullopt;
+        }
+        const int split = static_cast<int>(records.size()) / kHfsRootLeafSplitHalves;
+        return std::max(1, std::min(split, static_cast<int>(records.size()) - 1));
+    }
+
+    [[nodiscard]] bool splitAttributesModelLeaf(HfsAttributesTreeModel* model,
+                                                int leafIndex,
+                                                QStringList* blockers) {
+        auto& leaf = (*model).leaves[leafIndex];
+        if (model->old_index_nodes.isEmpty() && !leaf.is_new) {
+            const auto newLeft = allocateAttributesModelNode(model, blockers);
+            if (!newLeft.has_value()) {
+                return false;
+            }
+            freeAttributesModelNode(model, leaf.node_number);
+            leaf.node_number = *newLeft;
+            leaf.is_new = true;
+        }
+        const auto splitIndex = attributesRootLeafSplitIndex(leaf.records, blockers);
+        if (!splitIndex.has_value()) {
+            return false;
+        }
+        const auto rightNode = allocateAttributesModelNode(model, blockers);
+        if (!rightNode.has_value()) {
+            return false;
+        }
+        HfsAttributesWorkingLeaf right;
+        right.node_number = *rightNode;
+        right.records = leaf.records.mid(*splitIndex);
+        right.is_new = true;
+        (*model).leaves[leafIndex].records = (*model).leaves[leafIndex].records.mid(0, *splitIndex);
+        model->leaves.insert(leafIndex + 1, right);
+        return true;
+    }
+
+    void mergeUnderfullAttributesLeaves(HfsAttributesTreeModel* model) {
+        for (int index = 0; index + 1 < model->leaves.size();) {
+            const auto& left = model->leaves.at(index);
+            const auto& right = model->leaves.at(index + 1);
+            QVector<HfsAttributeRawRecord> combined = left.records;
+            combined.append(right.records);
+            const bool eitherUnderfull = attributesLeafUnderfull(model->tree, left.records) ||
+                                         attributesLeafUnderfull(model->tree, right.records);
+            if (!eitherUnderfull || !attributesLeafRecordsFit(model->tree, combined)) {
+                ++index;
+                continue;
+            }
+            model->leaves[index].records = combined;
+            freeWorkingAttributesLeaf(model, right);
+            model->leaves.removeAt(index + 1);
+        }
+    }
+
+    [[nodiscard]] bool rebalanceAttributesModel(HfsAttributesTreeModel* model,
+                                                QStringList* blockers) {
+        for (int index = 0; index < model->leaves.size(); ++index) {
+            int guard = 0;
+            while (!attributesLeafRecordsFit(model->tree, model->leaves.at(index).records)) {
+                if (++guard > kHfsMaxMutationLeaves) {
+                    blockers->append(QStringLiteral("HFS+ attributes leaf split limit reached"));
+                    return false;
+                }
+                if (!splitAttributesModelLeaf(model, index, blockers)) {
+                    return false;
+                }
+            }
+        }
+        for (int index = model->leaves.size() - 1; index >= 0; --index) {
+            if (model->leaves.at(index).records.isEmpty()) {
+                freeWorkingAttributesLeaf(model, model->leaves.at(index));
+                model->leaves.removeAt(index);
+            }
+        }
+        mergeUnderfullAttributesLeaves(model);
+        if (model->leaves.size() > kHfsMaxMutationLeaves) {
+            blockers->append(
+                QStringLiteral("HFS+ attributes mutation supports at most %1 leaf nodes")
+                    .arg(kHfsMaxMutationLeaves));
+            return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool emitAttributesLeafWrites(HfsAttributesTreeModel* model,
+                                                HfsExtentsTreeMutation* mutation) const {
+        for (int index = 0; index < model->leaves.size(); ++index) {
+            const auto& leaf = model->leaves.at(index);
+            const uint32_t forward =
+                index + 1 < model->leaves.size() ? model->leaves.at(index + 1).node_number : 0;
+            const uint32_t backward = index > 0 ? model->leaves.at(index - 1).node_number : 0;
+            const auto bytes =
+                buildAttributesLeafNodeBytes(model->tree, forward, backward, leaf.records);
+            if (!bytes.has_value()) {
+                return false;
+            }
+            mutation->node_writes.append(HfsBTreeNodeWrite{leaf.node_number, *bytes});
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::optional<QVector<QPair<QByteArray, uint32_t>>> emitAttributesIndexLevel(
+        HfsAttributesTreeModel* model,
+        const QVector<QPair<QByteArray, uint32_t>>& entries,
+        uint8_t height,
+        HfsExtentsTreeMutation* mutation,
+        QStringList* blockers) const {
+        QVector<QPair<QByteArray, uint32_t>> parents;
+        QVector<HfsBTreeNodeWrite> levelWrites;
+        int cursor = 0;
+        while (cursor < entries.size()) {
+            qsizetype usedBytes = kBTreeNodeDescriptorBytes + kUint16Size;
+            int count = 0;
+            while (cursor + count < entries.size()) {
+                const auto& entry = entries.at(cursor + count);
+                const qsizetype entryBytes = entry.first.size() + kUint32Size + kUint16Size;
+                if (count > 0 && usedBytes + entryBytes > model->tree.node_size) {
+                    break;
+                }
+                usedBytes += entryBytes;
+                ++count;
+            }
+            const QVector<QPair<QByteArray, uint32_t>> group = entries.mid(cursor, count);
+            const auto indexBytes = buildIndexNodeBytes(
+                model->tree.node_size, group, height, QStringLiteral("attributes"), blockers);
+            if (!indexBytes.has_value()) {
+                return std::nullopt;
+            }
+            const auto nodeNumber = allocateAttributesModelNode(model, blockers);
+            if (!nodeNumber.has_value()) {
+                return std::nullopt;
+            }
+            levelWrites.append(HfsBTreeNodeWrite{*nodeNumber, *indexBytes});
+            parents.append({group.first().first, *nodeNumber});
+            cursor += count;
+        }
+        for (int index = 0; index < levelWrites.size(); ++index) {
+            writeBe32(&levelWrites[index].bytes,
+                      kBTreeNodeForwardLinkOffset,
+                      index + 1 < levelWrites.size() ? levelWrites.at(index + 1).node_number : 0);
+            writeBe32(&levelWrites[index].bytes,
+                      kBTreeNodeBackwardLinkOffset,
+                      index > 0 ? levelWrites.at(index - 1).node_number : 0);
+            mutation->node_writes.append(levelWrites.at(index));
+        }
+        return parents;
+    }
+
+    [[nodiscard]] std::optional<HfsCatalogTreeShape> emitAttributesIndexLevels(
+        HfsAttributesTreeModel* model,
+        HfsExtentsTreeMutation* mutation,
+        QStringList* blockers) const {
+        QVector<QPair<QByteArray, uint32_t>> entries;
+        entries.reserve(model->leaves.size());
+        for (const auto& leaf : model->leaves) {
+            const auto key = rawRecordKeyBytes(leaf.records.first().bytes);
+            if (!key.has_value()) {
+                blockers->append(QStringLiteral("HFS+ attributes index key is invalid"));
+                return std::nullopt;
+            }
+            entries.append({*key, leaf.node_number});
+        }
+        uint8_t height = kHfsRootIndexNodeHeight;
+        while (true) {
+            if (height > kHfsMaxMutationTreeDepth) {
+                blockers->append(
+                    QStringLiteral("HFS+ attributes mutation supports B-trees up to %1 levels deep")
+                        .arg(kHfsMaxMutationTreeDepth));
+                return std::nullopt;
+            }
+            const auto parents =
+                emitAttributesIndexLevel(model, entries, height, mutation, blockers);
+            if (!parents.has_value()) {
+                return std::nullopt;
+            }
+            if (parents->size() == 1) {
+                return HfsCatalogTreeShape{parents->first().second, height};
+            }
+            entries = *parents;
+            ++height;
+        }
+    }
+
+    void composeAttributesTreeHeader(const HfsAttributesTreeModel& model,
+                                     const HfsCatalogTreeShape& shape,
+                                     uint32_t leafRecords,
+                                     HfsExtentsTreeMutation* mutation) const {
+        const bool empty = model.leaves.isEmpty();
+        HfsBTreeHeaderNodeContext updatedHeader = model.header;
+        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
+        const uint16_t treeDepth = empty ? 0 : shape.tree_depth;
+        const uint32_t rootNode = empty ? 0 : shape.root_node;
+        const uint32_t firstLeaf = empty ? 0 : model.leaves.first().node_number;
+        const uint32_t lastLeaf = empty ? 0 : model.leaves.last().node_number;
+        writeBe16(&updatedHeader.node, headerRecord + kBTreeHeaderTreeDepthOffset, treeDepth);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderRootNodeOffset, rootNode);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderLeafRecordsOffset, leafRecords);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, firstLeaf);
+        writeBe32(&updatedHeader.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, lastLeaf);
+        writeBe32(&updatedHeader.node,
+                  headerRecord + kBTreeHeaderFreeNodesOffset,
+                  static_cast<uint32_t>(model.working_free_nodes));
+        mutation->header_node = updatedHeader.node;
+        mutation->updated_header = model.tree;
+        mutation->updated_header.tree_depth = treeDepth;
+        mutation->updated_header.root_node = rootNode;
+        mutation->updated_header.leaf_records = leafRecords;
+        mutation->updated_header.first_leaf_node = firstLeaf;
+        mutation->updated_header.last_leaf_node = lastLeaf;
+        mutation->updated_header.free_nodes = static_cast<uint32_t>(model.working_free_nodes);
+    }
+
+    [[nodiscard]] std::optional<HfsExtentsTreeMutation> emitAttributesTreeMutation(
+        HfsAttributesTreeModel* model, QStringList* blockers) {
+        HfsExtentsTreeMutation mutation;
+        for (uint32_t oldIndexNode : model->old_index_nodes) {
+            freeAttributesModelNode(model, oldIndexNode);
+        }
+        uint32_t leafRecords = 0;
+        for (const auto& leaf : model->leaves) {
+            leafRecords += static_cast<uint32_t>(leaf.records.size());
+        }
+        if (!emitAttributesLeafWrites(model, &mutation)) {
+            blockers->append(QStringLiteral("HFS+ attributes leaf rebuild failed"));
+            return std::nullopt;
+        }
+        HfsCatalogTreeShape shape{model->leaves.isEmpty() ? 0 : model->leaves.first().node_number,
+                                  1};
+        if (model->leaves.size() > 1) {
+            const auto indexShape = emitAttributesIndexLevels(model, &mutation, blockers);
+            if (!indexShape.has_value()) {
+                return std::nullopt;
+            }
+            shape = *indexShape;
+        }
+        for (uint32_t freed : model->freed_nodes) {
+            mutation.post_commit_writes.append(
+                HfsBTreeNodeWrite{freed, QByteArray(model->tree.node_size, '\0')});
+        }
+        composeAttributesTreeHeader(*model, shape, leafRecords, &mutation);
+        return mutation;
+    }
+
+    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesStreamingMutationOnce(
+        const HfsBTreeHeader& tree, const HfsAttributesTreeEdit& edit, QStringList* blockers) {
+        auto model = loadAttributesTreeForMutation(tree, blockers);
+        if (!model.has_value()) {
+            return std::nullopt;
+        }
+        if (!applyAttributesEditToModel(&*model, edit, blockers)) {
+            return std::nullopt;
+        }
+        if (!rebalanceAttributesModel(&*model, blockers)) {
+            return std::nullopt;
+        }
+        return emitAttributesTreeMutation(&*model, blockers);
+    }
+
+    // Like withCatalogNodePoolGrowth, but for the attributes B-tree (whose header is
+    // parsed on demand rather than held in a member). A streaming rebuild rewrites
+    // every index level, so a deep/wide tree needs far more free nodes than a single
+    // split path; the target doubles each retry until the prepare fits or the volume
+    // cannot grow further.
+    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesStreamingMutation(
+        const HfsBTreeHeader& tree, const HfsAttributesTreeEdit& edit, QStringList* blockers) {
+        const QStringList saved = m_blockers;
+        QStringList firstAttempt;
+        auto mutation = prepareAttributesStreamingMutationOnce(tree, edit, &firstAttempt);
+        if (mutation.has_value()) {
+            return mutation;
+        }
+        if (!blockersIndicateNodeExhaustion(firstAttempt)) {
+            blockers->append(firstAttempt);
+            return std::nullopt;
+        }
+        uint32_t target = tree.free_nodes + static_cast<uint32_t>(tree.tree_depth) +
+                          kHfsNodePoolGrowthReserve;
+        while (true) {
+            m_blockers = saved;
+            HfsBTreeHeader header;
+            if (!loadAttributeHeader(&header)) {
+                blockers->append(m_blockers);
+                return std::nullopt;
+            }
+            if (!ensureAttributesFreeNodes(header, target, blockers)) {
+                return std::nullopt;
+            }
+            m_blockers = saved;
+            HfsBTreeHeader grown;
+            if (!loadAttributeHeader(&grown)) {
+                blockers->append(m_blockers);
+                return std::nullopt;
+            }
+            QStringList retry;
+            mutation = prepareAttributesStreamingMutationOnce(grown, edit, &retry);
+            if (mutation.has_value()) {
+                return mutation;
+            }
+            if (!blockersIndicateNodeExhaustion(retry) || target > kHfsMaxNodePoolGrowthTarget) {
+                blockers->append(retry);
+                return std::nullopt;
+            }
+            target *= 2;
+        }
+    }
+
+    // Single-record insert routed through the streaming multi-leaf engine (H-f),
+    // so inline + fork-data inserts grow the attributes B-tree to arbitrary depth.
+    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesTreeInsert(
+        const HfsBTreeHeader& tree, const HfsAttributeRawRecord& insertion, QStringList* blockers) {
+        HfsAttributesTreeEdit edit;
+        edit.insertions.append(insertion);
+        return prepareAttributesStreamingMutation(tree, edit, blockers);
+    }
+
+    [[nodiscard]] static QByteArray attributeKeyBytes(uint32_t fileId,
+                                                      const QString& name,
+                                                      uint32_t startBlock = 0) {
         const auto keyLength = static_cast<uint16_t>(kHfsAttributeKeyNameOffset - kUint16Size +
                                                      name.size() * kUint16Size);
         QByteArray key(kUint16Size + keyLength, '\0');
         writeBe16(&key, 0, keyLength);
         writeBe32(&key, kHfsAttributeKeyFileIdOffset, fileId);
-        writeBe32(&key, kHfsAttributeKeyStartBlockOffset, 0);
+        writeBe32(&key, kHfsAttributeKeyStartBlockOffset, startBlock);
         writeBe16(&key, kHfsAttributeKeyNameLengthOffset, static_cast<uint16_t>(name.size()));
         for (qsizetype index = 0; index < name.size(); ++index) {
             writeBe16(&key,
@@ -6016,10 +6615,11 @@ private:
                                        start + kHfsAttributeKeyNameOffset +
                                            static_cast<qsizetype>(charIndex) * kUint16Size)));
             }
-            records.append(
-                HfsAttributeRawRecord{.file_id = be32(*node, start + kHfsAttributeKeyFileIdOffset),
-                                      .name = name,
-                                      .bytes = node->mid(start, end - start)});
+            records.append(HfsAttributeRawRecord{
+                .file_id = be32(*node, start + kHfsAttributeKeyFileIdOffset),
+                .name = name,
+                .start_block = be32(*node, start + kHfsAttributeKeyStartBlockOffset),
+                .bytes = node->mid(start, end - start)});
         }
         return records;
     }
@@ -6057,237 +6657,6 @@ private:
         return parseBTreeHeaderNodeForMutation(*node, QStringLiteral("attributes"), blockers);
     }
 
-    [[nodiscard]] std::optional<QVector<HfsAttributeRawRecord>> collectAttributesRecordsForInsert(
-        const HfsBTreeHeader& tree,
-        bool treeIsEmpty,
-        const HfsAttributeRawRecord& insertion,
-        QStringList* blockers) {
-        QVector<HfsAttributeRawRecord> records;
-        if (!treeIsEmpty) {
-            const auto existing =
-                loadSingleAttributesLeafRecords(tree, tree.first_leaf_node, blockers);
-            if (!existing.has_value()) {
-                return std::nullopt;
-            }
-            records = *existing;
-        }
-        for (const auto& existing : records) {
-            if (compareAttributeRawKeys(
-                    existing.file_id, existing.name, insertion.file_id, insertion.name) == 0) {
-                blockers->append(QStringLiteral("HFS+ attribute already exists"));
-                return std::nullopt;
-            }
-        }
-        records.append(insertion);
-        std::sort(records.begin(),
-                  records.end(),
-                  [](const HfsAttributeRawRecord& left, const HfsAttributeRawRecord& right) {
-                      return compareAttributeRawKeys(
-                                 left.file_id, left.name, right.file_id, right.name) < 0;
-                  });
-        return records;
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesTreeInsert(
-        const HfsBTreeHeader& tree, const HfsAttributeRawRecord& insertion, QStringList* blockers) {
-        const QStringList saved = m_blockers;
-        QStringList firstAttempt;
-        auto mutation = prepareAttributesTreeInsertOnce(tree, insertion, &firstAttempt);
-        if (mutation.has_value()) {
-            return mutation;
-        }
-        if (!blockersIndicateNodeExhaustion(firstAttempt)) {
-            blockers->append(firstAttempt);
-            return std::nullopt;
-        }
-        m_blockers = saved;
-        if (!ensureAttributesFreeNodes(tree,
-                                       static_cast<uint32_t>(tree.tree_depth) +
-                                           kHfsNodePoolGrowthReserve,
-                                       blockers)) {
-            return std::nullopt;
-        }
-        HfsBTreeHeader grown;
-        if (!loadAttributeHeader(&grown)) {
-            blockers->append(m_blockers);
-            return std::nullopt;
-        }
-        return prepareAttributesTreeInsertOnce(grown, insertion, blockers);
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesTreeInsertOnce(
-        const HfsBTreeHeader& tree, const HfsAttributeRawRecord& insertion, QStringList* blockers) {
-        const bool treeIsEmpty = tree.leaf_records == 0 || tree.first_leaf_node == 0;
-        if (!treeIsEmpty && (tree.tree_depth != 1 || tree.first_leaf_node != tree.last_leaf_node ||
-                             tree.root_node != tree.first_leaf_node)) {
-            blockers->append(
-                QStringLiteral("HFS+ attribute create currently requires an empty or single-leaf "
-                               "attributes B-tree"));
-            return std::nullopt;
-        }
-        const auto collected =
-            collectAttributesRecordsForInsert(tree, treeIsEmpty, insertion, blockers);
-        if (!collected.has_value()) {
-            return std::nullopt;
-        }
-        const QVector<HfsAttributeRawRecord>& records = *collected;
-
-        auto header = loadAttributesHeaderNodeForMutation(tree, blockers);
-        if (!header.has_value()) {
-            return std::nullopt;
-        }
-        HfsExtentsTreeMutation mutation;
-        mutation.updated_header = tree;
-
-        if (treeIsEmpty) {
-            return buildAttributesTreeMaterialize(
-                tree, *header, records, std::move(mutation), blockers);
-        }
-
-        const auto singleLeaf = buildAttributesLeafNodeBytes(tree, 0, 0, records);
-        if (singleLeaf.has_value()) {
-            HfsBTreeHeaderNodeContext updated = *header;
-            writeBe32(&updated.node,
-                      kBTreeHeaderRecordOffset + kBTreeHeaderLeafRecordsOffset,
-                      static_cast<uint32_t>(records.size()));
-            mutation.leaf_rewrite = HfsBTreeNodeWrite{tree.first_leaf_node, *singleLeaf};
-            mutation.header_node = updated.node;
-            mutation.updated_header.leaf_records = static_cast<uint32_t>(records.size());
-            return mutation;
-        }
-        return buildAttributesTreeRootLeafSplit(
-            tree, *header, records, std::move(mutation), blockers);
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildAttributesTreeMaterialize(
-        const HfsBTreeHeader& tree,
-        const HfsBTreeHeaderNodeContext& header,
-        const QVector<HfsAttributeRawRecord>& records,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) const {
-        const auto allocated =
-            allocateBTreeNodesFromHeaderMap({.header = &header,
-                                             .tree = &tree,
-                                             .must_be_allocated = {0},
-                                             .count = 1,
-                                             .label = QStringLiteral("attributes")},
-                                            blockers);
-        if (!allocated.has_value()) {
-            return std::nullopt;
-        }
-        const uint32_t leafNode = allocated->first();
-        const auto leafBytes = buildAttributesLeafNodeBytes(tree, 0, 0, records);
-        if (!leafBytes.has_value()) {
-            blockers->append(
-                QStringLiteral("HFS+ attribute records do not fit a single new leaf node"));
-            return std::nullopt;
-        }
-        HfsBTreeHeaderNodeContext updated = header;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 1);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, leafNode);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderLeafRecordsOffset,
-                  static_cast<uint32_t>(records.size()));
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, leafNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFreeNodesOffset, tree.free_nodes - 1);
-        writeHeaderMapBit(&updated, leafNode, true);
-        mutation.materialize = true;
-        mutation.node_writes.append(HfsBTreeNodeWrite{leafNode, *leafBytes});
-        mutation.header_node = updated.node;
-        mutation.updated_header.tree_depth = 1;
-        mutation.updated_header.root_node = leafNode;
-        mutation.updated_header.leaf_records = static_cast<uint32_t>(records.size());
-        mutation.updated_header.first_leaf_node = leafNode;
-        mutation.updated_header.last_leaf_node = leafNode;
-        mutation.updated_header.free_nodes = tree.free_nodes - 1;
-        return mutation;
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> buildAttributesTreeRootLeafSplit(
-        const HfsBTreeHeader& tree,
-        const HfsBTreeHeaderNodeContext& header,
-        const QVector<HfsAttributeRawRecord>& records,
-        HfsExtentsTreeMutation mutation,
-        QStringList* blockers) {
-        if ((tree.attributes_mask & kBTreeBigKeysMask) == 0 ||
-            (tree.attributes_mask & kBTreeVariableIndexKeysMask) == 0) {
-            blockers->append(QStringLiteral(
-                "HFS+ attributes B-tree split requires big keys and variable-length index keys"));
-            return std::nullopt;
-        }
-        HfsBTreeHeaderNodeContext working = header;
-        const auto allocated =
-            allocateBTreeNodesFromHeaderMap({.header = &working,
-                                             .tree = &tree,
-                                             .must_be_allocated = {0, tree.first_leaf_node},
-                                             .count = kHfsRootLeafSplitNodesNeeded,
-                                             .label = QStringLiteral("attributes")},
-                                            blockers);
-        if (!allocated.has_value()) {
-            return std::nullopt;
-        }
-        const uint32_t leftNode = allocated->at(kHfsSplitLeftNodeSlot);
-        const uint32_t rightNode = allocated->at(kHfsSplitRightNodeSlot);
-        const uint32_t indexNode = allocated->at(kHfsSplitIndexNodeSlot);
-        const int splitIndex = std::max(1,
-                                        static_cast<int>(records.size()) / kHfsRootLeafSplitHalves);
-        const QVector<HfsAttributeRawRecord> leftRecords = records.mid(0, splitIndex);
-        const QVector<HfsAttributeRawRecord> rightRecords = records.mid(splitIndex);
-        const auto leftBytes = buildAttributesLeafNodeBytes(tree, rightNode, 0, leftRecords);
-        const auto rightBytes = buildAttributesLeafNodeBytes(tree, 0, leftNode, rightRecords);
-        if (!leftBytes.has_value() || !rightBytes.has_value()) {
-            blockers->append(QStringLiteral(
-                "HFS+ attributes root-leaf split could not fit records into two leaf nodes"));
-            return std::nullopt;
-        }
-        const auto leftKey = rawRecordKeyBytes(leftRecords.first().bytes);
-        const auto rightKey = rawRecordKeyBytes(rightRecords.first().bytes);
-        if (!leftKey.has_value() || !rightKey.has_value()) {
-            blockers->append(QStringLiteral("HFS+ attributes split index keys are invalid"));
-            return std::nullopt;
-        }
-        const auto indexBytes = buildIndexNodeBytes(tree.node_size,
-                                                    {{*leftKey, leftNode}, {*rightKey, rightNode}},
-                                                    kHfsRootIndexNodeHeight,
-                                                    QStringLiteral("attributes"),
-                                                    blockers);
-        if (!indexBytes.has_value()) {
-            return std::nullopt;
-        }
-        HfsBTreeHeaderNodeContext updated = working;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        writeBe16(&updated.node,
-                  headerRecord + kBTreeHeaderTreeDepthOffset,
-                  kHfsRootLeafSplitTreeDepth);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, indexNode);
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderLeafRecordsOffset,
-                  static_cast<uint32_t>(records.size()));
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, leftNode);
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, rightNode);
-        const uint32_t newFreeNodes =
-            tree.free_nodes -
-            std::min<uint32_t>(tree.free_nodes,
-                               static_cast<uint32_t>(-kHfsRootLeafSplitFreeNodeDelta));
-        writeBe32(&updated.node, headerRecord + kBTreeHeaderFreeNodesOffset, newFreeNodes);
-        writeHeaderMapBit(&updated, tree.first_leaf_node, false);
-        mutation.split = true;
-        mutation.node_writes.append(HfsBTreeNodeWrite{leftNode, *leftBytes});
-        mutation.node_writes.append(HfsBTreeNodeWrite{rightNode, *rightBytes});
-        mutation.node_writes.append(HfsBTreeNodeWrite{indexNode, *indexBytes});
-        mutation.post_commit_writes.append(
-            HfsBTreeNodeWrite{tree.first_leaf_node, QByteArray(tree.node_size, '\0')});
-        mutation.header_node = updated.node;
-        mutation.updated_header.tree_depth = kHfsRootLeafSplitTreeDepth;
-        mutation.updated_header.root_node = indexNode;
-        mutation.updated_header.leaf_records = static_cast<uint32_t>(records.size());
-        mutation.updated_header.first_leaf_node = leftNode;
-        mutation.updated_header.last_leaf_node = rightNode;
-        mutation.updated_header.free_nodes = newFreeNodes;
-        return mutation;
-    }
 
     [[nodiscard]] std::optional<HfsRawCatalogRecord> findCatalogModelFileOrFolderRecord(
         const HfsCatalogTreeModel& model, uint32_t fileId) const {
@@ -6511,6 +6880,68 @@ private:
         return record;
     }
 
+    // A kHFSPlusAttrExtents overflow record (recordType 0x30): the attribute key
+    // carries the cumulative startBlock, the payload an 8-slot HFSPlusExtentRecord
+    // of the overflow extents. Up to eight extents per record.
+    [[nodiscard]] static QByteArray attributeExtentsRecordBytes(uint32_t fileId,
+                                                                const QString& name,
+                                                                uint32_t startBlock,
+                                                                const QVector<HfsExtent>& extents) {
+        QByteArray record = attributeKeyBytes(fileId, name, startBlock);
+        QByteArray payload(kHfsAttributeForkDataOffset + kHfsExtentsRecordBytes, '\0');
+        writeBe32(&payload, 0, kHfsAttributeExtentsRecord);
+        const int count = std::min<int>(static_cast<int>(extents.size()), kHfsExtentCount);
+        for (int index = 0; index < count; ++index) {
+            const qsizetype offset = kHfsAttributeForkDataOffset + index * kHfsExtentBytes;
+            writeBe32(&payload, offset + kHfsExtentStartBlockOffset, extents.at(index).start_block);
+            writeBe32(&payload, offset + kHfsExtentBlockCountOffset, extents.at(index).block_count);
+        }
+        record.append(payload);
+        return record;
+    }
+
+    // Build the full attribute record set for a fork-backed attribute: the
+    // fork-data record (startBlock 0, theFork.totalBlocks = ALL blocks, first 8
+    // extents) plus one kHFSPlusAttrExtents overflow record per additional group
+    // of up to 8 extents, keyed by the cumulative block offset. Mirrors the
+    // catalog file extents-overflow accounting (fsck_hfs CheckAttributeRecord
+    // requires forkData.totalBlocks == sum of every extent across these records).
+    [[nodiscard]] QVector<HfsAttributeRawRecord> buildForkAttributeRecordSet(
+        uint32_t fileId, const QString& name, const HfsForkData& fork) const {
+        HfsForkData head = fork;
+        if (head.extents.size() > kHfsExtentCount) {
+            head.extents = head.extents.mid(0, kHfsExtentCount);
+        }
+        QVector<HfsAttributeRawRecord> records{
+            HfsAttributeRawRecord{.file_id = fileId,
+                                  .name = name,
+                                  .start_block = 0,
+                                  .bytes = forkAttributeRecordBytes(fileId, name, head)}};
+        uint32_t covered = 0;
+        QVector<HfsExtent> group;
+        uint32_t groupStart = 0;
+        for (int index = 0; index < fork.extents.size(); ++index) {
+            if (index >= kHfsExtentCount) {
+                if (((index - kHfsExtentCount) % kHfsExtentCount) == 0) {
+                    group.clear();
+                    groupStart = covered;
+                }
+                group.append(fork.extents.at(index));
+                const bool lastInGroup = group.size() == kHfsExtentCount ||
+                                         index + 1 == fork.extents.size();
+                if (lastInGroup) {
+                    records.append(HfsAttributeRawRecord{
+                        .file_id = fileId,
+                        .name = name,
+                        .start_block = groupStart,
+                        .bytes = attributeExtentsRecordBytes(fileId, name, groupStart, group)});
+                }
+            }
+            covered += fork.extents.at(index).block_count;
+        }
+        return records;
+    }
+
     struct HfsForkAttributeCreatePlan {
         HfsForkData fork;
         QVector<HfsAllocationBitmapByte> allocation_bytes;
@@ -6539,11 +6970,6 @@ private:
         if (!extents.has_value()) {
             return std::nullopt;
         }
-        if (extents->size() > kHfsExtentCount) {
-            blockers->append(QStringLiteral(
-                "HFS+ attribute fork would need extents-overflow records; create is blocked"));
-            return std::nullopt;
-        }
         const auto allocationBytes = prepareAllocationBitmapSet(*extents, blockers);
         if (!allocationBytes.has_value()) {
             return std::nullopt;
@@ -6554,11 +6980,13 @@ private:
         plan.fork.extents = *extents;
         plan.allocation_bytes = *allocationBytes;
         plan.allocated_blocks = *requiredBlocks;
-        const HfsAttributeRawRecord insertion{
-            .file_id = fileId,
-            .name = name,
-            .bytes = forkAttributeRecordBytes(fileId, name, plan.fork)};
-        const auto mutation = prepareAttributesTreeInsert(tree, insertion, blockers);
+        // A fork attribute with more than 8 fragments needs kHFSPlusAttrExtents
+        // overflow records (fork-data record holds the first 8; overflow records
+        // hold the rest, keyed by cumulative startBlock). The streaming engine
+        // inserts the whole record set across as many leaves as needed.
+        HfsAttributesTreeEdit edit;
+        edit.insertions = buildForkAttributeRecordSet(fileId, name, plan.fork);
+        const auto mutation = prepareAttributesStreamingMutation(tree, edit, blockers);
         if (!mutation.has_value()) {
             return std::nullopt;
         }
@@ -6685,133 +7113,12 @@ private:
 public:
 private:
     struct HfsAttributeDeleteSelection {
-        QVector<HfsAttributeRawRecord> remaining;
-        QByteArray removed_bytes;
         HfsForkData removed_fork;
+        bool found{false};
         bool fork_backed{false};
         bool last_attribute_for_file{false};
     };
 
-    [[nodiscard]] bool partitionAttributeRecordsForDelete(
-        const QVector<HfsAttributeRawRecord>& records,
-        uint32_t fileId,
-        const QString& name,
-        HfsAttributeDeleteSelection* selection) const {
-        bool found = false;
-        int remainingForFile = 0;
-        for (const auto& record : records) {
-            if (compareAttributeRawKeys(record.file_id, record.name, fileId, name) == 0) {
-                selection->removed_bytes = record.bytes;
-                found = true;
-                continue;
-            }
-            if (record.file_id == fileId) {
-                ++remainingForFile;
-            }
-            selection->remaining.append(record);
-        }
-        selection->last_attribute_for_file = remainingForFile == 0;
-        return found;
-    }
-
-    [[nodiscard]] bool parseDeletedAttributePayload(HfsAttributeDeleteSelection* selection,
-                                                    QStringList* blockers) const {
-        const uint16_t keyLength = be16(selection->removed_bytes, 0);
-        const qsizetype typeOffset = kUint16Size + keyLength;
-        if (!hasBytes(selection->removed_bytes, typeOffset, kUint32Size)) {
-            blockers->append(QStringLiteral("HFS+ attribute record for delete is invalid"));
-            return false;
-        }
-        const uint32_t recordType = be32(selection->removed_bytes, typeOffset);
-        if (recordType == kHfsAttributeForkDataRecord) {
-            const qsizetype forkOffset = typeOffset + kHfsAttributeForkDataOffset;
-            if (!hasBytes(selection->removed_bytes, forkOffset, kHfsForkDataBytes)) {
-                blockers->append(QStringLiteral("HFS+ attribute fork data for delete is invalid"));
-                return false;
-            }
-            selection->fork_backed = true;
-            selection->removed_fork = parseFork(selection->removed_bytes, forkOffset);
-            return true;
-        }
-        if (recordType != kHfsAttributeInlineDataRecord) {
-            blockers->append(QStringLiteral(
-                "HFS+ attribute delete supports only inline and fork-backed records"));
-            return false;
-        }
-        return true;
-    }
-
-    [[nodiscard]] std::optional<HfsAttributeDeleteSelection> selectAttributeForDelete(
-        const HfsBTreeHeader& tree, uint32_t fileId, const QString& name, QStringList* blockers) {
-        if (tree.leaf_records == 0 || tree.first_leaf_node == 0 || tree.tree_depth != 1 ||
-            tree.first_leaf_node != tree.last_leaf_node || tree.root_node != tree.first_leaf_node) {
-            blockers->append(QStringLiteral(
-                "HFS+ attribute delete currently requires a single-leaf attributes B-tree"));
-            return std::nullopt;
-        }
-        const auto records = loadSingleAttributesLeafRecords(tree, tree.first_leaf_node, blockers);
-        if (!records.has_value()) {
-            return std::nullopt;
-        }
-        HfsAttributeDeleteSelection selection;
-        if (!partitionAttributeRecordsForDelete(*records, fileId, name, &selection)) {
-            blockers->append(QStringLiteral("HFS+ attribute for delete was not found"));
-            return std::nullopt;
-        }
-        if (!parseDeletedAttributePayload(&selection, blockers)) {
-            return std::nullopt;
-        }
-        return selection;
-    }
-
-    [[nodiscard]] std::optional<HfsExtentsTreeMutation> prepareAttributesTreeRemove(
-        const HfsBTreeHeader& tree,
-        const QVector<HfsAttributeRawRecord>& remaining,
-        QStringList* blockers) {
-        auto header = loadAttributesHeaderNodeForMutation(tree, blockers);
-        if (!header.has_value()) {
-            return std::nullopt;
-        }
-        HfsExtentsTreeMutation mutation;
-        mutation.updated_header = tree;
-        const qsizetype headerRecord = kBTreeHeaderRecordOffset;
-        if (remaining.isEmpty()) {
-            HfsBTreeHeaderNodeContext updated = *header;
-            writeBe16(&updated.node, headerRecord + kBTreeHeaderTreeDepthOffset, 0);
-            writeBe32(&updated.node, headerRecord + kBTreeHeaderRootNodeOffset, 0);
-            writeBe32(&updated.node, headerRecord + kBTreeHeaderLeafRecordsOffset, 0);
-            writeBe32(&updated.node, headerRecord + kBTreeHeaderFirstLeafNodeOffset, 0);
-            writeBe32(&updated.node, headerRecord + kBTreeHeaderLastLeafNodeOffset, 0);
-            writeBe32(&updated.node,
-                      headerRecord + kBTreeHeaderFreeNodesOffset,
-                      tree.free_nodes + 1);
-            writeHeaderMapBit(&updated, tree.first_leaf_node, false);
-            mutation.free_tree = true;
-            mutation.post_commit_writes.append(
-                HfsBTreeNodeWrite{tree.first_leaf_node, QByteArray(tree.node_size, '\0')});
-            mutation.header_node = updated.node;
-            mutation.updated_header.tree_depth = 0;
-            mutation.updated_header.root_node = 0;
-            mutation.updated_header.leaf_records = 0;
-            mutation.updated_header.first_leaf_node = 0;
-            mutation.updated_header.last_leaf_node = 0;
-            mutation.updated_header.free_nodes = tree.free_nodes + 1;
-            return mutation;
-        }
-        const auto leafBytes = buildAttributesLeafNodeBytes(tree, 0, 0, remaining);
-        if (!leafBytes.has_value()) {
-            blockers->append(QStringLiteral("HFS+ attributes leaf rebuild failed"));
-            return std::nullopt;
-        }
-        HfsBTreeHeaderNodeContext updated = *header;
-        writeBe32(&updated.node,
-                  headerRecord + kBTreeHeaderLeafRecordsOffset,
-                  static_cast<uint32_t>(remaining.size()));
-        mutation.leaf_rewrite = HfsBTreeNodeWrite{tree.first_leaf_node, *leafBytes};
-        mutation.header_node = updated.node;
-        mutation.updated_header.leaf_records = static_cast<uint32_t>(remaining.size());
-        return mutation;
-    }
 
 public:
     [[nodiscard]] PartitionHfsAttributeWriteResult deleteAttributeValue(
@@ -6830,12 +7137,20 @@ public:
             return result;
         }
         const auto selection =
-            selectAttributeForDelete(tree, fileId, result.attribute_name, &result.blockers);
+            gatherStreamingAttributeDelete(fileId, result.attribute_name, &result.blockers);
         if (!selection.has_value()) {
             return result;
         }
-        const auto mutation =
-            prepareAttributesTreeRemove(tree, selection->remaining, &result.blockers);
+        if (!selection->found) {
+            result.blockers.append(QStringLiteral("HFS+ attribute for delete was not found"));
+            return result;
+        }
+        // Remove every record for this attribute (fork-data plus any overflow
+        // extents records) through the streaming engine, which collapses the
+        // attributes B-tree as leaves drain.
+        HfsAttributesTreeEdit edit;
+        edit.removals.append({fileId, result.attribute_name});
+        const auto mutation = prepareAttributesStreamingMutation(tree, edit, &result.blockers);
         if (!mutation.has_value()) {
             return result;
         }
@@ -6861,6 +7176,44 @@ public:
         return result;
     }
 
+private:
+    // Gather, across every leaf of the attributes B-tree, the full state needed to
+    // delete an attribute: whether it is fork-backed, the complete fork (logical
+    // size, total blocks, and ALL extents from the fork-data record plus every
+    // overflow extents record), and whether it is the file's last attribute.
+    [[nodiscard]] std::optional<HfsAttributeDeleteSelection> gatherStreamingAttributeDelete(
+        uint32_t fileId, const QString& name, QStringList* blockers) {
+        const auto attributes = scanAttributeRecords(kPartitionHfsDefaultCheckRecordLimit);
+        if (!attributes.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        HfsAttributeDeleteSelection selection;
+        bool found = false;
+        QSet<QString> otherNamesForFile;
+        for (const auto& record : attributes->parsed_records) {
+            const bool sameAttr = record.file_id == fileId && record.name == name;
+            if (sameAttr) {
+                found = true;
+                if (record.record_type == kHfsAttributeForkDataRecord && record.has_fork_data) {
+                    selection.fork_backed = true;
+                    selection.removed_fork.logical_size = record.fork_logical_size;
+                    selection.removed_fork.total_blocks = record.fork_data.total_blocks;
+                    selection.removed_fork.extents = record.fork_data.extents;
+                } else if (record.record_type == kHfsAttributeExtentsRecord &&
+                           record.has_extent_data) {
+                    selection.removed_fork.extents.append(record.extents);
+                }
+            } else if (record.file_id == fileId) {
+                otherNamesForFile.insert(record.name);
+            }
+        }
+        selection.found = found;
+        selection.last_attribute_for_file = otherNamesForFile.isEmpty();
+        return selection;
+    }
+
+public:
 private:
     [[nodiscard]] bool beginAttributeDelete(const PartitionHfsFileWriteOptions& options,
                                             PartitionHfsAttributeWriteResult* result) {
