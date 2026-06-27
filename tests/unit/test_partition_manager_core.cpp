@@ -4,6 +4,7 @@
 /// @file test_partition_manager_core.cpp
 /// @brief Unit tests for Partition Manager core planning and safety.
 
+#include "sak/apfs_crypto.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
@@ -1783,6 +1784,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
+    void apfsCrypto_matchesPublishedVectors();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8537,6 +8539,108 @@ void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
          .options = options});
     QVERIFY(!tooBig.ok);
     QVERIFY(tooBig.blockers.join(' ').contains(QStringLiteral("embedded-xattr limit")));
+}
+
+void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
+    // A6: the FileVault crypto primitives are certified against published test
+    // vectors before any APFS keybag depends on them. A single wrong byte here
+    // would silently corrupt every encrypted volume, so each primitive is pinned
+    // to an independent standard vector (FIPS 180-4 / FIPS 197 / RFC 4231 / RFC
+    // 3394 / IEEE 1619), with PBKDF2 cross-checked against this module's own HMAC.
+    using namespace sak::apfs_crypto;
+
+    // SHA-256("abc") — FIPS 180-4 example B.1.
+    QCOMPARE(sha256(QByteArrayLiteral("abc")).toHex(),
+             QByteArray("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+
+    // HMAC-SHA-256 — RFC 4231 Test Case 1.
+    QCOMPARE(hmacSha256(QByteArray::fromHex("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"),
+                        QByteArrayLiteral("Hi There"))
+                 .toHex(),
+             QByteArray("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"));
+
+    // PBKDF2-HMAC-SHA-256(P, S, c=1, dkLen=32) is, by definition, the first HMAC
+    // block: HMAC(P, S || INT_BE32(1)). Cross-checking against this module's own
+    // HMAC pins the PBKDF2 wiring (salt/password/length) without a memorized
+    // vector; the HMAC itself is already pinned to RFC 4231 above.
+    const QByteArray pwd = QByteArrayLiteral("passwd");
+    const QByteArray salt = QByteArrayLiteral("salt");
+    QCOMPARE(pbkdf2Sha256(pwd, salt, 1, 32),
+             hmacSha256(pwd, salt + QByteArray::fromHex("00000001")));
+    // Iterations are honoured (c=2 differs from c=1) and multi-block output spans.
+    QVERIFY(pbkdf2Sha256(pwd, salt, 2, 32) != pbkdf2Sha256(pwd, salt, 1, 32));
+    QCOMPARE(pbkdf2Sha256(pwd, salt, 4, 64).size(), 64);
+
+    // RFC 3394 §4.6 — wrap a 256-bit key under a 256-bit KEK.
+    const QByteArray kek =
+        QByteArray::fromHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    const QByteArray key =
+        QByteArray::fromHex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f");
+    const QByteArray wrapped = aesKeyWrap(kek, key);
+    QCOMPARE(wrapped.toHex(),
+             QByteArray("28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43b"
+                        "fb988b9b7a02dd21"));
+    const auto unwrapped = aesKeyUnwrap(kek, wrapped);
+    QVERIFY(unwrapped.has_value());
+    QCOMPARE(*unwrapped, key);
+
+    // Wrong KEK fails the RFC 3394 integrity check (A6A6...) — never silent garbage.
+    QByteArray wrongKek = kek;
+    wrongKek[0] = static_cast<char>(wrongKek[0] ^ 0x01);
+    QVERIFY(!aesKeyUnwrap(wrongKek, wrapped).has_value());
+
+    // AES-128 ECB pinned to the FIPS-197 known-answer (Appendix B / C.1); this is
+    // the primitive the AES-XTS construction is built from.
+    QCOMPARE(aesEcbEncryptBlock(QByteArray::fromHex("000102030405060708090a0b0c0d0e0f"),
+                                QByteArray::fromHex("00112233445566778899aabbccddeeff"))
+                 .toHex(),
+             QByteArray("69c4e0d86a7b0430d8cdb78070b4c55a"));
+
+    // AES-XTS — IEEE Std 1619-2007 Vector 1 (32-byte data unit, sequence 0,
+    // all-zero key and plaintext): a definitive external known-answer.
+    const QByteArray zeroKey(32, '\0');
+    const QByteArray zeroPt(32, '\0');
+    const QByteArray vec1 = xtsEncrypt(zeroKey, 0, zeroPt, 32);
+    QCOMPARE(vec1.toHex(),
+             QByteArray("917cf69ebd68b2ec9b9fe9a3eadda692cd43d2f59598ed858c02c2652fbf922e"));
+    QCOMPARE(xtsDecrypt(zeroKey, 0, vec1, 32), zeroPt);
+
+    // Round trip at the APFS 512-byte data-unit size with a non-trivial key/tweak.
+    QByteArray xtsKey(32, 0);
+    for (int i = 0; i < 16; ++i) {
+        xtsKey[i] = static_cast<char>(0x20 + i);
+        xtsKey[16 + i] = static_cast<char>(0x40 + i);
+    }
+    QByteArray ptx(512, 0);
+    for (int i = 0; i < ptx.size(); ++i) {
+        ptx[i] = static_cast<char>((i * 5 + 1) & 0xFF);
+    }
+    const uint64_t dataUnit = 0x01'02'03'04'05'06'07'08ULL;
+    const QByteArray ctx = xtsEncrypt(xtsKey, dataUnit, ptx, 512);
+    QCOMPARE(ctx.size(), 512);
+    QVERIFY(ctx != ptx);
+    QCOMPARE(xtsDecrypt(xtsKey, dataUnit, ctx, 512), ptx);
+    // Multi-unit input advances the tweak per unit (unit 1 != unit 0 ciphertext).
+    QByteArray twoUnits = ptx + ptx;
+    const QByteArray ctx2 = xtsEncrypt(xtsKey, dataUnit, twoUnits, 512);
+    QVERIFY(ctx2.left(512) != ctx2.mid(512));
+    QCOMPARE(xtsDecrypt(xtsKey, dataUnit, ctx2, 512), twoUnits);
+
+    // APFS 4096-byte block round trip: 512-byte data units, tweak base = addr * 8.
+    QByteArray vek(32, 0);
+    for (int i = 0; i < vek.size(); ++i) {
+        vek[i] = static_cast<char>(0x10 + i);
+    }
+    QByteArray block(4096, 0);
+    for (int i = 0; i < block.size(); ++i) {
+        block[i] = static_cast<char>(i * 7 + 3);
+    }
+    const QByteArray encBlock = xtsEncryptBlock(vek, 198, block);
+    QCOMPARE(encBlock.size(), block.size());
+    QVERIFY(encBlock != block);
+    QCOMPARE(xtsDecryptBlock(vek, 198, encBlock), block);
+    // The tweak is address-bound: the same plaintext at a different block differs.
+    QVERIFY(xtsEncryptBlock(vek, 199, block) != encBlock);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

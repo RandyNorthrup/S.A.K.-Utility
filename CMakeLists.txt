@@ -347,6 +347,7 @@ set(CORE_SOURCES
     src/core/file_explorer_sort_filter_model.cpp
     src/core/file_explorer_command_registry.cpp
     src/core/file_management_file_system.cpp
+    src/core/apfs_crypto.cpp
     src/core/partition_apfs_file_system_reader.cpp
     src/core/partition_apfs_writer.cpp
     src/core/partition_ext_file_system_reader.cpp
@@ -933,10 +934,12 @@ target_include_directories(sak_utility PRIVATE
 
 add_executable(sak_apfs_writer_cli
     src/tools/sak_apfs_writer_cli.cpp
+    src/core/apfs_crypto.cpp
     src/core/partition_apfs_file_system_reader.cpp
     src/core/partition_apfs_writer.cpp
     src/core/partition_file_system_detector.cpp
     src/core/partition_raw_device_io.cpp
+    include/sak/apfs_crypto.h
     include/sak/partition_apfs_writer.h
     include/sak/partition_apfs_file_system_reader.h
     include/sak/partition_file_system_detector.h

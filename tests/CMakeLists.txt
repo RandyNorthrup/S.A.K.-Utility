@@ -224,6 +224,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
     add_executable(test_partition_manager_core
         unit/test_partition_manager_core.cpp
         ../src/core/file_recovery_engine.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -300,6 +301,7 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_filesystem_probe_certifier.cpp")
     add_executable(partition_filesystem_probe_certifier
         certification/partition_filesystem_probe_certifier.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_file_system_detector.cpp
@@ -353,6 +355,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/file_management_live_certif
         ../src/core/file_hash.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/logger.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -440,6 +443,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_panel.cpp")
         ../src/gui/detachable_log_window.cpp
         ../src/gui/follow_scroll_controller.cpp
         ../src/core/file_recovery_engine.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -989,6 +993,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -1040,6 +1045,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp
     add_executable(test_file_management_file_system
         unit/test_file_management_file_system.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -2713,6 +2719,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_duplicate_finder_worker.cpp")
     add_executable(test_duplicate_finder_worker
         unit/test_duplicate_finder_worker.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -3262,6 +3269,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
     add_executable(test_advanced_search_worker
         unit/test_advanced_search_worker.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
@@ -3304,6 +3312,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
     add_executable(test_advanced_search_controller
         unit/test_advanced_search_controller.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/apfs_crypto.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
         ../src/core/partition_apfs_writer.cpp
         ../src/core/partition_ext_file_system_reader.cpp
