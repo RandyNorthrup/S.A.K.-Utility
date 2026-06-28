@@ -1789,6 +1789,7 @@ private Q_SLOTS:
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
     void apfsWriter_clonesFileSharingDataStream();
+    void apfsWriter_addsHardLinkToFile();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -8881,6 +8882,81 @@ void PartitionManagerCoreTests::apfsWriter_clonesFileSharingDataStream() {
          .written_image_path = dir.filePath(QStringLiteral("clone-miss.apfs")),
          .source_file_name = QStringLiteral("absent.bin"),
          .clone_file_name = QStringLiteral("x.bin"),
+         .options = options});
+    QVERIFY(!missing.ok);
+
+    // The container superblock stays self-consistent (object checksum).
+    QFile outImage(out);
+    QVERIFY(outImage.open(QIODevice::ReadOnly));
+    const QByteArray nxsb = outImage.read(4096);
+    outImage.close();
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+}
+
+void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
+    // A7 (A-h) hard links: adding a second name to a file makes both names resolve to
+    // the same inode (link count 2). No data or inode is copied; sibling-link and
+    // sibling-map records track the two names. apfsck/kernel-certified; the reader reads
+    // the identical bytes through either name.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("hl-base.apfs"));
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = base,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKA7HL"),
+                  .options = options})
+                 .ok,
+             "format hard-link base");
+
+    const QByteArray payload = QByteArray("hard-link-payload-").repeated(300);
+    const QString src = dir.filePath(QStringLiteral("hl-src.apfs"));
+    const auto insert =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = src,
+                                                        .file_name = QStringLiteral("orig.bin"),
+                                                        .file_data = payload,
+                                                        .options = options});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+
+    const QString out = dir.filePath(QStringLiteral("hl-out.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyFileHardlink(
+        {.source_image_path = src,
+         .written_image_path = out,
+         .source_file_name = QStringLiteral("orig.bin"),
+         .link_file_name = QStringLiteral("link.bin"),
+         .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.new_xid, 4ULL);
+
+    // Both names are present, each reporting the inode's size.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    for (const auto& entry : listing.entries) {
+        QCOMPARE(entry.size_bytes, static_cast<uint64_t>(payload.size()));
+    }
+
+    // Both names read back the identical bytes (one inode, one data stream).
+    const auto origRead = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(origRead.ok, qPrintable(origRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(origRead.data, payload);
+    const auto linkRead = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/link.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(linkRead.ok, qPrintable(linkRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(linkRead.data, payload);
+
+    // Linking a source that does not exist fails closed.
+    const auto missing = PartitionApfsWriter::commitImageOnlyFileHardlink(
+        {.source_image_path = src,
+         .written_image_path = dir.filePath(QStringLiteral("hl-miss.apfs")),
+         .source_file_name = QStringLiteral("absent.bin"),
+         .link_file_name = QStringLiteral("y.bin"),
          .options = options});
     QVERIFY(!missing.ok);
 

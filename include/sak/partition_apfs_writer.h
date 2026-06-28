@@ -508,6 +508,19 @@ struct PartitionApfsImageFileCloneCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to add a hard link (a second name) to one root file in a generated
+///        APFS container with a true in-place copy-on-write checkpoint commit (A7). The
+///        new name resolves to the source file's inode -- no data or inode is copied;
+///        the inode's link count rises to 2 and sibling-link/sibling-map records are
+///        added for both names.
+struct PartitionApfsImageFileHardlinkCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString source_file_name;
+    QString link_file_name;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to delete one root file from a generated APFS container with a
 ///        true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsImageFileDeleteCommitRequest {
@@ -877,6 +890,10 @@ public:
     ///        reference count rises to 2.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileClone(
         const PartitionApfsImageFileCloneCommitRequest& request);
+    /// @brief Add a hard link (second name) to one root file with a true in-place COW
+    ///        commit (A7): the new name shares the source's inode; link count rises to 2.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileHardlink(
+        const PartitionApfsImageFileHardlinkCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
         const PartitionApfsImageFileDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileRename(

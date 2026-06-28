@@ -171,10 +171,15 @@ constexpr uint16_t kApfsBtreeNodeFixedKvSize = 0x0004;
 constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
 constexpr uint8_t kApfsRecordInode = 3;
 constexpr uint8_t kApfsRecordXattr = 4;
+constexpr uint8_t kApfsRecordSiblingLink = 5;  // APFS_TYPE_SIBLING_LINK (hard-link names)
 constexpr uint8_t kApfsRecordDstreamId = 6;
 constexpr uint8_t kApfsRecordCryptoState = 7;  // APFS_TYPE_CRYPTO_STATE
 constexpr uint8_t kApfsRecordFileExtent = 8;
 constexpr uint8_t kApfsRecordDirectoryEntry = 9;
+constexpr uint8_t kApfsRecordSiblingMap = 12;  // APFS_TYPE_SIBLING_MAP (sibling id -> inode)
+// A7 (A-h) hard links: the dentry extended-field type carrying a name's sibling id
+// (APFS_DREC_EXT_TYPE_SIBLING_ID); each hard-link dentry references one sibling record.
+constexpr uint8_t kApfsDrecExtTypeSiblingId = 1;
 // CRYPTO_SW_ID: the well-known object id of an encrypted volume's default
 // whole-volume crypto-state record (A6).
 constexpr uint64_t kApfsCryptoSwId = 4;
@@ -802,6 +807,15 @@ struct ApfsDataExtent {
     uint64_t blockCount{0};
 };
 
+// A7 (A-h) hard link: one additional name (beyond a file's primary name) resolving to
+// the same inode. parentId is the directory holding the name; siblingId is the unique
+// sibling-record id assigned to it.
+struct ApfsHardLinkName {
+    QString name;
+    uint64_t parentId{kApfsRootDirectoryId};
+    uint64_t siblingId{0};
+};
+
 struct ApfsRootFilePayload {
     QString fileName;
     QString parentDirectoryName;
@@ -839,6 +853,14 @@ struct ApfsRootFilePayload {
     bool sharesDstream{false};
     uint32_t dstreamRefcnt{1};
     uint64_t extraInodeFlags{0};
+    // A7 (A-h) hard links: additional names (beyond fileName) that resolve to THIS
+    // inode. When non-empty the file is hard-linked: nlink == 1 + additionalLinks
+    // count, every name (primary + additional) carries a sibling-id dentry xfield and
+    // gets a sibling-link + sibling-map record, and primarySiblingId is the lowest of
+    // the sibling ids (Apple stores the primary name as the lowest-id sibling). Empty
+    // keeps a single-link file byte-identical.
+    QVector<ApfsHardLinkName> additionalLinks;
+    uint64_t primarySiblingId{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1157,6 +1179,53 @@ QByteArray dstreamIdValue(uint32_t refcnt = 1) {
     return value;
 }
 
+// A7 (A-h) hard link: a dentry value carrying a single sibling-id extended field, so
+// the name links to a sibling record. Layout = j_drec_val (file_id, date_added, flags)
+// + xf_blob{num_exts=1, used_data=8} + x_field{type=SIBLING_ID, flags=0, size=8} + the
+// 8-byte sibling id. xf_used_data is the value-bytes-only count (8), per Apple.
+QByteArray directoryEntryValueWithSibling(uint64_t fileId, uint16_t entryType, uint64_t siblingId) {
+    QByteArray value = directoryEntryValue(fileId, entryType);
+    QByteArray xf(kApfsXfieldHeaderBytes + kApfsXfieldTocEntryBytes + 8, '\0');
+    writeLe16(&xf, 0, 1);                   // xf_num_exts
+    writeLe16(&xf, 2, 8);                   // xf_used_data (the 8 value bytes only)
+    xf[kApfsXfieldHeaderBytes] = static_cast<char>(kApfsDrecExtTypeSiblingId);
+    xf[kApfsXfieldHeaderBytes + 1] = 0x00;  // x_flags
+    writeLe16(&xf, kApfsXfieldHeaderBytes + kApfsXfieldSizeOffset, 8);
+    writeLe64(&xf, kApfsXfieldHeaderBytes + kApfsXfieldTocEntryBytes, siblingId);
+    return value + xf;
+}
+
+// j_sibling_link_key: 8-byte header (inode id | SIBLING_LINK<<60) + the 8-byte sibling
+// id. One per hard-link name; lists the inode's links.
+QByteArray siblingLinkKey(uint64_t inodeId, uint64_t siblingId) {
+    QByteArray key = fsKey(inodeId, kApfsRecordSiblingLink, kApfsFormattedRootInodeKeyBytes + 8);
+    writeLe64(&key, kApfsFormattedRootInodeKeyBytes, siblingId);
+    return key;
+}
+
+// j_sibling_val: the parent directory id + the NUL-terminated name (name_len counts the
+// NUL, matching the dentry's name length).
+QByteArray siblingLinkValue(uint64_t parentId, const QString& name) {
+    const QByteArray nameBytes = name.toUtf8() + '\0';
+    QByteArray value(8 + kUint16Size + nameBytes.size(), '\0');
+    writeLe64(&value, 0, parentId);
+    writeLe16(&value, 8, static_cast<uint16_t>(nameBytes.size()));
+    std::copy(nameBytes.cbegin(), nameBytes.cend(), value.begin() + 8 + kUint16Size);
+    return value;
+}
+
+// j_sibling_map_key: 8-byte header (sibling id | SIBLING_MAP<<60). j_sibling_map_val:
+// the inode id the sibling maps back to.
+QByteArray siblingMapKey(uint64_t siblingId) {
+    return fsKey(siblingId, kApfsRecordSiblingMap, kApfsFormattedRootInodeKeyBytes);
+}
+
+QByteArray siblingMapValue(uint64_t inodeId) {
+    QByteArray value(8, '\0');
+    writeLe64(&value, 0, inodeId);
+    return value;
+}
+
 // j_xattr_key: 8-byte key header (inode id | XATTR<<60), then le16 name_len (the
 // NUL-terminated name's byte count) and the name bytes including the NUL.
 QByteArray xattrKey(uint64_t inodeId, const QByteArray& name) {
@@ -1264,9 +1333,31 @@ void appendInodeXattrs(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePa
     }
 }
 
+// A7 (A-h) hard links: emit the sibling-link + sibling-map records that track every
+// name of a hard-linked inode, plus the extra dentries for the additional names. The
+// primary name's dentry already carries its sibling-id xfield (written by the caller).
+// A single-link file (no additionalLinks) emits nothing, staying byte-identical.
+void appendHardLinkRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
+    if (file.additionalLinks.isEmpty()) {
+        return;
+    }
+    records->append({siblingLinkKey(file.fileId, file.primarySiblingId),
+                     siblingLinkValue(file.parentDirectoryId, file.fileName)});
+    records->append({siblingMapKey(file.primarySiblingId), siblingMapValue(file.fileId)});
+    for (const ApfsHardLinkName& link : file.additionalLinks) {
+        records->append(
+            {directoryEntryKey(link.parentId, link.name),
+             directoryEntryValueWithSibling(file.fileId, kApfsDirTypeRegularFile, link.siblingId)});
+        records->append({siblingLinkKey(file.fileId, link.siblingId),
+                         siblingLinkValue(link.parentId, link.name)});
+        records->append({siblingMapKey(link.siblingId), siblingMapValue(file.fileId)});
+    }
+}
+
 void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
     const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize
                                              : static_cast<uint64_t>(file.data.size());
+    const int32_t linkCount = 1 + static_cast<int32_t>(file.additionalLinks.size());
     records->append(
         {fsKey(file.fileId, kApfsRecordInode),
          inodeValue({.parentId = file.parentDirectoryId,
@@ -1274,13 +1365,18 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                      .mode = kApfsModeRegularFile,
                      .name = file.fileName,
                      .sizeBytes = logicalSize,
+                     .childOrLinkCount = linkCount,
                      .compressed = file.compressed,
                      .uncompressedSize = file.uncompressedSize,
                      .extraInternalFlags = inodeAttributeFlags(file),
                      .allocedSizeBytes =
                          file.sparse ? fileAllocedBytes(file, kSupportedApfsBlockSizeBytes) : 0})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
-                     directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)});
+                     file.additionalLinks.isEmpty()
+                         ? directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)
+                         : directoryEntryValueWithSibling(
+                               file.fileId, kApfsDirTypeRegularFile, file.primarySiblingId)});
+    appendHardLinkRecords(records, file);
     if (file.sharesDstream) {
         // A clone: the inode reuses the source file's data stream (its privateId is
         // the source's dstream id), so it emits no j_dstream_id and no file-extent
@@ -1372,6 +1468,12 @@ void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
                              return le64(left.key, kApfsFileExtentKeyLogicalOffset) <
                                     le64(right.key, kApfsFileExtentKeyLogicalOffset);
                          }
+                         // Hard-link sibling-link records for one inode order by their
+                         // 8-byte sibling id (the key tail after the object-id header).
+                         if (leftType == kApfsRecordSiblingLink) {
+                             return le64(left.key, kApfsFormattedRootInodeKeyBytes) <
+                                    le64(right.key, kApfsFormattedRootInodeKeyBytes);
+                         }
                          // Sibling extended attributes order by name (Apple compares
                          // the xattr name string, not the raw key bytes).
                          if (leftType == kApfsRecordXattr) {
@@ -1399,6 +1501,13 @@ int32_t directChildCount(uint64_t directoryId,
     for (const auto& file : files) {
         if (file.parentDirectoryId == directoryId) {
             ++count;
+        }
+        // A7 (A-h): each additional hard-link name is a separate dentry in its parent,
+        // so it counts toward that directory's child count too.
+        for (const ApfsHardLinkName& link : file.additionalLinks) {
+            if (link.parentId == directoryId) {
+                ++count;
+            }
         }
     }
     return count;
@@ -4391,6 +4500,11 @@ struct ApfsFileInsertRequest {
     // empty for a clone (no allocation).
     uint64_t cloneSourcePrivateId{0};
     uint64_t cloneLogicalSize{0};
+    // A7 (A-h) hard link: when non-zero, this commit adds a new name (fileName, in
+    // newFileParentId) for this existing inode rather than inserting a new file. No
+    // data or inode is allocated; two sibling ids are taken from the id pool (the
+    // primary name's + the new name's) and the inode's link count rises to 2.
+    uint64_t hardlinkTargetId{0};
 };
 
 struct ApfsChainedListInput {
@@ -4447,6 +4561,24 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
             {in.image, in.geometry, in.chain}, in.request.existingFiles, files, blockers)) {
         return false;
     }
+    if (in.request.hardlinkTargetId != 0) {
+        // A hard link: add a new name for an existing inode instead of a new file. Two
+        // sibling ids are taken from the id pool -- the primary name's (newFileId, the
+        // lower) and the new name's (newFileId + 1).
+        for (ApfsRootFilePayload& file : *files) {
+            if (file.fileId != in.request.hardlinkTargetId) {
+                continue;
+            }
+            file.primarySiblingId = newFileId;
+            file.additionalLinks.append({.name = in.request.fileName.trimmed(),
+                                         .parentId = in.request.newFileParentId,
+                                         .siblingId = newFileId + 1});
+            return true;
+        }
+        blockers->append(
+            QStringLiteral("APFS file-hardlink-commit: target inode not found in the live tree"));
+        return false;
+    }
     const bool clone = in.request.cloneSourcePrivateId != 0;
     files->append(
         {.fileName = in.request.fileName.trimmed(),
@@ -4486,6 +4618,9 @@ struct ApfsFileInsertBuildInputs {
     // owned by this dstream id (cloneLogicalSize = the shared stream's size).
     uint64_t cloneSourcePrivateId{0};
     uint64_t cloneLogicalSize{0};
+    // A7 (A-h) hard link: when non-zero, add fileName as a new name for this existing
+    // inode (no new file/inode/data).
+    uint64_t hardlinkTargetId{0};
 };
 
 // Build the in-place insert request for a (possibly compressed) file. When
@@ -4500,6 +4635,7 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
     request->xattrs = in.xattrs;
     request->cloneSourcePrivateId = in.cloneSourcePrivateId;
     request->cloneLogicalSize = in.cloneLogicalSize;
+    request->hardlinkTargetId = in.hardlinkTargetId;
     // A trailing-hole sparse file: extents cover fileData, the inode logical size is
     // sparseLogicalSize, and the gap reads as zeros. Must exceed the data size.
     if (in.sparseLogicalSize > static_cast<uint64_t>(in.fileData.size())) {
@@ -5019,6 +5155,9 @@ bool commitInPlaceFileInsert(QIODevice* image,
         return false;
     }
     const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    // A hard link adds no inode (the file count is unchanged) but consumes two object
+    // ids for its sibling records; a normal insert adds one inode and one id.
+    const bool hardlink = request.hardlinkTargetId != 0;
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
@@ -5027,8 +5166,8 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .extentRefNew = extentRefNew,
                              .freedDataBlocks = {},
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
-                             .fileCountDelta = 1,
-                             .nextObjIdDelta = 1,
+                             .fileCountDelta = hardlink ? 0 : 1,
+                             .nextObjIdDelta = hardlink ? 2ULL : 1ULL,
                              .chunk1BitmapBlock = chunk1BitmapBlock},
                             result,
                             blockers);
@@ -6449,6 +6588,23 @@ bool prepareCloneSource(QVector<ApfsRootFilePayload>* existingFiles,
         QStringLiteral("APFS file-clone-commit: source file '%1' not found in the container root")
             .arg(sourceName));
     return false;
+}
+
+// A7 (A-h) hard link: the object id of the named root file to link, or 0 (with a
+// blocker) if it is absent.
+uint64_t resolveHardlinkTargetId(const QVector<ApfsRootFilePayload>& existingFiles,
+                                 const QString& sourceName,
+                                 QStringList* blockers) {
+    for (const auto& file : existingFiles) {
+        if (file.parentDirectoryId == kApfsRootDirectoryId && file.fileName == sourceName) {
+            return file.fileId;
+        }
+    }
+    blockers->append(
+        QStringLiteral(
+            "APFS file-hardlink-commit: source file '%1' not found in the container root")
+            .arg(sourceName));
+    return 0;
 }
 
 // Full one-level tree for a chained insert; fails closed if the new root file name
@@ -13496,6 +13652,80 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .directories = directories,
                                 .cloneSourcePrivateId = cloneSource.privateId,
                                 .cloneLogicalSize = cloneSource.logicalSize},
+                               &result);
+    image.close();
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileHardlink(
+    const PartitionApfsImageFileHardlinkCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place file hard link remains image-only and is not exposed to user "
+        "actions; raw in-place commit support requires fsck_apfs/diskutil, crash replay, and "
+        "hardware evidence"));
+
+    const QString sourceName = request.source_file_name.trimmed();
+    const QString linkName = request.link_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            linkName, QLatin1StringView("file-hardlink-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-hardlink-commit"),
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-hardlink-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-hardlink-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+
+    // Collect the live tree (rejecting a link name that already exists) and resolve the
+    // source inode the new name links to; the commit adds the name + sibling records.
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(
+            result.source_image_path, linkName, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t targetId = resolveHardlinkTargetId(existingFiles, sourceName, &result.blockers);
+    if (targetId == 0) {
+        return result;
+    }
+
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-hardlink-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-hardlink-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    runInPlaceFileInsertCommit(&image,
+                               {.existingFiles = existingFiles,
+                                .fileName = linkName,
+                                .directories = directories,
+                                .hardlinkTargetId = targetId},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();
