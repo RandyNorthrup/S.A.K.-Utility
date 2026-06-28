@@ -1,0 +1,35 @@
+{
+  "evidence_id": "external.apfs-a7-kernel-cert",
+  "date": "2026-06-28",
+  "lane": "A7 (A-g resize + A-h clones / hard links / sparse / xattr / sealed)",
+  "environment": "qemu/KVM macOS Sequoia recovery (BaseSystem), apfs.kext; OSX-KVM snap3 USB config (ICH9-LPC.disable_s3=1, ich9-EHCI + nec-usb-xhci msi=off); headless vncdotool drive",
+  "image": "S.A.K.-generated APFS container (format 64 MiB -> insert data.bin -> clone data.bin -> hard link data.bin -> in-chunk grow to 100 MiB), attached as a raw IDE drive; host apfsck -cw clean (exit 0)",
+  "kernel_mount": "macOS kernel auto-mounted the S.A.K. container's volume SAKA7 at /Volumes/SAKA7 (the grown 100 MiB geometry parsed + mounted)",
+  "results": {
+    "clone": {
+      "certified": true,
+      "proof": "md5(/Volumes/SAKA7/clone.bin) == md5(/Volumes/SAKA7/data.bin) == daf7118243ce01cd672b57338c3d0089; clone is inode 17 (its own inode, nlink 1) with its own file-extent records pointing at the source's physical blocks (extent-ref refcount 2)",
+      "kernel_caught_bug": "the earlier shared-private-id clone (clone inode reused the source's dstream id with no own extents) read as ALL ZEROS on the macOS kernel -- the kernel keys file-extents by the inode's OWN object id, not private_id. apfsck and the S.A.K. reader both accepted it; only the kernel byte-read caught it. Fixed: clone emits its own extents + extent-ref refcnt rises to 2."
+    },
+    "hard_link": {
+      "certified": true,
+      "proof": "data.bin and link.bin are both inode 16, nlink 2, md5 == daf7118243ce01cd672b57338c3d0089 (kernel resolved the two names to one inode + identical bytes)"
+    },
+    "resize_in_chunk_grow": {
+      "certified": true,
+      "proof": "diskutil info disk1 -> Disk Size 104.9 MB (104857600 Bytes) = the grown 100 MiB; fsck_apfs -ln: '** The volume /dev/rdisk1s1 ... appears to be OK.' + '** The container /dev/disk1 appears to be OK.'"
+    },
+    "sparse": {
+      "certified": true,
+      "proof": "earlier same-session pass on the combined image: ls size 65536 (logical), tail bytes read as zeros (kernel zero-fills the hole), inode 17 nlink 1"
+    },
+    "xattr_acl": {
+      "certified": "host-apfsck + unit; kernel mount tolerated (xattr CLI absent in the recovery environment, not separately read back)"
+    },
+    "sealed_volume_policy": {
+      "certified": "unit (fail-closed gate; not a mountable artifact)"
+    }
+  },
+  "fsck_apfs": "** The volume /dev/rdisk1s1 with UUID CAD7B919-B378-44A3-9A88-0C9CAC64C6A1 appears to be OK. ** The container /dev/disk1 appears to be OK.",
+  "screenshot": "a7-kernel-cert.png"
+}

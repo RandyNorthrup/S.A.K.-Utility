@@ -1788,7 +1788,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
-    void apfsWriter_clonesFileSharingDataStream();
+    void apfsWriter_clonesFileSharingPhysicalExtents();
     void apfsWriter_addsHardLinkToFile();
     void apfsWriter_growsContainerInChunk();
     void apfsWriter_blocksSealedVolumeMutation();
@@ -8817,12 +8817,13 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
 }
 
-void PartitionManagerCoreTests::apfsWriter_clonesFileSharingDataStream() {
-    // A7 (A-h) file clone: cloning a file shares its data stream -- no data is copied.
-    // A new inode is added whose private id points at the source's dstream; the shared
-    // dstream's reference count rises to 2, and both inodes are flagged
-    // WAS_CLONED/WAS_EVER_CLONED. The on-disk structure is apfsck/kernel-certified, and
-    // the reader resolves both names (source + clone) to the identical bytes.
+void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
+    // A7 (A-h) file clone: cloning a file shares its physical blocks -- no data is copied.
+    // The clone is its OWN inode with its OWN file-extent records pointing at the source's
+    // physical blocks (the macOS kernel resolves extents by the inode's own id, so a
+    // shared-dstream clone reads as a hole -- kernel-caught); the shared blocks' extent-ref
+    // reference count rises to 2, and the clone is flagged WAS_CLONED/WAS_EVER_CLONED. The
+    // on-disk structure is apfsck/kernel-certified (md5 of source == clone on real macOS).
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());

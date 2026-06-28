@@ -843,15 +843,8 @@ struct ApfsRootFilePayload {
     // (a hole). The reader already zero-fills gaps between extents.
     bool sparse{false};
     uint64_t sparseLogicalSize{0};
-    // A7 (A-h) file clones: a clone shares the source file's data stream (its
-    // privateId points at the source's dstream id). When set, this inode emits NO
-    // j_dstream_id and NO file-extent records -- it reuses the source's, and the
-    // shared dstream carries the refcount instead. The source keeps dstreamRefcnt
-    // == number of inodes sharing it (clone source -> 2). extraInodeFlags OR-es the
-    // clone flags (WAS_CLONED / WAS_EVER_CLONED) into internal_flags. Defaults keep
-    // every non-clone file byte-identical.
-    bool sharesDstream{false};
-    uint32_t dstreamRefcnt{1};
+    // A7 (A-h): extra internal_flags OR-ed into the inode (WAS_CLONED / WAS_EVER_CLONED
+    // on a clone). 0 keeps every other file byte-identical.
     uint64_t extraInodeFlags{0};
     // A7 (A-h) hard links: additional names (beyond fileName) that resolve to THIS
     // inode. When non-empty the file is hard-linked: nlink == 1 + additionalLinks
@@ -1173,9 +1166,9 @@ QByteArray directoryEntryValue(uint64_t fileId, uint16_t entryType) {
     return value;
 }
 
-QByteArray dstreamIdValue(uint32_t refcnt = 1) {
+QByteArray dstreamIdValue() {
     QByteArray value(4, '\0');
-    writeLe32(&value, 0, refcnt);
+    writeLe32(&value, 0, 1);
     return value;
 }
 
@@ -1377,14 +1370,6 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                          : directoryEntryValueWithSibling(
                                file.fileId, kApfsDirTypeRegularFile, file.primarySiblingId)});
     appendHardLinkRecords(records, file);
-    if (file.sharesDstream) {
-        // A clone: the inode reuses the source file's data stream (its privateId is
-        // the source's dstream id), so it emits no j_dstream_id and no file-extent
-        // records -- the source owns them and carries the shared refcount. Only the
-        // inode, its dir entry, and any per-clone xattrs are written here.
-        appendInodeXattrs(records, file);
-        return;
-    }
     if (file.compressed) {
         // A transparently-compressed file has no data stream: its content lives
         // in an embedded com.apple.decmpfs xattr, and the inode is UF_COMPRESSED.
@@ -1393,8 +1378,7 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
         appendInodeXattrs(records, file);
         return;
     }
-    records->append(
-        {fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue(file.dstreamRefcnt)});
+    records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
     // A zero-length file has a size-0 data stream and no allocated blocks, so it
     // carries no file-extent record; emitting one produces a zero-length extent
     // at logical address 0, which fsck_apfs rejects ("invalid zero-length
@@ -2017,11 +2001,28 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
         uint64_t paddr{0};
         uint64_t blockCount{0};
         uint64_t owner{0};
+        uint32_t refcnt{1};
     };
     QVector<PhysExtRecord> records;
     for (const auto& file : files) {
         for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
-            records.append({extent.paddr, extent.blockCount, file.fileId});
+            // A7 (A-h) clones: when two files (the source and its clone) reference the
+            // same physical block, emit ONE j_phys_ext record with refcnt = the number
+            // of referencing data streams (fsck/apfsck cross-check e_refcnt against the
+            // file-extent references). The owner stays the lowest id (the source).
+            PhysExtRecord* shared = nullptr;
+            for (PhysExtRecord& candidate : records) {
+                if (candidate.paddr == extent.paddr) {
+                    shared = &candidate;
+                    break;
+                }
+            }
+            if (shared != nullptr) {
+                shared->refcnt += 1;
+                shared->owner = std::min(shared->owner, file.fileId);
+            } else {
+                records.append({extent.paddr, extent.blockCount, file.fileId, 1});
+            }
         }
     }
     std::sort(records.begin(),
@@ -2056,7 +2057,7 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
         const qsizetype value = valueAreaEnd - valueBackCursor;
         writeLe64(&block, value, record.blockCount | (kApfsKindNew << kApfsObjTypeShift));
         writeLe64(&block, value + 8, record.owner);
-        writeLe32(&block, value + 16, 1);
+        writeLe32(&block, value + 16, record.refcnt);
         keyCursor += kExtRefKeyBytes;
     }
     writeLe16(&block, 0x2C, static_cast<uint16_t>(keyCursor));
@@ -4577,9 +4578,14 @@ bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
         parseExtentRefOwners(source.image, source.geometry, source.chain.extentRef, blockers);
     for (ApfsRootFilePayload existing : inputFiles) {
         existing.privateId = existing.fileId;
-        existing.dataStartBlock = owners.value(existing.fileId);
         const QVector<ApfsDataExtent> recovered = recoverFileDataExtents(
             source.image, source.geometry, source.chain, existing.fileId, blockers);
+        // The start block comes from the file's OWN file-extent records, not the
+        // extent-ref owner map: a clone's shared block is owned by the source id in the
+        // extent-ref tree, so an owner-map lookup on the clone's id would miss (yielding
+        // block 0, a phantom hole). The empty-file fallback keeps the owner map.
+        existing.dataStartBlock = recovered.isEmpty() ? owners.value(existing.fileId)
+                                                      : recovered.first().paddr;
         if (recovered.size() > 1) {
             existing.dataExtents = recovered;
         }
@@ -4622,27 +4628,40 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
             QStringLiteral("APFS file-hardlink-commit: target inode not found in the live tree"));
         return false;
     }
-    const bool clone = in.request.cloneSourcePrivateId != 0;
-    files->append(
-        {.fileName = in.request.fileName.trimmed(),
-         // A clone carries a size-only buffer so its inode reports the shared stream's
-         // logical size while allocating nothing (sharesDstream skips its extents).
-         .data = clone ? QByteArray(static_cast<qsizetype>(in.request.cloneLogicalSize), '\0')
-                       : in.request.fileData,
-         .parentDirectoryId = in.request.newFileParentId,
-         .fileId = newFileId,
-         .privateId = clone ? in.request.cloneSourcePrivateId : newFileId,
-         .dataStartBlock = in.newDataStart,
-         .dataExtents = in.newDataExtents,
-         .compressed = in.request.compressed,
-         .decmpfsXattr = in.request.decmpfsXattr,
-         .uncompressedSize = in.request.uncompressedSize,
-         .xattrs = in.request.xattrs,
-         .sparse = in.request.sparse,
-         .sparseLogicalSize = in.request.sparseLogicalSize,
-         .sharesDstream = clone,
-         .extraInodeFlags = clone ? (kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned)
-                                  : 0ULL});
+    if (in.request.cloneSourcePrivateId != 0) {
+        // A clone is its OWN inode + data stream referencing the SOURCE's physical
+        // blocks: it carries its own file-extent records (keyed by its own id) pointing
+        // at the source's extents, so the macOS kernel -- which looks up extents by the
+        // inode's own id, not the source's -- reads the cloned data. The shared blocks'
+        // extent-ref refcount rises to 2 (buildExtentRefTreeBlock merges them). A
+        // size-only buffer carries the inode's logical size; the extents come from
+        // dataExtents, so no data is allocated.
+        const QVector<ApfsDataExtent> sourceExtents = recoverFileDataExtents(
+            in.image, in.geometry, in.chain, in.request.cloneSourcePrivateId, blockers);
+        files->append(
+            {.fileName = in.request.fileName.trimmed(),
+             .data = QByteArray(static_cast<qsizetype>(in.request.cloneLogicalSize), '\0'),
+             .parentDirectoryId = in.request.newFileParentId,
+             .fileId = newFileId,
+             .privateId = newFileId,
+             .dataExtents = sourceExtents,
+             .xattrs = in.request.xattrs,
+             .extraInodeFlags = kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned});
+        return true;
+    }
+    files->append({.fileName = in.request.fileName.trimmed(),
+                   .data = in.request.fileData,
+                   .parentDirectoryId = in.request.newFileParentId,
+                   .fileId = newFileId,
+                   .privateId = newFileId,
+                   .dataStartBlock = in.newDataStart,
+                   .dataExtents = in.newDataExtents,
+                   .compressed = in.request.compressed,
+                   .decmpfsXattr = in.request.decmpfsXattr,
+                   .uncompressedSize = in.request.uncompressedSize,
+                   .xattrs = in.request.xattrs,
+                   .sparse = in.request.sparse,
+                   .sparseLogicalSize = in.request.sparseLogicalSize});
     return true;
 }
 
@@ -5177,9 +5196,11 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!sizeInsertFsTree(ctx, request, &nodeCount, blockers)) {
         return false;
     }
-    // A file with data also copy-on-writes the extent-ref tree (one extra block);
-    // an empty new file leaves the existing extent-ref tree in place.
-    const int extentRefSlots = static_cast<int>(dataBlocks > 0);
+    // A file with data also copy-on-writes the extent-ref tree (one extra block); an
+    // empty new file leaves it in place. A clone allocates no data but still rewrites
+    // the extent-ref tree (the shared blocks' refcount rises to 2), so it COWs it too.
+    const int extentRefSlots = static_cast<int>(dataBlocks > 0 ||
+                                                request.cloneSourcePrivateId != 0);
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     if (!allocateFsCommitBlocks(ctx,
@@ -6713,9 +6734,9 @@ struct ApfsCloneSourceInfo {
 };
 
 // Locate the named root file in a collected tree and mark it as a clone source: its
-// shared data stream's reference count rises to 2 and it gains WAS_EVER_CLONED. Returns
-// the dstream id + logical size the clone inode reuses. Fails closed if the source is
-// absent or zero-length (a zero-length file has no data stream to share).
+// physical blocks gain a second extent-ref reference (refcount 2) and it gains
+// WAS_EVER_CLONED. Returns the source id + logical size the clone inode reuses. Fails
+// closed if the source is absent or zero-length (a zero-length file has no data to clone).
 bool prepareCloneSource(QVector<ApfsRootFilePayload>* existingFiles,
                         const QString& sourceName,
                         ApfsCloneSourceInfo* out,
@@ -6729,7 +6750,6 @@ bool prepareCloneSource(QVector<ApfsRootFilePayload>* existingFiles,
                 "APFS file-clone-commit: cloning a zero-length source file is not supported"));
             return false;
         }
-        file.dstreamRefcnt = 2;
         file.extraInodeFlags |= kApfsInodeFlagWasEverCloned;
         *out = {file.fileId, static_cast<uint64_t>(file.data.size())};
         return true;
