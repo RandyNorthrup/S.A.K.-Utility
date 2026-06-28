@@ -1501,6 +1501,39 @@ std::optional<QJsonObject> buildCommitFileCloneReport(const CliInvocation& invoc
     return report;
 }
 
+std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocation,
+                                                   QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-resize.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyResize(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .new_size_bytes = invocation.target_size_bytes,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"),
+                  QStringLiteral("APFS in-place container resize commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("new_size_bytes"),
+                  static_cast<qint64>(invocation.target_size_bytes));
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitFileHardlinkReport(const CliInvocation& invocation,
                                                          QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -1860,7 +1893,7 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 29> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 30> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
@@ -1876,6 +1909,7 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-image-file-insert"), buildCommitFileInsertReport},
         {QLatin1StringView("commit-image-file-clone"), buildCommitFileCloneReport},
         {QLatin1StringView("commit-image-file-hardlink"), buildCommitFileHardlinkReport},
+        {QLatin1StringView("commit-image-resize"), buildCommitResizeReport},
         {QLatin1StringView("commit-image-file-delete"), buildCommitFileDeleteReport},
         {QLatin1StringView("commit-image-file-rename"), buildCommitFileRenameReport},
         {QLatin1StringView("commit-raw-file-insert"), buildCommitRawFileInsertReport},

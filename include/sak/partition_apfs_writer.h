@@ -508,6 +508,18 @@ struct PartitionApfsImageFileCloneCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to grow a generated APFS container in place to a new (larger) size with
+///        a true crash-safe checkpoint commit (A7, A-g). Bounded to an in-chunk grow of a
+///        single-chunk container: the device gains blocks inside its one existing chunk, so
+///        no chunk is added and the spaceman internal pool does not reshape. new_size_bytes
+///        must be block-aligned and larger than the current size.
+struct PartitionApfsImageResizeCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    uint64_t new_size_bytes{0};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to add a hard link (a second name) to one root file in a generated
 ///        APFS container with a true in-place copy-on-write checkpoint commit (A7). The
 ///        new name resolves to the source file's inode -- no data or inode is copied;
@@ -890,6 +902,10 @@ public:
     ///        reference count rises to 2.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileClone(
         const PartitionApfsImageFileCloneCommitRequest& request);
+    /// @brief Grow a generated container in place to a new larger size with a crash-safe
+    ///        checkpoint commit (A7, A-g). Bounded to an in-chunk single-chunk grow.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyResize(
+        const PartitionApfsImageResizeCommitRequest& request);
     /// @brief Add a hard link (second name) to one root file with a true in-place COW
     ///        commit (A7): the new name shares the source's inode; link count rises to 2.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileHardlink(

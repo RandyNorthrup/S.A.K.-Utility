@@ -3083,6 +3083,9 @@ struct ApfsCheckpointCommitContext {
     uint64_t ipBitmapUsage{0};     // 0 = leave the sm_ip_bitmap ring; else advance it
     QVector<ApfsFreeQueueEntry> ipFqEntries;    // non-empty: rebuild the IP free-queue + counts
     QVector<ApfsFreeQueueEntry> mainFqEntries;  // non-empty: rebuild the main free-queue + counts
+    // A7 (A-g) in-chunk grow: blocks added to the main device's sm_block_count (0 = no
+    // resize). The matching free-count rise rides in spacemanFreeDelta.
+    int64_t spacemanBlockCountDelta{0};
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -3161,6 +3164,18 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
         writeLe64(object,
                   freeOffset,
                   le64(*object, freeOffset) + static_cast<uint64_t>(ctx.spacemanFreeDelta));
+    }
+    if (ctx.spacemanBlockCountDelta != 0) {
+        // A7 (A-g) in-chunk grow: the main device's block count rises by the blocks
+        // the device gained (the chunk count is unchanged - the grow stays in chunk 0).
+        const qsizetype countOffset = kApfsSpacemanMainDeviceOffset +
+                                      kApfsSpacemanDeviceBlockCountOffset;
+        const uint64_t grownBlockCount = le64(*object, countOffset) +
+                                         static_cast<uint64_t>(ctx.spacemanBlockCountDelta);
+        writeLe64(object, countOffset, grownBlockCount);
+        // The main free-queue's node limit scales with the device block count, so it has
+        // to be recomputed for the new size (fsck checks it).
+        writeLe16(object, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(grownBlockCount));
     }
     if (ctx.newCibAddr != 0) {
         // Only group slot 0 rotates, so just re-point spaceman address-array entry 0
@@ -3325,6 +3340,9 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
     QVector<uint64_t> extraFreedIpBlocks;  // overflow: old boundary-chunk bitmap freed this commit
     QVector<ApfsFreeQueueEntry> mainFqEntries;  // rebuilt main free-queue (empty = leave it)
+    // A7 (A-g) in-chunk grow: blocks added to nx_block_count + the spaceman main device
+    // (0 = no resize). Applied to the carried-forward nx_superblock + spaceman.
+    int64_t blockCountDelta{0};
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -3389,7 +3407,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           request.cibCount,
                                           request.ipBitmapUsage,
                                           ipFqEntries,
-                                          request.mainFqEntries};
+                                          request.mainFqEntries,
+                                          request.blockCountDelta};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -3400,6 +3419,17 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     }
     advanceNxSuperblockCheckpoint(
         &request.nxsb, live, newXid, static_cast<uint32_t>(ephemeralBlocks));
+    if (request.blockCountDelta != 0) {
+        // A7 (A-g) in-chunk grow: the container gained blocks within the existing chunk.
+        const uint64_t grownBlockCount = le64(request.nxsb, kApfsNxBlockCountOffset) +
+                                         static_cast<uint64_t>(request.blockCountDelta);
+        writeLe64(&request.nxsb, kApfsNxBlockCountOffset, grownBlockCount);
+        // nx_ephemeral_info[0] encodes main_fq_node_limit(block_count) for a sub-128-MiB
+        // container, so it has to track the new block count (fsck checks it exactly).
+        writeLe64(&request.nxsb,
+                  kApfsNxEphemeralInfoOffset,
+                  apfsNxEphemeralInfoValue(grownBlockCount, geometry.blockSize));
+    }
     if (request.newContainerOmap != 0) {
         writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
     }
@@ -4144,6 +4174,9 @@ struct ApfsFileInsertAllocation {
     int64_t cibFreeDelta{0};        // chunk-0 free-block delta if all allocation hit chunk 0
     uint64_t newXid{0};
     uint64_t chunk1BitmapBlock{0};  // 0 = single-chunk; else the chunk-1 bitmap's chunk-0 block
+    // A7 (A-g) in-chunk grow: blocks added to chunk 0's ci_block_count (the device grew
+    // within the existing chunk). 0 for every non-resize commit.
+    int64_t chunk0BlockCountDelta{0};
 };
 
 // The allocated blocks that landed in chunk 1+ (>= chunk0Blocks) - their data went
@@ -4200,6 +4233,16 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     writeLe32(&cib,
               freeOffset,
               static_cast<uint32_t>(static_cast<int64_t>(le32(cib, freeOffset)) + chunk0Delta));
+    // A7 (A-g) in-chunk grow: the device grew within chunk 0, so its ci_block_count
+    // rises by the same delta (the matching free-count rise rides in cibFreeDelta).
+    if (alloc.chunk0BlockCountDelta != 0) {
+        const qsizetype countOffset = kApfsChunkInfoEntriesOffset +
+                                      kApfsChunkInfoEntryBlockCountOffset;
+        writeLe32(&cib,
+                  countOffset,
+                  static_cast<uint32_t>(static_cast<int64_t>(le32(cib, countOffset)) +
+                                        alloc.chunk0BlockCountDelta));
+    }
     writeLe64(&cib,
               kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
               alloc.rotation.newBitmap);
@@ -5656,6 +5699,113 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
                               .mainFqEntries = mainFq.entries},
+                             result,
+                             blockers);
+}
+
+// A7 (A-g) resize: the number of blocks to grow a container to reach newSizeBytes, or 0
+// (with a blocker) if the new size is not block-aligned or is not larger than the current
+// size (shrink is a later increment).
+uint64_t resolveResizeGrowDelta(QIODevice* image, uint64_t newSizeBytes, QStringList* blockers) {
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
+        return 0;
+    }
+    if (blockSize == 0 || newSizeBytes % blockSize != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-commit: the new size must be a multiple of the block size"));
+        return 0;
+    }
+    const uint64_t newBlockCount = newSizeBytes / blockSize;
+    if (newBlockCount <= blockCount) {
+        blockers->append(QStringLiteral(
+            "APFS resize-commit: the new size must be larger than the current size (shrink is a "
+            "later increment)"));
+        return 0;
+    }
+    return newBlockCount - blockCount;
+}
+
+// A7 (A-g) container grow: extend a generated container in place by growDeltaBlocks with
+// a true crash-safe checkpoint commit. Bounded to an IN-CHUNK grow of a single-chunk
+// container -- the device gains blocks inside its one existing chunk, so no chunk is
+// added and the spaceman's internal-pool region does not reshape (a chunk-adding grow
+// relocates every metadata block, a later increment). The grow rotates the cib/bitmap
+// like every commit, but instead of allocating/freeing it raises chunk 0's block + free
+// counts, the spaceman main device's block + free counts, and nx_block_count by the same
+// delta; the new blocks are already free (0) in the carried-forward chunk bitmap. No
+// file-system metadata moves.
+bool commitInPlaceResizeGrow(QIODevice* image,
+                             uint64_t growDeltaBlocks,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    if (growDeltaBlocks == 0) {
+        blockers->append(QStringLiteral("APFS resize-grow: the grow amount must be non-zero"));
+        return false;
+    }
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    if (ctx.layout.cibCount != 1 || ctx.layout.cabCount != 0 || ctx.layout.allocChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: only an in-chunk grow of a single-chunk container is supported in "
+            "this increment (a chunk-adding grow reshapes the spaceman internal pool)"));
+        return false;
+    }
+    const uint64_t oldBlockCount = ctx.geometry.blockCount;
+    if (oldBlockCount + growDeltaBlocks > kApfsSpacemanBlocksPerChunk) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: the new size would add a chunk (exceeds the single "
+                           "chunk's %1-block "
+                           "capacity); only an in-chunk grow is supported in this increment")
+                .arg(kApfsSpacemanBlocksPerChunk));
+        return false;
+    }
+    auto* fileDevice = qobject_cast<QFileDevice*>(image);
+    if (fileDevice == nullptr || !fileDevice->resize(static_cast<qint64>(
+                                     (oldBlockCount + growDeltaBlocks) * ctx.geometry.blockSize))) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: unable to grow the backing image/device"));
+        return false;
+    }
+    const uint64_t newXid = ctx.live.xid + 1;
+    const int64_t growDelta = static_cast<int64_t>(growDeltaBlocks);
+    const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
+    const uint64_t groupSize = ctx.layout.ipGroupStride;
+    // Single-chunk, single-CIB: the IP bitmap marks the three rotation-group slots only.
+    const uint64_t ipBitmapUsage = (ctx.layout.cibCount - 1) + 3 * groupSize;
+    // No blocks are allocated or freed; the cib's chunk 0 simply gains growDelta blocks,
+    // all free. cibFreeDelta/spacemanFreeDelta raise the free counts, the *BlockCountDelta
+    // fields raise the block counts.
+    if (!applyFileInsertAllocation({.image = ctx.image,
+                                    .geometry = ctx.geometry,
+                                    .layout = ctx.layout,
+                                    .rotation = rotation,
+                                    .freed = {},
+                                    .allocated = {},
+                                    .cibFreeDelta = growDelta,
+                                    .newXid = newXid,
+                                    .chunk1BitmapBlock = 0,
+                                    .chunk0BlockCountDelta = growDelta},
+                                   blockers)) {
+        return false;
+    }
+    return advanceCheckpoint({.image = ctx.image,
+                              .geometry = ctx.geometry,
+                              .nxsb = ctx.nxsb,
+                              .live = ctx.live,
+                              .newContainerOmap = 0,
+                              .spacemanFreeDelta = growDelta,
+                              .nextOidAdvance = 0,
+                              .newCibAddr = rotation.newCib,
+                              .cibCount = ctx.layout.cibCount,
+                              .ipSlotStride = groupSize,
+                              .ipBitmapUsage = ipBitmapUsage,
+                              .freedCibSlot = rotation.liveCib,
+                              .prevFreedCibSlot = rotation.freeCib,
+                              .blockCountDelta = growDelta},
                              result,
                              blockers);
 }
@@ -13018,6 +13168,69 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceCheckpoint(&image, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    image.close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyResize(
+    const PartitionApfsImageResizeCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place resize remains image-only and is not exposed to user actions; "
+        "raw in-place commit support requires fsck_apfs/diskutil, crash replay, and hardware "
+        "evidence"));
+
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("resize-commit"),
+                                                &result.blockers);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("resize-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("resize-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("resize-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("resize-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    const uint64_t growDelta =
+        resolveResizeGrowDelta(&image, request.new_size_bytes, &result.blockers);
+    if (growDelta == 0) {
+        image.close();
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceResizeGrow(&image, growDelta, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
