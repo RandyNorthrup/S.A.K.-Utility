@@ -406,6 +406,7 @@ struct CliInvocation {
     QString snapshot_name;
     QString evidence_id;
     QString volume_password;
+    QString recovery_key;
     bool confirm_target{false};
     bool allow_raw_target{false};
     bool compress_zlib{false};
@@ -448,6 +449,7 @@ struct CliParserOptions {
     const QCommandLineOption* allow_raw{nullptr};
     const QCommandLineOption* compress_zlib{nullptr};
     const QCommandLineOption* volume_password{nullptr};
+    const QCommandLineOption* recovery_key{nullptr};
 };
 
 struct CliNumericInputs {
@@ -558,6 +560,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
                          .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
                          .volume_password = parser.value(*options.volume_password),
+                         .recovery_key = parser.value(*options.recovery_key),
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw),
                          .compress_zlib = parser.isSet(*options.compress_zlib)};
@@ -572,6 +575,7 @@ QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
                              .volume_name = invocation.volume_name,
                              .additional_volume_names = invocation.additional_volume_names,
                              .volume_password = invocation.volume_password,
+                             .recovery_key = invocation.recovery_key,
                              .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
@@ -2088,6 +2092,12 @@ int main(int argc, char* argv[]) {
         QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
                        "password; for format-image. Credential-in, never stored."),
         QStringLiteral("password"));
+    const QCommandLineOption recoveryKeyOption(
+        {QStringLiteral("recovery-key")},
+        QStringLiteral("Add a personal-recovery-key unlock record (used with --volume-password); "
+                       "the volume then unlocks by either the password or this recovery key; for "
+                       "format-image. Credential-in, never stored."),
+        QStringLiteral("recovery-key"));
     parser.addOptions({targetOption,
                        sizeOption,
                        blockSizeOption,
@@ -2106,7 +2116,8 @@ int main(int argc, char* argv[]) {
                        confirmOption,
                        allowRawOption,
                        compressZlibOption,
-                       volumePasswordOption});
+                       volumePasswordOption,
+                       recoveryKeyOption});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -2141,7 +2152,8 @@ int main(int argc, char* argv[]) {
                               .confirm = &confirmOption,
                               .allow_raw = &allowRawOption,
                               .compress_zlib = &compressZlibOption,
-                              .volume_password = &volumePasswordOption},
+                              .volume_password = &volumePasswordOption,
+                              .recovery_key = &recoveryKeyOption},
                              &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;

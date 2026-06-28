@@ -275,6 +275,11 @@ struct PartitionApfsImageFormatRequest {
     // container + volume keybags, sets nx_keylocker / APFS_FS_ONEKEY, and
     // AES-XTS-encrypts the volume's file-system tree. Credential-in, never stored.
     QString volume_password;
+    // A6 follow-on: optional personal-recovery-key credential. When set alongside
+    // volume_password, the volume keybag gets a second unlock record (the same KEK
+    // wrapped by this recovery key, keyed by Apple's fixed PRK UUID), so the volume
+    // is unlockable by EITHER the password or the recovery key. Never stored.
+    QString recovery_key;
     bool target_wipe_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

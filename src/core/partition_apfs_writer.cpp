@@ -8042,6 +8042,7 @@ struct ApfsEncryptionMaterial {
 
 struct ApfsEncryptionInputs {
     QString password;
+    QString recoveryKey;  // optional personal-recovery-key credential (PRK)
     QByteArray containerUuid;
     QByteArray volumeUuid;
     uint64_t containerKbBlock{0};
@@ -8061,49 +8062,66 @@ QByteArray sealKeybagBlock(QByteArray plaintext,
     return sak::apfs_crypto::xtsEncryptBlock(uuid + uuid, blockAddr, plaintext);
 }
 
+/// @brief Build one per-volume-keybag unlock record: the volume KEK wrapped by a
+/// credential (password or recovery key) via PBKDF2-HMAC-SHA256, keyed by @p uuid.
+sak::apfs_keybag::KeybagEntry buildVolumeUnlockRecord(const QByteArray& kek,
+                                                      const QByteArray& credential,
+                                                      const QByteArray& uuid,
+                                                      QStringList* blockers) {
+    using namespace sak::apfs_crypto;
+    const QByteArray salt = randomBytes(16);
+    const QByteArray derived = pbkdf2Sha256(credential, salt, kApfsEncryptionIterations, 32);
+    const QByteArray wrappedKek = aesKeyWrap(derived, kek);
+    if (wrappedKek.size() != kApfsWrappedKeyBytes) {
+        blockers->append(QStringLiteral("APFS encryption unlock-record generation failed"));
+        return {};
+    }
+    const QByteArray kekBlob =
+        sak::apfs_keybag::buildKekBlob({.uuid = uuid,
+                                        .wrappedKey = wrappedKek,
+                                        .flags8 = kApfsKekBlobFlags,
+                                        .outerSalt = randomBytes(8),
+                                        .iterations = kApfsEncryptionIterations,
+                                        .salt = salt});
+    return {uuid, sak::apfs_keybag::kKbTagVolumeUnlockRecords, kekBlob};
+}
+
 /// @brief Generate the VEK/KEK, build the container + per-volume keybags from the
-/// user password, and return both keybag blocks encrypted + ready to place.
+/// user password (and optional recovery key), and return both keybag blocks
+/// encrypted + ready to place. With a recovery key the volume keybag gets a second
+/// unlock record so the volume unlocks by EITHER the password or the recovery key.
 ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& in,
                                                    QStringList* blockers) {
     using namespace sak::apfs_crypto;
     using namespace sak::apfs_keybag;
-    const QByteArray& containerUuid = in.containerUuid;
     const QByteArray& volumeUuid = in.volumeUuid;
-    const uint64_t containerKbBlock = in.containerKbBlock;
-    const uint64_t volumeKbBlock = in.volumeKbBlock;
     const int blockSize = in.blockSize;
     ApfsEncryptionMaterial mat;
     const QByteArray vek = randomBytes(32);
     const QByteArray kek = randomBytes(32);
-    const QByteArray pbkdfSalt = randomBytes(16);
-    const QByteArray derived =
-        pbkdf2Sha256(in.password.toUtf8(), pbkdfSalt, kApfsEncryptionIterations, 32);
-    const QByteArray wrappedKek = aesKeyWrap(derived, kek);
     const QByteArray wrappedVek = aesKeyWrap(kek, vek);
-    if (vek.size() != 32 || wrappedKek.size() != 40 || wrappedVek.size() != 40) {
+    if (vek.size() != 32 || wrappedVek.size() != kApfsWrappedKeyBytes) {
         blockers->append(QStringLiteral("APFS encryption key generation failed"));
         return mat;
     }
+    QList<KeybagEntry> volumeEntries{
+        buildVolumeUnlockRecord(kek, in.password.toUtf8(), volumeUuid, blockers)};
+    if (!in.recoveryKey.isEmpty()) {
+        const QByteArray prkUuid =
+            QUuid::fromString(QString::fromLatin1(kApfsRecoveryKeyUuid)).toRfc4122();
+        volumeEntries.append(
+            buildVolumeUnlockRecord(kek, in.recoveryKey.toUtf8(), prkUuid, blockers));
+    }
+    const QByteArray volumeKb =
+        buildKeybagBlock(kApfsObjectTypeVolumeKeybag, 0, kApfsFormatXid, volumeEntries, blockSize);
+    // Container keybag: VOLUME_UNLOCK_RECORDS = prange to the per-volume keybag,
+    // VOLUME_KEY = the VEK blob (both keyed by the volume UUID).
     const QByteArray vekBlob = buildVekBlob({.uuid = volumeUuid,
                                              .wrappedKey = wrappedVek,
                                              .flags8 = kApfsVekBlobFlags,
                                              .outerSalt = randomBytes(8)});
-    const QByteArray kekBlob = buildKekBlob({.uuid = volumeUuid,
-                                             .wrappedKey = wrappedKek,
-                                             .flags8 = kApfsKekBlobFlags,
-                                             .outerSalt = randomBytes(8),
-                                             .iterations = kApfsEncryptionIterations,
-                                             .salt = pbkdfSalt});
-    // Per-volume keybag: one VOLUME_UNLOCK_RECORDS entry carrying the KEK blob.
-    const QByteArray volumeKb = buildKeybagBlock(kApfsObjectTypeVolumeKeybag,
-                                                 0,
-                                                 kApfsFormatXid,
-                                                 {{volumeUuid, kKbTagVolumeUnlockRecords, kekBlob}},
-                                                 blockSize);
-    // Container keybag: VOLUME_UNLOCK_RECORDS = prange to the per-volume keybag,
-    // VOLUME_KEY = the VEK blob (both keyed by the volume UUID).
     QByteArray prange(16, '\0');
-    writeLe64(&prange, 0, volumeKbBlock);
+    writeLe64(&prange, 0, in.volumeKbBlock);
     writeLe64(&prange, 8, 1);
     const QByteArray containerKb = buildKeybagBlock(
         kApfsObjectTypeContainerKeybag,
@@ -8113,8 +8131,8 @@ ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& i
         blockSize);
     mat.vek = vek;
     mat.containerKeybagBlock =
-        sealKeybagBlock(containerKb, containerUuid, containerKbBlock, blockers);
-    mat.volumeKeybagBlock = sealKeybagBlock(volumeKb, volumeUuid, volumeKbBlock, blockers);
+        sealKeybagBlock(containerKb, in.containerUuid, in.containerKbBlock, blockers);
+    mat.volumeKeybagBlock = sealKeybagBlock(volumeKb, volumeUuid, in.volumeKbBlock, blockers);
     mat.ok = mat.containerKeybagBlock.size() == blockSize &&
              mat.volumeKeybagBlock.size() == blockSize;
     return mat;
@@ -8156,6 +8174,7 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
     enc.keylockerBlocks = 1;
     const ApfsEncryptionMaterial mat =
         buildApfsEncryptionMaterial({.password = request.volume_password,
+                                     .recoveryKey = request.recovery_key,
                                      .containerUuid = containerUuid,
                                      .volumeUuid = volumeUuid,
                                      .containerKbBlock = enc.containerKbBlock,

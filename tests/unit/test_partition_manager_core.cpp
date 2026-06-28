@@ -1789,6 +1789,7 @@ private Q_SLOTS:
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
+    void apfsWriter_recoveryKeyUnlocksEncryptedVolume();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8870,6 +8871,46 @@ void PartitionManagerCoreTests::apfsReader_decryptsEncryptedVolumeWithCredential
         PartitionApfsFileSystemReader::listDirectoryFromImage(plain, QStringLiteral("/"), 1000);
     QVERIFY2(plainListing.ok, qPrintable(plainListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(plainListing.volume_name, QStringLiteral("SAKPLAIN"));
+}
+
+void PartitionManagerCoreTests::apfsWriter_recoveryKeyUnlocksEncryptedVolume() {
+    // A6 follow-on: a volume formatted with BOTH a password and a personal recovery
+    // key carries two unlock records (the same KEK wrapped by each credential), so
+    // the reader unlocks it with EITHER secret -- and rejects anything else.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString img = QDir(temp.path()).filePath(QStringLiteral("prk-enc.apfs"));
+    const QString password = QStringLiteral("sakpass1234");
+    const QString recoveryKey = QStringLiteral("ASDF-1234-QWER-5678-ZXCV-9012");
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = img,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKPRK"),
+                  .volume_password = password,
+                  .recovery_key = recoveryKey,
+                  .options = options})
+                 .ok,
+             "format encrypted volume with recovery key");
+
+    // The password still unlocks the volume.
+    const auto byPassword = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        img, QStringLiteral("/"), 1000, password);
+    QVERIFY2(byPassword.ok, qPrintable(byPassword.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(byPassword.volume_name, QStringLiteral("SAKPRK"));
+
+    // The personal recovery key unlocks the SAME volume via its own unlock record.
+    const auto byRecovery = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        img, QStringLiteral("/"), 1000, recoveryKey);
+    QVERIFY2(byRecovery.ok, qPrintable(byRecovery.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(byRecovery.volume_name, QStringLiteral("SAKPRK"));
+
+    // A credential matching neither record fails closed.
+    const auto wrong = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        img, QStringLiteral("/"), 1000, QStringLiteral("NOPE-0000-NOPE-0000-NOPE-0000"));
+    QVERIFY(!wrong.ok);
+    QVERIFY(wrong.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("incorrect")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
