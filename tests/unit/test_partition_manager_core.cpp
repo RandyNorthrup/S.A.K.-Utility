@@ -8660,15 +8660,12 @@ void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
         "03a51ebf59a36d9d51658de808a8aa2f9811a5e4eb852aa344bfd85128755da3d3ed19dde8750dab");
 
     // Byte-exact KEK blob (volume keybag KB_TAG_VOLUME_UNLOCK_RECORDS payload).
-    const QByteArray kekBlob =
-        buildKekBlob({.uuid = uuid,
-                      .wrappedKey = wrappedKek,
-                      .flags8 = QByteArray::fromHex("000000000200bcac"),
-                      .hmac32 = QByteArray::fromHex(
-                          "f3ad4e06ab404e03607f00445b46b01016a5ac022ecba8dc8db2b627667d014c"),
-                      .outerSalt = QByteArray::fromHex("e2fa559ef3ab357d"),
-                      .iterations = 113'939,
-                      .salt = kekSalt});
+    const QByteArray kekBlob = buildKekBlob({.uuid = uuid,
+                                             .wrappedKey = wrappedKek,
+                                             .flags8 = QByteArray::fromHex("000000000200bcac"),
+                                             .outerSalt = QByteArray::fromHex("e2fa559ef3ab357d"),
+                                             .iterations = 113'939,
+                                             .salt = kekSalt});
     QCOMPARE(kekBlob.toHex(),
              QByteArray("3081918001008120f3ad4e06ab404e03607f00445b46b01016a5ac022ecba8dc8db2b62"
                         "7667d014c8208e2fa559ef3ab357da3608001008110d822b542ebba48c3a760f2e35e991"
@@ -8677,13 +8674,10 @@ void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
                         "44f7a2d"));
 
     // Byte-exact VEK blob (container keybag KB_TAG_VOLUME_KEY payload).
-    const QByteArray vekBlob =
-        buildVekBlob({.uuid = uuid,
-                      .wrappedKey = wrappedVek,
-                      .flags8 = QByteArray::fromHex("000000000100bcac"),
-                      .hmac32 = QByteArray::fromHex(
-                          "2b546ddc5bd92afe4a13d556d724e800b7b680a4a1d235a691f7395cfe1181a9"),
-                      .outerSalt = QByteArray::fromHex("8e48b75f1a87d3bb")});
+    const QByteArray vekBlob = buildVekBlob({.uuid = uuid,
+                                             .wrappedKey = wrappedVek,
+                                             .flags8 = QByteArray::fromHex("000000000100bcac"),
+                                             .outerSalt = QByteArray::fromHex("8e48b75f1a87d3bb")});
     QCOMPARE(vekBlob.toHex(),
              QByteArray("307a80010081202b546ddc5bd92afe4a13d556d724e800b7b680a4a1d235a691f7395cfe1"
                         "181a982088e48b75f1a87d3bba3498001008110d822b542ebba48c3a760f2e35e991fb5820"

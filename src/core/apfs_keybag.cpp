@@ -6,6 +6,8 @@
 
 #include "sak/apfs_keybag.h"
 
+#include "sak/apfs_crypto.h"
+
 #include <QtEndian>
 
 #include <cstring>
@@ -183,13 +185,19 @@ QByteArray derTlv(uint8_t tag, const QByteArray& value) {
 
 namespace {
 
-/// @brief Wrap an inner keyblob field list in the outer SEQUENCE (hmac/salt/keyblob).
+/// @brief Wrap an inner keyblob field list in the outer SEQUENCE. The outer HMAC
+/// authenticates the keyblob ([0xA3] TLV) under the key SHA256(magic || outerSalt).
 QByteArray wrapBlob(const KeyBlobParams& p, const QByteArray& inner) {
+    const QByteArray keyblob = derTlv(0xA3, inner);
+    QByteArray hmacInput(kApfsKeyBlobHmacMagic, kApfsKeyBlobHmacMagicLen);
+    hmacInput.append(p.outerSalt);
+    const QByteArray hmac = sak::apfs_crypto::hmacSha256(sak::apfs_crypto::sha256(hmacInput),
+                                                         keyblob);
     QByteArray outer;
     outer.append(derTlv(0x80, QByteArray(1, '\0')));
-    outer.append(derTlv(0x81, p.hmac32));
+    outer.append(derTlv(0x81, hmac));
     outer.append(derTlv(0x82, p.outerSalt));
-    outer.append(derTlv(0xA3, inner));
+    outer.append(keyblob);
     return derTlv(0x30, outer);
 }
 

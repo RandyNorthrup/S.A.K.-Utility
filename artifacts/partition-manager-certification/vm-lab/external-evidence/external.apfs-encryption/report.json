@@ -1,0 +1,22 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-encryption",
+    "tier": "A6 / A-f: APFS software encryption (FileVault), credential-gated",
+    "destructive": false,
+    "host": "S.A.K. sak_apfs_writer_cli.exe formatted a software-encrypted (FileVault) APFS volume with --volume-password; the macOS Sequoia kernel (apfs_kext 2332.101.1, qemu/KVM recovery) UNLOCKED + MOUNTED it with the password and Apple fsck_apfs validated it. Cracking the keybag outer-HMAC came from the jtsylve 'APFS Wrapped Keys' writeup; the remaining two bugs were caught by byte-diffing a real macOS keybag.",
+    "change": "Implemented A6 end-to-end: a userspace APFS writer that formats a software-encrypted (FileVault, no SEP) volume the macOS kernel unlocks + mounts. (1) CRYPTO: PBKDF2-HMAC-SHA256, RFC3394 AES key wrap/unwrap, AES-XTS-128 over 512-byte data units (built from AES-ECB because the Windows CNG XTS-AES provider rejects BCryptEncrypt) -- all vector-certified (FIPS/RFC/IEEE-1619). (2) KEYBAG: container ('keys' 0x6B657973) + per-volume ('recs' 0x72656373) keybags, AES-XTS-encrypted with uuid||uuid (tweak block*8); DER key-blobs whose outer HMAC = HMAC-SHA256(SHA256(magic '\\x01\\x16\\x20\\x17\\x15\\x05' || outer_salt), keyblob-TLV). (3) FORMAT: generate VEK/KEK, wrap, build+place both keybags (reserved-prefix +2 so the spaceman accounts for them), set nx_keylocker @ NXSB 0x510, APSB apfs_fs_flags = APFS_FS_ONEKEY (0x8), flag the fs-tree's volume-omap value OMAP_VAL_ENCRYPTED (0x4), emit the default whole-volume crypto-state record (APFS_TYPE_CRYPTO_STATE 7 @ obj_id CRYPTO_SW_ID 4, refcnt 1, key_len 0) in the fs-tree, then AES-XTS-encrypt the fs-tree block with the VEK. Container, APSB, omap, extentref, snapmeta stay plaintext. Unencrypted format path byte-identical (every field gated behind a non-empty password). Three bugs found + fixed to reach the kernel cert: random outer HMAC -> the real SHA256(magic||salt)-keyed HMAC; volume-keybag magic 0x73636572 -> 0x72656373 (the kernel is strict where host tools were endianness-lenient); missing crypto-state record (the -69842 mount failure).",
+    "evidence_kernel": {
+        "recovery_assistant": "macOS Recovery 'Recovery Assistant: Select a user you know the password for' listed the S.A.K. volume as a 'Disk Password' cryptographic user (it did NOT before the keybag fixes) and accepted the password -- proving the kernel derived the VEK from the password through the S.A.K.-written keybag chain.",
+        "unlock_mount": "Terminal: 'diskutil apfs unlockVolume disk1s1 -passphrase sakpass1234' -> 'Unlocking any cryptographic user on APFS Volume disk1s1' -> 'Unlocked and mounted APFS Volume'. 'diskutil apfs list': Name SAKENC, Mount Point /Volumes/SAKENC, FileVault: Yes (Unlocked).",
+        "fsck": "Apple 'fsck_apfs -n -l /dev/rdisk1' on the unlocked+mounted volume: 'Checking the encryption key structures', 'The volume SAKENC was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1)', 'Checking the fsroot tree' (the decrypted fs-tree), 'The volume /dev/rdisk1s1 ... appears to be OK', 'The container /dev/rdisk1 appears to be OK'.",
+        "screenshots": [
+            "apfs.enc-recovery-disk-password-user.png",
+            "apfs.enc-kernel-unlocked-mounted.png",
+            "apfs.enc-filevault-unlocked-mountpoint.png",
+            "apfs.enc-fsck-apfs-PASS.png"
+        ]
+    },
+    "evidence_unit": "tests/unit/test_partition_manager_core.cpp: apfsCrypto_matchesPublishedVectors (FIPS 180-4 / FIPS 197 / RFC 4231 / RFC 3394 sec4.6 / IEEE 1619 vector 1); apfsKeybag_reproducesHarvestedFileVaultBlobs (byte-exact KEK+VEK DER blobs incl. the computed HMAC, vs bytes harvested from a real macOS volume, + the full PBKDF2->unwrap-KEK->unwrap-VEK chain recovering the real VEK); apfsWriter_formatsUnlockableEncryptedVolume (format encrypted -> walk the on-disk keybag chain -> derive VEK -> AES-XTS-decrypt the fs-tree to a valid Fletcher-64 b-tree node; wrong password fails the RFC3394 ICV). Core suite 146/146; clang-format / lizard / cppcheck clean.",
+    "credential_boundary": "Credential-in, never stored: the password is taken at format time, held only in memory; no key or unlocked state is persisted. Personal-recovery-key credential is a documented follow-on (PRK UUID EBC6C064-0000-11AA-AA11-00306543ECAC).",
+    "completed_at_utc": "2026-06-27T00:00:00Z"
+}

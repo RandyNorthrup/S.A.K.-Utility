@@ -172,8 +172,12 @@ constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
 constexpr uint8_t kApfsRecordInode = 3;
 constexpr uint8_t kApfsRecordXattr = 4;
 constexpr uint8_t kApfsRecordDstreamId = 6;
+constexpr uint8_t kApfsRecordCryptoState = 7;  // APFS_TYPE_CRYPTO_STATE
 constexpr uint8_t kApfsRecordFileExtent = 8;
 constexpr uint8_t kApfsRecordDirectoryEntry = 9;
+// CRYPTO_SW_ID: the well-known object id of an encrypted volume's default
+// whole-volume crypto-state record (A6).
+constexpr uint64_t kApfsCryptoSwId = 4;
 // apfs_inode_val.bsd_flags @0x44 and apfs_inode_val.uncompressed_size @0x54; a
 // compressed file sets UF_COMPRESSED in the former and pairs a non-zero size in
 // the latter with APFS_INODE_HAS_UNCOMPRESSED_SIZE in internal_flags @0x30.
@@ -1230,9 +1234,25 @@ int32_t directChildCount(uint64_t directoryId,
     return count;
 }
 
-QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
-    const QVector<ApfsRootFilePayload>& files,
-    const QVector<ApfsRootDirectoryPayload>& directories) {
+// The default whole-volume crypto-state record an encrypted (ONEKEY) volume
+// carries: APFS_TYPE_CRYPTO_STATE (7) at obj_id CRYPTO_SW_ID (4), j_crypto_val
+// = refcnt 1 + an all-zero wrapped_crypto_state (key_len 0). The macOS kernel
+// reads this on mount; without it a decrypted volume fails to mount (-69842).
+// Byte-harvested from a real macOS FileVault volume.
+ApfsBtreeKeyValue defaultVolumeCryptoStateRecord() {
+    QByteArray key(8, '\0');
+    writeLe64(&key,
+              0,
+              (static_cast<uint64_t>(kApfsRecordCryptoState) << kApfsObjTypeShift) |
+                  kApfsCryptoSwId);
+    QByteArray value(24, '\0');
+    writeLe32(&value, 0, 1);  // refcnt = 1; remaining wrapped_crypto_state all zero
+    return {key, value};
+}
+
+QVector<ApfsBtreeKeyValue> buildFsTreeRecords(const QVector<ApfsRootFilePayload>& files,
+                                              const QVector<ApfsRootDirectoryPayload>& directories,
+                                              bool includeCryptoState = false) {
     QVector<ApfsBtreeKeyValue> records{
         {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("root")),
          directoryEntryValue(kApfsRootDirectoryId, kApfsDirTypeDirectory)},
@@ -1258,6 +1278,9 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(
         appendRootDirectoryRecords(&records,
                                    directory,
                                    directChildCount(directory.directoryId, files, 0));
+    }
+    if (includeCryptoState) {
+        records.append(defaultVolumeCryptoStateRecord());
     }
     sortFsTreeRecords(&records);
     return records;
@@ -1342,7 +1365,8 @@ void writeFsTreeInfoTrailer(QByteArray* block,
 QByteArray buildRootTreeBlock(uint32_t blockSize,
                               const QVector<ApfsRootFilePayload>& files,
                               const QVector<ApfsRootDirectoryPayload>& directories,
-                              QStringList* blockers) {
+                              QStringList* blockers,
+                              bool includeCryptoState = false) {
     QByteArray block = newApfsObjectBlock(blockSize,
                                           kApfsFormatRootTreeOid,
                                           kApfsFormatXid,
@@ -1350,7 +1374,8 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
                                           kApfsObjectSubtypeFsTree);
     writeLe16(&block, kApfsBtreeNodeFlagsOffset, kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf);
     writeLe16(&block, kApfsBtreeNodeLevelOffset, 0);
-    const QVector<ApfsBtreeKeyValue> records = buildFsTreeRecords(files, directories);
+    const QVector<ApfsBtreeKeyValue> records =
+        buildFsTreeRecords(files, directories, includeCryptoState);
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
     if (!writeFsTreeNodeBody(&block, records, valueAreaEnd, blockers)) {
         blockers->append(
@@ -1370,8 +1395,10 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
     return buildRootTreeBlock(blockSize, files, {}, blockers);
 }
 
-QByteArray buildEmptyRootTreeBlock(uint32_t blockSize, QStringList* blockers) {
-    return buildRootTreeBlock(blockSize, {}, blockers);
+QByteArray buildEmptyRootTreeBlock(uint32_t blockSize,
+                                   QStringList* blockers,
+                                   bool includeCryptoState = false) {
+    return buildRootTreeBlock(blockSize, {}, {}, blockers, includeCryptoState);
 }
 
 // Multi-volume (A4): an empty root file-system tree published under a non-default
@@ -8060,12 +8087,10 @@ ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& i
     const QByteArray vekBlob = buildVekBlob({.uuid = volumeUuid,
                                              .wrappedKey = wrappedVek,
                                              .flags8 = kApfsVekBlobFlags,
-                                             .hmac32 = randomBytes(32),
                                              .outerSalt = randomBytes(8)});
     const QByteArray kekBlob = buildKekBlob({.uuid = volumeUuid,
                                              .wrappedKey = wrappedKek,
                                              .flags8 = kApfsKekBlobFlags,
-                                             .hmac32 = randomBytes(32),
                                              .outerSalt = randomBytes(8),
                                              .iterations = kApfsEncryptionIterations,
                                              .salt = pbkdfSalt});
@@ -8361,7 +8386,7 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
         {snapMeta,
          buildEmptyVariableTreeBlock(
              request.block_size_bytes, snapMeta, kApfsObjectSubtypeSnapMeta, blockers)},
-        {rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers)},
+        {rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers, enc.enabled)},
         {volSuper,
          buildVolumeSuperblock({.blockSize = request.block_size_bytes,
                                 .volumeName = volumeName,

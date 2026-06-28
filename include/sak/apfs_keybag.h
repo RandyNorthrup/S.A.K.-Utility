@@ -23,9 +23,10 @@
 
 namespace sak::apfs_keybag {
 
-/// keybag object-type magics (uint32 value; stored little-endian on disk).
+/// keybag object-type magics: the 4-char tag read as a big-endian uint32 (so the
+/// on-disk little-endian bytes spell the tag), matching real macOS keybags.
 inline constexpr uint32_t kApfsObjectTypeContainerKeybag = 0x6B'65'79'73;  // 'keys'
-inline constexpr uint32_t kApfsObjectTypeVolumeKeybag = 0x73'63'65'72;     // 'recs'
+inline constexpr uint32_t kApfsObjectTypeVolumeKeybag = 0x72'65'63'73;     // 'recs'
 
 inline constexpr uint16_t kApfsKeybagVersion = 2;
 
@@ -50,14 +51,20 @@ struct KeybagEntry {
 [[nodiscard]] QByteArray buildKeybagBlock(
     uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize);
 
+/// @brief Magic prefix for the keyblob HMAC key: hmac_key = SHA256(magic ||
+/// outer_salt); the outer HMAC then authenticates the DER keyblob ([0xA3] TLV).
+/// (Apple / jtsylve "APFS Wrapped Keys".)
+inline constexpr char kApfsKeyBlobHmacMagic[] = "\x01\x16\x20\x17\x15\x05";
+inline constexpr int kApfsKeyBlobHmacMagicLen = 6;
+
 /// @brief Inputs for a VEK / KEK key-blob. @c iterations and @c salt are used
 /// only by buildKekBlob (the password-derived KEK); buildVekBlob ignores them.
+/// The outer HMAC is computed from @c outerSalt + the keyblob, not supplied.
 struct KeyBlobParams {
     QByteArray uuid;         ///< 16 bytes (volume UUID)
     QByteArray wrappedKey;   ///< 40 bytes (RFC 3394-wrapped VEK or KEK)
     QByteArray flags8;       ///< 8-byte flags field
-    QByteArray hmac32;       ///< 32-byte outer HMAC
-    QByteArray outerSalt;    ///< outer salt
+    QByteArray outerSalt;    ///< outer salt (also keys the HMAC)
     uint64_t iterations{0};  ///< PBKDF2 iterations (KEK only)
     QByteArray salt;         ///< PBKDF2 salt, 16 bytes (KEK only)
 };
