@@ -5,6 +5,7 @@
 /// @brief Unit tests for Partition Manager core planning and safety.
 
 #include "sak/apfs_crypto.h"
+#include "sak/apfs_keybag.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
@@ -1785,6 +1786,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsCrypto_matchesPublishedVectors();
+    void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8641,6 +8643,78 @@ void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
     QCOMPARE(xtsDecryptBlock(vek, 198, encBlock), block);
     // The tweak is address-bound: the same plaintext at a different block differs.
     QVERIFY(xtsEncryptBlock(vek, 199, block) != encBlock);
+}
+
+void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
+    // A6: the keybag/DER-blob builders are pinned to bytes harvested from a REAL
+    // macOS software-FileVault volume (diskutil apfs addVolume -passphrase
+    // sakpass1234). Reproducing those bytes exactly, and recovering the same VEK
+    // the macOS kernel derives, is what lets the kernel unlock a S.A.K. volume.
+    using namespace sak::apfs_keybag;
+    const QByteArray uuid = QByteArray::fromHex("d822b542ebba48c3a760f2e35e991fb5");
+    const QByteArray wrappedKek = QByteArray::fromHex(
+        "98a9c7a040c1fa4cdfab4fd57c5a60cfb82f8e03d776b097a4ed0c6b039d6685124a6ee96a108d73");
+    const QByteArray kekSalt = QByteArray::fromHex("6a89f1d655c0880685544950244f7a2d");
+    const QByteArray wrappedVek = QByteArray::fromHex(
+        "03a51ebf59a36d9d51658de808a8aa2f9811a5e4eb852aa344bfd85128755da3d3ed19dde8750dab");
+
+    // Byte-exact KEK blob (volume keybag KB_TAG_VOLUME_UNLOCK_RECORDS payload).
+    const QByteArray kekBlob =
+        buildKekBlob({.uuid = uuid,
+                      .wrappedKey = wrappedKek,
+                      .flags8 = QByteArray::fromHex("000000000200bcac"),
+                      .hmac32 = QByteArray::fromHex(
+                          "f3ad4e06ab404e03607f00445b46b01016a5ac022ecba8dc8db2b627667d014c"),
+                      .outerSalt = QByteArray::fromHex("e2fa559ef3ab357d"),
+                      .iterations = 113'939,
+                      .salt = kekSalt});
+    QCOMPARE(kekBlob.toHex(),
+             QByteArray("3081918001008120f3ad4e06ab404e03607f00445b46b01016a5ac022ecba8dc8db2b62"
+                        "7667d014c8208e2fa559ef3ab357da3608001008110d822b542ebba48c3a760f2e35e991"
+                        "fb58208000000000200bcac832898a9c7a040c1fa4cdfab4fd57c5a60cfb82f8e03d776b0"
+                        "97a4ed0c6b039d6685124a6ee96a108d73840301bd1385106a89f1d655c08806855449502"
+                        "44f7a2d"));
+
+    // Byte-exact VEK blob (container keybag KB_TAG_VOLUME_KEY payload).
+    const QByteArray vekBlob =
+        buildVekBlob({.uuid = uuid,
+                      .wrappedKey = wrappedVek,
+                      .flags8 = QByteArray::fromHex("000000000100bcac"),
+                      .hmac32 = QByteArray::fromHex(
+                          "2b546ddc5bd92afe4a13d556d724e800b7b680a4a1d235a691f7395cfe1181a9"),
+                      .outerSalt = QByteArray::fromHex("8e48b75f1a87d3bb")});
+    QCOMPARE(vekBlob.toHex(),
+             QByteArray("307a80010081202b546ddc5bd92afe4a13d556d724e800b7b680a4a1d235a691f7395cfe1"
+                        "181a982088e48b75f1a87d3bba3498001008110d822b542ebba48c3a760f2e35e991fb5820"
+                        "8000000000100bcac832803a51ebf59a36d9d51658de808a8aa2f9811a5e4eb852aa344bfd"
+                        "85128755da3d3ed19dde8750dab"));
+
+    // The harvested unlock chain: PBKDF2 -> unwrap KEK -> unwrap VEK == the real
+    // VEK that XTS-decrypts the volume fs-tree on disk.
+    const QByteArray derived =
+        sak::apfs_crypto::pbkdf2Sha256(QByteArrayLiteral("sakpass1234"), kekSalt, 113'939, 32);
+    const auto kek = sak::apfs_crypto::aesKeyUnwrap(derived, wrappedKek);
+    QVERIFY(kek.has_value());
+    QCOMPARE(kek->toHex(),
+             QByteArray("8577094d56f91a131e83268a7de7f0c61036c950cd72075c7118d9ad6393df87"));
+    const auto vek = sak::apfs_crypto::aesKeyUnwrap(*kek, wrappedVek);
+    QVERIFY(vek.has_value());
+    QCOMPARE(vek->toHex(),
+             QByteArray("e23bad1abfb21839e58e5b64d6654e91ea802952ada97b377b68073e9a8c383a"));
+
+    // Container keybag block matches the harvested topology: o_type 'keys'
+    // (bytes 73 79 65 6b), kl_version 2, 2 entries, kl_nbytes = 16 + 48 + 160 = 224.
+    QList<KeybagEntry> entries;
+    entries.append(
+        {uuid, kKbTagVolumeUnlockRecords, QByteArray::fromHex("af010000000000000100000000000000")});
+    entries.append({uuid, kKbTagVolumeKey, vekBlob});
+    const QByteArray kb = buildKeybagBlock(kApfsObjectTypeContainerKeybag, 0, 2, entries, 4096);
+    QCOMPARE(kb.size(), 4096);
+    QCOMPARE(kb.mid(0x18, 4).toHex(), QByteArray("7379656b"));
+    const auto* p = reinterpret_cast<const uchar*>(kb.constData());
+    QCOMPARE(qFromLittleEndian<quint16>(p + 0x20), quint16(2));    // kl_version
+    QCOMPARE(qFromLittleEndian<quint16>(p + 0x22), quint16(2));    // kl_nkeys
+    QCOMPARE(qFromLittleEndian<quint32>(p + 0x24), quint32(224));  // kl_nbytes
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
