@@ -7,6 +7,8 @@
 #include "sak/partition_apfs_file_system_reader.h"
 
 #include "sak/apfs_compression.h"
+#include "sak/apfs_crypto.h"
+#include "sak/apfs_keybag.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -134,6 +136,15 @@ constexpr qsizetype kApfsOmapTreeOidOffset = 0x30;
 constexpr qsizetype kApfsVolumeIncompatibleFeaturesOffset = 0x38;
 constexpr qsizetype kApfsVolumeOmapOidOffset = 0x80;
 constexpr qsizetype kApfsVolumeRootTreeOidOffset = 0x88;
+// A6 read-side decrypt: container UUID + keylocker prange (NXSB) and per-volume
+// UUID + fs-flags (APSB) drive the keybag-chain VEK derivation.
+constexpr qsizetype kApfsUuidBytes = 16;
+constexpr qsizetype kApfsNxUuidOffset = 0x48;
+constexpr qsizetype kApfsNxKeylockerPaddrOffset = 0x510;
+constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
+constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
+constexpr uint64_t kApfsVolumeFsFlagUnencrypted = 0x1;
+constexpr uint64_t kApfsVolumeFsFlagOneKey = 0x8;
 constexpr qsizetype kApfsVolumeFlagsOffset = 0x198;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
 constexpr qsizetype kApfsVolumeNameBytes = 256;
@@ -347,6 +358,7 @@ struct ObjectMapValue {
     uint32_t size{0};
     uint64_t physical_address{0};
     uint64_t xid{0};
+    bool encrypted{false};  // OMAP_VAL_ENCRYPTED: target block is AES-XTS(VEK)
 };
 
 struct ObjectMapState {
@@ -396,7 +408,8 @@ struct FsTreeScanState {
 
 class ApfsReader {
 public:
-    explicit ApfsReader(QIODevice* device) : device_(device) {}
+    explicit ApfsReader(QIODevice* device, QString credential = {})
+        : device_(device), credential_(std::move(credential)) {}
 
     [[nodiscard]] PartitionApfsFileReadResult listDirectory(const QString& path, int maxEntries) {
         PartitionApfsFileReadResult result;
@@ -558,7 +571,140 @@ private:
             result->blockers.append(QStringLiteral("APFS volume has incomplete-restore state"));
             return false;
         }
+        if (!unlockEncryptedVolume(volumeBlock, result)) {
+            return false;
+        }
         return loadVolumeObjectMap(volumeBlock, result) && loadRootTree(result);
+    }
+
+    // A6 read-side decrypt: if the volume's fs-flags clear APFS_FS_UNENCRYPTED, walk
+    // the keybag chain with the supplied credential to recover the volume key (VEK).
+    // The credential loop is credential-agnostic, so a personal-recovery-key unlock
+    // record is tried the same way as the password record. Unencrypted volumes and
+    // the empty-credential locked case are handled without touching the keybags.
+    [[nodiscard]] bool unlockEncryptedVolume(const QByteArray& volumeBlock,
+                                             PartitionApfsFileReadResult* result) {
+        const uint64_t fsFlags = le64(volumeBlock, kApfsVolumeFsFlagsOffset);
+        // Software-encrypted only when the UNENCRYPTED flag is clear AND the
+        // container keylocker references a keybag. A cleared flag with no keylocker
+        // carries no key material (not an unlockable FileVault volume), so the
+        // fs-tree omap flags alone drive any per-object decrypt and we read as-is.
+        if ((fsFlags & kApfsVolumeFsFlagUnencrypted) != 0 || keylockerPaddr_ == 0) {
+            return true;
+        }
+        volumeOneKey_ = (fsFlags & kApfsVolumeFsFlagOneKey) != 0;
+        if (credential_.isEmpty()) {
+            result->blockers.append(
+                QStringLiteral("APFS volume is encrypted; a password or recovery key is required"));
+            return false;
+        }
+        const QByteArray volumeUuid = volumeBlock.mid(kApfsVolumeUuidOffset, kApfsUuidBytes);
+        const auto vek = deriveVolumeKey(volumeUuid, result);
+        if (!vek.has_value()) {
+            return false;
+        }
+        vek_ = *vek;
+        return true;
+    }
+
+    // Read a keybag block (raw ciphertext on disk) and AES-XTS-decrypt it with
+    // uuid||uuid (tweak base = block * 8), then verify the recovered object checksum.
+    [[nodiscard]] std::optional<QByteArray> readKeybagBlock(uint64_t paddr,
+                                                            const QByteArray& uuid,
+                                                            PartitionApfsFileReadResult* result) {
+        QByteArray cipher;
+        if (!readBlock(paddr, &cipher, result, true, false)) {
+            return std::nullopt;
+        }
+        QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(uuid + uuid, paddr, cipher);
+        if (plain.size() != static_cast<qsizetype>(blockSize_) ||
+            !PartitionApfsWriter::verifyObjectChecksum(plain)) {
+            result->blockers.append(
+                QStringLiteral("APFS keybag block %1 failed to decrypt").arg(paddr));
+            return std::nullopt;
+        }
+        return plain;
+    }
+
+    // Walk container keybag -> volume keybag -> KEK -> VEK for @p volumeUuid.
+    [[nodiscard]] std::optional<QByteArray> deriveVolumeKey(const QByteArray& volumeUuid,
+                                                            PartitionApfsFileReadResult* result) {
+        using namespace sak::apfs_keybag;
+        const auto containerKb = readKeybagBlock(keylockerPaddr_, containerUuid_, result);
+        if (!containerKb.has_value()) {
+            return std::nullopt;
+        }
+        QByteArray vekBlob;
+        uint64_t volumeKbPaddr = 0;
+        for (const auto& entry : parseKeybagBlock(*containerKb)) {
+            if (entry.uuid != volumeUuid) {
+                continue;
+            }
+            if (entry.tag == kKbTagVolumeKey) {
+                vekBlob = entry.keydata;
+            } else if (entry.tag == kKbTagVolumeUnlockRecords && entry.keydata.size() >= 8) {
+                volumeKbPaddr = qFromLittleEndian<quint64>(
+                    reinterpret_cast<const uchar*>(entry.keydata.constData()));
+            }
+        }
+        if (vekBlob.isEmpty() || volumeKbPaddr == 0) {
+            result->blockers.append(QStringLiteral("APFS container keybag has no volume key"));
+            return std::nullopt;
+        }
+        return unwrapVolumeKey(volumeUuid, volumeKbPaddr, vekBlob, result);
+    }
+
+    // Try every unlock record in the volume keybag with the supplied credential
+    // (password or recovery key) until one unwraps the KEK and then the VEK.
+    [[nodiscard]] std::optional<QByteArray> unwrapVolumeKey(const QByteArray& volumeUuid,
+                                                            uint64_t volumeKbPaddr,
+                                                            const QByteArray& vekBlob,
+                                                            PartitionApfsFileReadResult* result) {
+        using namespace sak::apfs_keybag;
+        const auto volumeKb = readKeybagBlock(volumeKbPaddr, volumeUuid, result);
+        if (!volumeKb.has_value()) {
+            return std::nullopt;
+        }
+        KeyBlobParams vekParams;
+        if (!parseKeyBlob(vekBlob, &vekParams)) {
+            result->blockers.append(QStringLiteral("APFS volume key blob is malformed"));
+            return std::nullopt;
+        }
+        for (const auto& entry : parseKeybagBlock(*volumeKb)) {
+            if (entry.tag != kKbTagVolumeUnlockRecords) {
+                continue;
+            }
+            const auto vek = tryUnlockRecord(entry.keydata, vekParams.wrappedKey);
+            if (vek.has_value()) {
+                return vek;
+            }
+        }
+        result->blockers.append(
+            QStringLiteral("APFS volume password or recovery key is incorrect"));
+        return std::nullopt;
+    }
+
+    // One credential attempt: PBKDF2(credential, salt, iters) -> unwrap KEK ->
+    // unwrap VEK. Returns nullopt when the credential does not match this record.
+    [[nodiscard]] std::optional<QByteArray> tryUnlockRecord(const QByteArray& kekBlob,
+                                                            const QByteArray& wrappedVek) const {
+        using namespace sak::apfs_crypto;
+        sak::apfs_keybag::KeyBlobParams kek;
+        if (!sak::apfs_keybag::parseKeyBlob(kekBlob, &kek) || kek.iterations == 0 ||
+            kek.salt.isEmpty()) {
+            return std::nullopt;
+        }
+        const QByteArray derived =
+            pbkdf2Sha256(credential_.toUtf8(), kek.salt, kek.iterations, kApfsKekBytes);
+        const auto unwrappedKek = aesKeyUnwrap(derived, kek.wrappedKey);
+        if (!unwrappedKek.has_value()) {
+            return std::nullopt;
+        }
+        const auto vek = aesKeyUnwrap(*unwrappedKek, wrappedVek);
+        if (!vek.has_value() || vek->size() != kApfsUnwrappedKeyBytes) {
+            return std::nullopt;
+        }
+        return *vek;
     }
 
     [[nodiscard]] bool loadVolumeObjectMap(const QByteArray& volumeBlock,
@@ -574,6 +720,7 @@ private:
             return false;
         }
         rootTreeAddress_ = rootMapping->physical_address;
+        rootTreeEncrypted_ = rootMapping->encrypted;
         return true;
     }
 
@@ -695,7 +842,10 @@ private:
             result->blockers.append(QStringLiteral("APFS file extent flags are not supported"));
             return false;
         }
-        if (extent.crypto_id != 0) {
+        // Encrypted extents are readable for a ONEKEY whole-volume FileVault volume
+        // once the VEK is unlocked (data tweak = physical block addr, like metadata);
+        // per-file-key (non-ONEKEY) crypto stays fail-closed.
+        if (extent.crypto_id != 0 && !(volumeOneKey_ && !vek_.isEmpty())) {
             result->blockers.append(
                 QStringLiteral("APFS encrypted/tweaked file extents are not supported"));
             return false;
@@ -742,6 +892,8 @@ private:
         QByteArray nxBlock = latestContainerSuperblock(firstBlock, result);
         const auto nxHeader = objectHeader(nxBlock);
         containerXid_ = nxHeader.xid;
+        containerUuid_ = nxBlock.mid(kApfsNxUuidOffset, kApfsUuidBytes);
+        keylockerPaddr_ = le64(nxBlock, kApfsNxKeylockerPaddrOffset);
         if (!validateContainerFeatures(nxBlock, result)) {
             return false;
         }
@@ -915,10 +1067,12 @@ private:
             const uint64_t keyOid = le64(node, entry.key_offset);
             const uint64_t keyXid = le64(node, entry.key_offset + kApfsOmapKeyXidOffset);
             if (keyOid == oid && keyXid <= xid && (!best.has_value() || keyXid > best->xid)) {
-                best = ObjectMapValue{le32(node, entry.value_offset),
+                const uint32_t valueFlags = le32(node, entry.value_offset);
+                best = ObjectMapValue{valueFlags,
                                       le32(node, entry.value_offset + kApfsOmapValueSizeOffset),
                                       le64(node, entry.value_offset + kApfsOmapValuePaddrOffset),
-                                      keyXid};
+                                      keyXid,
+                                      (valueFlags & kApfsOmapValueEncrypted) != 0};
             }
         }
         return best;
@@ -933,8 +1087,12 @@ private:
         if (!value.has_value()) {
             return std::nullopt;
         }
-        const uint32_t blockedFlags = kApfsOmapValueDeleted | kApfsOmapValueEncrypted |
-                                      kApfsOmapValueNoHeader;
+        // OMAP_VAL_ENCRYPTED is usable once the VEK is unlocked (readBlock decrypts
+        // the target with AES-XTS); without a key it stays fail-closed.
+        uint32_t blockedFlags = kApfsOmapValueDeleted | kApfsOmapValueNoHeader;
+        if (vek_.isEmpty()) {
+            blockedFlags |= kApfsOmapValueEncrypted;
+        }
         if ((value->flags & blockedFlags) != 0) {
             return std::nullopt;
         }
@@ -973,7 +1131,7 @@ private:
             return true;
         }
         QByteArray root;
-        if (!readBlock(rootTreeAddress_, &root, result)) {
+        if (!readDecryptedNode(rootTreeAddress_, rootTreeEncrypted_, &root, result)) {
             return false;
         }
         const auto rootHeader = objectHeader(root);
@@ -983,7 +1141,7 @@ private:
             return false;
         }
         FsTreeScanState state{btreeInfo(root), {}, 0, 0};
-        if (!visitFileSystemTreeNode(rootTreeAddress_, 0, &state, result)) {
+        if (!visitFileSystemTreeNode(rootTreeAddress_, rootTreeEncrypted_, 0, &state, result)) {
             return false;
         }
         fileSystemScanned_ = true;
@@ -991,6 +1149,7 @@ private:
     }
 
     [[nodiscard]] bool visitFileSystemTreeNode(uint64_t paddr,
+                                               bool encrypted,
                                                int depth,
                                                FsTreeScanState* state,
                                                PartitionApfsFileReadResult* result) {
@@ -1007,7 +1166,7 @@ private:
         }
         state->seen_nodes.insert(paddr);
         QByteArray node;
-        if (!readBlock(paddr, &node, result)) {
+        if (!readDecryptedNode(paddr, encrypted, &node, result)) {
             return false;
         }
         const auto entries = btreeEntries(node, state->info);
@@ -1058,7 +1217,8 @@ private:
                 QStringLiteral("APFS child B-tree node %1 was not found").arg(childOid));
             return false;
         }
-        return visitFileSystemTreeNode(childMapping->physical_address, depth + 1, state, result);
+        return visitFileSystemTreeNode(
+            childMapping->physical_address, childMapping->encrypted, depth + 1, state, result);
     }
 
     void parseFileSystemRecord(const QByteArray& node, const BtreeEntryView& entry) {
@@ -1322,12 +1482,21 @@ private:
                                          PartitionApfsFileReadResult* result) {
         uint64_t remaining = length;
         uint64_t absolute = extent.physical_block * blockSize_ + extentOffset;
+        const bool encrypted = extent.crypto_id != 0 && volumeOneKey_ && !vek_.isEmpty();
         while (remaining > 0) {
             const uint64_t blockIndex = absolute / blockSize_;
             const uint64_t blockOffset = absolute % blockSize_;
             QByteArray block;
             if (!readBlock(blockIndex, &block, result, true, false)) {
                 return false;
+            }
+            if (encrypted) {
+                // ONEKEY data block: AES-XTS-decrypt with the VEK (no object header,
+                // so no checksum); tweak base = physical block addr * 8.
+                const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(vek_, blockIndex, block);
+                if (plain.size() == static_cast<qsizetype>(blockSize_)) {
+                    block = plain;
+                }
             }
             const uint64_t chunk =
                 std::min<uint64_t>(remaining, static_cast<uint64_t>(block.size()) - blockOffset);
@@ -1441,6 +1610,25 @@ private:
                validateObjectBlockChecksum(block, *bytes, result, appendBlocker);
     }
 
+    // Read a virtual fs-tree node, AES-XTS-decrypting it with the VEK (tweak base =
+    // block * 8) before the Fletcher-64 check when the omap flagged it encrypted.
+    [[nodiscard]] bool readDecryptedNode(uint64_t block,
+                                         bool encrypted,
+                                         QByteArray* bytes,
+                                         PartitionApfsFileReadResult* result) {
+        if (!encrypted || vek_.isEmpty()) {
+            return readBlock(block, bytes, result);
+        }
+        if (!readBlock(block, bytes, result, true, false)) {
+            return false;
+        }
+        const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(vek_, block, *bytes);
+        if (plain.size() == static_cast<qsizetype>(blockSize_)) {
+            *bytes = plain;
+        }
+        return validateObjectBlockChecksum(block, *bytes, result);
+    }
+
     [[nodiscard]] bool validateObjectBlockChecksum(uint64_t block,
                                                    const QByteArray& bytes,
                                                    PartitionApfsFileReadResult* result,
@@ -1494,12 +1682,18 @@ private:
     }
 
     QIODevice* device_{nullptr};
+    QString credential_;  // A6: volume password or personal recovery key (in memory only)
     uint32_t blockSize_{0};
     uint64_t blockCount_{0};
     uint64_t containerXid_{0};
     uint64_t volumeXid_{0};
     uint64_t rootTreeOid_{0};
     uint64_t rootTreeAddress_{0};
+    bool rootTreeEncrypted_{false};
+    bool volumeOneKey_{false};  // ONEKEY whole-volume FileVault: data tweak = block addr
+    QByteArray containerUuid_;
+    uint64_t keylockerPaddr_{0};
+    QByteArray vek_;  // 32-byte AES-XTS volume key (empty = locked / unencrypted)
     QString volumeName_;
     ObjectMapState volumeOmap_;
     bool fileSystemScanned_{false};
@@ -1686,29 +1880,29 @@ PartitionApfsFileReadResult withOpenedApfsImage(
 
 }  // namespace
 
-PartitionApfsFileReadResult PartitionApfsFileSystemReader::listDirectory(QIODevice* device,
-                                                                         const QString& path,
-                                                                         int max_entries) {
-    return ApfsReader(device).listDirectory(path, max_entries);
+PartitionApfsFileReadResult PartitionApfsFileSystemReader::listDirectory(
+    QIODevice* device, const QString& path, int max_entries, const QString& credential) {
+    return ApfsReader(device, credential).listDirectory(path, max_entries);
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::listDirectoryFromImage(
-    const QString& image_path, const QString& path, int max_entries) {
+    const QString& image_path, const QString& path, int max_entries, const QString& credential) {
     return withOpenedApfsImage(image_path, [&](QIODevice* device) {
-        return PartitionApfsFileSystemReader::listDirectory(device, path, max_entries);
+        return PartitionApfsFileSystemReader::listDirectory(device, path, max_entries, credential);
     });
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::readFile(QIODevice* device,
                                                                     const QString& path,
-                                                                    uint64_t max_bytes) {
-    return ApfsReader(device).readFile(path, max_bytes);
+                                                                    uint64_t max_bytes,
+                                                                    const QString& credential) {
+    return ApfsReader(device, credential).readFile(path, max_bytes);
 }
 
 PartitionApfsFileReadResult PartitionApfsFileSystemReader::readFileFromImage(
-    const QString& image_path, const QString& path, uint64_t max_bytes) {
+    const QString& image_path, const QString& path, uint64_t max_bytes, const QString& credential) {
     return withOpenedApfsImage(image_path, [&](QIODevice* device) {
-        return PartitionApfsFileSystemReader::readFile(device, path, max_bytes);
+        return PartitionApfsFileSystemReader::readFile(device, path, max_bytes, credential);
     });
 }
 

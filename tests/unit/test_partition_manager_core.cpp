@@ -1788,6 +1788,7 @@ private Q_SLOTS:
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
+    void apfsReader_decryptsEncryptedVolumeWithCredential();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8817,6 +8818,58 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
     const QByteArray wrongDerived =
         pbkdf2Sha256(QByteArrayLiteral("wrongpw"), kek.salt, kek.iterations, 32);
     QVERIFY(!aesKeyUnwrap(wrongDerived, kek.wrappedKey).has_value());
+}
+
+void PartitionManagerCoreTests::apfsReader_decryptsEncryptedVolumeWithCredential() {
+    // A6 read-side: the S.A.K. APFS reader itself (not just the macOS kernel)
+    // unlocks a software-encrypted volume from the credential, walks the keybag
+    // chain to the VEK, and AES-XTS-decrypts the fs-tree to list the volume.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString img = QDir(temp.path()).filePath(QStringLiteral("rdr-enc.apfs"));
+    const QString password = QStringLiteral("sakpass1234");
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = img,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKENC"),
+                  .volume_password = password,
+                  .options = options})
+                 .ok,
+             "format encrypted volume");
+
+    // Correct credential -> the reader decrypts + lists the volume.
+    const auto unlocked = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        img, QStringLiteral("/"), 1000, password);
+    QVERIFY2(unlocked.ok, qPrintable(unlocked.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(unlocked.volume_name, QStringLiteral("SAKENC"));
+
+    // Wrong credential -> fail closed (no silent bad unlock, no garbage listing).
+    const auto wrong = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        img, QStringLiteral("/"), 1000, QStringLiteral("not-the-password"));
+    QVERIFY(!wrong.ok);
+    QVERIFY(wrong.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("incorrect")));
+
+    // No credential -> fail closed with an explicit "encrypted" blocker.
+    const auto locked =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 1000);
+    QVERIFY(!locked.ok);
+    QVERIFY(locked.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("encrypted")));
+
+    // A plaintext volume still lists with no credential (no regression).
+    const QString plain = QDir(temp.path()).filePath(QStringLiteral("rdr-plain.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = plain,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SAKPLAIN"),
+                 .options = options})
+                .ok);
+    const auto plainListing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(plain, QStringLiteral("/"), 1000);
+    QVERIFY2(plainListing.ok, qPrintable(plainListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(plainListing.volume_name, QStringLiteral("SAKPLAIN"));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

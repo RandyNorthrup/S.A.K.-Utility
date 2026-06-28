@@ -59,20 +59,27 @@ struct PartitionApfsDirectoryExportOptions {
 
 class PartitionApfsFileSystemReader {
 public:
+    /// @p credential (optional) is the FileVault volume password or personal
+    /// recovery key used to unlock a software-encrypted volume; held in memory only.
     [[nodiscard]] static PartitionApfsFileReadResult listDirectory(
         QIODevice* device,
         const QString& path = {},
-        int max_entries = kPartitionApfsDefaultBrowseEntryLimit);
+        int max_entries = kPartitionApfsDefaultBrowseEntryLimit,
+        const QString& credential = {});
     [[nodiscard]] static PartitionApfsFileReadResult listDirectoryFromImage(
         const QString& image_path,
         const QString& path = {},
-        int max_entries = kPartitionApfsDefaultBrowseEntryLimit);
+        int max_entries = kPartitionApfsDefaultBrowseEntryLimit,
+        const QString& credential = {});
     [[nodiscard]] static PartitionApfsFileReadResult readFile(QIODevice* device,
                                                               const QString& path,
-                                                              uint64_t max_bytes);
-    [[nodiscard]] static PartitionApfsFileReadResult readFileFromImage(const QString& image_path,
-                                                                       const QString& path,
-                                                                       uint64_t max_bytes);
+                                                              uint64_t max_bytes,
+                                                              const QString& credential = {});
+    [[nodiscard]] static PartitionApfsFileReadResult readFileFromImage(
+        const QString& image_path,
+        const QString& path,
+        uint64_t max_bytes,
+        const QString& credential = {});
     [[nodiscard]] static PartitionApfsDirectoryExportResult exportDirectoryFromImage(
         const QString& image_path,
         const QString& source_path,
