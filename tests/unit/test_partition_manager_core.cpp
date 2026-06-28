@@ -1787,6 +1787,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
+    void apfsWriter_insertsSparseAndXattrFile();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
@@ -8735,6 +8736,81 @@ void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
          .options = options});
     QVERIFY(!tooBig.ok);
     QVERIFY(tooBig.blockers.join(' ').contains(QStringLiteral("embedded-xattr limit")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
+    // A7 (A-h): insert one file that is BOTH sparse (a trailing hole) and carries
+    // arbitrary named extended attributes (an ACL in com.apple.system.Security, a
+    // Finder-info blob, a user attribute). The reader must zero-fill the hole and
+    // surface every attribute; the on-disk structure is apfsck/kernel-certified.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("a7-base.apfs"));
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = base,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKA7"),
+                  .options = options})
+                 .ok,
+             "format A7 base");
+
+    const QByteArray payload = QByteArrayLiteral("sparse data in the first block\n");
+    const uint64_t logicalSize = 64ULL * 1024ULL;  // ~16 blocks; only block 0 allocated
+    const QByteArray acl = QByteArrayLiteral(
+        "\x00\x00\x00\x04"
+        "acl-blob-bytes");
+    const QByteArray finder(32, '\x07');
+    const QVector<QPair<QByteArray, QByteArray>> xattrs{
+        {QByteArrayLiteral("com.apple.system.Security"), acl},
+        {QByteArrayLiteral("com.apple.FinderInfo"), finder},
+        {QByteArrayLiteral("user.note"), QByteArrayLiteral("hello-xattr")}};
+
+    const QString out = dir.filePath(QStringLiteral("a7-out.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = out,
+                                                        .file_name = QStringLiteral("sparse.bin"),
+                                                        .file_data = payload,
+                                                        .xattrs = xattrs,
+                                                        .sparse_logical_size = logicalSize,
+                                                        .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.new_xid, 3ULL);
+
+    // The listing reports the full (logical) sparse size.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().size_bytes, logicalSize);
+
+    // The read reassembles the data plus the trailing hole as zeros.
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/sparse.bin"), logicalSize);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(static_cast<uint64_t>(read.data.size()), logicalSize);
+    QCOMPARE(read.data.left(payload.size()), payload);
+    QCOMPARE(read.data.right(static_cast<qsizetype>(logicalSize) - payload.size()),
+             QByteArray(static_cast<qsizetype>(logicalSize) - payload.size(), '\0'));
+
+    // Every named attribute round-trips by name + value.
+    QMap<QString, QByteArray> got;
+    for (const auto& x : read.xattrs) {
+        got.insert(x.first, x.second);
+    }
+    QCOMPARE(got.value(QStringLiteral("com.apple.system.Security")), acl);
+    QCOMPARE(got.value(QStringLiteral("com.apple.FinderInfo")), finder);
+    QCOMPARE(got.value(QStringLiteral("user.note")), QByteArrayLiteral("hello-xattr"));
+
+    // The container superblock stays self-consistent (object checksum + xid).
+    QFile outImage(out);
+    QVERIFY(outImage.open(QIODevice::ReadOnly));
+    const QByteArray nxsb = outImage.read(4096);
+    outImage.close();
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
 }
 
 void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -38,6 +39,9 @@ struct PartitionApfsFileReadResult {
     QStringList warnings;
     QVector<PartitionApfsFileEntry> entries;
     QByteArray data;
+    // A7 (A-h): the read file's named extended attributes (ACL, Finder info, user
+    // xattrs), each as (name, embedded value). Populated by readFile.
+    QVector<QPair<QString, QByteArray>> xattrs;
 };
 
 struct PartitionApfsDirectoryExportResult {

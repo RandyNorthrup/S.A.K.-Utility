@@ -410,6 +410,8 @@ struct CliInvocation {
     bool confirm_target{false};
     bool allow_raw_target{false};
     bool compress_zlib{false};
+    uint64_t sparse_logical_size{0};
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
 };
 
 std::optional<QString> fileNameForCommand(const QCommandLineParser& parser,
@@ -450,7 +452,22 @@ struct CliParserOptions {
     const QCommandLineOption* compress_zlib{nullptr};
     const QCommandLineOption* volume_password{nullptr};
     const QCommandLineOption* recovery_key{nullptr};
+    const QCommandLineOption* sparse_size{nullptr};
+    const QCommandLineOption* xattr{nullptr};
 };
+
+// Parse repeatable --xattr name=hexvalue options into (name, value) pairs.
+[[nodiscard]] QVector<QPair<QByteArray, QByteArray>> parseXattrOptions(const QStringList& values) {
+    QVector<QPair<QByteArray, QByteArray>> out;
+    for (const QString& spec : values) {
+        const int eq = spec.indexOf(QLatin1Char('='));
+        if (eq <= 0) {
+            continue;
+        }
+        out.append({spec.left(eq).toUtf8(), QByteArray::fromHex(spec.mid(eq + 1).toUtf8())});
+    }
+    return out;
+}
 
 struct CliNumericInputs {
     uint64_t size{0};
@@ -563,7 +580,9 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .recovery_key = parser.value(*options.recovery_key),
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw),
-                         .compress_zlib = parser.isSet(*options.compress_zlib)};
+                         .compress_zlib = parser.isSet(*options.compress_zlib),
+                         .sparse_logical_size = parser.value(*options.sparse_size).toULongLong(),
+                         .xattrs = parseXattrOptions(parser.values(*options.xattr))};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
@@ -1426,6 +1445,8 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
          .compress_zlib = invocation.compress_zlib,
+         .xattrs = invocation.xattrs,
+         .sparse_logical_size = invocation.sparse_logical_size,
          .options = imageWriteOptions(invocation.evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -2098,6 +2119,18 @@ int main(int argc, char* argv[]) {
                        "the volume then unlocks by either the password or this recovery key; for "
                        "format-image. Credential-in, never stored."),
         QStringLiteral("recovery-key"));
+    const QCommandLineOption sparseSizeOption(
+        {QStringLiteral("sparse-size")},
+        QStringLiteral("Insert the file sparse with a trailing hole: its extents cover --payload "
+                       "and the inode's logical size is this many bytes (the gap reads as zeros); "
+                       "for commit-image-file-insert."),
+        QStringLiteral("bytes"));
+    const QCommandLineOption xattrOption(
+        {QStringLiteral("xattr")},
+        QStringLiteral("Attach a named extended attribute name=hexvalue (repeatable); ACL names "
+                       "com.apple.system.Security / com.apple.FinderInfo set the matching inode "
+                       "flag; for commit-image-file-insert."),
+        QStringLiteral("name=hex"));
     parser.addOptions({targetOption,
                        sizeOption,
                        blockSizeOption,
@@ -2117,7 +2150,9 @@ int main(int argc, char* argv[]) {
                        allowRawOption,
                        compressZlibOption,
                        volumePasswordOption,
-                       recoveryKeyOption});
+                       recoveryKeyOption,
+                       sparseSizeOption,
+                       xattrOption});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -2153,7 +2188,9 @@ int main(int argc, char* argv[]) {
                               .allow_raw = &allowRawOption,
                               .compress_zlib = &compressZlibOption,
                               .volume_password = &volumePasswordOption,
-                              .recovery_key = &recoveryKeyOption},
+                              .recovery_key = &recoveryKeyOption,
+                              .sparse_size = &sparseSizeOption,
+                              .xattr = &xattrOption},
                              &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;

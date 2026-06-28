@@ -9,6 +9,7 @@
 #include "sak/partition_file_system_detector.h"
 
 #include <QByteArray>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -482,6 +483,15 @@ struct PartitionApfsImageFileInsertCommitRequest {
     // xattr and flags the inode UF_COMPRESSED. Requires the compressed value to fit
     // an embedded xattr (<= 3804 bytes); larger files fail closed.
     bool compress_zlib{false};
+    // A7 (A-h): arbitrary named extended attributes attached to the inserted file
+    // (ACL in com.apple.system.Security, com.apple.FinderInfo, user xattrs). Each is
+    // stored embedded; the matching inode flag (HAS_SECURITY_EA / HAS_FINDER_INFO)
+    // is set automatically.
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    // A7 (A-h): when greater than file_data.size(), insert the file sparse with a
+    // trailing hole -- its extents cover file_data and the gap up to this logical
+    // size reads as zeros (INODE_IS_SPARSE).
+    uint64_t sparse_logical_size{0};
     PartitionApfsWriteOptions options;
 };
 

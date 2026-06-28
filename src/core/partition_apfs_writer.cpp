@@ -184,6 +184,22 @@ constexpr uint64_t kApfsCryptoSwId = 4;
 constexpr qsizetype kApfsInodeBsdFlagsOffset = 0x44;
 constexpr qsizetype kApfsInodeUncompressedSizeOffset = 0x54;
 constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
+// A7 (A-h) j_inode_val internal_flags (apfs/raw.h): a named-attribute or sparse
+// inode must set the matching flag or fsck_apfs/apfsck rejects it (inode.c
+// cross-checks i_xattr_bmap SECURITY/FINDER_INFO against these flags exactly).
+constexpr uint64_t kApfsInodeFlagWasCloned = 0x00'00'00'10;
+constexpr uint64_t kApfsInodeFlagHasSecurityEa = 0x00'00'00'40;
+constexpr uint64_t kApfsInodeFlagHasFinderInfo = 0x00'00'01'00;
+constexpr uint64_t kApfsInodeFlagIsSparse = 0x00'00'02'00;
+constexpr uint64_t kApfsInodeFlagWasEverCloned = 0x00'00'04'00;
+// Well-known extended-attribute names whose presence drives the inode flags above.
+constexpr char kApfsXattrNameSecurity[] = "com.apple.system.Security";
+constexpr char kApfsXattrNameFinderInfo[] = "com.apple.FinderInfo";
+// A7 (A-h) sparse inode: an INO_EXT_TYPE_SPARSE_BYTES (13) xfield carrying the hole
+// byte count, flags = XF_SYSTEM_FIELD | XF_CHILDREN_INHERIT (apfsck inode.c requires
+// this xfield exactly when APFS_INODE_IS_SPARSE is set).
+constexpr uint8_t kApfsInodeSparseBytesField = 13;
+constexpr uint8_t kApfsXfieldFlagsSparseBytes = 0x28;
 // Fixed timestamp written into generated records (an Apple-epoch nanosecond
 // value captured from newfs_apfs output; deterministic images need a
 // constant).
@@ -799,6 +815,15 @@ struct ApfsRootFilePayload {
     bool compressed{false};
     QByteArray decmpfsXattr;
     uint64_t uncompressedSize{0};
+    // A7 (A-h): arbitrary named extended attributes (user xattrs, ACL blobs in
+    // com.apple.system.Security, Finder info, ...). Each becomes a j_xattr record
+    // with an embedded value. Empty keeps the certified layout byte-identical.
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    // A7 (A-h): when set, the inode is sparse -- the dstream logical size exceeds
+    // the bytes its extents cover, and the uncovered logical ranges read as zeros
+    // (a hole). The reader already zero-fills gaps between extents.
+    bool sparse{false};
+    uint64_t sparseLogicalSize{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -956,12 +981,19 @@ struct ApfsInodeParams {
     // stamped UF_COMPRESSED and reports uncompressedSize via the dedicated field.
     bool compressed = false;
     uint64_t uncompressedSize = 0;
+    // A7 (A-h): extra internal_flags OR-ed in (IS_SPARSE / WAS_EVER_CLONED /
+    // HAS_SECURITY_EA / HAS_FINDER_INFO), derived from the inode's attributes.
+    uint64_t extraInternalFlags = 0;
+    // A7 (A-h): a sparse inode's dstream allocated size is fewer bytes than its
+    // logical size (the difference is the hole). 0 = dense (alloced == rounded size).
+    uint64_t allocedSizeBytes = 0;
 };
 
 // internal_flags base (0x8000) plus APFS_INODE_HAS_UNCOMPRESSED_SIZE when the
-// inode reports an uncompressed_size (compressed files only).
-uint64_t inodeInternalFlags(bool compressed) {
-    return 0x8000ULL | (compressed ? kApfsInodeHasUncompressedSize : 0ULL);
+// inode reports an uncompressed_size (compressed files only), plus any A7 attribute
+// flags (sparse / cloned / security-EA / finder-info).
+uint64_t inodeInternalFlags(bool compressed, uint64_t extra) {
+    return 0x8000ULL | (compressed ? kApfsInodeHasUncompressedSize : 0ULL) | extra;
 }
 
 // Stamp the compressed-file accounting onto a j_inode_val: UF_COMPRESSED routes
@@ -975,6 +1007,66 @@ void stampCompressedInodeFields(QByteArray* value, bool compressed, uint64_t unc
     writeLe64(value, kApfsInodeUncompressedSizeOffset, uncompressedSize);
 }
 
+// The xfield layout an inode value carries beyond its fixed header: a NAME xfield
+// always, a DSTREAM on an uncompressed regular file, and a SPARSE_BYTES xfield on a
+// sparse one.
+struct InodeXfieldParams {
+    bool hasDstream{false};
+    bool sparse{false};
+    QByteArray nameBytes;
+    qsizetype namePadded{0};
+    qsizetype tocBytes{0};
+    uint64_t sizeBytes{0};
+    uint64_t allocedSizeBytes{0};
+};
+
+// Write the inode's extended-field blob: the xf header, the TOC entries (NAME +
+// optional DSTREAM/SPARSE_BYTES), then the padded values. DSTREAM flags are
+// XF_SYSTEM_FIELD (0x20) and SPARSE_BYTES flags XF_SYSTEM_FIELD|XF_CHILDREN_INHERIT;
+// alloced_size is the block-aligned logical size (covers holes), and sparse_bytes is
+// the unbacked (hole) byte count.
+void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
+    const qsizetype dstreamBytes = x.hasDstream ? kApfsDstreamMinBytes : 0;
+    const qsizetype sparseFieldBytes = x.sparse ? 8 : 0;
+    const qsizetype xfieldCount = 1 + (x.hasDstream ? 1 : 0) + (x.sparse ? 1 : 0);
+    writeLe16(value, kApfsInodeXfieldsOffset, static_cast<uint16_t>(xfieldCount));
+    writeLe16(value,
+              kApfsInodeXfieldsOffset + kApfsXfieldDataBytesOffset,
+              static_cast<uint16_t>(x.namePadded + dstreamBytes + sparseFieldBytes));
+    qsizetype toc = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
+    (*value)[toc] = static_cast<char>(kApfsInodeNameField);
+    (*value)[toc + 1] = 0x02;
+    writeLe16(value, toc + kApfsXfieldSizeOffset, static_cast<uint16_t>(x.nameBytes.size()));
+    if (x.hasDstream) {
+        toc += kApfsXfieldTocEntryBytes;
+        (*value)[toc] = static_cast<char>(kApfsInodeDstreamField);
+        (*value)[toc + 1] = static_cast<char>(0x20);
+        writeLe16(value, toc + kApfsXfieldSizeOffset, kApfsDstreamMinBytes);
+    }
+    if (x.sparse) {
+        toc += kApfsXfieldTocEntryBytes;
+        (*value)[toc] = static_cast<char>(kApfsInodeSparseBytesField);
+        (*value)[toc + 1] = static_cast<char>(kApfsXfieldFlagsSparseBytes);
+        writeLe16(value, toc + kApfsXfieldSizeOffset, 8);
+    }
+    const qsizetype dataStart = kApfsInodeXfieldsOffset + x.tocBytes;
+    std::copy(x.nameBytes.cbegin(), x.nameBytes.cend(), value->begin() + dataStart);
+    const uint64_t roundedSize =
+        ((x.sizeBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
+        kSupportedApfsBlockSizeBytes;
+    if (x.hasDstream) {
+        const qsizetype dstream = dataStart + x.namePadded;
+        writeLe64(value, dstream, x.sizeBytes);       // size (logical)
+        writeLe64(value, dstream + 8, roundedSize);   // alloced_size (covers holes)
+        writeLe64(value, dstream + 24, roundedSize);  // total_bytes_written
+    }
+    if (x.sparse) {
+        writeLe64(value,
+                  dataStart + x.namePadded + dstreamBytes,
+                  roundedSize > x.allocedSizeBytes ? roundedSize - x.allocedSizeBytes : 0);
+    }
+}
+
 QByteArray inodeValue(const ApfsInodeParams& params) {
     const auto& [parentId,
                  privateId,
@@ -983,19 +1075,25 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                  sizeBytes,
                  childOrLinkCount,
                  compressed,
-                 uncompressedSize] = params;
+                 uncompressedSize,
+                 extraInternalFlags,
+                 allocedSizeBytes] = params;
     // A compressed regular file carries the NAME xfield only (its bytes live in the
     // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM.
     const bool regularFile = (mode & kApfsModeRegularFile) == kApfsModeRegularFile;
     const bool hasDstream = regularFile && !compressed;
+    // A sparse regular file carries an extra INO_EXT_TYPE_SPARSE_BYTES xfield.
+    const bool sparse = hasDstream && (extraInternalFlags & kApfsInodeFlagIsSparse) != 0;
     const QByteArray nameBytes = name.toUtf8() + '\0';
-    const qsizetype xfieldCount = hasDstream ? 2 : 1;
+    const qsizetype xfieldCount = 1 + (hasDstream ? 1 : 0) + (sparse ? 1 : 0);
     const qsizetype tocBytes = kApfsXfieldHeaderBytes + xfieldCount * kApfsXfieldTocEntryBytes;
     const qsizetype namePadded =
         ((nameBytes.size() + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
         kApfsXfieldAlignment;
-    const qsizetype valueBytes = kApfsInodeXfieldsOffset + tocBytes + namePadded +
-                                 (hasDstream ? kApfsDstreamMinBytes : 0);
+    const qsizetype dstreamBytes = hasDstream ? kApfsDstreamMinBytes : 0;
+    const qsizetype sparseFieldBytes = sparse ? 8 : 0;
+    const qsizetype valueBytes = kApfsInodeXfieldsOffset + tocBytes + namePadded + dstreamBytes +
+                                 sparseFieldBytes;
     QByteArray value(valueBytes, '\0');
     writeLe64(&value, 0, parentId);
     writeLe64(&value, kApfsInodePrivateIdOffset, privateId);
@@ -1003,36 +1101,21 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     writeLe64(&value, 0x18, kApfsGeneratedTimestamp);
     writeLe64(&value, 0x20, kApfsGeneratedTimestamp);
     writeLe64(&value, 0x28, kApfsGeneratedTimestamp);
-    writeLe64(&value, kApfsInodeInternalFlagsOffset, inodeInternalFlags(compressed));
+    writeLe64(&value,
+              kApfsInodeInternalFlagsOffset,
+              inodeInternalFlags(compressed, extraInternalFlags));
     writeLe32(&value, 0x38, static_cast<uint32_t>(childOrLinkCount));
     const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
     writeLe16(&value, kApfsInodeModeOffset, mode | permissions);
     stampCompressedInodeFields(&value, compressed, uncompressedSize);
-    writeLe16(&value, kApfsInodeXfieldsOffset, static_cast<uint16_t>(xfieldCount));
-    writeLe16(&value,
-              kApfsInodeXfieldsOffset + kApfsXfieldDataBytesOffset,
-              static_cast<uint16_t>(namePadded + (hasDstream ? kApfsDstreamMinBytes : 0)));
-    qsizetype toc = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
-    value[toc] = static_cast<char>(kApfsInodeNameField);
-    value[toc + 1] = 0x02;
-    writeLe16(&value, toc + kApfsXfieldSizeOffset, static_cast<uint16_t>(nameBytes.size()));
-    if (hasDstream) {
-        toc += kApfsXfieldTocEntryBytes;
-        value[toc] = static_cast<char>(kApfsInodeDstreamField);
-        value[toc + 1] = 0x08;
-        writeLe16(&value, toc + kApfsXfieldSizeOffset, kApfsDstreamMinBytes);
-    }
-    const qsizetype dataStart = kApfsInodeXfieldsOffset + tocBytes;
-    std::copy(nameBytes.cbegin(), nameBytes.cend(), value.begin() + dataStart);
-    if (hasDstream) {
-        const qsizetype dstream = dataStart + namePadded;
-        writeLe64(&value, dstream, sizeBytes);
-        writeLe64(&value,
-                  dstream + 8,
-                  ((sizeBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
-                      kSupportedApfsBlockSizeBytes);
-        writeLe64(&value, dstream + 24, sizeBytes);
-    }
+    writeInodeXfields(&value,
+                      {.hasDstream = hasDstream,
+                       .sparse = sparse,
+                       .nameBytes = nameBytes,
+                       .namePadded = namePadded,
+                       .tocBytes = tocBytes,
+                       .sizeBytes = sizeBytes,
+                       .allocedSizeBytes = allocedSizeBytes});
     return value;
 }
 
@@ -1131,15 +1214,55 @@ bool isSafeSeedFileName(const QString& fileName) {
            fileName != QStringLiteral("..");
 }
 
+// A7 (A-h): the j_inode_val internal_flags a file's attributes require -- IS_SPARSE
+// for a holed file, plus HAS_SECURITY_EA / HAS_FINDER_INFO when the matching
+// well-known xattr is present (apfsck/fsck cross-check these against the xattr set).
+uint64_t inodeAttributeFlags(const ApfsRootFilePayload& file) {
+    uint64_t flags = file.sparse ? kApfsInodeFlagIsSparse : 0ULL;
+    for (const auto& [name, value] : file.xattrs) {
+        if (name == QByteArray(kApfsXattrNameSecurity)) {
+            flags |= kApfsInodeFlagHasSecurityEa;
+        } else if (name == QByteArray(kApfsXattrNameFinderInfo)) {
+            flags |= kApfsInodeFlagHasFinderInfo;
+        }
+    }
+    return flags;
+}
+
+// Bytes a file actually allocates on disk: the sum of its data-extent blocks. For
+// a sparse file this is less than the rounded logical size (the hole is unallocated).
+uint64_t fileAllocedBytes(const ApfsRootFilePayload& file, uint32_t blockSize) {
+    uint64_t blocks = 0;
+    for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
+        blocks += extent.blockCount;
+    }
+    return blocks * blockSize;
+}
+
+// Emit one j_xattr record per arbitrary named attribute (ACL, Finder info, user
+// xattrs); each value rides embedded in the record (XATTR_DATA_EMBEDDED).
+void appendInodeXattrs(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
+    for (const auto& [name, value] : file.xattrs) {
+        records->append(
+            {xattrKey(file.fileId, name), xattrEmbeddedValue(kApfsXattrDataEmbedded, value)});
+    }
+}
+
 void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
-    records->append({fsKey(file.fileId, kApfsRecordInode),
-                     inodeValue({.parentId = file.parentDirectoryId,
-                                 .privateId = file.privateId,
-                                 .mode = kApfsModeRegularFile,
-                                 .name = file.fileName,
-                                 .sizeBytes = static_cast<uint64_t>(file.data.size()),
-                                 .compressed = file.compressed,
-                                 .uncompressedSize = file.uncompressedSize})});
+    const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize
+                                             : static_cast<uint64_t>(file.data.size());
+    records->append(
+        {fsKey(file.fileId, kApfsRecordInode),
+         inodeValue({.parentId = file.parentDirectoryId,
+                     .privateId = file.privateId,
+                     .mode = kApfsModeRegularFile,
+                     .name = file.fileName,
+                     .sizeBytes = logicalSize,
+                     .compressed = file.compressed,
+                     .uncompressedSize = file.uncompressedSize,
+                     .extraInternalFlags = inodeAttributeFlags(file),
+                     .allocedSizeBytes =
+                         file.sparse ? fileAllocedBytes(file, kSupportedApfsBlockSizeBytes) : 0})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)});
     if (file.compressed) {
@@ -1147,6 +1270,7 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
         // in an embedded com.apple.decmpfs xattr, and the inode is UF_COMPRESSED.
         records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameCompressed)),
                          xattrEmbeddedValue(kApfsXattrDataEmbedded, file.decmpfsXattr)});
+        appendInodeXattrs(records, file);
         return;
     }
     records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
@@ -1160,6 +1284,18 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
             {fileExtentKey(file.privateId, extent.logicalBlock * kSupportedApfsBlockSizeBytes),
              fileExtentValue(extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr)});
     }
+    if (file.sparse) {
+        // The trailing hole is an explicit file-extent with phys_block_num 0 so the
+        // dstream's extents stay consecutive up to its logical size (apfsck requires
+        // it, and the hole's length feeds the sparse-bytes accounting). No block is
+        // allocated for a phys 0 extent.
+        const uint64_t alloced = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes);
+        if (file.sparseLogicalSize > alloced) {
+            records->append({fileExtentKey(file.privateId, alloced),
+                             fileExtentValue(file.sparseLogicalSize - alloced, 0)});
+        }
+    }
+    appendInodeXattrs(records, file);
 }
 
 void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
@@ -1210,6 +1346,15 @@ void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
                          if (leftType == kApfsRecordFileExtent) {
                              return le64(left.key, kApfsFileExtentKeyLogicalOffset) <
                                     le64(right.key, kApfsFileExtentKeyLogicalOffset);
+                         }
+                         // Sibling extended attributes order by name (Apple compares
+                         // the xattr name string, not the raw key bytes).
+                         if (leftType == kApfsRecordXattr) {
+                             const auto name = [](const QByteArray& key) {
+                                 return key.mid(kApfsFormattedRootInodeKeyBytes + kUint16Size,
+                                                le16(key, kApfsFormattedRootInodeKeyBytes));
+                             };
+                             return name(left.key) < name(right.key);
                          }
                          return left.key < right.key;
                      });
@@ -4206,6 +4351,14 @@ struct ApfsFileInsertRequest {
     bool compressed{false};
     QByteArray decmpfsXattr;
     uint64_t uncompressedSize{0};
+    // A7 (A-h): arbitrary named xattrs attached to the inserted file (ACL, Finder
+    // info, user attributes). Each becomes a j_xattr record; no data is allocated.
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    // A7 (A-h): insert the file sparse with a trailing hole -- its extents cover
+    // fileData, but the inode's logical size is sparseLogicalSize and the gap reads
+    // as zeros (INODE_IS_SPARSE). 0 = dense.
+    bool sparse{false};
+    uint64_t sparseLogicalSize{0};
 };
 
 struct ApfsChainedListInput {
@@ -4271,7 +4424,10 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
                    .dataExtents = in.newDataExtents,
                    .compressed = in.request.compressed,
                    .decmpfsXattr = in.request.decmpfsXattr,
-                   .uncompressedSize = in.request.uncompressedSize});
+                   .uncompressedSize = in.request.uncompressedSize,
+                   .xattrs = in.request.xattrs,
+                   .sparse = in.request.sparse,
+                   .sparseLogicalSize = in.request.sparseLogicalSize});
     return true;
 }
 
@@ -4283,6 +4439,9 @@ struct ApfsFileInsertBuildInputs {
     QByteArray fileData;
     QVector<ApfsRootDirectoryPayload> directories;
     bool compress{false};
+    // A7 (A-h): arbitrary named xattrs + a trailing-hole sparse size (0 = dense).
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    uint64_t sparseLogicalSize{0};
 };
 
 // Build the in-place insert request for a (possibly compressed) file. When
@@ -4294,6 +4453,13 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
     *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
+    request->xattrs = in.xattrs;
+    // A trailing-hole sparse file: extents cover fileData, the inode logical size is
+    // sparseLogicalSize, and the gap reads as zeros. Must exceed the data size.
+    if (in.sparseLogicalSize > static_cast<uint64_t>(in.fileData.size())) {
+        request->sparse = true;
+        request->sparseLogicalSize = in.sparseLogicalSize;
+    }
     if (!in.compress) {
         return true;
     }
@@ -13138,10 +13304,15 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                           &result.blockers)) {
         return result;
     }
-    runInPlaceFileInsertCommit(
-        &image,
-        {existingFiles, cleanFileName, request.file_data, directories, request.compress_zlib},
-        &result);
+    runInPlaceFileInsertCommit(&image,
+                               {.existingFiles = existingFiles,
+                                .fileName = cleanFileName,
+                                .fileData = request.file_data,
+                                .directories = directories,
+                                .compress = request.compress_zlib,
+                                .xattrs = request.xattrs,
+                                .sparseLogicalSize = request.sparse_logical_size},
+                               &result);
     image.close();
     result.ok = result.blockers.isEmpty();
     return result;

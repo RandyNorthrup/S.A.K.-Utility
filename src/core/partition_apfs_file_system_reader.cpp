@@ -96,6 +96,8 @@ constexpr uint64_t kApfsRootDirectoryId = 2;
 constexpr uint8_t kApfsInodeDstreamField = 8;
 constexpr qsizetype kApfsInodePrivateIdOffset = 0x08;
 constexpr qsizetype kApfsInodeModeOffset = 0x50;
+constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
+constexpr uint64_t kApfsInodeFlagSparse = 0x00'00'02'00;  // APFS_INODE_IS_SPARSE
 constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
 constexpr uint16_t kApfsModeTypeMask = 0170000;
 constexpr uint16_t kApfsModeDirectory = 0040000;
@@ -379,6 +381,7 @@ struct InodeRecord {
     uint64_t private_id{0};
     uint64_t size{0};
     uint16_t mode{0};
+    bool sparse{false};  // A7 (A-h): INODE_IS_SPARSE -- a trailing/embedded hole reads as zeros
 };
 
 struct FileExtentRecord {
@@ -459,6 +462,13 @@ public:
         }
         if (!appendFileData(*target, &result)) {
             return result;
+        }
+        // A7 (A-h): surface the file's named attributes (ACL, Finder info, user
+        // xattrs); the compressed-content attribute is internal, so skip it.
+        for (const auto& xattr : xattrsByInode_.values(target->inode.object_id)) {
+            if (xattr.first != QLatin1StringView(kApfsXattrNameCompressed)) {
+                result.xattrs.append(xattr);
+            }
         }
         result.volume_name = volumeName_;
         result.ok = result.blockers.isEmpty();
@@ -811,7 +821,7 @@ private:
             return appendCompressedFileData(target, result);
         }
         const auto extents = sortedExtents(target.inode.private_id);
-        if (target.bytes_to_read > 0 && extents.isEmpty()) {
+        if (target.bytes_to_read > 0 && extents.isEmpty() && !target.inode.sparse) {
             result->blockers.append(QStringLiteral("APFS file has no readable extents"));
             return false;
         }
@@ -825,8 +835,14 @@ private:
             }
         }
         if (cursor < target.bytes_to_read) {
-            result->blockers.append(QStringLiteral("APFS file extents ended before expected size"));
-            return false;
+            // A7 (A-h): a sparse inode's extents may end before its logical size; the
+            // trailing hole reads as zeros. A dense file ending early is corruption.
+            if (!target.inode.sparse) {
+                result->blockers.append(
+                    QStringLiteral("APFS file extents ended before expected size"));
+                return false;
+            }
+            result->data.append(static_cast<qsizetype>(target.bytes_to_read - cursor), '\0');
         }
         return true;
     }
@@ -858,7 +874,19 @@ private:
         const uint64_t extentOffset = *cursor - extent.logical_offset;
         const uint64_t readable = std::min<uint64_t>(extent.length - extentOffset,
                                                      bytesToRead - *cursor);
-        if (!appendExtentBytes(extent, extentOffset, readable, result)) {
+        return emitExtentPortion(extent, extentOffset, readable, cursor, result);
+    }
+
+    // Append one extent portion: a hole extent (phys_block_num 0) reads as zeros (no
+    // block is read -- block 0 is the container superblock); a data extent is read.
+    [[nodiscard]] bool emitExtentPortion(const FileExtentRecord& extent,
+                                         uint64_t extentOffset,
+                                         uint64_t readable,
+                                         uint64_t* cursor,
+                                         PartitionApfsFileReadResult* result) {
+        if (extent.physical_block == 0) {
+            result->data.append(static_cast<qsizetype>(readable), '\0');
+        } else if (!appendExtentBytes(extent, extentOffset, readable, result)) {
             return false;
         }
         *cursor += readable;
@@ -1258,22 +1286,25 @@ private:
             node.mid(entry.key_offset + kApfsXattrKeyNameOffset,
                      std::min<qsizetype>(
                          payloadLen, node.size() - (entry.key_offset + kApfsXattrKeyNameOffset))));
-        if (name != QLatin1StringView(kApfsXattrNameCompressed)) {
-            return;
-        }
         const uint16_t flags = le16(node, entry.value_offset + kApfsXattrValueFlagsOffset);
         const uint16_t xdataLen = le16(node, entry.value_offset + kApfsXattrValueXdataLenOffset);
         if ((flags & kApfsXattrDataEmbedded) == 0) {
-            // Dstream-backed (resource-fork) decmpfs is a documented follow-on; the
-            // inline-embedded case below is the certified A5 read path.
+            // Dstream-backed (resource-fork) attributes are a documented follow-on;
+            // the inline-embedded case is the certified read path (A5 + A7).
             return;
         }
         if (entry.value_offset + kApfsXattrValueXdataOffset + xdataLen >
             entry.value_offset + entry.value_length) {
             return;
         }
-        decmpfsByInode_.insert(objectId,
-                               node.mid(entry.value_offset + kApfsXattrValueXdataOffset, xdataLen));
+        const QByteArray xdata = node.mid(entry.value_offset + kApfsXattrValueXdataOffset,
+                                          xdataLen);
+        // A7 (A-h): surface every named attribute; the compressed file's content
+        // attribute additionally feeds the decmpfs decode path (A5).
+        xattrsByInode_.insert(objectId, {name, xdata});
+        if (name == QLatin1StringView(kApfsXattrNameCompressed)) {
+            decmpfsByInode_.insert(objectId, xdata);
+        }
     }
 
     void parseDirectoryRecord(const QByteArray& node,
@@ -1319,6 +1350,8 @@ private:
         record.private_id = le64(node, entry.value_offset + kApfsInodePrivateIdOffset);
         record.mode = le16(node, entry.value_offset + kApfsInodeModeOffset);
         record.size = inodeDstreamSize(node, entry);
+        record.sparse = (le64(node, entry.value_offset + kApfsInodeInternalFlagsOffset) &
+                         kApfsInodeFlagSparse) != 0;
         inodeById_.insert(record.object_id, record);
     }
 
@@ -1332,15 +1365,13 @@ private:
         if (count > kApfsMaxXfieldCount || usedBytes > entry.value_length) {
             return 0;
         }
-        // Extended-field offsets are aligned relative to the start of the
-        // inode value (values are packed unaligned within the node, matching
-        // Apple's on-disk layout).
+        // The xfield value region begins immediately after the TOC (Apple's
+        // `xval = xf_data + xcount * sizeof(x_field)`), NOT 8-aligned -- only the
+        // individual values are padded to 8. (Rounding the start was harmless for
+        // 1-2 xfields but shifted the data for a 3-xfield sparse inode.)
         const qsizetype metadataRelative = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
-        qsizetype dataRelative =
-            ((metadataRelative + static_cast<qsizetype>(count) * kApfsXfieldTocEntryBytes +
-              kApfsXfieldAlignmentPadding) /
-             kApfsXfieldAlignment) *
-            kApfsXfieldAlignment;
+        qsizetype dataRelative = metadataRelative +
+                                 static_cast<qsizetype>(count) * kApfsXfieldTocEntryBytes;
         for (uint16_t index = 0; index < count; ++index) {
             const qsizetype fieldRelative = metadataRelative + static_cast<qsizetype>(index) *
                                                                    kApfsXfieldTocEntryBytes;
@@ -1356,9 +1387,11 @@ private:
             if (type == kApfsInodeDstreamField && size >= kApfsDstreamMinBytes) {
                 return le64(node, entry.value_offset + dataRelative);
             }
-            dataRelative =
-                ((dataRelative + size + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
-                kApfsXfieldAlignment;
+            // Each xfield value is padded to 8 bytes (Apple advances by
+            // ROUND_UP(xlen, 8)); pad the SIZE, not the absolute position, so the
+            // next value is found correctly even when the data start is unaligned.
+            dataRelative += ((size + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
+                            kApfsXfieldAlignment;
         }
         return 0;
     }
@@ -1711,6 +1744,9 @@ private:
     // Embedded com.apple.decmpfs attribute value (16-byte header + inline payload)
     // keyed by inode object id, for transparently-compressed files (A5).
     QHash<uint64_t, QByteArray> decmpfsByInode_;
+    // A7 (A-h): every embedded named attribute (ACL, Finder info, user xattrs)
+    // keyed by inode object id, surfaced on a file read result.
+    QMultiHash<uint64_t, QPair<QString, QByteArray>> xattrsByInode_;
 };
 
 struct ApfsExportFrame {
