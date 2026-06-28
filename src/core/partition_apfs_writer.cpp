@@ -8112,6 +8112,15 @@ ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& i
         volumeEntries.append(
             buildVolumeUnlockRecord(kek, in.recoveryKey.toUtf8(), prkUuid, blockers));
     }
+    // Fail closed if any unlock record failed to generate: buildVolumeUnlockRecord
+    // returns a default (empty-uuid) entry on failure, which buildKeybagBlock would
+    // pack with a 16-byte memcpy from empty data (out-of-bounds). The blocker is
+    // already recorded, so just stop before assembling the keybag.
+    for (const auto& entry : volumeEntries) {
+        if (entry.uuid.size() != kApfsUuidBytes || entry.keydata.isEmpty()) {
+            return mat;
+        }
+    }
     const QByteArray volumeKb =
         buildKeybagBlock(kApfsObjectTypeVolumeKeybag, 0, kApfsFormatXid, volumeEntries, blockSize);
     // Container keybag: VOLUME_UNLOCK_RECORDS = prange to the per-volume keybag,
@@ -8165,23 +8174,29 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
     if (request.volume_password.isEmpty()) {
         return enc;
     }
+    const ApfsEncryptionMaterial mat =
+        buildApfsEncryptionMaterial({.password = request.volume_password,
+                                     .recoveryKey = request.recovery_key,
+                                     .containerUuid = containerUuid,
+                                     .volumeUuid = volumeUuid,
+                                     .containerKbBlock = baseReserved,
+                                     .volumeKbBlock = baseReserved + 1,
+                                     .blockSize = static_cast<int>(request.block_size_bytes)},
+                                    blockers);
+    if (!mat.ok) {
+        // Key material failed (blocker already recorded). Leave the plan disabled so
+        // the format never emits an inconsistent ONEKEY-flagged-but-plaintext volume;
+        // the operation fails closed on the blocker.
+        return enc;
+    }
     enc.enabled = true;
+    enc.ok = true;
     enc.containerKbBlock = baseReserved;
     enc.volumeKbBlock = baseReserved + 1;
     enc.reservedDelta = 2;
     enc.omapFlag = kApfsOmapValueEncrypted;
     enc.fsFlags = kApfsVolumeFsFlagsOneKey;
     enc.keylockerBlocks = 1;
-    const ApfsEncryptionMaterial mat =
-        buildApfsEncryptionMaterial({.password = request.volume_password,
-                                     .recoveryKey = request.recovery_key,
-                                     .containerUuid = containerUuid,
-                                     .volumeUuid = volumeUuid,
-                                     .containerKbBlock = enc.containerKbBlock,
-                                     .volumeKbBlock = enc.volumeKbBlock,
-                                     .blockSize = static_cast<int>(request.block_size_bytes)},
-                                    blockers);
-    enc.ok = mat.ok;
     enc.vek = mat.vek;
     enc.containerKeybagBlock = mat.containerKeybagBlock;
     enc.volumeKeybagBlock = mat.volumeKeybagBlock;

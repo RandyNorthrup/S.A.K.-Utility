@@ -1492,11 +1492,16 @@ private:
             }
             if (encrypted) {
                 // ONEKEY data block: AES-XTS-decrypt with the VEK (no object header,
-                // so no checksum); tweak base = physical block addr * 8.
+                // so no checksum); tweak base = physical block addr * 8. A failed
+                // decrypt must fail closed, not silently return the ciphertext.
                 const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(vek_, blockIndex, block);
-                if (plain.size() == static_cast<qsizetype>(blockSize_)) {
-                    block = plain;
+                if (plain.size() != static_cast<qsizetype>(blockSize_)) {
+                    result->blockers.append(
+                        QStringLiteral("APFS encrypted data block %1 failed to decrypt")
+                            .arg(blockIndex));
+                    return false;
                 }
+                block = plain;
             }
             const uint64_t chunk =
                 std::min<uint64_t>(remaining, static_cast<uint64_t>(block.size()) - blockOffset);
@@ -1623,9 +1628,12 @@ private:
             return false;
         }
         const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(vek_, block, *bytes);
-        if (plain.size() == static_cast<qsizetype>(blockSize_)) {
-            *bytes = plain;
+        if (plain.size() != static_cast<qsizetype>(blockSize_)) {
+            result->blockers.append(
+                QStringLiteral("APFS encrypted node %1 failed to decrypt").arg(block));
+            return false;
         }
+        *bytes = plain;
         return validateObjectBlockChecksum(block, *bytes, result);
     }
 
@@ -1730,7 +1738,7 @@ void appendApfsExportRequestBlockers(const QString& imagePath,
 
 class ApfsDirectoryExporter {
 public:
-    ApfsDirectoryExporter(QIODevice* image, PartitionApfsDirectoryExportOptions options)
+    ApfsDirectoryExporter(QIODevice* image, const PartitionApfsDirectoryExportOptions& options)
         : reader_(image), options_(options) {}
 
     PartitionApfsDirectoryExportResult run(const QString& sourcePath,

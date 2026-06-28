@@ -226,6 +226,20 @@ QByteArray buildKekBlob(const KeyBlobParams& p) {
 
 QByteArray buildKeybagBlock(
     uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize) {
+    // Fail closed on a malformed entry: every keybag entry copies a fixed 16-byte
+    // ke_uuid (an undersized uuid would read past the source buffer), and the packed
+    // entries must fit the block (else the writes below overflow it). Reject the
+    // whole block rather than emit a corrupt keybag or read/write out of bounds.
+    int packedBytes = 0x30;
+    for (const auto& e : entries) {
+        if (e.uuid.size() != 16) {
+            return {};
+        }
+        packedBytes += (0x18 + static_cast<int>(e.keydata.size()) + 15) & ~15;
+    }
+    if (packedBytes > blockSize) {
+        return {};
+    }
     QByteArray b(blockSize, '\0');
     putLe64(b, 0x08, oid);
     putLe64(b, 0x10, xid);

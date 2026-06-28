@@ -1792,6 +1792,7 @@ private Q_SLOTS:
     void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
     void apfsWriter_recoveryKeyUnlocksEncryptedVolume();
+    void apfsKeybag_failsClosedOnMalformedEntry();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -9101,6 +9102,39 @@ void PartitionManagerCoreTests::apfsWriter_recoveryKeyUnlocksEncryptedVolume() {
         img, QStringLiteral("/"), 1000, QStringLiteral("NOPE-0000-NOPE-0000-NOPE-0000"));
     QVERIFY(!wrong.ok);
     QVERIFY(wrong.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("incorrect")));
+}
+
+void PartitionManagerCoreTests::apfsKeybag_failsClosedOnMalformedEntry() {
+    // Defense-in-depth: buildKeybagBlock copies a fixed 16-byte ke_uuid per entry,
+    // so a malformed (undersized-uuid) entry must fail closed -- return empty -- not
+    // read past the source buffer or emit a corrupt keybag. This guards the OOB the
+    // adversarial review found in the encryption-material failure path.
+    using namespace sak::apfs_keybag;
+    const QByteArray goodUuid(16, '\x11');
+    const QByteArray key = QByteArrayLiteral("unlock-record-bytes");
+
+    // A well-formed entry builds a full block.
+    QVERIFY(
+        !buildKeybagBlock(
+             kApfsObjectTypeVolumeKeybag, 0, 2, {{goodUuid, kKbTagVolumeUnlockRecords, key}}, 4096)
+             .isEmpty());
+
+    // An empty-uuid entry (what buildVolumeUnlockRecord returns on key-wrap failure)
+    // fails closed.
+    QVERIFY(buildKeybagBlock(kApfsObjectTypeVolumeKeybag,
+                             0,
+                             2,
+                             {{QByteArray(), kKbTagVolumeUnlockRecords, key}},
+                             4096)
+                .isEmpty());
+
+    // An entry set that cannot fit the block fails closed (no overflow write).
+    QVERIFY(buildKeybagBlock(kApfsObjectTypeVolumeKeybag,
+                             0,
+                             2,
+                             {{goodUuid, kKbTagVolumeUnlockRecords, QByteArray(8192, 'x')}},
+                             4096)
+                .isEmpty());
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {
