@@ -270,6 +270,11 @@ struct PartitionApfsImageFormatRequest {
     QStringList additional_volume_names;
     QString seed_file_name;
     QByteArray seed_file_data;
+    // A6 (A-f): when non-empty, format a software-encrypted (FileVault) volume
+    // unlockable by this password. The writer generates the VEK/KEK, builds the
+    // container + volume keybags, sets nx_keylocker / APFS_FS_ONEKEY, and
+    // AES-XTS-encrypts the volume's file-system tree. Credential-in, never stored.
+    QString volume_password;
     bool target_wipe_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

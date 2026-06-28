@@ -1787,6 +1787,7 @@ private Q_SLOTS:
     void apfsWriter_insertsInlineCompressedFile();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
+    void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
     void apfsWriter_inPlaceFileInsertChainsAndPreservesExistingFiles();
     void apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers();
@@ -8715,6 +8716,113 @@ void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
     QCOMPARE(qFromLittleEndian<quint16>(p + 0x20), quint16(2));    // kl_version
     QCOMPARE(qFromLittleEndian<quint16>(p + 0x22), quint16(2));    // kl_nkeys
     QCOMPARE(qFromLittleEndian<quint32>(p + 0x24), quint32(224));  // kl_nbytes
+
+    // parseKeybagBlock round-trips the entries; parseKeyBlob recovers the fields.
+    const QList<KeybagEntry> parsed = parseKeybagBlock(kb);
+    QCOMPARE(parsed.size(), 2);
+    QCOMPARE(parsed.at(1).tag, kKbTagVolumeKey);
+    KeyBlobParams vp;
+    QVERIFY(parseKeyBlob(parsed.at(1).keydata, &vp));
+    QCOMPARE(vp.uuid, uuid);
+    QCOMPARE(vp.wrappedKey, wrappedVek);
+}
+
+void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
+    // A6: the writer produces a software-encrypted (FileVault) volume that the
+    // macOS kernel can unlock. This test does exactly what the kernel does on
+    // mount: walk the on-disk keybag chain, derive the VEK from the password, and
+    // AES-XTS-decrypt the volume file-system tree to a valid, checksum-correct node.
+    using namespace sak::apfs_crypto;
+    using namespace sak::apfs_keybag;
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString img = QDir(temp.path()).filePath(QStringLiteral("enc.apfs"));
+    const QByteArray password = QByteArrayLiteral("sakpass1234");
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = img,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKENC"),
+                  .volume_password = QString::fromUtf8(password),
+                  .options = options})
+                 .ok,
+             "format encrypted volume");
+
+    QFile f(img);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const auto readBlk = [&f](uint64_t blk) {
+        f.seek(static_cast<qint64>(blk) * 4096);
+        return f.read(4096);
+    };
+    const auto le64 = [](const QByteArray& b, int off) {
+        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + off));
+    };
+
+    // nx_keylocker @ 0x510 points at the container keybag.
+    const QByteArray nxsb = readBlk(0);
+    const QByteArray nxUuid = nxsb.mid(0x48, 16);
+    const uint64_t keylocker = le64(nxsb, 0x510);
+    QVERIFY(keylocker != 0);
+
+    // Decrypt + parse the container keybag (XTS key = container UUID).
+    const QList<KeybagEntry> containerEntries =
+        parseKeybagBlock(xtsDecryptBlock(nxUuid + nxUuid, keylocker, readBlk(keylocker)));
+    QCOMPARE(containerEntries.size(), 2);
+    QByteArray volUuid;
+    QByteArray vekBlob;
+    uint64_t volumeKbBlock = 0;
+    for (const auto& e : containerEntries) {
+        if (e.tag == kKbTagVolumeKey) {
+            volUuid = e.uuid;
+            vekBlob = e.keydata;
+        } else if (e.tag == kKbTagVolumeUnlockRecords) {
+            volumeKbBlock = le64(e.keydata, 0);
+        }
+    }
+    QVERIFY(!vekBlob.isEmpty());
+    QVERIFY(volumeKbBlock != 0);
+
+    // Decrypt + parse the per-volume keybag (XTS key = volume UUID) -> KEK blob.
+    const QList<KeybagEntry> volumeEntries =
+        parseKeybagBlock(xtsDecryptBlock(volUuid + volUuid, volumeKbBlock, readBlk(volumeKbBlock)));
+    QByteArray kekBlob;
+    for (const auto& e : volumeEntries) {
+        if (e.tag == kKbTagVolumeUnlockRecords) {
+            kekBlob = e.keydata;
+        }
+    }
+    QVERIFY(!kekBlob.isEmpty());
+
+    // The unlock chain: PBKDF2(password) -> unwrap KEK -> unwrap VEK.
+    KeyBlobParams kek;
+    KeyBlobParams vek;
+    QVERIFY(parseKeyBlob(kekBlob, &kek));
+    QVERIFY(parseKeyBlob(vekBlob, &vek));
+    const QByteArray derived = pbkdf2Sha256(password, kek.salt, kek.iterations, 32);
+    const auto kekKey = aesKeyUnwrap(derived, kek.wrappedKey);
+    QVERIFY(kekKey.has_value());
+    const auto vekKey = aesKeyUnwrap(*kekKey, vek.wrappedKey);
+    QVERIFY(vekKey.has_value());
+    QCOMPARE(vekKey->size(), 32);
+
+    // APSB (block 198, single-chunk 64 MiB) is plaintext + flagged ONEKEY-encrypted.
+    const QByteArray apsb = readBlk(198);
+    QCOMPARE(apsb.mid(0x20, 4), QByteArrayLiteral("APSB"));
+    QCOMPARE(le64(apsb, 0x108), quint64(0x8));
+
+    // The file-system tree (block 197) decrypts with the VEK to a valid, Fletcher-64
+    // correct b-tree node -- the volume is genuinely unlockable.
+    const QByteArray fsTree = xtsDecryptBlock(*vekKey, 197, readBlk(197));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(fsTree));
+    const auto otype =
+        qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(fsTree.constData() + 0x18));
+    QVERIFY(otype == 2 || otype == 3);
+
+    // A wrong password fails the RFC 3394 integrity check (no silent bad unlock).
+    const QByteArray wrongDerived =
+        pbkdf2Sha256(QByteArrayLiteral("wrongpw"), kek.salt, kek.iterations, 32);
+    QVERIFY(!aesKeyUnwrap(wrongDerived, kek.wrappedKey).has_value());
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertWritesMultiBlockExtent() {

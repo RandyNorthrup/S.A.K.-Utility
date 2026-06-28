@@ -23,6 +23,73 @@ void putLe32(QByteArray& b, int off, uint32_t v) {
 void putLe64(QByteArray& b, int off, uint64_t v) {
     qToLittleEndian(v, reinterpret_cast<uchar*>(b.data() + off));
 }
+uint16_t getLe16(const QByteArray& b, int off) {
+    return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + off));
+}
+uint32_t getLe32(const QByteArray& b, int off) {
+    return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + off));
+}
+
+/// @brief One parsed DER TLV field (tag + value; constructed values re-parsed).
+struct DerField {
+    uint8_t tag{0};
+    QByteArray value;
+};
+
+/// @brief Decode a big-endian DER INTEGER value into a uint64.
+uint64_t derBigEndianU64(const QByteArray& value) {
+    uint64_t v = 0;
+    for (char c : value) {
+        v = (v << 8) | static_cast<uint8_t>(c);
+    }
+    return v;
+}
+
+/// @brief Assign one inner keyblob DER field into the parsed params by its tag.
+void assignKeyBlobField(KeyBlobParams* out, uint8_t tag, const QByteArray& value) {
+    switch (tag) {
+    case 0x81:
+        out->uuid = value;
+        break;
+    case 0x82:
+        out->flags8 = value;
+        break;
+    case 0x83:
+        out->wrappedKey = value;
+        break;
+    case 0x84:
+        out->iterations = derBigEndianU64(value);
+        break;
+    case 0x85:
+        out->salt = value;
+        break;
+    default:
+        break;
+    }
+}
+
+/// @brief Parse a flat sequence of DER TLV fields (short + long-form lengths).
+QList<DerField> derParse(const QByteArray& buf) {
+    QList<DerField> out;
+    int i = 0;
+    while (i + 2 <= buf.size()) {
+        const uint8_t tag = static_cast<uint8_t>(buf.at(i++));
+        int len = static_cast<uint8_t>(buf.at(i++));
+        if ((len & 0x80) != 0) {
+            int n = len & 0x7f;
+            len = 0;
+            for (int k = 0; k < n && i < buf.size(); ++k) {
+                len = (len << 8) | static_cast<uint8_t>(buf.at(i++));
+            }
+        }
+        if (i + len > buf.size()) {
+            break;
+        }
+        out.append({tag, buf.mid(i, len)});
+        i += len;
+    }
+    return out;
+}
 
 /// @brief Minimal big-endian DER INTEGER content for a non-negative value
 /// (leading 0x00 added when the top bit is set, per DER).
@@ -43,6 +110,51 @@ QByteArray derIntegerBytes(uint64_t value) {
 }
 
 }  // namespace
+
+QList<KeybagEntry> parseKeybagBlock(const QByteArray& block) {
+    QList<KeybagEntry> out;
+    if (block.size() < 0x30) {
+        return out;
+    }
+    const uint32_t magic = getLe32(block, 0x18);
+    if (magic != kApfsObjectTypeContainerKeybag && magic != kApfsObjectTypeVolumeKeybag) {
+        return out;
+    }
+    if (getLe16(block, 0x20) != kApfsKeybagVersion) {
+        return out;
+    }
+    const int nkeys = getLe16(block, 0x22);
+    int p = 0x30;
+    for (int i = 0; i < nkeys; ++i) {
+        if (p + 0x18 > block.size()) {
+            break;
+        }
+        const int klen = getLe16(block, p + 0x12);
+        if (p + 0x18 + klen > block.size()) {
+            break;
+        }
+        out.append({block.mid(p, 16), getLe16(block, p + 0x10), block.mid(p + 0x18, klen)});
+        p += (0x18 + klen + 15) & ~15;
+    }
+    return out;
+}
+
+bool parseKeyBlob(const QByteArray& blob, KeyBlobParams* out) {
+    const QList<DerField> top = derParse(blob);
+    if (top.isEmpty() || top.first().tag != 0x30) {
+        return false;
+    }
+    QByteArray keyblob;
+    for (const auto& f : derParse(top.first().value)) {
+        if (f.tag == 0xA3) {
+            keyblob = f.value;
+        }
+    }
+    for (const auto& f : derParse(keyblob)) {
+        assignKeyBlobField(out, f.tag, f.value);
+    }
+    return out->wrappedKey.size() == 40;
+}
 
 QByteArray derLength(int length) {
     QByteArray out;

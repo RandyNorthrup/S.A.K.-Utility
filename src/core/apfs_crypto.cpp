@@ -220,6 +220,25 @@ void xorCounter(unsigned char* a, uint64_t t) {
 
 }  // namespace
 
+QByteArray randomBytes(int count) {
+#ifdef _WIN32
+    if (count <= 0) {
+        return {};
+    }
+    QByteArray out(count, 0);
+    if (BCryptGenRandom(nullptr,
+                        reinterpret_cast<PUCHAR>(out.data()),
+                        static_cast<ULONG>(count),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+        return {};
+    }
+    return out;
+#else
+    Q_UNUSED(count);
+    return {};
+#endif
+}
+
 QByteArray sha256(const QByteArray& data) {
     return QCryptographicHash::hash(data, QCryptographicHash::Sha256);
 }

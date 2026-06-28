@@ -36,6 +36,9 @@ inline constexpr int kApfsWrappedKeyBytes = 40;    ///< 32 key + 8 RFC 3394 over
 inline constexpr int kApfsUnwrappedKeyBytes = 32;  ///< key1(16) || key2(16)
 inline constexpr int kApfsKekBytes = 32;           ///< 256-bit KEK / derived key
 
+/// @brief @p count cryptographically-random bytes (CNG RNG), empty on failure.
+[[nodiscard]] QByteArray randomBytes(int count);
+
 /// @brief SHA-256 digest of @p data (32 bytes), or empty on failure.
 [[nodiscard]] QByteArray sha256(const QByteArray& data);
 

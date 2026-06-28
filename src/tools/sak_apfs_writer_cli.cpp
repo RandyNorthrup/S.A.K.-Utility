@@ -405,6 +405,7 @@ struct CliInvocation {
     QString patch_offset_error;
     QString snapshot_name;
     QString evidence_id;
+    QString volume_password;
     bool confirm_target{false};
     bool allow_raw_target{false};
     bool compress_zlib{false};
@@ -446,6 +447,7 @@ struct CliParserOptions {
     const QCommandLineOption* confirm{nullptr};
     const QCommandLineOption* allow_raw{nullptr};
     const QCommandLineOption* compress_zlib{nullptr};
+    const QCommandLineOption* volume_password{nullptr};
 };
 
 struct CliNumericInputs {
@@ -555,6 +557,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .patch_offset_error = mutation->patch_offset_error,
                          .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
                          .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
+                         .volume_password = parser.value(*options.volume_password),
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw),
                          .compress_zlib = parser.isSet(*options.compress_zlib)};
@@ -568,6 +571,7 @@ QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
                              .block_size_bytes = invocation.block_size_bytes,
                              .volume_name = invocation.volume_name,
                              .additional_volume_names = invocation.additional_volume_names,
+                             .volume_password = invocation.volume_password,
                              .options = imageWriteOptions(invocation.evidence_id)}));
 }
 
@@ -2079,6 +2083,11 @@ int main(int argc, char* argv[]) {
         {QStringLiteral("compress-zlib")},
         QStringLiteral("Store the inserted file transparently compressed (inline zlib "
                        "com.apple.decmpfs); for commit-image/raw-file-insert."));
+    const QCommandLineOption volumePasswordOption(
+        {QStringLiteral("volume-password")},
+        QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
+                       "password; for format-image. Credential-in, never stored."),
+        QStringLiteral("password"));
     parser.addOptions({targetOption,
                        sizeOption,
                        blockSizeOption,
@@ -2096,7 +2105,8 @@ int main(int argc, char* argv[]) {
                        evidenceOption,
                        confirmOption,
                        allowRawOption,
-                       compressZlibOption});
+                       compressZlibOption,
+                       volumePasswordOption});
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -2130,7 +2140,8 @@ int main(int argc, char* argv[]) {
                               .evidence = &evidenceOption,
                               .confirm = &confirmOption,
                               .allow_raw = &allowRawOption,
-                              .compress_zlib = &compressZlibOption},
+                              .compress_zlib = &compressZlibOption,
+                              .volume_password = &volumePasswordOption},
                              &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;

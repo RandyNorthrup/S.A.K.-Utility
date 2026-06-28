@@ -7,6 +7,8 @@
 #include "sak/partition_apfs_writer.h"
 
 #include "sak/apfs_compression.h"
+#include "sak/apfs_crypto.h"
+#include "sak/apfs_keybag.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -280,6 +282,9 @@ constexpr qsizetype kApfsNxSpacemanOidOffset = 0x98;
 constexpr qsizetype kApfsNxOmapOidOffset = 0xA0;
 constexpr qsizetype kApfsNxMaxFileSystemsOffset = 0xB4;
 constexpr qsizetype kApfsNxFsOidArrayOffset = 0xB8;
+// nx_keylocker prange (A6): harvested byte-offset from a real macOS encrypted
+// container (paddr@0x510, block_count@0x518).
+constexpr qsizetype kApfsNxKeylockerOffset = 0x510;
 constexpr qsizetype kApfsOmapTreeOidOffset = 0x30;
 constexpr qsizetype kApfsOmapSnapshotCountOffset = 0x24;
 constexpr qsizetype kApfsOmapSnapshotTreeOidOffset = 0x38;
@@ -415,6 +420,10 @@ constexpr qsizetype kApfsBtreeInfoNodeCountOffset = 0x20;
 constexpr qsizetype kApfsOmapKeyXidOffset = 8;
 constexpr qsizetype kApfsOmapValueSizeOffset = 4;
 constexpr qsizetype kApfsOmapValuePaddrOffset = 8;
+// A6: omap value flag marking an AES-XTS-encrypted virtual object, and the volume
+// fs_flags value for a software-encrypted whole-volume-key (FileVault) volume.
+constexpr uint32_t kApfsOmapValueEncrypted = 0x00'00'00'04;
+constexpr uint64_t kApfsVolumeFsFlagsOneKey = 0x8;
 constexpr qsizetype kApfsObjectMapKeyBytes = 16;
 constexpr qsizetype kApfsObjectMapValueBytes = 16;
 constexpr qsizetype kApfsBtreeFixedTocEntryBytes = 4;
@@ -683,6 +692,9 @@ struct ApfsObjectMapEntry {
     uint64_t oid{0};
     uint64_t xid{0};
     uint64_t physicalBlock{0};
+    // ov_flags (A6): OMAP_VAL_ENCRYPTED (0x4) marks the target virtual object
+    // (the volume file-system tree) as AES-XTS-encrypted with the volume key.
+    uint32_t flags{0};
 };
 
 QByteArray buildObjectMapTreeBlock(uint32_t blockSize,
@@ -730,7 +742,7 @@ QByteArray buildObjectMapTreeBlock(uint32_t blockSize,
                   static_cast<uint16_t>(valueBackOffset));
         writeLe64(&block, key, mappings.at(index).oid);
         writeLe64(&block, key + kApfsOmapKeyXidOffset, mappings.at(index).xid);
-        writeLe32(&block, value, 0);
+        writeLe32(&block, value, mappings.at(index).flags);
         writeLe32(&block, value + kApfsOmapValueSizeOffset, blockSize);
         writeLe64(&block, value + kApfsOmapValuePaddrOffset, mappings.at(index).physicalBlock);
     }
@@ -1495,6 +1507,10 @@ struct ApfsCheckpointPosition {
     // (only nx_fs_oid[0] = fsOid is written).
     QVector<uint64_t> fsOids;
     uint64_t nextOid{kApfsNxMinimumNextOid};
+    // nx_keylocker (A6): physical range of the container keybag. 0 = unencrypted
+    // container (the field stays zero, byte-identical to the prior layout).
+    uint64_t keylockerPaddr{0};
+    uint64_t keylockerBlocks{0};
 };
 
 QByteArray buildNxSuperblock(uint32_t blockSize,
@@ -1526,6 +1542,11 @@ QByteArray buildNxSuperblock(uint32_t blockSize,
     writeLe64(&block, kApfsNxReaperOidOffset, kApfsFormatReaperOid);
     writeLe64(&block, kApfsNxEphemeralInfoOffset, apfsNxEphemeralInfoValue(blockCount, blockSize));
     writeLe64(&block, kApfsNxOmapOidOffset, position.omapOid);
+    // nx_keylocker (prange): container keybag location for an encrypted container.
+    if (position.keylockerPaddr != 0) {
+        writeLe64(&block, kApfsNxKeylockerOffset, position.keylockerPaddr);
+        writeLe64(&block, kApfsNxKeylockerOffset + 8, position.keylockerBlocks);
+    }
     // nx_max_file_systems is the size-derived volume capacity; fsck_apfs/the Apple
     // reference require it to equal DIV_ROUND_UP(container_bytes, 512 MiB) exactly, so
     // multi-volume containers are sized large enough that this covers every volume
@@ -2472,6 +2493,9 @@ struct ApfsVolumeSuperblockFields {
     uint64_t volumeOid{kApfsFormatVolumeOid};
     uint32_t fsIndex{0};
     uint64_t rootTreeOid{kApfsFormatRootTreeOid};
+    // apfs_fs_flags (A6): 1 = APFS_FS_UNENCRYPTED (default); 0x8 = APFS_FS_ONEKEY
+    // for a software-encrypted whole-volume-key (FileVault) volume.
+    uint64_t fsFlags{1};
 };
 
 QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStringList* blockers) {
@@ -2496,7 +2520,7 @@ QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStri
     // first document ID, and trailing tree-type/extended fields mirrored from
     // newfs_apfs output (fsck enforces apfs_next_doc_id >= MIN_DOC_ID).
     writeLe64(&block, 0x100, 0x18'B8'30'5B'1F'32'81'92ULL);
-    writeLe64(&block, kApfsVolumeFsFlagsOffset, 1);
+    writeLe64(&block, kApfsVolumeFsFlagsOffset, fields.fsFlags);
     writeAscii(&block, 0x110, QByteArrayLiteral("S.A.K. Utility APFS writer"), 32);
     writeLe64(&block, 0x130, 0x18'B8'30'5B'1A'D4'FB'FBULL);
     writeLe64(&block, 0x138, kApfsFormatXid);
@@ -7973,6 +7997,170 @@ ExtraApfsVolumes layOutExtraApfsVolumes(const QStringList& names, uint64_t baseB
     return out;
 }
 
+// A6 (A-f) software-FileVault encryption material. PBKDF2 iteration count for a
+// S.A.K.-generated volume (the kernel re-derives with whatever count the keybag
+// records; a real macOS volume uses a machine-tuned count near this).
+constexpr uint64_t kApfsEncryptionIterations = 100'000;
+// Harvested inner-keyblob `flags` integers for a pure-software (AES-256 wrap,
+// no CoreStorage/hardware bits) FileVault volume: VEK keyblob vs KEK keyblob.
+const QByteArray kApfsVekBlobFlags = QByteArray::fromHex("000000000100bcac");
+const QByteArray kApfsKekBlobFlags = QByteArray::fromHex("000000000200bcac");
+
+struct ApfsEncryptionMaterial {
+    bool ok{false};
+    QByteArray vek;                   // 32-byte AES-XTS volume key
+    QByteArray containerKeybagBlock;  // encrypted, ready to write
+    QByteArray volumeKeybagBlock;     // encrypted, ready to write
+};
+
+struct ApfsEncryptionInputs {
+    QString password;
+    QByteArray containerUuid;
+    QByteArray volumeUuid;
+    uint64_t containerKbBlock{0};
+    uint64_t volumeKbBlock{0};
+    int blockSize{0};
+};
+
+/// @brief Fletcher-stamp a plaintext keybag block then AES-XTS-encrypt the whole
+/// 4096B block with @p uuid||uuid (tweak base = blockAddr * 8).
+QByteArray sealKeybagBlock(QByteArray plaintext,
+                           const QByteArray& uuid,
+                           uint64_t blockAddr,
+                           QStringList* blockers) {
+    if (!stampApfsObjectBlock(&plaintext, blockers)) {
+        return {};
+    }
+    return sak::apfs_crypto::xtsEncryptBlock(uuid + uuid, blockAddr, plaintext);
+}
+
+/// @brief Generate the VEK/KEK, build the container + per-volume keybags from the
+/// user password, and return both keybag blocks encrypted + ready to place.
+ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& in,
+                                                   QStringList* blockers) {
+    using namespace sak::apfs_crypto;
+    using namespace sak::apfs_keybag;
+    const QByteArray& containerUuid = in.containerUuid;
+    const QByteArray& volumeUuid = in.volumeUuid;
+    const uint64_t containerKbBlock = in.containerKbBlock;
+    const uint64_t volumeKbBlock = in.volumeKbBlock;
+    const int blockSize = in.blockSize;
+    ApfsEncryptionMaterial mat;
+    const QByteArray vek = randomBytes(32);
+    const QByteArray kek = randomBytes(32);
+    const QByteArray pbkdfSalt = randomBytes(16);
+    const QByteArray derived =
+        pbkdf2Sha256(in.password.toUtf8(), pbkdfSalt, kApfsEncryptionIterations, 32);
+    const QByteArray wrappedKek = aesKeyWrap(derived, kek);
+    const QByteArray wrappedVek = aesKeyWrap(kek, vek);
+    if (vek.size() != 32 || wrappedKek.size() != 40 || wrappedVek.size() != 40) {
+        blockers->append(QStringLiteral("APFS encryption key generation failed"));
+        return mat;
+    }
+    const QByteArray vekBlob = buildVekBlob({.uuid = volumeUuid,
+                                             .wrappedKey = wrappedVek,
+                                             .flags8 = kApfsVekBlobFlags,
+                                             .hmac32 = randomBytes(32),
+                                             .outerSalt = randomBytes(8)});
+    const QByteArray kekBlob = buildKekBlob({.uuid = volumeUuid,
+                                             .wrappedKey = wrappedKek,
+                                             .flags8 = kApfsKekBlobFlags,
+                                             .hmac32 = randomBytes(32),
+                                             .outerSalt = randomBytes(8),
+                                             .iterations = kApfsEncryptionIterations,
+                                             .salt = pbkdfSalt});
+    // Per-volume keybag: one VOLUME_UNLOCK_RECORDS entry carrying the KEK blob.
+    const QByteArray volumeKb = buildKeybagBlock(kApfsObjectTypeVolumeKeybag,
+                                                 0,
+                                                 kApfsFormatXid,
+                                                 {{volumeUuid, kKbTagVolumeUnlockRecords, kekBlob}},
+                                                 blockSize);
+    // Container keybag: VOLUME_UNLOCK_RECORDS = prange to the per-volume keybag,
+    // VOLUME_KEY = the VEK blob (both keyed by the volume UUID).
+    QByteArray prange(16, '\0');
+    writeLe64(&prange, 0, volumeKbBlock);
+    writeLe64(&prange, 8, 1);
+    const QByteArray containerKb = buildKeybagBlock(
+        kApfsObjectTypeContainerKeybag,
+        0,
+        kApfsFormatXid,
+        {{volumeUuid, kKbTagVolumeUnlockRecords, prange}, {volumeUuid, kKbTagVolumeKey, vekBlob}},
+        blockSize);
+    mat.vek = vek;
+    mat.containerKeybagBlock =
+        sealKeybagBlock(containerKb, containerUuid, containerKbBlock, blockers);
+    mat.volumeKeybagBlock = sealKeybagBlock(volumeKb, volumeUuid, volumeKbBlock, blockers);
+    mat.ok = mat.containerKeybagBlock.size() == blockSize &&
+             mat.volumeKeybagBlock.size() == blockSize;
+    return mat;
+}
+
+// Per-format encryption plan: the field values the format path reads when a
+// software-encrypted volume is requested (all zero / unencrypted otherwise).
+struct ApfsFormatEncryption {
+    bool enabled{false};
+    bool ok{false};
+    uint64_t containerKbBlock{0};
+    uint64_t volumeKbBlock{0};
+    uint64_t reservedDelta{0};  // extra reserved blocks for the two keybags
+    uint32_t omapFlag{0};       // OMAP_VAL_ENCRYPTED on the fs-tree mapping
+    uint64_t fsFlags{1};        // APFS_FS_UNENCRYPTED vs APFS_FS_ONEKEY
+    uint64_t keylockerBlocks{0};
+    QByteArray vek;
+    QByteArray containerKeybagBlock;
+    QByteArray volumeKeybagBlock;
+};
+
+/// @brief Resolve the encryption plan for a format request. The two keybags take
+/// the next blocks after the reserved metadata prefix at @p baseReserved.
+ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatRequest& request,
+                                             uint64_t baseReserved,
+                                             const QByteArray& containerUuid,
+                                             const QByteArray& volumeUuid,
+                                             QStringList* blockers) {
+    ApfsFormatEncryption enc;
+    if (request.volume_password.isEmpty()) {
+        return enc;
+    }
+    enc.enabled = true;
+    enc.containerKbBlock = baseReserved;
+    enc.volumeKbBlock = baseReserved + 1;
+    enc.reservedDelta = 2;
+    enc.omapFlag = kApfsOmapValueEncrypted;
+    enc.fsFlags = kApfsVolumeFsFlagsOneKey;
+    enc.keylockerBlocks = 1;
+    const ApfsEncryptionMaterial mat =
+        buildApfsEncryptionMaterial({.password = request.volume_password,
+                                     .containerUuid = containerUuid,
+                                     .volumeUuid = volumeUuid,
+                                     .containerKbBlock = enc.containerKbBlock,
+                                     .volumeKbBlock = enc.volumeKbBlock,
+                                     .blockSize = static_cast<int>(request.block_size_bytes)},
+                                    blockers);
+    enc.ok = mat.ok;
+    enc.vek = mat.vek;
+    enc.containerKeybagBlock = mat.containerKeybagBlock;
+    enc.volumeKeybagBlock = mat.volumeKeybagBlock;
+    return enc;
+}
+
+/// @brief AES-XTS-encrypt the volume fs-tree with the VEK and append the two
+/// keybag blocks. No-op for an unencrypted (or failed) format.
+void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
+                           const ApfsFormatEncryption& enc,
+                           uint64_t rootTree) {
+    if (!enc.enabled || !enc.ok) {
+        return;
+    }
+    for (auto& blk : *blocks) {
+        if (blk.first == rootTree) {
+            blk.second = sak::apfs_crypto::xtsEncryptBlock(enc.vek, rootTree, blk.second);
+        }
+    }
+    blocks->append({enc.containerKbBlock, enc.containerKeybagBlock});
+    blocks->append({enc.volumeKbBlock, enc.volumeKeybagBlock});
+}
+
 QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
                                           uint64_t blockCount,
                                           const QString& volumeName,
@@ -8018,8 +8206,6 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     const uint64_t containerOmap = kApfsFormatContainerOmapBlock + ipDelta;
     const uint64_t containerOmapTree = kApfsFormatContainerOmapTreeBlock + ipDelta;
     const uint64_t seedData = kApfsFormatSeedFileDataBlock + ipDelta;
-    const QVector<ApfsObjectMapEntry> volumeMappings{
-        {kApfsFormatRootTreeOid, kApfsFormatXid, rootTree}};
     // Multi-volume (A4): each additional volume gets its own six-block set placed in
     // the previously-free region right after the first volume's reserved prefix
     // (volume object map + its tree, extent-ref tree, snap-meta tree, root tree, and
@@ -8029,7 +8215,15 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     // empty additional_volume_names list is byte-identical to the prior layout.
     const ExtraApfsVolumes extras = layOutExtraApfsVolumes(request.additional_volume_names,
                                                            seedData);
-    const uint64_t reservedSeed = seedData + extras.blockCount;
+    // A6: resolve the encryption plan. The two keybags take the blocks after the
+    // reserved metadata prefix, so the space manager's reserved count (free count +
+    // allocation bitmap) accounts for them; the fs-tree mapping is flagged
+    // OMAP_VAL_ENCRYPTED. Unencrypted leaves every value default -> byte-identical.
+    const ApfsFormatEncryption enc = prepareFormatEncryption(
+        request, seedData + extras.blockCount, containerUuid, volumeUuid, blockers);
+    const uint64_t reservedSeed = seedData + extras.blockCount + enc.reservedDelta;
+    const QVector<ApfsObjectMapEntry> volumeMappings{
+        {kApfsFormatRootTreeOid, kApfsFormatXid, rootTree, enc.omapFlag}};
     const uint64_t containerNextOid = kApfsNxMinimumNextOid +
                                       2 * static_cast<uint64_t>(extras.volumes.size());
     QVector<ApfsObjectMapEntry> containerMappings{{kApfsFormatVolumeOid, kApfsFormatXid, volSuper}};
@@ -8053,7 +8247,9 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                                .dataNext = liveDataNext,
                                                .omapOid = containerOmap,
                                                .fsOids = fsOids,
-                                               .nextOid = containerNextOid},
+                                               .nextOid = containerNextOid,
+                                               .keylockerPaddr = enc.containerKbBlock,
+                                               .keylockerBlocks = enc.keylockerBlocks},
                                               blockers);
     const QByteArray genesisNxsb = buildNxSuperblock(request.block_size_bytes,
                                                      blockCount,
@@ -8173,7 +8369,8 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                 .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
                                 .volumeOmapBlock = volOmap,
                                 .extentRefTreeBlock = extentRef,
-                                .snapMetaTreeBlock = snapMeta},
+                                .snapMetaTreeBlock = snapMeta,
+                                .fsFlags = enc.fsFlags},
                                blockers)},
         {containerOmap,
          buildObjectMapBlock({.blockSize = request.block_size_bytes,
@@ -8372,6 +8569,11 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                              blockers)});
         }
     }
+    // A6: AES-XTS-encrypt the volume file-system tree with the VEK (its omap value
+    // already carries OMAP_VAL_ENCRYPTED) and place the two keybag blocks. Everything
+    // else - the container, the volume superblock, the object maps, the extent-ref /
+    // snap-meta trees - stays plaintext, exactly as a real macOS FileVault volume.
+    applyFormatEncryption(&blocks, enc, rootTree);
     return blocks;
 }
 

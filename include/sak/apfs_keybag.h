@@ -75,6 +75,15 @@ struct KeyBlobParams {
 ///            [0x84] iterations; [0x85] salt(16) } }.
 [[nodiscard]] QByteArray buildKekBlob(const KeyBlobParams& p);
 
+/// @brief Parse a plaintext (already XTS-decrypted) keybag block into its entries.
+/// Returns empty if the block is not a valid keybag (wrong magic / version).
+[[nodiscard]] QList<KeybagEntry> parseKeybagBlock(const QByteArray& block);
+
+/// @brief Parse a VEK / KEK key-blob (inverse of buildVekBlob/buildKekBlob).
+/// Fills @p out (uuid, wrappedKey, flags8, iterations, salt as present).
+/// @return true on a well-formed blob.
+[[nodiscard]] bool parseKeyBlob(const QByteArray& blob, KeyBlobParams* out);
+
 /// @brief Encode a DER length prefix (short form < 128, else long form).
 [[nodiscard]] QByteArray derLength(int length);
 
