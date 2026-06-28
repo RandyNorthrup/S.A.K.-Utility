@@ -312,6 +312,11 @@ constexpr qsizetype kApfsOmapMostRecentSnapshotOffset = 0x40;
 constexpr qsizetype kApfsOmapPendingRevertMinOffset = 0x48;
 constexpr qsizetype kApfsOmapPendingRevertMaxOffset = 0x50;
 constexpr qsizetype kApfsVolumeIncompatibleFeaturesOffset = 0x38;
+// A7 (A-h) sealed-volume policy: a signed-system (sealed) volume sets
+// APFS_INCOMPAT_SEALED_VOLUME and carries an integrity-meta object. Mutating it
+// breaks the volume seal, so S.A.K. fails closed on any sealed-volume commit.
+constexpr uint64_t kApfsVolumeIncompatSealed = 0x00'00'00'20;
+constexpr qsizetype kApfsVolumeIntegrityMetaOidOffset = 0x400;
 constexpr qsizetype kApfsVolumeAllocatedBlockCountOffset = 0x58;
 constexpr qsizetype kApfsVolumeOmapOidOffset = 0x80;
 constexpr qsizetype kApfsVolumeRootTreeOidOffset = 0x88;
@@ -4539,6 +4544,32 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
     return true;
 }
 
+// A7 (A-h) sealed-volume policy: fail closed before any in-place commit touches a
+// signed-system (sealed) volume. A sealed volume sets APFS_INCOMPAT_SEALED_VOLUME
+// and references an integrity-meta object whose hash tree authenticates every block;
+// mutating it silently breaks that seal (the OS refuses to boot the volume). The
+// mutation is blocked unconditionally here -- a typed seal-invalidation confirmation
+// is the documented opt-in override at the safety-validation layer, not a silent path.
+bool appendSealedVolumeBlocker(QIODevice* image,
+                               const ApfsRepairGeometry& geometry,
+                               uint64_t volSbBlock,
+                               QStringList* blockers) {
+    QByteArray volSb(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, volSbBlock, &volSb, blockers)) {
+        return false;
+    }
+    const bool sealedFeature =
+        (le64(volSb, kApfsVolumeIncompatibleFeaturesOffset) & kApfsVolumeIncompatSealed) != 0;
+    if (sealedFeature || le64(volSb, kApfsVolumeIntegrityMetaOidOffset) != 0) {
+        blockers->append(
+            QStringLiteral("APFS sealed (signed-system) volume: any mutation breaks the volume "
+                           "seal and is blocked; a typed seal-invalidation confirmation is "
+                           "required to override"));
+        return false;
+    }
+    return true;
+}
+
 bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
@@ -4554,6 +4585,9 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
     ctx->live = readLiveCheckpoint(ctx->nxsb);
     if (!walkLiveFsChain(
             image, ctx->geometry, le64(ctx->nxsb, kApfsNxOmapOidOffset), &ctx->chain, blockers)) {
+        return false;
+    }
+    if (!appendSealedVolumeBlocker(image, ctx->geometry, ctx->chain.volSb, blockers)) {
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);

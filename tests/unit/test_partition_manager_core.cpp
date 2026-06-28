@@ -1788,6 +1788,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
+    void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
@@ -8811,6 +8812,60 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
     const QByteArray nxsb = outImage.read(4096);
     outImage.close();
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+}
+
+void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
+    // A7 (A-h) sealed-volume policy: an in-place commit must fail closed on a
+    // signed-system (sealed) volume -- mutating it breaks the volume seal. The
+    // gate fires for APFS_INCOMPAT_SEALED_VOLUME and for an integrity-meta object.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("seal-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SAKSEAL"),
+                 .options = options})
+                .ok);
+
+    // A normal (unsealed) volume still mutates.
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert(
+                {.source_image_path = base,
+                 .written_image_path = dir.filePath(QStringLiteral("seal-ok.apfs")),
+                 .file_name = QStringLiteral("a.txt"),
+                 .file_data = QByteArrayLiteral("hi"),
+                 .options = options})
+                .ok);
+
+    // Set APFS_INCOMPAT_SEALED_VOLUME (0x20) in the volume superblock -> blocked.
+    constexpr uint32_t kApsbMagic = 0x42'53'50'41;  // 'APSB'
+    const QString sealedFeature = dir.filePath(QStringLiteral("seal-feature.apfs"));
+    QVERIFY(QFile::copy(base, sealedFeature));
+    QVERIFY(tamperApfsBlockField(sealedFeature, kApsbMagic, 0x38, 0x21, false));
+    const auto blockedFeature = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = sealedFeature,
+         .written_image_path = dir.filePath(QStringLiteral("seal-feature-out.apfs")),
+         .file_name = QStringLiteral("a.txt"),
+         .file_data = QByteArrayLiteral("hi"),
+         .options = options});
+    QVERIFY(!blockedFeature.ok);
+    QVERIFY(blockedFeature.blockers.join(' ').contains(QStringLiteral("sealed")));
+
+    // An integrity-meta object reference (apfs_integrity_meta_oid != 0) -> blocked.
+    const QString sealedMeta = dir.filePath(QStringLiteral("seal-meta.apfs"));
+    QVERIFY(QFile::copy(base, sealedMeta));
+    QVERIFY(tamperApfsBlockField(sealedMeta, kApsbMagic, 0x400, 0x2002, false));
+    const auto blockedMeta = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = sealedMeta,
+         .written_image_path = dir.filePath(QStringLiteral("seal-meta-out.apfs")),
+         .file_name = QStringLiteral("a.txt"),
+         .file_data = QByteArrayLiteral("hi"),
+         .options = options});
+    QVERIFY(!blockedMeta.ok);
+    QVERIFY(blockedMeta.blockers.join(' ').contains(QStringLiteral("sealed")));
 }
 
 void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
