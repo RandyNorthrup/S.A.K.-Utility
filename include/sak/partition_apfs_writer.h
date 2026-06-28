@@ -495,6 +495,19 @@ struct PartitionApfsImageFileInsertCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to clone one root file in a generated APFS container with a true
+///        in-place copy-on-write checkpoint commit (A7). The clone shares the source
+///        file's data stream (no data is copied): a new inode is added whose private
+///        id points at the source's dstream, the shared dstream's reference count
+///        rises to 2, and both inodes are flagged WAS_CLONED/WAS_EVER_CLONED.
+struct PartitionApfsImageFileCloneCommitRequest {
+    QString source_image_path;
+    QString written_image_path;
+    QString source_file_name;
+    QString clone_file_name;
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to delete one root file from a generated APFS container with a
 ///        true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsImageFileDeleteCommitRequest {
@@ -859,6 +872,11 @@ public:
         const PartitionApfsImageFilePatchCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileInsert(
         const PartitionApfsImageFileInsertCommitRequest& request);
+    /// @brief Clone one root file with a true in-place COW commit (A7): the clone shares
+    ///        the source's data stream, no data is copied, and the shared dstream's
+    ///        reference count rises to 2.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileClone(
+        const PartitionApfsImageFileCloneCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileDelete(
         const PartitionApfsImageFileDeleteCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileRename(

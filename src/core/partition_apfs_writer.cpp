@@ -829,6 +829,16 @@ struct ApfsRootFilePayload {
     // (a hole). The reader already zero-fills gaps between extents.
     bool sparse{false};
     uint64_t sparseLogicalSize{0};
+    // A7 (A-h) file clones: a clone shares the source file's data stream (its
+    // privateId points at the source's dstream id). When set, this inode emits NO
+    // j_dstream_id and NO file-extent records -- it reuses the source's, and the
+    // shared dstream carries the refcount instead. The source keeps dstreamRefcnt
+    // == number of inodes sharing it (clone source -> 2). extraInodeFlags OR-es the
+    // clone flags (WAS_CLONED / WAS_EVER_CLONED) into internal_flags. Defaults keep
+    // every non-clone file byte-identical.
+    bool sharesDstream{false};
+    uint32_t dstreamRefcnt{1};
+    uint64_t extraInodeFlags{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1141,9 +1151,9 @@ QByteArray directoryEntryValue(uint64_t fileId, uint16_t entryType) {
     return value;
 }
 
-QByteArray dstreamIdValue() {
+QByteArray dstreamIdValue(uint32_t refcnt = 1) {
     QByteArray value(4, '\0');
-    writeLe32(&value, 0, 1);
+    writeLe32(&value, 0, refcnt);
     return value;
 }
 
@@ -1224,6 +1234,7 @@ bool isSafeSeedFileName(const QString& fileName) {
 // well-known xattr is present (apfsck/fsck cross-check these against the xattr set).
 uint64_t inodeAttributeFlags(const ApfsRootFilePayload& file) {
     uint64_t flags = file.sparse ? kApfsInodeFlagIsSparse : 0ULL;
+    flags |= file.extraInodeFlags;
     for (const auto& [name, value] : file.xattrs) {
         if (name == QByteArray(kApfsXattrNameSecurity)) {
             flags |= kApfsInodeFlagHasSecurityEa;
@@ -1270,6 +1281,14 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                          file.sparse ? fileAllocedBytes(file, kSupportedApfsBlockSizeBytes) : 0})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)});
+    if (file.sharesDstream) {
+        // A clone: the inode reuses the source file's data stream (its privateId is
+        // the source's dstream id), so it emits no j_dstream_id and no file-extent
+        // records -- the source owns them and carries the shared refcount. Only the
+        // inode, its dir entry, and any per-clone xattrs are written here.
+        appendInodeXattrs(records, file);
+        return;
+    }
     if (file.compressed) {
         // A transparently-compressed file has no data stream: its content lives
         // in an embedded com.apple.decmpfs xattr, and the inode is UF_COMPRESSED.
@@ -1278,7 +1297,8 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
         appendInodeXattrs(records, file);
         return;
     }
-    records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
+    records->append(
+        {fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue(file.dstreamRefcnt)});
     // A zero-length file has a size-0 data stream and no allocated blocks, so it
     // carries no file-extent record; emitting one produces a zero-length extent
     // at logical address 0, which fsck_apfs rejects ("invalid zero-length
@@ -4364,6 +4384,13 @@ struct ApfsFileInsertRequest {
     // as zeros (INODE_IS_SPARSE). 0 = dense.
     bool sparse{false};
     uint64_t sparseLogicalSize{0};
+    // A7 (A-h) file clone: when non-zero, the inserted file is a clone that shares
+    // the data stream owned by this private (dstream) id -- it allocates no data
+    // blocks and emits no dstream-id/extent records, reusing the source's. Its inode
+    // logical size is cloneLogicalSize (the shared stream's size). fileData must be
+    // empty for a clone (no allocation).
+    uint64_t cloneSourcePrivateId{0};
+    uint64_t cloneLogicalSize{0};
 };
 
 struct ApfsChainedListInput {
@@ -4420,19 +4447,27 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
             {in.image, in.geometry, in.chain}, in.request.existingFiles, files, blockers)) {
         return false;
     }
-    files->append({.fileName = in.request.fileName.trimmed(),
-                   .data = in.request.fileData,
-                   .parentDirectoryId = in.request.newFileParentId,
-                   .fileId = newFileId,
-                   .privateId = newFileId,
-                   .dataStartBlock = in.newDataStart,
-                   .dataExtents = in.newDataExtents,
-                   .compressed = in.request.compressed,
-                   .decmpfsXattr = in.request.decmpfsXattr,
-                   .uncompressedSize = in.request.uncompressedSize,
-                   .xattrs = in.request.xattrs,
-                   .sparse = in.request.sparse,
-                   .sparseLogicalSize = in.request.sparseLogicalSize});
+    const bool clone = in.request.cloneSourcePrivateId != 0;
+    files->append(
+        {.fileName = in.request.fileName.trimmed(),
+         // A clone carries a size-only buffer so its inode reports the shared stream's
+         // logical size while allocating nothing (sharesDstream skips its extents).
+         .data = clone ? QByteArray(static_cast<qsizetype>(in.request.cloneLogicalSize), '\0')
+                       : in.request.fileData,
+         .parentDirectoryId = in.request.newFileParentId,
+         .fileId = newFileId,
+         .privateId = clone ? in.request.cloneSourcePrivateId : newFileId,
+         .dataStartBlock = in.newDataStart,
+         .dataExtents = in.newDataExtents,
+         .compressed = in.request.compressed,
+         .decmpfsXattr = in.request.decmpfsXattr,
+         .uncompressedSize = in.request.uncompressedSize,
+         .xattrs = in.request.xattrs,
+         .sparse = in.request.sparse,
+         .sparseLogicalSize = in.request.sparseLogicalSize,
+         .sharesDstream = clone,
+         .extraInodeFlags = clone ? (kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned)
+                                  : 0ULL});
     return true;
 }
 
@@ -4447,6 +4482,10 @@ struct ApfsFileInsertBuildInputs {
     // A7 (A-h): arbitrary named xattrs + a trailing-hole sparse size (0 = dense).
     QVector<QPair<QByteArray, QByteArray>> xattrs;
     uint64_t sparseLogicalSize{0};
+    // A7 (A-h) file clone: when non-zero, the inserted file clones the data stream
+    // owned by this dstream id (cloneLogicalSize = the shared stream's size).
+    uint64_t cloneSourcePrivateId{0};
+    uint64_t cloneLogicalSize{0};
 };
 
 // Build the in-place insert request for a (possibly compressed) file. When
@@ -4459,6 +4498,8 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             QStringList* blockers) {
     *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
     request->xattrs = in.xattrs;
+    request->cloneSourcePrivateId = in.cloneSourcePrivateId;
+    request->cloneLogicalSize = in.cloneLogicalSize;
     // A trailing-hole sparse file: extents cover fileData, the inode logical size is
     // sparseLogicalSize, and the gap reads as zeros. Must exceed the data size.
     if (in.sparseLogicalSize > static_cast<uint64_t>(in.fileData.size())) {
@@ -6373,6 +6414,41 @@ bool collectFullFsTree(const QString& sourcePath,
         }
     }
     return true;
+}
+
+// A7 (A-h) clone: the shared data stream id and logical size a clone inherits from its
+// source file.
+struct ApfsCloneSourceInfo {
+    uint64_t privateId{0};
+    uint64_t logicalSize{0};
+};
+
+// Locate the named root file in a collected tree and mark it as a clone source: its
+// shared data stream's reference count rises to 2 and it gains WAS_EVER_CLONED. Returns
+// the dstream id + logical size the clone inode reuses. Fails closed if the source is
+// absent or zero-length (a zero-length file has no data stream to share).
+bool prepareCloneSource(QVector<ApfsRootFilePayload>* existingFiles,
+                        const QString& sourceName,
+                        ApfsCloneSourceInfo* out,
+                        QStringList* blockers) {
+    for (auto& file : *existingFiles) {
+        if (file.parentDirectoryId != kApfsRootDirectoryId || file.fileName != sourceName) {
+            continue;
+        }
+        if (file.data.isEmpty()) {
+            blockers->append(QStringLiteral(
+                "APFS file-clone-commit: cloning a zero-length source file is not supported"));
+            return false;
+        }
+        file.dstreamRefcnt = 2;
+        file.extraInodeFlags |= kApfsInodeFlagWasEverCloned;
+        *out = {file.fileId, static_cast<uint64_t>(file.data.size())};
+        return true;
+    }
+    blockers->append(
+        QStringLiteral("APFS file-clone-commit: source file '%1' not found in the container root")
+            .arg(sourceName));
+    return false;
 }
 
 // Full one-level tree for a chained insert; fails closed if the new root file name
@@ -13346,6 +13422,80 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .compress = request.compress_zlib,
                                 .xattrs = request.xattrs,
                                 .sparseLogicalSize = request.sparse_logical_size},
+                               &result);
+    image.close();
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileClone(
+    const PartitionApfsImageFileCloneCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.source_image_path.trimmed();
+    result.written_image_path = request.written_image_path.trimmed();
+    result.warnings.append(QStringLiteral(
+        "Generated APFS in-place file clone remains image-only and is not exposed to user "
+        "actions; raw in-place commit support requires fsck_apfs/diskutil, crash replay, and "
+        "hardware evidence"));
+
+    const QString sourceName = request.source_file_name.trimmed();
+    const QString cloneName = request.clone_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cloneName, QLatin1StringView("file-clone-commit"), &result.blockers)) {
+        return result;
+    }
+    const auto source = validateImageOnlySource(result.source_image_path,
+                                                QLatin1StringView("file-clone-commit"),
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return result;
+    }
+    if (!appendSeparateOutputBlockers(source.info,
+                                      result.written_image_path,
+                                      QLatin1StringView("file-clone-commit"),
+                                      &result.blockers)) {
+        return result;
+    }
+    if (!detectApfsImageSource(result.source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               QLatin1StringView("file-clone-commit"),
+                               &result.blockers)
+             .has_value()) {
+        return result;
+    }
+
+    // Collect the live tree (rejecting a clone name that already exists), then locate the
+    // source root file and bump its shared data stream's reference count to 2 while marking
+    // it WAS_EVER_CLONED -- the clone inode then reuses that dstream and its extents.
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    ApfsCloneSourceInfo cloneSource;
+    if (!collectExistingFullFsTree(
+            result.source_image_path, cloneName, &existingFiles, &directories, &result.blockers) ||
+        !prepareCloneSource(&existingFiles, sourceName, &cloneSource, &result.blockers)) {
+        return result;
+    }
+
+    if (!copyToScratchImage(result.source_image_path,
+                            result.written_image_path,
+                            QLatin1StringView("file-clone-commit"),
+                            &result.blockers)) {
+        return result;
+    }
+    QFile image;
+    if (!openScratchImage(result.written_image_path,
+                          QLatin1StringView("file-clone-commit"),
+                          &image,
+                          &result.blockers)) {
+        return result;
+    }
+    runInPlaceFileInsertCommit(&image,
+                               {.existingFiles = existingFiles,
+                                .fileName = cloneName,
+                                .directories = directories,
+                                .cloneSourcePrivateId = cloneSource.privateId,
+                                .cloneLogicalSize = cloneSource.logicalSize},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();

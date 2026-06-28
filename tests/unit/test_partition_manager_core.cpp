@@ -1788,6 +1788,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
+    void apfsWriter_clonesFileSharingDataStream();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -8807,6 +8808,83 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
     QCOMPARE(got.value(QStringLiteral("user.note")), QByteArrayLiteral("hello-xattr"));
 
     // The container superblock stays self-consistent (object checksum + xid).
+    QFile outImage(out);
+    QVERIFY(outImage.open(QIODevice::ReadOnly));
+    const QByteArray nxsb = outImage.read(4096);
+    outImage.close();
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+}
+
+void PartitionManagerCoreTests::apfsWriter_clonesFileSharingDataStream() {
+    // A7 (A-h) file clone: cloning a file shares its data stream -- no data is copied.
+    // A new inode is added whose private id points at the source's dstream; the shared
+    // dstream's reference count rises to 2, and both inodes are flagged
+    // WAS_CLONED/WAS_EVER_CLONED. The on-disk structure is apfsck/kernel-certified, and
+    // the reader resolves both names (source + clone) to the identical bytes.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("clone-base.apfs"));
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = base,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKA7CL"),
+                  .options = options})
+                 .ok,
+             "format clone base");
+
+    // A multi-block source file so the clone genuinely shares > 1 extent block.
+    const QByteArray payload = QByteArray("clone-source-payload-").repeated(400);
+    const QString src = dir.filePath(QStringLiteral("clone-src.apfs"));
+    const auto insert =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = src,
+                                                        .file_name = QStringLiteral("orig.bin"),
+                                                        .file_data = payload,
+                                                        .options = options});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+
+    const QString out = dir.filePath(QStringLiteral("clone-out.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyFileClone(
+        {.source_image_path = src,
+         .written_image_path = out,
+         .source_file_name = QStringLiteral("orig.bin"),
+         .clone_file_name = QStringLiteral("clone.bin"),
+         .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(commit.new_xid, 4ULL);
+
+    // Both names are present, each reporting the shared stream's logical size.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    for (const auto& entry : listing.entries) {
+        QCOMPARE(entry.size_bytes, static_cast<uint64_t>(payload.size()));
+    }
+
+    // The source and the clone both read back the identical bytes (shared extents).
+    const auto sourceRead = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(sourceRead.ok, qPrintable(sourceRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(sourceRead.data, payload);
+    const auto cloneRead = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/clone.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(cloneRead.ok, qPrintable(cloneRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(cloneRead.data, payload);
+
+    // Cloning a source that does not exist fails closed.
+    const auto missing = PartitionApfsWriter::commitImageOnlyFileClone(
+        {.source_image_path = src,
+         .written_image_path = dir.filePath(QStringLiteral("clone-miss.apfs")),
+         .source_file_name = QStringLiteral("absent.bin"),
+         .clone_file_name = QStringLiteral("x.bin"),
+         .options = options});
+    QVERIFY(!missing.ok);
+
+    // The container superblock stays self-consistent (object checksum).
     QFile outImage(out);
     QVERIFY(outImage.open(QIODevice::ReadOnly));
     const QByteArray nxsb = outImage.read(4096);

@@ -1468,6 +1468,39 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
     return report;
 }
 
+std::optional<QJsonObject> buildCommitFileCloneReport(const CliInvocation& invocation,
+                                                      QString* error) {
+    if (invocation.output_image_path.isEmpty()) {
+        *error = QStringLiteral("--output-image is required for commit-image-file-clone.");
+        return std::nullopt;
+    }
+    const auto commit = sak::PartitionApfsWriter::commitImageOnlyFileClone(
+        {.source_image_path = invocation.target_path,
+         .written_image_path = invocation.output_image_path,
+         .source_file_name = invocation.file_name,
+         .clone_file_name = invocation.directory_name,
+         .options = imageWriteOptions(invocation.evidence_id)});
+    QJsonObject report;
+    report.insert(QStringLiteral("ok"), commit.ok);
+    report.insert(QStringLiteral("operation"), QStringLiteral("APFS in-place file clone commit"));
+    report.insert(QStringLiteral("source_image"), commit.source_image_path);
+    report.insert(QStringLiteral("output_image"), commit.written_image_path);
+    report.insert(QStringLiteral("source_name"), invocation.file_name.trimmed());
+    report.insert(QStringLiteral("clone_name"), invocation.directory_name.trimmed());
+    report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
+    report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
+    report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));
+    QJsonArray blockers;
+    for (const auto& blocker : commit.blockers) {
+        blockers.append(blocker);
+    }
+    report.insert(QStringLiteral("blockers"), blockers);
+    if (!commit.ok) {
+        *error = commit.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitFileDeleteReport(const CliInvocation& invocation,
                                                        QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -1793,7 +1826,7 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 27> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 28> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
@@ -1807,6 +1840,7 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-image-directory-child-delete"),
          buildCommitDirectoryChildDeleteReport},
         {QLatin1StringView("commit-image-file-insert"), buildCommitFileInsertReport},
+        {QLatin1StringView("commit-image-file-clone"), buildCommitFileCloneReport},
         {QLatin1StringView("commit-image-file-delete"), buildCommitFileDeleteReport},
         {QLatin1StringView("commit-image-file-rename"), buildCommitFileRenameReport},
         {QLatin1StringView("commit-raw-file-insert"), buildCommitRawFileInsertReport},
@@ -1877,6 +1911,7 @@ bool isFileNameCommand(const QString& command) {
         QStringLiteral("delete-raw-root-file"),
         QStringLiteral("commit-image-file-write"),
         QStringLiteral("commit-image-file-insert"),
+        QStringLiteral("commit-image-file-clone"),
         QStringLiteral("commit-image-file-delete"),
         QStringLiteral("commit-image-file-rename"),
         QStringLiteral("commit-raw-file-write"),
@@ -1908,6 +1943,7 @@ bool isDirectoryNameCommand(const QString& command) {
         QStringLiteral("delete-raw-root-directory"),
         QStringLiteral("commit-image-file-rename"),
         QStringLiteral("commit-raw-file-rename"),
+        QStringLiteral("commit-image-file-clone"),
         QStringLiteral("commit-image-directory-create"),
         QStringLiteral("commit-image-directory-delete"),
         QStringLiteral("commit-image-directory-child-write"),
