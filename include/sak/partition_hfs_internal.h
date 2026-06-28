@@ -7361,7 +7361,28 @@ private:
         uint32_t blhdr_size{0};
         QByteArray header;
         bool needs_init{false};
+        // PowerPC-era journals store every header/block-info field big-endian. The
+        // endian magic at offset 4 selects how all journal metadata is decoded; the
+        // journaled block payloads are copied verbatim either way (H-g).
+        bool big_endian{false};
     };
+
+    // Decode a journal metadata field in the journal's own byte order.
+    [[nodiscard]] static uint16_t ju16(const HfsJournalState& s, const QByteArray& b, qsizetype o) {
+        return s.big_endian ? be16(b, o) : le16(b, o);
+    }
+    [[nodiscard]] static uint32_t ju32(const HfsJournalState& s, const QByteArray& b, qsizetype o) {
+        return s.big_endian ? be32(b, o) : le32(b, o);
+    }
+    [[nodiscard]] static uint64_t ju64(const HfsJournalState& s, const QByteArray& b, qsizetype o) {
+        return s.big_endian ? be64(b, o) : le64(b, o);
+    }
+    static void writeJu32(const HfsJournalState& s, QByteArray* b, qsizetype o, uint32_t v) {
+        s.big_endian ? writeBe32(b, o, v) : writeLe32(b, o, v);
+    }
+    static void writeJu64(const HfsJournalState& s, QByteArray* b, qsizetype o, uint64_t v) {
+        s.big_endian ? writeBe64(b, o, v) : writeLe64(b, o, v);
+    }
 
     [[nodiscard]] std::optional<HfsJournalState> loadJournalInfoBlock(QStringList* blockers) {
         if ((m_volume.attributes & kHfsVolumeJournaledMask) == 0) {
@@ -7422,25 +7443,32 @@ private:
             blockers->append(m_blockers);
             return false;
         }
-        if (le32(*header, 0) != kHfsJournalHeaderMagic) {
+        // The endian magic (offset 4) is the constant 0x12345678 stored in the
+        // journal's own byte order, so it selects little- vs big-endian decoding for
+        // every header/block-info field (H-g; PowerPC-era journals are big-endian).
+        if (le32(*header, kUint32Size) == kHfsJournalEndianMagic) {
+            state->big_endian = false;
+        } else if (be32(*header, kUint32Size) == kHfsJournalEndianMagic) {
+            state->big_endian = true;
+        } else {
+            blockers->append(QStringLiteral("HFS+ journal endian magic is invalid"));
+            return false;
+        }
+        if (ju32(*state, *header, 0) != kHfsJournalHeaderMagic) {
             blockers->append(QStringLiteral("HFS+ journal header magic is invalid"));
             return false;
         }
-        if (le32(*header, kUint32Size) != kHfsJournalEndianMagic) {
-            blockers->append(
-                QStringLiteral("HFS+ big-endian journals are not supported for replay"));
-            return false;
-        }
         QByteArray checksumInput = *header;
-        writeLe32(&checksumInput, kHfsJournalHeaderChecksumField, 0);
-        if (hfsJournalChecksum(checksumInput) != le32(*header, kHfsJournalHeaderChecksumField)) {
+        writeLe32(&checksumInput, kHfsJournalHeaderChecksumField, 0);  // zero = endian-agnostic
+        if (hfsJournalChecksum(checksumInput) !=
+            ju32(*state, *header, kHfsJournalHeaderChecksumField)) {
             blockers->append(QStringLiteral("HFS+ journal header checksum is invalid"));
             return false;
         }
-        state->start = le64(*header, kHfsJournalHeaderStartField);
-        state->end = le64(*header, kHfsJournalHeaderEndField);
-        state->blhdr_size = le32(*header, kHfsJournalHeaderBlhdrSizeField);
-        state->region.header_bytes = le32(*header, kHfsJournalHeaderJhdrSizeField);
+        state->start = ju64(*state, *header, kHfsJournalHeaderStartField);
+        state->end = ju64(*state, *header, kHfsJournalHeaderEndField);
+        state->blhdr_size = ju32(*state, *header, kHfsJournalHeaderBlhdrSizeField);
+        state->region.header_bytes = ju32(*state, *header, kHfsJournalHeaderJhdrSizeField);
         state->header = *header;
         return validateJournalHeaderGeometry(*state, blockers);
     }
@@ -7452,7 +7480,7 @@ private:
 
     [[nodiscard]] bool validateJournalHeaderGeometry(const HfsJournalState& state,
                                                      QStringList* blockers) const {
-        if (le64(state.header, kHfsJournalHeaderSizeField) != state.region.size ||
+        if (ju64(state, state.header, kHfsJournalHeaderSizeField) != state.region.size ||
             state.region.header_bytes < kHfsJournalHeaderBytes ||
             state.region.header_bytes >= state.region.size ||
             state.blhdr_size < kHfsJournalBlockInfoOffset + kHfsJournalBlockInfoBytes ||
@@ -7491,13 +7519,14 @@ private:
             return std::nullopt;
         }
         QByteArray checksumInput = blhdr->left(kHfsJournalBlhdrChecksumBytes);
-        writeLe32(&checksumInput, kHfsJournalBlhdrChecksumField, 0);
-        if (hfsJournalChecksum(checksumInput) != le32(*blhdr, kHfsJournalBlhdrChecksumField)) {
+        writeLe32(&checksumInput, kHfsJournalBlhdrChecksumField, 0);  // zero = endian-agnostic
+        if (hfsJournalChecksum(checksumInput) !=
+            ju32(state, *blhdr, kHfsJournalBlhdrChecksumField)) {
             blockers->append(QStringLiteral("HFS+ journal transaction checksum is invalid"));
             return std::nullopt;
         }
-        const uint16_t numBlocks = le16(*blhdr, kHfsJournalBlhdrNumBlocksField);
-        const uint32_t bytesUsed = le32(*blhdr, kHfsJournalBlhdrBytesUsedField);
+        const uint16_t numBlocks = ju16(state, *blhdr, kHfsJournalBlhdrNumBlocksField);
+        const uint32_t bytesUsed = ju32(state, *blhdr, kHfsJournalBlhdrBytesUsedField);
         const qsizetype infoCapacity =
             (static_cast<qsizetype>(state.blhdr_size) - kHfsJournalBlockInfoOffset) /
             kHfsJournalBlockInfoBytes;
@@ -7542,12 +7571,12 @@ private:
                                                 const QByteArray& blhdr,
                                                 HfsJournalReplayProgress* progress,
                                                 QStringList* blockers) {
-        const uint16_t numBlocks = le16(blhdr, kHfsJournalBlhdrNumBlocksField);
+        const uint16_t numBlocks = ju16(state, blhdr, kHfsJournalBlhdrNumBlocksField);
         uint64_t dataPosition = journalAdvance(state.region, progress->position, state.blhdr_size);
         for (uint16_t index = 1; index < numBlocks; ++index) {
             const qsizetype info = kHfsJournalBlockInfoOffset + index * kHfsJournalBlockInfoBytes;
-            const uint64_t blockNumber = le64(blhdr, info);
-            const uint32_t blockSize = le32(blhdr, info + kHfsJournalBlockInfoSizeField);
+            const uint64_t blockNumber = ju64(state, blhdr, info);
+            const uint32_t blockSize = ju32(state, blhdr, info + kHfsJournalBlockInfoSizeField);
             if (blockSize == 0) {
                 continue;
             }
@@ -7566,7 +7595,7 @@ private:
         }
         progress->position = journalAdvance(state.region,
                                             progress->position,
-                                            le32(blhdr, kHfsJournalBlhdrBytesUsedField));
+                                            ju32(state, blhdr, kHfsJournalBlhdrBytesUsedField));
         return true;
     }
 
@@ -7599,9 +7628,10 @@ private:
     [[nodiscard]] bool writeCleanJournalHeader(const HfsJournalState& state,
                                                QStringList* blockers) {
         QByteArray updatedHeader = state.header;
-        qToLittleEndian<quint64>(state.end, updatedHeader.data() + kHfsJournalHeaderStartField);
-        writeLe32(&updatedHeader, kHfsJournalHeaderChecksumField, 0);
-        writeLe32(&updatedHeader,
+        writeJu64(state, &updatedHeader, kHfsJournalHeaderStartField, state.end);
+        writeLe32(&updatedHeader, kHfsJournalHeaderChecksumField, 0);  // zero = endian-agnostic
+        writeJu32(state,
+                  &updatedHeader,
                   kHfsJournalHeaderChecksumField,
                   hfsJournalChecksum(updatedHeader));
         if (!writeAt(m_volume.volume_offset + state.region.journal_offset,
@@ -7612,8 +7642,8 @@ private:
         }
         const auto verify = readAt(m_volume.volume_offset + state.region.journal_offset,
                                    kHfsJournalHeaderBytes);
-        if (!verify.has_value() || le64(*verify, kHfsJournalHeaderStartField) !=
-                                       le64(*verify, kHfsJournalHeaderEndField)) {
+        if (!verify.has_value() || ju64(state, *verify, kHfsJournalHeaderStartField) !=
+                                       ju64(state, *verify, kHfsJournalHeaderEndField)) {
             blockers->append(QStringLiteral("HFS+ journal replay read-back verification failed"));
             return false;
         }

@@ -1752,6 +1752,8 @@ private Q_SLOTS:
     void hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete();
     void hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn();
     void hfsFileSystemWriter_replaysJournalTransactions();
+    void hfsFileSystemWriter_replaysBigEndianJournal();
+    void hfsFileSystemWriter_writesIntoWrappedVolume();
     void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
     void hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords();
@@ -4659,6 +4661,194 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replaysJournalTransactions()
                                                                                    options);
     QVERIFY(!notJournaled.ok);
     QVERIFY(notJournaled.blockers.join(' ').contains(QStringLiteral("not journaled")));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_replaysBigEndianJournal() {
+    // H-g: a PowerPC-era HFS+ journal stores every journal header / block-list /
+    // block-info field big-endian (the endian marker selects the byte order). The
+    // replay must produce the byte-identical result of the certified little-endian
+    // direct-write path. No Apple big-endian rig exists, so this byte-equality is
+    // the H-g exit gate.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-journal-replay-be");
+
+    // Expected end state via the certified direct-write path (endian-independent).
+    const QString expectedPath = temp.filePath(QStringLiteral("hfs-bejournal-expected.img"));
+    QVERIFY(writeBytes(expectedPath, hfsReaderFixture()));
+    const QByteArray newContent = QByteArrayLiteral("big-endian journal replay!\n");
+    const auto direct = PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
+        expectedPath,
+        QStringLiteral("/hello.txt"),
+        newContent.leftJustified(15, '\n', true),
+        options);
+    QVERIFY2(direct.ok, qPrintable(direct.blockers.join(QStringLiteral("; "))));
+    const QByteArray expectedBytes = readBytes(expectedPath);
+
+    // Dirty image carrying the same change as ONE big-endian journal transaction.
+    QByteArray dirty = hfsReaderFixture();
+    const uint32_t jibBlock = 50;
+    const uint64_t journalOffset = 51ULL * kTestHfsBlockSize;
+    const uint64_t journalSize = 8ULL * kTestHfsBlockSize;
+    writeBe32(&dirty, kTestHfsHeaderOffset + kTestHfsVolumeJournalInfoBlockOffset, jibBlock);
+    const qsizetype jibOffset = static_cast<qsizetype>(jibBlock) * kTestHfsBlockSize;
+    writeBe32(&dirty, jibOffset, 1);  // kJIJournalInFSMask (JIB is always big-endian)
+    writeBe64(&dirty, jibOffset + 36, journalOffset);
+    writeBe64(&dirty, jibOffset + 44, journalSize);
+
+    const qsizetype targetOffset = static_cast<qsizetype>(kTestHfsHelloFileBlock) *
+                                   kTestHfsBlockSize;
+    const QByteArray replayBlock = expectedBytes.mid(targetOffset, kTestHfsBlockSize);
+
+    constexpr uint64_t kJhdrSize = 512;
+    constexpr uint64_t kBlhdrSize = 512;
+    const uint64_t bytesUsed = kBlhdrSize + kTestHfsBlockSize;
+
+    // Block-list header + block-info, all big-endian.
+    QByteArray blhdr(static_cast<qsizetype>(kBlhdrSize), '\0');
+    writeBe16(&blhdr, 0, 31);                                     // max_blocks
+    writeBe16(&blhdr, 2, 2);                                      // num_blocks (sentinel + 1)
+    writeBe32(&blhdr, 4, static_cast<uint32_t>(bytesUsed));
+    writeBe64(&blhdr, 16, std::numeric_limits<uint64_t>::max());  // binfo[0] sentinel
+    writeBe64(&blhdr, 32, static_cast<uint64_t>(targetOffset) / 512);
+    writeBe32(&blhdr, 40, kTestHfsBlockSize);
+    QByteArray blhdrChecksumInput = blhdr.left(32);
+    writeBe32(&blhdrChecksumInput, 8, 0);
+    writeBe32(&blhdr, 8, testJournalChecksum(blhdrChecksumInput));
+
+    // Journal header, all big-endian (endian marker stored as bytes 12 34 56 78).
+    QByteArray journalHeader(44, '\0');
+    writeBe32(&journalHeader, 0, 0x4a'4e'4c'78);           // 'JNLx'
+    writeBe32(&journalHeader, 4, 0x12'34'56'78);           // endian marker (big-endian on disk)
+    writeBe64(&journalHeader, 8, kJhdrSize);               // start
+    writeBe64(&journalHeader, 16, kJhdrSize + bytesUsed);  // end
+    writeBe64(&journalHeader, 24, journalSize);
+    writeBe32(&journalHeader, 32, static_cast<uint32_t>(kBlhdrSize));
+    writeBe32(&journalHeader, 40, static_cast<uint32_t>(kJhdrSize));
+    writeBe32(&journalHeader, 36, testJournalChecksum(journalHeader));
+
+    const qsizetype journalBase = static_cast<qsizetype>(journalOffset);
+    std::copy(journalHeader.cbegin(), journalHeader.cend(), dirty.begin() + journalBase);
+    std::copy(blhdr.cbegin(),
+              blhdr.cend(),
+              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize));
+    std::copy(replayBlock.cbegin(),
+              replayBlock.cend(),
+              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize + kBlhdrSize));
+
+    const QString dirtyPath = temp.filePath(QStringLiteral("hfs-bejournal-dirty.img"));
+    QVERIFY(writeBytes(dirtyPath, dirty));
+
+    const auto replayed = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath, options);
+    QVERIFY2(replayed.ok, qPrintable(replayed.blockers.join(QStringLiteral("; "))));
+    QVERIFY(replayed.warnings.join(' ').contains(
+        QStringLiteral("journal replayed: 1 transactions, 1 blocks")));
+
+    // Byte-equality vs the certified direct-write path -- the H-g exit gate.
+    const QByteArray afterReplay = readBytes(dirtyPath);
+    QCOMPARE(afterReplay.mid(targetOffset, kTestHfsBlockSize),
+             expectedBytes.mid(targetOffset, kTestHfsBlockSize));
+    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
+        dirtyPath, QStringLiteral("/hello.txt"), 4096);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, newContent.leftJustified(15, '\n', true));
+
+    // The big-endian journal header is now clean (start == end) and a re-replay no-ops.
+    const QByteArray headerAfter = afterReplay.mid(journalBase, 44);
+    QCOMPARE(headerAfter.mid(8, 8), headerAfter.mid(16, 8));
+    const auto cleanReplay = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath,
+                                                                                  options);
+    QVERIFY2(cleanReplay.ok, qPrintable(cleanReplay.blockers.join(QStringLiteral("; "))));
+    QVERIFY(cleanReplay.warnings.join(' ').contains(QStringLiteral("journal is clean")));
+
+    // A tampered big-endian transaction checksum fails closed without writing.
+    QByteArray tampered = dirty;
+    tampered[journalBase + static_cast<qsizetype>(kJhdrSize) + 20] =
+        static_cast<char>(tampered.at(journalBase + static_cast<qsizetype>(kJhdrSize) + 20) ^ 0x5A);
+    const QString tamperedPath = temp.filePath(QStringLiteral("hfs-bejournal-tampered.img"));
+    QVERIFY(writeBytes(tamperedPath, tampered));
+    const auto blocked = PartitionHfsFileSystemWriter::replayJournalFromImage(tamperedPath,
+                                                                              options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("transaction checksum")));
+    QCOMPARE(readBytes(tamperedPath), tampered);
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
+    // H-h: an HFS+ volume embedded inside a legacy HFS wrapper. Every I/O is offset
+    // by the embedded volume's start; a write must land in the embedded volume and
+    // round-trip, leave the wrapper MDB untouched, and stay fail-closed without the
+    // explicit wrapper override.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    // Embed a complete writable HFS+ volume at the wrapper's embedded offset and put
+    // an HFS wrapper master directory block (signature 'BD') at offset 1024.
+    const qsizetype embeddedOffset =
+        static_cast<qsizetype>(kTestHfsWrapperAllocationStartSector * 512ULL +
+                               static_cast<uint64_t>(kTestHfsWrapperEmbeddedStartBlock) *
+                                   kTestHfsWrapperAllocationBlockSize);
+    const QByteArray embedded = hfsReaderFixture();
+    QByteArray wrapped(embeddedOffset + embedded.size() + kTestHfsBlockSize, '\0');
+    std::copy(embedded.cbegin(), embedded.cend(), wrapped.begin() + embeddedOffset);
+    writeAscii(&wrapped, kTestHfsWrapperMdbOffset, "BD");
+    writeBe32(&wrapped,
+              kTestHfsWrapperMdbOffset + kTestHfsWrapperAllocationBlockSizeOffset,
+              kTestHfsWrapperAllocationBlockSize);
+    writeBe16(&wrapped,
+              kTestHfsWrapperMdbOffset + kTestHfsWrapperAllocationBlockStartOffset,
+              kTestHfsWrapperAllocationStartSector);
+    writeAscii(&wrapped, kTestHfsWrapperMdbOffset + kTestHfsWrapperEmbeddedSignatureOffset, "H+");
+    writeBe16(&wrapped,
+              kTestHfsWrapperMdbOffset + kTestHfsWrapperEmbeddedExtentStartOffset,
+              kTestHfsWrapperEmbeddedStartBlock);
+    writeBe16(&wrapped,
+              kTestHfsWrapperMdbOffset + kTestHfsWrapperEmbeddedExtentCountOffset,
+              kTestHfsWrapperEmbeddedBlockCount);
+
+    const QString wrappedPath = temp.filePath(QStringLiteral("hfs-wrapped.img"));
+    QVERIFY(writeBytes(wrappedPath, wrapped));
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-wrapped-write");
+    const QByteArray newContent = QByteArrayLiteral("wrapped!\n").leftJustified(15, '\n', true);
+
+    // Fail-closed without the wrapper override; the image is untouched.
+    const auto blocked = PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
+        wrappedPath, QStringLiteral("/hello.txt"), newContent, options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("Wrapped HFS+ volume writes")));
+    QCOMPARE(readBytes(wrappedPath), wrapped);
+
+    // With the override the write lands in the embedded volume and round-trips.
+    options.allow_wrapped_volume = true;
+    const auto written = PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
+        wrappedPath, QStringLiteral("/hello.txt"), newContent, options);
+    QVERIFY2(written.ok, qPrintable(written.blockers.join(QStringLiteral("; "))));
+
+    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
+        wrappedPath, QStringLiteral("/hello.txt"), 4096);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, newContent);
+
+    // The mutation landed INSIDE the embedded volume (offset by the wrapper start),
+    // and the wrapper MDB at offset 1024 is untouched.
+    const QByteArray after = readBytes(wrappedPath);
+    QCOMPARE(after.mid(kTestHfsWrapperMdbOffset, 2), QByteArrayLiteral("BD"));
+    const qsizetype dataAt = embeddedOffset +
+                             static_cast<qsizetype>(kTestHfsHelloFileBlock) * kTestHfsBlockSize;
+    QVERIFY(after.mid(dataAt, 8) == QByteArrayLiteral("wrapped!"));
+    // Nothing was written at the non-wrapped (offset-0) data position.
+    QVERIFY(after.mid(static_cast<qsizetype>(kTestHfsHelloFileBlock) * kTestHfsBlockSize, 8) !=
+            QByteArrayLiteral("wrapped!"));
 }
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed() {

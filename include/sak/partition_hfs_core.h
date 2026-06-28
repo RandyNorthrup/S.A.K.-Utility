@@ -466,6 +466,13 @@ void writeBe32(QByteArray* bytes, qsizetype offset, uint32_t value) {
     qToBigEndian<uint32_t>(value, bytes->data() + offset);
 }
 
+void writeBe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
+    if (!bytes || !hasBytes(*bytes, offset, kUint64Size)) {
+        return;
+    }
+    qToBigEndian<uint64_t>(value, bytes->data() + offset);
+}
+
 uint64_t be64(const QByteArray& bytes, qsizetype offset) {
     if (!hasBytes(bytes, offset, kUint64Size)) {
         return 0;
