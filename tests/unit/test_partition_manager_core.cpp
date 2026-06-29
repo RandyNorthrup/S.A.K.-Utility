@@ -11197,6 +11197,34 @@ void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builde
                                      QStringLiteral("-FileName")}});
 }
 
+// A3 promotion: snapshot create/delete/revert route through the production
+// commit-raw-snapshot-* commands with --snapshot-name; a missing name fails closed.
+void verifyApfsSnapshotMutationScripts(const PartitionScriptBuilder& builder,
+                                       const PartitionTarget& target) {
+    QJsonObject snapshotPayload = baseApfsRootFileMutationPayload();
+    snapshotPayload[QStringLiteral("apfs_snapshot_name")] = QStringLiteral("sak.ui.snap");
+
+    const auto create = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsSnapshotCreate, target, snapshotPayload));
+    QVERIFY2(create.valid(), qPrintable(create.blockers.join(QStringLiteral("; "))));
+    QVERIFY(create.script.contains(QStringLiteral("commit-raw-snapshot-create")));
+    QVERIFY(create.script.contains(QStringLiteral("-SnapshotName 'sak.ui.snap'")));
+    QVERIFY(create.script.contains(QStringLiteral("--snapshot-name")));
+
+    const auto del = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsSnapshotDelete, target, snapshotPayload));
+    QVERIFY(del.script.contains(QStringLiteral("commit-raw-snapshot-delete")));
+
+    const auto revert = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsSnapshotRevert, target, snapshotPayload));
+    QVERIFY(revert.script.contains(QStringLiteral("commit-raw-snapshot-revert")));
+
+    const auto noName = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsSnapshotCreate, target, baseApfsRootFileMutationPayload()));
+    QVERIFY(!noName.valid());
+    QVERIFY(noName.blockers.join(' ').contains(QStringLiteral("snapshot name")));
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts() {
@@ -11255,6 +11283,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     const auto compressedPatch = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsPatchRootFile, target, compressPayload));
     QVERIFY(!compressedPatch.script.contains(QStringLiteral("-CompressZlib")));
+
+    verifyApfsSnapshotMutationScripts(builder, target);
 }
 
 namespace {

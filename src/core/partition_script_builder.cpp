@@ -60,6 +60,7 @@ constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_by
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
 constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
 constexpr auto kApfsCompressZlibPayload = "apfs_compress_zlib";
+constexpr auto kApfsSnapshotNamePayload = "apfs_snapshot_name";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
 // fsck_apfs requires nx_max_file_systems == ceil(container_bytes / 512 MiB); each volume in
 // an A4 multi-volume container consumes one nx_max_file_systems slot.
@@ -938,6 +939,70 @@ QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operat
     return {};
 }
 
+QString apfsSnapshotCommand(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsSnapshotDelete:
+        return QStringLiteral("commit-raw-snapshot-delete");
+    case PartitionOperationType::ApfsSnapshotRevert:
+        return QStringLiteral("commit-raw-snapshot-revert");
+    default:
+        return QStringLiteral("commit-raw-snapshot-create");
+    }
+}
+
+QString apfsSnapshotEvidenceId(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsSnapshotDelete:
+        return QStringLiteral("ui.apfs-generated-raw-snapshot-delete");
+    case PartitionOperationType::ApfsSnapshotRevert:
+        return QStringLiteral("ui.apfs-generated-raw-snapshot-revert");
+    default:
+        return QStringLiteral("ui.apfs-generated-raw-snapshot-create");
+    }
+}
+
+QString apfsSnapshotVerb(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsSnapshotDelete:
+        return QStringLiteral("Delete");
+    case PartitionOperationType::ApfsSnapshotRevert:
+        return QStringLiteral("Revert to");
+    default:
+        return QStringLiteral("Create");
+    }
+}
+
+// Snapshot create/delete/revert share the format/mutation prerequisites (raw APFS target,
+// destructive + generated-layout confirmation, certified size range) plus a snapshot name.
+QString apfsSnapshotPrerequisiteBlocker(const PartitionOperation& operation,
+                                        const QString& snapshotName) {
+    const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
+    if (!targetBlocker.isEmpty()) {
+        return targetBlocker;
+    }
+    const QString fs =
+        payloadString(operation, QStringLiteral("file_system"), QStringLiteral("APFS"));
+    if (!isApfsFileSystemToken(fs)) {
+        return QStringLiteral("APFS snapshot mutation requires APFS file system");
+    }
+    if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
+        return QStringLiteral("APFS snapshot mutation requires confirmation");
+    }
+    if (!payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload))) {
+        return QStringLiteral("APFS snapshot mutation requires generated-layout confirmation");
+    }
+    if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
+        operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
+        return QStringLiteral(
+            "APFS generated raw snapshot mutation supports single-CIB, multi-CIB, "
+            "metadata-overflow, and CAB-tier targets from 64 MiB through 24 TiB");
+    }
+    if (snapshotName.isEmpty()) {
+        return QStringLiteral("APFS snapshot mutation requires a snapshot name");
+    }
+    return {};
+}
+
 QString apfsRootMutationDirectoryName(const PartitionOperation& operation) {
     const QString directoryName =
         payloadString(operation, QString::fromLatin1(kApfsRootDirectoryNamePayload)).trimmed();
@@ -1334,6 +1399,12 @@ QString apfsWriterCliArgConditionals() {
         "'commit-raw-directory-child-write')) {\n"
         "    $args += '--compress-zlib'\n"
         "  }\n"
+        "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
+        "'commit-raw-snapshot-revert')) {\n"
+        "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name is "
+        "required' }\n"
+        "    $args += @('--snapshot-name', $SnapshotName)\n"
+        "  }\n"
         "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
         "'commit-raw-file-patch')) {\n"
         "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
@@ -1347,7 +1418,7 @@ QString apfsWriterCliFunctionScript() {
                "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
                "[string]$DirectoryName = '', [string]$PayloadFile = '', "
                "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @(), "
-               "[switch]$CompressZlib)\n"
+               "[switch]$CompressZlib, [string]$SnapshotName = '')\n"
                "  $cliPath = %1\n"
                "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
@@ -3282,6 +3353,11 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
                             PartitionOperationType::ApfsChangeVolumeLabel}) {
         builders->insert(static_cast<int>(type), &buildApfsRootFileMutationScript);
     }
+    for (const auto type : {PartitionOperationType::ApfsSnapshotCreate,
+                            PartitionOperationType::ApfsSnapshotDelete,
+                            PartitionOperationType::ApfsSnapshotRevert}) {
+        builders->insert(static_cast<int>(type), &buildApfsSnapshotScript);
+    }
     for (const auto type : {PartitionOperationType::HfsOverwriteFile,
                             PartitionOperationType::HfsReplaceFile,
                             PartitionOperationType::HfsGrowFile,
@@ -3577,6 +3653,45 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") +
                          input.command + QStringLiteral(" ") +
                          quotePowerShell(rawPartitionTargetPath(operation));
+    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    return out;
+}
+
+PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
+    const PartitionOperation& operation) const {
+    const QString snapshotName =
+        payloadString(operation, QString::fromLatin1(kApfsSnapshotNamePayload)).trimmed();
+    const QString blocker = apfsSnapshotPrerequisiteBlocker(operation, snapshotName);
+    if (!blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
+
+    const QString command = apfsSnapshotCommand(operation.type);
+    const QString evidenceId = apfsSnapshotEvidenceId(operation.type);
+    PartitionScript out;
+    out.preview = QStringLiteral("%1 APFS snapshot %2 on Disk %3 Partition %4")
+                      .arg(apfsSnapshotVerb(operation.type),
+                           snapshotName,
+                           QString::number(operation.target.disk_number),
+                           QString::number(operation.target.partition_number));
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n"
+                     "Invoke-SakApfsWriterCli -Command %2 -TargetPath $targetPath "
+                     "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId %3 "
+                     "-SnapshotName %4\n"
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     .arg(quotePowerShell(rawPartitionTargetPath(operation)),
+                          quotePowerShell(command),
+                          quotePowerShell(evidenceId),
+                          quotePowerShell(snapshotName));
+    out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + command +
+                         QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
     return out;
 }

@@ -77,6 +77,9 @@ QStringList apfsOperationNames() {
         QStringLiteral("APFS Create Root Directory"),
         QStringLiteral("APFS Delete Root Directory"),
         QStringLiteral("APFS Change Volume Label"),
+        QStringLiteral("APFS Snapshot Create"),
+        QStringLiteral("APFS Snapshot Delete"),
+        QStringLiteral("APFS Snapshot Revert"),
     };
 }
 

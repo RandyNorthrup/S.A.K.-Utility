@@ -270,6 +270,9 @@ constexpr const char* kApfsRootDirectoryFileDeleteMode = "delete-directory-file"
 constexpr const char* kApfsRootDirectoryCreateMode = "create-directory";
 constexpr const char* kApfsRootDirectoryDeleteMode = "delete-directory";
 constexpr const char* kApfsVolumeLabelMode = "change-volume-label";
+constexpr const char* kApfsSnapshotCreateMode = "snapshot-create";
+constexpr const char* kApfsSnapshotDeleteMode = "snapshot-delete";
+constexpr const char* kApfsSnapshotRevertMode = "snapshot-revert";
 constexpr const char* kHfsOverwriteFileMode = "overwrite-file";
 constexpr const char* kHfsReplaceFileMode = "replace-file";
 constexpr const char* kHfsGrowFileMode = "grow-file";
@@ -9930,31 +9933,31 @@ bool apfsMutationSupportsCompression(PartitionOperationType type) {
 }
 
 PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
-    if (mode == QString::fromLatin1(kApfsRootFilePatchMode)) {
-        return PartitionOperationType::ApfsPatchRootFile;
-    }
-    if (mode == QString::fromLatin1(kApfsRootFileDeleteMode)) {
-        return PartitionOperationType::ApfsDeleteRootFile;
-    }
-    if (mode == QString::fromLatin1(kApfsRootDirectoryFileWriteMode)) {
-        return PartitionOperationType::ApfsWriteRootDirectoryFile;
-    }
-    if (mode == QString::fromLatin1(kApfsRootDirectoryFilePatchMode)) {
-        return PartitionOperationType::ApfsPatchRootDirectoryFile;
-    }
-    if (mode == QString::fromLatin1(kApfsRootDirectoryFileDeleteMode)) {
-        return PartitionOperationType::ApfsDeleteRootDirectoryFile;
-    }
-    if (mode == QString::fromLatin1(kApfsRootDirectoryCreateMode)) {
-        return PartitionOperationType::ApfsCreateRootDirectory;
-    }
-    if (mode == QString::fromLatin1(kApfsRootDirectoryDeleteMode)) {
-        return PartitionOperationType::ApfsDeleteRootDirectory;
-    }
-    if (mode == QString::fromLatin1(kApfsVolumeLabelMode)) {
-        return PartitionOperationType::ApfsChangeVolumeLabel;
-    }
-    return PartitionOperationType::ApfsWriteRootFile;
+    static const QHash<QString, PartitionOperationType> kModes = {
+        {QString::fromLatin1(kApfsRootFilePatchMode), PartitionOperationType::ApfsPatchRootFile},
+        {QString::fromLatin1(kApfsRootFileDeleteMode), PartitionOperationType::ApfsDeleteRootFile},
+        {QString::fromLatin1(kApfsRootDirectoryFileWriteMode),
+         PartitionOperationType::ApfsWriteRootDirectoryFile},
+        {QString::fromLatin1(kApfsRootDirectoryFilePatchMode),
+         PartitionOperationType::ApfsPatchRootDirectoryFile},
+        {QString::fromLatin1(kApfsRootDirectoryFileDeleteMode),
+         PartitionOperationType::ApfsDeleteRootDirectoryFile},
+        {QString::fromLatin1(kApfsRootDirectoryCreateMode),
+         PartitionOperationType::ApfsCreateRootDirectory},
+        {QString::fromLatin1(kApfsRootDirectoryDeleteMode),
+         PartitionOperationType::ApfsDeleteRootDirectory},
+        {QString::fromLatin1(kApfsVolumeLabelMode), PartitionOperationType::ApfsChangeVolumeLabel},
+        {QString::fromLatin1(kApfsSnapshotCreateMode), PartitionOperationType::ApfsSnapshotCreate},
+        {QString::fromLatin1(kApfsSnapshotDeleteMode), PartitionOperationType::ApfsSnapshotDelete},
+        {QString::fromLatin1(kApfsSnapshotRevertMode), PartitionOperationType::ApfsSnapshotRevert},
+    };
+    return kModes.value(mode, PartitionOperationType::ApfsWriteRootFile);
+}
+
+bool apfsMutationIsSnapshot(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsSnapshotCreate ||
+           type == PartitionOperationType::ApfsSnapshotDelete ||
+           type == PartitionOperationType::ApfsSnapshotRevert;
 }
 
 bool apfsMutationNeedsPayload(PartitionOperationType type) {
@@ -10042,6 +10045,9 @@ QString apfsMutationFilePlaceholder(PartitionOperationType type) {
     if (apfsMutationIsVolumeLabel(type)) {
         return QObject::tr("Volume label");
     }
+    if (apfsMutationIsSnapshot(type)) {
+        return QObject::tr("Snapshot name");
+    }
     return QObject::tr("Root file name");
 }
 
@@ -10063,6 +10069,9 @@ QString apfsMutationFallbackName(PartitionOperationType type) {
     }
     if (apfsMutationIsVolumeLabel(type)) {
         return QObject::tr("(volume label)");
+    }
+    if (apfsMutationIsSnapshot(type)) {
+        return QObject::tr("(snapshot)");
     }
     return QObject::tr("(root file)");
 }
@@ -10112,6 +10121,9 @@ void populateApfsRootFileMutationModes(QComboBox* mode) {
     mode->addItem(QObject::tr("Delete empty root directory"),
                   QString::fromLatin1(kApfsRootDirectoryDeleteMode));
     mode->addItem(QObject::tr("Change volume label"), QString::fromLatin1(kApfsVolumeLabelMode));
+    mode->addItem(QObject::tr("Create snapshot"), QString::fromLatin1(kApfsSnapshotCreateMode));
+    mode->addItem(QObject::tr("Delete snapshot"), QString::fromLatin1(kApfsSnapshotDeleteMode));
+    mode->addItem(QObject::tr("Revert to snapshot"), QString::fromLatin1(kApfsSnapshotRevertMode));
 }
 
 void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
@@ -10192,6 +10204,10 @@ QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
                         {QStringLiteral("apfs_generated_layout_confirmed"), true}};
     if (apfsMutationIsVolumeLabel(request.type)) {
         payload[QStringLiteral("label")] = request.entry_name;
+        return payload;
+    }
+    if (apfsMutationIsSnapshot(request.type)) {
+        payload[QStringLiteral("apfs_snapshot_name")] = request.entry_name;
         return payload;
     }
     payload[QStringLiteral("apfs_root_file_name")] = request.entry_name;

@@ -97,6 +97,8 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildApfsRootFileMutationScript(
         const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildApfsSnapshotScript(
+        const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildHfsFileMutationScript(
         const PartitionOperation& operation) const;
 
