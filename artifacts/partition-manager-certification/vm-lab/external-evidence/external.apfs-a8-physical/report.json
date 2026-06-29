@@ -1,0 +1,47 @@
+{
+  "evidence_id": "external.apfs-a8-physical",
+  "date": "2026-06-28",
+  "lane": "A8 (APFS full-driver certification gate)",
+  "gate": "Physical USB destructive + crash + rollback on an arbitrary-size, Apple-validated, multi-volume (+ snapshot) APFS container; Apple fsck_apfs + macOS-kernel RW mount",
+  "status": "Passed",
+  "destructive": true,
+  "writes_target_media": true,
+  "environment": "qemu/KVM macOS Sequoia recovery (apfs_kext 2332.101.1, fsck_apfs); OSX-KVM snap3 USB config (ICH9-LPC.disable_s3=1, ich9-EHCI + nec-usb-xhci msi=off); the disposable USB disk passed through to the VM via 'wsl --mount --bare PHYSICALDRIVE2' -> /dev/sde -> qemu ide-hd raw drive. OpenCore picker driven via HMP sendkey (VNC HID is dead pre-boot); recovery Terminal driven via single-VNC-client a8drive.py (Cmd-N fresh shell + capture)",
+  "physical_disk": "Seagate Expansion Desk, serial NAAA3QVK, 7.3 TiB USB (Windows disk 2), fully disposable per user; whole-disk wipe authorized. GPT with a 256 MiB Apple HFS (SAKH8, H8 gate) at sector 2048 and a 1024 MiB Apple APFS (AF0A) partition 'SAKA8' at sector 526336 (offset 257 MiB).",
+  "apple_written_base": "the container itself is wholly S.A.K.-generated (S.A.K. Utility APFS writer); the macOS kernel (apfs_kext 2332.101.1) + Apple native fsck_apfs are the external Apple validators that mount, read, snapshot-enumerate, RW-write, and check it",
+  "sak_container": "S.A.K. APFS writer built a multi-volume container: volume 0 SAKA8A (file a8proof.bin, 52 bytes) + snapshot sak.a8.physical, volume 1 SAKA8B, both sharing one space manager. Host apfsck clean (both volume superblocks walked, exit 0) + S.A.K. reader confirmed entries before writing to physical media; dd'd to the raw APFS partition byte offset (sector 526336 * 512).",
+  "results": {
+    "physical_destructive": {
+      "certified": true,
+      "proof": "disk 2 wiped + GPT (sfdisk --wipe always) with an Apple APFS partition SAKA8 (type AF0A) at sector 526336; S.A.K.-built multi-volume+snapshot APFS container dd'd to the raw partition byte offset; the macOS VM reads /dev/sde raw + parses GPT itself"
+    },
+    "kernel_auto_mount_multivolume": {
+      "certified": true,
+      "proof": "the macOS kernel synthesized the container (disk1) from the physical APFS partition and AUTO-MOUNTED BOTH volumes: ls /Volumes -> 'SAKA8A  SAKA8B  SAKH8  Untitled' (both S.A.K. volumes mounted RW from one shared space manager). Evidence a8-physical-mount-snapshot.png"
+    },
+    "kernel_read_file_and_snapshot": {
+      "certified": true,
+      "proof": "ls -l /Volumes/SAKA8A read the S.A.K.-written a8proof.bin (52 bytes); diskutil apfs listSnapshots /Volumes/SAKA8A enumerated the S.A.K.-authored snapshot 'sak.a8.physical' (XID 6, UUID E7366ACB-477A-4C5F-8403-829EA6690C58, 'Snapshot for disk1s1 (1 found)'). Evidence a8-physical-mount-snapshot.png"
+    },
+    "apple_native_fsck_apfs": {
+      "certified": true,
+      "proof": "diskutil unmountDisk force disk1 then fsck_apfs -n /dev/disk1 (Apple NATIVE): 'Checking snapshot 1 of 1 (sak.a8.physical, transaction ID 4)', 'The volume SAKA8B was formatted by S.A.K. Utility APFS writer and last modified by apfs_kext (2332.101.1)', 'The volume /dev/rdisk1s1 ... appears to be OK' (SAKA8A), 'The volume /dev/rdisk1s2 ... appears to be OK' (SAKA8B), 'The container /dev/rdisk1 appears to be OK.' Evidence a8-physical-fsck.png"
+    },
+    "kernel_rw_write": {
+      "certified": true,
+      "proof": "diskutil mountDisk disk1 ('Volume(s) mounted successfully') then the macOS kernel wrote a8crash.txt into the S.A.K.-built volume (echo SAKA8-CRASH-PROOF-2026 > /Volumes/SAKA8A/a8crash.txt; sync); cat read it back. Evidence a8-physical-kernel-write.png"
+    },
+    "crash_and_checkpoint_rollback": {
+      "certified": true,
+      "proof": "qemu killed (kill, simulated power loss) while SAKA8A was mounted with the kernel-written a8crash.txt -> VM rebooted -> the macOS kernel auto-mounted disk1 RW (APFS checkpoint recovery) -> a8crash.txt SURVIVED, cat -> 'SAKA8-CRASH-PROOF-2026' byte-exact (kernel-written data persisted through the full qemu kill + reboot, proving it is the real physical disk, not a RAM copy); a8proof.bin + the snapshot intact -> post-crash Apple fsck_apfs -n /dev/disk1 CLEAN again (container + both volumes + snapshot 'appears to be OK'). Evidence a8-physical-postcrash-survive.png + a8-physical-postcrash-fsck.png"
+    }
+  },
+  "fsck_apfs": "fsck_apfs -n /dev/disk1 (Apple native, apfs_kext 2332.101.1): Checking snapshot 1 of 1 (sak.a8.physical, transaction ID 4) ... The volume /dev/rdisk1s1 (SAKA8A) appears to be OK ... The volume /dev/rdisk1s2 (SAKA8B) appears to be OK ... The container /dev/rdisk1 appears to be OK. (both before and after the crash)",
+  "screenshots": [
+    "a8-physical-mount-snapshot.png",
+    "a8-physical-fsck.png",
+    "a8-physical-kernel-write.png",
+    "a8-physical-postcrash-survive.png",
+    "a8-physical-postcrash-fsck.png"
+  ]
+}
