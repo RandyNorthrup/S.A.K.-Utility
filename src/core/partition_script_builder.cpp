@@ -13,6 +13,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QStringList>
 
 #include <algorithm>
@@ -57,7 +58,11 @@ constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
 constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
+constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
+// fsck_apfs requires nx_max_file_systems == ceil(container_bytes / 512 MiB); each volume in
+// an A4 multi-volume container consumes one nx_max_file_systems slot.
+constexpr uint64_t kApfsVolumeSizingSpanBytes = 512ULL * 1024ULL * 1024ULL;
 // A1/A2 (multi-CIB + CAB spaceman) FORMAT and in-place root-file mutation are both
 // Apple-certified: the writer emits single-CIB, multi-CIB, metadata-overflow, AND the CAB
 // tier (cab_count > 0, the spaceman publishes a cab-address array pointing at
@@ -129,6 +134,27 @@ bool payloadBool(const PartitionOperation& operation, const QString& key, bool f
                              .toLower();
     return text == QStringLiteral("true") || text == QStringLiteral("1") ||
            text == QStringLiteral("yes");
+}
+
+// Reads a JSON-array payload value as a trimmed, non-empty string list. Accepts an array
+// of strings (the canonical form) and tolerates a single string value.
+QStringList payloadStringList(const PartitionOperation& operation, const QString& key) {
+    QStringList out;
+    const auto value = operation.payload.value(key);
+    if (value.isArray()) {
+        for (const auto entry : value.toArray()) {
+            const QString text = entry.toString().trimmed();
+            if (!text.isEmpty()) {
+                out.append(text);
+            }
+        }
+    } else if (value.isString()) {
+        const QString text = value.toString().trimmed();
+        if (!text.isEmpty()) {
+            out.append(text);
+        }
+    }
+    return out;
 }
 
 bool isNonNativeFileSystemToolOperation(const PartitionOperation& operation) {
@@ -325,6 +351,44 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
 QString apfsWriterCliFunctionScript();
 QString dismountSelectedPartitionVolumeScript();
 
+struct ApfsAdditionalVolumesArg {
+    QString blocker;          // non-empty => the format is invalid (e.g. container too small)
+    QString powershell_list;  // PowerShell string-array literal, e.g. @('SAKVOLB','SAKVOLC')
+};
+
+// A4 multi-volume: extra volumes share the one space manager. fsck_apfs requires
+// nx_max_file_systems == ceil(container_bytes / 512 MiB), so the container must be large
+// enough that ceil(bytes / 512 MiB) covers the total volume count (2 volumes need > 512 MiB).
+ApfsAdditionalVolumesArg resolveApfsAdditionalVolumes(const PartitionOperation& operation) {
+    ApfsAdditionalVolumesArg result;
+    const QStringList names =
+        payloadStringList(operation, QString::fromLatin1(kApfsAdditionalVolumeNamesPayload));
+    const qsizetype totalVolumeCount = names.size() + 1;
+    if (totalVolumeCount > 1) {
+        const uint64_t maxFileSystems =
+            (operation.target.size_bytes + kApfsVolumeSizingSpanBytes - 1) /
+            kApfsVolumeSizingSpanBytes;
+        if (maxFileSystems < static_cast<uint64_t>(totalVolumeCount)) {
+            result.blocker = QStringLiteral(
+                                 "APFS multi-volume format needs a container large enough that "
+                                 "ceil(size / 512 MiB) covers all %1 volumes; grow the partition "
+                                 "or remove additional volumes")
+                                 .arg(totalVolumeCount);
+            return result;
+        }
+    }
+    QString literal = QStringLiteral("@(");
+    for (qsizetype i = 0; i < names.size(); ++i) {
+        if (i > 0) {
+            literal += QLatin1Char(',');
+        }
+        literal += PartitionScriptBuilder::quotePowerShell(names.at(i));
+    }
+    literal += QLatin1Char(')');
+    result.powershell_list = literal;
+    return result;
+}
+
 PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                                          const QString& label) {
     const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
@@ -342,6 +406,11 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
             "CAB-tier targets from 64 MiB through 24 TiB; larger targets remain blocked"));
     }
 
+    const ApfsAdditionalVolumesArg extraVolumes = resolveApfsAdditionalVolumes(operation);
+    if (!extraVolumes.blocker.isEmpty()) {
+        return invalidPartitionScript(extraVolumes.blocker);
+    }
+
     const QString targetPath = rawPartitionTargetPath(operation);
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as APFS with S.A.K. APFS writer")
@@ -356,11 +425,12 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
                      "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $targetPath "
-                     "-SizeBytes $targetSizeBytes -VolumeName %2 -EvidenceId "
-                     "'ui.apfs-generated-raw-format'\n"
+                     "-SizeBytes $targetSizeBytes -VolumeName %2 -AdditionalVolumeNames %3 "
+                     "-EvidenceId 'ui.apfs-generated-raw-format'\n"
                      "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
-                          PartitionScriptBuilder::quotePowerShell(label));
+                          PartitionScriptBuilder::quotePowerShell(label),
+                          extraVolumes.powershell_list);
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe format-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
@@ -1207,7 +1277,7 @@ QString apfsWriterCliFunctionScript() {
                "  param([string]$Command, [string]$TargetPath, [uint64]$SizeBytes, "
                "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
                "[string]$DirectoryName = '', [string]$PayloadFile = '', "
-               "[uint64]$PatchOffsetBytes = 0)\n"
+               "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @())\n"
                "  $cliPath = %1\n"
                "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
@@ -1215,7 +1285,14 @@ QString apfsWriterCliFunctionScript() {
                "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
                "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
                "$EvidenceId, '--confirm-target', '--allow-raw-target')\n"
-               "  if ($Command -eq 'format-raw') { $args += @('--volume-name', $VolumeName) }\n"
+               "  if ($Command -eq 'format-raw') {\n"
+               "    $args += @('--volume-name', $VolumeName)\n"
+               "    foreach ($extraVolume in $AdditionalVolumeNames) {\n"
+               "      if (-not [string]::IsNullOrWhiteSpace($extraVolume)) {\n"
+               "        $args += @('--additional-volume-name', $extraVolume)\n"
+               "      }\n"
+               "    }\n"
+               "  }\n"
                "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
                "'patch-raw-root-directory-file', "
                "'delete-raw-root-file', 'write-raw-root-directory-file', "

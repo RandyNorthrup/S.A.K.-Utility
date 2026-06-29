@@ -3923,6 +3923,7 @@ struct FormatPartitionWidgets {
     QComboBox* allocation_unit{nullptr};
     QComboBox* swap_page_size{nullptr};
     QLineEdit* label{nullptr};
+    QLineEdit* apfs_additional_volumes{nullptr};
     QCheckBox* full_format{nullptr};
     QCheckBox* raw_format_confirm{nullptr};
 };
@@ -4041,6 +4042,10 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.swap_page_size = createLinuxSwapPageSizeSelector(&dialog);
     widgets.label = new QLineEdit(partition.volume ? partition.volume->label : QString(), &dialog);
     widgets.label->setAccessibleName(QObject::tr("Volume label"));
+    widgets.apfs_additional_volumes = new QLineEdit(&dialog);
+    widgets.apfs_additional_volumes->setAccessibleName(QObject::tr("Additional APFS volume names"));
+    widgets.apfs_additional_volumes->setPlaceholderText(
+        QObject::tr("Comma-separated extra volume names (one space manager)"));
     widgets.full_format = new QCheckBox(QObject::tr("Full format"), &dialog);
     widgets.full_format->setAccessibleName(QObject::tr("Full format"));
     widgets.raw_format_confirm = new QCheckBox(
@@ -4052,6 +4057,8 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     dialog.formLayout()->addRow(QObject::tr("Cluster size:"), widgets.allocation_unit);
     dialog.formLayout()->addRow(QObject::tr("Swap page size:"), widgets.swap_page_size);
     dialog.formLayout()->addRow(QObject::tr("Label:"), widgets.label);
+    dialog.formLayout()->addRow(QObject::tr("Additional APFS volumes:"),
+                                widgets.apfs_additional_volumes);
     dialog.formLayout()->addRow(QString(), widgets.full_format);
     dialog.formLayout()->addRow(QString(), widgets.raw_format_confirm);
     return widgets;
@@ -4062,7 +4069,10 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     const RawFormatKind rawKind = rawFormatKindForFileSystem(widgets.file_system->currentText());
     const bool rawSelected = rawKind != RawFormatKind::None;
     const bool swapSelected = rawKind == RawFormatKind::Swap;
+    const bool apfsSelected = isApfsFilesystem(widgets.file_system->currentText());
 
+    widgets.apfs_additional_volumes->setVisible(apfsSelected);
+    widgets.apfs_additional_volumes->setEnabled(apfsSelected);
     widgets.allocation_unit->setEnabled(!rawSelected);
     widgets.full_format->setEnabled(!rawSelected);
     widgets.swap_page_size->setVisible(swapSelected);
@@ -4085,7 +4095,26 @@ void connectFormatPartitionControls(PartitionOperationDialog& dialog,
     QObject::connect(
         widgets.swap_page_size, &QComboBox::currentTextChanged, &dialog, updatePreview);
     QObject::connect(widgets.label, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(
+        widgets.apfs_additional_volumes, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(widgets.raw_format_confirm, &QCheckBox::toggled, &dialog, updatePreview);
+}
+
+// Parses the Format dialog's comma-separated "Additional APFS volumes" field into a
+// trimmed, non-empty JSON array (empty when no extra volumes were entered).
+QJsonArray apfsAdditionalVolumesArray(const QLineEdit* field) {
+    QJsonArray volumes;
+    if (!field) {
+        return volumes;
+    }
+    const QStringList names = field->text().split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& name : names) {
+        const QString trimmed = name.trimmed();
+        if (!trimmed.isEmpty()) {
+            volumes.append(trimmed);
+        }
+    }
+    return volumes;
 }
 
 QJsonObject formatPartitionPayload(const FormatPartitionWidgets& widgets,
@@ -4102,6 +4131,13 @@ QJsonObject formatPartitionPayload(const FormatPartitionWidgets& widgets,
         payload[QStringLiteral("non_native_file_system_tool")] = true;
         payload[QStringLiteral("target_path")] = nonNativeFilesystemWriteTargetPath(&partition);
         payload[QStringLiteral("target_wipe_confirmed")] = widgets.raw_format_confirm->isChecked();
+    }
+    if (isApfsFilesystem(fileSystem)) {
+        const QJsonArray additionalVolumes =
+            apfsAdditionalVolumesArray(widgets.apfs_additional_volumes);
+        if (!additionalVolumes.isEmpty()) {
+            payload[QStringLiteral("apfs_additional_volume_names")] = additionalVolumes;
+        }
     }
     if (isLinuxSwapFilesystem(fileSystem)) {
         payload[QStringLiteral("linux_swap_page_size_bytes")] =

@@ -3003,6 +3003,35 @@ void verifyApfsFormatAndRepairScripts(const PartitionScriptBuilder* builder,
     QVERIFY(oversizedFormat.blockers.join(' ').contains(QStringLiteral("24 TiB")));
 }
 
+// A4 promotion: a multi-volume format threads each additional volume name through the
+// production format-raw route; the container must be large enough for nx_max_file_systems.
+void verifyApfsMultiVolumeFormatScripts(const PartitionScriptBuilder* builder,
+                                        const PartitionTarget& target) {
+    QJsonObject multiVolumePayload = baseExtToolPayload();
+    multiVolumePayload[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    multiVolumePayload[QStringLiteral("apfs_additional_volume_names")] =
+        QJsonArray{QStringLiteral("SAKVOLB")};
+
+    PartitionTarget multiVolumeTarget = target;
+    multiVolumeTarget.size_bytes = 1024ULL * 1024ULL * 1024ULL;  // 1 GiB -> nx_max_file_systems 2
+    const auto multiVolumeFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, multiVolumeTarget, multiVolumePayload));
+    QVERIFY2(multiVolumeFormat.valid(),
+             qPrintable(multiVolumeFormat.blockers.join(QStringLiteral("; "))));
+    QVERIFY(
+        multiVolumeFormat.script.contains(QStringLiteral("-AdditionalVolumeNames @('SAKVOLB')")));
+    QVERIFY(multiVolumeFormat.script.contains(QStringLiteral("--additional-volume-name")));
+
+    // A container too small for the extra volume's nx_max_file_systems slot fails closed.
+    PartitionTarget smallMultiVolumeTarget = target;
+    smallMultiVolumeTarget.size_bytes = 256ULL * 1024ULL * 1024ULL;  // 256 MiB -> only 1 slot
+    const auto smallMultiVolumeFormat =
+        builder->buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::Format, smallMultiVolumeTarget, multiVolumePayload));
+    QVERIFY(!smallMultiVolumeFormat.valid());
+    QVERIFY(smallMultiVolumeFormat.blockers.join(' ').contains(QStringLiteral("512 MiB")));
+}
+
 void verifyExtRepairScript(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
     const auto repair = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CheckFileSystem, target, baseExtToolPayload()));
@@ -11019,6 +11048,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsExtToolScriptsWithManifestGa
     verifyExtFormatScript(&builder, target);
     verifyHfsFormatAndRepairScripts(&builder, target);
     verifyApfsFormatAndRepairScripts(&builder, target);
+    verifyApfsMultiVolumeFormatScripts(&builder, target);
     verifyExtRepairScript(&builder, target);
     verifyExtResizeScripts(&builder, target);
     verifyExtTargetPathGates(&builder, target);
