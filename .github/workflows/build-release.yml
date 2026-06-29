@@ -397,6 +397,11 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       shell: pwsh
       run: |
+        # Permanent direct-download asset for the sakutility.com download button:
+        #   https://github.com/<owner>/<repo>/releases/latest/download/SAK-Utility-Windows-x64.zip
+        # Byte-identical copy of the versioned zip, so the contained signed exe has
+        # the same hash and SmartScreen verdict. Reputation accrues to the Trusted
+        # Signing publisher identity, not the file name.
         $versionedZip = "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip"
         $stableZip = "build/Release/SAK-Utility-Windows-x64.zip"
         Copy-Item -LiteralPath $versionedZip -Destination $stableZip -Force
@@ -407,7 +412,7 @@ jobs:
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v7
       with:
-        name: SAK-Utility-Windows-x64
+        name: SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64
         path: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/*
         retention-days: 90
 
@@ -416,7 +421,6 @@ jobs:
       uses: softprops/action-gh-release@v3
       with:
         files: |
-          build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip
           build/Release/SAK-Utility-Windows-x64.zip
           build/Release/SHA256SUMS.txt
         body: |

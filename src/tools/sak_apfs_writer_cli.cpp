@@ -2413,7 +2413,7 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sak_apfs_writer_cli"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.1.9"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.2.0"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
