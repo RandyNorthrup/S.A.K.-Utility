@@ -61,6 +61,8 @@ constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_con
 constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
 constexpr auto kApfsCompressZlibPayload = "apfs_compress_zlib";
 constexpr auto kApfsSnapshotNamePayload = "apfs_snapshot_name";
+// A7: the new (clone/hard-link) name; the source file name reuses kApfsRootFileNamePayload.
+constexpr auto kApfsRootFileNewNamePayload = "apfs_root_file_new_name";
 // A6 (A-f): opt-in FileVault format. The encrypt flag GATES encryption so an ordinary
 // format never silently encrypts; the password/recovery-key travel as PartitionScript
 // credentials (locked temp file at execution), never inline in the script text.
@@ -1095,6 +1097,77 @@ QString apfsSnapshotPrerequisiteBlocker(const PartitionOperation& operation,
     return {};
 }
 
+// A7: clone + hard link take a source file name and a new (clone/link) name; resize grows the
+// container to fill the partition (no file arguments). All three ride the certified COW commit.
+bool apfsA7IsLinkOp(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsCloneRootFile ||
+           type == PartitionOperationType::ApfsHardlinkRootFile;
+}
+
+QString apfsA7Command(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsCloneRootFile:
+        return QStringLiteral("commit-raw-file-clone");
+    case PartitionOperationType::ApfsHardlinkRootFile:
+        return QStringLiteral("commit-raw-file-hardlink");
+    default:
+        return QStringLiteral("commit-raw-resize");
+    }
+}
+
+QString apfsA7EvidenceId(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsCloneRootFile:
+        return QStringLiteral("ui.apfs-generated-raw-file-clone");
+    case PartitionOperationType::ApfsHardlinkRootFile:
+        return QStringLiteral("ui.apfs-generated-raw-file-hardlink");
+    default:
+        return QStringLiteral("ui.apfs-generated-raw-resize");
+    }
+}
+
+QString apfsA7Verb(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::ApfsCloneRootFile:
+        return QStringLiteral("Clone");
+    case PartitionOperationType::ApfsHardlinkRootFile:
+        return QStringLiteral("Hard link");
+    default:
+        return QStringLiteral("Resize");
+    }
+}
+
+// Clone/hard link/resize share the raw-APFS mutation prerequisites; clone + hard link also
+// require a source file name and a new (clone/link) name.
+QString apfsA7PrerequisiteBlocker(const PartitionOperation& operation,
+                                  const QString& sourceName,
+                                  const QString& newName) {
+    const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
+    if (!targetBlocker.isEmpty()) {
+        return targetBlocker;
+    }
+    if (!isApfsFileSystemToken(
+            payloadString(operation, QStringLiteral("file_system"), QStringLiteral("APFS")))) {
+        return QStringLiteral("APFS clone/hard link/resize requires APFS file system");
+    }
+    if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
+        return QStringLiteral("APFS clone/hard link/resize requires confirmation");
+    }
+    if (!payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload))) {
+        return QStringLiteral("APFS clone/hard link/resize requires generated-layout confirmation");
+    }
+    if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
+        operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
+        return QStringLiteral(
+            "APFS generated raw clone/hard link/resize supports single-CIB, multi-CIB, "
+            "metadata-overflow, and CAB-tier targets from 64 MiB through 24 TiB");
+    }
+    if (apfsA7IsLinkOp(operation.type) && (sourceName.isEmpty() || newName.isEmpty())) {
+        return QStringLiteral("APFS clone/hard link requires a source file name and a new name");
+    }
+    return {};
+}
+
 QString apfsRootMutationDirectoryName(const PartitionOperation& operation) {
     const QString directoryName =
         payloadString(operation, QString::fromLatin1(kApfsRootDirectoryNamePayload)).trimmed();
@@ -1465,10 +1538,16 @@ QString apfsWriterCliArgConditionals() {
         "'delete-raw-root-file', 'write-raw-root-directory-file', "
         "'delete-raw-root-directory-file', 'commit-raw-file-write', "
         "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
-        "'commit-raw-directory-child-delete', 'commit-raw-file-patch')) {\n"
+        "'commit-raw-directory-child-delete', 'commit-raw-file-patch', "
+        "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
         "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
         "required' }\n"
         "    $args += @('--file-name', $FileName)\n"
+        "  }\n"
+        "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
+        "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link new "
+        "name is required' }\n"
+        "    $args += @('--new-file-name', $NewFileName)\n"
         "  }\n"
         "  if ($Command -eq 'commit-raw-file-patch' -and "
         "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
@@ -1517,7 +1596,8 @@ QString apfsWriterCliFunctionScript() {
                "[string]$DirectoryName = '', [string]$PayloadFile = '', "
                "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @(), "
                "[switch]$CompressZlib, [string]$SnapshotName = '', "
-               "[string]$VolumePasswordFile = '', [string]$RecoveryKeyFile = '')\n"
+               "[string]$VolumePasswordFile = '', [string]$RecoveryKeyFile = '', "
+               "[string]$NewFileName = '')\n"
                "  $cliPath = %1\n"
                "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
@@ -3459,6 +3539,11 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
                             PartitionOperationType::ApfsSnapshotRevert}) {
         builders->insert(static_cast<int>(type), &buildApfsSnapshotScript);
     }
+    for (const auto type : {PartitionOperationType::ApfsCloneRootFile,
+                            PartitionOperationType::ApfsHardlinkRootFile,
+                            PartitionOperationType::ApfsResizeContainer}) {
+        builders->insert(static_cast<int>(type), &buildApfsCloneHardlinkResizeScript);
+    }
     for (const auto type : {PartitionOperationType::HfsOverwriteFile,
                             PartitionOperationType::HfsReplaceFile,
                             PartitionOperationType::HfsGrowFile,
@@ -3794,6 +3879,50 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
                           quotePowerShell(command),
                           quotePowerShell(evidenceId),
                           quotePowerShell(snapshotName));
+    out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + command +
+                         QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
+    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
+    return out;
+}
+
+PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
+    const PartitionOperation& operation) const {
+    const QString sourceName =
+        payloadString(operation, QString::fromLatin1(kApfsRootFileNamePayload)).trimmed();
+    const QString newName =
+        payloadString(operation, QString::fromLatin1(kApfsRootFileNewNamePayload)).trimmed();
+    const QString blocker = apfsA7PrerequisiteBlocker(operation, sourceName, newName);
+    if (!blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
+
+    const QString command = apfsA7Command(operation.type);
+    // Clone/hard link carry a source file name and a new (clone/link) name; resize grows the
+    // container to fill the partition ($p.Size) and takes no file arguments.
+    const QString nameArgs = apfsA7IsLinkOp(operation.type)
+                                 ? QStringLiteral(" -FileName %1 -NewFileName %2")
+                                       .arg(quotePowerShell(sourceName), quotePowerShell(newName))
+                                 : QString();
+    PartitionScript out;
+    out.preview = QStringLiteral("%1 on Disk %2 Partition %3 with S.A.K. APFS writer")
+                      .arg(apfsA7Verb(operation.type),
+                           QString::number(operation.target.disk_number),
+                           QString::number(operation.target.partition_number));
+    out.script = commonHeader(out.preview) +
+                 requirePartitionIdentity(operation.target.disk_number,
+                                          operation.target.partition_number,
+                                          operation.target.size_bytes) +
+                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n"
+                     "Invoke-SakApfsWriterCli -Command %2 -TargetPath $targetPath "
+                     "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId %3%4\n"
+                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     .arg(quotePowerShell(rawPartitionTargetPath(operation)),
+                          quotePowerShell(command),
+                          quotePowerShell(apfsA7EvidenceId(operation.type)),
+                          nameArgs);
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") + command +
                          QStringLiteral(" ") + quotePowerShell(rawPartitionTargetPath(operation));
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;

@@ -80,6 +80,9 @@ QStringList apfsOperationNames() {
         QStringLiteral("APFS Snapshot Create"),
         QStringLiteral("APFS Snapshot Delete"),
         QStringLiteral("APFS Snapshot Revert"),
+        QStringLiteral("APFS Clone Root File"),
+        QStringLiteral("APFS Hardlink Root File"),
+        QStringLiteral("APFS Resize Container"),
     };
 }
 

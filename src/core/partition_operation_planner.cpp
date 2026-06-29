@@ -102,6 +102,10 @@ void insertApfsRisks(QHash<int, OperationRisk>* risks) {
         {static_cast<int>(PartitionOperationType::ApfsSnapshotCreate), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ApfsSnapshotDelete), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ApfsSnapshotRevert), OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::ApfsCloneRootFile), OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::ApfsHardlinkRootFile),
+         OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::ApfsResizeContainer), OperationRisk::Destructive},
     };
     insertRiskEntries(risks, entries);
 }

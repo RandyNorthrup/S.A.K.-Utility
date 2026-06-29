@@ -5988,8 +5988,33 @@ uint64_t resolveResizeGrowDelta(QIODevice* image, uint64_t newSizeBytes, QString
 // Validates the resize-grow request, loads the commit context into *ctx, enforces
 // the single-chunk in-chunk-grow constraint, and grows the backing image/device.
 // Byte-identical to the inline preflight it replaces.
+// Either grow the backing image to newSizeBytes, or (raw target) verify the already-sized
+// device spans it -- a block device / partition cannot itself be resized.
+bool sizeOrVerifyResizeTarget(QIODevice* image,
+                              uint64_t newSizeBytes,
+                              bool deviceAlreadySized,
+                              QStringList* blockers) {
+    if (deviceAlreadySized) {
+        const qint64 deviceSize = image->size();
+        if (deviceSize > 0 && static_cast<uint64_t>(deviceSize) < newSizeBytes) {
+            blockers->append(QStringLiteral(
+                "APFS resize-grow: the raw device is smaller than the requested new size"));
+            return false;
+        }
+        return true;
+    }
+    auto* fileDevice = qobject_cast<QFileDevice*>(image);
+    if (fileDevice == nullptr || !fileDevice->resize(static_cast<qint64>(newSizeBytes))) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: unable to grow the backing image/device"));
+        return false;
+    }
+    return true;
+}
+
 bool preflightResizeGrow(QIODevice* image,
                          uint64_t growDeltaBlocks,
+                         bool deviceAlreadySized,
                          ApfsFsCommitContext* ctx,
                          QStringList* blockers) {
     if (growDeltaBlocks == 0) {
@@ -6014,23 +6039,17 @@ bool preflightResizeGrow(QIODevice* image,
                 .arg(kApfsSpacemanBlocksPerChunk));
         return false;
     }
-    auto* fileDevice = qobject_cast<QFileDevice*>(image);
-    if (fileDevice == nullptr ||
-        !fileDevice->resize(
-            static_cast<qint64>((oldBlockCount + growDeltaBlocks) * ctx->geometry.blockSize))) {
-        blockers->append(
-            QStringLiteral("APFS resize-grow: unable to grow the backing image/device"));
-        return false;
-    }
-    return true;
+    const uint64_t newSizeBytes = (oldBlockCount + growDeltaBlocks) * ctx->geometry.blockSize;
+    return sizeOrVerifyResizeTarget(image, newSizeBytes, deviceAlreadySized, blockers);
 }
 
 bool commitInPlaceResizeGrow(QIODevice* image,
                              uint64_t growDeltaBlocks,
+                             bool deviceAlreadySized,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!preflightResizeGrow(image, growDeltaBlocks, &ctx, blockers)) {
+    if (!preflightResizeGrow(image, growDeltaBlocks, deviceAlreadySized, &ctx, blockers)) {
         return false;
     }
     const uint64_t newXid = ctx.live.xid + 1;
@@ -13853,7 +13872,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyRes
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceResizeGrow(&image, growDelta, &commit, &commitBlockers)) {
+    if (commitInPlaceResizeGrow(
+            &image, growDelta, /*deviceAlreadySized=*/false, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -15225,6 +15245,132 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFilePatch
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceFilePatch(target.get(), patch, &commit, &commitBlockers)) {
+        result.previous_xid = commit.previous_xid;
+        result.new_xid = commit.new_xid;
+        result.checkpoint_map_block = commit.checkpoint_map_block;
+        result.superblock_block = commit.superblock_block;
+    }
+    target->close();
+    result.blockers.append(commitBlockers);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileClone(
+    const PartitionApfsRawFileCloneCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString sourceName = request.source_file_name.trimmed();
+    const QString cloneName = request.clone_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            cloneName, QLatin1StringView("raw file-clone-commit"), &result.blockers)) {
+        return result;
+    }
+    // Collect the live tree (rejecting a clone name that already exists) and bump the source
+    // file's shared data stream's reference count -- identical to commitImageOnlyFileClone but
+    // applied to a confirmed raw device in place.
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    ApfsCloneSourceInfo cloneSource;
+    if (!collectExistingFullFsTree(
+            result.written_image_path, cloneName, &existingFiles, &directories, &result.blockers) ||
+        !prepareCloneSource(&existingFiles, sourceName, &cloneSource, &result.blockers)) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-clone-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    runInPlaceFileInsertCommit(target.get(),
+                               {.existingFiles = existingFiles,
+                                .fileName = cloneName,
+                                .directories = directories,
+                                .cloneSourcePrivateId = cloneSource.privateId,
+                                .cloneLogicalSize = cloneSource.logicalSize},
+                               &result);
+    target->close();
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileHardlink(
+    const PartitionApfsRawFileHardlinkCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    const QString sourceName = request.source_file_name.trimmed();
+    const QString linkName = request.link_file_name.trimmed();
+    if (!appendRootFileNameBlockers(
+            linkName, QLatin1StringView("raw file-hardlink-commit"), &result.blockers)) {
+        return result;
+    }
+    // Collect the live tree (rejecting a link name that already exists) and resolve the source
+    // inode the new name links to -- identical to commitImageOnlyFileHardlink applied in place.
+    QVector<ApfsRootFilePayload> existingFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectExistingFullFsTree(
+            result.written_image_path, linkName, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    const uint64_t targetId = resolveHardlinkTargetId(existingFiles, sourceName, &result.blockers);
+    if (targetId == 0) {
+        return result;
+    }
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("file-hardlink-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    runInPlaceFileInsertCommit(target.get(),
+                               {.existingFiles = existingFiles,
+                                .fileName = linkName,
+                                .directories = directories,
+                                .hardlinkTargetId = targetId},
+                               &result);
+    target->close();
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawResize(
+    const PartitionApfsRawResizeCommitRequest& request) {
+    PartitionApfsImageCheckpointCommitResult result;
+    result.source_image_path = request.target_path.trimmed();
+    result.written_image_path = request.target_path.trimmed();
+    auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
+                                              .targetBytes = request.target_container_bytes,
+                                              .confirmed = request.target_mutation_confirmed,
+                                              .allowRawTarget = request.allow_raw_device_target,
+                                              .options = &request.options,
+                                              .purpose = QLatin1StringView("resize-commit")},
+                                             &result.blockers);
+    if (!target) {
+        return result;
+    }
+    // The device (partition) already spans the new size; the grow only raises the container's
+    // claim into that span (a raw block device cannot itself be resized).
+    const uint64_t growDelta =
+        resolveResizeGrowDelta(target.get(), request.new_size_bytes, &result.blockers);
+    if (growDelta == 0) {
+        target->close();
+        return result;
+    }
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    if (commitInPlaceResizeGrow(
+            target.get(), growDelta, /*deviceAlreadySized=*/true, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

@@ -708,6 +708,46 @@ struct PartitionApfsRawFilePatchCommitRequest {
     PartitionApfsWriteOptions options;
 };
 
+/// @brief Request to clone one root file in a generated APFS container on a raw device
+///        with a true in-place copy-on-write checkpoint commit (A7). Mirrors
+///        PartitionApfsImageFileCloneCommitRequest applied to the device in place, so it is
+///        gated by destructive-target confirmation and raw opt-in.
+struct PartitionApfsRawFileCloneCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString source_file_name;
+    QString clone_file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to add a hard link (a second name) to one root file in a generated APFS
+///        container on a raw device with a true in-place copy-on-write checkpoint commit
+///        (A7). Mirrors PartitionApfsImageFileHardlinkCommitRequest applied in place.
+struct PartitionApfsRawFileHardlinkCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    QString source_file_name;
+    QString link_file_name;
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
+/// @brief Request to grow a generated APFS container on a raw device in place to a new
+///        (larger) size with a crash-safe checkpoint commit (A7, A-g). In-chunk grow only:
+///        target_container_bytes is the current container size and new_size_bytes is the
+///        larger target; the device must already span new_size_bytes.
+struct PartitionApfsRawResizeCommitRequest {
+    QString target_path;
+    uint64_t target_container_bytes{0};
+    uint64_t new_size_bytes{0};
+    bool target_mutation_confirmed{false};
+    bool allow_raw_device_target{false};
+    PartitionApfsWriteOptions options;
+};
+
 /// @brief Request to create one snapshot of a generated APFS container with a true
 ///        in-place copy-on-write checkpoint commit (A3). Freezes the volume's current
 ///        tree state into a snapshot the kernel and fsck_apfs can enumerate; the live
@@ -943,6 +983,16 @@ public:
         const PartitionApfsRawFileMoveCommitRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFilePatch(
         const PartitionApfsRawFilePatchCommitRequest& request);
+    /// @brief A7 raw in-place commits: clone a root file (shared data stream), add a hard
+    ///        link (second name), or grow the container in chunk -- each applied to a
+    ///        confirmed raw device in place, reusing the same certified COW commit core as
+    ///        the corresponding commitImageOnly* path.
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileClone(
+        const PartitionApfsRawFileCloneCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawFileHardlink(
+        const PartitionApfsRawFileHardlinkCommitRequest& request);
+    [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawResize(
+        const PartitionApfsRawResizeCommitRequest& request);
     /// @brief Create one snapshot of a generated APFS container with a true in-place COW
     ///        checkpoint commit (A3). commitImageOnlySnapshotCreate clones to a scratch
     ///        image; commitRawSnapshotCreate applies to a confirmed raw device in place.

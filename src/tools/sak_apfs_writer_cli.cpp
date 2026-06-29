@@ -1940,13 +1940,54 @@ std::optional<QJsonObject> buildCommitRawSnapshotRevertReport(const CliInvocatio
         commit, QStringLiteral("APFS raw in-place snapshot revert commit"), invocation, error);
 }
 
+std::optional<QJsonObject> buildCommitRawFileCloneReport(const CliInvocation& invocation,
+                                                         QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawFileClone(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .source_file_name = invocation.file_name,
+         .clone_file_name = invocation.new_file_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place file clone commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawFileHardlinkReport(const CliInvocation& invocation,
+                                                            QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawFileHardlink(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .source_file_name = invocation.file_name,
+         .link_file_name = invocation.new_file_name,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place file hard link commit"), invocation, error);
+}
+
+std::optional<QJsonObject> buildCommitRawResizeReport(const CliInvocation& invocation,
+                                                      QString* error) {
+    const auto commit = sak::PartitionApfsWriter::commitRawResize(
+        {.target_path = invocation.target_path,
+         .target_container_bytes = invocation.target_size_bytes,
+         .new_size_bytes = invocation.target_size_bytes,
+         .target_mutation_confirmed = invocation.confirm_target,
+         .allow_raw_device_target = invocation.allow_raw_target,
+         .options = rawWriteOptions(invocation.evidence_id)});
+    return commitResultReport(
+        commit, QStringLiteral("APFS raw in-place container resize commit"), invocation, error);
+}
+
 // Dispatch the in-place commit family (image + raw). Sets *handled when the
 // command is a commit command, keeping buildCommandReport's branch count low.
 std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocation,
                                                     QString* error,
                                                     bool* handled) {
     using CommitBuilder = std::optional<QJsonObject> (*)(const CliInvocation&, QString*);
-    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 30> kCommitBuilders = {{
+    static const std::array<std::pair<QLatin1StringView, CommitBuilder>, 33> kCommitBuilders = {{
         {QLatin1StringView("commit-image-checkpoint"), buildCommitCheckpointReport},
         {QLatin1StringView("commit-image-file-move"), buildCommitFileMoveReport},
         {QLatin1StringView("commit-raw-file-move"), buildCommitRawFileMoveReport},
@@ -1967,6 +2008,9 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
         {QLatin1StringView("commit-image-file-rename"), buildCommitFileRenameReport},
         {QLatin1StringView("commit-raw-file-insert"), buildCommitRawFileInsertReport},
         {QLatin1StringView("commit-raw-file-write"), buildCommitRawFileWriteReport},
+        {QLatin1StringView("commit-raw-file-clone"), buildCommitRawFileCloneReport},
+        {QLatin1StringView("commit-raw-file-hardlink"), buildCommitRawFileHardlinkReport},
+        {QLatin1StringView("commit-raw-resize"), buildCommitRawResizeReport},
         {QLatin1StringView("commit-raw-file-delete"), buildCommitRawFileDeleteReport},
         {QLatin1StringView("commit-raw-file-rename"), buildCommitRawFileRenameReport},
         {QLatin1StringView("commit-raw-directory-create"), buildCommitRawDirectoryCreateReport},
@@ -2039,6 +2083,8 @@ bool isFileNameCommand(const QString& command) {
         QStringLiteral("commit-image-file-rename"),
         QStringLiteral("commit-raw-file-write"),
         QStringLiteral("commit-raw-file-insert"),
+        QStringLiteral("commit-raw-file-clone"),
+        QStringLiteral("commit-raw-file-hardlink"),
         QStringLiteral("commit-raw-file-delete"),
         QStringLiteral("commit-raw-file-rename"),
         QStringLiteral("commit-image-directory-child-write"),

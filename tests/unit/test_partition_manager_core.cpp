@@ -1801,6 +1801,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
     void apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice();
+    void apfsWriter_rawA7CloneHardlinkResizeMutateConfirmedTarget();
     void apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman();
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
@@ -9156,6 +9157,107 @@ void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersFailClosedWithoutRaw
         imageOnlyReject.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("non-image-only")));
 }
 
+namespace {
+
+// A7: insert a source file, clone it (shared data stream) + hard link it (second name to one
+// inode), then assert all three names read back the identical shared payload.
+void exerciseApfsRawA7CloneAndHardlink(const QString& container,
+                                       uint64_t bytes,
+                                       const PartitionApfsWriteOptions& rawOptions,
+                                       const QByteArray& payload) {
+    QVERIFY2(PartitionApfsWriter::commitRawFileInsert({.target_path = container,
+                                                       .target_container_bytes = bytes,
+                                                       .file_name = QStringLiteral("src.bin"),
+                                                       .file_data = payload,
+                                                       .target_mutation_confirmed = true,
+                                                       .allow_raw_device_target = true,
+                                                       .options = rawOptions})
+                 .ok,
+             "raw insert source");
+    QVERIFY2(PartitionApfsWriter::commitRawFileClone(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .source_file_name = QStringLiteral("src.bin"),
+                  .clone_file_name = QStringLiteral("clone.bin"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw clone");
+    QVERIFY2(PartitionApfsWriter::commitRawFileHardlink(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .source_file_name = QStringLiteral("src.bin"),
+                  .link_file_name = QStringLiteral("link.bin"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw hard link");
+    const QStringList names = {QStringLiteral("src.bin"),
+                               QStringLiteral("clone.bin"),
+                               QStringLiteral("link.bin")};
+    for (const QString& name : names) {
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+            container, QStringLiteral("/%1").arg(name), payload.size());
+        QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, payload);
+    }
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_rawA7CloneHardlinkResizeMutateConfirmedTarget() {
+    // A7 I1: the raw clone / hard link / resize wrappers run the same certified COW core as the
+    // image-only twins on a confirmed raw target (a temp container classified as a raw device
+    // via the test seam). Resize grows the container's claim into the already-sized device.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString container = QDir(temp.path()).filePath(QStringLiteral("a7raw.apfs"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = container,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("A7RAW"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+
+    struct RawTargetPredicateGuard {
+        ~RawTargetPredicateGuard() {
+            PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+        }
+    } guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [container](const QString& path) { return path == container; });
+
+    const QByteArray payload = QByteArrayLiteral("a7-shared-payload-bytes");
+    exerciseApfsRawA7CloneAndHardlink(container, bytes, rawOptions, payload);
+
+    // Resize: the device already spans the larger size (as a grown partition would), so the
+    // commit only raises the container's claim. The earlier files survive byte-for-byte.
+    const uint64_t newBytes = bytes + bytes / 2;  // 96 MiB, still in-chunk
+    {
+        QFile device(container);
+        QVERIFY(device.open(QIODevice::ReadWrite));
+        QVERIFY(device.resize(static_cast<qint64>(newBytes)));
+        device.close();
+    }
+    QVERIFY2(PartitionApfsWriter::commitRawResize({.target_path = container,
+                                                   .target_container_bytes = newBytes,
+                                                   .new_size_bytes = newBytes,
+                                                   .target_mutation_confirmed = true,
+                                                   .allow_raw_device_target = true,
+                                                   .options = rawOptions})
+                 .ok,
+             "raw resize");
+    const auto afterResize = PartitionApfsFileSystemReader::readFileFromImage(
+        container, QStringLiteral("/clone.bin"), payload.size());
+    QVERIFY2(afterResize.ok, qPrintable(afterResize.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(afterResize.data, payload);
+}
+
 void PartitionManagerCoreTests::apfsWriter_formatsMetadataOverflowDeadZoneMultiBlockSpaceman() {
     // The ~2.9-7.8 TiB metadata-overflow "dead zone" (cib_count 182-507) overflows the
     // spaceman's inline cib-address array; the spaceman object spans a second block
@@ -11328,6 +11430,38 @@ void verifyApfsSnapshotMutationScripts(const PartitionScriptBuilder& builder,
     QVERIFY(noName.blockers.join(' ').contains(QStringLiteral("snapshot name")));
 }
 
+// A7 promotion: clone/hard link emit commit-raw-file-clone/-hardlink with --file-name +
+// --new-file-name; resize emits commit-raw-resize with no file names; clone/hard link without
+// a new name fails closed.
+void verifyApfsCloneHardlinkResizeScripts(const PartitionScriptBuilder& builder,
+                                          const PartitionTarget& target) {
+    QJsonObject linkPayload = baseApfsRootFileMutationPayload();
+    linkPayload[QStringLiteral("apfs_root_file_name")] = QStringLiteral("src.bin");
+    linkPayload[QStringLiteral("apfs_root_file_new_name")] = QStringLiteral("copy.bin");
+
+    const auto clone = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsCloneRootFile, target, linkPayload));
+    QVERIFY2(clone.valid(), qPrintable(clone.blockers.join(QStringLiteral("; "))));
+    QVERIFY(clone.script.contains(QStringLiteral("commit-raw-file-clone")));
+    QVERIFY(clone.script.contains(QStringLiteral("-FileName 'src.bin'")));
+    QVERIFY(clone.script.contains(QStringLiteral("-NewFileName 'copy.bin'")));
+    QVERIFY(clone.script.contains(QStringLiteral("--new-file-name")));
+
+    const auto link = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsHardlinkRootFile, target, linkPayload));
+    QVERIFY(link.script.contains(QStringLiteral("commit-raw-file-hardlink")));
+
+    const auto resize = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsResizeContainer, target, baseApfsRootFileMutationPayload()));
+    QVERIFY2(resize.valid(), qPrintable(resize.blockers.join(QStringLiteral("; "))));
+    QVERIFY(resize.script.contains(QStringLiteral("commit-raw-resize")));
+
+    const auto noName = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsCloneRootFile, target, baseApfsRootFileMutationPayload()));
+    QVERIFY(!noName.valid());
+    QVERIFY(noName.blockers.join(' ').contains(QStringLiteral("source file name and a new name")));
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts() {
@@ -11388,6 +11522,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     QVERIFY(!compressedPatch.script.contains(QStringLiteral("-CompressZlib")));
 
     verifyApfsSnapshotMutationScripts(builder, target);
+    verifyApfsCloneHardlinkResizeScripts(builder, target);
 }
 
 namespace {

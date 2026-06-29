@@ -273,6 +273,9 @@ constexpr const char* kApfsVolumeLabelMode = "change-volume-label";
 constexpr const char* kApfsSnapshotCreateMode = "snapshot-create";
 constexpr const char* kApfsSnapshotDeleteMode = "snapshot-delete";
 constexpr const char* kApfsSnapshotRevertMode = "snapshot-revert";
+constexpr const char* kApfsCloneRootFileMode = "clone-root-file";
+constexpr const char* kApfsHardlinkRootFileMode = "hardlink-root-file";
+constexpr const char* kApfsResizeContainerMode = "resize-container";
 constexpr const char* kHfsOverwriteFileMode = "overwrite-file";
 constexpr const char* kHfsReplaceFileMode = "replace-file";
 constexpr const char* kHfsGrowFileMode = "grow-file";
@@ -9989,6 +9992,11 @@ PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
         {QString::fromLatin1(kApfsSnapshotCreateMode), PartitionOperationType::ApfsSnapshotCreate},
         {QString::fromLatin1(kApfsSnapshotDeleteMode), PartitionOperationType::ApfsSnapshotDelete},
         {QString::fromLatin1(kApfsSnapshotRevertMode), PartitionOperationType::ApfsSnapshotRevert},
+        {QString::fromLatin1(kApfsCloneRootFileMode), PartitionOperationType::ApfsCloneRootFile},
+        {QString::fromLatin1(kApfsHardlinkRootFileMode),
+         PartitionOperationType::ApfsHardlinkRootFile},
+        {QString::fromLatin1(kApfsResizeContainerMode),
+         PartitionOperationType::ApfsResizeContainer},
     };
     return kModes.value(mode, PartitionOperationType::ApfsWriteRootFile);
 }
@@ -9997,6 +10005,17 @@ bool apfsMutationIsSnapshot(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsSnapshotCreate ||
            type == PartitionOperationType::ApfsSnapshotDelete ||
            type == PartitionOperationType::ApfsSnapshotRevert;
+}
+
+// A7: clone + hard link take a source file (file_name field) and a new name (directory_name
+// field); resize grows the container to fill the partition and needs no file fields.
+bool apfsMutationIsLink(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsCloneRootFile ||
+           type == PartitionOperationType::ApfsHardlinkRootFile;
+}
+
+bool apfsMutationIsResize(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsResizeContainer;
 }
 
 bool apfsMutationNeedsPayload(PartitionOperationType type) {
@@ -10021,7 +10040,26 @@ bool apfsMutationIsVolumeLabel(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsChangeVolumeLabel;
 }
 
+QString apfsSpecialMutationPreview(PartitionOperationType type, const QString& entryName) {
+    switch (type) {
+    case PartitionOperationType::ApfsChangeVolumeLabel:
+        return QObject::tr("Queue APFS generated volume-label change to %1.").arg(entryName);
+    case PartitionOperationType::ApfsCloneRootFile:
+        return QObject::tr("Queue APFS generated root-file clone of %1.").arg(entryName);
+    case PartitionOperationType::ApfsHardlinkRootFile:
+        return QObject::tr("Queue APFS generated root-file hard link to %1.").arg(entryName);
+    case PartitionOperationType::ApfsResizeContainer:
+        return QObject::tr("Queue APFS generated container resize to fill the partition.");
+    default:
+        return {};
+    }
+}
+
 QString apfsMutationPreview(PartitionOperationType type, const QString& entryName) {
+    const QString special = apfsSpecialMutationPreview(type, entryName);
+    if (!special.isEmpty()) {
+        return special;
+    }
     switch (type) {
     case PartitionOperationType::ApfsWriteRootFile:
         return QObject::tr("Queue APFS generated root-file write for %1.").arg(entryName);
@@ -10044,8 +10082,6 @@ QString apfsMutationPreview(PartitionOperationType type, const QString& entryNam
     case PartitionOperationType::ApfsDeleteRootDirectory:
         return QObject::tr("Queue APFS generated empty root-directory delete for %1.")
             .arg(entryName);
-    case PartitionOperationType::ApfsChangeVolumeLabel:
-        return QObject::tr("Queue APFS generated volume-label change to %1.").arg(entryName);
     default:
         return {};
     }
@@ -10062,14 +10098,19 @@ void applyApfsMutationModeControls(const ApfsRootFileMutationDialogWidgets& widg
     const bool needsPayload = apfsMutationNeedsPayload(type);
     const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
                            type == PartitionOperationType::ApfsPatchRootDirectoryFile;
-    const bool directoryFileMode = apfsMutationIsDirectoryFile(type);
+    // directory_name doubles as the new (clone/link) name for link modes; resize takes no
+    // file fields (it grows the container to fill the partition).
+    const bool directoryNameMode = apfsMutationIsDirectoryFile(type) || apfsMutationIsLink(type);
+    const bool resizeMode = apfsMutationIsResize(type);
     const bool compressMode = apfsMutationSupportsCompression(type);
     widgets.payload->setEnabled(needsPayload);
     widgets.payload->setVisible(needsPayload);
     widgets.patch_offset->setEnabled(patchMode);
     widgets.patch_offset->setVisible(patchMode);
-    widgets.directory_name->setEnabled(directoryFileMode);
-    widgets.directory_name->setVisible(directoryFileMode);
+    widgets.file_name->setEnabled(!resizeMode);
+    widgets.file_name->setVisible(!resizeMode);
+    widgets.directory_name->setEnabled(directoryNameMode);
+    widgets.directory_name->setVisible(directoryNameMode);
     widgets.compress->setEnabled(compressMode);
     widgets.compress->setVisible(compressMode);
 }
@@ -10086,6 +10127,12 @@ QString apfsMutationFilePlaceholder(PartitionOperationType type) {
     }
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("Snapshot name");
+    }
+    if (apfsMutationIsLink(type)) {
+        return QObject::tr("Source file name");
+    }
+    if (apfsMutationIsResize(type)) {
+        return QObject::tr("(not used for resize)");
     }
     return QObject::tr("Root file name");
 }
@@ -10112,7 +10159,17 @@ QString apfsMutationFallbackName(PartitionOperationType type) {
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("(snapshot)");
     }
+    if (apfsMutationIsResize(type)) {
+        return QObject::tr("(container)");
+    }
     return QObject::tr("(root file)");
+}
+
+bool apfsMutationHasRequiredOffset(const ApfsRootFileMutationDialogWidgets& widgets,
+                                   PartitionOperationType type) {
+    const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
+                           type == PartitionOperationType::ApfsPatchRootDirectoryFile;
+    return !patchMode || parsedPatchOffset(widgets.patch_offset->text()).has_value();
 }
 
 bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widgets,
@@ -10120,14 +10177,12 @@ bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widget
                                  const QString& directoryName,
                                  const QString& entryName) {
     const bool needsPayload = apfsMutationNeedsPayload(type);
-    const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
-                           type == PartitionOperationType::ApfsPatchRootDirectoryFile;
-    const bool directoryFileMode = apfsMutationIsDirectoryFile(type);
+    const bool directoryNameMode = apfsMutationIsDirectoryFile(type) || apfsMutationIsLink(type);
     const bool hasPayload = !needsPayload || !widgets.payload->toPlainText().isEmpty();
-    const bool hasOffset = !patchMode ||
-                           parsedPatchOffset(widgets.patch_offset->text()).has_value();
-    const bool hasDirectory = !directoryFileMode || !directoryName.isEmpty();
-    return !entryName.isEmpty() && hasDirectory && hasPayload && hasOffset &&
+    const bool hasDirectory = !directoryNameMode || !directoryName.isEmpty();
+    // Resize takes no names; every other mode needs the file/entry name.
+    const bool hasEntry = apfsMutationIsResize(type) || !entryName.isEmpty();
+    return hasEntry && hasDirectory && hasPayload && apfsMutationHasRequiredOffset(widgets, type) &&
            widgets.confirm->isChecked();
 }
 
@@ -10135,6 +10190,9 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
     const auto type = apfsMutationTypeForMode(widgets.mode->currentData().toString());
     applyApfsMutationModeControls(widgets, type);
     widgets.file_name->setPlaceholderText(apfsMutationFilePlaceholder(type));
+    widgets.directory_name->setPlaceholderText(apfsMutationIsLink(type)
+                                                   ? QObject::tr("New (clone/link) name")
+                                                   : QObject::tr("Root directory name"));
     const QString entryName = widgets.file_name->text().trimmed();
     const QString directoryName = widgets.directory_name->text().trimmed();
     const QString previewName = apfsMutationPreviewName(type, directoryName, entryName);
@@ -10163,6 +10221,11 @@ void populateApfsRootFileMutationModes(QComboBox* mode) {
     mode->addItem(QObject::tr("Create snapshot"), QString::fromLatin1(kApfsSnapshotCreateMode));
     mode->addItem(QObject::tr("Delete snapshot"), QString::fromLatin1(kApfsSnapshotDeleteMode));
     mode->addItem(QObject::tr("Revert to snapshot"), QString::fromLatin1(kApfsSnapshotRevertMode));
+    mode->addItem(QObject::tr("Clone root file"), QString::fromLatin1(kApfsCloneRootFileMode));
+    mode->addItem(QObject::tr("Hard link root file"),
+                  QString::fromLatin1(kApfsHardlinkRootFileMode));
+    mode->addItem(QObject::tr("Resize container to fill partition"),
+                  QString::fromLatin1(kApfsResizeContainerMode));
 }
 
 void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
@@ -10234,13 +10297,10 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
                                            apfsMutationSupportsCompression(type)};
 }
 
-QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
-                                        const ApfsRootFileMutationRequest& request) {
-    QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
-                        {QStringLiteral("file_system"), QStringLiteral("APFS")},
-                        {QStringLiteral("target_path"), state.target_path},
-                        {QStringLiteral("target_wipe_confirmed"), true},
-                        {QStringLiteral("apfs_generated_layout_confirmed"), true}};
+// Volume-label / snapshot / resize modes finish the payload with their one extra field (or
+// none for resize); returns nullopt for the file/directory modes that fall through below.
+std::optional<QJsonObject> apfsSpecialModePayload(QJsonObject payload,
+                                                  const ApfsRootFileMutationRequest& request) {
     if (apfsMutationIsVolumeLabel(request.type)) {
         payload[QStringLiteral("label")] = request.entry_name;
         return payload;
@@ -10249,12 +10309,31 @@ QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
         payload[QStringLiteral("apfs_snapshot_name")] = request.entry_name;
         return payload;
     }
+    if (apfsMutationIsResize(request.type)) {
+        return payload;  // resize grows the container to fill the partition; no file arguments
+    }
+    return std::nullopt;
+}
+
+QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
+                                        const ApfsRootFileMutationRequest& request) {
+    QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
+                        {QStringLiteral("file_system"), QStringLiteral("APFS")},
+                        {QStringLiteral("target_path"), state.target_path},
+                        {QStringLiteral("target_wipe_confirmed"), true},
+                        {QStringLiteral("apfs_generated_layout_confirmed"), true}};
+    if (auto special = apfsSpecialModePayload(payload, request)) {
+        return *special;
+    }
     payload[QStringLiteral("apfs_root_file_name")] = request.entry_name;
     if (apfsMutationIsDirectory(request.type)) {
         payload[QStringLiteral("apfs_root_directory_name")] = request.entry_name;
     }
     if (apfsMutationIsDirectoryFile(request.type)) {
         payload[QStringLiteral("apfs_root_directory_name")] = request.directory_name;
+    }
+    if (apfsMutationIsLink(request.type)) {
+        payload[QStringLiteral("apfs_root_file_new_name")] = request.directory_name;
     }
     if (apfsMutationNeedsPayload(request.type)) {
         payload[QStringLiteral("apfs_root_file_payload_text")] = request.payload_text;
