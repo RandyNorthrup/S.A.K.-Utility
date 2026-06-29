@@ -20,7 +20,12 @@ env:
 jobs:
   build-windows:
     name: Build, verify, package, and publish Windows release
-    runs-on: windows-latest
+    # Pinned to windows-2022 (Visual Studio 2022 / v17). windows-latest rolled to
+    # windows-2025-vs2026 (VS 18 / 2026 only), which the hardcoded
+    # "Visual Studio 17 2022" CMake generator and the Qt win64_msvc2022_64 libs
+    # cannot use ("could not find any instance of Visual Studio"). Keep the runner,
+    # generator, compiler, and Qt ABI aligned. Migrate to VS 2026 deliberately later.
+    runs-on: windows-2022
     permissions:
       contents: write
       id-token: write
