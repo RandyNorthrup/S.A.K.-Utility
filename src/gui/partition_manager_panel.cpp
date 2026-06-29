@@ -9909,6 +9909,7 @@ struct ApfsRootFileMutationDialogWidgets {
     QLineEdit* file_name{nullptr};
     QTextEdit* payload{nullptr};
     QLineEdit* patch_offset{nullptr};
+    QCheckBox* compress{nullptr};
     QCheckBox* confirm{nullptr};
 };
 
@@ -9918,7 +9919,15 @@ struct ApfsRootFileMutationRequest {
     QString entry_name;
     QString payload_text;
     uint64_t patch_offset_bytes{0};
+    bool compress_zlib{false};
 };
+
+// A5: inline zlib transparent compression (com.apple.decmpfs) only applies to new file
+// writes (commit-raw-file-write / commit-raw-directory-child-write), not patch/delete.
+bool apfsMutationSupportsCompression(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsWriteRootFile ||
+           type == PartitionOperationType::ApfsWriteRootDirectoryFile;
+}
 
 PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
     if (mode == QString::fromLatin1(kApfsRootFilePatchMode)) {
@@ -10012,12 +10021,15 @@ void applyApfsMutationModeControls(const ApfsRootFileMutationDialogWidgets& widg
     const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
                            type == PartitionOperationType::ApfsPatchRootDirectoryFile;
     const bool directoryFileMode = apfsMutationIsDirectoryFile(type);
+    const bool compressMode = apfsMutationSupportsCompression(type);
     widgets.payload->setEnabled(needsPayload);
     widgets.payload->setVisible(needsPayload);
     widgets.patch_offset->setEnabled(patchMode);
     widgets.patch_offset->setVisible(patchMode);
     widgets.directory_name->setEnabled(directoryFileMode);
     widgets.directory_name->setVisible(directoryFileMode);
+    widgets.compress->setEnabled(compressMode);
+    widgets.compress->setVisible(compressMode);
 }
 
 QString apfsMutationFilePlaceholder(PartitionOperationType type) {
@@ -10136,6 +10148,9 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     payload->setMinimumHeight(kApfsRootFilePayloadMinHeight);
     auto* patchOffset = new QLineEdit(QStringLiteral("0"), &dialog);
     patchOffset->setAccessibleName(QObject::tr("APFS root file patch byte offset"));
+    auto* compress = new QCheckBox(QObject::tr("Store compressed (inline zlib com.apple.decmpfs)"),
+                                   &dialog);
+    compress->setAccessibleName(QObject::tr("Compress APFS file with inline zlib"));
     auto* confirm = new QCheckBox(
         QObject::tr("I understand this only supports S.A.K. generated APFS layouts and will "
                     "mutate the selected raw partition on Apply."),
@@ -10147,10 +10162,11 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     dialog.formLayout()->addRow(QObject::tr("Name:"), fileName);
     dialog.formLayout()->addRow(QObject::tr("Payload:"), payload);
     dialog.formLayout()->addRow(QObject::tr("Patch offset:"), patchOffset);
+    dialog.formLayout()->addRow(QString(), compress);
     dialog.formLayout()->addRow(QString(), confirm);
 
     const ApfsRootFileMutationDialogWidgets widgets{
-        &dialog, mode, directoryName, fileName, payload, patchOffset, confirm};
+        &dialog, mode, directoryName, fileName, payload, patchOffset, compress, confirm};
     connectApfsRootFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
@@ -10162,7 +10178,9 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
                                        directoryName->text().trimmed(),
                                        fileName->text().trimmed(),
                                        payload->toPlainText(),
-                                       parsedPatchOffset(patchOffset->text()).value_or(0)};
+                                       parsedPatchOffset(patchOffset->text()).value_or(0),
+                                       compress->isChecked() &&
+                                           apfsMutationSupportsCompression(type)};
 }
 
 QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
@@ -10185,6 +10203,9 @@ QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
     }
     if (apfsMutationNeedsPayload(request.type)) {
         payload[QStringLiteral("apfs_root_file_payload_text")] = request.payload_text;
+    }
+    if (request.compress_zlib) {
+        payload[QStringLiteral("apfs_compress_zlib")] = true;
     }
     if (request.type == PartitionOperationType::ApfsPatchRootFile ||
         request.type == PartitionOperationType::ApfsPatchRootDirectoryFile) {

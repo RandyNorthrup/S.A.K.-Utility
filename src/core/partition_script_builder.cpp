@@ -59,6 +59,7 @@ constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
 constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
+constexpr auto kApfsCompressZlibPayload = "apfs_compress_zlib";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
 // fsck_apfs requires nx_max_file_systems == ceil(container_bytes / 512 MiB); each volume in
 // an A4 multi-volume container consumes one nx_max_file_systems slot.
@@ -500,6 +501,13 @@ bool apfsRootFileMutationWritesPayload(PartitionOperationType type) {
            type == PartitionOperationType::ApfsPatchRootFile;
 }
 
+// A5: inline zlib transparent compression (com.apple.decmpfs) is stored only on a brand-new
+// file write (commit-raw-file-write / commit-raw-directory-child-write), never on a patch.
+bool apfsRootFileMutationSupportsCompression(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsWriteRootFile ||
+           type == PartitionOperationType::ApfsWriteRootDirectoryFile;
+}
+
 bool isHfsFileMutationOperation(PartitionOperationType type) {
     static const QHash<int, bool> kTypes{
         {static_cast<int>(PartitionOperationType::HfsOverwriteFile), true},
@@ -899,6 +907,7 @@ struct ApfsRootFileMutationScriptInput {
     uint64_t patch_offset_bytes{0};
     QString command;
     QString evidence_id;
+    bool compress_zlib{false};
 };
 
 QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operation) {
@@ -1027,6 +1036,8 @@ ApfsRootFileMutationScriptInput apfsRootFileMutationScriptInput(
     input.patch_offset_bytes = patchOffset.value();
     input.command = apfsRootFileMutationCommand(operation.type);
     input.evidence_id = apfsRootFileMutationEvidenceId(operation.type);
+    input.compress_zlib = payloadBool(operation, QString::fromLatin1(kApfsCompressZlibPayload)) &&
+                          apfsRootFileMutationSupportsCompression(operation.type);
     return input;
 }
 
@@ -1048,6 +1059,9 @@ QString apfsRootFileMutationInvoke(const PartitionOperation& operation,
     }
     if (apfsRootFileMutationWritesPayload(operation.type)) {
         invoke += QStringLiteral(" -PayloadFile $payloadPath");
+    }
+    if (input.compress_zlib) {
+        invoke += QStringLiteral(" -CompressZlib");
     }
     if (operation.type == PartitionOperationType::ApfsPatchRootFile ||
         operation.type == PartitionOperationType::ApfsPatchRootDirectoryFile) {
@@ -1271,65 +1285,80 @@ QString runtimeHfsWriterCliPath() {
     return QDir::current().filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
 }
 
+// The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
+// function within the length gate). No format placeholders.
+QString apfsWriterCliArgConditionals() {
+    return QStringLiteral(
+        "  if ($Command -eq 'format-raw') {\n"
+        "    $args += @('--volume-name', $VolumeName)\n"
+        "    foreach ($extraVolume in $AdditionalVolumeNames) {\n"
+        "      if (-not [string]::IsNullOrWhiteSpace($extraVolume)) {\n"
+        "        $args += @('--additional-volume-name', $extraVolume)\n"
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+        "'patch-raw-root-directory-file', "
+        "'delete-raw-root-file', 'write-raw-root-directory-file', "
+        "'delete-raw-root-directory-file', 'commit-raw-file-write', "
+        "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
+        "'commit-raw-directory-child-delete', 'commit-raw-file-patch')) {\n"
+        "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+        "required' }\n"
+        "    $args += @('--file-name', $FileName)\n"
+        "  }\n"
+        "  if ($Command -eq 'commit-raw-file-patch' -and "
+        "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
+        "    $args += @('--directory-name', $DirectoryName)\n"
+        "  }\n"
+        "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
+        "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
+        "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
+        "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
+        "'commit-raw-directory-child-delete')) {\n"
+        "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
+        "name is "
+        "required' }\n"
+        "    $args += @('--directory-name', $DirectoryName)\n"
+        "  }\n"
+        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+        "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
+        "'commit-raw-file-write', 'commit-raw-directory-child-write', "
+        "'commit-raw-file-patch')) {\n"
+        "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
+        "payload "
+        "is required' }\n"
+        "    $args += @('--payload-file', $PayloadFile)\n"
+        "  }\n"
+        "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
+        "'commit-raw-directory-child-write')) {\n"
+        "    $args += '--compress-zlib'\n"
+        "  }\n"
+        "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
+        "'commit-raw-file-patch')) {\n"
+        "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+        "  }\n");
+}
+
 QString apfsWriterCliFunctionScript() {
     return QStringLiteral(
                "function Invoke-SakApfsWriterCli {\n"
                "  param([string]$Command, [string]$TargetPath, [uint64]$SizeBytes, "
                "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
                "[string]$DirectoryName = '', [string]$PayloadFile = '', "
-               "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @())\n"
+               "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @(), "
+               "[switch]$CompressZlib)\n"
                "  $cliPath = %1\n"
                "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"
                "  }\n"
                "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
                "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
-               "$EvidenceId, '--confirm-target', '--allow-raw-target')\n"
-               "  if ($Command -eq 'format-raw') {\n"
-               "    $args += @('--volume-name', $VolumeName)\n"
-               "    foreach ($extraVolume in $AdditionalVolumeNames) {\n"
-               "      if (-not [string]::IsNullOrWhiteSpace($extraVolume)) {\n"
-               "        $args += @('--additional-volume-name', $extraVolume)\n"
-               "      }\n"
-               "    }\n"
-               "  }\n"
-               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-               "'patch-raw-root-directory-file', "
-               "'delete-raw-root-file', 'write-raw-root-directory-file', "
-               "'delete-raw-root-directory-file', 'commit-raw-file-write', "
-               "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
-               "'commit-raw-directory-child-delete', 'commit-raw-file-patch')) {\n"
-               "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
-               "required' }\n"
-               "    $args += @('--file-name', $FileName)\n"
-               "  }\n"
-               "  if ($Command -eq 'commit-raw-file-patch' -and "
-               "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
-               "    $args += @('--directory-name', $DirectoryName)\n"
-               "  }\n"
-               "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
-               "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
-               "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
-               "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
-               "'commit-raw-directory-child-delete')) {\n"
-               "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
-               "name is "
-               "required' }\n"
-               "    $args += @('--directory-name', $DirectoryName)\n"
-               "  }\n"
-               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-               "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
-               "'commit-raw-file-write', 'commit-raw-directory-child-write', "
-               "'commit-raw-file-patch')) {\n"
-               "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
-               "payload "
-               "is required' }\n"
-               "    $args += @('--payload-file', $PayloadFile)\n"
-               "  }\n"
-               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
-               "'commit-raw-file-patch')) {\n"
-               "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
-               "  }\n"
+               "$EvidenceId, '--confirm-target', '--allow-raw-target')\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(
+                   QDir::toNativeSeparators(runtimeApfsWriterCliPath()))) +
+           apfsWriterCliArgConditionals() +
+           QStringLiteral(
                "  Write-Output ('Running S.A.K. APFS writer helper: {0} {1}' -f $cliPath, "
                "($args -join ' '))\n"
                "  $output = & $cliPath @args 2>&1\n"
@@ -1337,9 +1366,7 @@ QString apfsWriterCliFunctionScript() {
                "  $output | ForEach-Object { Write-Output $_ }\n"
                "  if ($exitCode -ne 0) { throw ('APFS writer helper failed with exit code {0}' "
                "-f $exitCode) }\n"
-               "}\n")
-        .arg(PartitionScriptBuilder::quotePowerShell(
-            QDir::toNativeSeparators(runtimeApfsWriterCliPath())));
+               "}\n");
 }
 
 QString hfsWriterCliFunctionScript() {

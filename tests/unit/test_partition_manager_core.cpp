@@ -11236,6 +11236,25 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
                                                  baseApfsRootFileMutationPayload()));
     QVERIFY(!oversizedWrite.valid());
     QVERIFY(oversizedWrite.blockers.join(' ').contains(QStringLiteral("24 TiB")));
+
+    // A5 promotion: apfs_compress_zlib threads through the write route as --compress-zlib;
+    // a plain write omits it, and a patch (which cannot compress) ignores the flag.
+    QJsonObject compressPayload = baseApfsRootFileMutationPayload();
+    compressPayload[QStringLiteral("apfs_compress_zlib")] = true;
+    const auto compressedWrite = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsWriteRootFile, target, compressPayload));
+    QVERIFY2(compressedWrite.valid(),
+             qPrintable(compressedWrite.blockers.join(QStringLiteral("; "))));
+    QVERIFY(compressedWrite.script.contains(QStringLiteral("-CompressZlib")));
+    QVERIFY(compressedWrite.script.contains(QStringLiteral("--compress-zlib")));
+
+    const auto plainWrite = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsWriteRootFile, target, baseApfsRootFileMutationPayload()));
+    QVERIFY(!plainWrite.script.contains(QStringLiteral("-CompressZlib")));
+
+    const auto compressedPatch = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::ApfsPatchRootFile, target, compressPayload));
+    QVERIFY(!compressedPatch.script.contains(QStringLiteral("-CompressZlib")));
 }
 
 namespace {
