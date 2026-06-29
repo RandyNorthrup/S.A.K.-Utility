@@ -6503,7 +6503,9 @@ PartitionApfsWriteOptions certifiedApfsRawCommitOptions() {
 
 QByteArray readApfsImageBlock(const QString& path, quint64 block) {
     QFile file(path);
-    file.open(QIODevice::ReadOnly);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
     file.seek(static_cast<qint64>(block * 4096));
     return file.read(4096);
 }
@@ -10736,7 +10738,9 @@ void writeApfsCrashRollbackImage(const QDir& dir,
                                  QString* crashedOut) {
     const auto readImage = [](const QString& p) {
         QFile f(p);
-        f.open(QIODevice::ReadOnly);
+        if (!f.open(QIODevice::ReadOnly)) {
+            return QByteArray{};
+        }
         return f.readAll();
     };
     const QByteArray nBytes = readImage(n);

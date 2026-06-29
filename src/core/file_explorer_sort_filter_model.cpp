@@ -77,7 +77,7 @@ void FileExplorerSortFilterModel::setNameFilter(const QString& filter_text) {
         return;
     }
     m_name_filter = clean;
-    invalidateFilter();
+    invalidate();
 }
 
 QString FileExplorerSortFilterModel::nameFilter() const {
@@ -89,7 +89,7 @@ void FileExplorerSortFilterModel::setShowHiddenItems(const bool show) {
         return;
     }
     m_show_hidden_items = show;
-    invalidateFilter();
+    invalidate();
 }
 
 bool FileExplorerSortFilterModel::showHiddenItems() const {

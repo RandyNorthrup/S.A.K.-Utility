@@ -8,6 +8,7 @@
 #include "sak/file_explorer_sort_filter_model.h"
 
 #include <QDateTime>
+#include <QTimeZone>
 #include <QtTest/QtTest>
 
 namespace {
@@ -20,8 +21,8 @@ sak::FileManagementEntry fileEntry(const QString& name, uint64_t bytes) {
     entry.size_bytes = bytes;
     entry.identifier = QStringLiteral("id-%1").arg(name);
     entry.regular_file = true;
-    entry.modified_time = QDateTime(QDate(2026, 6, 10), QTime(9, 30), Qt::UTC);
-    entry.created_time = QDateTime(QDate(2026, 6, 9), QTime(8, 15), Qt::UTC);
+    entry.modified_time = QDateTime(QDate(2026, 6, 10), QTime(9, 30), QTimeZone::UTC);
+    entry.created_time = QDateTime(QDate(2026, 6, 9), QTime(8, 15), QTimeZone::UTC);
     return entry;
 }
 
