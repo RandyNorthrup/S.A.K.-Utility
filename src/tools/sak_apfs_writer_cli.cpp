@@ -1105,36 +1105,19 @@ bool collectImportSourceFiles(const QString& sourcePath,
     return true;
 }
 
-std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocation, QString* error) {
-    // Arbitrary Apple-media APFS read-modify-write: read every root file from a
-    // foreign source container (any block layout the generic reader can walk),
-    // then re-emit a freshly certified S.A.K. container carrying those files
-    // plus an optional added file. This delivers mutation of arbitrary
-    // unencrypted single-volume Apple containers without fragile in-place
-    // checkpoint-ring surgery.
-    const QString sourcePath = invocation.target_path;
-    const QString outputPath = invocation.output_image_path;
-    QVector<ImportedFile> files;
-    QString volumeName;
-    if (!collectImportSourceFiles(sourcePath, &files, &volumeName, error)) {
-        return std::nullopt;
-    }
-    if (!invocation.file_name.trimmed().isEmpty()) {
-        files.append({invocation.file_name, invocation.payload});
-    }
-    const uint32_t blockSize = invocation.block_size_bytes;
-
-    QTemporaryDir scratch;
-    if (!scratch.isValid()) {
-        *error = QStringLiteral("Unable to create scratch directory for arbitrary import");
-        return std::nullopt;
-    }
+// Format a fresh certified container in `scratch`, then re-emit every imported
+// file into successive scratch images; returns the final container path.
+std::optional<QString> reEmitImportedFiles(const CliInvocation& invocation,
+                                           QTemporaryDir& scratch,
+                                           const QString& volumeName,
+                                           const QVector<ImportedFile>& files,
+                                           QString* error) {
     const auto options = imageWriteOptions(invocation.evidence_id);
     const QString freshPath = scratch.filePath(QStringLiteral("import-fresh.apfs"));
     const auto formatResult = sak::PartitionApfsWriter::buildImageOnlyFormatImage(
         {.image_path = freshPath,
          .target_container_bytes = invocation.target_size_bytes,
-         .block_size_bytes = blockSize,
+         .block_size_bytes = invocation.block_size_bytes,
          .volume_name = volumeName,
          .options = options});
     if (!formatResult.ok) {
@@ -1159,25 +1142,62 @@ std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocatio
         }
         currentPath = nextPath;
     }
+    return currentPath;
+}
 
-    if (!QFile::exists(currentPath)) {
-        *error = QStringLiteral("Arbitrary import produced no output");
-        return std::nullopt;
-    }
-    QFile::remove(outputPath);
-    if (!QFile::copy(currentPath, outputPath)) {
-        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
-        return std::nullopt;
-    }
-
+QJsonObject buildImportReportObject(const QString& sourcePath,
+                                    const QString& outputPath,
+                                    const QString& volumeName,
+                                    int importedFileCount) {
     QJsonObject report;
     report.insert(QStringLiteral("ok"), true);
     report.insert(QStringLiteral("operation"), QStringLiteral("Arbitrary APFS import"));
     report.insert(QStringLiteral("source_image"), sourcePath);
     report.insert(QStringLiteral("output_image"), outputPath);
     report.insert(QStringLiteral("volume_name"), volumeName);
-    report.insert(QStringLiteral("imported_file_count"), static_cast<int>(files.size()));
+    report.insert(QStringLiteral("imported_file_count"), importedFileCount);
     return report;
+}
+
+std::optional<QJsonObject> buildImportImageReport(const CliInvocation& invocation, QString* error) {
+    // Arbitrary Apple-media APFS read-modify-write: read every root file from a
+    // foreign source container (any block layout the generic reader can walk),
+    // then re-emit a freshly certified S.A.K. container carrying those files
+    // plus an optional added file. This delivers mutation of arbitrary
+    // unencrypted single-volume Apple containers without fragile in-place
+    // checkpoint-ring surgery.
+    const QString sourcePath = invocation.target_path;
+    const QString outputPath = invocation.output_image_path;
+    QVector<ImportedFile> files;
+    QString volumeName;
+    if (!collectImportSourceFiles(sourcePath, &files, &volumeName, error)) {
+        return std::nullopt;
+    }
+    if (!invocation.file_name.trimmed().isEmpty()) {
+        files.append({invocation.file_name, invocation.payload});
+    }
+
+    QTemporaryDir scratch;
+    if (!scratch.isValid()) {
+        *error = QStringLiteral("Unable to create scratch directory for arbitrary import");
+        return std::nullopt;
+    }
+    const auto currentPath = reEmitImportedFiles(invocation, scratch, volumeName, files, error);
+    if (!currentPath.has_value()) {
+        return std::nullopt;
+    }
+
+    if (!QFile::exists(*currentPath)) {
+        *error = QStringLiteral("Arbitrary import produced no output");
+        return std::nullopt;
+    }
+    QFile::remove(outputPath);
+    if (!QFile::copy(*currentPath, outputPath)) {
+        *error = QStringLiteral("Unable to write imported container to %1").arg(outputPath);
+        return std::nullopt;
+    }
+    return buildImportReportObject(
+        sourcePath, outputPath, volumeName, static_cast<int>(files.size()));
 }
 
 std::optional<QJsonObject> buildListImageReport(const CliInvocation& invocation, QString* error) {
@@ -2138,6 +2158,161 @@ std::optional<uint64_t> patchOffsetForCommand(const QCommandLineParser& parser,
     return parseNonNegativeUInt64Option(parser, option, error);
 }
 
+// Owns every QCommandLineOption used by the CLI so the objects outlive parsing.
+struct CliOptions {
+    QCommandLineOption target{{QStringLiteral("target")},
+                              QStringLiteral("Target raw partition or image path."),
+                              QStringLiteral("path")};
+    QCommandLineOption size{{QStringLiteral("size-bytes")},
+                            QStringLiteral("Target APFS container size in bytes."),
+                            QStringLiteral("bytes")};
+    QCommandLineOption blockSize{{QStringLiteral("block-size-bytes")},
+                                 QStringLiteral("APFS block size, default 4096."),
+                                 QStringLiteral("bytes")};
+    QCommandLineOption volumeName{{QStringLiteral("volume-name")},
+                                  QStringLiteral("APFS volume name."),
+                                  QStringLiteral("name"),
+                                  QStringLiteral("SAK APFS")};
+    QCommandLineOption additionalVolumeName{
+        {QStringLiteral("additional-volume-name")},
+        QStringLiteral("Name of an additional APFS volume (repeatable; multi-volume format)."),
+        QStringLiteral("name")};
+    QCommandLineOption outputImage{{QStringLiteral("output-image")},
+                                   QStringLiteral("Image repair output path."),
+                                   QStringLiteral("path")};
+    QCommandLineOption fileName{{QStringLiteral("file-name")},
+                                QStringLiteral(
+                                    "Root or child file name for generated APFS writes."),
+                                QStringLiteral("name")};
+    QCommandLineOption directoryName{
+        {QStringLiteral("directory-name")},
+        QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
+        QStringLiteral("name")};
+    QCommandLineOption newFileName{{QStringLiteral("new-file-name")},
+                                   QStringLiteral(
+                                       "Destination file name for a generated APFS file move."),
+                                   QStringLiteral("name")};
+    QCommandLineOption destinationDirectoryName{
+        {QStringLiteral("destination-directory-name")},
+        QStringLiteral("Destination directory (empty = root) for a generated APFS file move."),
+        QStringLiteral("name")};
+    QCommandLineOption payload{{QStringLiteral("payload-file")},
+                               QStringLiteral("Payload file for generated APFS writes or patches."),
+                               QStringLiteral("path")};
+    QCommandLineOption patchOffset{
+        {QStringLiteral("patch-offset-bytes")},
+        QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
+        QStringLiteral("bytes")};
+    QCommandLineOption snapshotName{{QStringLiteral("snapshot-name")},
+                                    QStringLiteral(
+                                        "Snapshot name for a generated APFS snapshot create."),
+                                    QStringLiteral("name")};
+    QCommandLineOption outputJson{{QStringLiteral("output-json")},
+                                  QStringLiteral("Optional report JSON path."),
+                                  QStringLiteral("path")};
+    QCommandLineOption evidence{{QStringLiteral("evidence-id")},
+                                QStringLiteral("Certification/evidence ID."),
+                                QStringLiteral("id")};
+    QCommandLineOption confirm{{QStringLiteral("confirm-target")},
+                               QStringLiteral("Confirm destructive target mutation.")};
+    QCommandLineOption allowRaw{{QStringLiteral("allow-raw-target")},
+                                QStringLiteral("Permit Windows raw-device mutation.")};
+    QCommandLineOption compressZlib{
+        {QStringLiteral("compress-zlib")},
+        QStringLiteral("Store the inserted file transparently compressed (inline zlib "
+                       "com.apple.decmpfs); for commit-image/raw-file-insert.")};
+    QCommandLineOption volumePassword{
+        {QStringLiteral("volume-password")},
+        QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
+                       "password; for format-image. Credential-in, never stored."),
+        QStringLiteral("password")};
+    QCommandLineOption recoveryKey{
+        {QStringLiteral("recovery-key")},
+        QStringLiteral("Add a personal-recovery-key unlock record (used with --volume-password); "
+                       "the volume then unlocks by either the password or this recovery key; for "
+                       "format-image. Credential-in, never stored."),
+        QStringLiteral("recovery-key")};
+    QCommandLineOption sparseSize{
+        {QStringLiteral("sparse-size")},
+        QStringLiteral("Insert the file sparse with a trailing hole: its extents cover --payload "
+                       "and the inode's logical size is this many bytes (the gap reads as zeros); "
+                       "for commit-image-file-insert."),
+        QStringLiteral("bytes")};
+    QCommandLineOption xattr{
+        {QStringLiteral("xattr")},
+        QStringLiteral("Attach a named extended attribute name=hexvalue (repeatable); ACL names "
+                       "com.apple.system.Security / com.apple.FinderInfo set the matching inode "
+                       "flag; for commit-image-file-insert."),
+        QStringLiteral("name=hex")};
+};
+
+// Register every CLI option plus the positional command argument on `parser`.
+void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
+    parser.addOptions({options.target,
+                       options.size,
+                       options.blockSize,
+                       options.volumeName,
+                       options.additionalVolumeName,
+                       options.outputImage,
+                       options.fileName,
+                       options.directoryName,
+                       options.newFileName,
+                       options.destinationDirectoryName,
+                       options.payload,
+                       options.patchOffset,
+                       options.snapshotName,
+                       options.outputJson,
+                       options.evidence,
+                       options.confirm,
+                       options.allowRaw,
+                       options.compressZlib,
+                       options.volumePassword,
+                       options.recoveryKey,
+                       options.sparseSize,
+                       options.xattr});
+    parser.addPositionalArgument(
+        QStringLiteral("command"),
+        QStringLiteral(
+            "format-image, repair-image, write-image-root-file, write-image-root-directory-file, "
+            "patch-image-root-file, patch-image-root-directory-file, delete-image-root-file, "
+            "delete-image-root-directory-file, create-image-root-directory, "
+            "delete-image-root-directory, change-image-volume-label, format-raw, "
+            "write-raw-root-file, write-raw-root-directory-file, patch-raw-root-file, "
+            "patch-raw-root-directory-file, delete-raw-root-file, delete-raw-root-directory-file, "
+            "create-raw-root-directory, delete-raw-root-directory, change-raw-volume-label, "
+            "repair-raw, commit-raw-file-insert, commit-raw-file-delete, or "
+            "commit-raw-file-rename."));
+}
+
+// Bind the parsed options into a CliInvocation via invocationFromParser.
+std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser,
+                                                const CliOptions& options,
+                                                QString* error) {
+    return invocationFromParser(parser,
+                                {.target = &options.target,
+                                 .size = &options.size,
+                                 .block_size = &options.blockSize,
+                                 .volume_name = &options.volumeName,
+                                 .additional_volume_name = &options.additionalVolumeName,
+                                 .output_image = &options.outputImage,
+                                 .file_name = &options.fileName,
+                                 .directory_name = &options.directoryName,
+                                 .new_file_name = &options.newFileName,
+                                 .destination_directory_name = &options.destinationDirectoryName,
+                                 .payload = &options.payload,
+                                 .patch_offset = &options.patchOffset,
+                                 .snapshot_name = &options.snapshotName,
+                                 .evidence = &options.evidence,
+                                 .confirm = &options.confirm,
+                                 .allow_raw = &options.allowRaw,
+                                 .compress_zlib = &options.compressZlib,
+                                 .volume_password = &options.volumePassword,
+                                 .recovery_key = &options.recoveryKey,
+                                 .sparse_size = &options.sparseSize,
+                                 .xattr = &options.xattr},
+                                error);
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -2153,152 +2328,12 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     parser.addVersionOption();
 
-    const QCommandLineOption targetOption({QStringLiteral("target")},
-                                          QStringLiteral("Target raw partition or image path."),
-                                          QStringLiteral("path"));
-    const QCommandLineOption sizeOption({QStringLiteral("size-bytes")},
-                                        QStringLiteral("Target APFS container size in bytes."),
-                                        QStringLiteral("bytes"));
-    const QCommandLineOption blockSizeOption({QStringLiteral("block-size-bytes")},
-                                             QStringLiteral("APFS block size, default 4096."),
-                                             QStringLiteral("bytes"));
-    const QCommandLineOption volumeNameOption({QStringLiteral("volume-name")},
-                                              QStringLiteral("APFS volume name."),
-                                              QStringLiteral("name"),
-                                              QStringLiteral("SAK APFS"));
-    const QCommandLineOption additionalVolumeNameOption(
-        {QStringLiteral("additional-volume-name")},
-        QStringLiteral("Name of an additional APFS volume (repeatable; multi-volume format)."),
-        QStringLiteral("name"));
-    const QCommandLineOption outputImageOption({QStringLiteral("output-image")},
-                                               QStringLiteral("Image repair output path."),
-                                               QStringLiteral("path"));
-    const QCommandLineOption fileNameOption(
-        {QStringLiteral("file-name")},
-        QStringLiteral("Root or child file name for generated APFS writes."),
-        QStringLiteral("name"));
-    const QCommandLineOption directoryNameOption(
-        {QStringLiteral("directory-name")},
-        QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
-        QStringLiteral("name"));
-    const QCommandLineOption newFileNameOption(
-        {QStringLiteral("new-file-name")},
-        QStringLiteral("Destination file name for a generated APFS file move."),
-        QStringLiteral("name"));
-    const QCommandLineOption destinationDirectoryNameOption(
-        {QStringLiteral("destination-directory-name")},
-        QStringLiteral("Destination directory (empty = root) for a generated APFS file move."),
-        QStringLiteral("name"));
-    const QCommandLineOption payloadOption(
-        {QStringLiteral("payload-file")},
-        QStringLiteral("Payload file for generated APFS writes or patches."),
-        QStringLiteral("path"));
-    const QCommandLineOption patchOffsetOption(
-        {QStringLiteral("patch-offset-bytes")},
-        QStringLiteral("Byte offset for generated APFS partial root or child-file patch."),
-        QStringLiteral("bytes"));
-    const QCommandLineOption snapshotNameOption(
-        {QStringLiteral("snapshot-name")},
-        QStringLiteral("Snapshot name for a generated APFS snapshot create."),
-        QStringLiteral("name"));
-    const QCommandLineOption outputJsonOption({QStringLiteral("output-json")},
-                                              QStringLiteral("Optional report JSON path."),
-                                              QStringLiteral("path"));
-    const QCommandLineOption evidenceOption({QStringLiteral("evidence-id")},
-                                            QStringLiteral("Certification/evidence ID."),
-                                            QStringLiteral("id"));
-    const QCommandLineOption confirmOption({QStringLiteral("confirm-target")},
-                                           QStringLiteral("Confirm destructive target mutation."));
-    const QCommandLineOption allowRawOption({QStringLiteral("allow-raw-target")},
-                                            QStringLiteral("Permit Windows raw-device mutation."));
-    const QCommandLineOption compressZlibOption(
-        {QStringLiteral("compress-zlib")},
-        QStringLiteral("Store the inserted file transparently compressed (inline zlib "
-                       "com.apple.decmpfs); for commit-image/raw-file-insert."));
-    const QCommandLineOption volumePasswordOption(
-        {QStringLiteral("volume-password")},
-        QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
-                       "password; for format-image. Credential-in, never stored."),
-        QStringLiteral("password"));
-    const QCommandLineOption recoveryKeyOption(
-        {QStringLiteral("recovery-key")},
-        QStringLiteral("Add a personal-recovery-key unlock record (used with --volume-password); "
-                       "the volume then unlocks by either the password or this recovery key; for "
-                       "format-image. Credential-in, never stored."),
-        QStringLiteral("recovery-key"));
-    const QCommandLineOption sparseSizeOption(
-        {QStringLiteral("sparse-size")},
-        QStringLiteral("Insert the file sparse with a trailing hole: its extents cover --payload "
-                       "and the inode's logical size is this many bytes (the gap reads as zeros); "
-                       "for commit-image-file-insert."),
-        QStringLiteral("bytes"));
-    const QCommandLineOption xattrOption(
-        {QStringLiteral("xattr")},
-        QStringLiteral("Attach a named extended attribute name=hexvalue (repeatable); ACL names "
-                       "com.apple.system.Security / com.apple.FinderInfo set the matching inode "
-                       "flag; for commit-image-file-insert."),
-        QStringLiteral("name=hex"));
-    parser.addOptions({targetOption,
-                       sizeOption,
-                       blockSizeOption,
-                       volumeNameOption,
-                       additionalVolumeNameOption,
-                       outputImageOption,
-                       fileNameOption,
-                       directoryNameOption,
-                       newFileNameOption,
-                       destinationDirectoryNameOption,
-                       payloadOption,
-                       patchOffsetOption,
-                       snapshotNameOption,
-                       outputJsonOption,
-                       evidenceOption,
-                       confirmOption,
-                       allowRawOption,
-                       compressZlibOption,
-                       volumePasswordOption,
-                       recoveryKeyOption,
-                       sparseSizeOption,
-                       xattrOption});
-    parser.addPositionalArgument(
-        QStringLiteral("command"),
-        QStringLiteral(
-            "format-image, repair-image, write-image-root-file, write-image-root-directory-file, "
-            "patch-image-root-file, patch-image-root-directory-file, delete-image-root-file, "
-            "delete-image-root-directory-file, create-image-root-directory, "
-            "delete-image-root-directory, change-image-volume-label, format-raw, "
-            "write-raw-root-file, write-raw-root-directory-file, patch-raw-root-file, "
-            "patch-raw-root-directory-file, delete-raw-root-file, delete-raw-root-directory-file, "
-            "create-raw-root-directory, delete-raw-root-directory, change-raw-volume-label, "
-            "repair-raw, commit-raw-file-insert, commit-raw-file-delete, or "
-            "commit-raw-file-rename."));
+    CliOptions options;
+    registerCliOptions(parser, options);
     parser.process(app);
 
     QString parseError;
-    const auto invocation =
-        invocationFromParser(parser,
-                             {.target = &targetOption,
-                              .size = &sizeOption,
-                              .block_size = &blockSizeOption,
-                              .volume_name = &volumeNameOption,
-                              .additional_volume_name = &additionalVolumeNameOption,
-                              .output_image = &outputImageOption,
-                              .file_name = &fileNameOption,
-                              .directory_name = &directoryNameOption,
-                              .new_file_name = &newFileNameOption,
-                              .destination_directory_name = &destinationDirectoryNameOption,
-                              .payload = &payloadOption,
-                              .patch_offset = &patchOffsetOption,
-                              .snapshot_name = &snapshotNameOption,
-                              .evidence = &evidenceOption,
-                              .confirm = &confirmOption,
-                              .allow_raw = &allowRawOption,
-                              .compress_zlib = &compressZlibOption,
-                              .volume_password = &volumePasswordOption,
-                              .recovery_key = &recoveryKeyOption,
-                              .sparse_size = &sparseSizeOption,
-                              .xattr = &xattrOption},
-                             &parseError);
+    const auto invocation = parseCliInvocation(parser, options, &parseError);
     if (!invocation.has_value()) {
         QTextStream(stderr) << parseError << Qt::endl;
         return kExitInvalidArguments;
@@ -2312,7 +2347,7 @@ int main(int argc, char* argv[]) {
     }
 
     QString reportError;
-    if (!writeReport(*report, parser.value(outputJsonOption).trimmed(), &reportError)) {
+    if (!writeReport(*report, parser.value(options.outputJson).trimmed(), &reportError)) {
         QTextStream(stderr) << "Failed to write report: " << reportError << Qt::endl;
         return kExitReportFailed;
     }

@@ -8,12 +8,24 @@
 
 #include <QHash>
 
+#include <initializer_list>
+#include <utility>
+
 namespace sak {
 
 namespace {
 
-OperationRisk riskForType(PartitionOperationType type) {
-    static const QHash<int, OperationRisk> kRisks = {
+using RiskEntry = std::pair<int, OperationRisk>;
+using RiskEntryList = std::initializer_list<RiskEntry>;
+
+void insertRiskEntries(QHash<int, OperationRisk>* risks, RiskEntryList entries) {
+    for (const auto& entry : entries) {
+        risks->insert(entry.first, entry.second);
+    }
+}
+
+void insertCorePartitionRisks(QHash<int, OperationRisk>* risks) {
+    const RiskEntryList entries = {
         {static_cast<int>(PartitionOperationType::Create), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::Delete), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::Format), OperationRisk::Destructive},
@@ -39,6 +51,12 @@ OperationRisk riskForType(PartitionOperationType type) {
         {static_cast<int>(PartitionOperationType::Split), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ConvertFileSystem), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ChangeClusterSize), OperationRisk::Destructive},
+    };
+    insertRiskEntries(risks, entries);
+}
+
+void insertImagingAndMaintenanceRisks(QHash<int, OperationRisk>* risks) {
+    const RiskEntryList entries = {
         {static_cast<int>(PartitionOperationType::CloneDisk), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ClonePartition), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::CreateImage), OperationRisk::ReadOnly},
@@ -60,6 +78,12 @@ OperationRisk riskForType(PartitionOperationType type) {
          OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ConvertDynamicDiskToBasic),
          OperationRisk::Destructive},
+    };
+    insertRiskEntries(risks, entries);
+}
+
+void insertApfsRisks(QHash<int, OperationRisk>* risks) {
+    const RiskEntryList entries = {
         {static_cast<int>(PartitionOperationType::ApfsWriteRootFile), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ApfsPatchRootFile), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ApfsPatchRootDirectoryFile),
@@ -75,6 +99,12 @@ OperationRisk riskForType(PartitionOperationType type) {
          OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::ApfsChangeVolumeLabel),
          OperationRisk::Destructive},
+    };
+    insertRiskEntries(risks, entries);
+}
+
+void insertHfsRisks(QHash<int, OperationRisk>* risks) {
+    const RiskEntryList entries = {
         {static_cast<int>(PartitionOperationType::HfsOverwriteFile), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::HfsReplaceFile), OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::HfsGrowFile), OperationRisk::Destructive},
@@ -102,6 +132,20 @@ OperationRisk riskForType(PartitionOperationType type) {
         {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
          OperationRisk::Destructive},
     };
+    insertRiskEntries(risks, entries);
+}
+
+QHash<int, OperationRisk> buildRiskTable() {
+    QHash<int, OperationRisk> risks;
+    insertCorePartitionRisks(&risks);
+    insertImagingAndMaintenanceRisks(&risks);
+    insertApfsRisks(&risks);
+    insertHfsRisks(&risks);
+    return risks;
+}
+
+OperationRisk riskForType(PartitionOperationType type) {
+    static const QHash<int, OperationRisk> kRisks = buildRiskTable();
     return kRisks.value(static_cast<int>(type), OperationRisk::Low);
 }
 

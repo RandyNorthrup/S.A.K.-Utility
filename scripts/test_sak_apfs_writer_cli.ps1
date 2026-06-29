@@ -20,6 +20,12 @@ function Read-Report([string]$Path) {
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
+function Get-Sha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { ([BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
 if (-not (Test-Path -LiteralPath $CliPath -PathType Leaf)) {
     Fail "CLI not found: $CliPath"
 }
@@ -115,7 +121,7 @@ $imagePath = $relabeledImagePath
 
 [byte[]]$payloadBytes = for ($i = 0; $i -lt 9000; $i++) { [byte]($i % 251) }
 [System.IO.File]::WriteAllBytes($payloadPath, $payloadBytes)
-$payloadHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$payloadHash = Get-Sha256Hex $payloadPath
 & $CliPath write-image-root-file `
     --target $imagePath `
     --size-bytes $sizeBytes `
@@ -142,7 +148,7 @@ if ([int64]$writeReport.written_data_blocks -lt 2) {
 
 [byte[]]$replacementBytes = for ($i = 0; $i -lt 5123; $i++) { [byte](255 - ($i % 251)) }
 [System.IO.File]::WriteAllBytes($replacementPayloadPath, $replacementBytes)
-$replacementHash = (Get-FileHash -LiteralPath $replacementPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$replacementHash = Get-Sha256Hex $replacementPayloadPath
 & $CliPath write-image-root-file `
     --target $writtenImagePath `
     --size-bytes $sizeBytes `
@@ -163,13 +169,13 @@ if ($replaceReport.payload_sha256 -ne $replacementHash -or $replaceReport.readba
 
 [byte[]]$patchBytes = for ($i = 0; $i -lt 257; $i++) { [byte](65 + ($i % 26)) }
 [System.IO.File]::WriteAllBytes($patchPayloadPath, $patchBytes)
-$patchHash = (Get-FileHash -LiteralPath $patchPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$patchHash = Get-Sha256Hex $patchPayloadPath
 [byte[]]$patchedBytes = [byte[]]::new($replacementBytes.Length)
 [System.Array]::Copy($replacementBytes, $patchedBytes, $replacementBytes.Length)
 $patchOffset = 321
 [System.Array]::Copy($patchBytes, 0, $patchedBytes, $patchOffset, $patchBytes.Length)
 [System.IO.File]::WriteAllBytes($patchedExpectedPayloadPath, $patchedBytes)
-$patchedHash = (Get-FileHash -LiteralPath $patchedExpectedPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$patchedHash = Get-Sha256Hex $patchedExpectedPayloadPath
 & $CliPath patch-image-root-file `
     --target $replacedImagePath `
     --size-bytes $sizeBytes `
@@ -237,7 +243,7 @@ if (-not (Test-Path -LiteralPath $directoryImagePath -PathType Leaf)) {
 
 [byte[]]$directoryFileBytes = for ($i = 0; $i -lt 1234; $i++) { [byte](33 + ($i % 90)) }
 [System.IO.File]::WriteAllBytes($directoryFilePayloadPath, $directoryFileBytes)
-$directoryFileHash = (Get-FileHash -LiteralPath $directoryFilePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$directoryFileHash = Get-Sha256Hex $directoryFilePayloadPath
 & $CliPath write-image-root-directory-file `
     --target $directoryImagePath `
     --size-bytes $sizeBytes `
@@ -262,13 +268,13 @@ if ($directoryFileWriteReport.payload_sha256 -ne $directoryFileHash -or $directo
 
 [byte[]]$directoryFilePatchBytes = [System.Text.Encoding]::UTF8.GetBytes("CHILD-PATCH")
 [System.IO.File]::WriteAllBytes($directoryFilePatchPayloadPath, $directoryFilePatchBytes)
-$directoryFilePatchHash = (Get-FileHash -LiteralPath $directoryFilePatchPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$directoryFilePatchHash = Get-Sha256Hex $directoryFilePatchPayloadPath
 $directoryFilePatchOffset = 128
 [byte[]]$directoryFilePatchedBytes = [byte[]]::new($directoryFileBytes.Length)
 [System.Array]::Copy($directoryFileBytes, $directoryFilePatchedBytes, $directoryFileBytes.Length)
 [System.Array]::Copy($directoryFilePatchBytes, 0, $directoryFilePatchedBytes, $directoryFilePatchOffset, $directoryFilePatchBytes.Length)
 [System.IO.File]::WriteAllBytes($directoryFilePatchedExpectedPayloadPath, $directoryFilePatchedBytes)
-$directoryFilePatchedHash = (Get-FileHash -LiteralPath $directoryFilePatchedExpectedPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$directoryFilePatchedHash = Get-Sha256Hex $directoryFilePatchedExpectedPayloadPath
 & $CliPath patch-image-root-directory-file `
     --target $directoryFileImagePath `
     --size-bytes $sizeBytes `

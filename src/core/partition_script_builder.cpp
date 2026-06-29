@@ -592,80 +592,103 @@ struct HfsFileMutationSpec {
     QString verb;
 };
 
+void appendHfsFileForkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsOverwriteFile),
+                 {QStringLiteral("overwrite-image"),
+                  QStringLiteral("ui.hfs.raw-file-overwrite"),
+                  QStringLiteral("Overwrite")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceFile),
+                 {QStringLiteral("replace-image"),
+                  QStringLiteral("ui.hfs.raw-file-replace"),
+                  QStringLiteral("Replace")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsGrowFile),
+                 {QStringLiteral("grow-image"),
+                  QStringLiteral("ui.hfs.raw-file-allocation-growth"),
+                  QStringLiteral("Grow file")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsTruncateFile),
+                 {QStringLiteral("truncate-image"),
+                  QStringLiteral("ui.hfs.raw-file-truncate"),
+                  QStringLiteral("Truncate")});
+}
+
+void appendHfsResourceForkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceResourceFork),
+                 {QStringLiteral("replace-resource-fork-image"),
+                  QStringLiteral("ui.hfs.raw-resource-fork-replace"),
+                  QStringLiteral("Replace resource fork")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsGrowResourceFork),
+                 {QStringLiteral("grow-resource-fork-image"),
+                  QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth"),
+                  QStringLiteral("Grow resource fork")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsTruncateResourceFork),
+                 {QStringLiteral("truncate-resource-fork-image"),
+                  QStringLiteral("ui.hfs.raw-resource-fork-truncate"),
+                  QStringLiteral("Truncate resource fork")});
+}
+
+void appendHfsFileLifecycleMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsCreateEmptyFile),
+                 {QStringLiteral("create-empty-file-image"),
+                  QStringLiteral("ui.hfs.raw-empty-file-create"),
+                  QStringLiteral("Create empty file")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsCreateFile),
+                 {QStringLiteral("create-file-image"),
+                  QStringLiteral("ui.hfs.raw-file-create"),
+                  QStringLiteral("Create file")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteEmptyFile),
+                 {QStringLiteral("delete-empty-file-image"),
+                  QStringLiteral("ui.hfs.raw-empty-file-delete"),
+                  QStringLiteral("Delete empty file")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteFile),
+                 {QStringLiteral("delete-file-image"),
+                  QStringLiteral("ui.hfs.raw-file-delete"),
+                  QStringLiteral("Delete file")});
+}
+
+void appendHfsFolderMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsCreateEmptyFolder),
+                 {QStringLiteral("create-empty-folder-image"),
+                  QStringLiteral("ui.hfs.raw-empty-folder-create"),
+                  QStringLiteral("Create empty folder")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteEmptyFolder),
+                 {QStringLiteral("delete-empty-folder-image"),
+                  QStringLiteral("ui.hfs.raw-empty-folder-delete"),
+                  QStringLiteral("Delete empty folder")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteFolderTree),
+                 {QStringLiteral("delete-folder-tree-image"),
+                  QStringLiteral("ui.hfs.raw-folder-tree-delete"),
+                  QStringLiteral("Delete folder tree")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsRenameMoveCatalogEntry),
+                 {QStringLiteral("rename-catalog-entry-image"),
+                  QStringLiteral("ui.hfs.raw-catalog-rename-move"),
+                  QStringLiteral("Rename/move catalog entry")});
+}
+
+void appendHfsAttributeMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
+                 {QStringLiteral("replace-inline-attribute-image"),
+                  QStringLiteral("ui.hfs.raw-inline-attribute-replace"),
+                  QStringLiteral("Replace inline attribute")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
+                 {QStringLiteral("replace-fork-attribute-image"),
+                  QStringLiteral("ui.hfs.raw-fork-attribute-replace"),
+                  QStringLiteral("Replace fork attribute")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
+                 {QStringLiteral("grow-fork-attribute-image"),
+                  QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth"),
+                  QStringLiteral("Grow fork attribute")});
+}
+
 const QHash<int, HfsFileMutationSpec>& hfsFileMutationSpecs() {
-    static const QHash<int, HfsFileMutationSpec> kSpecs{
-        {static_cast<int>(PartitionOperationType::HfsOverwriteFile),
-         {QStringLiteral("overwrite-image"),
-          QStringLiteral("ui.hfs.raw-file-overwrite"),
-          QStringLiteral("Overwrite")}},
-        {static_cast<int>(PartitionOperationType::HfsReplaceFile),
-         {QStringLiteral("replace-image"),
-          QStringLiteral("ui.hfs.raw-file-replace"),
-          QStringLiteral("Replace")}},
-        {static_cast<int>(PartitionOperationType::HfsGrowFile),
-         {QStringLiteral("grow-image"),
-          QStringLiteral("ui.hfs.raw-file-allocation-growth"),
-          QStringLiteral("Grow file")}},
-        {static_cast<int>(PartitionOperationType::HfsTruncateFile),
-         {QStringLiteral("truncate-image"),
-          QStringLiteral("ui.hfs.raw-file-truncate"),
-          QStringLiteral("Truncate")}},
-        {static_cast<int>(PartitionOperationType::HfsReplaceResourceFork),
-         {QStringLiteral("replace-resource-fork-image"),
-          QStringLiteral("ui.hfs.raw-resource-fork-replace"),
-          QStringLiteral("Replace resource fork")}},
-        {static_cast<int>(PartitionOperationType::HfsGrowResourceFork),
-         {QStringLiteral("grow-resource-fork-image"),
-          QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth"),
-          QStringLiteral("Grow resource fork")}},
-        {static_cast<int>(PartitionOperationType::HfsTruncateResourceFork),
-         {QStringLiteral("truncate-resource-fork-image"),
-          QStringLiteral("ui.hfs.raw-resource-fork-truncate"),
-          QStringLiteral("Truncate resource fork")}},
-        {static_cast<int>(PartitionOperationType::HfsCreateEmptyFile),
-         {QStringLiteral("create-empty-file-image"),
-          QStringLiteral("ui.hfs.raw-empty-file-create"),
-          QStringLiteral("Create empty file")}},
-        {static_cast<int>(PartitionOperationType::HfsCreateFile),
-         {QStringLiteral("create-file-image"),
-          QStringLiteral("ui.hfs.raw-file-create"),
-          QStringLiteral("Create file")}},
-        {static_cast<int>(PartitionOperationType::HfsDeleteEmptyFile),
-         {QStringLiteral("delete-empty-file-image"),
-          QStringLiteral("ui.hfs.raw-empty-file-delete"),
-          QStringLiteral("Delete empty file")}},
-        {static_cast<int>(PartitionOperationType::HfsDeleteFile),
-         {QStringLiteral("delete-file-image"),
-          QStringLiteral("ui.hfs.raw-file-delete"),
-          QStringLiteral("Delete file")}},
-        {static_cast<int>(PartitionOperationType::HfsCreateEmptyFolder),
-         {QStringLiteral("create-empty-folder-image"),
-          QStringLiteral("ui.hfs.raw-empty-folder-create"),
-          QStringLiteral("Create empty folder")}},
-        {static_cast<int>(PartitionOperationType::HfsDeleteEmptyFolder),
-         {QStringLiteral("delete-empty-folder-image"),
-          QStringLiteral("ui.hfs.raw-empty-folder-delete"),
-          QStringLiteral("Delete empty folder")}},
-        {static_cast<int>(PartitionOperationType::HfsDeleteFolderTree),
-         {QStringLiteral("delete-folder-tree-image"),
-          QStringLiteral("ui.hfs.raw-folder-tree-delete"),
-          QStringLiteral("Delete folder tree")}},
-        {static_cast<int>(PartitionOperationType::HfsRenameMoveCatalogEntry),
-         {QStringLiteral("rename-catalog-entry-image"),
-          QStringLiteral("ui.hfs.raw-catalog-rename-move"),
-          QStringLiteral("Rename/move catalog entry")}},
-        {static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
-         {QStringLiteral("replace-inline-attribute-image"),
-          QStringLiteral("ui.hfs.raw-inline-attribute-replace"),
-          QStringLiteral("Replace inline attribute")}},
-        {static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
-         {QStringLiteral("replace-fork-attribute-image"),
-          QStringLiteral("ui.hfs.raw-fork-attribute-replace"),
-          QStringLiteral("Replace fork attribute")}},
-        {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
-         {QStringLiteral("grow-fork-attribute-image"),
-          QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth"),
-          QStringLiteral("Grow fork attribute")}}};
+    static const QHash<int, HfsFileMutationSpec> kSpecs = [] {
+        QHash<int, HfsFileMutationSpec> specs;
+        appendHfsFileForkMutationSpecs(specs);
+        appendHfsResourceForkMutationSpecs(specs);
+        appendHfsFileLifecycleMutationSpecs(specs);
+        appendHfsFolderMutationSpecs(specs);
+        appendHfsAttributeMutationSpecs(specs);
+        return specs;
+    }();
     return kSpecs;
 }
 

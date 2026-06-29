@@ -361,6 +361,50 @@ FileManagementMutationResult fromApfsCommitResult(
             .warnings = input.warnings};
 }
 
+// Route an APFS File Management file write onto the certified crash-safe in-place COW
+// engine: a single path component is a root file (create-or-replace), two components are
+// a one-level directory child (create-or-replace under a parent). Limited to root + one
+// level.
+FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
+                                           const QString& cleanPath,
+                                           const QByteArray& data) {
+    const QString fs = QStringLiteral("apfs");
+    if (!isApfsPathSupported(cleanPath, false)) {
+        return mutationBlocked(fs,
+                               cleanPath,
+                               QStringLiteral("APFS File Management file write is limited "
+                                              "to root files or one root-directory child"));
+    }
+    const auto parts = apfsParts(cleanPath);
+    if (parts.size() == 1) {
+        // Root files use the certified crash-safe in-place COW engine
+        // (create-or-replace).
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawFileWrite(
+                {.target_path = target.root_path,
+                 .target_container_bytes = target.size_bytes,
+                 .file_name = parts.value(0),
+                 .file_data = data,
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .options = apfsRawWriteOptions()}),
+            cleanPath,
+            static_cast<uint64_t>(data.size()));
+    }
+    // Directory children use the same COW engine (create-or-replace under a parent).
+    return fromApfsCommitResult(PartitionApfsWriter::commitRawDirectoryChildWrite(
+                                    {.target_path = target.root_path,
+                                     .target_container_bytes = target.size_bytes,
+                                     .directory_name = parts.value(0),
+                                     .file_name = parts.value(1),
+                                     .file_data = data,
+                                     .target_mutation_confirmed = true,
+                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
+                                     .options = apfsRawWriteOptions()}),
+                                cleanPath,
+                                static_cast<uint64_t>(data.size()));
+}
+
 }  // namespace
 
 QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
@@ -690,41 +734,7 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
             target.root_path, cleanPath, data, hfsWriteOptions(target)));
     }
     if (fs == QStringLiteral("apfs")) {
-        if (!isApfsPathSupported(cleanPath, false)) {
-            return mutationBlocked(fs,
-                                   cleanPath,
-                                   QStringLiteral("APFS File Management file write is limited "
-                                                  "to root files or one root-directory child"));
-        }
-        const auto parts = apfsParts(cleanPath);
-        if (parts.size() == 1) {
-            // Root files use the certified crash-safe in-place COW engine
-            // (create-or-replace).
-            return fromApfsCommitResult(
-                PartitionApfsWriter::commitRawFileWrite(
-                    {.target_path = target.root_path,
-                     .target_container_bytes = target.size_bytes,
-                     .file_name = parts.value(0),
-                     .file_data = data,
-                     .target_mutation_confirmed = true,
-                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                     .options = apfsRawWriteOptions()}),
-                cleanPath,
-                static_cast<uint64_t>(data.size()));
-        }
-        // Directory children use the same COW engine (create-or-replace under a parent).
-        return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawDirectoryChildWrite(
-                {.target_path = target.root_path,
-                 .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
-                 .file_name = parts.value(1),
-                 .file_data = data,
-                 .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
-            cleanPath,
-            static_cast<uint64_t>(data.size()));
+        return writeApfsFile(target, cleanPath, data);
     }
     return mutationBlocked(
         fs,

@@ -12,8 +12,11 @@
 
 namespace sak {
 
-QString toDisplayString(PartitionOperationType type) {
-    static const QStringList kNames = {
+namespace {
+
+// Names for the core block/partition-level operations (Create..Initialize Disk).
+QStringList corePartitionOperationNames() {
+    return {
         QStringLiteral("Create Partition"),
         QStringLiteral("Delete Partition"),
         QStringLiteral("Format Partition"),
@@ -27,6 +30,12 @@ QString toDisplayString(PartitionOperationType type) {
         QStringLiteral("Set Active/Inactive"),
         QStringLiteral("Change Partition Type ID"),
         QStringLiteral("Initialize Disk"),
+    };
+}
+
+// Names for the advanced layout / clone / imaging / wipe operations.
+QStringList advancedPartitionOperationNames() {
+    return {
         QStringLiteral("Delete All Partitions"),
         QStringLiteral("Resize Partition"),
         QStringLiteral("Allocate Free Space"),
@@ -53,6 +62,12 @@ QString toDisplayString(PartitionOperationType type) {
         QStringLiteral("Convert Primary/Logical"),
         QStringLiteral("Change Volume Serial Number"),
         QStringLiteral("Convert Dynamic Disk to Basic"),
+    };
+}
+
+// Names for the APFS root file-system mutation operations.
+QStringList apfsOperationNames() {
+    return {
         QStringLiteral("APFS Write Root File"),
         QStringLiteral("APFS Patch Root File"),
         QStringLiteral("APFS Patch Root Directory File"),
@@ -62,6 +77,12 @@ QString toDisplayString(PartitionOperationType type) {
         QStringLiteral("APFS Create Root Directory"),
         QStringLiteral("APFS Delete Root Directory"),
         QStringLiteral("APFS Change Volume Label"),
+    };
+}
+
+// Names for the HFS catalog / fork / attribute mutation operations.
+QStringList hfsOperationNames() {
+    return {
         QStringLiteral("HFS Overwrite File"),
         QStringLiteral("HFS Replace File"),
         QStringLiteral("HFS Grow File"),
@@ -81,6 +102,21 @@ QString toDisplayString(PartitionOperationType type) {
         QStringLiteral("HFS Replace Fork Attribute"),
         QStringLiteral("HFS Grow Fork Attribute"),
     };
+}
+
+// Builds the operation-name table in PartitionOperationType enum order.
+QStringList buildPartitionOperationNames() {
+    QStringList names = corePartitionOperationNames();
+    names += advancedPartitionOperationNames();
+    names += apfsOperationNames();
+    names += hfsOperationNames();
+    return names;
+}
+
+}  // namespace
+
+QString toDisplayString(PartitionOperationType type) {
+    static const QStringList kNames = buildPartitionOperationNames();
     const int index = static_cast<int>(type);
     return index >= 0 && index < kNames.size() ? kNames.at(index)
                                                : QStringLiteral("Unknown Operation");

@@ -474,9 +474,10 @@ bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
         return false;
     }
     const QString targetPath = normalizedTargetPath(operation);
-    return std::any_of(disk.partitions.cbegin(), disk.partitions.cend(), [&targetPath](auto& p) {
-        return p.volume && targetPathStartsWithDrive(targetPath, p.volume->drive_letter);
-    });
+    return std::any_of(
+        disk.partitions.cbegin(), disk.partitions.cend(), [&targetPath](const auto& p) {
+            return p.volume && targetPathStartsWithDrive(targetPath, p.volume->drive_letter);
+        });
 }
 
 bool isSupportedAllocationUnitSize(uint64_t value) {
@@ -934,10 +935,12 @@ bool recoveryCandidateOverlapsExistingPartition(const PartitionDiskInfo& disk,
         return false;
     }
     const uint64_t end = start + size;
-    return std::any_of(disk.partitions.cbegin(), disk.partitions.cend(), [start, end](auto& p) {
-        const uint64_t partition_end = p.offset_bytes + p.size_bytes;
-        return start < partition_end && end > p.offset_bytes;
-    });
+    return std::any_of(disk.partitions.cbegin(),
+                       disk.partitions.cend(),
+                       [start, end](const auto& p) {
+                           const uint64_t partition_end = p.offset_bytes + p.size_bytes;
+                           return start < partition_end && end > p.offset_bytes;
+                       });
 }
 
 bool recoveryCandidateExceedsDisk(const PartitionDiskInfo& disk,
@@ -1334,9 +1337,9 @@ void validateImageRestoreContentBlockers(const PartitionInfoEx& partition,
                  QStringLiteral("Create Image destination cannot be on the source partition"));
 }
 
-void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
-                                      const PartitionOperation& operation,
-                                      PartitionValidationResult* result) {
+void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
+                                          const PartitionOperation& operation,
+                                          PartitionValidationResult* result) {
     addBlockerIf(result,
                  operation.type == PartitionOperationType::Format &&
                      operation.target.partition_number == 0,
@@ -1365,6 +1368,10 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  nonNativeResizeShrinkNeedsUsageMetadata(partition, operation),
                  QStringLiteral("Ext shrink requires detected filesystem usage metadata"));
+}
+
+void validateApfsRootMutationContentBlockers(const PartitionOperation& operation,
+                                             PartitionValidationResult* result) {
     addBlockerIf(result,
                  apfsRootFileMutationMissingToolMarker(operation),
                  QStringLiteral("APFS generated root mutation must use non-Windows tool payload"));
@@ -1398,6 +1405,10 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  apfsRootFilePatchMissingOffset(operation),
                  QStringLiteral("APFS root or child-file patch requires a byte offset"));
+}
+
+void validateHfsFileMutationContentBlockers(const PartitionOperation& operation,
+                                            PartitionValidationResult* result) {
     addBlockerIf(result,
                  hfsFileMutationMissingToolMarker(operation),
                  QStringLiteral("HFS+ file mutation must use non-Windows tool payload"));
@@ -1426,6 +1437,14 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
                  hfsSecureWipeUnsupported(operation),
                  QStringLiteral("HFS+ secure block wipe is supported only for delete-file or "
                                 "delete-folder-tree mutations"));
+}
+
+void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
+                                      const PartitionOperation& operation,
+                                      PartitionValidationResult* result) {
+    validateNonNativeToolContentBlockers(partition, operation, result);
+    validateApfsRootMutationContentBlockers(operation, result);
+    validateHfsFileMutationContentBlockers(operation, result);
 }
 
 void validateResizeContentBlockers(const PartitionInfoEx& partition,
@@ -1591,18 +1610,19 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
 
 const PartitionDiskInfo* PartitionSafetyValidator::findDisk(const PartitionInventory& inventory,
                                                             uint32_t disk_number) {
-    auto it = std::find_if(inventory.disks.begin(), inventory.disks.end(), [disk_number](auto& d) {
-        return d.disk_number == disk_number;
-    });
+    auto it = std::find_if(inventory.disks.begin(),
+                           inventory.disks.end(),
+                           [disk_number](const auto& d) { return d.disk_number == disk_number; });
     return it == inventory.disks.end() ? nullptr : &(*it);
 }
 
 const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDiskInfo& disk,
                                                                uint32_t partition_number) {
-    auto it =
-        std::find_if(disk.partitions.begin(), disk.partitions.end(), [partition_number](auto& p) {
-            return p.partition_number == partition_number;
-        });
+    auto it = std::find_if(disk.partitions.begin(),
+                           disk.partitions.end(),
+                           [partition_number](const auto& p) {
+                               return p.partition_number == partition_number;
+                           });
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 

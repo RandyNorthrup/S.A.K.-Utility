@@ -1277,21 +1277,7 @@ QByteArray testCompressedAttrPayload(uint32_t type, const QByteArray& content) {
     return attrPayload;
 }
 
-QByteArray hfsCompressedFixture(uint32_t type,
-                                const QByteArray& content,
-                                int inlineSpareBytes = 0) {
-    QByteArray image = hfsReaderAttributeFixture();
-
-    HfsFileRecordFixture packed;
-    packed.file_id = kTestHfsCompressedFileId;
-    const QByteArray resourceForkBytes = testCompressedResourceForkBytes(type, content);
-    if (!resourceForkBytes.isEmpty()) {
-        packed.resource_fork =
-            HfsForkFixture{.logical_size = static_cast<uint64_t>(resourceForkBytes.size()),
-                           .total_blocks = kTestHfsCompressedResourceBlocks,
-                           .first_block = kTestHfsCompressedResourceStartBlock,
-                           .first_block_count = kTestHfsCompressedResourceBlocks};
-    }
+void writeHfsCompressedCatalog(QByteArray* image, const HfsFileRecordFixture& packed) {
     const QVector<QByteArray> catalogRecords{
         hfsCatalogRecord(2, QStringLiteral("Docs"), hfsFolderRecord(16)),
         hfsCatalogRecord(
@@ -1303,15 +1289,19 @@ QByteArray hfsCompressedFixture(uint32_t type,
             16,
             QStringLiteral("note.txt"),
             hfsFileRecord(18, QByteArrayLiteral("nested hfs note\n"), kTestHfsNoteFileBlock))};
-    writeHfsCatalogLeafRecords(&image, kTestHfsCatalogStartBlock + 1, catalogRecords);
+    writeHfsCatalogLeafRecords(image, kTestHfsCatalogStartBlock + 1, catalogRecords);
     const qsizetype catalogHeaderOffset =
         static_cast<qsizetype>(kTestHfsCatalogStartBlock * kTestHfsBlockSize);
-    writeBe32(&image,
+    writeBe32(image,
               catalogHeaderOffset + kTestHfsBTreeHeaderRecordOffset +
                   kTestHfsBTreeHeaderLeafRecordsOffset,
               4);
-    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFileCountOffset, 3);
+    writeBe32(image, kTestHfsHeaderOffset + kTestHfsFileCountOffset, 3);
+}
 
+QByteArray hfsCompressedDecmpfsRecord(uint32_t type,
+                                      const QByteArray& content,
+                                      int inlineSpareBytes) {
     const QByteArray attrPayload = testCompressedAttrPayload(type, content);
     QByteArray paddedPayload = attrPayload;
     paddedPayload.append(QByteArray(inlineSpareBytes, '\0'));
@@ -1322,7 +1312,10 @@ QByteArray hfsCompressedFixture(uint32_t type,
                                                   paddedPayload);
     const qsizetype sizeFieldOffset = 2 + (12 + 17 * 2) + 12;
     writeBe32(&decmpfsRecord, sizeFieldOffset, static_cast<uint32_t>(attrPayload.size()));
+    return decmpfsRecord;
+}
 
+void writeHfsCompressedAttributeNode(QByteArray* image, const QByteArray& decmpfsRecord) {
     const QVector<QByteArray> attrRecords{
         hfsAttributeRecord(17,
                            QStringLiteral("com.apple.FinderInfo"),
@@ -1352,23 +1345,47 @@ QByteArray hfsCompressedFixture(uint32_t type,
         attrCursor += record.size();
     }
     writeHfsNodeOffsets(&attrNode, attrOffsets, attrCursor);
-    std::copy(attrNode.cbegin(), attrNode.cend(), image.begin() + attrNodeOffset);
+    std::copy(attrNode.cbegin(), attrNode.cend(), image->begin() + attrNodeOffset);
     const qsizetype attrHeaderOffset =
         static_cast<qsizetype>(kTestHfsAttributesStartBlock * kTestHfsBlockSize);
-    writeBe32(&image,
+    writeBe32(image,
               attrHeaderOffset + kTestHfsBTreeHeaderRecordOffset +
                   kTestHfsBTreeHeaderLeafRecordsOffset,
               3);
+}
 
-    if (!resourceForkBytes.isEmpty()) {
-        for (uint32_t block = 0; block < kTestHfsCompressedResourceBlocks; ++block) {
-            setHfsAllocationBit(&image, kTestHfsCompressedResourceStartBlock + block);
-        }
-        std::copy(resourceForkBytes.cbegin(),
-                  resourceForkBytes.cend(),
-                  image.begin() + static_cast<qsizetype>(kTestHfsCompressedResourceStartBlock *
-                                                         kTestHfsBlockSize));
+void writeHfsCompressedResourceFork(QByteArray* image, const QByteArray& resourceForkBytes) {
+    if (resourceForkBytes.isEmpty()) {
+        return;
     }
+    for (uint32_t block = 0; block < kTestHfsCompressedResourceBlocks; ++block) {
+        setHfsAllocationBit(image, kTestHfsCompressedResourceStartBlock + block);
+    }
+    std::copy(resourceForkBytes.cbegin(),
+              resourceForkBytes.cend(),
+              image->begin() +
+                  static_cast<qsizetype>(kTestHfsCompressedResourceStartBlock * kTestHfsBlockSize));
+}
+
+QByteArray hfsCompressedFixture(uint32_t type,
+                                const QByteArray& content,
+                                int inlineSpareBytes = 0) {
+    QByteArray image = hfsReaderAttributeFixture();
+
+    HfsFileRecordFixture packed;
+    packed.file_id = kTestHfsCompressedFileId;
+    const QByteArray resourceForkBytes = testCompressedResourceForkBytes(type, content);
+    if (!resourceForkBytes.isEmpty()) {
+        packed.resource_fork =
+            HfsForkFixture{.logical_size = static_cast<uint64_t>(resourceForkBytes.size()),
+                           .total_blocks = kTestHfsCompressedResourceBlocks,
+                           .first_block = kTestHfsCompressedResourceStartBlock,
+                           .first_block_count = kTestHfsCompressedResourceBlocks};
+    }
+    writeHfsCompressedCatalog(&image, packed);
+    const QByteArray decmpfsRecord = hfsCompressedDecmpfsRecord(type, content, inlineSpareBytes);
+    writeHfsCompressedAttributeNode(&image, decmpfsRecord);
+    writeHfsCompressedResourceFork(&image, resourceForkBytes);
     return image;
 }
 
@@ -3878,30 +3895,85 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsForksWithAllocationBitm
     QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("not have enough free blocks")));
 }
 
+namespace {
+
+struct HfsCompressedReadBackCase {
+    const char* imageName;
+    uint32_t type;
+    QByteArray content;
+    qsizetype readCap;
+    QString expectedWarning;
+};
+
+void verifyHfsCompressedReadBack(QTemporaryDir& temp, const HfsCompressedReadBackCase& testCase) {
+    const QString path = temp.filePath(QString::fromLatin1(testCase.imageName));
+    QVERIFY(writeBytes(path, hfsCompressedFixture(testCase.type, testCase.content)));
+    const auto read = PartitionHfsFileSystemReader::readFileFromImage(path,
+                                                                      QStringLiteral("/packed.bin"),
+                                                                      testCase.readCap);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, testCase.content);
+    if (!testCase.expectedWarning.isEmpty()) {
+        QVERIFY(read.warnings.join(' ').contains(testCase.expectedWarning));
+    }
+}
+
+// LZVN and LZFSE containers (raw-escape inline chunks, chunked offset-table
+// resource forks, and a handcrafted lzfse uncompressed block).
+void verifyHfsLzvnLzfseReadBack(QTemporaryDir& temp,
+                                const QByteArray& inlineContent,
+                                const QByteArray& rawContent) {
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzvn-inline.img",
+                                 .type = 7,
+                                 .content = inlineContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QStringLiteral("decmpfs type-7")});
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzvn-resource.img",
+                                 .type = 8,
+                                 .content = rawContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QString()});
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzfse-inline.img",
+                                 .type = 11,
+                                 .content = inlineContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QStringLiteral("decmpfs type-11")});
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzfse-resource.img",
+                                 .type = 12,
+                                 .content = rawContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QString()});
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::hfsFileSystemReader_readsDecmpfsCompressedFiles() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
     QByteArray inlineContent(900, 'Z');
     inlineContent.replace(0, 26, QByteArrayLiteral("decmpfs inline zlib proof\n"));
-    const QString inlinePath = temp.filePath(QStringLiteral("hfs-decmpfs-inline.img"));
-    QVERIFY(writeBytes(inlinePath, hfsCompressedFixture(3, inlineContent)));
-    const auto inlineRead = PartitionHfsFileSystemReader::readFileFromImage(
-        inlinePath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(inlineRead.ok, qPrintable(inlineRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(inlineRead.data, inlineContent);
-    QVERIFY(inlineRead.warnings.join(' ').contains(QStringLiteral("decmpfs type-3")));
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-inline.img",
+                                 .type = 3,
+                                 .content = inlineContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QStringLiteral("decmpfs type-3")});
 
     QByteArray rawContent = QByteArrayLiteral("incompressible?");
     while (rawContent.size() < 64) {
         rawContent.append(static_cast<char>((rawContent.size() * 89 + 7) % 251));
     }
-    const QString rawPath = temp.filePath(QStringLiteral("hfs-decmpfs-raw.img"));
-    QVERIFY(writeBytes(rawPath, hfsCompressedFixture(3, rawContent)));
-    const auto rawRead = PartitionHfsFileSystemReader::readFileFromImage(
-        rawPath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(rawRead.ok, qPrintable(rawRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(rawRead.data, rawContent);
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-raw.img",
+                                 .type = 3,
+                                 .content = rawContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QString()});
 
     QByteArray resourceContent(70'000, 'R');
     for (int index = 0; index < resourceContent.size(); index += 97) {
@@ -3920,39 +3992,7 @@ void PartitionManagerCoreTests::hfsFileSystemReader_readsDecmpfsCompressedFiles(
     QVERIFY(!capBlocked.ok);
     QVERIFY(capBlocked.blockers.join(' ').contains(QStringLiteral("read cap")));
 
-    // LZVN and LZFSE containers (raw-escape inline chunks, chunked offset-table
-    // resource forks, and a handcrafted lzfse uncompressed block).
-    const QString lzvnInlinePath = temp.filePath(QStringLiteral("hfs-decmpfs-lzvn-inline.img"));
-    QVERIFY(writeBytes(lzvnInlinePath, hfsCompressedFixture(7, inlineContent)));
-    const auto lzvnInlineRead = PartitionHfsFileSystemReader::readFileFromImage(
-        lzvnInlinePath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(lzvnInlineRead.ok, qPrintable(lzvnInlineRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(lzvnInlineRead.data, inlineContent);
-    QVERIFY(lzvnInlineRead.warnings.join(' ').contains(QStringLiteral("decmpfs type-7")));
-
-    const QString lzvnResourcePath = temp.filePath(QStringLiteral("hfs-decmpfs-lzvn-resource.img"));
-    QVERIFY(writeBytes(lzvnResourcePath, hfsCompressedFixture(8, rawContent)));
-    const auto lzvnResourceRead = PartitionHfsFileSystemReader::readFileFromImage(
-        lzvnResourcePath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(lzvnResourceRead.ok, qPrintable(lzvnResourceRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(lzvnResourceRead.data, rawContent);
-
-    const QString lzfseInlinePath = temp.filePath(QStringLiteral("hfs-decmpfs-lzfse-inline.img"));
-    QVERIFY(writeBytes(lzfseInlinePath, hfsCompressedFixture(11, inlineContent)));
-    const auto lzfseInlineRead = PartitionHfsFileSystemReader::readFileFromImage(
-        lzfseInlinePath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(lzfseInlineRead.ok, qPrintable(lzfseInlineRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(lzfseInlineRead.data, inlineContent);
-    QVERIFY(lzfseInlineRead.warnings.join(' ').contains(QStringLiteral("decmpfs type-11")));
-
-    const QString lzfseResourcePath =
-        temp.filePath(QStringLiteral("hfs-decmpfs-lzfse-resource.img"));
-    QVERIFY(writeBytes(lzfseResourcePath, hfsCompressedFixture(12, rawContent)));
-    const auto lzfseResourceRead = PartitionHfsFileSystemReader::readFileFromImage(
-        lzfseResourcePath, QStringLiteral("/packed.bin"), 4096);
-    QVERIFY2(lzfseResourceRead.ok,
-             qPrintable(lzfseResourceRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(lzfseResourceRead.data, rawContent);
+    verifyHfsLzvnLzfseReadBack(temp, inlineContent, rawContent);
 
     const QString unsupportedPath = temp.filePath(QStringLiteral("hfs-decmpfs-unknown.img"));
     QVERIFY(writeBytes(unsupportedPath, hfsCompressedFixture(9, inlineContent)));
@@ -3963,22 +4003,15 @@ void PartitionManagerCoreTests::hfsFileSystemReader_readsDecmpfsCompressedFiles(
         QStringLiteral("compression type 9 is not supported")));
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedContent() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
+namespace {
 
-    PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
-    options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-decmpfs-replace");
-
-    QByteArray inlineContent(900, 'Z');
+void verifyHfsDecmpfsInlineReplace(QTemporaryDir& temp,
+                                   PartitionHfsFileWriteOptions& options,
+                                   const QByteArray& inlineContent,
+                                   const QByteArray& newInlineContent) {
     const QString inlinePath = temp.filePath(QStringLiteral("hfs-decmpfs-inline-write.img"));
     QVERIFY(writeBytes(inlinePath, hfsCompressedFixture(3, inlineContent, 128)));
 
-    QByteArray newInlineContent(700, 'Q');
-    newInlineContent.replace(0, 24, QByteArrayLiteral("replaced inline payload\n"));
     const auto blockedWithoutOptIn =
         PartitionHfsFileSystemWriter::replaceCompressedFileContentFromImage(
             inlinePath, QStringLiteral("/packed.bin"), newInlineContent, options);
@@ -4000,7 +4033,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedCon
         inlinePath, QStringLiteral("/packed.bin"), 4096);
     QVERIFY2(inlineReadBack.ok, qPrintable(inlineReadBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(inlineReadBack.data, newInlineContent);
+}
 
+void verifyHfsDecmpfsResourceReplace(QTemporaryDir& temp,
+                                     const PartitionHfsFileWriteOptions& options) {
     QByteArray resourceContent(70'000, 'R');
     const QString resourcePath = temp.filePath(QStringLiteral("hfs-decmpfs-resource-write.img"));
     QVERIFY(writeBytes(resourcePath, hfsCompressedFixture(4, resourceContent)));
@@ -4032,7 +4068,11 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedCon
             << (8 * index);
     }
     QCOMPARE(storedSize, static_cast<uint64_t>(newResourceContent.size()));
+}
 
+void verifyHfsDecmpfsCodecReplace(QTemporaryDir& temp,
+                                  const PartitionHfsFileWriteOptions& options,
+                                  const QByteArray& inlineContent) {
     // LZVN and LZFSE replacement round trips: the replacement payload runs
     // through the vendored Apple reference encoders and must read back exactly
     // through the matching decoders.
@@ -4074,6 +4114,26 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedCon
                                 .arg(codecReadBack.blockers.join(QStringLiteral("; ")))));
         QCOMPARE(codecReadBack.data, replacement);
     }
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedContent() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-decmpfs-replace");
+
+    QByteArray inlineContent(900, 'Z');
+    QByteArray newInlineContent(700, 'Q');
+    newInlineContent.replace(0, 24, QByteArrayLiteral("replaced inline payload\n"));
+    verifyHfsDecmpfsInlineReplace(temp, options, inlineContent, newInlineContent);
+    verifyHfsDecmpfsResourceReplace(temp, options);
+    verifyHfsDecmpfsCodecReplace(temp, options, inlineContent);
 
     const QString unsupportedPath = temp.filePath(QStringLiteral("hfs-decmpfs-unknown-write.img"));
     QVERIFY(writeBytes(unsupportedPath, hfsCompressedFixture(9, inlineContent)));
@@ -4085,26 +4145,9 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesDecmpfsCompressedCon
         QStringLiteral("supported decmpfs payload")));
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_splitsCatalogRootLeafOnCreate() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
+namespace {
 
-    PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
-    options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-catalog-root-leaf-split");
-
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-catalog-split-create.img"));
-    QVERIFY(writeBytes(imagePath, hfsSplitReadyFixture()));
-
-    const auto created = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        imagePath, QStringLiteral("/split-created.txt"), options);
-    QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(created.catalog_id, 30U);
-    QVERIFY(created.warnings.join(' ').contains(QStringLiteral("split into two leaf nodes")));
-
-    const QByteArray after = readBytes(imagePath);
+void verifyHfsSplitHeaderShape(const QByteArray& after) {
     const qsizetype headerOffset =
         static_cast<qsizetype>(kTestHfsCatalogStartBlock * kTestHfsBlockSize) +
         kTestHfsBTreeHeaderRecordOffset;
@@ -4131,27 +4174,9 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_splitsCatalogRootLeafOnCreat
         static_cast<qsizetype>((kTestHfsCatalogStartBlock + lastLeaf) * kTestHfsBlockSize);
     QCOMPARE(readBe32(after, leftLeafOffset), lastLeaf);
     QCOMPARE(readBe32(after, rightLeafOffset + 4), firstLeaf);
+}
 
-    const auto root =
-        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 40);
-    QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(root.entries.size(), kTestHfsSplitFixtureFileCount + 1);
-    QVERIFY(std::any_of(root.entries.cbegin(), root.entries.cend(), [](const auto& entry) {
-        return entry.name == QStringLiteral("split-created.txt") && entry.regular_file;
-    }));
-
-    const auto firstFile =
-        PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/file-aa"), 1);
-    QVERIFY2(firstFile.ok, qPrintable(firstFile.blockers.join(QStringLiteral("; "))));
-    QVERIFY(firstFile.data.isEmpty());
-
-    const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
-                                                                                     200);
-    QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(consistency.files, kTestHfsSplitFixtureFileCount + 1);
-    QCOMPARE(consistency.records_scanned, kTestHfsSplitFixtureFileCount + 2);
-    QVERIFY(!consistency.warnings.join(' ').contains(QStringLiteral("record count mismatch")));
-
+void verifyHfsSplitDataAndFolder(QTemporaryDir& temp, const PartitionHfsFileWriteOptions& options) {
     const QString dataImagePath = temp.filePath(QStringLiteral("hfs-catalog-split-data.img"));
     QVERIFY(writeBytes(dataImagePath, hfsSplitReadyFixture()));
     const QByteArray payload(300, 'P');
@@ -4177,6 +4202,136 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_splitsCatalogRootLeafOnCreat
     QVERIFY2(folderListing.ok, qPrintable(folderListing.blockers.join(QStringLiteral("; "))));
     QVERIFY(folderListing.entries.isEmpty());
 }
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_splitsCatalogRootLeafOnCreate() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-catalog-root-leaf-split");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-catalog-split-create.img"));
+    QVERIFY(writeBytes(imagePath, hfsSplitReadyFixture()));
+
+    const auto created = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        imagePath, QStringLiteral("/split-created.txt"), options);
+    QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(created.catalog_id, 30U);
+    QVERIFY(created.warnings.join(' ').contains(QStringLiteral("split into two leaf nodes")));
+
+    const QByteArray after = readBytes(imagePath);
+    verifyHfsSplitHeaderShape(after);
+
+    const auto root =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 40);
+    QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(root.entries.size(), kTestHfsSplitFixtureFileCount + 1);
+    QVERIFY(std::any_of(root.entries.cbegin(), root.entries.cend(), [](const auto& entry) {
+        return entry.name == QStringLiteral("split-created.txt") && entry.regular_file;
+    }));
+
+    const auto firstFile =
+        PartitionHfsFileSystemReader::readFileFromImage(imagePath, QStringLiteral("/file-aa"), 1);
+    QVERIFY2(firstFile.ok, qPrintable(firstFile.blockers.join(QStringLiteral("; "))));
+    QVERIFY(firstFile.data.isEmpty());
+
+    const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
+                                                                                     200);
+    QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(consistency.files, kTestHfsSplitFixtureFileCount + 1);
+    QCOMPARE(consistency.records_scanned, kTestHfsSplitFixtureFileCount + 2);
+    QVERIFY(!consistency.warnings.join(' ').contains(QStringLiteral("record count mismatch")));
+
+    verifyHfsSplitDataAndFolder(temp, options);
+}
+
+namespace {
+
+void verifyHfsDepthTwoThirdLeaf(const QString& imagePath, qsizetype headerOffset) {
+    const QByteArray afterThirdLeaf = readBytes(imagePath);
+    QCOMPARE(readBe16(afterThirdLeaf, headerOffset + kTestHfsBTreeHeaderTreeDepthOffset), 2);
+    const uint32_t firstLeaf = readBe32(afterThirdLeaf,
+                                        headerOffset + kTestHfsBTreeHeaderFirstLeafNodeOffset);
+    int chainLeaves = 0;
+    uint32_t chainNode = firstLeaf;
+    while (chainNode != 0 && chainLeaves < 8) {
+        ++chainLeaves;
+        const qsizetype leafOffset =
+            static_cast<qsizetype>((kTestHfsCatalogStartBlock + chainNode) * kTestHfsBlockSize);
+        chainNode = readBe32(afterThirdLeaf, leafOffset);
+    }
+    QVERIFY(chainLeaves >= 3);
+}
+
+void verifyHfsDepthTwoDeleteRenameFolder(const QString& imagePath,
+                                         const PartitionHfsFileWriteOptions& options) {
+    // Depth-2 delete and rename, including a cross-leaf move.
+    const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+        imagePath, QStringLiteral("/zzz-00.txt"), options);
+    QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
+    const auto deletedReadBack = PartitionHfsFileSystemReader::readFileFromImage(
+        imagePath, QStringLiteral("/zzz-00.txt"), 1);
+    QVERIFY(!deletedReadBack.ok);
+
+    const auto renamed = PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
+        imagePath, QStringLiteral("/zzz-01.txt"), QStringLiteral("/aaa-moved.txt"), options);
+    QVERIFY2(renamed.ok, qPrintable(renamed.blockers.join(QStringLiteral("; "))));
+    const auto renamedReadBack = PartitionHfsFileSystemReader::readFileFromImage(
+        imagePath, QStringLiteral("/aaa-moved.txt"), 1);
+    QVERIFY2(renamedReadBack.ok, qPrintable(renamedReadBack.blockers.join(QStringLiteral("; "))));
+
+    // Depth-2 folder lifecycle.
+    const auto folderCreated = PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
+        imagePath, QStringLiteral("/Depth Two Folder"), options);
+    QVERIFY2(folderCreated.ok, qPrintable(folderCreated.blockers.join(QStringLiteral("; "))));
+    const auto childCreated = PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+        imagePath,
+        QStringLiteral("/Depth Two Folder/nested.bin"),
+        QByteArrayLiteral("depth two nested payload\n"),
+        options);
+    QVERIFY2(childCreated.ok, qPrintable(childCreated.blockers.join(QStringLiteral("; "))));
+    const auto treeDeleted =
+        PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocksFromImage(
+            imagePath, QStringLiteral("/Depth Two Folder"), options);
+    QVERIFY2(treeDeleted.ok, qPrintable(treeDeleted.blockers.join(QStringLiteral("; "))));
+}
+
+void verifyHfsDepthTwoDrainCollapse(const QString& imagePath,
+                                    const PartitionHfsFileWriteOptions& options,
+                                    qsizetype headerOffset) {
+    // Drain every file; emptied leaves are removed and the tree collapses back
+    // to a one-level catalog with the freed nodes erased.
+    const auto rootListing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 100);
+    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
+    for (const auto& entry : rootListing.entries) {
+        const auto drained = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+            imagePath, QStringLiteral("/%1").arg(entry.name), options);
+        QVERIFY2(drained.ok,
+                 qPrintable(QStringLiteral("%1: %2").arg(
+                     entry.name, drained.blockers.join(QStringLiteral("; ")))));
+    }
+    const QByteArray afterDrain = readBytes(imagePath);
+    QCOMPARE(readBe16(afterDrain, headerOffset + kTestHfsBTreeHeaderTreeDepthOffset), 1);
+    QCOMPARE(readBe32(afterDrain, headerOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 0U);
+    QCOMPARE(readBe32(afterDrain, headerOffset + kTestHfsBTreeHeaderFreeNodesOffset),
+             static_cast<uint32_t>(kTestHfsSplitCatalogTotalNodes - 2));
+    const auto emptyListing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 10);
+    QVERIFY2(emptyListing.ok, qPrintable(emptyListing.blockers.join(QStringLiteral("; "))));
+    QVERIFY(emptyListing.entries.isEmpty());
+
+    const auto finalConsistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
+                                                                                          400);
+    QVERIFY2(finalConsistency.ok, qPrintable(finalConsistency.blockers.join(QStringLiteral("; "))));
+}
+
+}  // namespace
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthTwoCatalogs() {
     QTemporaryDir temp;
@@ -4212,84 +4367,70 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthTwoCatalogs() {
             PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath, name, options);
         QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
     }
-    const QByteArray afterThirdLeaf = readBytes(imagePath);
     const qsizetype headerOffset =
         static_cast<qsizetype>(kTestHfsCatalogStartBlock * kTestHfsBlockSize) +
         kTestHfsBTreeHeaderRecordOffset;
-    QCOMPARE(readBe16(afterThirdLeaf, headerOffset + kTestHfsBTreeHeaderTreeDepthOffset), 2);
-    const uint32_t firstLeaf = readBe32(afterThirdLeaf,
-                                        headerOffset + kTestHfsBTreeHeaderFirstLeafNodeOffset);
-    int chainLeaves = 0;
-    uint32_t chainNode = firstLeaf;
-    while (chainNode != 0 && chainLeaves < 8) {
-        ++chainLeaves;
-        const qsizetype leafOffset =
-            static_cast<qsizetype>((kTestHfsCatalogStartBlock + chainNode) * kTestHfsBlockSize);
-        chainNode = readBe32(afterThirdLeaf, leafOffset);
-    }
-    QVERIFY(chainLeaves >= 3);
+    verifyHfsDepthTwoThirdLeaf(imagePath, headerOffset);
 
     const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
                                                                                      400);
     QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
     QVERIFY(!consistency.warnings.join(' ').contains(QStringLiteral("record count mismatch")));
 
-    // Depth-2 delete and rename, including a cross-leaf move.
-    const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
-        imagePath, QStringLiteral("/zzz-00.txt"), options);
-    QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
-    const auto deletedReadBack = PartitionHfsFileSystemReader::readFileFromImage(
-        imagePath, QStringLiteral("/zzz-00.txt"), 1);
-    QVERIFY(!deletedReadBack.ok);
+    verifyHfsDepthTwoDeleteRenameFolder(imagePath, options);
+    verifyHfsDepthTwoDrainCollapse(imagePath, options, headerOffset);
+}
 
-    const auto renamed = PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
-        imagePath, QStringLiteral("/zzz-01.txt"), QStringLiteral("/aaa-moved.txt"), options);
-    QVERIFY2(renamed.ok, qPrintable(renamed.blockers.join(QStringLiteral("; "))));
-    const auto renamedReadBack = PartitionHfsFileSystemReader::readFileFromImage(
-        imagePath, QStringLiteral("/aaa-moved.txt"), 1);
-    QVERIFY2(renamedReadBack.ok, qPrintable(renamedReadBack.blockers.join(QStringLiteral("; "))));
+namespace {
 
-    // Depth-2 folder lifecycle.
-    const auto folderCreated = PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
-        imagePath, QStringLiteral("/Depth Two Folder"), options);
-    QVERIFY2(folderCreated.ok, qPrintable(folderCreated.blockers.join(QStringLiteral("; "))));
-    const auto childCreated = PartitionHfsFileSystemWriter::createFileWithDataFromImage(
-        imagePath,
-        QStringLiteral("/Depth Two Folder/nested.bin"),
-        QByteArrayLiteral("depth two nested payload\n"),
-        options);
-    QVERIFY2(childCreated.ok, qPrintable(childCreated.blockers.join(QStringLiteral("; "))));
-    const auto treeDeleted =
-        PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocksFromImage(
-            imagePath, QStringLiteral("/Depth Two Folder"), options);
-    QVERIFY2(treeDeleted.ok, qPrintable(treeDeleted.blockers.join(QStringLiteral("; "))));
-
-    // Drain every file; emptied leaves are removed and the tree collapses back
-    // to a one-level catalog with the freed nodes erased.
-    const auto rootListing =
-        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 100);
-    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
-    for (const auto& entry : rootListing.entries) {
-        const auto drained = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
-            imagePath, QStringLiteral("/%1").arg(entry.name), options);
-        QVERIFY2(drained.ok,
-                 qPrintable(QStringLiteral("%1: %2").arg(
-                     entry.name, drained.blockers.join(QStringLiteral("; ")))));
+template <typename TreeDepthFn>
+void growHfsCatalogToDepthThree(const QString& imagePath,
+                                const PartitionHfsFileWriteOptions& options,
+                                const QString& namePad,
+                                const TreeDepthFn& treeDepth,
+                                int* createdOut) {
+    int created = 0;
+    while (treeDepth() < 3 && created < 800) {
+        const QString name =
+            QStringLiteral("/zz-%1-%2.txt").arg(created, 4, 10, QLatin1Char('0')).arg(namePad);
+        const auto result =
+            PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath, name, options);
+        QVERIFY2(result.ok,
+                 qPrintable(QStringLiteral("create %1: %2")
+                                .arg(created)
+                                .arg(result.blockers.join(QStringLiteral("; ")))));
+        ++created;
     }
-    const QByteArray afterDrain = readBytes(imagePath);
-    QCOMPARE(readBe16(afterDrain, headerOffset + kTestHfsBTreeHeaderTreeDepthOffset), 1);
-    QCOMPARE(readBe32(afterDrain, headerOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 0U);
-    QCOMPARE(readBe32(afterDrain, headerOffset + kTestHfsBTreeHeaderFreeNodesOffset),
-             static_cast<uint32_t>(kTestHfsSplitCatalogTotalNodes - 2));
-    const auto emptyListing =
-        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 10);
-    QVERIFY2(emptyListing.ok, qPrintable(emptyListing.blockers.join(QStringLiteral("; "))));
-    QVERIFY(emptyListing.entries.isEmpty());
+    *createdOut = created;
+}
 
+template <typename TreeDepthFn>
+void drainHfsDepthThreeCatalog(const QString& imagePath,
+                               const PartitionHfsFileWriteOptions& options,
+                               qsizetype headerOffset,
+                               const TreeDepthFn& treeDepth) {
+    // Drain everything: the tree must collapse 3 -> 2 -> 1 and stay readable.
+    const auto drainListing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 2000);
+    QVERIFY(drainListing.ok);
+    for (const auto& entry : drainListing.entries) {
+        const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+            imagePath, QStringLiteral("/%1").arg(entry.name), options);
+        QVERIFY2(deleted.ok,
+                 qPrintable(QStringLiteral("%1: %2").arg(
+                     entry.name, deleted.blockers.join(QStringLiteral("; ")))));
+    }
+    QCOMPARE(treeDepth(), 1);
+    const QByteArray drained = readBytes(imagePath);
+    QCOMPARE(readBe32(drained, headerOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 0U);
+    QCOMPARE(readBe32(drained, headerOffset + kTestHfsBTreeHeaderFreeNodesOffset),
+             kTestHfsDeepCatalogTotalNodes - 2);
     const auto finalConsistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
-                                                                                          400);
+                                                                                          4000);
     QVERIFY2(finalConsistency.ok, qPrintable(finalConsistency.blockers.join(QStringLiteral("; "))));
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthThreeCatalogs() {
     QTemporaryDir temp;
@@ -4316,17 +4457,7 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthThreeCatalogs() 
     // within the fixture's node budget.
     const QString namePad(48, QLatin1Char('x'));
     int created = 0;
-    while (treeDepth() < 3 && created < 800) {
-        const QString name =
-            QStringLiteral("/zz-%1-%2.txt").arg(created, 4, 10, QLatin1Char('0')).arg(namePad);
-        const auto result =
-            PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath, name, options);
-        QVERIFY2(result.ok,
-                 qPrintable(QStringLiteral("create %1: %2")
-                                .arg(created)
-                                .arg(result.blockers.join(QStringLiteral("; ")))));
-        ++created;
-    }
+    growHfsCatalogToDepthThree(imagePath, options, namePad, treeDepth, &created);
     QCOMPARE(treeDepth(), 3);
     QVERIFY(created > 100);
 
@@ -4350,25 +4481,7 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesDepthThreeCatalogs() 
         imagePath, QStringLiteral("/aa-renamed.txt"), 1);
     QVERIFY2(renamedReadBack.ok, qPrintable(renamedReadBack.blockers.join(QStringLiteral("; "))));
 
-    // Drain everything: the tree must collapse 3 -> 2 -> 1 and stay readable.
-    const auto drainListing =
-        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 2000);
-    QVERIFY(drainListing.ok);
-    for (const auto& entry : drainListing.entries) {
-        const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
-            imagePath, QStringLiteral("/%1").arg(entry.name), options);
-        QVERIFY2(deleted.ok,
-                 qPrintable(QStringLiteral("%1: %2").arg(
-                     entry.name, deleted.blockers.join(QStringLiteral("; ")))));
-    }
-    QCOMPARE(treeDepth(), 1);
-    const QByteArray drained = readBytes(imagePath);
-    QCOMPARE(readBe32(drained, headerOffset + kTestHfsBTreeHeaderLeafRecordsOffset), 0U);
-    QCOMPARE(readBe32(drained, headerOffset + kTestHfsBTreeHeaderFreeNodesOffset),
-             kTestHfsDeepCatalogTotalNodes - 2);
-    const auto finalConsistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
-                                                                                          4000);
-    QVERIFY2(finalConsistency.ok, qPrintable(finalConsistency.blockers.join(QStringLiteral("; "))));
+    drainHfsDepthThreeCatalog(imagePath, options, headerOffset, treeDepth);
 }
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete() {
@@ -4439,26 +4552,24 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_mergesUnderfullCatalogLeaves
     QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
+namespace {
 
-    PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
-    options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-create-delete-churn");
+void verifyHfsChurnTree(const QString& imagePath, qsizetype liveCount) {
+    const auto listing =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 4000);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), liveCount + kTestHfsDeepFixtureFileCount);
+    const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
+                                                                                     8000);
+    QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
+}
 
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-churn.img"));
-    QVERIFY(writeBytes(imagePath, hfsDeepCatalogFixture()));
-
-    const qsizetype headerOffset = static_cast<qsizetype>(kTestHfsDeepCatalogStartBlock) *
-                                       kTestHfsBlockSize +
-                                   kTestHfsBTreeHeaderRecordOffset;
+void runHfsRandomizedCatalogChurn(const QString& imagePath,
+                                  const PartitionHfsFileWriteOptions& options,
+                                  qsizetype headerOffset) {
     const auto treeDepth = [&]() {
         return readBe16(readBytes(imagePath), headerOffset + kTestHfsBTreeHeaderTreeDepthOffset);
     };
-
     // Deterministic LCG so the churn is reproducible across runs and platforms.
     uint32_t rng = 0x12'34'56'7Bu;
     const auto nextRandom = [&]() {
@@ -4470,16 +4581,6 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDele
     QStringList live;
     uint32_t createCounter = 0;
     uint16_t peakDepth = treeDepth();
-
-    const auto verifyTree = [&]() {
-        const auto listing = PartitionHfsFileSystemReader::listDirectoryFromImage(
-            imagePath, QStringLiteral("/"), 4000);
-        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
-        QCOMPARE(listing.entries.size(), live.size() + kTestHfsDeepFixtureFileCount);
-        const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath,
-                                                                                         8000);
-        QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
-    };
 
     constexpr int kChurnOperations = 300;
     for (int op = 0; op < kChurnOperations; ++op) {
@@ -4503,14 +4604,14 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDele
         }
         peakDepth = std::max(peakDepth, treeDepth());
         if ((op % 50) == 49) {
-            verifyTree();
+            verifyHfsChurnTree(imagePath, live.size());
         }
     }
 
     // The churn must have actually grown the tree past a single leaf, otherwise
     // it never exercised the split/merge paths this test is here to cover.
     QVERIFY(peakDepth >= 2);
-    verifyTree();
+    verifyHfsChurnTree(imagePath, live.size());
 
     // Drain the remaining churn files; the tree collapses back to the fixture.
     for (const QString& name : live) {
@@ -4520,7 +4621,28 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDele
     }
     live.clear();
     QCOMPARE(treeDepth(), static_cast<uint16_t>(1));
-    verifyTree();
+    verifyHfsChurnTree(imagePath, live.size());
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-create-delete-churn");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-churn.img"));
+    QVERIFY(writeBytes(imagePath, hfsDeepCatalogFixture()));
+
+    const qsizetype headerOffset = static_cast<qsizetype>(kTestHfsDeepCatalogStartBlock) *
+                                       kTestHfsBlockSize +
+                                   kTestHfsBTreeHeaderRecordOffset;
+    runHfsRandomizedCatalogChurn(imagePath, options, headerOffset);
 }
 
 namespace {
@@ -4542,6 +4664,121 @@ void writeTestLe64(QByteArray* bytes, qsizetype offset, uint64_t value) {
     for (int index = 0; index < 8; ++index) {
         (*bytes)[offset + index] = static_cast<char>((value >> (8 * index)) & 0xFF);
     }
+}
+
+// Endian-pluggable field writers so the little- and big-endian journal builders
+// share the same layout code.
+struct HfsJournalEndianWriters {
+    void (*w16)(QByteArray*, qsizetype, uint16_t);
+    void (*w32)(QByteArray*, qsizetype, uint32_t);
+    void (*w64)(QByteArray*, qsizetype, uint64_t);
+};
+
+// Builds a dirty journal image carrying ONE transaction that rewrites the hello
+// file's data block, returning the dirty image. Field byte order is selected by
+// the supplied writers (little-endian for the modern path, big-endian for PPC).
+QByteArray buildHfsJournalDirtyImage(const QByteArray& expectedBytes,
+                                     const HfsJournalEndianWriters& w,
+                                     qsizetype* journalBaseOut) {
+    QByteArray dirty = hfsReaderFixture();
+    const uint32_t jibBlock = 50;
+    const uint64_t journalOffset = 51ULL * kTestHfsBlockSize;
+    const uint64_t journalSize = 8ULL * kTestHfsBlockSize;
+    writeBe32(&dirty, kTestHfsHeaderOffset + kTestHfsVolumeJournalInfoBlockOffset, jibBlock);
+    const qsizetype jibOffset = static_cast<qsizetype>(jibBlock) * kTestHfsBlockSize;
+    writeBe32(&dirty, jibOffset, 1);  // kJIJournalInFSMask (JIB is always big-endian)
+    writeBe64(&dirty, jibOffset + 36, journalOffset);
+    writeBe64(&dirty, jibOffset + 44, journalSize);
+
+    const qsizetype targetOffset = static_cast<qsizetype>(kTestHfsHelloFileBlock) *
+                                   kTestHfsBlockSize;
+    const QByteArray replayBlock = expectedBytes.mid(targetOffset, kTestHfsBlockSize);
+
+    constexpr uint64_t kJhdrSize = 512;
+    constexpr uint64_t kBlhdrSize = 512;
+    const uint64_t bytesUsed = kBlhdrSize + kTestHfsBlockSize;
+
+    QByteArray blhdr(static_cast<qsizetype>(kBlhdrSize), '\0');
+    w.w16(&blhdr, 0, 31);                                     // max_blocks
+    w.w16(&blhdr, 2, 2);                                      // num_blocks (sentinel + 1)
+    w.w32(&blhdr, 4, static_cast<uint32_t>(bytesUsed));
+    w.w64(&blhdr, 16, std::numeric_limits<uint64_t>::max());  // binfo[0] sentinel
+    w.w64(&blhdr, 32, static_cast<uint64_t>(targetOffset) / 512);
+    w.w32(&blhdr, 40, kTestHfsBlockSize);
+    QByteArray blhdrChecksumInput = blhdr.left(32);
+    w.w32(&blhdrChecksumInput, 8, 0);
+    w.w32(&blhdr, 8, testJournalChecksum(blhdrChecksumInput));
+
+    QByteArray journalHeader(44, '\0');
+    w.w32(&journalHeader, 0, 0x4a'4e'4c'78);           // 'JNLx'
+    w.w32(&journalHeader, 4, 0x12'34'56'78);           // endian marker
+    w.w64(&journalHeader, 8, kJhdrSize);               // start
+    w.w64(&journalHeader, 16, kJhdrSize + bytesUsed);  // end
+    w.w64(&journalHeader, 24, journalSize);
+    w.w32(&journalHeader, 32, static_cast<uint32_t>(kBlhdrSize));
+    w.w32(&journalHeader, 40, static_cast<uint32_t>(kJhdrSize));
+    w.w32(&journalHeader, 36, testJournalChecksum(journalHeader));
+
+    const qsizetype journalBase = static_cast<qsizetype>(journalOffset);
+    std::copy(journalHeader.cbegin(), journalHeader.cend(), dirty.begin() + journalBase);
+    std::copy(blhdr.cbegin(),
+              blhdr.cend(),
+              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize));
+    std::copy(replayBlock.cbegin(),
+              replayBlock.cend(),
+              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize + kBlhdrSize));
+    *journalBaseOut = journalBase;
+    return dirty;
+}
+
+struct HfsJournalReplayCase {
+    QByteArray dirty;
+    QByteArray expectedBytes;
+    QByteArray newContent;
+    qsizetype journalBase;
+    const char* dirtyName;
+    const char* tamperedName;
+};
+
+void verifyHfsJournalReplayAndTamper(QTemporaryDir& temp,
+                                     const PartitionHfsFileWriteOptions& options,
+                                     const HfsJournalReplayCase& testCase) {
+    constexpr uint64_t kJhdrSize = 512;
+    const qsizetype targetOffset = static_cast<qsizetype>(kTestHfsHelloFileBlock) *
+                                   kTestHfsBlockSize;
+    const QString dirtyPath = temp.filePath(QString::fromLatin1(testCase.dirtyName));
+    QVERIFY(writeBytes(dirtyPath, testCase.dirty));
+
+    const auto replayed = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath, options);
+    QVERIFY2(replayed.ok, qPrintable(replayed.blockers.join(QStringLiteral("; "))));
+    QVERIFY(replayed.warnings.join(' ').contains(
+        QStringLiteral("journal replayed: 1 transactions, 1 blocks")));
+
+    const QByteArray afterReplay = readBytes(dirtyPath);
+    QCOMPARE(afterReplay.mid(targetOffset, kTestHfsBlockSize),
+             testCase.expectedBytes.mid(targetOffset, kTestHfsBlockSize));
+    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
+        dirtyPath, QStringLiteral("/hello.txt"), 4096);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, testCase.newContent.leftJustified(15, '\n', true));
+
+    const QByteArray headerAfter = afterReplay.mid(testCase.journalBase, 44);
+    QCOMPARE(headerAfter.mid(8, 8), headerAfter.mid(16, 8));
+    const auto cleanReplay = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath,
+                                                                                  options);
+    QVERIFY2(cleanReplay.ok, qPrintable(cleanReplay.blockers.join(QStringLiteral("; "))));
+    QVERIFY(cleanReplay.warnings.join(' ').contains(QStringLiteral("journal is clean")));
+
+    QByteArray tampered = testCase.dirty;
+    tampered[testCase.journalBase + static_cast<qsizetype>(kJhdrSize) + 20] = static_cast<char>(
+        tampered.at(testCase.journalBase + static_cast<qsizetype>(kJhdrSize) + 20) ^ 0x5A);
+    const QString tamperedPath = temp.filePath(QString::fromLatin1(testCase.tamperedName));
+    QVERIFY(writeBytes(tamperedPath, tampered));
+    const auto blocked = PartitionHfsFileSystemWriter::replayJournalFromImage(tamperedPath,
+                                                                              options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("transaction checksum")));
+    QCOMPARE(readBytes(tamperedPath), tampered);
 }
 
 }  // namespace
@@ -4571,92 +4808,17 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replaysJournalTransactions()
 
     // Dirty-journal image: the same change captured as a journal transaction
     // (one 4096-byte block) over the unmodified fixture.
-    QByteArray dirty = hfsReaderFixture();
-    const uint32_t jibBlock = 50;
-    const uint64_t journalOffset = 51ULL * kTestHfsBlockSize;
-    const uint64_t journalSize = 8ULL * kTestHfsBlockSize;
-    writeBe32(&dirty, kTestHfsHeaderOffset + kTestHfsVolumeJournalInfoBlockOffset, jibBlock);
-    const qsizetype jibOffset = static_cast<qsizetype>(jibBlock) * kTestHfsBlockSize;
-    writeBe32(&dirty, jibOffset, 1);  // kJIJournalInFSMask
-    writeBe64(&dirty, jibOffset + 36, journalOffset);
-    writeBe64(&dirty, jibOffset + 44, journalSize);
-
-    const qsizetype targetOffset = static_cast<qsizetype>(kTestHfsHelloFileBlock) *
-                                   kTestHfsBlockSize;
-    const QByteArray replayBlock = expectedBytes.mid(targetOffset, kTestHfsBlockSize);
-
-    constexpr uint64_t kJhdrSize = 512;
-    constexpr uint64_t kBlhdrSize = 512;
-    QByteArray blhdr(static_cast<qsizetype>(kBlhdrSize), '\0');
-    writeTestLe16(&blhdr, 0, 31);  // max_blocks
-    writeTestLe16(&blhdr, 2, 2);   // num_blocks (sentinel + 1)
-    const uint64_t bytesUsed = kBlhdrSize + kTestHfsBlockSize;
-    writeTestLe32(&blhdr, 4, static_cast<uint32_t>(bytesUsed));
-    writeTestLe64(&blhdr, 16, std::numeric_limits<uint64_t>::max());  // binfo[0]
-    writeTestLe64(&blhdr, 32, static_cast<uint64_t>(targetOffset) / 512);
-    writeTestLe32(&blhdr, 40, kTestHfsBlockSize);
-    QByteArray blhdrChecksumInput = blhdr.left(32);
-    writeTestLe32(&blhdrChecksumInput, 8, 0);
-    writeTestLe32(&blhdr, 8, testJournalChecksum(blhdrChecksumInput));
-
-    QByteArray journalHeader(44, '\0');
-    writeTestLe32(&journalHeader, 0, 0x4a'4e'4c'78);           // 'JNLx'
-    writeTestLe32(&journalHeader, 4, 0x12'34'56'78);           // little-endian marker
-    writeTestLe64(&journalHeader, 8, kJhdrSize);               // start
-    writeTestLe64(&journalHeader, 16, kJhdrSize + bytesUsed);  // end
-    writeTestLe64(&journalHeader, 24, journalSize);
-    writeTestLe32(&journalHeader, 32, static_cast<uint32_t>(kBlhdrSize));
-    writeTestLe32(&journalHeader, 40, static_cast<uint32_t>(kJhdrSize));
-    writeTestLe32(&journalHeader, 36, testJournalChecksum(journalHeader));
-
-    const qsizetype journalBase = static_cast<qsizetype>(journalOffset);
-    std::copy(journalHeader.cbegin(), journalHeader.cend(), dirty.begin() + journalBase);
-    std::copy(blhdr.cbegin(),
-              blhdr.cend(),
-              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize));
-    std::copy(replayBlock.cbegin(),
-              replayBlock.cend(),
-              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize + kBlhdrSize));
-
-    const QString dirtyPath = temp.filePath(QStringLiteral("hfs-journal-dirty.img"));
-    QVERIFY(writeBytes(dirtyPath, dirty));
-
-    const auto replayed = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath, options);
-    QVERIFY2(replayed.ok, qPrintable(replayed.blockers.join(QStringLiteral("; "))));
-    QVERIFY(replayed.warnings.join(' ').contains(
-        QStringLiteral("journal replayed: 1 transactions, 1 blocks")));
-
-    // The replayed data region must byte-match the certified direct write.
-    const QByteArray afterReplay = readBytes(dirtyPath);
-    QCOMPARE(afterReplay.mid(targetOffset, kTestHfsBlockSize),
-             expectedBytes.mid(targetOffset, kTestHfsBlockSize));
-    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
-        dirtyPath, QStringLiteral("/hello.txt"), 4096);
-    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBack.data, newContent.leftJustified(15, '\n', true));
-
-    // Journal header is now clean (start == end, checksum valid).
-    const qsizetype headerAt = static_cast<qsizetype>(journalOffset);
-    const QByteArray headerAfter = afterReplay.mid(headerAt, 44);
-    QCOMPARE(headerAfter.mid(8, 8), headerAfter.mid(16, 8));
-
-    // Replaying a clean journal is a no-op.
-    const auto cleanReplay = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath,
-                                                                                  options);
-    QVERIFY2(cleanReplay.ok, qPrintable(cleanReplay.blockers.join(QStringLiteral("; "))));
-    QVERIFY(cleanReplay.warnings.join(' ').contains(QStringLiteral("journal is clean")));
-
-    // Tampered transaction checksum fails closed without writing.
-    QByteArray tampered = dirty;
-    tampered[journalBase + static_cast<qsizetype>(kJhdrSize) + 20] =
-        static_cast<char>(tampered.at(journalBase + static_cast<qsizetype>(kJhdrSize) + 20) ^ 0x5A);
-    const QString tamperedPath = temp.filePath(QStringLiteral("hfs-journal-tampered.img"));
-    QVERIFY(writeBytes(tamperedPath, tampered));
-    const auto blocked = PartitionHfsFileSystemWriter::replayJournalFromImage(tamperedPath,
-                                                                              options);
-    QVERIFY(!blocked.ok);
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("transaction checksum")));
-    QCOMPARE(readBytes(tamperedPath), tampered);
+    const HfsJournalEndianWriters leWriters{writeTestLe16, writeTestLe32, writeTestLe64};
+    qsizetype journalBase = 0;
+    const QByteArray dirty = buildHfsJournalDirtyImage(expectedBytes, leWriters, &journalBase);
+    verifyHfsJournalReplayAndTamper(temp,
+                                    options,
+                                    {.dirty = dirty,
+                                     .expectedBytes = expectedBytes,
+                                     .newContent = newContent,
+                                     .journalBase = journalBase,
+                                     .dirtyName = "hfs-journal-dirty.img",
+                                     .tamperedName = "hfs-journal-tampered.img"});
 
     // Non-journaled volumes are blocked.
     const QString plainPath = temp.filePath(QStringLiteral("hfs-journal-plain.img"));
@@ -4697,108 +4859,22 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replaysBigEndianJournal() {
     const QByteArray expectedBytes = readBytes(expectedPath);
 
     // Dirty image carrying the same change as ONE big-endian journal transaction.
-    QByteArray dirty = hfsReaderFixture();
-    const uint32_t jibBlock = 50;
-    const uint64_t journalOffset = 51ULL * kTestHfsBlockSize;
-    const uint64_t journalSize = 8ULL * kTestHfsBlockSize;
-    writeBe32(&dirty, kTestHfsHeaderOffset + kTestHfsVolumeJournalInfoBlockOffset, jibBlock);
-    const qsizetype jibOffset = static_cast<qsizetype>(jibBlock) * kTestHfsBlockSize;
-    writeBe32(&dirty, jibOffset, 1);  // kJIJournalInFSMask (JIB is always big-endian)
-    writeBe64(&dirty, jibOffset + 36, journalOffset);
-    writeBe64(&dirty, jibOffset + 44, journalSize);
-
-    const qsizetype targetOffset = static_cast<qsizetype>(kTestHfsHelloFileBlock) *
-                                   kTestHfsBlockSize;
-    const QByteArray replayBlock = expectedBytes.mid(targetOffset, kTestHfsBlockSize);
-
-    constexpr uint64_t kJhdrSize = 512;
-    constexpr uint64_t kBlhdrSize = 512;
-    const uint64_t bytesUsed = kBlhdrSize + kTestHfsBlockSize;
-
-    // Block-list header + block-info, all big-endian.
-    QByteArray blhdr(static_cast<qsizetype>(kBlhdrSize), '\0');
-    writeBe16(&blhdr, 0, 31);                                     // max_blocks
-    writeBe16(&blhdr, 2, 2);                                      // num_blocks (sentinel + 1)
-    writeBe32(&blhdr, 4, static_cast<uint32_t>(bytesUsed));
-    writeBe64(&blhdr, 16, std::numeric_limits<uint64_t>::max());  // binfo[0] sentinel
-    writeBe64(&blhdr, 32, static_cast<uint64_t>(targetOffset) / 512);
-    writeBe32(&blhdr, 40, kTestHfsBlockSize);
-    QByteArray blhdrChecksumInput = blhdr.left(32);
-    writeBe32(&blhdrChecksumInput, 8, 0);
-    writeBe32(&blhdr, 8, testJournalChecksum(blhdrChecksumInput));
-
-    // Journal header, all big-endian (endian marker stored as bytes 12 34 56 78).
-    QByteArray journalHeader(44, '\0');
-    writeBe32(&journalHeader, 0, 0x4a'4e'4c'78);           // 'JNLx'
-    writeBe32(&journalHeader, 4, 0x12'34'56'78);           // endian marker (big-endian on disk)
-    writeBe64(&journalHeader, 8, kJhdrSize);               // start
-    writeBe64(&journalHeader, 16, kJhdrSize + bytesUsed);  // end
-    writeBe64(&journalHeader, 24, journalSize);
-    writeBe32(&journalHeader, 32, static_cast<uint32_t>(kBlhdrSize));
-    writeBe32(&journalHeader, 40, static_cast<uint32_t>(kJhdrSize));
-    writeBe32(&journalHeader, 36, testJournalChecksum(journalHeader));
-
-    const qsizetype journalBase = static_cast<qsizetype>(journalOffset);
-    std::copy(journalHeader.cbegin(), journalHeader.cend(), dirty.begin() + journalBase);
-    std::copy(blhdr.cbegin(),
-              blhdr.cend(),
-              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize));
-    std::copy(replayBlock.cbegin(),
-              replayBlock.cend(),
-              dirty.begin() + journalBase + static_cast<qsizetype>(kJhdrSize + kBlhdrSize));
-
-    const QString dirtyPath = temp.filePath(QStringLiteral("hfs-bejournal-dirty.img"));
-    QVERIFY(writeBytes(dirtyPath, dirty));
-
-    const auto replayed = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath, options);
-    QVERIFY2(replayed.ok, qPrintable(replayed.blockers.join(QStringLiteral("; "))));
-    QVERIFY(replayed.warnings.join(' ').contains(
-        QStringLiteral("journal replayed: 1 transactions, 1 blocks")));
-
-    // Byte-equality vs the certified direct-write path -- the H-g exit gate.
-    const QByteArray afterReplay = readBytes(dirtyPath);
-    QCOMPARE(afterReplay.mid(targetOffset, kTestHfsBlockSize),
-             expectedBytes.mid(targetOffset, kTestHfsBlockSize));
-    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
-        dirtyPath, QStringLiteral("/hello.txt"), 4096);
-    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(readBack.data, newContent.leftJustified(15, '\n', true));
-
-    // The big-endian journal header is now clean (start == end) and a re-replay no-ops.
-    const QByteArray headerAfter = afterReplay.mid(journalBase, 44);
-    QCOMPARE(headerAfter.mid(8, 8), headerAfter.mid(16, 8));
-    const auto cleanReplay = PartitionHfsFileSystemWriter::replayJournalFromImage(dirtyPath,
-                                                                                  options);
-    QVERIFY2(cleanReplay.ok, qPrintable(cleanReplay.blockers.join(QStringLiteral("; "))));
-    QVERIFY(cleanReplay.warnings.join(' ').contains(QStringLiteral("journal is clean")));
-
-    // A tampered big-endian transaction checksum fails closed without writing.
-    QByteArray tampered = dirty;
-    tampered[journalBase + static_cast<qsizetype>(kJhdrSize) + 20] =
-        static_cast<char>(tampered.at(journalBase + static_cast<qsizetype>(kJhdrSize) + 20) ^ 0x5A);
-    const QString tamperedPath = temp.filePath(QStringLiteral("hfs-bejournal-tampered.img"));
-    QVERIFY(writeBytes(tamperedPath, tampered));
-    const auto blocked = PartitionHfsFileSystemWriter::replayJournalFromImage(tamperedPath,
-                                                                              options);
-    QVERIFY(!blocked.ok);
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("transaction checksum")));
-    QCOMPARE(readBytes(tamperedPath), tampered);
+    const HfsJournalEndianWriters beWriters{writeBe16, writeBe32, writeBe64};
+    qsizetype journalBase = 0;
+    const QByteArray dirty = buildHfsJournalDirtyImage(expectedBytes, beWriters, &journalBase);
+    verifyHfsJournalReplayAndTamper(temp,
+                                    options,
+                                    {.dirty = dirty,
+                                     .expectedBytes = expectedBytes,
+                                     .newContent = newContent,
+                                     .journalBase = journalBase,
+                                     .dirtyName = "hfs-bejournal-dirty.img",
+                                     .tamperedName = "hfs-bejournal-tampered.img"});
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
-    // H-h: an HFS+ volume embedded inside a legacy HFS wrapper. Every I/O is offset
-    // by the embedded volume's start; a write must land in the embedded volume and
-    // round-trip, leave the wrapper MDB untouched, and stay fail-closed without the
-    // explicit wrapper override.
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
+namespace {
 
-    // Embed a complete writable HFS+ volume at the wrapper's embedded offset and put
-    // an HFS wrapper master directory block (signature 'BD') at offset 1024.
-    const qsizetype embeddedOffset =
-        static_cast<qsizetype>(kTestHfsWrapperAllocationStartSector * 512ULL +
-                               static_cast<uint64_t>(kTestHfsWrapperEmbeddedStartBlock) *
-                                   kTestHfsWrapperAllocationBlockSize);
+QByteArray buildHfsWrappedVolumeImage(qsizetype embeddedOffset) {
     const QByteArray embedded = hfsReaderFixture();
     QByteArray wrapped(embeddedOffset + embedded.size() + kTestHfsBlockSize, '\0');
     std::copy(embedded.cbegin(), embedded.cend(), wrapped.begin() + embeddedOffset);
@@ -4816,6 +4892,26 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
     writeBe16(&wrapped,
               kTestHfsWrapperMdbOffset + kTestHfsWrapperEmbeddedExtentCountOffset,
               kTestHfsWrapperEmbeddedBlockCount);
+    return wrapped;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
+    // H-h: an HFS+ volume embedded inside a legacy HFS wrapper. Every I/O is offset
+    // by the embedded volume's start; a write must land in the embedded volume and
+    // round-trip, leave the wrapper MDB untouched, and stay fail-closed without the
+    // explicit wrapper override.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    // Embed a complete writable HFS+ volume at the wrapper's embedded offset and put
+    // an HFS wrapper master directory block (signature 'BD') at offset 1024.
+    const qsizetype embeddedOffset =
+        static_cast<qsizetype>(kTestHfsWrapperAllocationStartSector * 512ULL +
+                               static_cast<uint64_t>(kTestHfsWrapperEmbeddedStartBlock) *
+                                   kTestHfsWrapperAllocationBlockSize);
+    const QByteArray wrapped = buildHfsWrappedVolumeImage(embeddedOffset);
 
     const QString wrappedPath = temp.filePath(QStringLiteral("hfs-wrapped.img"));
     QVERIFY(writeBytes(wrappedPath, wrapped));
@@ -4856,6 +4952,27 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_writesIntoWrappedVolume() {
     QVERIFY(after.mid(static_cast<qsizetype>(kTestHfsHelloFileBlock) * kTestHfsBlockSize, 8) !=
             QByteArrayLiteral("wrapped!"));
 }
+
+namespace {
+
+void verifyHfsSplitCreateFailsClosed(QTemporaryDir& temp,
+                                     const PartitionHfsFileWriteOptions& options,
+                                     const HfsSplitFixtureOptions& fixtureOptions,
+                                     const char* imageName,
+                                     const QString& expectedBlocker) {
+    const QString path = temp.filePath(QString::fromLatin1(imageName));
+    QVERIFY(writeBytes(path, hfsSplitReadyFixture(fixtureOptions)));
+    const QByteArray before = readBytes(path);
+    const auto blocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        path, QStringLiteral("/split-created.txt"), options);
+    QVERIFY(!blocked.ok);
+    if (!expectedBlocker.isEmpty()) {
+        QVERIFY(blocked.blockers.join(' ').contains(expectedBlocker));
+    }
+    QCOMPARE(readBytes(path), before);
+}
+
+}  // namespace
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed() {
     QTemporaryDir temp;
@@ -4908,38 +5025,57 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsCatalogNodePoolOrFailsC
     HfsSplitFixtureOptions noFreeBlocks;
     noFreeBlocks.free_nodes = 1;
     noFreeBlocks.full_volume = true;
-    const QString noBlocksPath = temp.filePath(QStringLiteral("hfs-split-no-free-blocks.img"));
-    QVERIFY(writeBytes(noBlocksPath, hfsSplitReadyFixture(noFreeBlocks)));
-    const QByteArray noBlocksBefore = readBytes(noBlocksPath);
-    const auto noBlocksBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        noBlocksPath, QStringLiteral("/split-created.txt"), options);
-    QVERIFY(!noBlocksBlocked.ok);
-    QCOMPARE(readBytes(noBlocksPath), noBlocksBefore);
+    verifyHfsSplitCreateFailsClosed(
+        temp, options, noFreeBlocks, "hfs-split-no-free-blocks.img", QString());
 
     HfsSplitFixtureOptions fixedIndexKeys;
     fixedIndexKeys.attributes_mask = kTestHfsBTreeBigKeysMask;
-    const QString fixedKeysPath = temp.filePath(QStringLiteral("hfs-split-fixed-index-keys.img"));
-    QVERIFY(writeBytes(fixedKeysPath, hfsSplitReadyFixture(fixedIndexKeys)));
-    const QByteArray fixedKeysBefore = readBytes(fixedKeysPath);
-    const auto fixedKeysBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        fixedKeysPath, QStringLiteral("/split-created.txt"), options);
-    QVERIFY(!fixedKeysBlocked.ok);
-    QVERIFY(
-        fixedKeysBlocked.blockers.join(' ').contains(QStringLiteral("variable-length index keys")));
-    QCOMPARE(readBytes(fixedKeysPath), fixedKeysBefore);
+    verifyHfsSplitCreateFailsClosed(temp,
+                                    options,
+                                    fixedIndexKeys,
+                                    "hfs-split-fixed-index-keys.img",
+                                    QStringLiteral("variable-length index keys"));
 
     HfsSplitFixtureOptions inconsistentMap;
     inconsistentMap.leaf_map_bit = false;
-    const QString badMapPath = temp.filePath(QStringLiteral("hfs-split-bad-map.img"));
-    QVERIFY(writeBytes(badMapPath, hfsSplitReadyFixture(inconsistentMap)));
-    const QByteArray badMapBefore = readBytes(badMapPath);
-    const auto badMapBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        badMapPath, QStringLiteral("/split-created.txt"), options);
-    QVERIFY(!badMapBlocked.ok);
-    QVERIFY(badMapBlocked.blockers.join(' ').contains(
-        QStringLiteral("inconsistent with allocated nodes")));
-    QCOMPARE(readBytes(badMapPath), badMapBefore);
+    verifyHfsSplitCreateFailsClosed(temp,
+                                    options,
+                                    inconsistentMap,
+                                    "hfs-split-bad-map.img",
+                                    QStringLiteral("inconsistent with allocated nodes"));
 }
+
+namespace {
+
+void growHfsAttributesMultiLeaf(const QString& imagePath,
+                                const PartitionHfsFileWriteOptions& options,
+                                qsizetype attrHeader,
+                                const QByteArray& value,
+                                int created) {
+    for (int index = 0; index < created; ++index) {
+        const auto result = PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
+            imagePath,
+            18,
+            QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
+            value,
+            options);
+        QVERIFY2(result.ok,
+                 qPrintable(QStringLiteral("attr%1: %2")
+                                .arg(index)
+                                .arg(result.blockers.join(QStringLiteral("; ")))));
+    }
+    const uint16_t depth = readBe16(readBytes(imagePath),
+                                    attrHeader + kTestHfsBTreeHeaderTreeDepthOffset);
+    const uint32_t leafRecords = readBe32(readBytes(imagePath),
+                                          attrHeader + kTestHfsBTreeHeaderLeafRecordsOffset);
+    QVERIFY2(depth >= 2,
+             qPrintable(QStringLiteral("attributes tree depth %1 is not multi-leaf").arg(depth)));
+    QVERIFY2(leafRecords >= static_cast<uint32_t>(created),
+             qPrintable(
+                 QStringLiteral("leafRecords %1 < created %2").arg(leafRecords).arg(created)));
+}
+
+}  // namespace
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit() {
     QTemporaryDir temp;
@@ -4962,27 +5098,7 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsAttributesNodePoolOnRoo
     // leaves and growing the node pool as needed; the tree reaches depth >= 2.
     const QByteArray value(96, 'a');
     const int created = 50;
-    for (int index = 0; index < created; ++index) {
-        const auto result = PartitionHfsFileSystemWriter::createInlineAttributeValueFromImage(
-            imagePath,
-            18,
-            QStringLiteral("org.sak.attr%1").arg(index, 4, 10, QLatin1Char('0')),
-            value,
-            options);
-        QVERIFY2(result.ok,
-                 qPrintable(QStringLiteral("attr%1: %2")
-                                .arg(index)
-                                .arg(result.blockers.join(QStringLiteral("; ")))));
-    }
-    const uint16_t depth = readBe16(readBytes(imagePath),
-                                    attrHeader + kTestHfsBTreeHeaderTreeDepthOffset);
-    const uint32_t leafRecords = readBe32(readBytes(imagePath),
-                                          attrHeader + kTestHfsBTreeHeaderLeafRecordsOffset);
-    QVERIFY2(depth >= 2,
-             qPrintable(QStringLiteral("attributes tree depth %1 is not multi-leaf").arg(depth)));
-    QVERIFY2(leafRecords >= static_cast<uint32_t>(created),
-             qPrintable(
-                 QStringLiteral("leafRecords %1 < created %2").arg(leafRecords).arg(created)));
+    growHfsAttributesMultiLeaf(imagePath, options, attrHeader, value, created);
 
     // Every attribute reads back across the multi-leaf tree (the reader walks the
     // leaf fLink chain).
@@ -5250,18 +5366,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_truncatesResourceForkWithinA
     QCOMPARE(dataBack.data, expectedHello);
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWithReadback() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-inline-attribute-write.img"));
-    QVERIFY(writeBytes(imagePath, hfsReaderAttributeFixture()));
+namespace {
 
-    PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
-    options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-inline-attribute-replace");
-
+void verifyHfsInlineAttributeReplacePhase(const QString& imagePath,
+                                          const PartitionHfsFileWriteOptions& options) {
     const QByteArray replacement("finder-patched");
     const auto written = PartitionHfsFileSystemWriter::replaceInlineAttributeValueFromImage(
         imagePath, 17, QStringLiteral("com.apple.FinderInfo"), replacement, options);
@@ -5293,7 +5401,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWith
         options);
     QVERIFY(!forkBlocked.ok);
     QVERIFY(forkBlocked.blockers.join(' ').contains(QStringLiteral("inline")));
+}
 
+void verifyHfsForkAttributeReplacePhase(const QString& imagePath,
+                                        const PartitionHfsFileWriteOptions& options) {
     const QByteArray forkReplacement("fork-attribute-patched");
     const auto forkWritten =
         PartitionHfsFileSystemWriter::replaceForkAttributeValueWithinAllocatedBlocksFromImage(
@@ -5336,7 +5447,11 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWith
     QVERIFY(!noGrowth.ok);
     QVERIFY(
         noGrowth.blockers.join(' ').contains(QStringLiteral("does not require allocation growth")));
+}
 
+void verifyHfsForkAttributeGrowthPhase(QTemporaryDir& temp,
+                                       const QString& imagePath,
+                                       const PartitionHfsFileWriteOptions& options) {
     const QByteArray forkGrowth(kTestHfsBlockSize + 32, 'G');
     const auto grown =
         PartitionHfsFileSystemWriter::replaceForkAttributeValueWithAllocationGrowthFromImage(
@@ -5368,7 +5483,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWith
             fullImagePath, 17, QStringLiteral("com.apple.ResourceFork"), forkGrowth, options);
     QVERIFY(!noFree.ok);
     QVERIFY(noFree.blockers.join(' ').contains(QStringLiteral("not have enough free blocks")));
+}
 
+void verifyHfsAttributeCreatePhase(const QString& imagePath,
+                                   const PartitionHfsFileWriteOptions& options) {
     // New-attribute create: insert into the existing single attributes leaf,
     // reject duplicates, and verify read-back of the created value.
     const QByteArray createdValue = QByteArrayLiteral("created xattr value");
@@ -5415,7 +5533,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWith
     QVERIFY(!decmpfsBlocked.ok);
     QVERIFY(decmpfsBlocked.blockers.join(' ').contains(
         QStringLiteral("compressed-file mutation is blocked")));
+}
 
+void verifyHfsForkAttributeCreateAndDeletePhase(const QString& imagePath,
+                                                const PartitionHfsFileWriteOptions& options) {
     // Fork-backed attribute create: allocates blocks, writes the value into
     // the new extents, and reads it back through the fork storage path.
     QByteArray forkAttrValue(9000, '\0');
@@ -5461,34 +5582,32 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWith
     QVERIFY(missingDelete.blockers.join(' ').contains(QStringLiteral("was not found")));
 }
 
-void PartitionManagerCoreTests::
-    hfsFileSystemWriter_createsAndDeletesEmptyFilesWithCatalogReadback() {
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_replacesInlineAttributesWithReadback() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-empty-file-create-delete.img"));
-    QVERIFY(writeBytes(imagePath, hfsReaderFixture()));
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-inline-attribute-write.img"));
+    QVERIFY(writeBytes(imagePath, hfsReaderAttributeFixture()));
 
     PartitionHfsFileWriteOptions options;
-    auto blocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        imagePath, QStringLiteral("/created.txt"), options);
-    QVERIFY(!blocked.ok);
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("writer is not enabled")));
-
     options.enable_writer = true;
     options.target_write_confirmed = true;
-    options.evidence_id = QStringLiteral("unit.hfs-empty-file-create-delete");
-    blocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath,
-                                                                     QStringLiteral("/created.txt"),
-                                                                     options);
-    QVERIFY(!blocked.ok);
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("journal")));
-
     options.allow_journaled_volume = true;
-    const auto rawBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-        extToolRawTargetPath(), QStringLiteral("/created.txt"), options);
-    QVERIFY(!rawBlocked.ok);
-    QVERIFY(rawBlocked.blockers.join(' ').contains(QStringLiteral("image-only")));
+    options.evidence_id = QStringLiteral("unit.hfs-inline-attribute-replace");
 
+    verifyHfsInlineAttributeReplacePhase(imagePath, options);
+    verifyHfsForkAttributeReplacePhase(imagePath, options);
+    verifyHfsForkAttributeGrowthPhase(temp, imagePath, options);
+    verifyHfsAttributeCreatePhase(imagePath, options);
+    verifyHfsForkAttributeCreateAndDeletePhase(imagePath, options);
+}
+
+namespace {
+
+void verifyHfsEmptyFileCreateAndRename(const QString& imagePath,
+                                       const PartitionHfsFileWriteOptions& options,
+                                       uint32_t* createdCatalogIdOut) {
     const auto created = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
         imagePath, QStringLiteral("/created.txt"), options);
     QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
@@ -5531,6 +5650,13 @@ void PartitionManagerCoreTests::
     QVERIFY2(renamedEmptyReadBack.ok,
              qPrintable(renamedEmptyReadBack.blockers.join(QStringLiteral("; "))));
     QVERIFY(renamedEmptyReadBack.data.isEmpty());
+    *createdCatalogIdOut = created.catalog_id;
+}
+
+void verifyHfsEmptyFileLifecyclePhase(const QString& imagePath,
+                                      const PartitionHfsFileWriteOptions& options) {
+    uint32_t createdCatalogId = 0;
+    verifyHfsEmptyFileCreateAndRename(imagePath, options, &createdCatalogId);
 
     const auto consistency = PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 20);
     QVERIFY2(consistency.ok, qPrintable(consistency.blockers.join(QStringLiteral("; "))));
@@ -5552,7 +5678,7 @@ void PartitionManagerCoreTests::
     const auto deleted = PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
         imagePath, QStringLiteral("/created-renamed.txt"), options);
     QVERIFY2(deleted.ok, qPrintable(deleted.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(deleted.catalog_id, created.catalog_id);
+    QCOMPARE(deleted.catalog_id, createdCatalogId);
     QCOMPARE(deleted.bytes_written, 0ULL);
     QVERIFY(deleted.chunks_written >= 3);
     QVERIFY(deleted.warnings.join(' ').contains(QStringLiteral("empty file deleted")));
@@ -5571,7 +5697,16 @@ void PartitionManagerCoreTests::
     QCOMPARE(finalConsistency.files, 2);
     QCOMPARE(finalConsistency.threads, 0);
     QCOMPARE(finalConsistency.records_scanned, 3);
+}
 
+void verifyHfsDataFileMoveAndDelete(const QString& imagePath,
+                                    const PartitionHfsFileWriteOptions& options,
+                                    uint32_t dataCatalogId,
+                                    uint32_t moveTargetCatalogId,
+                                    const QByteArray& createFilePayload);
+
+void verifyHfsDataFileMovePhase(const QString& imagePath,
+                                const PartitionHfsFileWriteOptions& options) {
     const auto moveTargetCreated = PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
         imagePath, QStringLiteral("/Move Target"), options);
     QVERIFY2(moveTargetCreated.ok,
@@ -5595,13 +5730,25 @@ void PartitionManagerCoreTests::
     QVERIFY(hfsAllocationBitSet(afterDataCreate, 1));
     QCOMPARE(readBe32(afterDataCreate, kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset), 39U);
 
+    verifyHfsDataFileMoveAndDelete(imagePath,
+                                   options,
+                                   dataCreated.catalog_id,
+                                   moveTargetCreated.catalog_id,
+                                   createFilePayload);
+}
+
+void verifyHfsDataFileMoveAndDelete(const QString& imagePath,
+                                    const PartitionHfsFileWriteOptions& options,
+                                    uint32_t dataCatalogId,
+                                    uint32_t moveTargetCatalogId,
+                                    const QByteArray& createFilePayload) {
     const auto movedData = PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
         imagePath,
         QStringLiteral("/created-data.bin"),
         QStringLiteral("/Move Target/renamed-data.bin"),
         options);
     QVERIFY2(movedData.ok, qPrintable(movedData.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(movedData.catalog_id, dataCreated.catalog_id);
+    QCOMPARE(movedData.catalog_id, dataCatalogId);
     QCOMPARE(movedData.bytes_written, 1ULL);
     QVERIFY(movedData.warnings.join(' ').contains(QStringLiteral("moved")));
 
@@ -5631,7 +5778,7 @@ void PartitionManagerCoreTests::
         PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
             imagePath, QStringLiteral("/Move Target/renamed-data.bin"), options);
     QVERIFY2(dataDeleted.ok, qPrintable(dataDeleted.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(dataDeleted.catalog_id, dataCreated.catalog_id);
+    QCOMPARE(dataDeleted.catalog_id, dataCatalogId);
     QVERIFY(dataDeleted.warnings.join(' ').contains(QStringLiteral("allocated blocks released")));
     const QByteArray afterDataDelete = readBytes(imagePath);
     QVERIFY(!hfsAllocationBitSet(afterDataDelete, 1));
@@ -5641,8 +5788,15 @@ void PartitionManagerCoreTests::
         imagePath, QStringLiteral("/Move Target"), options);
     QVERIFY2(moveTargetDeleted.ok,
              qPrintable(moveTargetDeleted.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(moveTargetDeleted.catalog_id, moveTargetCreated.catalog_id);
+    QCOMPARE(moveTargetDeleted.catalog_id, moveTargetCatalogId);
+}
 
+void verifyHfsFolderDeletePhase(const QString& imagePath,
+                                const PartitionHfsFileWriteOptions& options,
+                                uint32_t folderCatalogId);
+
+void verifyHfsFolderLifecyclePhase(const QString& imagePath,
+                                   const PartitionHfsFileWriteOptions& options) {
     const auto folderCreated = PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
         imagePath, QStringLiteral("/Created Folder"), options);
     QVERIFY2(folderCreated.ok, qPrintable(folderCreated.blockers.join(QStringLiteral("; "))));
@@ -5682,6 +5836,12 @@ void PartitionManagerCoreTests::
     QVERIFY(!oldFolderListing.ok);
     QVERIFY(oldFolderListing.blockers.join(' ').contains(QStringLiteral("not found")));
 
+    verifyHfsFolderDeletePhase(imagePath, options, folderCreated.catalog_id);
+}
+
+void verifyHfsFolderDeletePhase(const QString& imagePath,
+                                const PartitionHfsFileWriteOptions& options,
+                                uint32_t folderCatalogId) {
     const auto rootDeleteBlocked = PartitionHfsFileSystemWriter::deleteEmptyFolderFromImage(
         imagePath, QStringLiteral("/"), options);
     QVERIFY(!rootDeleteBlocked.ok);
@@ -5695,7 +5855,7 @@ void PartitionManagerCoreTests::
     const auto folderDeleted = PartitionHfsFileSystemWriter::deleteEmptyFolderFromImage(
         imagePath, QStringLiteral("/Renamed Folder"), options);
     QVERIFY2(folderDeleted.ok, qPrintable(folderDeleted.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(folderDeleted.catalog_id, folderCreated.catalog_id);
+    QCOMPARE(folderDeleted.catalog_id, folderCatalogId);
     QVERIFY(folderDeleted.warnings.join(' ').contains(QStringLiteral("empty folder deleted")));
     QVERIFY(!folderDeleted.before_sha256.isEmpty());
     QVERIFY(!folderDeleted.after_sha256.isEmpty());
@@ -5715,18 +5875,45 @@ void PartitionManagerCoreTests::
     QCOMPARE(finalFolderConsistency.records_scanned, 3);
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndReleasesBitmap() {
+}  // namespace
+
+void PartitionManagerCoreTests::
+    hfsFileSystemWriter_createsAndDeletesEmptyFilesWithCatalogReadback() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-allocated-file-delete.img"));
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-empty-file-create-delete.img"));
     QVERIFY(writeBytes(imagePath, hfsReaderFixture()));
 
     PartitionHfsFileWriteOptions options;
+    auto blocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        imagePath, QStringLiteral("/created.txt"), options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("writer is not enabled")));
+
     options.enable_writer = true;
     options.target_write_confirmed = true;
-    options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-allocated-file-delete");
+    options.evidence_id = QStringLiteral("unit.hfs-empty-file-create-delete");
+    blocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(imagePath,
+                                                                     QStringLiteral("/created.txt"),
+                                                                     options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("journal")));
 
+    options.allow_journaled_volume = true;
+    const auto rawBlocked = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        extToolRawTargetPath(), QStringLiteral("/created.txt"), options);
+    QVERIFY(!rawBlocked.ok);
+    QVERIFY(rawBlocked.blockers.join(' ').contains(QStringLiteral("image-only")));
+
+    verifyHfsEmptyFileLifecyclePhase(imagePath, options);
+    verifyHfsDataFileMovePhase(imagePath, options);
+    verifyHfsFolderLifecyclePhase(imagePath, options);
+}
+
+namespace {
+
+void verifyHfsAllocatedFileDeletePhase(const QString& imagePath,
+                                       const PartitionHfsFileWriteOptions& options) {
     const QByteArray beforeImage = readBytes(imagePath);
     QVERIFY(hfsAllocationBitSet(beforeImage, kTestHfsNoteFileBlock));
 
@@ -5775,12 +5962,13 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndRele
             imagePath, QStringLiteral("/Docs/note.txt"), options);
     QVERIFY(!missingAgain.ok);
     QVERIFY(missingAgain.blockers.join(' ').contains(QStringLiteral("not found")));
+}
 
+void verifyHfsSecureFileDeletePhase(QTemporaryDir& temp,
+                                    const PartitionHfsFileWriteOptions& secureDeleteOptions) {
     const QString secureDeleteImagePath =
         temp.filePath(QStringLiteral("hfs-allocated-file-secure-delete.img"));
     QVERIFY(writeBytes(secureDeleteImagePath, hfsReaderFixture()));
-    PartitionHfsFileWriteOptions secureDeleteOptions = options;
-    secureDeleteOptions.secure_wipe_deleted_blocks = true;
     const auto secureDeleted =
         PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
             secureDeleteImagePath, QStringLiteral("/Docs/note.txt"), secureDeleteOptions);
@@ -5791,7 +5979,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndRele
     QCOMPARE(secureDeletedImage.mid(kTestHfsNoteFileBlock * kTestHfsBlockSize, kTestHfsBlockSize),
              QByteArray(kTestHfsBlockSize, '\0'));
     QVERIFY(!hfsAllocationBitSet(secureDeletedImage, kTestHfsNoteFileBlock));
+}
 
+void verifyHfsFolderTreeDeletePhase(QTemporaryDir& temp,
+                                    const PartitionHfsFileWriteOptions& options) {
     const QString folderTreeImagePath = temp.filePath(QStringLiteral("hfs-folder-tree-delete.img"));
     QVERIFY(writeBytes(folderTreeImagePath, hfsReaderFixture()));
     const auto rootTreeBlocked =
@@ -5842,7 +6033,12 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndRele
     QCOMPARE(treeConsistency.files, 1);
     QCOMPARE(treeConsistency.directories, 0);
     QCOMPARE(treeConsistency.records_scanned, 1);
+}
 
+void verifyHfsDeleteFailClosedAndOverflowPhase(
+    QTemporaryDir& temp,
+    const PartitionHfsFileWriteOptions& options,
+    const PartitionHfsFileWriteOptions& secureDeleteOptions) {
     const QString secureTreeImagePath =
         temp.filePath(QStringLiteral("hfs-folder-tree-secure-delete.img"));
     QVERIFY(writeBytes(secureTreeImagePath, hfsReaderFixture()));
@@ -5899,26 +6095,34 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndRele
     QVERIFY(overflowMissing.blockers.join(' ').contains(QStringLiteral("not found")));
 }
 
-void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks() {
-    // H5: symlink + hard-link create/delete. Byte layout harvested from macOS and
-    // certified clean by Apple fsck_hfs (multi-linked files + catalog hierarchy).
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_deletesAllocatedFilesAndReleasesBitmap() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    const QString imagePath = temp.filePath(QStringLiteral("hfs-h5.img"));
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-allocated-file-delete.img"));
     QVERIFY(writeBytes(imagePath, hfsReaderFixture()));
 
     PartitionHfsFileWriteOptions options;
     options.enable_writer = true;
     options.target_write_confirmed = true;
     options.allow_journaled_volume = true;
-    options.evidence_id = QStringLiteral("unit.hfs-h5-links");
+    options.evidence_id = QStringLiteral("unit.hfs-allocated-file-delete");
 
-    const QByteArray payload(200, 'H');
-    QVERIFY2(PartitionHfsFileSystemWriter::createFileWithDataFromImage(
-                 imagePath, QStringLiteral("/hl.txt"), payload, options)
-                 .ok,
-             "create base file");
+    PartitionHfsFileWriteOptions secureDeleteOptions = options;
+    secureDeleteOptions.secure_wipe_deleted_blocks = true;
 
+    verifyHfsAllocatedFileDeletePhase(imagePath, options);
+    verifyHfsSecureFileDeletePhase(temp, secureDeleteOptions);
+    verifyHfsFolderTreeDeletePhase(temp, options);
+    verifyHfsDeleteFailClosedAndOverflowPhase(temp, options, secureDeleteOptions);
+}
+
+namespace {
+
+void verifyHfsLinkCreateAndResolve(const QString& imagePath,
+                                   const PartitionHfsFileWriteOptions& options,
+                                   const QByteArray& payload) {
     // Symbolic link: a file with the S_IFLNK / 'slnk':'rhap' record whose data fork
     // holds the target path.
     const auto symlink = PartitionHfsFileSystemWriter::createSymlinkFromImage(
@@ -5953,7 +6157,9 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
                      alias, aliasRead.blockers.join(QStringLiteral("; ")))));
         QCOMPARE(aliasRead.data, payload);
     }
+}
 
+void verifyHfsLinkListing(const QString& imagePath, const QByteArray& payload) {
     // All three aliases plus the hidden private metadata directory are present; the
     // listing resolves each alias's shared inode so size_bytes reports the inode's
     // 200-byte fork (not the alias's empty fork) and the hard-link flag is set.
@@ -5983,7 +6189,11 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
     }
     QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 50).ok,
              "consistency after hard-link create");
+}
 
+void verifyHfsLinkDeleteChain(const QString& imagePath,
+                              const PartitionHfsFileWriteOptions& options,
+                              const QByteArray& payload) {
     // A non-hard-link cannot be deleted via the hard-link path.
     const auto notLink = PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
         imagePath, QStringLiteral("/sym.txt"), options);
@@ -6014,6 +6224,33 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
                  .ok);
     QVERIFY2(PartitionHfsFileSystemReader::checkConsistencyFromImage(imagePath, 50).ok,
              "consistency after hard-link delete");
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks() {
+    // H5: symlink + hard-link create/delete. Byte layout harvested from macOS and
+    // certified clean by Apple fsck_hfs (multi-linked files + catalog hierarchy).
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-h5.img"));
+    QVERIFY(writeBytes(imagePath, hfsReaderFixture()));
+
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-h5-links");
+
+    const QByteArray payload(200, 'H');
+    QVERIFY2(PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+                 imagePath, QStringLiteral("/hl.txt"), payload, options)
+                 .ok,
+             "create base file");
+
+    verifyHfsLinkCreateAndResolve(imagePath, options, payload);
+    verifyHfsLinkListing(imagePath, payload);
+    verifyHfsLinkDeleteChain(imagePath, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsFileSystemReader_rejectsCorruptMetadataChecksum() {
@@ -6065,9 +6302,10 @@ void PartitionManagerCoreTests::apfsWriter_computesAndVerifiesObjectChecksums() 
     QVERIFY(!PartitionApfsWriter::stampObjectChecksum(nullptr));
 }
 
-void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry() {
+namespace {
+
+void verifyApfsSingleChunkTierGeometry() {
     constexpr uint64_t kBlocksPerChunk = 32'768;  // one spaceman chunk (4096-byte blocks)
-    constexpr uint64_t kChunksPerCib = 126;
 
     // Empty/degenerate input is fully defined and harmless.
     const auto empty = PartitionApfsWriter::computeContainerGeometry(0);
@@ -6098,6 +6336,15 @@ void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry()
     QVERIFY(!justOver.single_chunk);
     QVERIFY(!justOver.multi_cib);
     QCOMPARE(justOver.ip_block_count, static_cast<uint64_t>(9));  // 3 * (1 + 2)
+
+    // Partial trailing chunk rounds up.
+    const auto partial = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk * 3 + 17);
+    QCOMPARE(partial.chunk_count, static_cast<uint64_t>(4));
+}
+
+void verifyApfsMultiCibTierGeometry() {
+    constexpr uint64_t kBlocksPerChunk = 32'768;  // one spaceman chunk (4096-byte blocks)
+    constexpr uint64_t kChunksPerCib = 126;
 
     // 512 MiB (131072 blocks) -> 4 chunks, 1 CIB.
     const auto fiveTwelve = PartitionApfsWriter::computeContainerGeometry(131'072);
@@ -6138,10 +6385,13 @@ void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry()
     QCOMPARE(hundredGiB.chunk_count, static_cast<uint64_t>(800));
     QCOMPARE(hundredGiB.cib_count, static_cast<uint64_t>(7));
     QCOMPARE(hundredGiB.cab_count, static_cast<uint64_t>(0));
+}
 
-    // Partial trailing chunk rounds up.
-    const auto partial = PartitionApfsWriter::computeContainerGeometry(kBlocksPerChunk * 3 + 17);
-    QCOMPARE(partial.chunk_count, static_cast<uint64_t>(4));
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_computesMultiChunkContainerGeometry() {
+    verifyApfsSingleChunkTierGeometry();
+    verifyApfsMultiCibTierGeometry();
 }
 
 PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
@@ -6165,6 +6415,65 @@ PartitionApfsWriteOptions certifiedApfsRawCommitOptions() {
     options.raw_media_hardware_certification_evidence = true;
     options.evidence_id = QStringLiteral("external.apfs-raw-commit-fixture");
     return options;
+}
+
+QByteArray readApfsImageBlock(const QString& path, quint64 block) {
+    QFile file(path);
+    file.open(QIODevice::ReadOnly);
+    file.seek(static_cast<qint64>(block * 4096));
+    return file.read(4096);
+}
+
+quint32 apfsLe32(const QByteArray& bytes, int offset) {
+    return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(bytes.constData() + offset));
+}
+
+quint16 apfsLe16(const QByteArray& bytes, int offset) {
+    return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(bytes.constData() + offset));
+}
+
+quint64 apfsLe64(const QByteArray& bytes, int offset) {
+    return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(bytes.constData() + offset));
+}
+
+// Asserts the root holds exactly two names (nameA, nameB) that each read back the
+// identical payload at the payload's logical size -- the clone/hard-link round trip.
+void verifyApfsTwoNamesShareData(const QString& out,
+                                 const QString& nameA,
+                                 const QString& nameB,
+                                 const QByteArray& payload) {
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    for (const auto& entry : listing.entries) {
+        QCOMPARE(entry.size_bytes, static_cast<uint64_t>(payload.size()));
+    }
+    const auto readA = PartitionApfsFileSystemReader::readFileFromImage(
+        out, nameA, static_cast<uint64_t>(payload.size()));
+    QVERIFY2(readA.ok, qPrintable(readA.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readA.data, payload);
+    const auto readB = PartitionApfsFileSystemReader::readFileFromImage(
+        out, nameB, static_cast<uint64_t>(payload.size()));
+    QVERIFY2(readB.ok, qPrintable(readB.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readB.data, payload);
+}
+
+// Asserts the container superblock (block 0) still carries a valid object checksum.
+void verifyApfsContainerSuperblockChecksum(const QString& path) {
+    QFile outImage(path);
+    QVERIFY(outImage.open(QIODevice::ReadOnly));
+    const QByteArray nxsb = outImage.read(4096);
+    outImage.close();
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+}
+
+// Walks nx_superblock -> container omap header -> container omap tree -> volume APSB.
+quint64 apfsApsbBlockOf(const QString& path) {
+    const QByteArray nxsb = readApfsImageBlock(path, 0);
+    const QByteArray ctrHdr = readApfsImageBlock(path, apfsLe64(nxsb, 0xA0));
+    const QByteArray tree = readApfsImageBlock(path, apfsLe64(ctrHdr, 0x30));
+    return apfsLe64(tree, 4096 - 40 - 16 + 8);  // single omap entry, paddr at value+8
 }
 
 constexpr qsizetype kTestApfsTamperBlockSize = 4096;
@@ -6341,8 +6650,7 @@ void verifyApfsImageOnlyExecutionEvidenceGate(const PartitionApfsImageMutationPl
     QVERIFY(mismatchGate.blockers.join(' ').contains(QStringLiteral("target path")));
 }
 
-void verifyApfsWholeContainerPlanShapes(const PartitionFileSystemDetection& detection,
-                                        const PartitionApfsWriteOptions& options) {
+void verifyApfsFormatPlanShapes(const PartitionApfsWriteOptions& options) {
     const auto formatPlan = PartitionApfsWriter::planImageOnlyFormat(
         128ULL * 1024ULL * 1024ULL, 4096, QStringLiteral("SAK APFS"), options);
     QVERIFY2(formatPlan.buildable,
@@ -6378,7 +6686,10 @@ void verifyApfsWholeContainerPlanShapes(const PartitionFileSystemDetection& dete
         128ULL * 1024ULL * 1024ULL, 4096, QStringLiteral("Bad/Name"), options);
     QVERIFY(!unsafeNamePlan.buildable);
     QVERIFY(unsafeNamePlan.preflight.blockers.join(' ').contains(QStringLiteral("separator")));
+}
 
+void verifyApfsContainerMutationPlanShapes(const PartitionFileSystemDetection& detection,
+                                           const PartitionApfsWriteOptions& options) {
     const auto repairPlan = PartitionApfsWriter::planImageOnlyMutation(
         detection, PartitionApfsWriteOperation::RepairContainer, options, {});
     QVERIFY2(repairPlan.buildable,
@@ -6431,16 +6742,19 @@ void verifyApfsWholeContainerPlanShapes(const PartitionFileSystemDetection& dete
         badRepairTarget.preflight.blockers.join(' ').contains(QStringLiteral("whole-container")));
 }
 
-void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
-    PartitionApfsWriteOptions generatedOnlyOptions = options;
-    generatedOnlyOptions.allow_encrypted_or_protected_volume = false;
-    generatedOnlyOptions.allow_compressed_file_mutation = false;
-    generatedOnlyOptions.allow_snapshots = false;
-    generatedOnlyOptions.allow_multi_volume_container = false;
+void verifyApfsWholeContainerPlanShapes(const PartitionFileSystemDetection& detection,
+                                        const PartitionApfsWriteOptions& options) {
+    verifyApfsFormatPlanShapes(options);
+    verifyApfsContainerMutationPlanShapes(detection, options);
+}
 
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("formatted.apfs"));
+void verifyApfsExistingContainerFormat(QTemporaryDir& temp,
+                                       const PartitionApfsWriteOptions& generatedOnlyOptions);
+
+void verifyApfsFormatRelabelAndExistingPhase(
+    QTemporaryDir& temp,
+    const QString& imagePath,
+    const PartitionApfsWriteOptions& generatedOnlyOptions) {
     const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
         {.image_path = imagePath,
          .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
@@ -6491,6 +6805,11 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY(!invalidRelabel.ok);
     QVERIFY(invalidRelabel.blockers.join(' ').contains(QStringLiteral("separator")));
 
+    verifyApfsExistingContainerFormat(temp, generatedOnlyOptions);
+}
+
+void verifyApfsExistingContainerFormat(QTemporaryDir& temp,
+                                       const PartitionApfsWriteOptions& generatedOnlyOptions) {
     const QString existingTargetPath = QDir(temp.path()).filePath(QStringLiteral("existing.apfs"));
     QFile existingTarget(existingTargetPath);
     QVERIFY(existingTarget.open(QIODevice::WriteOnly));
@@ -6525,30 +6844,16 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(existingListing.ok, qPrintable(existingListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(existingListing.volume_name, QStringLiteral("SAK Existing"));
     QCOMPARE(existingListing.entries.size(), 0);
+}
 
-    const QString fakeRawTarget =
-        QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk99\\Partition1");
-    const auto rawOptInBlocked = PartitionApfsWriter::formatExistingContainerTarget(
-        {.image_path = fakeRawTarget,
-         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-         .block_size_bytes = 4096,
-         .volume_name = QStringLiteral("SAK Raw"),
-         .target_wipe_confirmed = true,
-         .options = generatedOnlyOptions});
-    QVERIFY(!rawOptInBlocked.ok);
-    QVERIFY(rawOptInBlocked.blockers.join(' ').contains(QStringLiteral("raw-device opt-in")));
+void verifyApfsRawLabelAndRepairGuards(const QString& imagePath,
+                                       const QString& fakeRawTarget,
+                                       const PartitionApfsWriteOptions& certifiedRaw,
+                                       const PartitionApfsWriteOptions& generatedOnlyOptions);
 
-    const auto rawImageOnlyBlocked = PartitionApfsWriter::formatExistingContainerTarget(
-        {.image_path = fakeRawTarget,
-         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-         .block_size_bytes = 4096,
-         .volume_name = QStringLiteral("SAK Raw"),
-         .target_wipe_confirmed = true,
-         .allow_raw_device_target = true,
-         .options = generatedOnlyOptions});
-    QVERIFY(!rawImageOnlyBlocked.ok);
-    QVERIFY(rawImageOnlyBlocked.blockers.join(' ').contains(QStringLiteral("non-image-only")));
-
+void verifyApfsRawFileOpGuards(const QString& imagePath,
+                               const QString& fakeRawTarget,
+                               const PartitionApfsWriteOptions& generatedOnlyOptions) {
     PartitionApfsWriteOptions certifiedRaw = generatedOnlyOptions;
     certifiedRaw.image_only = false;
     certifiedRaw.raw_media_hardware_certification_evidence = true;
@@ -6596,6 +6901,13 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY(
         rawDeleteConfirmationBlocked.blockers.join(' ').contains(QStringLiteral("confirmation")));
 
+    verifyApfsRawLabelAndRepairGuards(imagePath, fakeRawTarget, certifiedRaw, generatedOnlyOptions);
+}
+
+void verifyApfsRawLabelAndRepairGuards(const QString& imagePath,
+                                       const QString& fakeRawTarget,
+                                       const PartitionApfsWriteOptions& certifiedRaw,
+                                       const PartitionApfsWriteOptions& generatedOnlyOptions) {
     const auto rawLabelNonRawBlocked = PartitionApfsWriter::changeRawVolumeLabel(
         {.target_path = imagePath,
          .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
@@ -6625,6 +6937,35 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY(!rawRepairImageOnlyBlocked.ok);
     QVERIFY(
         rawRepairImageOnlyBlocked.blockers.join(' ').contains(QStringLiteral("non-image-only")));
+}
+
+void verifyApfsRawTargetGuardPhase(QTemporaryDir& temp,
+                                   const QString& imagePath,
+                                   const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString fakeRawTarget =
+        QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk99\\Partition1");
+    const auto rawOptInBlocked = PartitionApfsWriter::formatExistingContainerTarget(
+        {.image_path = fakeRawTarget,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAK Raw"),
+         .target_wipe_confirmed = true,
+         .options = generatedOnlyOptions});
+    QVERIFY(!rawOptInBlocked.ok);
+    QVERIFY(rawOptInBlocked.blockers.join(' ').contains(QStringLiteral("raw-device opt-in")));
+
+    const auto rawImageOnlyBlocked = PartitionApfsWriter::formatExistingContainerTarget(
+        {.image_path = fakeRawTarget,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAK Raw"),
+         .target_wipe_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = generatedOnlyOptions});
+    QVERIFY(!rawImageOnlyBlocked.ok);
+    QVERIFY(rawImageOnlyBlocked.blockers.join(' ').contains(QStringLiteral("non-image-only")));
+
+    verifyApfsRawFileOpGuards(imagePath, fakeRawTarget, generatedOnlyOptions);
 
     const auto overwriteBlocked = PartitionApfsWriter::buildImageOnlyFormatImage(
         {.image_path = imagePath,
@@ -6644,13 +6985,35 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
          .options = defaults});
     QVERIFY(!defaultsBlocked.ok);
     QVERIFY(defaultsBlocked.blockers.join(' ').contains(QStringLiteral("disabled")));
+}
 
-    const QString seededImagePath = QDir(temp.path()).filePath(QStringLiteral("seeded.apfs"));
+QByteArray apfsImageOnlySeedData() {
     QByteArray seedData;
     while (seedData.size() < 9000) {
         seedData.append("APFS seed file proof across contiguous writer blocks.\n");
     }
     seedData.resize(9000);
+    return seedData;
+}
+
+QByteArray apfsImageOnlyReplacementSeedData() {
+    QByteArray replacementSeedData;
+    while (replacementSeedData.size() < 7000) {
+        replacementSeedData.append("replacement generated APFS file proof.\n");
+    }
+    replacementSeedData.resize(7000);
+    return replacementSeedData;
+}
+
+void verifyApfsImageOnlyNonEmptyWrite(QTemporaryDir& temp,
+                                      const QByteArray& seedData,
+                                      const PartitionApfsWriteOptions& generatedOnlyOptions);
+
+void verifyApfsImageOnlyWriteAndSeed(QTemporaryDir& temp,
+                                     const QString& imagePath,
+                                     const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString seededImagePath = QDir(temp.path()).filePath(QStringLiteral("seeded.apfs"));
+    const QByteArray seedData = apfsImageOnlySeedData();
 
     const QString writtenImagePath = QDir(temp.path()).filePath(QStringLiteral("written.apfs"));
     const auto writeBuild =
@@ -6697,7 +7060,14 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(seededRead.ok, qPrintable(seededRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(seededRead.data, seedData);
 
-    QByteArray secondSeedData("second generated APFS file proof");
+    verifyApfsImageOnlyNonEmptyWrite(temp, seedData, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyNonEmptyWrite(QTemporaryDir& temp,
+                                      const QByteArray& seedData,
+                                      const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString seededImagePath = QDir(temp.path()).filePath(QStringLiteral("seeded.apfs"));
+    const QByteArray secondSeedData("second generated APFS file proof");
     const QString nonEmptyWritePath =
         QDir(temp.path()).filePath(QStringLiteral("non-empty-write.apfs"));
     const auto nonEmptyWrite =
@@ -6723,12 +7093,17 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
         static_cast<uint64_t>(secondSeedData.size()));
     QVERIFY2(secondRead.ok, qPrintable(secondRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(secondRead.data, secondSeedData);
+}
 
-    QByteArray replacementSeedData;
-    while (replacementSeedData.size() < 7000) {
-        replacementSeedData.append("replacement generated APFS file proof.\n");
-    }
-    replacementSeedData.resize(7000);
+void verifyApfsImageOnlyPatch(QTemporaryDir& temp,
+                              const PartitionApfsWriteOptions& generatedOnlyOptions);
+
+void verifyApfsImageOnlyReplaceAndPatch(QTemporaryDir& temp,
+                                        const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QByteArray secondSeedData("second generated APFS file proof");
+    const QByteArray replacementSeedData = apfsImageOnlyReplacementSeedData();
+    const QString nonEmptyWritePath =
+        QDir(temp.path()).filePath(QStringLiteral("non-empty-write.apfs"));
     const QString replaceWritePath =
         QDir(temp.path()).filePath(QStringLiteral("replace-write.apfs"));
     const auto replaceWrite =
@@ -6757,6 +7132,16 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(otherPreservedAfterReplace.ok,
              qPrintable(otherPreservedAfterReplace.blockers.join(QStringLiteral("; "))));
     QCOMPARE(otherPreservedAfterReplace.data, secondSeedData);
+
+    verifyApfsImageOnlyPatch(temp, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyPatch(QTemporaryDir& temp,
+                              const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QByteArray secondSeedData("second generated APFS file proof");
+    const QByteArray replacementSeedData = apfsImageOnlyReplacementSeedData();
+    const QString replaceWritePath =
+        QDir(temp.path()).filePath(QStringLiteral("replace-write.apfs"));
 
     QByteArray patchPayload("APFS byte-range patch proof");
     QByteArray patchedReplacement = replacementSeedData;
@@ -6802,7 +7187,19 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
          .options = generatedOnlyOptions});
     QVERIFY(!rangeBlockedPatch.ok);
     QVERIFY(rangeBlockedPatch.blockers.join(' ').contains(QStringLiteral("inside")));
+}
 
+void verifyApfsImageOnlyDelete(QTemporaryDir& temp,
+                               const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QByteArray secondSeedData("second generated APFS file proof");
+    QByteArray patchedReplacement = apfsImageOnlyReplacementSeedData();
+    const QByteArray patchPayload("APFS byte-range patch proof");
+    constexpr uint64_t kPatchOffset = 512;
+    std::copy(patchPayload.cbegin(),
+              patchPayload.cend(),
+              patchedReplacement.begin() + static_cast<qsizetype>(kPatchOffset));
+
+    const QString patchWritePath = QDir(temp.path()).filePath(QStringLiteral("patch-write.apfs"));
     const QString deleteWritePath = QDir(temp.path()).filePath(QStringLiteral("delete-write.apfs"));
     const auto deleteWrite =
         PartitionApfsWriter::deleteImageOnlyRootFile({.source_image_path = patchWritePath,
@@ -6846,7 +7243,20 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(emptyAfterDeleteListing.ok,
              qPrintable(emptyAfterDeleteListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(emptyAfterDeleteListing.entries.size(), 0);
+}
 
+void verifyApfsImageOnlyFileMutationPhase(QTemporaryDir& temp,
+                                          const QString& imagePath,
+                                          const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    verifyApfsImageOnlyWriteAndSeed(temp, imagePath, generatedOnlyOptions);
+    verifyApfsImageOnlyReplaceAndPatch(temp, generatedOnlyOptions);
+    verifyApfsImageOnlyDelete(temp, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyDirectoryCreateAndRoundTrip(
+    QTemporaryDir& temp, const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString emptyAfterDeletePath =
+        QDir(temp.path()).filePath(QStringLiteral("empty-after-delete.apfs"));
     const QString directoryCreatePath =
         QDir(temp.path()).filePath(QStringLiteral("directory-create.apfs"));
     const auto directoryCreate = PartitionApfsWriter::createImageOnlyRootDirectory(
@@ -6901,7 +7311,17 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(preservedDirListing.ok,
              qPrintable(preservedDirListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(preservedDirListing.entries.size(), 0);
+}
 
+void verifyApfsImageOnlyChildFilePatchAndDelete(
+    QTemporaryDir& temp,
+    const QByteArray& childReplacement,
+    const PartitionApfsWriteOptions& generatedOnlyOptions);
+
+void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
+                                           const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString directoryCreatePath =
+        QDir(temp.path()).filePath(QStringLiteral("directory-create.apfs"));
     const QByteArray childFileData("APFS child file in generated root directory");
     const QString childFileWritePath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-write.apfs"));
@@ -6954,6 +7374,21 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
              qPrintable(childReplacementRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(childReplacementRead.data, childReplacement);
 
+    verifyApfsImageOnlyChildFilePatchAndDelete(temp, childReplacement, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyChildRangeBlockAndDelete(
+    QTemporaryDir& temp,
+    const QByteArray& childReplacement,
+    const QByteArray& patchedChildReplacement,
+    const PartitionApfsWriteOptions& generatedOnlyOptions);
+
+void verifyApfsImageOnlyChildFilePatchAndDelete(
+    QTemporaryDir& temp,
+    const QByteArray& childReplacement,
+    const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString childFileReplacePath =
+        QDir(temp.path()).filePath(QStringLiteral("child-file-replace.apfs"));
     const QByteArray childPatchPayload("PATCH");
     QByteArray patchedChildReplacement = childReplacement;
     constexpr uint64_t kChildPatchOffset = 12;
@@ -6985,6 +7420,19 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(childPatchRead.ok, qPrintable(childPatchRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(childPatchRead.data, patchedChildReplacement);
 
+    verifyApfsImageOnlyChildRangeBlockAndDelete(
+        temp, childReplacement, patchedChildReplacement, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyChildRangeBlockAndDelete(
+    QTemporaryDir& temp,
+    const QByteArray& childReplacement,
+    const QByteArray& patchedChildReplacement,
+    const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString childFileReplacePath =
+        QDir(temp.path()).filePath(QStringLiteral("child-file-replace.apfs"));
+    const QString childFilePatchPath =
+        QDir(temp.path()).filePath(QStringLiteral("child-file-patch.apfs"));
     const auto childRangeBlockedPatch = PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
         {.source_image_path = childFileReplacePath,
          .written_image_path =
@@ -7019,7 +7467,12 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
     QVERIFY2(emptyAfterChildDelete.ok,
              qPrintable(emptyAfterChildDelete.blockers.join(QStringLiteral("; "))));
     QCOMPARE(emptyAfterChildDelete.entries.size(), 0);
+}
 
+void verifyApfsImageOnlyDirectoryDelete(QTemporaryDir& temp,
+                                        const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString childFileDeletePath =
+        QDir(temp.path()).filePath(QStringLiteral("child-file-delete.apfs"));
     const QString fileAfterDirectoryPath =
         QDir(temp.path()).filePath(QStringLiteral("file-after-directory.apfs"));
     const auto fileAfterDirectory = PartitionApfsWriter::writeImageOnlyRootFile(
@@ -7067,6 +7520,19 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
          .options = generatedOnlyOptions});
     QVERIFY(!missingDirectoryDelete.ok);
     QVERIFY(missingDirectoryDelete.blockers.join(' ').contains(QStringLiteral("not found")));
+}
+
+void verifyApfsImageOnlyDirectoryMutationPhase(
+    QTemporaryDir& temp, const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    verifyApfsImageOnlyDirectoryCreateAndRoundTrip(temp, generatedOnlyOptions);
+    verifyApfsImageOnlyChildFileMutations(temp, generatedOnlyOptions);
+    verifyApfsImageOnlyDirectoryDelete(temp, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyCorruptionRepair(QTemporaryDir& temp,
+                                         const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QString seededImagePath = QDir(temp.path()).filePath(QStringLiteral("seeded.apfs"));
+    const QByteArray seedData = apfsImageOnlySeedData();
 
     const QString corruptedImagePath = QDir(temp.path()).filePath(QStringLiteral("corrupted.apfs"));
     QVERIFY(QFile::copy(seededImagePath, corruptedImagePath));
@@ -7111,6 +7577,13 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
          .options = generatedOnlyOptions});
     QVERIFY(!cleanRepair.ok);
     QVERIFY(cleanRepair.blockers.join(' ').contains(QStringLiteral("did not find")));
+}
+
+void verifyApfsImageOnlyMalformedGuards(QTemporaryDir& temp,
+                                        const QString& imagePath,
+                                        const PartitionApfsWriteOptions& options,
+                                        const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    const QByteArray seedData = apfsImageOnlySeedData();
 
     const QString malformedGeneratedPath =
         QDir(temp.path()).filePath(QStringLiteral("malformed-generated.apfs"));
@@ -7148,6 +7621,33 @@ void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
          .options = generatedOnlyOptions});
     QVERIFY(!badSeed.ok);
     QVERIFY(badSeed.blockers.join(' ').contains(QStringLiteral("traversal")));
+}
+
+void verifyApfsImageOnlyRepairAndMalformedPhase(
+    QTemporaryDir& temp,
+    const QString& imagePath,
+    const PartitionApfsWriteOptions& options,
+    const PartitionApfsWriteOptions& generatedOnlyOptions) {
+    verifyApfsImageOnlyCorruptionRepair(temp, generatedOnlyOptions);
+    verifyApfsImageOnlyMalformedGuards(temp, imagePath, options, generatedOnlyOptions);
+}
+
+void verifyApfsImageOnlyFormatBuild(const PartitionApfsWriteOptions& options) {
+    PartitionApfsWriteOptions generatedOnlyOptions = options;
+    generatedOnlyOptions.allow_encrypted_or_protected_volume = false;
+    generatedOnlyOptions.allow_compressed_file_mutation = false;
+    generatedOnlyOptions.allow_snapshots = false;
+    generatedOnlyOptions.allow_multi_volume_container = false;
+
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("formatted.apfs"));
+
+    verifyApfsFormatRelabelAndExistingPhase(temp, imagePath, generatedOnlyOptions);
+    verifyApfsRawTargetGuardPhase(temp, imagePath, generatedOnlyOptions);
+    verifyApfsImageOnlyFileMutationPhase(temp, imagePath, generatedOnlyOptions);
+    verifyApfsImageOnlyDirectoryMutationPhase(temp, generatedOnlyOptions);
+    verifyApfsImageOnlyRepairAndMalformedPhase(temp, imagePath, options, generatedOnlyOptions);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() {
@@ -7220,6 +7720,122 @@ void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() 
     QCOMPARE(detection->free_bytes, 0ULL);
 }
 
+namespace {
+
+// Selects one field tamper and the blocker it must trigger. `omapField` selects
+// volume-omap vs APSB field tamper.
+struct ApfsSnapshotGateCase {
+    const char* name;
+    qsizetype fieldOffset;
+    uint64_t value;
+    bool field32;
+    bool omapField;
+    QString expectedBlocker;
+};
+
+// Copies the clean image, applies one tamper, and asserts the write fails closed
+// with the expected blocker.
+void verifyApfsSnapshotGateCase(QTemporaryDir& temp,
+                                const QString& imagePath,
+                                const QByteArray& payload,
+                                const PartitionApfsWriteOptions& options,
+                                const ApfsSnapshotGateCase& gateCase) {
+    constexpr uint32_t kApsbMagic = 0x42'53'50'41;  // 'APSB'
+    const QString casePath =
+        QDir(temp.path()).filePath(QString::fromLatin1(gateCase.name) + ".apfs");
+    QVERIFY(QFile::copy(imagePath, casePath));
+    if (gateCase.omapField) {
+        QVERIFY(tamperApfsVolumeOmapField(
+            casePath, gateCase.fieldOffset, gateCase.value, gateCase.field32));
+    } else {
+        QVERIFY(tamperApfsBlockField(
+            casePath, kApsbMagic, gateCase.fieldOffset, gateCase.value, gateCase.field32));
+    }
+    const auto blocked = PartitionApfsWriter::writeImageOnlyRootFile(
+        {.source_image_path = casePath,
+         .written_image_path =
+             QDir(temp.path()).filePath(QString::fromLatin1(gateCase.name) + "-out.apfs"),
+         .file_name = QStringLiteral("blocked.txt"),
+         .file_data = payload,
+         .options = options});
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(gateCase.expectedBlocker));
+}
+
+// Runs every snapshot-state tamper case the generated-layout gate must reject.
+void verifyApfsSnapshotGateCases(QTemporaryDir& temp,
+                                 const QString& imagePath,
+                                 const QByteArray& payload,
+                                 const PartitionApfsWriteOptions& options) {
+    verifyApfsSnapshotGateCase(temp,
+                               imagePath,
+                               payload,
+                               options,
+                               {.name = "snap-meta",
+                                .fieldOffset = 0x98,
+                                .value = 7,
+                                .field32 = false,
+                                .omapField = false,
+                                .expectedBlocker =
+                                    QStringLiteral("snapshot-metadata tree OID mismatch")});
+    verifyApfsSnapshotGateCase(temp,
+                               imagePath,
+                               payload,
+                               options,
+                               {.name = "snap-revert",
+                                .fieldOffset = 0xA0,
+                                .value = 12,
+                                .field32 = false,
+                                .omapField = false,
+                                .expectedBlocker =
+                                    QStringLiteral("must not carry revert metadata")});
+    verifyApfsSnapshotGateCase(temp,
+                               imagePath,
+                               payload,
+                               options,
+                               {.name = "snap-omap",
+                                .fieldOffset = 0x24,
+                                .value = 1,
+                                .field32 = true,
+                                .omapField = true,
+                                .expectedBlocker =
+                                    QStringLiteral("must not carry snapshot state")});
+    verifyApfsSnapshotGateCase(temp,
+                               imagePath,
+                               payload,
+                               options,
+                               {.name = "snap-omap-revert",
+                                .fieldOffset = 0x48,
+                                .value = 5,
+                                .field32 = false,
+                                .omapField = true,
+                                .expectedBlocker =
+                                    QStringLiteral("must not carry pending revert state")});
+    verifyApfsSnapshotGateCase(temp,
+                               imagePath,
+                               payload,
+                               options,
+                               {.name = "snap-count",
+                                .fieldOffset = 0xD8,
+                                .value = 3,
+                                .field32 = false,
+                                .omapField = false,
+                                .expectedBlocker = QStringLiteral("must not contain snapshots")});
+    verifyApfsSnapshotGateCase(
+        temp,
+        imagePath,
+        payload,
+        options,
+        {.name = "snap-encrypted",
+         .fieldOffset = 0x108,
+         .value = 0x04,
+         .field32 = false,
+         .omapField = false,
+         .expectedBlocker = QStringLiteral("encrypted or protected volume state is blocked")});
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_blocksGeneratedLayoutWithSnapshotState() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -7243,87 +7859,7 @@ void PartitionManagerCoreTests::apfsWriter_blocksGeneratedLayoutWithSnapshotStat
          .options = options});
     QVERIFY2(baseline.ok, qPrintable(baseline.blockers.join(QStringLiteral("; "))));
 
-    constexpr uint32_t kApsbMagic = 0x42'53'50'41;  // 'APSB'
-    const QString snapMetaPath = QDir(temp.path()).filePath(QStringLiteral("snap-meta.apfs"));
-    QVERIFY(QFile::copy(imagePath, snapMetaPath));
-    QVERIFY(tamperApfsBlockField(snapMetaPath, kApsbMagic, 0x98, 7, false));
-    const auto snapMetaBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = snapMetaPath,
-         .written_image_path = QDir(temp.path()).filePath(QStringLiteral("snap-meta-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!snapMetaBlocked.ok);
-    QVERIFY(snapMetaBlocked.blockers.join(' ').contains(
-        QStringLiteral("snapshot-metadata tree OID mismatch")));
-
-    const QString revertPath = QDir(temp.path()).filePath(QStringLiteral("snap-revert.apfs"));
-    QVERIFY(QFile::copy(imagePath, revertPath));
-    QVERIFY(tamperApfsBlockField(revertPath, kApsbMagic, 0xA0, 12, false));
-    const auto revertBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = revertPath,
-         .written_image_path = QDir(temp.path()).filePath(QStringLiteral("snap-revert-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!revertBlocked.ok);
-    QVERIFY(revertBlocked.blockers.join(' ').contains(
-        QStringLiteral("must not carry revert metadata")));
-
-    const QString omapSnapPath = QDir(temp.path()).filePath(QStringLiteral("snap-omap.apfs"));
-    QVERIFY(QFile::copy(imagePath, omapSnapPath));
-    QVERIFY(tamperApfsVolumeOmapField(omapSnapPath, 0x24, 1, true));
-    const auto omapBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = omapSnapPath,
-         .written_image_path = QDir(temp.path()).filePath(QStringLiteral("snap-omap-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!omapBlocked.ok);
-    QVERIFY(
-        omapBlocked.blockers.join(' ').contains(QStringLiteral("must not carry snapshot state")));
-
-    const QString omapRevertPath =
-        QDir(temp.path()).filePath(QStringLiteral("snap-omap-revert.apfs"));
-    QVERIFY(QFile::copy(imagePath, omapRevertPath));
-    QVERIFY(tamperApfsVolumeOmapField(omapRevertPath, 0x48, 5, false));
-    const auto omapRevertBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = omapRevertPath,
-         .written_image_path =
-             QDir(temp.path()).filePath(QStringLiteral("snap-omap-revert-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!omapRevertBlocked.ok);
-    QVERIFY(omapRevertBlocked.blockers.join(' ').contains(
-        QStringLiteral("must not carry pending revert state")));
-
-    const QString numSnapshotsPath = QDir(temp.path()).filePath(QStringLiteral("snap-count.apfs"));
-    QVERIFY(QFile::copy(imagePath, numSnapshotsPath));
-    QVERIFY(tamperApfsBlockField(numSnapshotsPath, kApsbMagic, 0xD8, 3, false));
-    const auto numSnapshotsBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = numSnapshotsPath,
-         .written_image_path = QDir(temp.path()).filePath(QStringLiteral("snap-count-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!numSnapshotsBlocked.ok);
-    QVERIFY(numSnapshotsBlocked.blockers.join(' ').contains(
-        QStringLiteral("must not contain snapshots")));
-
-    const QString encryptedPath = QDir(temp.path()).filePath(QStringLiteral("snap-encrypted.apfs"));
-    QVERIFY(QFile::copy(imagePath, encryptedPath));
-    QVERIFY(tamperApfsBlockField(encryptedPath, kApsbMagic, 0x108, 0x04, false));
-    const auto encryptedBlocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = encryptedPath,
-         .written_image_path =
-             QDir(temp.path()).filePath(QStringLiteral("snap-encrypted-out.apfs")),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!encryptedBlocked.ok);
-    QVERIFY(encryptedBlocked.blockers.join(' ').contains(
-        QStringLiteral("encrypted or protected volume state is blocked")));
+    verifyApfsSnapshotGateCases(temp, imagePath, payload, options);
 }
 
 void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() {
@@ -7377,21 +7913,6 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransa
          .options = options});
     QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
 
-    const auto readBlock = [](const QString& path, quint64 block) {
-        QFile file(path);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le32 = [](const QByteArray& bytes, int offset) {
-        return qFromLittleEndian<quint32>(
-            reinterpret_cast<const uchar*>(bytes.constData() + offset));
-    };
-    const auto le64 = [](const QByteArray& bytes, int offset) {
-        return qFromLittleEndian<quint64>(
-            reinterpret_cast<const uchar*>(bytes.constData() + offset));
-    };
-
     // First in-place commit: xid 2 -> 3, checkpoint into descriptor-ring slot 5/6.
     const QString x3 = dir.filePath(QStringLiteral("a2-x3.apfs"));
     const auto commit = PartitionApfsWriter::commitImageOnlyCheckpoint(
@@ -7402,16 +7923,16 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransa
     QCOMPARE(commit.checkpoint_map_block, 5ULL);
     QCOMPARE(commit.superblock_block, 6ULL);
 
-    const QByteArray nxsb = readBlock(x3, 0);
+    const QByteArray nxsb = readApfsImageBlock(x3, 0);
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
-    QCOMPARE(le64(nxsb, 0x10), 3ULL);    // o_xid advanced
-    QCOMPARE(le64(nxsb, 0x60), 4ULL);    // nx_next_xid
-    QCOMPARE(le32(nxsb, 0x88), 4U);      // nx_xp_desc_index
-    QCOMPARE(le32(nxsb, 0x90), 6U);      // nx_xp_data_index
-    QCOMPARE(le64(nxsb, 0xA0), 199ULL);  // nx_omap_oid carried forward (no fs COW)
-    QCOMPARE(readBlock(x3, 6), nxsb);    // descriptor-ring nx_superblock mirrors block 0
+    QCOMPARE(apfsLe64(nxsb, 0x10), 3ULL);       // o_xid advanced
+    QCOMPARE(apfsLe64(nxsb, 0x60), 4ULL);       // nx_next_xid
+    QCOMPARE(apfsLe32(nxsb, 0x88), 4U);         // nx_xp_desc_index
+    QCOMPARE(apfsLe32(nxsb, 0x90), 6U);         // nx_xp_data_index
+    QCOMPARE(apfsLe64(nxsb, 0xA0), 199ULL);     // nx_omap_oid carried forward (no fs COW)
+    QCOMPARE(readApfsImageBlock(x3, 6), nxsb);  // descriptor-ring nx_superblock mirrors block 0
     for (quint64 block : {0ULL, 5ULL, 6ULL, 15ULL, 16ULL, 17ULL, 18ULL}) {
-        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readBlock(x3, block)),
+        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readApfsImageBlock(x3, block)),
                  qPrintable(QStringLiteral("invalid object checksum at block %1").arg(block)));
     }
 
@@ -7428,12 +7949,17 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransa
     QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
     QCOMPARE(commit2.new_xid, 4ULL);
     QCOMPARE(commit2.checkpoint_map_block, 7ULL);
-    const QByteArray nxsb4 = readBlock(x4, 0);
+    const QByteArray nxsb4 = readApfsImageBlock(x4, 0);
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb4));
-    QCOMPARE(le64(nxsb4, 0x10), 4ULL);
-    QCOMPARE(le32(nxsb4, 0x88), 6U);   // descriptor index advanced one pair
-    QCOMPARE(le32(nxsb4, 0x90), 10U);  // data index advanced one quad
+    QCOMPARE(apfsLe64(nxsb4, 0x10), 4ULL);
+    QCOMPARE(apfsLe32(nxsb4, 0x88), 6U);   // descriptor index advanced one pair
+    QCOMPARE(apfsLe32(nxsb4, 0x90), 10U);  // data index advanced one quad
 }
+
+namespace {
+void verifyApfsFileInsertRotatedBitmap(const QString& out);
+void verifyApfsNonEmptyFileInsertCommit(const QDir& dir, const PartitionApfsWriteOptions& options);
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFile() {
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
@@ -7470,25 +7996,15 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     QCOMPARE(listing.entries.first().name, QStringLiteral("proof.txt"));
     QCOMPARE(listing.entries.first().size_bytes, 0ULL);
 
-    const auto readBlock = [](const QString& path, quint64 block) {
-        QFile file(path);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le64 = [](const QByteArray& bytes, int offset) {
-        return qFromLittleEndian<quint64>(
-            reinterpret_cast<const uchar*>(bytes.constData() + offset));
-    };
-    const QByteArray nxsb = readBlock(out, 0);
+    const QByteArray nxsb = readApfsImageBlock(out, 0);
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
-    QCOMPARE(le64(nxsb, 0x10), 3ULL);  // o_xid advanced
-    QCOMPARE(le64(nxsb, 0xA0),
+    QCOMPARE(apfsLe64(nxsb, 0x10), 3ULL);  // o_xid advanced
+    QCOMPARE(apfsLe64(nxsb, 0xA0),
              206ULL);  // nx_omap_oid -> the new container omap header (6th free block)
 
     // Every copy-on-written object block carries a valid object checksum.
     for (quint64 block : {201ULL, 202ULL, 203ULL, 204ULL, 205ULL, 206ULL}) {
-        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readBlock(out, block)),
+        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(readApfsImageBlock(out, block)),
                  qPrintable(QStringLiteral("invalid object checksum at block %1").arg(block)));
     }
 
@@ -7497,11 +8013,19 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     // checkpoint's cib/bitmap intact, and moved the spaceman cib_addr to 189. The
     // live allocation bitmap is therefore block 190.
     QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(out), 189ULL);
+    verifyApfsFileInsertRotatedBitmap(out);
+
+    verifyApfsNonEmptyFileInsertCommit(dir, options);
+}
+
+namespace {
+
+void verifyApfsFileInsertRotatedBitmap(const QString& out) {
     // Deferred reclamation: the old chain blocks are NOT freed immediately - they
     // are queued on the main free-queue (kept allocated in the rotated chunk bitmap
     // until they age past the rollback window), so they still read as used; the six
     // new blocks are allocated.
-    const QByteArray bitmap = readBlock(out, 190);
+    const QByteArray bitmap = readApfsImageBlock(out, 190);
     const auto used = [&bitmap](quint64 block) {
         return (static_cast<quint8>(bitmap.at(static_cast<qsizetype>(block / 8))) >> (block % 8)) &
                1;
@@ -7514,7 +8038,9 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
         QVERIFY2(used(block) == 1,
                  qPrintable(QStringLiteral("new block %1 not allocated").arg(block)));
     }
+}
 
+void verifyApfsNonEmptyFileInsertCommit(const QDir& dir, const PartitionApfsWriteOptions& options) {
     // A non-empty file inserts a data extent: the payload is written to a data
     // block, the reader reads back the exact size, and the spaceman + CIB free
     // counts drop by the one allocated data block.
@@ -7545,20 +8071,23 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertCommitAddsReadableFi
     QCOMPARE(listing2.entries.first().size_bytes, static_cast<uint64_t>(payload.size()));
     // The payload landed in the data block past the seven COW chain blocks (six
     // metadata + the copy-on-written extent-ref tree), i.e. block 208.
-    QCOMPARE(readBlock(out2, 208).left(payload.size()), payload);
+    QCOMPARE(readApfsImageBlock(out2, 208).left(payload.size()), payload);
     // The copy-on-written extent-ref tree (block 207) carries the data extent.
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(readBlock(out2, 207)));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(readApfsImageBlock(out2, 207)));
     // Deferred reclamation: nothing ages out at this first commit, so the spaceman
     // free count (block 15) drops by every newly allocated block - the seven-block
     // COW chain (one fs node + five object-map blocks + the copy-on-written extent-
     // ref tree) plus the one data block - while the seven old chain blocks are
     // queued on the main free-queue rather than released. apfsck confirms the
     // resulting space accounting is exact.
-    const auto deviceFree = [&le64](const QByteArray& spaceman) {
-        return le64(spaceman, 0x30 + 0x18);  // sm_dev[MAIN].sm_free_count
+    const auto deviceFree = [](const QByteArray& spaceman) {
+        return apfsLe64(spaceman, 0x30 + 0x18);  // sm_dev[MAIN].sm_free_count
     };
-    QCOMPARE(deviceFree(readBlock(out2, 15)) + 8ULL, deviceFree(readBlock(base2, 11)));
+    QCOMPARE(deviceFree(readApfsImageBlock(out2, 15)) + 8ULL,
+             deviceFree(readApfsImageBlock(base2, 11)));
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileWriteCreatesThenReplaces() {
     // The production file-write primitive (commitImageOnly/RawFileWrite) is
@@ -7688,14 +8217,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree()
     QVERIFY(!dup.ok);
 }
 
-void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() {
-    // The in-place COW directory-child write/delete and empty-directory delete commits
-    // preserve the rest of the tree (Apple-certified: kernel reads docs/b.txt, tmp and
-    // docs/a.txt removed, fsck_apfs clean). Non-empty / missing targets fail closed.
-    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QDir dir(temp.path());
+namespace {
+
+void buildApfsDirMutationSetup(const QDir& dir,
+                               const PartitionApfsWriteOptions& options,
+                               QString* withBOut) {
     const QString base = dir.filePath(QStringLiteral("a2dm-base.apfs"));
     QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
                 {.image_path = base,
@@ -7740,6 +8266,28 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
                  .file_data = QByteArrayLiteral("child-b"),
                  .options = options})
                 .ok);
+    *withBOut = withB;
+}
+
+void verifyApfsDirEmptyCreateDelete(const QDir& dir,
+                                    const QString& withDelA,
+                                    const PartitionApfsWriteOptions& options,
+                                    QString* withDelTmpOut);
+void verifyApfsDirMutationFailClosed(const QDir& dir,
+                                     const QString& withDelTmp,
+                                     const PartitionApfsWriteOptions& options);
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() {
+    // The in-place COW directory-child write/delete and empty-directory delete commits
+    // preserve the rest of the tree (Apple-certified: kernel reads docs/b.txt, tmp and
+    // docs/a.txt removed, fsck_apfs clean). Non-empty / missing targets fail closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    QString withB;
+    buildApfsDirMutationSetup(dir, options, &withB);
     const auto docsTwo =
         PartitionApfsFileSystemReader::listDirectoryFromImage(withB, QStringLiteral("/docs"), 20);
     QVERIFY2(docsTwo.ok, qPrintable(docsTwo.blockers.join(QStringLiteral("; "))));
@@ -7760,6 +8308,17 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
     QCOMPARE(docsOne.entries.size(), 1);
     QCOMPARE(docsOne.entries.first().name, QStringLiteral("b.txt"));
 
+    QString withDelTmp;
+    verifyApfsDirEmptyCreateDelete(dir, withDelA, options, &withDelTmp);
+    verifyApfsDirMutationFailClosed(dir, withDelTmp, options);
+}
+
+namespace {
+
+void verifyApfsDirEmptyCreateDelete(const QDir& dir,
+                                    const QString& withDelA,
+                                    const PartitionApfsWriteOptions& options,
+                                    QString* withDelTmpOut) {
     // Create then delete an empty directory.
     const QString withTmp = dir.filePath(QStringLiteral("a2dm-tmp.apfs"));
     QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
@@ -7791,7 +8350,12 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
     QVERIFY(sawDocs);
     QVERIFY(sawRoot);
     QVERIFY(!sawTmp);
+    *withDelTmpOut = withDelTmp;
+}
 
+void verifyApfsDirMutationFailClosed(const QDir& dir,
+                                     const QString& withDelTmp,
+                                     const PartitionApfsWriteOptions& options) {
     // Fail-closed: deleting a non-empty directory, a missing directory, and writing a
     // child into a missing directory are all rejected.
     QVERIFY(!PartitionApfsWriter::commitImageOnlyDirectoryDelete(
@@ -7815,6 +8379,8 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryMutationsRoundTrip() 
                   .options = options})
                  .ok);
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryChildRename() {
     // Same-directory child rename routes onto the certified COW engine (the production
@@ -7953,6 +8519,56 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFilePatchPreservesObjectId() {
                  .ok);
 }
 
+namespace {
+
+void verifyApfsSnapshotCreateStructures(const QString& snap,
+                                        const QByteArray& baseVol,
+                                        quint64 beforeAlloc) {
+    const QByteArray vol = readApfsImageBlock(snap, apfsApsbBlockOf(snap));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(apfsLe64(vol, 0xD8), 1ULL);                 // num_snapshots
+    QCOMPARE(apfsLe64(vol, 0x58), 2 * beforeAlloc - 3);  // logical alloc count
+    const quint64 snapMetaTree = apfsLe64(vol, 0x98);
+    const QByteArray volOmap = readApfsImageBlock(snap, apfsLe64(vol, 0x80));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(volOmap));
+    QCOMPARE(apfsLe32(volOmap, 0x24), 1U);    // om_snap_count
+    QCOMPARE(apfsLe64(volOmap, 0x40), 3ULL);  // om_most_recent_snap = new xid
+    const quint64 omapSnapTree = apfsLe64(volOmap, 0x38);
+    QVERIFY(omapSnapTree != 0);
+
+    // Omap snapshot tree: subtype 0x13, one fixed-kv record keyed by the snapshot xid.
+    const QByteArray omapSnap = readApfsImageBlock(snap, omapSnapTree);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omapSnap));
+    QCOMPARE(apfsLe32(omapSnap, 0x1C), 0x13U);       // subtype
+    QCOMPARE(apfsLe32(omapSnap, 0x24), 1U);          // nkeys
+    QCOMPARE(apfsLe64(omapSnap, 0x38 + 576), 3ULL);  // key = snapshot xid
+
+    // Snap-meta tree: two records (j_snap_metadata then j_snap_name).
+    const QByteArray snapMeta = readApfsImageBlock(snap, snapMetaTree);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(snapMeta));
+    QCOMPARE(apfsLe32(snapMeta, 0x1C), 0x10U);  // subtype SNAP_META
+    QCOMPARE(apfsLe32(snapMeta, 0x24), 2U);     // nkeys
+
+    // Record 0 (j_snap_metadata) -> physical frozen superblock copy that keeps the root.
+    const quint16 keyOff = apfsLe16(snapMeta, 0x38);
+    const quint16 valBack = apfsLe16(snapMeta, 0x38 + 4);
+    const quint64 metaKey = apfsLe64(snapMeta, 0x38 + 64 + keyOff);
+    QCOMPARE(metaKey >> 60, 1ULL);  // SNAP_METADATA type
+    const quint64 sblockOid = apfsLe64(snapMeta, (4096 - 40) - valBack + 0x08);
+    const QByteArray frozen = readApfsImageBlock(snap, sblockOid);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(frozen));
+    QCOMPARE(apfsLe64(frozen, 0x08), sblockOid);                // physical object: oid == paddr
+    QCOMPARE(apfsLe32(frozen, 0x18), 0x40'00'00'0DU);           // OBJ_PHYSICAL | OBJECT_TYPE_FS
+    QCOMPARE(frozen.mid(0x20, 4), QByteArrayLiteral("APSB"));
+    QCOMPARE(apfsLe64(frozen, 0x88), apfsLe64(baseVol, 0x88));  // root tree kept
+    QCOMPARE(apfsLe64(frozen, 0x80), 0ULL);                     // omap zeroed
+    QCOMPARE(apfsLe64(frozen, 0x90), 0ULL);                     // extentref zeroed
+    QCOMPARE(apfsLe64(frozen, 0x98), 0ULL);                     // snap-meta zeroed
+    QCOMPARE(apfsLe64(frozen, 0xD8), 1ULL);                     // frozen num_snapshots
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
     // A3: creating a snapshot freezes the volume's tree pointers into a snapshot the
     // kernel + fsck_apfs enumerate. Verifies the on-disk structures: the volume gains
@@ -7972,33 +8588,10 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
                  .options = options})
                 .ok);
 
-    const auto readBlock = [](const QString& path, quint64 block) {
-        QFile file(path);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le16 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le32 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le64 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    // Walk nx_superblock -> container omap header -> container omap tree -> volume APSB.
-    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
-        const QByteArray nxsb = readBlock(path, 0);
-        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
-        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
-        return le64(tree, 4096 - 40 - 16 + 8);  // single omap entry, paddr at value+8
-    };
-
-    const quint64 baseApsb = apsbBlockOf(base);
-    const QByteArray baseVol = readBlock(base, baseApsb);
-    const quint64 beforeAlloc = le64(baseVol, 0x58);
-    QCOMPARE(le64(baseVol, 0xD8), 0ULL);  // no snapshots yet
+    const quint64 baseApsb = apfsApsbBlockOf(base);
+    const QByteArray baseVol = readApfsImageBlock(base, baseApsb);
+    const quint64 beforeAlloc = apfsLe64(baseVol, 0x58);
+    QCOMPARE(apfsLe64(baseVol, 0xD8), 0ULL);  // no snapshots yet
 
     const QString snap = dir.filePath(QStringLiteral("a3-snap.apfs"));
     const auto commit = PartitionApfsWriter::commitImageOnlySnapshotCreate(
@@ -8017,47 +8610,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("A3SNAP"));
 
-    const QByteArray vol = readBlock(snap, apsbBlockOf(snap));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
-    QCOMPARE(le64(vol, 0xD8), 1ULL);                 // num_snapshots
-    QCOMPARE(le64(vol, 0x58), 2 * beforeAlloc - 3);  // logical alloc count
-    const quint64 snapMetaTree = le64(vol, 0x98);
-    const QByteArray volOmap = readBlock(snap, le64(vol, 0x80));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(volOmap));
-    QCOMPARE(le32(volOmap, 0x24), 1U);    // om_snap_count
-    QCOMPARE(le64(volOmap, 0x40), 3ULL);  // om_most_recent_snap = new xid
-    const quint64 omapSnapTree = le64(volOmap, 0x38);
-    QVERIFY(omapSnapTree != 0);
-
-    // Omap snapshot tree: subtype 0x13, one fixed-kv record keyed by the snapshot xid.
-    const QByteArray omapSnap = readBlock(snap, omapSnapTree);
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omapSnap));
-    QCOMPARE(le32(omapSnap, 0x1C), 0x13U);       // subtype
-    QCOMPARE(le32(omapSnap, 0x24), 1U);          // nkeys
-    QCOMPARE(le64(omapSnap, 0x38 + 576), 3ULL);  // key = snapshot xid
-
-    // Snap-meta tree: two records (j_snap_metadata then j_snap_name).
-    const QByteArray snapMeta = readBlock(snap, snapMetaTree);
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(snapMeta));
-    QCOMPARE(le32(snapMeta, 0x1C), 0x10U);  // subtype SNAP_META
-    QCOMPARE(le32(snapMeta, 0x24), 2U);     // nkeys
-
-    // Record 0 (j_snap_metadata) -> physical frozen superblock copy that keeps the root.
-    const quint16 keyOff = le16(snapMeta, 0x38);
-    const quint16 valBack = le16(snapMeta, 0x38 + 4);
-    const quint64 metaKey = le64(snapMeta, 0x38 + 64 + keyOff);
-    QCOMPARE(metaKey >> 60, 1ULL);  // SNAP_METADATA type
-    const quint64 sblockOid = le64(snapMeta, (4096 - 40) - valBack + 0x08);
-    const QByteArray frozen = readBlock(snap, sblockOid);
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(frozen));
-    QCOMPARE(le64(frozen, 0x08), sblockOid);            // physical object: oid == paddr
-    QCOMPARE(le32(frozen, 0x18), 0x40'00'00'0DU);       // OBJ_PHYSICAL | OBJECT_TYPE_FS
-    QCOMPARE(frozen.mid(0x20, 4), QByteArrayLiteral("APSB"));
-    QCOMPARE(le64(frozen, 0x88), le64(baseVol, 0x88));  // root tree kept
-    QCOMPARE(le64(frozen, 0x80), 0ULL);                 // omap zeroed
-    QCOMPARE(le64(frozen, 0x90), 0ULL);                 // extentref zeroed
-    QCOMPARE(le64(frozen, 0x98), 0ULL);                 // snap-meta zeroed
-    QCOMPARE(le64(frozen, 0xD8), 1ULL);                 // frozen num_snapshots
+    verifyApfsSnapshotCreateStructures(snap, baseVol, beforeAlloc);
 
     // A volume that already carries a snapshot fails closed (multi-snapshot is later).
     QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotCreate(
@@ -8092,26 +8645,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshot
                  .options = options})
                 .ok);
 
-    const auto readBlock = [](const QString& path, quint64 block) {
-        QFile file(path);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le32 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le64 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
-        const QByteArray nxsb = readBlock(path, 0);
-        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
-        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
-        return le64(tree, 4096 - 40 - 16 + 8);
-    };
-
-    const quint64 baseAlloc = le64(readBlock(base, apsbBlockOf(base)), 0x58);
+    const quint64 baseAlloc = apfsLe64(readApfsImageBlock(base, apfsApsbBlockOf(base)), 0x58);
 
     const QString snap = dir.filePath(QStringLiteral("a3d-snap.apfs"));
     QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
@@ -8132,14 +8666,14 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshot
         PartitionApfsFileSystemReader::listDirectoryFromImage(del, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("A3DEL"));
-    const QByteArray vol = readBlock(del, apsbBlockOf(del));
+    const QByteArray vol = readApfsImageBlock(del, apfsApsbBlockOf(del));
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
-    QCOMPARE(le64(vol, 0xD8), 0ULL);       // num_snapshots back to 0
-    QCOMPARE(le64(vol, 0x58), baseAlloc);  // alloc_count restored
-    const QByteArray omap = readBlock(del, le64(vol, 0x80));
-    QCOMPARE(le32(omap, 0x24), 0U);        // om_snap_count 0
-    QCOMPARE(le64(omap, 0x38), 0ULL);      // om_snapshot_tree_oid 0
-    QCOMPARE(le64(omap, 0x40), 0ULL);      // om_most_recent_snap 0
+    QCOMPARE(apfsLe64(vol, 0xD8), 0ULL);       // num_snapshots back to 0
+    QCOMPARE(apfsLe64(vol, 0x58), baseAlloc);  // alloc_count restored
+    const QByteArray omap = readApfsImageBlock(del, apfsLe64(vol, 0x80));
+    QCOMPARE(apfsLe32(omap, 0x24), 0U);        // om_snap_count 0
+    QCOMPARE(apfsLe64(omap, 0x38), 0ULL);      // om_snapshot_tree_oid 0
+    QCOMPARE(apfsLe64(omap, 0x40), 0ULL);      // om_most_recent_snap 0
 
     // A delete with no snapshot fails closed.
     QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotDelete(
@@ -8148,6 +8682,28 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshot
                   .options = options})
                  .ok);
 }
+
+namespace {
+
+void verifyApfsSnapshotRevertTag(const QString& rev,
+                                 quint64 frozenSblock,
+                                 quint64 snapAlloc,
+                                 quint64 snapRoot,
+                                 quint64 snapNextObj) {
+    const QByteArray vol = readApfsImageBlock(rev, apfsApsbBlockOf(rev));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(apfsLe64(vol, 0xA0), 3ULL);          // revert_to_xid == snapshot xid
+    QCOMPARE(apfsLe64(vol, 0xA8), frozenSblock);  // revert_to_sblock_oid == frozen paddr
+    QCOMPARE(apfsLe64(vol, 0xD8), 1ULL);          // snapshot kept (num_snapshots)
+    QCOMPARE(apfsLe64(vol, 0x58), snapAlloc);     // alloc_count unchanged
+    QCOMPARE(apfsLe64(vol, 0x88), snapRoot);      // root tree unchanged
+    QCOMPARE(apfsLe64(vol, 0xB0), snapNextObj);   // next_obj_id unchanged (monotonic)
+    const QByteArray omap = readApfsImageBlock(rev, apfsLe64(vol, 0x80));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omap));
+    QCOMPARE(apfsLe32(omap, 0x24), 1U);  // om_snap_count still 1 (snapshot survives)
+}
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert() {
     // A3: reverting the single snapshot writes Apple's deferred-revert tag - the volume
@@ -8169,28 +8725,6 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
                  .options = options})
                 .ok);
 
-    const auto readBlock = [](const QString& path, quint64 block) {
-        QFile file(path);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le16 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le32 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le64 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto apsbBlockOf = [&](const QString& path) -> quint64 {
-        const QByteArray nxsb = readBlock(path, 0);
-        const QByteArray ctrHdr = readBlock(path, le64(nxsb, 0xA0));
-        const QByteArray tree = readBlock(path, le64(ctrHdr, 0x30));
-        return le64(tree, 4096 - 40 - 16 + 8);
-    };
-
     const QString snap = dir.filePath(QStringLiteral("a3r-snap.apfs"));
     QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
                 {.source_image_path = base,
@@ -8201,13 +8735,13 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
 
     // The snapshot state to revert to: its xid (== om_most_recent_snap) and the frozen
     // physical superblock paddr recorded in the j_snap_metadata record.
-    const QByteArray snapVol = readBlock(snap, apsbBlockOf(snap));
-    const quint64 snapAlloc = le64(snapVol, 0x58);
-    const quint64 snapRoot = le64(snapVol, 0x88);
-    const quint64 snapNextObj = le64(snapVol, 0xB0);
-    const QByteArray snapMeta = readBlock(snap, le64(snapVol, 0x98));
-    const quint16 valBack = le16(snapMeta, 0x38 + 4);
-    const quint64 frozenSblock = le64(snapMeta, (4096 - 40) - valBack + 0x08);
+    const QByteArray snapVol = readApfsImageBlock(snap, apfsApsbBlockOf(snap));
+    const quint64 snapAlloc = apfsLe64(snapVol, 0x58);
+    const quint64 snapRoot = apfsLe64(snapVol, 0x88);
+    const quint64 snapNextObj = apfsLe64(snapVol, 0xB0);
+    const QByteArray snapMeta = readApfsImageBlock(snap, apfsLe64(snapVol, 0x98));
+    const quint16 valBack = apfsLe16(snapMeta, 0x38 + 4);
+    const quint64 frozenSblock = apfsLe64(snapMeta, (4096 - 40) - valBack + 0x08);
     QVERIFY(frozenSblock != 0);
 
     const QString rev = dir.filePath(QStringLiteral("a3r-rev.apfs"));
@@ -8222,17 +8756,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
         PartitionApfsFileSystemReader::listDirectoryFromImage(rev, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("A3REV"));
-    const QByteArray vol = readBlock(rev, apsbBlockOf(rev));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
-    QCOMPARE(le64(vol, 0xA0), 3ULL);          // revert_to_xid == snapshot xid
-    QCOMPARE(le64(vol, 0xA8), frozenSblock);  // revert_to_sblock_oid == frozen paddr
-    QCOMPARE(le64(vol, 0xD8), 1ULL);          // snapshot kept (num_snapshots)
-    QCOMPARE(le64(vol, 0x58), snapAlloc);     // alloc_count unchanged
-    QCOMPARE(le64(vol, 0x88), snapRoot);      // root tree unchanged
-    QCOMPARE(le64(vol, 0xB0), snapNextObj);   // next_obj_id unchanged (monotonic)
-    const QByteArray omap = readBlock(rev, le64(vol, 0x80));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(omap));
-    QCOMPARE(le32(omap, 0x24), 1U);  // om_snap_count still 1 (snapshot survives)
+    verifyApfsSnapshotRevertTag(rev, frozenSblock, snapAlloc, snapRoot, snapNextObj);
 
     // A revert with no snapshot fails closed.
     QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
@@ -8248,13 +8772,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
                  .ok);
 }
 
-void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
-    // Cross-parent move (root <-> directory) on the COW engine: the file keeps its data,
-    // both parents' valences update, and a missing source/destination fails closed.
-    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QDir dir(temp.path());
+namespace {
+
+void buildApfsFileMoveSetup(const QDir& dir,
+                            const PartitionApfsWriteOptions& options,
+                            QString* withChildOut) {
     const QString base = dir.filePath(QStringLiteral("a2mv-base.apfs"));
     QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
                 {.image_path = base,
@@ -8287,6 +8809,20 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
                  .file_data = QByteArrayLiteral("child-a"),
                  .options = options})
                 .ok);
+    *withChildOut = withChild;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
+    // Cross-parent move (root <-> directory) on the COW engine: the file keeps its data,
+    // both parents' valences update, and a missing source/destination fails closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    QString withChild;
+    buildApfsFileMoveSetup(dir, options, &withChild);
 
     // Move root.txt (root) into docs, renamed to moved.txt.
     const QString intoDir = dir.filePath(QStringLiteral("a2mv-into.apfs"));
@@ -8341,6 +8877,12 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileMoveAcrossDirectories() {
                  .ok);
 }
 
+namespace {
+void exerciseApfsRawDirectoryAndFileMutations(const QString& container,
+                                              uint64_t bytes,
+                                              const PartitionApfsWriteOptions& rawOptions);
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersMutateConfirmedTarget() {
     // The on-hardware raw commitRaw* wrappers run the same certified COW core as the
     // image-only twins. A test seam classifies a temporary container file as an acceptable
@@ -8390,6 +8932,19 @@ void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersMutateConfirmedTarge
                  .options = rawOptions})
                 .ok);
 
+    exerciseApfsRawDirectoryAndFileMutations(container, bytes, rawOptions);
+
+    const auto rootListing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(container, QStringLiteral("/"), 20);
+    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(rootListing.entries.size(), 0);
+}
+
+namespace {
+
+void exerciseApfsRawDirectoryAndFileMutations(const QString& container,
+                                              uint64_t bytes,
+                                              const PartitionApfsWriteOptions& rawOptions) {
     QVERIFY2(PartitionApfsWriter::commitRawDirectoryCreate(
                  {.target_path = container,
                   .target_container_bytes = bytes,
@@ -8450,12 +9005,9 @@ void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersMutateConfirmedTarge
                   .options = rawOptions})
                  .ok,
              "raw delete empty docs");
-
-    const auto rootListing =
-        PartitionApfsFileSystemReader::listDirectoryFromImage(container, QStringLiteral("/"), 20);
-    QVERIFY2(rootListing.ok, qPrintable(rootListing.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(rootListing.entries.size(), 0);
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersFailClosedWithoutRawDevice() {
     // Defense in depth: the raw commit wrappers fail closed on a non-raw image-file path,
@@ -8561,6 +9113,38 @@ void PartitionManagerCoreTests::apfsWriter_formatsMetadataOverflowDeadZoneMultiB
     QCOMPARE(spacemanCpmSize, 2u * 4096u);
 }
 
+namespace {
+
+void verifyApfsMultiVolumeSuperblocks(const QString& image) {
+    // Locate both volume superblocks by their APSB magic in the reserved prefix.
+    QList<quint64> apsbBlocks;
+    for (quint64 block = 185; block < 1024; ++block) {
+        const QByteArray candidate = readApfsImageBlock(image, block);
+        if (candidate.size() == 4096 && apfsLe32(candidate, 0x20) == 0x42'53'50'41U /* 'APSB' */) {
+            apsbBlocks.append(block);
+        }
+    }
+    QCOMPARE(apsbBlocks.size(), 2);
+
+    const QByteArray vol1 = readApfsImageBlock(image, apsbBlocks.at(0));
+    const QByteArray vol2 = readApfsImageBlock(image, apsbBlocks.at(1));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol1));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol2));
+    // fs_index @0x24, superblock OID @0x08, root-tree OID @0x88 are distinct per volume.
+    QCOMPARE(apfsLe32(vol1, 0x24), 0U);
+    QCOMPARE(apfsLe32(vol2, 0x24), 1U);
+    QCOMPARE(apfsLe64(vol1, 0x08), 1026ULL);
+    QCOMPARE(apfsLe64(vol2, 0x08), 1030ULL);
+    QCOMPARE(apfsLe64(vol1, 0x88), 1028ULL);
+    QCOMPARE(apfsLe64(vol2, 0x88), 1031ULL);
+    QCOMPARE(QString::fromUtf8(QByteArray(vol1.constData() + 0x2C0)), QStringLiteral("SAKVOL1"));
+    QCOMPARE(QString::fromUtf8(QByteArray(vol2.constData() + 0x2C0)), QStringLiteral("SAKVOL2"));
+    // Each volume carries its own UUID (@0xF0).
+    QVERIFY(vol1.mid(0xF0, 16) != vol2.mid(0xF0, 16));
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
     // A4 multi-volume containers: a second volume gets its own omap, root/extent-ref/
     // snap-meta trees, superblock, fs_index, virtual OIDs, and UUID, all sharing the
@@ -8580,57 +9164,18 @@ void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
          .options = options});
     QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
 
-    const auto readBlock = [&](quint64 block) {
-        QFile file(image);
-        file.open(QIODevice::ReadOnly);
-        file.seek(static_cast<qint64>(block * 4096));
-        return file.read(4096);
-    };
-    const auto le32 = [](const QByteArray& bytes, int offset) {
-        return qFromLittleEndian<quint32>(
-            reinterpret_cast<const uchar*>(bytes.constData() + offset));
-    };
-    const auto le64 = [](const QByteArray& bytes, int offset) {
-        return qFromLittleEndian<quint64>(
-            reinterpret_cast<const uchar*>(bytes.constData() + offset));
-    };
-
     // Container superblock: nx_max_file_systems = 2 (1 GiB), nx_fs_oid carries both
     // volume OIDs (1026, 1030) with the rest of the array zero, and nx_next_oid clears
     // every assigned virtual OID (superblock + root tree per volume).
-    const QByteArray nxsb = readBlock(0);
+    const QByteArray nxsb = readApfsImageBlock(image, 0);
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
-    QCOMPARE(le32(nxsb, 0xB4), 2U);
-    QCOMPARE(le64(nxsb, 0xB8), 1026ULL);
-    QCOMPARE(le64(nxsb, 0xC0), 1030ULL);
-    QCOMPARE(le64(nxsb, 0xC8), 0ULL);
-    QCOMPARE(le64(nxsb, 0x58), 1032ULL);  // nx_next_oid
+    QCOMPARE(apfsLe32(nxsb, 0xB4), 2U);
+    QCOMPARE(apfsLe64(nxsb, 0xB8), 1026ULL);
+    QCOMPARE(apfsLe64(nxsb, 0xC0), 1030ULL);
+    QCOMPARE(apfsLe64(nxsb, 0xC8), 0ULL);
+    QCOMPARE(apfsLe64(nxsb, 0x58), 1032ULL);  // nx_next_oid
 
-    // Locate both volume superblocks by their APSB magic in the reserved prefix.
-    QList<quint64> apsbBlocks;
-    for (quint64 block = 185; block < 1024; ++block) {
-        const QByteArray candidate = readBlock(block);
-        if (candidate.size() == 4096 && le32(candidate, 0x20) == 0x42'53'50'41U /* 'APSB' */) {
-            apsbBlocks.append(block);
-        }
-    }
-    QCOMPARE(apsbBlocks.size(), 2);
-
-    const QByteArray vol1 = readBlock(apsbBlocks.at(0));
-    const QByteArray vol2 = readBlock(apsbBlocks.at(1));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol1));
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol2));
-    // fs_index @0x24, superblock OID @0x08, root-tree OID @0x88 are distinct per volume.
-    QCOMPARE(le32(vol1, 0x24), 0U);
-    QCOMPARE(le32(vol2, 0x24), 1U);
-    QCOMPARE(le64(vol1, 0x08), 1026ULL);
-    QCOMPARE(le64(vol2, 0x08), 1030ULL);
-    QCOMPARE(le64(vol1, 0x88), 1028ULL);
-    QCOMPARE(le64(vol2, 0x88), 1031ULL);
-    QCOMPARE(QString::fromUtf8(QByteArray(vol1.constData() + 0x2C0)), QStringLiteral("SAKVOL1"));
-    QCOMPARE(QString::fromUtf8(QByteArray(vol2.constData() + 0x2C0)), QStringLiteral("SAKVOL2"));
-    // Each volume carries its own UUID (@0xF0).
-    QVERIFY(vol1.mid(0xF0, 16) != vol2.mid(0xF0, 16));
+    verifyApfsMultiVolumeSuperblocks(image);
 
     // The reader still walks the first volume by default.
     const auto listing =
@@ -8650,6 +9195,12 @@ void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
     QVERIFY(!tooSmall.ok);
     QVERIFY(tooSmall.blockers.join(' ').contains(QStringLiteral("nx_max_file_systems")));
 }
+
+namespace {
+void verifyApfsIncompressiblePayloadRejected(const QDir& dir,
+                                             const QString& base,
+                                             const PartitionApfsWriteOptions& options);
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
     // A5: insert a transparently-compressed file (inline zlib com.apple.decmpfs)
@@ -8715,14 +9266,18 @@ void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
     // The image's container superblock is self-consistent (object checksum intact,
     // COW xid advanced); the inserted file allocated no data block (compressed
     // inline, so the commit copied only the metadata chain).
-    QFile outImage(out);
-    QVERIFY(outImage.open(QIODevice::ReadOnly));
-    const QByteArray nxsb = outImage.read(4096);
-    outImage.close();
+    const QByteArray nxsb = readApfsImageBlock(out, 0);
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
-    QCOMPARE(qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(nxsb.constData() + 0x10)),
-             3ULL);
+    QCOMPARE(apfsLe64(nxsb, 0x10), 3ULL);
 
+    verifyApfsIncompressiblePayloadRejected(dir, base, options);
+}
+
+namespace {
+
+void verifyApfsIncompressiblePayloadRejected(const QDir& dir,
+                                             const QString& base,
+                                             const PartitionApfsWriteOptions& options) {
     // Fail-closed: an incompressible payload whose decmpfs value would exceed the
     // embedded-xattr limit is rejected (resource-fork compression is a follow-on).
     QByteArray incompressible(8192, '\0');
@@ -8741,6 +9296,8 @@ void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
     QVERIFY(!tooBig.ok);
     QVERIFY(tooBig.blockers.join(' ').contains(QStringLiteral("embedded-xattr limit")));
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
     // A7 (A-h): insert one file that is BOTH sparse (a trailing hole) and carries
@@ -8810,11 +9367,7 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
     QCOMPARE(got.value(QStringLiteral("user.note")), QByteArrayLiteral("hello-xattr"));
 
     // The container superblock stays self-consistent (object checksum + xid).
-    QFile outImage(out);
-    QVERIFY(outImage.open(QIODevice::ReadOnly));
-    const QByteArray nxsb = outImage.read(4096);
-    outImage.close();
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    verifyApfsContainerSuperblockChecksum(out);
 }
 
 void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
@@ -8859,24 +9412,9 @@ void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
     QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
     QCOMPARE(commit.new_xid, 4ULL);
 
-    // Both names are present, each reporting the shared stream's logical size.
-    const auto listing =
-        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
-    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(listing.entries.size(), 2);
-    for (const auto& entry : listing.entries) {
-        QCOMPARE(entry.size_bytes, static_cast<uint64_t>(payload.size()));
-    }
-
-    // The source and the clone both read back the identical bytes (shared extents).
-    const auto sourceRead = PartitionApfsFileSystemReader::readFileFromImage(
-        out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
-    QVERIFY2(sourceRead.ok, qPrintable(sourceRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(sourceRead.data, payload);
-    const auto cloneRead = PartitionApfsFileSystemReader::readFileFromImage(
-        out, QStringLiteral("/clone.bin"), static_cast<uint64_t>(payload.size()));
-    QVERIFY2(cloneRead.ok, qPrintable(cloneRead.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(cloneRead.data, payload);
+    // Both names present at the shared stream's logical size; both read identical bytes.
+    verifyApfsTwoNamesShareData(
+        out, QStringLiteral("/orig.bin"), QStringLiteral("/clone.bin"), payload);
 
     // Cloning a source that does not exist fails closed.
     const auto missing = PartitionApfsWriter::commitImageOnlyFileClone(
@@ -8888,11 +9426,7 @@ void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
     QVERIFY(!missing.ok);
 
     // The container superblock stays self-consistent (object checksum).
-    QFile outImage(out);
-    QVERIFY(outImage.open(QIODevice::ReadOnly));
-    const QByteArray nxsb = outImage.read(4096);
-    outImage.close();
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    verifyApfsContainerSuperblockChecksum(out);
 }
 
 void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
@@ -8963,12 +9497,16 @@ void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
     QVERIFY(!missing.ok);
 
     // The container superblock stays self-consistent (object checksum).
-    QFile outImage(out);
-    QVERIFY(outImage.open(QIODevice::ReadOnly));
-    const QByteArray nxsb = outImage.read(4096);
-    outImage.close();
-    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+    verifyApfsContainerSuperblockChecksum(out);
 }
+
+namespace {
+void verifyApfsResizeFailClosed(const QDir& dir,
+                                const QString& withFile,
+                                uint64_t kOldBytes,
+                                uint64_t kNewBytes,
+                                const PartitionApfsWriteOptions& options);
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_growsContainerInChunk() {
     // A7 (A-g) container grow: extend a generated container in place to a larger size with
@@ -9031,6 +9569,16 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerInChunk() {
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
 
+    verifyApfsResizeFailClosed(dir, withFile, kOldBytes, kNewBytes, options);
+}
+
+namespace {
+
+void verifyApfsResizeFailClosed(const QDir& dir,
+                                const QString& withFile,
+                                uint64_t kOldBytes,
+                                uint64_t kNewBytes,
+                                const PartitionApfsWriteOptions& options) {
     // Shrinking, a non-block-aligned size, and a grow that would add a chunk all fail closed.
     QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
                  {.source_image_path = withFile,
@@ -9051,6 +9599,8 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerInChunk() {
                   .options = options})
                  .ok);
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
     // A7 (A-h) sealed-volume policy: an in-place commit must fail closed on a
@@ -9106,12 +9656,9 @@ void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
     QVERIFY(blockedMeta.blockers.join(' ').contains(QStringLiteral("sealed")));
 }
 
-void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
-    // A6: the FileVault crypto primitives are certified against published test
-    // vectors before any APFS keybag depends on them. A single wrong byte here
-    // would silently corrupt every encrypted volume, so each primitive is pinned
-    // to an independent standard vector (FIPS 180-4 / FIPS 197 / RFC 4231 / RFC
-    // 3394 / IEEE 1619), with PBKDF2 cross-checked against this module's own HMAC.
+namespace {
+
+void verifyApfsCryptoHashHmacKeywrapVectors() {
     using namespace sak::apfs_crypto;
 
     // SHA-256("abc") — FIPS 180-4 example B.1.
@@ -9160,6 +9707,10 @@ void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
                                 QByteArray::fromHex("00112233445566778899aabbccddeeff"))
                  .toHex(),
              QByteArray("69c4e0d86a7b0430d8cdb78070b4c55a"));
+}
+
+void verifyApfsCryptoXtsVectors() {
+    using namespace sak::apfs_crypto;
 
     // AES-XTS — IEEE Std 1619-2007 Vector 1 (32-byte data unit, sequence 0,
     // all-zero key and plaintext): a definitive external known-answer.
@@ -9207,6 +9758,24 @@ void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
     // The tweak is address-bound: the same plaintext at a different block differs.
     QVERIFY(xtsEncryptBlock(vek, 199, block) != encBlock);
 }
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsCrypto_matchesPublishedVectors() {
+    // A6: the FileVault crypto primitives are certified against published test
+    // vectors before any APFS keybag depends on them. A single wrong byte here
+    // would silently corrupt every encrypted volume, so each primitive is pinned
+    // to an independent standard vector (FIPS 180-4 / FIPS 197 / RFC 4231 / RFC
+    // 3394 / IEEE 1619), with PBKDF2 cross-checked against this module's own HMAC.
+    verifyApfsCryptoHashHmacKeywrapVectors();
+    verifyApfsCryptoXtsVectors();
+}
+
+namespace {
+void verifyApfsKeybagBlockTopology(const QByteArray& uuid,
+                                   const QByteArray& vekBlob,
+                                   const QByteArray& wrappedVek);
+}  // namespace
 
 void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
     // A6: the keybag/DER-blob builders are pinned to bytes harvested from a REAL
@@ -9259,6 +9828,15 @@ void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
     QCOMPARE(vek->toHex(),
              QByteArray("e23bad1abfb21839e58e5b64d6654e91ea802952ada97b377b68073e9a8c383a"));
 
+    verifyApfsKeybagBlockTopology(uuid, vekBlob, wrappedVek);
+}
+
+namespace {
+
+void verifyApfsKeybagBlockTopology(const QByteArray& uuid,
+                                   const QByteArray& vekBlob,
+                                   const QByteArray& wrappedVek) {
+    using namespace sak::apfs_keybag;
     // Container keybag block matches the harvested topology: o_type 'keys'
     // (bytes 73 79 65 6b), kl_version 2, 2 entries, kl_nbytes = 16 + 48 + 160 = 224.
     QList<KeybagEntry> entries;
@@ -9283,6 +9861,15 @@ void PartitionManagerCoreTests::apfsKeybag_reproducesHarvestedFileVaultBlobs() {
     QCOMPARE(vp.wrappedKey, wrappedVek);
 }
 
+}  // namespace
+
+namespace {
+void verifyApfsEncryptedVolumeUnlock(const QString& img,
+                                     const QByteArray& password,
+                                     const QByteArray& kekBlob,
+                                     const QByteArray& vekBlob);
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
     // A6: the writer produces a software-encrypted (FileVault) volume that the
     // macOS kernel can unlock. This test does exactly what the kernel does on
@@ -9305,25 +9892,15 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
                  .ok,
              "format encrypted volume");
 
-    QFile f(img);
-    QVERIFY(f.open(QIODevice::ReadOnly));
-    const auto readBlk = [&f](uint64_t blk) {
-        f.seek(static_cast<qint64>(blk) * 4096);
-        return f.read(4096);
-    };
-    const auto le64 = [](const QByteArray& b, int off) {
-        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + off));
-    };
-
     // nx_keylocker @ 0x510 points at the container keybag.
-    const QByteArray nxsb = readBlk(0);
+    const QByteArray nxsb = readApfsImageBlock(img, 0);
     const QByteArray nxUuid = nxsb.mid(0x48, 16);
-    const uint64_t keylocker = le64(nxsb, 0x510);
+    const uint64_t keylocker = apfsLe64(nxsb, 0x510);
     QVERIFY(keylocker != 0);
 
     // Decrypt + parse the container keybag (XTS key = container UUID).
-    const QList<KeybagEntry> containerEntries =
-        parseKeybagBlock(xtsDecryptBlock(nxUuid + nxUuid, keylocker, readBlk(keylocker)));
+    const QList<KeybagEntry> containerEntries = parseKeybagBlock(
+        xtsDecryptBlock(nxUuid + nxUuid, keylocker, readApfsImageBlock(img, keylocker)));
     QCOMPARE(containerEntries.size(), 2);
     QByteArray volUuid;
     QByteArray vekBlob;
@@ -9333,15 +9910,15 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
             volUuid = e.uuid;
             vekBlob = e.keydata;
         } else if (e.tag == kKbTagVolumeUnlockRecords) {
-            volumeKbBlock = le64(e.keydata, 0);
+            volumeKbBlock = apfsLe64(e.keydata, 0);
         }
     }
     QVERIFY(!vekBlob.isEmpty());
     QVERIFY(volumeKbBlock != 0);
 
     // Decrypt + parse the per-volume keybag (XTS key = volume UUID) -> KEK blob.
-    const QList<KeybagEntry> volumeEntries =
-        parseKeybagBlock(xtsDecryptBlock(volUuid + volUuid, volumeKbBlock, readBlk(volumeKbBlock)));
+    const QList<KeybagEntry> volumeEntries = parseKeybagBlock(
+        xtsDecryptBlock(volUuid + volUuid, volumeKbBlock, readApfsImageBlock(img, volumeKbBlock)));
     QByteArray kekBlob;
     for (const auto& e : volumeEntries) {
         if (e.tag == kKbTagVolumeUnlockRecords) {
@@ -9350,6 +9927,17 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
     }
     QVERIFY(!kekBlob.isEmpty());
 
+    verifyApfsEncryptedVolumeUnlock(img, password, kekBlob, vekBlob);
+}
+
+namespace {
+
+void verifyApfsEncryptedVolumeUnlock(const QString& img,
+                                     const QByteArray& password,
+                                     const QByteArray& kekBlob,
+                                     const QByteArray& vekBlob) {
+    using namespace sak::apfs_crypto;
+    using namespace sak::apfs_keybag;
     // The unlock chain: PBKDF2(password) -> unwrap KEK -> unwrap VEK.
     KeyBlobParams kek;
     KeyBlobParams vek;
@@ -9363,13 +9951,13 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
     QCOMPARE(vekKey->size(), 32);
 
     // APSB (block 198, single-chunk 64 MiB) is plaintext + flagged ONEKEY-encrypted.
-    const QByteArray apsb = readBlk(198);
+    const QByteArray apsb = readApfsImageBlock(img, 198);
     QCOMPARE(apsb.mid(0x20, 4), QByteArrayLiteral("APSB"));
-    QCOMPARE(le64(apsb, 0x108), quint64(0x8));
+    QCOMPARE(apfsLe64(apsb, 0x108), quint64(0x8));
 
     // The file-system tree (block 197) decrypts with the VEK to a valid, Fletcher-64
     // correct b-tree node -- the volume is genuinely unlockable.
-    const QByteArray fsTree = xtsDecryptBlock(*vekKey, 197, readBlk(197));
+    const QByteArray fsTree = xtsDecryptBlock(*vekKey, 197, readApfsImageBlock(img, 197));
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(fsTree));
     const auto otype =
         qFromLittleEndian<quint16>(reinterpret_cast<const uchar*>(fsTree.constData() + 0x18));
@@ -9380,6 +9968,8 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
         pbkdf2Sha256(QByteArrayLiteral("wrongpw"), kek.salt, kek.iterations, 32);
     QVERIFY(!aesKeyUnwrap(wrongDerived, kek.wrappedKey).has_value());
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::apfsReader_decryptsEncryptedVolumeWithCredential() {
     // A6 read-side: the S.A.K. APFS reader itself (not just the macOS kernel)
@@ -9613,21 +10203,12 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileInsertChainsAndPreservesEx
     QVERIFY(duplicate.blockers.join(' ').contains(QStringLiteral("already exists")));
 }
 
-void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
-    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QDir dir(temp.path());
-    const QString d0 = dir.filePath(QStringLiteral("del0.apfs"));
-    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
-        {.image_path = d0,
-         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-         .block_size_bytes = 4096,
-         .volume_name = QStringLiteral("DEL"),
-         .options = options});
-    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+namespace {
 
-    // Build three content files via chained inserts.
+void buildApfsThreeFileChain(const QDir& dir,
+                             const QString& d0,
+                             const PartitionApfsWriteOptions& options,
+                             QString* d3Out) {
     const QByteArray a = QByteArrayLiteral("AAAA file one content");
     const QByteArray b = QByteArrayLiteral("BBBB file two content");
     const QByteArray c = QByteArrayLiteral("CCCC file three content");
@@ -9652,6 +10233,30 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreser
                                                             .file_data = c,
                                                             .options = options})
                 .ok);
+    *d3Out = d3;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString d0 = dir.filePath(QStringLiteral("del0.apfs"));
+    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = d0,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("DEL"),
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // Build three content files via chained inserts.
+    const QByteArray a = QByteArrayLiteral("AAAA file one content");
+    const QByteArray c = QByteArrayLiteral("CCCC file three content");
+    QString d3;
+    buildApfsThreeFileChain(dir, d0, options, &d3);
 
     // Delete the middle file in place.
     const QString d4 = dir.filePath(QStringLiteral("del4.apfs"));
@@ -9888,6 +10493,40 @@ void PartitionManagerCoreTests::apfsWriter_readsGeneratedLiveCibAddr() {
     QCOMPARE(PartitionApfsWriter::readGeneratedLiveCibAddr(path), static_cast<quint64>(187));
 }
 
+namespace {
+
+// Builds a crashed image: block 0 rolled back to the previous checkpoint and the
+// interrupted checkpoint voided, then writes it and returns its path via out-param.
+void writeApfsCrashRollbackImage(const QDir& dir,
+                                 const QString& n,
+                                 const QString& n1,
+                                 QString* crashedOut) {
+    const auto readImage = [](const QString& p) {
+        QFile f(p);
+        f.open(QIODevice::ReadOnly);
+        return f.readAll();
+    };
+    const QByteArray nBytes = readImage(n);
+    QByteArray crashedBytes = readImage(n1);
+    const quint64 descBase = apfsLe64(crashedBytes, 0x70);   // nx_xp_desc_base
+    const quint32 descIndex = apfsLe32(crashedBytes, 0x88);  // nx_xp_desc_index
+    crashedBytes.replace(0, 4096, nBytes.left(4096));        // block 0 -> previous checkpoint
+    const qsizetype checkpoint = static_cast<qsizetype>((descBase + descIndex) * 4096);
+    crashedBytes.replace(checkpoint,
+                         8192,
+                         QByteArray(8192, '\0'));  // void the interrupted checkpoint
+
+    const QString crashed = dir.filePath(QStringLiteral("rcrash.apfs"));
+    {
+        QFile f(crashed);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(crashedBytes);
+    }
+    *crashedOut = crashed;
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::apfsWriter_crashBeforeCheckpointDurableRollsBack() {
     // Crash-safety: a commit interrupted before its checkpoint becomes durable
     // must roll back to the previous checkpoint with its data intact. The cib/
@@ -9920,33 +10559,8 @@ void PartitionManagerCoreTests::apfsWriter_crashBeforeCheckpointDurableRollsBack
     QVERIFY(commit(a, n, QStringLiteral("bravo.txt")));
     QVERIFY(commit(n, n1, QStringLiteral("charlie.txt")));
 
-    const auto readImage = [](const QString& p) {
-        QFile f(p);
-        f.open(QIODevice::ReadOnly);
-        return f.readAll();
-    };
-    const auto le64 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint64>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const auto le32 = [](const QByteArray& b, int o) {
-        return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(b.constData() + o));
-    };
-    const QByteArray nBytes = readImage(n);
-    QByteArray crashedBytes = readImage(n1);
-    const quint64 descBase = le64(crashedBytes, 0x70);   // nx_xp_desc_base
-    const quint32 descIndex = le32(crashedBytes, 0x88);  // nx_xp_desc_index
-    crashedBytes.replace(0, 4096, nBytes.left(4096));    // block 0 -> previous checkpoint
-    const qsizetype checkpoint = static_cast<qsizetype>((descBase + descIndex) * 4096);
-    crashedBytes.replace(checkpoint,
-                         8192,
-                         QByteArray(8192, '\0'));  // void the interrupted checkpoint
-
-    const QString crashed = dir.filePath(QStringLiteral("rcrash.apfs"));
-    {
-        QFile f(crashed);
-        QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write(crashedBytes);
-    }
+    QString crashed;
+    writeApfsCrashRollbackImage(dir, n, n1, &crashed);
     const auto listing =
         PartitionApfsFileSystemReader::listDirectoryFromImage(crashed, QStringLiteral("/"), 64);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
@@ -10256,6 +10870,12 @@ void PartitionManagerCoreTests::scriptBuilder_createRespectsWizardPayload() {
         QStringLiteral("-NewFileSystemLabel 'Field Media' -Full -AllocationUnitSize 4096")));
 }
 
+namespace {
+void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
+                                         const PartitionTarget& target,
+                                         const QJsonObject& payload);
+}  // namespace
+
 void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Unallocated;
@@ -10284,10 +10904,18 @@ void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts
     QVERIFY(!extScript.script.contains(QStringLiteral("Format-Volume")));
     QVERIFY(!extScript.script.contains(QStringLiteral("__SAK_NEW_PARTITION_RAW_TARGET__")));
 
+    verifyNonNativeCreateScriptVariants(&builder, target, payload);
+}
+
+namespace {
+
+void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
+                                         const PartitionTarget& target,
+                                         const QJsonObject& payload) {
     QJsonObject hfsPayload = payload;
     hfsPayload[QStringLiteral("file_system")] = QStringLiteral("HFSX");
     hfsPayload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
-    const auto hfsScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+    const auto hfsScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Create, target, hfsPayload));
     QVERIFY2(hfsScript.valid(), qPrintable(hfsScript.blockers.join(QStringLiteral("; "))));
     QVERIFY(hfsScript.script.contains(QStringLiteral("newfs_hfs")));
@@ -10300,7 +10928,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts
     swapPayload[QStringLiteral("file_system")] = QStringLiteral("Linux swap");
     swapPayload[QStringLiteral("label")] = QStringLiteral("SAK_SWAP");
     swapPayload[QStringLiteral("linux_swap_page_size_bytes")] = QStringLiteral("4096");
-    const auto swapScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+    const auto swapScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Create, target, swapPayload));
     QVERIFY2(swapScript.valid(), qPrintable(swapScript.blockers.join(QStringLiteral("; "))));
     QVERIFY(swapScript.script.contains(QStringLiteral("SWAPSPACE2")));
@@ -10312,7 +10940,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts
     apfsPayload[QStringLiteral("label")] = QStringLiteral("SAK_APFS");
     apfsPayload[QStringLiteral("gpt_type")] =
         QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}");
-    const auto apfsScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+    const auto apfsScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Create, target, apfsPayload));
     QVERIFY2(apfsScript.valid(), qPrintable(apfsScript.blockers.join(QStringLiteral("; "))));
     QVERIFY(apfsScript.script.contains(QStringLiteral("sak_apfs_writer_cli.exe")));
@@ -10322,11 +10950,13 @@ void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts
 
     QJsonObject unconfirmedPayload = payload;
     unconfirmedPayload[QStringLiteral("target_wipe_confirmed")] = false;
-    const auto blockedScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
+    const auto blockedScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Create, target, unconfirmedPayload));
     QVERIFY(!blockedScript.valid());
     QVERIFY(blockedScript.blockers.join(' ').contains(QStringLiteral("confirmation")));
 }
+
+}  // namespace
 
 void PartitionManagerCoreTests::scriptBuilder_rejectsInvalidCreatePartitionType() {
     PartitionTarget target;
@@ -10394,119 +11024,159 @@ void PartitionManagerCoreTests::scriptBuilder_buildsExtToolScriptsWithManifestGa
     verifyExtTargetPathGates(&builder, target);
 }
 
-void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts() {
-    PartitionTarget target = extToolPartitionTarget();
-    target.size_bytes = 128ULL * 1024ULL * 1024ULL;
-    PartitionScriptBuilder builder;
+namespace {
 
-    const auto writeScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsWriteRootFile, target, baseApfsRootFileMutationPayload()));
-    QVERIFY2(writeScript.valid(), qPrintable(writeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(writeScript.script.contains(QStringLiteral("sak_apfs_writer_cli.exe")));
-    QVERIFY(writeScript.script.contains(QStringLiteral("commit-raw-file-write")));
-    QVERIFY(writeScript.script.contains(QStringLiteral("--payload-file")));
-    QVERIFY(writeScript.script.contains(QStringLiteral("FromBase64String")));
-    QVERIFY(writeScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-write")));
-    QVERIFY(writeScript.script.contains(extToolRawTargetPath()));
+// One script-builder expectation: the operation to plan plus the substrings that
+// must appear (`present`) and must not appear (`absent`) in the built script.
+struct ScriptContainsCase {
+    PartitionOperationType type;
+    QJsonObject payload;
+    QStringList present;
+    QStringList absent = {};
+};
 
-    const auto patchScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsPatchRootFile, target, baseApfsRootFileMutationPayload()));
-    QVERIFY2(patchScript.valid(), qPrintable(patchScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(patchScript.script.contains(QStringLiteral("commit-raw-file-patch")));
-    QVERIFY(patchScript.script.contains(QStringLiteral("-PatchOffsetBytes 6")));
-    QVERIFY(patchScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-patch")));
+// Builds the script for one operation and asserts each `present` substring appears
+// and each `absent` substring does not, after confirming the script is valid.
+void verifyScriptContains(const PartitionScriptBuilder* builder,
+                          const PartitionTarget& target,
+                          const ScriptContainsCase& testCase) {
+    const auto script = builder->buildScript(
+        PartitionOperationPlanner::makeOperation(testCase.type, target, testCase.payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    for (const QString& needle : testCase.present) {
+        QVERIFY2(script.script.contains(needle), qPrintable(QStringLiteral("missing: ") + needle));
+    }
+    for (const QString& needle : testCase.absent) {
+        QVERIFY2(!script.script.contains(needle),
+                 qPrintable(QStringLiteral("unexpected: ") + needle));
+    }
+}
+
+void verifyApfsRootFileWritePatchDeleteScripts(const PartitionScriptBuilder* builder,
+                                               const PartitionTarget& target) {
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsWriteRootFile,
+                          .payload = baseApfsRootFileMutationPayload(),
+                          .present = {QStringLiteral("sak_apfs_writer_cli.exe"),
+                                      QStringLiteral("commit-raw-file-write"),
+                                      QStringLiteral("--payload-file"),
+                                      QStringLiteral("FromBase64String"),
+                                      QStringLiteral("ui.apfs-generated-raw-root-file-write"),
+                                      extToolRawTargetPath()}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsPatchRootFile,
+                          .payload = baseApfsRootFileMutationPayload(),
+                          .present = {QStringLiteral("commit-raw-file-patch"),
+                                      QStringLiteral("-PatchOffsetBytes 6"),
+                                      QStringLiteral("ui.apfs-generated-raw-root-file-patch")}});
 
     QJsonObject deletePayload = baseApfsRootFileMutationPayload();
     deletePayload.remove(QStringLiteral("apfs_root_file_payload_text"));
     deletePayload.remove(QStringLiteral("apfs_root_file_patch_offset_bytes"));
-    const auto deleteScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsDeleteRootFile, target, deletePayload));
-    QVERIFY2(deleteScript.valid(), qPrintable(deleteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteScript.script.contains(QStringLiteral("commit-raw-file-delete")));
-    QVERIFY(!deleteScript.script.contains(QStringLiteral("FromBase64String")));
-    QVERIFY(deleteScript.script.contains(QStringLiteral("ui.apfs-generated-raw-root-file-delete")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsDeleteRootFile,
+                          .payload = deletePayload,
+                          .present = {QStringLiteral("commit-raw-file-delete"),
+                                      QStringLiteral("ui.apfs-generated-raw-root-file-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+}
 
+void verifyApfsRootDirectoryFileScripts(const PartitionScriptBuilder* builder,
+                                        const PartitionTarget& target) {
     QJsonObject directoryFilePayload = baseApfsRootFileMutationPayload();
     directoryFilePayload[QStringLiteral("apfs_root_directory_name")] =
         QStringLiteral("Proof Folder");
-    const auto directoryFileWriteScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::ApfsWriteRootDirectoryFile, target, directoryFilePayload));
-    QVERIFY2(directoryFileWriteScript.valid(),
-             qPrintable(directoryFileWriteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(directoryFileWriteScript.script.contains(
-        QStringLiteral("commit-raw-directory-child-write")));
-    QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-DirectoryName")));
-    QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-FileName")));
-    QVERIFY(directoryFileWriteScript.script.contains(QStringLiteral("-PayloadFile $payloadPath")));
-    QVERIFY(directoryFileWriteScript.script.contains(
-        QStringLiteral("ui.apfs-generated-raw-root-directory-file-write")));
-
-    const auto directoryFilePatchScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::ApfsPatchRootDirectoryFile, target, directoryFilePayload));
-    QVERIFY2(directoryFilePatchScript.valid(),
-             qPrintable(directoryFilePatchScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("commit-raw-file-patch")));
-    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-DirectoryName")));
-    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-FileName")));
-    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-PayloadFile $payloadPath")));
-    QVERIFY(directoryFilePatchScript.script.contains(QStringLiteral("-PatchOffsetBytes 6")));
-    QVERIFY(directoryFilePatchScript.script.contains(
-        QStringLiteral("ui.apfs-generated-raw-root-directory-file-patch")));
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::ApfsWriteRootDirectoryFile,
+         .payload = directoryFilePayload,
+         .present = {QStringLiteral("commit-raw-directory-child-write"),
+                     QStringLiteral("-DirectoryName"),
+                     QStringLiteral("-FileName"),
+                     QStringLiteral("-PayloadFile $payloadPath"),
+                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-write")}});
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::ApfsPatchRootDirectoryFile,
+         .payload = directoryFilePayload,
+         .present = {QStringLiteral("commit-raw-file-patch"),
+                     QStringLiteral("-DirectoryName"),
+                     QStringLiteral("-FileName"),
+                     QStringLiteral("-PayloadFile $payloadPath"),
+                     QStringLiteral("-PatchOffsetBytes 6"),
+                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-patch")}});
 
     QJsonObject directoryFileDeletePayload = directoryFilePayload;
     directoryFileDeletePayload.remove(QStringLiteral("apfs_root_file_payload_text"));
     directoryFileDeletePayload.remove(QStringLiteral("apfs_root_file_patch_offset_bytes"));
-    const auto directoryFileDeleteScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::ApfsDeleteRootDirectoryFile,
-            target,
-            directoryFileDeletePayload));
-    QVERIFY2(directoryFileDeleteScript.valid(),
-             qPrintable(directoryFileDeleteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(directoryFileDeleteScript.script.contains(
-        QStringLiteral("commit-raw-directory-child-delete")));
-    QVERIFY(directoryFileDeleteScript.script.contains(QStringLiteral("-DirectoryName")));
-    QVERIFY(directoryFileDeleteScript.script.contains(QStringLiteral("-FileName")));
-    QVERIFY(!directoryFileDeleteScript.script.contains(QStringLiteral("FromBase64String")));
-    QVERIFY(directoryFileDeleteScript.script.contains(
-        QStringLiteral("ui.apfs-generated-raw-root-directory-file-delete")));
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::ApfsDeleteRootDirectoryFile,
+         .payload = directoryFileDeletePayload,
+         .present = {QStringLiteral("commit-raw-directory-child-delete"),
+                     QStringLiteral("-DirectoryName"),
+                     QStringLiteral("-FileName"),
+                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-delete")},
+         .absent = {QStringLiteral("FromBase64String")}});
+}
+
+void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builder,
+                                            const PartitionTarget& target) {
+    QJsonObject deletePayload = baseApfsRootFileMutationPayload();
+    deletePayload.remove(QStringLiteral("apfs_root_file_payload_text"));
+    deletePayload.remove(QStringLiteral("apfs_root_file_patch_offset_bytes"));
 
     QJsonObject createDirectoryPayload = deletePayload;
     createDirectoryPayload[QStringLiteral("apfs_root_directory_name")] =
         QStringLiteral("Proof Folder");
     createDirectoryPayload.remove(QStringLiteral("apfs_root_file_name"));
-    const auto createDirectoryScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsCreateRootDirectory, target, createDirectoryPayload));
-    QVERIFY2(createDirectoryScript.valid(),
-             qPrintable(createDirectoryScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(createDirectoryScript.script.contains(QStringLiteral("commit-raw-directory-create")));
-    QVERIFY(createDirectoryScript.script.contains(QStringLiteral("-DirectoryName")));
-    QVERIFY(createDirectoryScript.script.contains(
-        QStringLiteral("ui.apfs-generated-raw-root-directory-create")));
-    QVERIFY(!createDirectoryScript.script.contains(QStringLiteral("FromBase64String")));
-
-    const auto deleteDirectoryScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsDeleteRootDirectory, target, createDirectoryPayload));
-    QVERIFY2(deleteDirectoryScript.valid(),
-             qPrintable(deleteDirectoryScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteDirectoryScript.script.contains(QStringLiteral("commit-raw-directory-delete")));
-    QVERIFY(deleteDirectoryScript.script.contains(
-        QStringLiteral("ui.apfs-generated-raw-root-directory-delete")));
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::ApfsCreateRootDirectory,
+         .payload = createDirectoryPayload,
+         .present = {QStringLiteral("commit-raw-directory-create"),
+                     QStringLiteral("-DirectoryName"),
+                     QStringLiteral("ui.apfs-generated-raw-root-directory-create")},
+         .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::ApfsDeleteRootDirectory,
+         .payload = createDirectoryPayload,
+         .present = {QStringLiteral("commit-raw-directory-delete"),
+                     QStringLiteral("ui.apfs-generated-raw-root-directory-delete")}});
 
     QJsonObject labelPayload = deletePayload;
     labelPayload.remove(QStringLiteral("apfs_root_file_name"));
     labelPayload[QStringLiteral("label")] = QStringLiteral("SAK Relabeled");
-    const auto labelScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsChangeVolumeLabel, target, labelPayload));
-    QVERIFY2(labelScript.valid(), qPrintable(labelScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(labelScript.script.contains(QStringLiteral("change-raw-volume-label")));
-    QVERIFY(labelScript.script.contains(QStringLiteral("-VolumeName 'SAK Relabeled'")));
-    QVERIFY(
-        labelScript.script.contains(QStringLiteral("ui.apfs-generated-raw-volume-label-change")));
-    QVERIFY(!labelScript.script.contains(QStringLiteral("FromBase64String")));
-    QVERIFY(!labelScript.script.contains(QStringLiteral("-FileName")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsChangeVolumeLabel,
+                          .payload = labelPayload,
+                          .present = {QStringLiteral("change-raw-volume-label"),
+                                      QStringLiteral("-VolumeName 'SAK Relabeled'"),
+                                      QStringLiteral("ui.apfs-generated-raw-volume-label-change")},
+                          .absent = {QStringLiteral("FromBase64String"),
+                                     QStringLiteral("-FileName")}});
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts() {
+    PartitionTarget target = extToolPartitionTarget();
+    target.size_bytes = 128ULL * 1024ULL * 1024ULL;
+    PartitionScriptBuilder builder;
+
+    verifyApfsRootFileWritePatchDeleteScripts(&builder, target);
+    verifyApfsRootDirectoryFileScripts(&builder, target);
+    verifyApfsRootDirectoryAndLabelScripts(&builder, target);
 
     QJsonObject missingLayout = baseApfsRootFileMutationPayload();
     missingLayout[QStringLiteral("apfs_generated_layout_confirmed")] = false;
@@ -10516,194 +11186,208 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("generated-layout")));
 }
 
-void PartitionManagerCoreTests::scriptBuilder_buildsHfsFileMutationScripts() {
-    const PartitionTarget target = extToolPartitionTarget();
-    PartitionScriptBuilder builder;
+namespace {
 
-    const auto replaceScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsReplaceFile, target, baseHfsFileMutationPayload()));
-    QVERIFY2(replaceScript.valid(), qPrintable(replaceScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("sak_hfs_writer_cli.exe")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("replace-image")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("Copy-SakRawTargetToImage")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("Get-SakHfsVolumeStagingSizeBytes")));
-    QVERIFY(replaceScript.script.contains(
-        QStringLiteral("$targetPartitionSizeBytes = [uint64]$p.Size")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("-SizeBytes $targetSizeBytes")));
-    QVERIFY(!replaceScript.script.contains(QStringLiteral("-SizeBytes $targetPartitionSizeBytes")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("Invoke-SakHfsRepairUntilClean")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("Copy-SakSparseImageToRawTarget")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("--allow-journaled-volume")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("--allow-wrapped-volume")));
-    QVERIFY(replaceScript.script.contains(QStringLiteral("-AllowJournaledIncomplete")));
-    QVERIFY(replaceScript.script.contains(extToolRawTargetPath()));
-
-    const auto growScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsGrowFile, target, baseHfsFileMutationPayload()));
-    QVERIFY2(growScript.valid(), qPrintable(growScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(growScript.script.contains(QStringLiteral("grow-image")));
-    QVERIFY(growScript.script.contains(QStringLiteral("ui.hfs.raw-file-allocation-growth")));
-
-    const auto overwriteScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsOverwriteFile, target, baseHfsFileMutationPayload()));
-    QVERIFY2(overwriteScript.valid(),
-             qPrintable(overwriteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(overwriteScript.script.contains(QStringLiteral("overwrite-image")));
+void verifyHfsFileForkMutationScripts(const PartitionScriptBuilder* builder,
+                                      const PartitionTarget& target) {
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsReplaceFile,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("sak_hfs_writer_cli.exe"),
+                                      QStringLiteral("replace-image"),
+                                      QStringLiteral("Copy-SakRawTargetToImage"),
+                                      QStringLiteral("Get-SakHfsVolumeStagingSizeBytes"),
+                                      QStringLiteral("$targetPartitionSizeBytes = [uint64]$p.Size"),
+                                      QStringLiteral("-SizeBytes $targetSizeBytes"),
+                                      QStringLiteral("Invoke-SakHfsRepairUntilClean"),
+                                      QStringLiteral("Copy-SakSparseImageToRawTarget"),
+                                      QStringLiteral("--allow-journaled-volume"),
+                                      QStringLiteral("--allow-wrapped-volume"),
+                                      QStringLiteral("-AllowJournaledIncomplete"),
+                                      extToolRawTargetPath()},
+                          .absent = {QStringLiteral("-SizeBytes $targetPartitionSizeBytes")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsGrowFile,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("grow-image"),
+                                      QStringLiteral("ui.hfs.raw-file-allocation-growth")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsOverwriteFile,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("overwrite-image")}});
 
     QJsonObject truncatePayload = baseHfsFileMutationPayload();
     truncatePayload.remove(QStringLiteral("hfs_payload_text"));
-    const auto truncateScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsTruncateFile, target, truncatePayload));
-    QVERIFY2(truncateScript.valid(),
-             qPrintable(truncateScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(truncateScript.script.contains(QStringLiteral("truncate-image")));
-    QVERIFY(!truncateScript.script.contains(QStringLiteral("FromBase64String")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsTruncateFile,
+                          .payload = truncatePayload,
+                          .present = {QStringLiteral("truncate-image")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsReplaceResourceFork,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("replace-resource-fork-image")}});
+    verifyScriptContains(
+        builder,
+        target,
+        {.type = PartitionOperationType::HfsGrowResourceFork,
+         .payload = baseHfsFileMutationPayload(),
+         .present = {QStringLiteral("grow-resource-fork-image"),
+                     QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth")}});
+}
 
-    const auto resourceScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsReplaceResourceFork, target, baseHfsFileMutationPayload()));
-    QVERIFY2(resourceScript.valid(),
-             qPrintable(resourceScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(resourceScript.script.contains(QStringLiteral("replace-resource-fork-image")));
-
-    const auto resourceGrowScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsGrowResourceFork, target, baseHfsFileMutationPayload()));
-    QVERIFY2(resourceGrowScript.valid(),
-             qPrintable(resourceGrowScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(resourceGrowScript.script.contains(QStringLiteral("grow-resource-fork-image")));
-    QVERIFY(resourceGrowScript.script.contains(
-        QStringLiteral("ui.hfs.raw-resource-fork-allocation-growth")));
-
+void verifyHfsCreateDeleteScripts(const PartitionScriptBuilder* builder,
+                                  const PartitionTarget& target) {
     QJsonObject createPayload = baseHfsFileMutationPayload();
     createPayload[QStringLiteral("hfs_path")] = QStringLiteral("/created.txt");
     createPayload.remove(QStringLiteral("hfs_payload_text"));
-    const auto createScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsCreateEmptyFile, target, createPayload));
-    QVERIFY2(createScript.valid(), qPrintable(createScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(createScript.script.contains(QStringLiteral("create-empty-file-image")));
-    QVERIFY(createScript.script.contains(QStringLiteral("ui.hfs.raw-empty-file-create")));
-    QVERIFY(!createScript.script.contains(QStringLiteral("FromBase64String")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsCreateEmptyFile,
+                          .payload = createPayload,
+                          .present = {QStringLiteral("create-empty-file-image"),
+                                      QStringLiteral("ui.hfs.raw-empty-file-create")},
+                          .absent = {QStringLiteral("FromBase64String")}});
 
     QJsonObject createFilePayload = createPayload;
     createFilePayload[QStringLiteral("hfs_payload_text")] = QStringLiteral("created payload");
-    const auto createFileScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsCreateFile, target, createFilePayload));
-    QVERIFY2(createFileScript.valid(),
-             qPrintable(createFileScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(createFileScript.script.contains(QStringLiteral("create-file-image")));
-    QVERIFY(createFileScript.script.contains(QStringLiteral("ui.hfs.raw-file-create")));
-    QVERIFY(createFileScript.script.contains(QStringLiteral("FromBase64String")));
-    QVERIFY(createFileScript.script.contains(QStringLiteral("-PayloadFile $payloadPath")));
-
-    const auto deleteScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsDeleteEmptyFile, target, createPayload));
-    QVERIFY2(deleteScript.valid(), qPrintable(deleteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteScript.script.contains(QStringLiteral("delete-empty-file-image")));
-    QVERIFY(deleteScript.script.contains(QStringLiteral("ui.hfs.raw-empty-file-delete")));
-    QVERIFY(!deleteScript.script.contains(QStringLiteral("FromBase64String")));
-
-    const auto deleteAllocatedScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsDeleteFile, target, createPayload));
-    QVERIFY2(deleteAllocatedScript.valid(),
-             qPrintable(deleteAllocatedScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteAllocatedScript.script.contains(QStringLiteral("delete-file-image")));
-    QVERIFY(deleteAllocatedScript.script.contains(QStringLiteral("ui.hfs.raw-file-delete")));
-    QVERIFY(!deleteAllocatedScript.script.contains(QStringLiteral("FromBase64String")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsCreateFile,
+                          .payload = createFilePayload,
+                          .present = {QStringLiteral("create-file-image"),
+                                      QStringLiteral("ui.hfs.raw-file-create"),
+                                      QStringLiteral("FromBase64String"),
+                                      QStringLiteral("-PayloadFile $payloadPath")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteEmptyFile,
+                          .payload = createPayload,
+                          .present = {QStringLiteral("delete-empty-file-image"),
+                                      QStringLiteral("ui.hfs.raw-empty-file-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteFile,
+                          .payload = createPayload,
+                          .present = {QStringLiteral("delete-file-image"),
+                                      QStringLiteral("ui.hfs.raw-file-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
 
     QJsonObject secureDeletePayload = createPayload;
     secureDeletePayload[QStringLiteral("hfs_secure_wipe_released_blocks")] = true;
-    const auto secureDeleteScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsDeleteFile, target, secureDeletePayload));
-    QVERIFY2(secureDeleteScript.valid(),
-             qPrintable(secureDeleteScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(secureDeleteScript.script.contains(QStringLiteral("-SecureWipeReleasedBlocks $true")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteFile,
+                          .payload = secureDeletePayload,
+                          .present = {QStringLiteral("-SecureWipeReleasedBlocks $true")}});
 
     QJsonObject unsupportedSecurePayload = baseHfsFileMutationPayload();
     unsupportedSecurePayload[QStringLiteral("hfs_secure_wipe_released_blocks")] = true;
     const auto unsupportedSecureScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
+        builder->buildScript(PartitionOperationPlanner::makeOperation(
             PartitionOperationType::HfsReplaceFile, target, unsupportedSecurePayload));
     QVERIFY(!unsupportedSecureScript.valid());
     QVERIFY(
         unsupportedSecureScript.blockers.join(' ').contains(QStringLiteral("secure block wipe")));
+}
 
-    QJsonObject folderPayload = createPayload;
+void verifyHfsAttributeScripts(const PartitionScriptBuilder* builder,
+                               const PartitionTarget& target);
+
+void verifyHfsFolderAndAttributeScripts(const PartitionScriptBuilder* builder,
+                                        const PartitionTarget& target) {
+    QJsonObject folderPayload = baseHfsFileMutationPayload();
     folderPayload[QStringLiteral("hfs_path")] = QStringLiteral("/Created Folder");
-    const auto createFolderScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsCreateEmptyFolder, target, folderPayload));
-    QVERIFY2(createFolderScript.valid(),
-             qPrintable(createFolderScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(createFolderScript.script.contains(QStringLiteral("create-empty-folder-image")));
-    QVERIFY(createFolderScript.script.contains(QStringLiteral("ui.hfs.raw-empty-folder-create")));
-    QVERIFY(!createFolderScript.script.contains(QStringLiteral("FromBase64String")));
-
-    const auto deleteFolderScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsDeleteEmptyFolder, target, folderPayload));
-    QVERIFY2(deleteFolderScript.valid(),
-             qPrintable(deleteFolderScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteFolderScript.script.contains(QStringLiteral("delete-empty-folder-image")));
-    QVERIFY(deleteFolderScript.script.contains(QStringLiteral("ui.hfs.raw-empty-folder-delete")));
-    QVERIFY(!deleteFolderScript.script.contains(QStringLiteral("FromBase64String")));
-
-    const auto deleteFolderTreeScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::HfsDeleteFolderTree, target, folderPayload));
-    QVERIFY2(deleteFolderTreeScript.valid(),
-             qPrintable(deleteFolderTreeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(deleteFolderTreeScript.script.contains(QStringLiteral("delete-folder-tree-image")));
-    QVERIFY(
-        deleteFolderTreeScript.script.contains(QStringLiteral("ui.hfs.raw-folder-tree-delete")));
-    QVERIFY(!deleteFolderTreeScript.script.contains(QStringLiteral("FromBase64String")));
+    folderPayload.remove(QStringLiteral("hfs_payload_text"));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsCreateEmptyFolder,
+                          .payload = folderPayload,
+                          .present = {QStringLiteral("create-empty-folder-image"),
+                                      QStringLiteral("ui.hfs.raw-empty-folder-create")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteEmptyFolder,
+                          .payload = folderPayload,
+                          .present = {QStringLiteral("delete-empty-folder-image"),
+                                      QStringLiteral("ui.hfs.raw-empty-folder-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteFolderTree,
+                          .payload = folderPayload,
+                          .present = {QStringLiteral("delete-folder-tree-image"),
+                                      QStringLiteral("ui.hfs.raw-folder-tree-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
 
     QJsonObject renamePayload = folderPayload;
     renamePayload[QStringLiteral("hfs_destination_path")] = QStringLiteral("/Renamed Folder");
-    const auto renameMoveScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsRenameMoveCatalogEntry, target, renamePayload));
-    QVERIFY2(renameMoveScript.valid(),
-             qPrintable(renameMoveScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(renameMoveScript.script.contains(QStringLiteral("rename-catalog-entry-image")));
-    QVERIFY(renameMoveScript.script.contains(QStringLiteral("-DestinationHfsPath")));
-    QVERIFY(renameMoveScript.script.contains(QStringLiteral("ui.hfs.raw-catalog-rename-move")));
-    QVERIFY(!renameMoveScript.script.contains(QStringLiteral("FromBase64String")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsRenameMoveCatalogEntry,
+                          .payload = renamePayload,
+                          .present = {QStringLiteral("rename-catalog-entry-image"),
+                                      QStringLiteral("-DestinationHfsPath"),
+                                      QStringLiteral("ui.hfs.raw-catalog-rename-move")},
+                          .absent = {QStringLiteral("FromBase64String")}});
 
     QJsonObject secureFolderPayload = folderPayload;
     secureFolderPayload[QStringLiteral("hfs_secure_wipe_released_blocks")] = true;
-    const auto secureFolderTreeScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::HfsDeleteFolderTree, target, secureFolderPayload));
-    QVERIFY2(secureFolderTreeScript.valid(),
-             qPrintable(secureFolderTreeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(
-        secureFolderTreeScript.script.contains(QStringLiteral("-SecureWipeReleasedBlocks $true")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteFolderTree,
+                          .payload = secureFolderPayload,
+                          .present = {QStringLiteral("-SecureWipeReleasedBlocks $true")}});
 
-    const auto attributeScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsReplaceInlineAttribute, target, baseHfsFileMutationPayload()));
-    QVERIFY2(attributeScript.valid(),
-             qPrintable(attributeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(attributeScript.script.contains(QStringLiteral("replace-inline-attribute-image")));
-    QVERIFY(attributeScript.script.contains(QStringLiteral("-FileId 17")));
-    QVERIFY(attributeScript.script.contains(QStringLiteral("com.apple.FinderInfo")));
+    verifyHfsAttributeScripts(builder, target);
+}
+
+void verifyHfsAttributeScripts(const PartitionScriptBuilder* builder,
+                               const PartitionTarget& target) {
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsReplaceInlineAttribute,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("replace-inline-attribute-image"),
+                                      QStringLiteral("-FileId 17"),
+                                      QStringLiteral("com.apple.FinderInfo")}});
 
     QJsonObject forkAttributePayload = baseHfsFileMutationPayload();
     forkAttributePayload[QStringLiteral("hfs_attribute_name")] =
         QStringLiteral("com.apple.ResourceFork");
-    const auto forkAttributeScript = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::HfsReplaceForkAttribute, target, forkAttributePayload));
-    QVERIFY2(forkAttributeScript.valid(),
-             qPrintable(forkAttributeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(forkAttributeScript.script.contains(QStringLiteral("replace-fork-attribute-image")));
-    QVERIFY(forkAttributeScript.script.contains(QStringLiteral("-FileId 17")));
-    QVERIFY(forkAttributeScript.script.contains(QStringLiteral("com.apple.ResourceFork")));
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsReplaceForkAttribute,
+                          .payload = forkAttributePayload,
+                          .present = {QStringLiteral("replace-fork-attribute-image"),
+                                      QStringLiteral("-FileId 17"),
+                                      QStringLiteral("com.apple.ResourceFork")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsGrowForkAttribute,
+                          .payload = forkAttributePayload,
+                          .present = {QStringLiteral("grow-fork-attribute-image"),
+                                      QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth"),
+                                      QStringLiteral("-FileId 17"),
+                                      QStringLiteral("com.apple.ResourceFork")}});
+}
 
-    const auto growForkAttributeScript =
-        builder.buildScript(PartitionOperationPlanner::makeOperation(
-            PartitionOperationType::HfsGrowForkAttribute, target, forkAttributePayload));
-    QVERIFY2(growForkAttributeScript.valid(),
-             qPrintable(growForkAttributeScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(growForkAttributeScript.script.contains(QStringLiteral("grow-fork-attribute-image")));
-    QVERIFY(growForkAttributeScript.script.contains(
-        QStringLiteral("ui.hfs.raw-fork-attribute-allocation-growth")));
-    QVERIFY(growForkAttributeScript.script.contains(QStringLiteral("-FileId 17")));
-    QVERIFY(growForkAttributeScript.script.contains(QStringLiteral("com.apple.ResourceFork")));
+}  // namespace
+
+void PartitionManagerCoreTests::scriptBuilder_buildsHfsFileMutationScripts() {
+    const PartitionTarget target = extToolPartitionTarget();
+    PartitionScriptBuilder builder;
+
+    verifyHfsFileForkMutationScripts(&builder, target);
+    verifyHfsCreateDeleteScripts(&builder, target);
+    verifyHfsFolderAndAttributeScripts(&builder, target);
 
     QJsonObject forgedTarget = baseHfsFileMutationPayload();
     forgedTarget[QStringLiteral("target_path")] =
@@ -11528,26 +12212,15 @@ void PartitionManagerCoreTests::safetyValidator_gatesNonNativeWriteOperations() 
     verifyExtShrinkUsageSafetyGate(&inventory, target, &partition, payload);
 }
 
-void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
-    auto inventory = singleDataDiskInventory();
-    auto& disk = inventory.disks.first();
-    auto& partition = disk.partitions.first();
-    partition.volume->file_system = QStringLiteral("APFS");
-    partition.volume->drive_letter.clear();
-    partition.volume->file_system_details = {QStringLiteral("APFS space manager block: 10"),
-                                             QStringLiteral("APFS volume candidate block 6"),
-                                             QStringLiteral("volume object map OID 103"),
-                                             QStringLiteral("root tree OID 104"),
-                                             QStringLiteral("Volume OIDs: 102")};
+namespace {
 
-    PartitionTarget target;
-    target.kind = PartitionTargetKind::Partition;
-    target.disk_number = disk.disk_number;
-    target.partition_number = partition.partition_number;
-    target.size_bytes = partition.size_bytes;
-    target.offset_bytes = partition.offset_bytes;
+void verifyApfsSafetyValidatorDirectoryCases(const PartitionInventory& inventory,
+                                             const PartitionTarget& target,
+                                             const QJsonObject& payload);
 
-    auto payload = baseApfsRootFileMutationPayload();
+void verifyApfsSafetyValidatorPositiveCases(const PartitionInventory& inventory,
+                                            const PartitionTarget& target,
+                                            const QJsonObject& payload) {
     auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::ApfsWriteRootFile, target, payload);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
@@ -11577,13 +12250,19 @@ void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("path separators")));
 
+    verifyApfsSafetyValidatorDirectoryCases(inventory, target, payload);
+}
+
+void verifyApfsSafetyValidatorDirectoryCases(const PartitionInventory& inventory,
+                                             const PartitionTarget& target,
+                                             const QJsonObject& payload) {
     QJsonObject directoryFilePayload = payload;
     directoryFilePayload[QStringLiteral("apfs_root_directory_name")] =
         QStringLiteral("Proof Folder");
-    preview = previewNonNativeOperation(inventory,
-                                        PartitionOperationType::ApfsWriteRootDirectoryFile,
-                                        target,
-                                        directoryFilePayload);
+    auto preview = previewNonNativeOperation(inventory,
+                                             PartitionOperationType::ApfsWriteRootDirectoryFile,
+                                             target,
+                                             directoryFilePayload);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
     QCOMPARE(preview.operations.first().risk, OperationRisk::Destructive);
 
@@ -11635,10 +12314,18 @@ void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
         inventory, PartitionOperationType::ApfsDeleteRootDirectory, target, missingDirectoryName);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("directory name")));
+}
+
+void verifyApfsSafetyValidatorFailClosedCases(const PartitionInventory& inventory,
+                                              const PartitionTarget& target,
+                                              const QJsonObject& payload) {
+    QJsonObject directoryFilePayload = payload;
+    directoryFilePayload[QStringLiteral("apfs_root_directory_name")] =
+        QStringLiteral("Proof Folder");
 
     QJsonObject missingLayout = payload;
     missingLayout[QStringLiteral("apfs_generated_layout_confirmed")] = false;
-    preview = previewNonNativeOperation(
+    auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::ApfsWriteRootFile, target, missingLayout);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("generated-layout")));
@@ -11678,12 +12365,19 @@ void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("byte offset")));
 }
 
-void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
+}  // namespace
+
+void PartitionManagerCoreTests::safetyValidator_gatesApfsRootFileMutations() {
     auto inventory = singleDataDiskInventory();
     auto& disk = inventory.disks.first();
     auto& partition = disk.partitions.first();
-    partition.volume->file_system = QStringLiteral("HFS+");
+    partition.volume->file_system = QStringLiteral("APFS");
     partition.volume->drive_letter.clear();
+    partition.volume->file_system_details = {QStringLiteral("APFS space manager block: 10"),
+                                             QStringLiteral("APFS volume candidate block 6"),
+                                             QStringLiteral("volume object map OID 103"),
+                                             QStringLiteral("root tree OID 104"),
+                                             QStringLiteral("Volume OIDs: 102")};
 
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
@@ -11692,7 +12386,20 @@ void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
     target.size_bytes = partition.size_bytes;
     target.offset_bytes = partition.offset_bytes;
 
-    auto payload = baseHfsFileMutationPayload();
+    const auto payload = baseApfsRootFileMutationPayload();
+    verifyApfsSafetyValidatorPositiveCases(inventory, target, payload);
+    verifyApfsSafetyValidatorFailClosedCases(inventory, target, payload);
+}
+
+namespace {
+
+void verifyHfsSafetyValidatorFolderCases(const PartitionInventory& inventory,
+                                         const PartitionTarget& target,
+                                         const QJsonObject& folderPayload);
+
+void verifyHfsSafetyValidatorForkCases(const PartitionInventory& inventory,
+                                       const PartitionTarget& target,
+                                       const QJsonObject& payload) {
     auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::HfsReplaceFile, target, payload);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
@@ -11722,11 +12429,15 @@ void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
         inventory, PartitionOperationType::HfsReplaceFile, target, missingPath);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("HFS path")));
+}
 
+void verifyHfsSafetyValidatorCreateDeleteCases(const PartitionInventory& inventory,
+                                               const PartitionTarget& target,
+                                               const QJsonObject& payload) {
     QJsonObject createPayload = payload;
     createPayload[QStringLiteral("hfs_path")] = QStringLiteral("/created.txt");
     createPayload.remove(QStringLiteral("hfs_payload_text"));
-    preview = previewNonNativeOperation(
+    auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::HfsCreateEmptyFile, target, createPayload);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
     QCOMPARE(preview.operations.first().risk, OperationRisk::Destructive);
@@ -11764,7 +12475,13 @@ void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
 
     QJsonObject folderPayload = createPayload;
     folderPayload[QStringLiteral("hfs_path")] = QStringLiteral("/Created Folder");
-    preview = previewNonNativeOperation(
+    verifyHfsSafetyValidatorFolderCases(inventory, target, folderPayload);
+}
+
+void verifyHfsSafetyValidatorFolderCases(const PartitionInventory& inventory,
+                                         const PartitionTarget& target,
+                                         const QJsonObject& folderPayload) {
+    auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::HfsCreateEmptyFolder, target, folderPayload);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
     QCOMPARE(preview.operations.first().risk, OperationRisk::Destructive);
@@ -11793,10 +12510,14 @@ void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
                                         missingDestinationPath);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("destination HFS path")));
+}
 
+void verifyHfsSafetyValidatorAttributeCases(const PartitionInventory& inventory,
+                                            const PartitionTarget& target,
+                                            const QJsonObject& payload) {
     QJsonObject missingPayload = payload;
     missingPayload.remove(QStringLiteral("hfs_payload_text"));
-    preview = previewNonNativeOperation(
+    auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::HfsReplaceResourceFork, target, missingPayload);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("payload")));
@@ -11834,6 +12555,28 @@ void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
         inventory, PartitionOperationType::HfsReplaceFile, target, apfsPayload);
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("HFS+ or HFSX")));
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::safetyValidator_gatesHfsFileMutations() {
+    auto inventory = singleDataDiskInventory();
+    auto& disk = inventory.disks.first();
+    auto& partition = disk.partitions.first();
+    partition.volume->file_system = QStringLiteral("HFS+");
+    partition.volume->drive_letter.clear();
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = disk.disk_number;
+    target.partition_number = partition.partition_number;
+    target.size_bytes = partition.size_bytes;
+    target.offset_bytes = partition.offset_bytes;
+
+    const auto payload = baseHfsFileMutationPayload();
+    verifyHfsSafetyValidatorForkCases(inventory, target, payload);
+    verifyHfsSafetyValidatorCreateDeleteCases(inventory, target, payload);
+    verifyHfsSafetyValidatorAttributeCases(inventory, target, payload);
 }
 
 void PartitionManagerCoreTests::safetyValidator_allowsResizeIntoAdjacentFreeSpace() {

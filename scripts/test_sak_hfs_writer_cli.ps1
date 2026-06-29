@@ -16,6 +16,18 @@ function Fail([string]$Message) {
     throw "sak_hfs_writer_cli self-test failed: $Message"
 }
 
+function Get-Sha256Hex([string]$Path) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        $hash = $sha256.ComputeHash($bytes)
+    }
+    finally {
+        $sha256.Dispose()
+    }
+    return [System.BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
+}
+
 function Read-Report([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         Fail "missing report: $Path"
@@ -100,10 +112,10 @@ $deleteFolderTreeListReportPath = Join-Path $runRoot "hfs-delete-folder-tree-lis
 [System.IO.File]::WriteAllBytes($targetPath, [byte[]](0, 1, 2, 3))
 $replacementBytes = [System.Text.Encoding]::ASCII.GetBytes("patched hfs ok`n")
 [System.IO.File]::WriteAllBytes($payloadPath, $replacementBytes)
-$expectedReplacementHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedReplacementHash = Get-Sha256Hex $payloadPath
 $createFileBytes = [System.Text.Encoding]::ASCII.GetBytes("created hfs file payload`n")
 [System.IO.File]::WriteAllBytes($createFilePayloadPath, $createFileBytes)
-$expectedCreateFileHash = (Get-FileHash -LiteralPath $createFilePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedCreateFileHash = Get-Sha256Hex $createFilePayloadPath
 
 & $CliPath overwrite-image `
     --target $targetPath `
@@ -221,10 +233,10 @@ if ($readBackReport.hfs_read_file.sha256 -ne $expectedReplacementHash) {
 
 $growBytes = [System.Text.Encoding]::ASCII.GetBytes("grown hfs payload inside allocation`n")
 [System.IO.File]::WriteAllBytes($growPayloadPath, $growBytes)
-$expectedGrowHash = (Get-FileHash -LiteralPath $growPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedGrowHash = Get-Sha256Hex $growPayloadPath
 $shrinkBytes = [System.Text.Encoding]::ASCII.GetBytes("tiny hfs`n")
 [System.IO.File]::WriteAllBytes($shrinkPayloadPath, $shrinkBytes)
-$expectedShrinkHash = (Get-FileHash -LiteralPath $shrinkPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedShrinkHash = Get-Sha256Hex $shrinkPayloadPath
 
 & $CertifierPath `
     --hfs-build-writer-fixture $resizeFixturePath `
@@ -239,7 +251,7 @@ if ($resizeFixtureReport.status -ne "Passed") {
 
 $allocationBytes = [System.Text.Encoding]::ASCII.GetBytes("allocation-growth-data`n" + ("A" * 4200))
 [System.IO.File]::WriteAllBytes($allocationPayloadPath, $allocationBytes)
-$expectedAllocationHash = (Get-FileHash -LiteralPath $allocationPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedAllocationHash = Get-Sha256Hex $allocationPayloadPath
 
 & $CliPath grow-image `
     --target $resizeFixturePath `
@@ -284,7 +296,7 @@ if ($allocationReadBackReport.status -ne "Passed" -or
 
 $resourceAllocationBytes = [System.Text.Encoding]::ASCII.GetBytes("resource-allocation-growth`n" + ("R" * 9000))
 [System.IO.File]::WriteAllBytes($resourceAllocationPayloadPath, $resourceAllocationBytes)
-$expectedResourceAllocationHash = (Get-FileHash -LiteralPath $resourceAllocationPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedResourceAllocationHash = Get-Sha256Hex $resourceAllocationPayloadPath
 
 & $CliPath grow-resource-fork-image `
     --target $resizeFixturePath `
@@ -440,7 +452,7 @@ if ($truncateReadBackReport.status -ne "Passed" -or
 
 $resourceBytes = [System.Text.Encoding]::ASCII.GetBytes("patched hfs resource fork`n")
 [System.IO.File]::WriteAllBytes($resourcePayloadPath, $resourceBytes)
-$expectedResourceHash = (Get-FileHash -LiteralPath $resourcePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedResourceHash = Get-Sha256Hex $resourcePayloadPath
 
 & $CliPath replace-resource-fork-image `
     --target $resizeFixturePath `
@@ -518,7 +530,7 @@ if ($resourceTruncateReadBackReport.status -ne "Passed" -or
 
 $attributeBytes = [System.Text.Encoding]::ASCII.GetBytes("finder-patched")
 [System.IO.File]::WriteAllBytes($attributePayloadPath, $attributeBytes)
-$expectedAttributeHash = (Get-FileHash -LiteralPath $attributePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedAttributeHash = Get-Sha256Hex $attributePayloadPath
 
 & $CliPath replace-inline-attribute-image `
     --target $resizeFixturePath `
@@ -561,7 +573,7 @@ if ($attributeReadBackReport.status -ne "Passed" -or
 
 $forkAttributeBytes = [System.Text.Encoding]::ASCII.GetBytes("fork-attribute-patched")
 [System.IO.File]::WriteAllBytes($forkAttributePayloadPath, $forkAttributeBytes)
-$expectedForkAttributeHash = (Get-FileHash -LiteralPath $forkAttributePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedForkAttributeHash = Get-Sha256Hex $forkAttributePayloadPath
 
 & $CliPath replace-fork-attribute-image `
     --target $resizeFixturePath `
@@ -608,7 +620,7 @@ if ($forkAttributeReadBackReport.status -ne "Passed" -or
 
 $forkAttributeGrowthBytes = [System.Text.Encoding]::ASCII.GetBytes("fork-attribute-growth`n" + ("F" * 4300))
 [System.IO.File]::WriteAllBytes($forkAttributeGrowthPayloadPath, $forkAttributeGrowthBytes)
-$expectedForkAttributeGrowthHash = (Get-FileHash -LiteralPath $forkAttributeGrowthPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedForkAttributeGrowthHash = Get-Sha256Hex $forkAttributeGrowthPayloadPath
 
 & $CliPath grow-fork-attribute-image `
     --target $resizeFixturePath `
@@ -1081,7 +1093,7 @@ for ($i = 0; $i -lt $stage2Bytes.Length; $i++) {
     $stage2Bytes[$i] = [byte](($i * 7 + 13) % 251)
 }
 [System.IO.File]::WriteAllBytes($growStage2Path, $stage2Bytes)
-$expectedStage2Hash = (Get-FileHash -LiteralPath $growStage2Path -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedStage2Hash = Get-Sha256Hex $growStage2Path
 $growStage2ReportPath = Join-Path $runRoot "real-grow-stage2.json"
 & $CliPath grow-image `
     --target $realImagePath `
@@ -1262,7 +1274,7 @@ if ($LASTEXITCODE -ne 0) {
     Fail "real-volume attribute read-back certifier exited $LASTEXITCODE"
 }
 $attrReadBack = Read-Report $attrReadBackPath
-$expectedAttrHash = (Get-FileHash -LiteralPath $attrCreatePayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedAttrHash = Get-Sha256Hex $attrCreatePayloadPath
 if ($attrReadBack.status -ne "Passed" -or
     $attrReadBack.hfs_read_attribute.sha256 -ne $expectedAttrHash) {
     Fail "real-volume created attribute hash mismatch"
@@ -1341,7 +1353,7 @@ if ($LASTEXITCODE -ne 0) {
     Fail "real-volume fork attribute read-back certifier exited $LASTEXITCODE"
 }
 $forkAttrReadBack = Read-Report $forkAttrReadBackPath
-$expectedForkAttrHash = (Get-FileHash -LiteralPath $forkAttrPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedForkAttrHash = Get-Sha256Hex $forkAttrPayloadPath
 if ($forkAttrReadBack.status -ne "Passed" -or
     $forkAttrReadBack.hfs_read_attribute.sha256 -ne $expectedForkAttrHash) {
     Fail "real-volume fork attribute hash mismatch"

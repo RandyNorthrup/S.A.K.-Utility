@@ -3485,7 +3485,7 @@ void applyPartitionTypeFileSystemDefault(const CreatePartitionWidgets& widgets) 
     selectApfsPartitionTypeIfDefault(widgets);
 }
 
-void addCreatePartitionFormRows(PartitionOperationDialog& dialog,
+void addCreatePartitionFormRows(const PartitionOperationDialog& dialog,
                                 const CreatePartitionWidgets& widgets) {
     dialog.formLayout()->addRow(QObject::tr("Size:"), widgets.size_mb);
     dialog.formLayout()->addRow(QObject::tr("Size handle:"), widgets.size_handle);
@@ -3551,11 +3551,9 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     return widgets;
 }
 
-void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
-                                  const CreatePartitionWidgets& widgets,
-                                  uint64_t free_bytes) {
-    applyPartitionTypeFileSystemDefault(widgets);
-    const RawFormatKind rawKind = rawFormatKindForFileSystem(widgets.file_system->currentText());
+void applyRawFormatControlState(PartitionOperationDialog& dialog,
+                                const CreatePartitionWidgets& widgets,
+                                RawFormatKind rawKind) {
     const bool rawSelected = rawKind != RawFormatKind::None;
     const bool swapSelected = rawKind == RawFormatKind::Swap;
 
@@ -3568,6 +3566,31 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
     widgets.raw_format_confirm->setAccessibleName(rawFormatConfirmationAccessibleName(rawKind));
     widgets.raw_format_confirm->setText(rawFormatConfirmationText(rawKind));
     dialog.setAcceptEnabled(!rawSelected || widgets.raw_format_confirm->isChecked());
+}
+
+QString createPartitionFormatText(const CreatePartitionWidgets& widgets, RawFormatKind rawKind) {
+    switch (rawKind) {
+    case RawFormatKind::Ext:
+        return QObject::tr(" Format with bundled mke2fs.");
+    case RawFormatKind::Hfs:
+        return QObject::tr(" Format through sparse staging with bundled newfs_hfs.");
+    case RawFormatKind::Swap:
+        return QObject::tr(" Write Linux SWAPSPACE2 metadata with %1 byte pages.")
+            .arg(widgets.swap_page_size->currentText());
+    case RawFormatKind::Apfs:
+        return QObject::tr(" Format with S.A.K. generated APFS metadata.");
+    case RawFormatKind::None:
+        break;
+    }
+    return QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
+}
+
+void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
+                                  const CreatePartitionWidgets& widgets,
+                                  uint64_t free_bytes) {
+    applyPartitionTypeFileSystemDefault(widgets);
+    const RawFormatKind rawKind = rawFormatKindForFileSystem(widgets.file_system->currentText());
+    applyRawFormatControlState(dialog, widgets, rawKind);
 
     const uint64_t requestedBytes = static_cast<uint64_t>(widgets.size_mb->value()) *
                                     kMegabyteBytes;
@@ -3597,26 +3620,7 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                                         .arg(formatPartitionBytes(requestedBytes),
                                              formatPartitionBytes(beforeBytes + afterBytes)),
                                     beforeBytes}});
-    QString formatText;
-    switch (rawKind) {
-    case RawFormatKind::Ext:
-        formatText = QObject::tr(" Format with bundled mke2fs.");
-        break;
-    case RawFormatKind::Hfs:
-        formatText = QObject::tr(" Format through sparse staging with bundled newfs_hfs.");
-        break;
-    case RawFormatKind::Swap:
-        formatText = QObject::tr(" Write Linux SWAPSPACE2 metadata with %1 byte pages.")
-                         .arg(widgets.swap_page_size->currentText());
-        break;
-    case RawFormatKind::Apfs:
-        formatText = QObject::tr(" Format with S.A.K. generated APFS metadata.");
-        break;
-    case RawFormatKind::None:
-        formatText = QObject::tr(" Format with %1.")
-                         .arg(selectedAllocationUnitText(widgets.allocation_unit));
-        break;
-    }
+    const QString formatText = createPartitionFormatText(widgets, rawKind);
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
                               .arg(widgets.size_mb->value())
                               .arg(selectedPartitionTypeText(widgets.partition_type),
@@ -4186,8 +4190,8 @@ void updateClusterSizePreview(PartitionOperationDialog& dialog,
 void connectClusterSizeControls(PartitionOperationDialog& dialog,
                                 const ClusterSizeWidgets& widgets,
                                 const PartitionVolumeInfo& volume) {
-    const ClusterSizeWidgets controls = widgets;
-    const PartitionVolumeInfo volumeCopy = volume;
+    const ClusterSizeWidgets& controls = widgets;
+    const PartitionVolumeInfo& volumeCopy = volume;
     auto updatePreview = [&dialog, controls, volumeCopy]() {
         updateClusterSizePreview(dialog, controls, volumeCopy);
     };
@@ -4581,9 +4585,9 @@ void connectAllocateFreeSpaceControls(PartitionOperationDialog& dialog,
                                       const AllocateFreeSpaceWidgets& widgets,
                                       const PartitionInfoEx& target,
                                       const PartitionInfoEx& donor) {
-    const AllocateFreeSpaceWidgets controls = widgets;
-    const PartitionInfoEx targetCopy = target;
-    const PartitionInfoEx donorCopy = donor;
+    const AllocateFreeSpaceWidgets& controls = widgets;
+    const PartitionInfoEx& targetCopy = target;
+    const PartitionInfoEx& donorCopy = donor;
     auto updatePreview = [&dialog, controls, targetCopy, donorCopy]() {
         updateAllocateFreeSpacePreview(dialog, controls, targetCopy, donorCopy);
     };
@@ -4920,7 +4924,7 @@ QTableWidget* createQuickPartitionTable(QWidget* parent) {
     return table;
 }
 
-void addQuickPartitionFormRows(PartitionOperationDialog& dialog,
+void addQuickPartitionFormRows(const PartitionOperationDialog& dialog,
                                const QuickPartitionWidgets& widgets,
                                QWidget* presetRow) {
     dialog.formLayout()->addRow(QObject::tr("Preset:"), presetRow);
@@ -8334,44 +8338,48 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::layoutOper
                            {actionTargetKindList({kActionTargetDisk})})};
 }
 
+QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFilesystemActionSpecs()
+    const {
+    return {makeActionSpec(tr("Format Partition"),
+                           kIconDisk,
+                           tr("Format partition"),
+                           &PartitionManagerPanel::onFormatPartition,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Explore Partition"),
+                           kIconProperties,
+                           tr("Open in Explorer"),
+                           &PartitionManagerPanel::onExploreSelected,
+                           {actionTargetKindList({kActionTargetPartition}), true}),
+            makeActionSpec(tr("Convert File System"),
+                           kIconConvert,
+                           tr("Convert partition file system"),
+                           &PartitionManagerPanel::onConvertFileSystem,
+                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+            makeActionSpec(tr("Change Cluster Size"),
+                           kIconProperties,
+                           tr("Back up, reformat with selected cluster size, restore, and verify"),
+                           &PartitionManagerPanel::onChangeClusterSize,
+                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+            makeActionSpec(tr("Change Drive Letter"),
+                           kIconProperties,
+                           tr("Set drive letter"),
+                           &PartitionManagerPanel::onSetDriveLetter,
+                           {actionTargetKindList({kActionTargetPartition})}),
+            makeActionSpec(tr("Change Label"),
+                           kIconProperties,
+                           tr("Set partition label"),
+                           &PartitionManagerPanel::onSetPartitionLabel,
+                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+            makeActionSpec(tr("Check File System"),
+                           kIconSurface,
+                           tr("Scan file system"),
+                           &PartitionManagerPanel::onCheckFileSystem,
+                           {actionTargetKindList({kActionTargetPartition}), true, true})};
+}
+
 QVector<PartitionManagerPanel::ActionLinkSpec>
-PartitionManagerPanel::filesystemOperationActionSpecs() const {
+PartitionManagerPanel::nonNativeFilesystemActionSpecs() const {
     return {
-        makeActionSpec(tr("Format Partition"),
-                       kIconDisk,
-                       tr("Format partition"),
-                       &PartitionManagerPanel::onFormatPartition,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Explore Partition"),
-                       kIconProperties,
-                       tr("Open in Explorer"),
-                       &PartitionManagerPanel::onExploreSelected,
-                       {actionTargetKindList({kActionTargetPartition}), true}),
-        makeActionSpec(tr("Convert File System"),
-                       kIconConvert,
-                       tr("Convert partition file system"),
-                       &PartitionManagerPanel::onConvertFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Change Cluster Size"),
-                       kIconProperties,
-                       tr("Back up, reformat with selected cluster size, restore, and verify"),
-                       &PartitionManagerPanel::onChangeClusterSize,
-                       {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Change Drive Letter"),
-                       kIconProperties,
-                       tr("Set drive letter"),
-                       &PartitionManagerPanel::onSetDriveLetter,
-                       {actionTargetKindList({kActionTargetPartition})}),
-        makeActionSpec(tr("Change Label"),
-                       kIconProperties,
-                       tr("Set partition label"),
-                       &PartitionManagerPanel::onSetPartitionLabel,
-                       {actionTargetKindList({kActionTargetPartition}), true, true}),
-        makeActionSpec(tr("Check File System"),
-                       kIconSurface,
-                       tr("Scan file system"),
-                       &PartitionManagerPanel::onCheckFileSystem,
-                       {actionTargetKindList({kActionTargetPartition}), true, true}),
         makeActionSpec(tr("Inspect Non-Windows File System"),
                        kIconProperties,
                        tr("Inspect captured read-only filesystem metadata"),
@@ -8419,6 +8427,13 @@ PartitionManagerPanel::filesystemOperationActionSpecs() const {
                         false,
                         false,
                         true})};
+}
+
+QVector<PartitionManagerPanel::ActionLinkSpec>
+PartitionManagerPanel::filesystemOperationActionSpecs() const {
+    QVector<ActionLinkSpec> specs = nativeFilesystemActionSpecs();
+    specs += nonNativeFilesystemActionSpecs();
+    return specs;
 }
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
@@ -8668,14 +8683,13 @@ void PartitionManagerPanel::addSidebarSection(QVBoxLayout* layout,
         ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
     groupLayout->setSpacing(ui::kSpacingTight);
 
-    QWidget* buttonHost = group;
     auto* buttonLayout = groupLayout;
     if (scroll_buttons) {
         auto* scroll = new QScrollArea(group);
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
         setAccessible(scroll, tr("Partition operations"), tr("Scroll partition operation buttons"));
-        buttonHost = new QWidget(scroll);
+        auto* buttonHost = new QWidget(scroll);
         buttonLayout = new QVBoxLayout(buttonHost);
         buttonLayout->setContentsMargins(
             ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
@@ -10034,14 +10048,7 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
         type, previewName.isEmpty() ? apfsMutationFallbackName(type) : previewName));
 }
 
-std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
-    QWidget* parent, const ApfsRootFileMutationState& state) {
-    PartitionOperationDialog dialog(
-        QObject::tr("APFS Generated File"),
-        state.target_path,
-        QObject::tr("Queue a S.A.K. generated APFS file or directory mutation."),
-        parent);
-    auto* mode = new QComboBox(&dialog);
+void populateApfsRootFileMutationModes(QComboBox* mode) {
     mode->setAccessibleName(QObject::tr("APFS generated file mutation mode"));
     mode->addItem(QObject::tr("Write root file"), QString::fromLatin1(kApfsRootFileWriteMode));
     mode->addItem(QObject::tr("Patch root file"), QString::fromLatin1(kApfsRootFilePatchMode));
@@ -10057,6 +10064,31 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     mode->addItem(QObject::tr("Delete empty root directory"),
                   QString::fromLatin1(kApfsRootDirectoryDeleteMode));
     mode->addItem(QObject::tr("Change volume label"), QString::fromLatin1(kApfsVolumeLabelMode));
+}
+
+void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
+                                       const ApfsRootFileMutationDialogWidgets& widgets) {
+    auto updatePreview = [widgets]() {
+        syncApfsRootFileMutationDialog(widgets);
+    };
+    QObject::connect(widgets.mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
+    QObject::connect(widgets.directory_name, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.file_name, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.payload, &QTextEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.patch_offset, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.confirm, &QCheckBox::toggled, &dialog, updatePreview);
+    syncApfsRootFileMutationDialog(widgets);
+}
+
+std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
+    QWidget* parent, const ApfsRootFileMutationState& state) {
+    PartitionOperationDialog dialog(
+        QObject::tr("APFS Generated File"),
+        state.target_path,
+        QObject::tr("Queue a S.A.K. generated APFS file or directory mutation."),
+        parent);
+    auto* mode = new QComboBox(&dialog);
+    populateApfsRootFileMutationModes(mode);
 
     auto* directoryName = new QLineEdit(&dialog);
     directoryName->setAccessibleName(QObject::tr("APFS root directory name"));
@@ -10083,16 +10115,7 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
 
     const ApfsRootFileMutationDialogWidgets widgets{
         &dialog, mode, directoryName, fileName, payload, patchOffset, confirm};
-    auto updatePreview = [&widgets]() {
-        syncApfsRootFileMutationDialog(widgets);
-    };
-    QObject::connect(mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
-    QObject::connect(directoryName, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(fileName, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(payload, &QTextEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(patchOffset, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(confirm, &QCheckBox::toggled, &dialog, updatePreview);
-    syncApfsRootFileMutationDialog(widgets);
+    connectApfsRootFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
         return std::nullopt;
@@ -10368,13 +10391,7 @@ void syncHfsFileMutationDialog(const HfsFileMutationDialogWidgets& widgets) {
     widgets.dialog->setPreviewText(hfsMutationDialogPreviewText(widgets, type, secureWipeMode));
 }
 
-std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
-                                                                const HfsFileMutationState& state) {
-    PartitionOperationDialog dialog(QObject::tr("HFS File"),
-                                    state.target_path,
-                                    QObject::tr("Queue a staged HFS+ file mutation."),
-                                    parent);
-    auto* mode = new QComboBox(&dialog);
+void populateHfsFileMutationModes(QComboBox* mode) {
     mode->setAccessibleName(QObject::tr("HFS file mutation mode"));
     mode->addItem(QObject::tr("Replace data fork within allocated blocks"),
                   QString::fromLatin1(kHfsReplaceFileMode));
@@ -10406,6 +10423,12 @@ std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
                   QString::fromLatin1(kHfsReplaceForkAttributeMode));
     mode->addItem(QObject::tr("Grow fork-backed attribute with free blocks"),
                   QString::fromLatin1(kHfsGrowForkAttributeMode));
+}
+
+HfsFileMutationDialogWidgets createHfsFileMutationWidgets(PartitionOperationDialog& dialog,
+                                                          const HfsFileMutationState& state) {
+    auto* mode = new QComboBox(&dialog);
+    populateHfsFileMutationModes(mode);
 
     auto* hfsPath = new QLineEdit(QStringLiteral("/hello.txt"), &dialog);
     hfsPath->setAccessibleName(QObject::tr("HFS file path"));
@@ -10445,44 +10468,58 @@ std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
     dialog.formLayout()->addRow(QString(), secureWipe);
     dialog.formLayout()->addRow(QString(), confirm);
 
-    const HfsFileMutationDialogWidgets widgets{&dialog,
-                                               mode,
-                                               hfsPath,
-                                               destinationHfsPath,
-                                               payload,
-                                               fileId,
-                                               attributeName,
-                                               allowJournaled,
-                                               allowWrapped,
-                                               secureWipe,
-                                               confirm};
-    auto updatePreview = [&widgets]() {
+    return HfsFileMutationDialogWidgets{&dialog,
+                                        mode,
+                                        hfsPath,
+                                        destinationHfsPath,
+                                        payload,
+                                        fileId,
+                                        attributeName,
+                                        allowJournaled,
+                                        allowWrapped,
+                                        secureWipe,
+                                        confirm};
+}
+
+void connectHfsFileMutationDialog(PartitionOperationDialog& dialog,
+                                  const HfsFileMutationDialogWidgets& widgets) {
+    auto updatePreview = [widgets]() {
         syncHfsFileMutationDialog(widgets);
     };
-    QObject::connect(mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
-    QObject::connect(hfsPath, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(destinationHfsPath, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(payload, &QTextEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(fileId, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(attributeName, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(secureWipe, &QCheckBox::toggled, &dialog, updatePreview);
-    QObject::connect(confirm, &QCheckBox::toggled, &dialog, updatePreview);
+    QObject::connect(widgets.mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
+    QObject::connect(widgets.hfs_path, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.destination_hfs_path, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.payload, &QTextEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.file_id, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.attribute_name, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.secure_wipe, &QCheckBox::toggled, &dialog, updatePreview);
+    QObject::connect(widgets.confirm, &QCheckBox::toggled, &dialog, updatePreview);
     syncHfsFileMutationDialog(widgets);
+}
+
+std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
+                                                                const HfsFileMutationState& state) {
+    PartitionOperationDialog dialog(QObject::tr("HFS File"),
+                                    state.target_path,
+                                    QObject::tr("Queue a staged HFS+ file mutation."),
+                                    parent);
+    const HfsFileMutationDialogWidgets widgets = createHfsFileMutationWidgets(dialog, state);
+    connectHfsFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
         return std::nullopt;
     }
 
-    const auto type = hfsMutationTypeForMode(mode->currentData().toString());
+    const auto type = hfsMutationTypeForMode(widgets.mode->currentData().toString());
     return HfsFileMutationRequest{type,
-                                  hfsPath->text().trimmed(),
-                                  destinationHfsPath->text().trimmed(),
-                                  payload->toPlainText(),
-                                  parsedPositiveInteger(fileId->text()).value_or(0),
-                                  attributeName->text().trimmed(),
-                                  allowJournaled->isChecked(),
-                                  allowWrapped->isChecked(),
-                                  secureWipe->isChecked()};
+                                  widgets.hfs_path->text().trimmed(),
+                                  widgets.destination_hfs_path->text().trimmed(),
+                                  widgets.payload->toPlainText(),
+                                  parsedPositiveInteger(widgets.file_id->text()).value_or(0),
+                                  widgets.attribute_name->text().trimmed(),
+                                  widgets.allow_journaled->isChecked(),
+                                  widgets.allow_wrapped->isChecked(),
+                                  widgets.secure_wipe->isChecked()};
 }
 
 QJsonObject hfsFileMutationPayload(const HfsFileMutationState& state,

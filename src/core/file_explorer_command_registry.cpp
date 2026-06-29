@@ -169,9 +169,9 @@ std::optional<FileExplorerCommandState> capabilityState(const FileExplorerComman
     return std::nullopt;
 }
 
-}  // namespace
 
-QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
+// Open + pane navigation commands (resolve from selection / pane history).
+QVector<FileExplorerCommand> openAndNavigationCommands() {
     return {
         makeCommand(FileExplorerCommandId::Open,
                     QStringLiteral("Open"),
@@ -208,6 +208,12 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
                     QStringLiteral("Refresh"),
                     QStringLiteral("Refresh current folder."),
                     QStringLiteral("F5")),
+    };
+}
+
+// Clipboard, preview, and selection commands.
+QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
+    return {
         makeCommand(FileExplorerCommandId::CopyPath,
                     QStringLiteral("Copy Path"),
                     QStringLiteral("Copy current folder path.")),
@@ -237,6 +243,12 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
         makeCommand(FileExplorerCommandId::InvertSelection,
                     QStringLiteral("Invert Selection"),
                     QStringLiteral("Invert current folder selection.")),
+    };
+}
+
+// Write / destructive commands that mutate the target.
+QVector<FileExplorerCommand> writeCommands() {
+    return {
         makeCommand(FileExplorerCommandId::NewFolder,
                     QStringLiteral("New Folder"),
                     QStringLiteral("Create a folder in the current location."),
@@ -257,6 +269,12 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
                     QStringLiteral("Delete selected item."),
                     QStringLiteral("Delete"),
                     {.destructive = true, .selection_required = true, .write_operation = true}),
+    };
+}
+
+// View / display toggle commands.
+QVector<FileExplorerCommand> viewCommands() {
+    return {
         makeCommand(FileExplorerCommandId::ToggleHiddenItems,
                     QStringLiteral("Hidden Items"),
                     QStringLiteral("Toggle hidden item display."),
@@ -297,6 +315,17 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
                     QStringLiteral("Toggle dual-pane explorer layout."),
                     QStringLiteral("Ctrl+Alt+D")),
     };
+}
+
+}  // namespace
+
+QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
+    QVector<FileExplorerCommand> registry;
+    registry.append(openAndNavigationCommands());
+    registry.append(clipboardAndSelectionCommands());
+    registry.append(writeCommands());
+    registry.append(viewCommands());
+    return registry;
 }
 
 FileExplorerCommand FileExplorerCommandRegistry::command(const FileExplorerCommandId id) {

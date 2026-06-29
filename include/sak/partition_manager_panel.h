@@ -160,6 +160,8 @@ private:
     [[nodiscard]] QVector<ActionLinkSpec> partitionOperationActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> layoutOperationActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> filesystemOperationActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> nativeFilesystemActionSpecs() const;
+    [[nodiscard]] QVector<ActionLinkSpec> nonNativeFilesystemActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> maintenanceOperationActionSpecs() const;
     [[nodiscard]] QVector<ActionLinkSpec> advancedOperationActionSpecs() const;
     [[nodiscard]] QToolButton* createConfiguredActionLink(QWidget* parent,

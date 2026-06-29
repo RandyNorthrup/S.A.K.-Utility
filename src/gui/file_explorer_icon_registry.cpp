@@ -23,8 +23,8 @@ using IconDescriptor = FileExplorerIconDescriptor;
             QStringLiteral("MIT")};
 }
 
-[[nodiscard]] const QVector<IconDescriptor>& iconDescriptors() {
-    static const QVector<IconDescriptor> items{
+[[nodiscard]] QVector<IconDescriptor> fileActionDescriptors() {
+    return {
         descriptor("open",
                    "open",
                    "App.ThemedIcons.Open",
@@ -57,6 +57,11 @@ using IconDescriptor = FileExplorerIconDescriptor;
                    "delete",
                    "App.ThemedIcons.Delete",
                    "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
+    };
+}
+
+[[nodiscard]] QVector<IconDescriptor> viewLayoutDescriptors() {
+    return {
         descriptor("view-details",
                    "view-details",
                    "App.ThemedIcons.IconLayout.Details",
@@ -77,6 +82,11 @@ using IconDescriptor = FileExplorerIconDescriptor;
                    "view-columns",
                    "App.ThemedIcons.IconLayout.Columns",
                    "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"),
+    };
+}
+
+[[nodiscard]] QVector<IconDescriptor> viewLayout28Descriptors() {
+    return {
         descriptor("view-details-28",
                    "view-details-28",
                    "App.ThemedIcons.IconLayout.Details.28",
@@ -97,6 +107,11 @@ using IconDescriptor = FileExplorerIconDescriptor;
                    "view-columns-28",
                    "App.ThemedIcons.IconLayout.Columns.28",
                    "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"),
+    };
+}
+
+[[nodiscard]] QVector<IconDescriptor> panelAndStatusDescriptors() {
+    return {
         descriptor("panel-left",
                    "panel-left",
                    "App.ThemedIcons.PanelLeft",
@@ -130,6 +145,19 @@ using IconDescriptor = FileExplorerIconDescriptor;
                    "App.ThemedIcons.More",
                    "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"),
     };
+}
+
+[[nodiscard]] QVector<IconDescriptor> buildIconDescriptors() {
+    QVector<IconDescriptor> items;
+    items += fileActionDescriptors();
+    items += viewLayoutDescriptors();
+    items += viewLayout28Descriptors();
+    items += panelAndStatusDescriptors();
+    return items;
+}
+
+[[nodiscard]] const QVector<IconDescriptor>& iconDescriptors() {
+    static const QVector<IconDescriptor> items = buildIconDescriptors();
     return items;
 }
 

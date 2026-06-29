@@ -381,6 +381,16 @@ void FileManagementExplorerPanel::setupUi() {
     centerLayout->setSpacing(ui::kSpacingSmall);
     m_shell_splitter->addWidget(center);
 
+    buildCommandAndNavBars(center, centerLayout);
+    buildContentArea(center, centerLayout);
+
+    connectUiSignals();
+    installCommandShortcuts();
+    updateActionButtons();
+}
+
+void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
+                                                         QVBoxLayout* center_layout) {
     m_command_bar = new FileExplorerCommandBar(center);
     m_sidebar_toggle_button = m_command_bar->sidebarToggleButton();
     m_refresh_button = m_command_bar->refreshButton();
@@ -392,7 +402,7 @@ void FileManagementExplorerPanel::setupUi() {
     m_delete_button = m_command_bar->deleteButton();
     m_view_button = m_command_bar->viewButton();
     m_details_toggle_button = m_command_bar->detailsToggleButton();
-    centerLayout->addWidget(m_command_bar);
+    center_layout->addWidget(m_command_bar);
 
     m_omnibar = new FileExplorerOmnibar(center);
     m_back_button = m_omnibar->backButton();
@@ -403,20 +413,22 @@ void FileManagementExplorerPanel::setupUi() {
     m_command_button = m_omnibar->commandButton();
     m_open_button = m_omnibar->openButton();
     m_copy_path_button = m_omnibar->copyPathButton();
-    centerLayout->addWidget(m_omnibar);
+    center_layout->addWidget(m_omnibar);
+}
 
+void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout* center_layout) {
     m_summary_label = new QLabel(tr("No target selected"), this);
     m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
     m_summary_label->setWordWrap(true);
     m_summary_label->setAccessibleName(tr("Explorer target summary"));
     m_summary_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
-    centerLayout->addWidget(m_summary_label);
+    center_layout->addWidget(m_summary_label);
 
     m_pane = new FileExplorerPane(center);
     m_item_model = m_pane->itemModel();
     m_status_label = m_pane->statusLabel();
-    centerLayout->addWidget(m_pane, 1);
+    center_layout->addWidget(m_pane, 1);
 
     m_details_pane = new FileExplorerDetailsPane(m_shell_splitter);
     m_details_tabs = m_details_pane;
@@ -428,7 +440,15 @@ void FileManagementExplorerPanel::setupUi() {
     m_shell_splitter->setStretchFactor(0, 0);
     m_shell_splitter->setStretchFactor(1, 1);
     m_shell_splitter->setStretchFactor(2, 0);
+}
 
+void FileManagementExplorerPanel::connectUiSignals() {
+    connectToolbarSignals();
+    connectNavigationSignals();
+    connectPaneSignals();
+}
+
+void FileManagementExplorerPanel::connectToolbarSignals() {
     connect(m_refresh_button,
             &QPushButton::clicked,
             this,
@@ -457,6 +477,9 @@ void FileManagementExplorerPanel::setupUi() {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
+}
+
+void FileManagementExplorerPanel::connectNavigationSignals() {
     connect(m_target_list,
             &QListWidget::currentRowChanged,
             this,
@@ -498,6 +521,9 @@ void FileManagementExplorerPanel::setupUi() {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::onDeleteClicked);
+}
+
+void FileManagementExplorerPanel::connectPaneSignals() {
     if (m_pane->sharedSelectionModel()) {
         connect(m_pane->sharedSelectionModel(),
                 &QItemSelectionModel::selectionChanged,
@@ -524,8 +550,6 @@ void FileManagementExplorerPanel::setupUi() {
     connect(m_pane, &FileExplorerPane::columnsChildActivated, this, [this](const QString& path) {
         loadDirectory(path);
     });
-    installCommandShortcuts();
-    updateActionButtons();
 }
 
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
@@ -1219,6 +1243,31 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     }
     menu->addSeparator();
 
+    appendItemSizeMenuRow(menu);
+
+    menu->addSeparator();
+    if (auto* hiddenAction =
+            addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
+        hiddenAction->setCheckable(true);
+        hiddenAction->setChecked(m_pane_state.view.show_hidden);
+    }
+    if (auto* extensionAction =
+            addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
+        extensionAction->setCheckable(true);
+        extensionAction->setChecked(m_pane_state.view.show_extensions);
+    }
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
+
+    const FileExplorerCommandState detailsState =
+        FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
+    m_view_button->setEnabled(detailsState.enabled);
+    m_view_button->setToolTip(detailsState.enabled ? tr("Change File Explorer view layout")
+                                                   : detailsState.blocker);
+}
+
+void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     auto* sizeRow = new QWidget(menu);
     sizeRow->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
     auto* sizeLayout = new QHBoxLayout(sizeRow);
@@ -1247,26 +1296,6 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
         Q_EMIT statusMessage(tr("Explorer item size set to %1 px").arg(value),
                              sak::kTimerStatusMessageMs);
     });
-    menu->addSeparator();
-    if (auto* hiddenAction =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
-        hiddenAction->setCheckable(true);
-        hiddenAction->setChecked(m_pane_state.view.show_hidden);
-    }
-    if (auto* extensionAction =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
-        extensionAction->setCheckable(true);
-        extensionAction->setChecked(m_pane_state.view.show_extensions);
-    }
-    menu->addSeparator();
-    addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
-    addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
-
-    const FileExplorerCommandState detailsState =
-        FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
-    m_view_button->setEnabled(detailsState.enabled);
-    m_view_button->setToolTip(detailsState.enabled ? tr("Change File Explorer view layout")
-                                                   : detailsState.blocker);
 }
 
 void FileManagementExplorerPanel::executeCommand(const FileExplorerCommandId command) {

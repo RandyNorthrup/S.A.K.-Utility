@@ -307,7 +307,7 @@ private Q_SLOTS:
                     .enabled);
     }
 
-    void registryKeepsUnavailableLayoutCommandsGated() {
+    void registryEnablesLayoutAndViewToggleCommands() {
         const auto context = contextFor(writableLocalTarget(), true);
 
         const auto details = sak::FileExplorerCommandRegistry::state(
@@ -317,11 +317,12 @@ private Q_SLOTS:
         const auto hidden = sak::FileExplorerCommandRegistry::state(
             sak::FileExplorerCommandId::ToggleHiddenItems, context);
 
+        // View layouts and toggles ship functional: in a normal writable-local
+        // context they are enabled (the File Explorer panel exposes List/Grid/Cards/
+        // Columns/Adaptive + Hidden Items as working actions, no milestone gating).
         QVERIFY2(details.enabled, qPrintable(details.blocker));
-        QVERIFY(!list.enabled);
-        QVERIFY(list.blocker.contains(QStringLiteral("Details view")));
-        QVERIFY(!hidden.enabled);
-        QVERIFY(hidden.blocker.contains(QStringLiteral("unavailable")));
+        QVERIFY2(list.enabled, qPrintable(list.blocker));
+        QVERIFY2(hidden.enabled, qPrintable(hidden.blocker));
     }
 
     void registryReportsSelectionAndTargetBlockers() {

@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """Lizard complexity checker for S.A.K. Utility — TigerStyle settings.
 
-Hard limits (block commit):
+Hard limits (block commit — warnings are errors in this repo):
   - Cyclomatic complexity (CCN) ≤ 10
   - Parameter count ≤ 5
+  - Function length ≤ 70 lines
 
-Soft limit (advisory warning, does not block):
-  - Function length ≤ 70 lines (NLOC)
-
-Length-only violations are printed as recommendations but do not cause
-a non-zero exit code. This prevents artificial function splitting in
-low-complexity UI setup or data-initialization code where the length
-comes from declarative content rather than logic.
+All three are blocking; there are no advisory-only violations.
 
 Usage:
     python scripts/run_lizard.py [files...]
@@ -30,7 +25,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 MAX_CCN = 10            # Cyclomatic complexity (hard limit)
 MAX_PARAMS = 5          # Parameter count (hard limit)
-MAX_FUNC_LENGTH = 70    # Function length in NLOC (soft recommendation)
+MAX_FUNC_LENGTH = 70    # Function length in lines (hard limit)
 
 # Directories to scan when no files are specified
 DEFAULT_DIRS = ["src", "include", "tests"]
@@ -91,8 +86,7 @@ def classify_warning(line: str) -> str | None:
     """Classify a lizard warning line.
 
     Returns:
-        "hard"  — CCN or PARAM violation (blocks commit)
-        "soft"  — length-only violation (advisory)
+        "hard"  — CCN, PARAM, or length violation (blocks commit)
         None    — not a warning line
     """
     match = WARNING_RE.search(line)
@@ -103,14 +97,8 @@ def classify_warning(line: str) -> str | None:
     params = int(match.group(3))
     length = int(match.group(4))
 
-    has_ccn = ccn > MAX_CCN
-    has_params = params > MAX_PARAMS
-    has_length = length > MAX_FUNC_LENGTH
-
-    if has_ccn or has_params:
+    if ccn > MAX_CCN or params > MAX_PARAMS or length > MAX_FUNC_LENGTH:
         return "hard"
-    if has_length:
-        return "soft"
     return None
 
 
@@ -134,35 +122,20 @@ def main() -> int:
     output = result.stdout + result.stderr
 
     hard_errors: list[str] = []
-    soft_warnings: list[str] = []
 
     for line in output.splitlines():
-        kind = classify_warning(line)
-        if kind == "hard":
+        if classify_warning(line) == "hard":
             hard_errors.append(line)
-        elif kind == "soft":
-            soft_warnings.append(line)
 
     if hard_errors:
-        print(f"=== {len(hard_errors)} HARD violation(s) "
-              f"(CCN>{MAX_CCN} or PARAM>{MAX_PARAMS}) ===")
+        print(f"=== {len(hard_errors)} violation(s) "
+              f"(CCN>{MAX_CCN}, PARAM>{MAX_PARAMS}, or length>{MAX_FUNC_LENGTH}) ===")
         for line in hard_errors:
             print(line)
-
-    if soft_warnings:
-        print(f"\n--- {len(soft_warnings)} length advisory warning(s) "
-              f"(>{MAX_FUNC_LENGTH} lines, non-blocking) ---")
-        for line in soft_warnings:
-            print(line)
-
-    if hard_errors:
-        print(f"\nFAILED: {len(hard_errors)} hard violation(s) must be fixed.")
+        print(f"\nFAILED: {len(hard_errors)} violation(s) must be fixed.")
         return 1
 
-    if soft_warnings:
-        print(f"\nPASSED (with {len(soft_warnings)} length advisory warning(s))")
-    else:
-        print("\nPASSED — all functions within limits.")
+    print("\nPASSED — all functions within limits.")
     return 0
 
 

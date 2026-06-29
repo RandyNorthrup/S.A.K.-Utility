@@ -10,6 +10,8 @@
 #include <QToolButton>
 #include <QWidget>
 
+class QHBoxLayout;
+
 namespace sak {
 
 class FileExplorerCommandBar : public QWidget {
@@ -30,6 +32,10 @@ public:
     [[nodiscard]] QPushButton* detailsToggleButton() const;
 
 private:
+    void createTargetButtons(QHBoxLayout* commandRow);
+    void createMutationButtons(QHBoxLayout* commandRow);
+    void createViewButtons(QHBoxLayout* commandRow);
+
     QPushButton* m_sidebar_toggle_button{nullptr};
     QPushButton* m_refresh_button{nullptr};
     QPushButton* m_scan_disks_button{nullptr};

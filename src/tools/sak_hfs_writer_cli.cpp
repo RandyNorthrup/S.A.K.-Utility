@@ -137,163 +137,175 @@ sak::PartitionHfsFileWriteOptions writeOptions(const CliInvocation& invocation) 
     return options;
 }
 
-const QHash<QString, FileCommandRunner>& fileCommandRunners() {
-    static const QHash<QString, FileCommandRunner> kRunners{
-        {QStringLiteral("delete-empty-folder-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::deleteEmptyFolderFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("delete-folder-tree-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::
-                 deleteFolderTreeAndReleaseAllocatedBlocksFromImage(invocation.target_image_path,
-                                                                    invocation.hfs_path,
-                                                                    writeOptions(invocation));
-         }},
-        {QStringLiteral("rename-catalog-entry-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.destination_hfs_path,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("delete-file-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("create-empty-folder-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("delete-empty-file-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("create-empty-file-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("create-symlink-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::createSymlinkFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.destination_hfs_path,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("create-hardlink-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::createHardlinkFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.destination_hfs_path,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("delete-hardlink-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("replay-journal-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replayJournalFromImage(
-                 invocation.target_image_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("create-empty-files-image"),
-         [](const CliInvocation& invocation) {
-             sak::PartitionHfsFileWriteResult result;
-             const QString pad(std::max(0, invocation.name_pad), QLatin1Char('x'));
-             for (int index = 0; index < invocation.file_count; ++index) {
-                 const QString path = QStringLiteral("%1-%2-%3.txt")
-                                          .arg(invocation.hfs_path)
-                                          .arg(index, 4, 10, QLatin1Char('0'))
-                                          .arg(pad);
-                 result = sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
-                     invocation.target_image_path, path, writeOptions(invocation));
-                 if (!result.ok) {
-                     return result;
-                 }
-             }
-             if (invocation.file_count <= 0) {
-                 result.blockers.append(
-                     QStringLiteral("create-empty-files-image requires --file-count > 0"));
-                 result.ok = false;
-             }
-             return result;
-         }},
-        {QStringLiteral("create-file-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::createFileWithDataFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("truncate-resource-fork-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::
-                 truncateResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
-                                                                    invocation.hfs_path,
-                                                                    writeOptions(invocation));
-         }},
-        {QStringLiteral("truncate-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocksFromImage(
-                 invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
-         }},
-        {QStringLiteral("replace-resource-fork-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::
-                 replaceResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
+using FileCommandRunnerTable = QHash<QString, FileCommandRunner>;
+
+// Folder + simple-file create/delete commands taking only --hfs-path.
+void appendFolderAndSimpleFileRunners(FileCommandRunnerTable& runners) {
+    runners.insert(
+        QStringLiteral("delete-empty-folder-image"), [](const CliInvocation& invocation) {
+            return sak::PartitionHfsFileSystemWriter::deleteEmptyFolderFromImage(
+                invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+        });
+    runners.insert(QStringLiteral("delete-folder-tree-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::
+            deleteFolderTreeAndReleaseAllocatedBlocksFromImage(invocation.target_image_path,
+                                                               invocation.hfs_path,
+                                                               writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("rename-catalog-entry-image"),
+                   [](const CliInvocation& invocation) {
+                       return sak::PartitionHfsFileSystemWriter::renameOrMoveCatalogEntryFromImage(
+                           invocation.target_image_path,
+                           invocation.hfs_path,
+                           invocation.destination_hfs_path,
+                           writeOptions(invocation));
+                   });
+    runners.insert(QStringLiteral("delete-file-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
+            invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+    });
+    runners.insert(
+        QStringLiteral("create-empty-folder-image"), [](const CliInvocation& invocation) {
+            return sak::PartitionHfsFileSystemWriter::createEmptyFolderFromImage(
+                invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+        });
+    runners.insert(QStringLiteral("delete-empty-file-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::deleteEmptyFileFromImage(
+            invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("create-empty-file-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+            invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+    });
+}
+
+// Symlink/hardlink + journal-replay + batch create-empty-files commands.
+void appendLinkJournalAndBatchRunners(FileCommandRunnerTable& runners) {
+    runners.insert(QStringLiteral("create-symlink-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::createSymlinkFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.destination_hfs_path,
+            writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("create-hardlink-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::createHardlinkFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.destination_hfs_path,
+            writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("delete-hardlink-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::deleteHardlinkFromImage(
+            invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("replay-journal-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::replayJournalFromImage(
+            invocation.target_image_path, writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("create-empty-files-image"), [](const CliInvocation& invocation) {
+        sak::PartitionHfsFileWriteResult result;
+        const QString pad(std::max(0, invocation.name_pad), QLatin1Char('x'));
+        for (int index = 0; index < invocation.file_count; ++index) {
+            const QString path = QStringLiteral("%1-%2-%3.txt")
+                                     .arg(invocation.hfs_path)
+                                     .arg(index, 4, 10, QLatin1Char('0'))
+                                     .arg(pad);
+            result = sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+                invocation.target_image_path, path, writeOptions(invocation));
+            if (!result.ok) {
+                return result;
+            }
+        }
+        if (invocation.file_count <= 0) {
+            result.blockers.append(
+                QStringLiteral("create-empty-files-image requires --file-count > 0"));
+            result.ok = false;
+        }
+        return result;
+    });
+}
+
+// Truncate + resource-fork mutation commands.
+void appendTruncateAndResourceForkRunners(FileCommandRunnerTable& runners) {
+    runners.insert(QStringLiteral("create-file-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+    runners.insert(
+        QStringLiteral("truncate-resource-fork-image"), [](const CliInvocation& invocation) {
+            return sak::PartitionHfsFileSystemWriter::
+                truncateResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
                                                                    invocation.hfs_path,
-                                                                   invocation.payload,
                                                                    writeOptions(invocation));
-         }},
-        {QStringLiteral("grow-resource-fork-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::
-                 replaceResourceForkWithAllocationGrowthFromImage(invocation.target_image_path,
+        });
+    runners.insert(QStringLiteral("truncate-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocksFromImage(
+            invocation.target_image_path, invocation.hfs_path, writeOptions(invocation));
+    });
+    runners.insert(
+        QStringLiteral("replace-resource-fork-image"), [](const CliInvocation& invocation) {
+            return sak::PartitionHfsFileSystemWriter::
+                replaceResourceForkWithinAllocatedBlocksFromImage(invocation.target_image_path,
                                                                   invocation.hfs_path,
                                                                   invocation.payload,
                                                                   writeOptions(invocation));
-         }},
-        {QStringLiteral("grow-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowthFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("replace-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replaceFileWithinAllocatedBlocksFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("replace-compressed-image"),
-         [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::replaceCompressedFileContentFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
-         }},
-        {QStringLiteral("overwrite-image"), [](const CliInvocation& invocation) {
-             return sak::PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
-                 invocation.target_image_path,
-                 invocation.hfs_path,
-                 invocation.payload,
-                 writeOptions(invocation));
-         }}};
+        });
+    runners.insert(QStringLiteral("grow-resource-fork-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowthFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+}
+
+// Data-fork replace/grow/overwrite commands.
+void appendDataForkReplaceRunners(FileCommandRunnerTable& runners) {
+    runners.insert(QStringLiteral("grow-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowthFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("replace-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::replaceFileWithinAllocatedBlocksFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("replace-compressed-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::replaceCompressedFileContentFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+    runners.insert(QStringLiteral("overwrite-image"), [](const CliInvocation& invocation) {
+        return sak::PartitionHfsFileSystemWriter::overwriteFileSameSizeFromImage(
+            invocation.target_image_path,
+            invocation.hfs_path,
+            invocation.payload,
+            writeOptions(invocation));
+    });
+}
+
+FileCommandRunnerTable buildFileCommandRunners() {
+    FileCommandRunnerTable runners;
+    appendFolderAndSimpleFileRunners(runners);
+    appendLinkJournalAndBatchRunners(runners);
+    appendTruncateAndResourceForkRunners(runners);
+    appendDataForkReplaceRunners(runners);
+    return runners;
+}
+
+const QHash<QString, FileCommandRunner>& fileCommandRunners() {
+    static const QHash<QString, FileCommandRunner> kRunners = buildFileCommandRunners();
     return kRunners;
 }
 
@@ -574,21 +586,8 @@ std::optional<CliInvocation> parseInvocation(const QCommandLineParser& parser,
         .allow_raw_target = parser.isSet(options.allow_raw)};
 }
 
-}  // namespace
-
-int main(int argc, char* argv[]) {
-    QCoreApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("sak_hfs_writer_cli"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.1.9"));
-
-    QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral(
-        "S.A.K. HFS+ image-only writer. Supports certified data/resource-fork replacement "
-        "and bounded allocation-growth file/fork mutations in an HFS+/HFSX image."));
-    parser.addHelpOption();
-    parser.addVersionOption();
-
-    const CliOptions options{
+CliOptions buildCliOptions() {
+    return CliOptions{
         .target = QCommandLineOption({QStringLiteral("target")},
                                      QStringLiteral("Target HFS+/HFSX image path."),
                                      QStringLiteral("path")),
@@ -624,6 +623,9 @@ int main(int argc, char* argv[]) {
                                        QStringLiteral("length")),
         .allow_raw = QCommandLineOption({QStringLiteral("allow-raw-target")},
                                         QStringLiteral("Permit Windows raw-device mutation."))};
+}
+
+void registerCliOptions(QCommandLineParser& parser, const CliOptions& options) {
     parser.addOptions(
         {options.target,
          options.hfs_path,
@@ -647,6 +649,9 @@ int main(int argc, char* argv[]) {
          QCommandLineOption({QStringLiteral("secure-wipe-released-blocks")},
                             QStringLiteral(
                                 "Zero released file blocks before HFS delete operations."))});
+}
+
+void registerPositionalCommand(QCommandLineParser& parser) {
     parser.addPositionalArgument(
         QStringLiteral("command"),
         QStringLiteral(
@@ -658,6 +663,25 @@ int main(int argc, char* argv[]) {
             "rename-catalog-entry-image, "
             "replace-inline-attribute-image, replace-fork-attribute-image, or "
             "grow-fork-attribute-image."));
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+    QCoreApplication app(argc, argv);
+    QCoreApplication::setApplicationName(QStringLiteral("sak_hfs_writer_cli"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.1.9"));
+
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral(
+        "S.A.K. HFS+ image-only writer. Supports certified data/resource-fork replacement "
+        "and bounded allocation-growth file/fork mutations in an HFS+/HFSX image."));
+    parser.addHelpOption();
+    parser.addVersionOption();
+
+    const CliOptions options = buildCliOptions();
+    registerCliOptions(parser, options);
+    registerPositionalCommand(parser);
     parser.process(app);
 
     QString error;

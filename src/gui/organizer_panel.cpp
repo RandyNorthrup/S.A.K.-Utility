@@ -172,6 +172,33 @@ OrganizerPanel::~OrganizerPanel() {
 // Main setup -- panel header, tabbed layout, shared status bar
 // ============================================================================
 
+void OrganizerPanel::updateHeaderForTab(int index) {
+    struct TabMeta {
+        const char* icon;
+        const char* title;
+        const char* subtitle;
+    };
+    static constexpr TabMeta kTabs[] = {
+        {":/icons/icons/panel_organizer.svg",
+         "File Organizer",
+         "Organize files into categorized folders"},
+        {":/icons/icons/icons8-duplicate.svg",
+         "Duplicate Finder",
+         "Find duplicate files to reclaim disk space"},
+        {":/icons/icons/panel_search.svg",
+         "File Explorer",
+         "Browse mounted and supported non-Windows file systems"},
+        {":/icons/icons/panel_search.svg",
+         "Advanced Search",
+         "Search file contents, metadata, archives, and binary data across directory trees"},
+    };
+    if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
+        const auto& meta = kTabs[index];
+        sak::updatePanelHeader(
+            m_headerWidgets, QString::fromUtf8(meta.icon), tr(meta.title), tr(meta.subtitle));
+    }
+}
+
 void OrganizerPanel::setupUi() {
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(
@@ -214,30 +241,7 @@ void OrganizerPanel::setupUi() {
 
     // Update header when sub-tab changes
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
-        struct TabMeta {
-            const char* icon;
-            const char* title;
-            const char* subtitle;
-        };
-        static constexpr TabMeta kTabs[] = {
-            {":/icons/icons/panel_organizer.svg",
-             "File Organizer",
-             "Organize files into categorized folders"},
-            {":/icons/icons/icons8-duplicate.svg",
-             "Duplicate Finder",
-             "Find duplicate files to reclaim disk space"},
-            {":/icons/icons/panel_search.svg",
-             "File Explorer",
-             "Browse mounted and supported non-Windows file systems"},
-            {":/icons/icons/panel_search.svg",
-             "Advanced Search",
-             "Search file contents, metadata, archives, and binary data across directory trees"},
-        };
-        if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
-            const auto& meta = kTabs[index];
-            sak::updatePanelHeader(
-                m_headerWidgets, QString::fromUtf8(meta.icon), tr(meta.title), tr(meta.subtitle));
-        }
+        updateHeaderForTab(index);
     });
 
     // Shared status bar with log toggle
@@ -492,7 +496,13 @@ QWidget* OrganizerPanel::createOrganizerTab() {
     QPushButton* settingsBtn = nullptr;
     createOrganizerControls(layout, settingsBtn);
 
-    // Connections
+    connectOrganizerTabSignals(settingsBtn);
+
+    scrollArea->setWidget(tab);
+    return scrollArea;
+}
+
+void OrganizerPanel::connectOrganizerTabSignals(QPushButton* settingsBtn) {
     connect(m_target_path, &QLineEdit::textChanged, this, &OrganizerPanel::onTargetPathChanged);
     connect(m_organizer_target_combo,
             &QComboBox::currentIndexChanged,
@@ -523,9 +533,6 @@ QWidget* OrganizerPanel::createOrganizerTab() {
             &QPushButton::clicked,
             this,
             &OrganizerPanel::onResetCategoriesClicked);
-
-    scrollArea->setWidget(tab);
-    return scrollArea;
 }
 
 void OrganizerPanel::createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn) {
@@ -702,7 +709,13 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     QPushButton* settingsBtn = nullptr;
     createDedupControls(layout, settingsBtn);
 
-    // Connections
+    connectDuplicateFinderTabSignals(settingsBtn);
+
+    scrollArea->setWidget(tab);
+    return scrollArea;
+}
+
+void OrganizerPanel::connectDuplicateFinderTabSignals(QPushButton* settingsBtn) {
     connect(m_dedup_add_button,
             &QPushButton::clicked,
             this,
@@ -721,9 +734,6 @@ QWidget* OrganizerPanel::createDuplicateFinderTab() {
     connect(
         m_dedup_cancel_button, &QPushButton::clicked, this, &OrganizerPanel::onDedupCancelClicked);
     connect(settingsBtn, &QPushButton::clicked, this, &OrganizerPanel::onDedupSettingsClicked);
-
-    scrollArea->setWidget(tab);
-    return scrollArea;
 }
 
 // ============================================================================
@@ -899,6 +909,34 @@ void OrganizerPanel::connectOrganizerWorkerSignals() {
     connect(m_worker.get(), &OrganizerWorker::fileProgress, this, &OrganizerPanel::onFileProgress);
     connect(
         m_worker.get(), &OrganizerWorker::previewResults, this, &OrganizerPanel::onPreviewResults);
+}
+
+void OrganizerPanel::connectDedupWorkerSignals() {
+    Q_ASSERT(m_dedup_worker);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::started,
+            this,
+            &OrganizerPanel::onDedupWorkerStarted);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::finished,
+            this,
+            &OrganizerPanel::onDedupWorkerFinished);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::failed,
+            this,
+            &OrganizerPanel::onDedupWorkerFailed);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::cancelled,
+            this,
+            &OrganizerPanel::onDedupWorkerCancelled);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::scanProgress,
+            this,
+            &OrganizerPanel::onDedupScanProgress);
+    connect(m_dedup_worker.get(),
+            &DuplicateFinderWorker::resultsReady,
+            this,
+            &OrganizerPanel::onDedupResultsReady);
 }
 
 void OrganizerPanel::startOrganizerWorker(const OrganizerWorker::Config& config) {
@@ -1388,30 +1426,7 @@ void OrganizerPanel::onDedupScanClicked() {
 
     m_dedup_worker = std::make_unique<DuplicateFinderWorker>(config, this);
 
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::started,
-            this,
-            &OrganizerPanel::onDedupWorkerStarted);
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::finished,
-            this,
-            &OrganizerPanel::onDedupWorkerFinished);
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::failed,
-            this,
-            &OrganizerPanel::onDedupWorkerFailed);
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::cancelled,
-            this,
-            &OrganizerPanel::onDedupWorkerCancelled);
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::scanProgress,
-            this,
-            &OrganizerPanel::onDedupScanProgress);
-    connect(m_dedup_worker.get(),
-            &DuplicateFinderWorker::resultsReady,
-            this,
-            &OrganizerPanel::onDedupResultsReady);
+    connectDedupWorkerSignals();
 
     setDedupRunning(true);
     m_dedup_progress_bar->setValue(0);

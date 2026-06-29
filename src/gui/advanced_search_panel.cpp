@@ -653,28 +653,7 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
     auto* searchLayout = new QVBoxLayout(searchGroup);
     searchLayout->setSpacing(ui::kSpacingSmall);
 
-    auto* targetRow = new QHBoxLayout();
-    targetRow->setSpacing(ui::kSpacingSmall);
-    m_target_combo = new QComboBox(this);
-    m_target_combo->setAccessibleName(tr("Advanced search filesystem target"));
-    m_target_combo->setToolTip(tr("Choose a mounted volume or supported raw/image file system"));
-    targetRow->addWidget(m_target_combo, 1);
-
-    m_target_refresh_button = new QPushButton(tr("Refresh"), this);
-    m_target_refresh_button->setAccessibleName(tr("Refresh mounted search targets"));
-    m_target_refresh_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    targetRow->addWidget(m_target_refresh_button);
-
-    m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
-    m_target_scan_button->setAccessibleName(tr("Scan disk and partition search targets"));
-    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    targetRow->addWidget(m_target_scan_button);
-
-    m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
-    m_target_manual_button->setAccessibleName(tr("Add raw or image search target"));
-    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    targetRow->addWidget(m_target_manual_button);
-    searchLayout->addLayout(targetRow);
+    createSearchTargetRow(searchLayout);
 
     // -- Row 1: Search input + buttons --
     auto* row1 = new QHBoxLayout();
@@ -723,6 +702,35 @@ void AdvancedSearchPanel::createSearchBar(QVBoxLayout* layout) {
 
     populateSearchTargets(FileManagementFileSystemBridge::mountedTargets());
 
+    connectSearchBarSignals();
+}
+
+void AdvancedSearchPanel::createSearchTargetRow(QVBoxLayout* searchLayout) {
+    auto* targetRow = new QHBoxLayout();
+    targetRow->setSpacing(ui::kSpacingSmall);
+    m_target_combo = new QComboBox(this);
+    m_target_combo->setAccessibleName(tr("Advanced search filesystem target"));
+    m_target_combo->setToolTip(tr("Choose a mounted volume or supported raw/image file system"));
+    targetRow->addWidget(m_target_combo, 1);
+
+    m_target_refresh_button = new QPushButton(tr("Refresh"), this);
+    m_target_refresh_button->setAccessibleName(tr("Refresh mounted search targets"));
+    m_target_refresh_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    targetRow->addWidget(m_target_refresh_button);
+
+    m_target_scan_button = new QPushButton(tr("Scan Disks"), this);
+    m_target_scan_button->setAccessibleName(tr("Scan disk and partition search targets"));
+    m_target_scan_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    targetRow->addWidget(m_target_scan_button);
+
+    m_target_manual_button = new QPushButton(tr("Add Raw/Image"), this);
+    m_target_manual_button->setAccessibleName(tr("Add raw or image search target"));
+    m_target_manual_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    targetRow->addWidget(m_target_manual_button);
+    searchLayout->addLayout(targetRow);
+}
+
+void AdvancedSearchPanel::connectSearchBarSignals() {
     // Connect search actions
     connect(m_search_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onSearchClicked);
     connect(m_stop_button, &QPushButton::clicked, this, &AdvancedSearchPanel::onStopClicked);

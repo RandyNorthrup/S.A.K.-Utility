@@ -19,6 +19,8 @@
 #include <QStackedWidget>
 #include <QWidget>
 
+class QVBoxLayout;
+
 namespace sak {
 
 class FileExplorerPane : public QWidget {
@@ -59,6 +61,11 @@ public:
     void showErrorState(const QString& message);
 
 private:
+    void buildStateLabel(QVBoxLayout* layout);
+    void buildModels();
+    void buildItemViews();
+    void buildStatusLabel(QVBoxLayout* layout);
+    void connectSignals();
     void setStateMessage(const QString& message, bool visible);
     void configureListView(QListView* view, const QString& object_name, QListView::ViewMode mode);
     void configureColumnsPreviewView(QListView* view);

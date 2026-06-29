@@ -109,11 +109,14 @@ private:
     [[nodiscard]] FileManagementTarget currentTargetForCombo(const QComboBox* combo) const;
     [[nodiscard]] FileManagementTarget currentOrganizerTarget() const;
     [[nodiscard]] FileManagementTarget currentDedupTarget() const;
+    void updateHeaderForTab(int index);
     QWidget* createOrganizerTab();
+    void connectOrganizerTabSignals(QPushButton* settingsBtn);
     QGroupBox* createTargetDirectoryGroup();
     QGroupBox* createCategoryMappingGroup();
     void createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
     QWidget* createDuplicateFinderTab();
+    void connectDuplicateFinderTabSignals(QPushButton* settingsBtn);
     QGroupBox* createScanDirectoriesGroup();
     void createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
     void setupDefaultCategories();
@@ -123,6 +126,7 @@ private:
     bool confirmOrganizerExecution(const QDir& targetDir);
     OrganizerWorker::Config buildOrganizerConfig() const;
     void connectOrganizerWorkerSignals();
+    void connectDedupWorkerSignals();
     void startOrganizerWorker(const OrganizerWorker::Config& config);
     void setOperationRunning(bool running);
     void setDedupRunning(bool running);

@@ -1994,31 +1994,25 @@ QByteArray buildFreeQueueTreeBlock(uint32_t blockSize,
 // Key: physical_block_addr | (OBJ_TYPE_PHYSEXT << 60). Value: a 20-byte
 // j_phys_ext_val { len_and_kind = block_count | (APFS_KIND_NEW << 60),
 // owning_obj_id, refcnt }.
-QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
-                                   const QVector<ApfsRootFilePayload>& files,
-                                   QStringList* blockers) {
-    constexpr uint64_t kApfsObjTypePhysExt = 2;
-    constexpr uint64_t kApfsKindNew = 1;
-    QByteArray block = newApfsObjectBlock(
-        blockSize, kApfsFormatExtentRefTreeBlock, kApfsFormatXid, kApfsObjectTypeBtreePhysical);
-    writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeExtentRef);
-    writeLe16(&block, kApfsBtreeNodeFlagsOffset, 0x0003);
+struct ExtentRefPhysRecord {
+    uint64_t paddr{0};
+    uint64_t blockCount{0};
+    uint64_t owner{0};
+    uint32_t refcnt{1};
+};
 
-    struct PhysExtRecord {
-        uint64_t paddr{0};
-        uint64_t blockCount{0};
-        uint64_t owner{0};
-        uint32_t refcnt{1};
-    };
-    QVector<PhysExtRecord> records;
+// Collects one merged j_phys_ext record per distinct physical block across all
+// files, paddr-sorted. A7 (A-h) clones: when two files (the source and its
+// clone) reference the same physical block, emit ONE record with refcnt = the
+// number of referencing data streams (fsck/apfsck cross-check e_refcnt against
+// the file-extent references). The owner stays the lowest id (the source).
+QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
+                                                     const QVector<ApfsRootFilePayload>& files) {
+    QVector<ExtentRefPhysRecord> records;
     for (const auto& file : files) {
         for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
-            // A7 (A-h) clones: when two files (the source and its clone) reference the
-            // same physical block, emit ONE j_phys_ext record with refcnt = the number
-            // of referencing data streams (fsck/apfsck cross-check e_refcnt against the
-            // file-extent references). The owner stays the lowest id (the source).
-            PhysExtRecord* shared = nullptr;
-            for (PhysExtRecord& candidate : records) {
+            ExtentRefPhysRecord* shared = nullptr;
+            for (ExtentRefPhysRecord& candidate : records) {
                 if (candidate.paddr == extent.paddr) {
                     shared = &candidate;
                     break;
@@ -2034,9 +2028,55 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
     }
     std::sort(records.begin(),
               records.end(),
-              [](const PhysExtRecord& left, const PhysExtRecord& right) {
+              [](const ExtentRefPhysRecord& left, const ExtentRefPhysRecord& right) {
                   return left.paddr < right.paddr;
               });
+    return records;
+}
+
+// Emits the per-record TOC entries plus key/value pairs for the extent-ref tree
+// and returns the consumed key-area length (keyCursor) so the caller can finish
+// the node-free/info trailer. Mutates valueBackCursor to track the value area.
+qsizetype writeExtentRefRecords(QByteArray* block,
+                                const QVector<ExtentRefPhysRecord>& records,
+                                qsizetype keyAreaStart,
+                                qsizetype valueAreaEnd,
+                                qsizetype* valueBackCursor) {
+    constexpr uint64_t kApfsObjTypePhysExt = 2;
+    constexpr uint64_t kApfsKindNew = 1;
+    constexpr qsizetype kExtRefKeyBytes = 8;
+    constexpr qsizetype kExtRefValueBytes = 20;
+    qsizetype keyCursor = 0;
+    for (qsizetype index = 0; index < records.size(); ++index) {
+        const auto& record = records.at(index);
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
+        writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kExtRefKeyBytes);
+        *valueBackCursor += kExtRefValueBytes;
+        writeLe16(block,
+                  toc + kApfsBtreeVariableTocValueOffset,
+                  static_cast<uint16_t>(*valueBackCursor));
+        writeLe16(block, toc + kApfsBtreeVariableTocValueLengthOffset, kExtRefValueBytes);
+        const qsizetype key = keyAreaStart + keyCursor;
+        writeLe64(block, key, record.paddr | (kApfsObjTypePhysExt << kApfsObjTypeShift));
+        const qsizetype value = valueAreaEnd - *valueBackCursor;
+        writeLe64(block, value, record.blockCount | (kApfsKindNew << kApfsObjTypeShift));
+        writeLe64(block, value + 8, record.owner);
+        writeLe32(block, value + 16, record.refcnt);
+        keyCursor += kExtRefKeyBytes;
+    }
+    return keyCursor;
+}
+
+QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
+                                   const QVector<ApfsRootFilePayload>& files,
+                                   QStringList* blockers) {
+    QByteArray block = newApfsObjectBlock(
+        blockSize, kApfsFormatExtentRefTreeBlock, kApfsFormatXid, kApfsObjectTypeBtreePhysical);
+    writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeExtentRef);
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, 0x0003);
+
+    const QVector<ExtentRefPhysRecord> records = collectExtentRefRecords(blockSize, files);
 
     constexpr qsizetype kExtRefKeyBytes = 8;
     constexpr qsizetype kExtRefValueBytes = 20;
@@ -2047,26 +2087,9 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
-    qsizetype keyCursor = 0;
     qsizetype valueBackCursor = 0;
-    for (qsizetype index = 0; index < records.size(); ++index) {
-        const auto& record = records.at(index);
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
-        writeLe16(&block, toc, static_cast<uint16_t>(keyCursor));
-        writeLe16(&block, toc + kApfsBtreeVariableTocKeyLengthOffset, kExtRefKeyBytes);
-        valueBackCursor += kExtRefValueBytes;
-        writeLe16(&block,
-                  toc + kApfsBtreeVariableTocValueOffset,
-                  static_cast<uint16_t>(valueBackCursor));
-        writeLe16(&block, toc + kApfsBtreeVariableTocValueLengthOffset, kExtRefValueBytes);
-        const qsizetype key = keyAreaStart + keyCursor;
-        writeLe64(&block, key, record.paddr | (kApfsObjTypePhysExt << kApfsObjTypeShift));
-        const qsizetype value = valueAreaEnd - valueBackCursor;
-        writeLe64(&block, value, record.blockCount | (kApfsKindNew << kApfsObjTypeShift));
-        writeLe64(&block, value + 8, record.owner);
-        writeLe32(&block, value + 16, record.refcnt);
-        keyCursor += kExtRefKeyBytes;
-    }
+    const qsizetype keyCursor =
+        writeExtentRefRecords(&block, records, keyAreaStart, valueAreaEnd, &valueBackCursor);
     writeLe16(&block, 0x2C, static_cast<uint16_t>(keyCursor));
     writeLe16(&block,
               0x2E,
@@ -2504,6 +2527,120 @@ void setupIpBitmapRing(QByteArray* block, uint64_t ipBmSize, bool genesis) {
     set(ipBmSize - 1, kApfsSpacemanIpBmRingInUse);
 }
 
+// Bundles the sizing values both spaceman-block writers consume (block/chunk/cib/cab
+// counts, free count, offsets, checkpoint xid, ip bitmap size, genesis flag) so each
+// helper stays within the parameter-count gate. Same values the inline code computed.
+struct ApfsSpacemanWriteParams {
+    uint32_t blockSize;
+    uint64_t xid;
+    uint64_t blockCount;
+    uint64_t chunkCount;
+    uint64_t cibCount;
+    uint64_t cabCount;
+    uint64_t freeBlocks;
+    uint64_t cibArrayOffset;
+    uint64_t ipBmSize;
+    bool genesis;
+};
+
+// Writes the spaceman object header plus the main-device descriptor (block/chunk/
+// cib/cab counts, free count, cib-array offset). Byte-identical to the inline
+// sequence it replaces.
+void writeSpacemanHeaderAndMainDevice(QByteArray* block, const ApfsSpacemanWriteParams& p) {
+    writeLe64(block, kApfsObjectOidOffset, kApfsFormatSpacemanOid);
+    writeLe64(block, kApfsObjectXidOffset, p.xid);
+    writeLe32(block, kApfsObjectTypeOffset, kApfsObjectTypeSpaceman);
+    writeLe32(block, kApfsSpacemanBlockSizeOffset, p.blockSize);
+    writeLe32(block, kApfsSpacemanBlocksPerChunkOffset, kApfsSpacemanBlocksPerChunk);
+    writeLe32(block, kApfsSpacemanChunksPerCibOffset, kApfsSpacemanChunksPerCib);
+    writeLe32(block, kApfsSpacemanCibsPerCabOffset, kApfsSpacemanCibsPerCab);
+    writeLe64(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceBlockCountOffset,
+              p.blockCount);
+    writeLe64(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceChunkCountOffset,
+              p.chunkCount);
+    writeLe32(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset,
+              static_cast<uint32_t>(p.cibCount));
+    writeLe32(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset,
+              static_cast<uint32_t>(p.cabCount));
+    writeLe64(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceFreeCountOffset,
+              p.freeBlocks);
+    writeLe32(block,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset,
+              static_cast<uint32_t>(p.cibArrayOffset));
+}
+
+// Writes the internal-pool sizing, tier2 cib-address offset, free-queue limits,
+// internal-offset table, per-bitmap xid array, active-bitmap index array, and the
+// ip bitmap ring. Byte-identical to the inline sequence it replaces.
+void writeSpacemanInternalPoolAndBitmaps(QByteArray* block, const ApfsSpacemanWriteParams& p) {
+    const uint64_t blockCount = p.blockCount;
+    const uint64_t chunkCount = p.chunkCount;
+    const uint64_t cibCount = p.cibCount;
+    const uint64_t cabCount = p.cabCount;
+    const uint64_t cibArrayOffset = p.cibArrayOffset;
+    const uint64_t ipBmSize = p.ipBmSize;
+    const uint64_t xid = p.xid;
+    const bool genesis = p.genesis;
+    writeLe32(block, kApfsSpacemanFlagsOffset, kApfsSpacemanFlagVersioned);
+    writeLe32(block, kApfsSpacemanIpBmTxMultiplierOffset, kApfsSpacemanIpBmTxMultiplier);
+    // Internal-pool size scales with the allocator structures apfsck/fsck_apfs
+    // require: ip_block_count = 3 * (chunk_count + cib_count + cab_count). With
+    // cab_count 0 (<=507 cibs) this is 3 * (chunk_count + cib_count). Validated
+    // against Apple newfs_apfs output (1-chunk/1-cib 6; 8-chunk 27) and mkapfs
+    // (128-chunk/2-cib -> 390).
+    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount + cabCount);
+    writeLe64(block, kApfsSpacemanIpBlockCountOffset, ipBlockCount);
+    // Each ip allocation bitmap is ip_bm_size blocks (one 4096-byte block per 32768
+    // IP blocks); the 16-slot ring is ip_bm_size * 16 blocks and ip_base follows it.
+    writeLe32(block, kApfsSpacemanIpBmSizeOffset, static_cast<uint32_t>(ipBmSize));
+    writeLe32(block,
+              kApfsSpacemanIpBmBlockCountOffset,
+              static_cast<uint32_t>(ipBmSize * kApfsSpacemanIpBmTxMultiplier));
+    writeLe64(block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
+    writeLe64(block,
+              kApfsSpacemanIpBaseOffset,
+              generatedIpBaseBlock(chunkCount, cibCount, cabCount));
+    // The secondary (tier2) device's cib-address offset sits immediately after the
+    // main device's inline cib-address array. fsck_apfs rejects overlapping spaceman
+    // structs, so this clears the whole main array (cib_count entries) past the
+    // cib-array offset - single-CIB keeps the certified 2576.
+    const uint64_t addrArrayEntries = cabCount > 0 ? cabCount : cibCount;
+    writeLe32(block,
+              kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
+              static_cast<uint32_t>(cibArrayOffset + addrArrayEntries * 8));
+    writeLe16(block, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(chunkCount));
+    writeLe16(block, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(blockCount));
+    // Internal-offset table: sm_ip_bm_xid_offset / sm_ip_bitmap_offset /
+    // sm_ip_bm_free_next_offset point at the three inline arrays, each scaled by
+    // ip_bm_size (single-block bitmaps keep the certified 2520 / 2528 / 2536).
+    const uint64_t bmAddrOffset = spacemanBmAddrOffset(ipBmSize);
+    const uint64_t freeNextOffset = spacemanFreeNextOffset(ipBmSize);
+    writeLe32(block, 0x144, static_cast<uint32_t>(kApfsSpacemanBitmapXidOffset));
+    writeLe32(block, 0x148, static_cast<uint32_t>(bmAddrOffset));
+    writeLe32(block, 0x14C, static_cast<uint32_t>(freeNextOffset));
+    writeLe32(block, 0x150, 1);
+    writeLe32(block, 0x154, 2520);
+    // Per-bitmap xid array: one u64 per active bitmap block, all the checkpoint xid.
+    for (uint64_t i = 0; i < ipBmSize; ++i) {
+        writeLe64(block, kApfsSpacemanBitmapXidOffset + static_cast<qsizetype>(i) * 8, xid);
+    }
+    // Active-bitmap index array: the live checkpoint's ip_bm_size bitmap blocks sit
+    // at ring slots 0..ip_bm_size-1 (genesis) or ip_bm_size..2*ip_bm_size-1 (rotated).
+    // Each entry must be a distinct ring slot or apfsck reports "same bitmap twice".
+    const uint64_t activeBase = genesis ? 0 : ipBmSize;
+    for (uint64_t i = 0; i < ipBmSize; ++i) {
+        writeLe16(block,
+                  static_cast<qsizetype>(bmAddrOffset + i * 2),
+                  static_cast<uint16_t>(activeBase + i));
+    }
+    setupIpBitmapRing(block, ipBmSize, genesis);
+}
+
 QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blockers) {
     const auto& [blockSize,
                  blockCount,
@@ -2527,84 +2664,18 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
     const uint64_t spacemanBlocks = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
     QByteArray block(static_cast<qsizetype>(blockSize) * static_cast<qsizetype>(spacemanBlocks),
                      '\0');
-    writeLe64(&block, kApfsObjectOidOffset, kApfsFormatSpacemanOid);
-    writeLe64(&block, kApfsObjectXidOffset, xid);
-    writeLe32(&block, kApfsObjectTypeOffset, kApfsObjectTypeSpaceman);
-    writeLe32(&block, kApfsSpacemanBlockSizeOffset, blockSize);
-    writeLe32(&block, kApfsSpacemanBlocksPerChunkOffset, kApfsSpacemanBlocksPerChunk);
-    writeLe32(&block, kApfsSpacemanChunksPerCibOffset, kApfsSpacemanChunksPerCib);
-    writeLe32(&block, kApfsSpacemanCibsPerCabOffset, kApfsSpacemanCibsPerCab);
-    writeLe64(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceBlockCountOffset,
-              blockCount);
-    writeLe64(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceChunkCountOffset,
-              chunkCount);
-    writeLe32(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset,
-              static_cast<uint32_t>(cibCount));
-    writeLe32(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset,
-              static_cast<uint32_t>(cabCount));
-    writeLe64(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceFreeCountOffset,
-              freeBlocks);
-    writeLe32(&block,
-              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(cibArrayOffset));
-    writeLe32(&block, kApfsSpacemanFlagsOffset, kApfsSpacemanFlagVersioned);
-    writeLe32(&block, kApfsSpacemanIpBmTxMultiplierOffset, kApfsSpacemanIpBmTxMultiplier);
-    // Internal-pool size scales with the allocator structures apfsck/fsck_apfs
-    // require: ip_block_count = 3 * (chunk_count + cib_count + cab_count). With
-    // cab_count 0 (<=507 cibs) this is 3 * (chunk_count + cib_count). Validated
-    // against Apple newfs_apfs output (1-chunk/1-cib 6; 8-chunk 27) and mkapfs
-    // (128-chunk/2-cib -> 390).
-    const uint64_t ipBlockCount = 3 * (chunkCount + cibCount + cabCount);
-    writeLe64(&block, kApfsSpacemanIpBlockCountOffset, ipBlockCount);
-    // Each ip allocation bitmap is ip_bm_size blocks (one 4096-byte block per 32768
-    // IP blocks); the 16-slot ring is ip_bm_size * 16 blocks and ip_base follows it.
-    writeLe32(&block, kApfsSpacemanIpBmSizeOffset, static_cast<uint32_t>(ipBmSize));
-    writeLe32(&block,
-              kApfsSpacemanIpBmBlockCountOffset,
-              static_cast<uint32_t>(ipBmSize * kApfsSpacemanIpBmTxMultiplier));
-    writeLe64(&block, kApfsSpacemanIpBmBaseOffset, kApfsFormatIpBitmapBaseBlock);
-    writeLe64(&block,
-              kApfsSpacemanIpBaseOffset,
-              generatedIpBaseBlock(chunkCount, cibCount, cabCount));
-    // The secondary (tier2) device's cib-address offset sits immediately after the
-    // main device's inline cib-address array. fsck_apfs rejects overlapping spaceman
-    // structs, so this clears the whole main array (cib_count entries) past the
-    // cib-array offset - single-CIB keeps the certified 2576.
-    const uint64_t addrArrayEntries = cabCount > 0 ? cabCount : cibCount;
-    writeLe32(&block,
-              kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-              static_cast<uint32_t>(cibArrayOffset + addrArrayEntries * 8));
-    writeLe16(&block, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(chunkCount));
-    writeLe16(&block, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(blockCount));
-    // Internal-offset table: sm_ip_bm_xid_offset / sm_ip_bitmap_offset /
-    // sm_ip_bm_free_next_offset point at the three inline arrays, each scaled by
-    // ip_bm_size (single-block bitmaps keep the certified 2520 / 2528 / 2536).
-    const uint64_t bmAddrOffset = spacemanBmAddrOffset(ipBmSize);
-    const uint64_t freeNextOffset = spacemanFreeNextOffset(ipBmSize);
-    writeLe32(&block, 0x144, static_cast<uint32_t>(kApfsSpacemanBitmapXidOffset));
-    writeLe32(&block, 0x148, static_cast<uint32_t>(bmAddrOffset));
-    writeLe32(&block, 0x14C, static_cast<uint32_t>(freeNextOffset));
-    writeLe32(&block, 0x150, 1);
-    writeLe32(&block, 0x154, 2520);
-    // Per-bitmap xid array: one u64 per active bitmap block, all the checkpoint xid.
-    for (uint64_t i = 0; i < ipBmSize; ++i) {
-        writeLe64(&block, kApfsSpacemanBitmapXidOffset + static_cast<qsizetype>(i) * 8, xid);
-    }
-    // Active-bitmap index array: the live checkpoint's ip_bm_size bitmap blocks sit
-    // at ring slots 0..ip_bm_size-1 (genesis) or ip_bm_size..2*ip_bm_size-1 (rotated).
-    // Each entry must be a distinct ring slot or apfsck reports "same bitmap twice".
-    const uint64_t activeBase = genesis ? 0 : ipBmSize;
-    for (uint64_t i = 0; i < ipBmSize; ++i) {
-        writeLe16(&block,
-                  static_cast<qsizetype>(bmAddrOffset + i * 2),
-                  static_cast<uint16_t>(activeBase + i));
-    }
-    setupIpBitmapRing(&block, ipBmSize, genesis);
+    const ApfsSpacemanWriteParams smWrite{.blockSize = blockSize,
+                                          .xid = xid,
+                                          .blockCount = blockCount,
+                                          .chunkCount = chunkCount,
+                                          .cibCount = cibCount,
+                                          .cabCount = cabCount,
+                                          .freeBlocks = freeBlocks,
+                                          .cibArrayOffset = cibArrayOffset,
+                                          .ipBmSize = ipBmSize,
+                                          .genesis = genesis};
+    writeSpacemanHeaderAndMainDevice(&block, smWrite);
+    writeSpacemanInternalPoolAndBitmaps(&block, smWrite);
     if (!genesis) {
         // sm_fq[IP] holds the genesis rotation group pending reclamation: cib 0 +
         // chunk-0 bitmap, plus the ghost cab 0 (CAB tier) / ghost boundary bitmap
@@ -3382,6 +3453,36 @@ QVector<ApfsFreeQueueEntry> buildIpFreeQueueWindow(const ApfsCheckpointAdvanceRe
     return entries;
 }
 
+// Advances the in-memory nxsb to the new checkpoint and applies the optional
+// block-count grow, container-omap, and next-oid deltas. Byte-identical to the
+// inline sequence it replaces.
+void applyNxSuperblockCheckpointDeltas(ApfsCheckpointAdvanceRequest& request,
+                                       const ApfsLiveCheckpoint& live,
+                                       uint64_t newXid,
+                                       uint32_t ephemeralBlocks,
+                                       const ApfsRepairGeometry& geometry) {
+    advanceNxSuperblockCheckpoint(&request.nxsb, live, newXid, ephemeralBlocks);
+    if (request.blockCountDelta != 0) {
+        // A7 (A-g) in-chunk grow: the container gained blocks within the existing chunk.
+        const uint64_t grownBlockCount = le64(request.nxsb, kApfsNxBlockCountOffset) +
+                                         static_cast<uint64_t>(request.blockCountDelta);
+        writeLe64(&request.nxsb, kApfsNxBlockCountOffset, grownBlockCount);
+        // nx_ephemeral_info[0] encodes main_fq_node_limit(block_count) for a sub-128-MiB
+        // container, so it has to track the new block count (fsck checks it exactly).
+        writeLe64(&request.nxsb,
+                  kApfsNxEphemeralInfoOffset,
+                  apfsNxEphemeralInfoValue(grownBlockCount, geometry.blockSize));
+    }
+    if (request.newContainerOmap != 0) {
+        writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
+    }
+    if (request.nextOidAdvance != 0) {
+        writeLe64(&request.nxsb,
+                  kApfsNxNextOidOffset,
+                  le64(request.nxsb, kApfsNxNextOidOffset) + request.nextOidAdvance);
+    }
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -3425,27 +3526,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     if (!stampAndWriteApfsBlock(request.image, geometry, cpmBlock, &checkpointMap, blockers)) {
         return false;
     }
-    advanceNxSuperblockCheckpoint(
-        &request.nxsb, live, newXid, static_cast<uint32_t>(ephemeralBlocks));
-    if (request.blockCountDelta != 0) {
-        // A7 (A-g) in-chunk grow: the container gained blocks within the existing chunk.
-        const uint64_t grownBlockCount = le64(request.nxsb, kApfsNxBlockCountOffset) +
-                                         static_cast<uint64_t>(request.blockCountDelta);
-        writeLe64(&request.nxsb, kApfsNxBlockCountOffset, grownBlockCount);
-        // nx_ephemeral_info[0] encodes main_fq_node_limit(block_count) for a sub-128-MiB
-        // container, so it has to track the new block count (fsck checks it exactly).
-        writeLe64(&request.nxsb,
-                  kApfsNxEphemeralInfoOffset,
-                  apfsNxEphemeralInfoValue(grownBlockCount, geometry.blockSize));
-    }
-    if (request.newContainerOmap != 0) {
-        writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
-    }
-    if (request.nextOidAdvance != 0) {
-        writeLe64(&request.nxsb,
-                  kApfsNxNextOidOffset,
-                  le64(request.nxsb, kApfsNxNextOidOffset) + request.nextOidAdvance);
-    }
+    applyNxSuperblockCheckpointDeltas(
+        request, live, newXid, static_cast<uint32_t>(ephemeralBlocks), geometry);
     if (!stampAndWriteApfsBlock(request.image, geometry, nxsbBlock, &request.nxsb, blockers) ||
         !writeApfsRepairBlock(
             request.image, geometry, kApfsFormatNxsbBlock, request.nxsb, blockers)) {
@@ -4256,6 +4338,33 @@ QVector<uint64_t> chunk1AllocatedBlocks(const ApfsFileInsertAllocation& alloc) {
     return chunk1;
 }
 
+// Overflow-tier rotated cib: chunk 0 stays full (free unchanged), its bitmap just
+// moves to the new rotation slot. The boundary chunk (M-1) absorbs the allocation:
+// its entry takes the fresh copy-on-write bitmap, the net free delta, and the new
+// xid. M-1 < chunks_per_cib keeps it inside this (cib 0) block. Byte-identical to
+// the inline branch it replaces.
+bool writeRotatedCibOverflow(QByteArray* cib,
+                             const ApfsFileInsertAllocation& alloc,
+                             QStringList* blockers) {
+    writeLe64(cib,
+              kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
+              alloc.rotation.newBitmap);
+    const qsizetype entryM = kApfsChunkInfoEntriesOffset +
+                             static_cast<qsizetype>(alloc.layout.allocChunk) *
+                                 kApfsChunkInfoEntryStride;
+    writeLe32(cib,
+              entryM + kApfsChunkInfoEntryFreeCountOffset,
+              static_cast<uint32_t>(
+                  static_cast<int64_t>(le32(*cib, entryM + kApfsChunkInfoEntryFreeCountOffset)) +
+                  alloc.cibFreeDelta));
+    writeLe64(cib, entryM + kApfsChunkInfoEntryBitmapAddrOffset, alloc.chunk1BitmapBlock);
+    writeLe64(cib, entryM, alloc.newXid);
+    writeLe64(cib, kApfsObjectOidOffset, alloc.rotation.newCib);
+    writeLe64(cib, kApfsObjectXidOffset, alloc.newXid);
+    return stampAndWriteApfsBlock(
+        alloc.image, alloc.geometry, alloc.rotation.newCib, cib, blockers);
+}
+
 // Write the rotated chunk-info block: read the live cib, adjust chunk 0's free count
 // (and chunk 1's, on a multi-chunk overflow), re-point chunk 0's bitmap_addr at the
 // new rotated bitmap slot (and chunk 1's at its fresh physical bitmap block), re-stamp
@@ -4267,27 +4376,7 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
         return false;
     }
     if (alloc.layout.allocChunk != 0) {
-        // Overflow tier: chunk 0 stays full (free unchanged), its bitmap just moves to
-        // the new rotation slot. The boundary chunk (M-1) absorbs the allocation: its
-        // entry takes the fresh copy-on-write bitmap, the net free delta, and the new
-        // xid. M-1 < chunks_per_cib keeps it inside this (cib 0) block.
-        writeLe64(&cib,
-                  kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryBitmapAddrOffset,
-                  alloc.rotation.newBitmap);
-        const qsizetype entryM = kApfsChunkInfoEntriesOffset +
-                                 static_cast<qsizetype>(alloc.layout.allocChunk) *
-                                     kApfsChunkInfoEntryStride;
-        writeLe32(&cib,
-                  entryM + kApfsChunkInfoEntryFreeCountOffset,
-                  static_cast<uint32_t>(
-                      static_cast<int64_t>(le32(cib, entryM + kApfsChunkInfoEntryFreeCountOffset)) +
-                      alloc.cibFreeDelta));
-        writeLe64(&cib, entryM + kApfsChunkInfoEntryBitmapAddrOffset, alloc.chunk1BitmapBlock);
-        writeLe64(&cib, entryM, alloc.newXid);
-        writeLe64(&cib, kApfsObjectOidOffset, alloc.rotation.newCib);
-        writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
-        return stampAndWriteApfsBlock(
-            alloc.image, alloc.geometry, alloc.rotation.newCib, &cib, blockers);
+        return writeRotatedCibOverflow(&cib, alloc, blockers);
     }
     const int chunk1Count = static_cast<int>(chunk1AllocatedBlocks(alloc).size());
     // cibFreeDelta assumed every allocation hit chunk 0; move the chunk-1 data back
@@ -5089,6 +5178,98 @@ bool liveVolumeHasSnapshot(const ApfsFsCommitContext& ctx, QStringList* blockers
 // fs-tree nodes plus new minus freed data) threads identically through the
 // volume allocated-count, the CIB/spaceman free counts, and nx_next_oid grows by
 // the number of new fs-tree leaves.
+// Cumulative IP-bitmap usage after the rotation touches the spare slot: the
+// immutable cibs (cib_count - 1), the immutable cabs (cab_count - 1, CAB tier),
+// the fully-reserved overflow chunk bitmaps (M - 2 on the overflow tier; the
+// boundary chunk now rides in the group), all three rotation group slots
+// (3 * groupSize, with 2 ghost groups held by the IP free-queue + the live
+// group), and a non-overflow multi-chunk spill's chunk-1 slot. Single-CIB
+// reduces to 6 (0x3f). Byte-identical to the inline computation it replaces.
+uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f, uint64_t groupSize) {
+    const uint64_t extraBitmaps = f.ctx.layout.metadataChunks > 1 ? f.ctx.layout.metadataChunks - 2
+                                                                  : 0;
+    const uint64_t immutableCabCount = f.ctx.layout.cabCount > 0 ? f.ctx.layout.cabCount - 1 : 0;
+    return (f.ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps + 3 * groupSize +
+           (f.ctx.layout.allocChunk == 0 && f.chunk1BitmapBlock != 0 ? 1 : 0);
+}
+
+// Writes the file-insert COW chain for the commit. Byte-identical to the inline
+// writeFileInsertCowChain call it replaces.
+bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
+                           qsizetype nodeCount,
+                           int64_t netConsumed,
+                           QStringList* blockers) {
+    return writeFileInsertCowChain({.image = f.ctx.image,
+                                    .geometry = f.ctx.geometry,
+                                    .newXid = f.newXid,
+                                    .live = f.ctx.chain,
+                                    .fsNodes = f.fsNodes,
+                                    .newBlocks = f.newBlocks.mid(0, nodeCount + 5),
+                                    .files = f.files,
+                                    .allocBlockDelta = netConsumed,
+                                    .extentRefNew = f.extentRefNew,
+                                    .fileCountDelta = f.fileCountDelta,
+                                    .directoryCountDelta = f.directoryCountDelta,
+                                    .nextObjIdDelta = f.nextObjIdDelta},
+                                   blockers);
+}
+
+struct ApfsFinalizeFreeQueue {
+    ApfsMainFqAdvance mainFq;
+    int64_t freedCount{0};
+};
+
+// Gathers this commit's freed blocks (old COW chain + freed data extents), queues
+// them on the live main free-queue, and reclaims only the runs aged past the
+// rollback window. Returns the advance plus the freed-block count for the
+// net-queued accounting. Byte-identical to the inline sequence it replaces.
+//
+// Queue this commit's freed blocks on the main free-queue (they stay allocated
+// in the bitmap so an interrupted commit's predecessor keeps them) and reclaim
+// only the runs that have aged past the rollback window. The bitmap therefore
+// releases the reclaimed runs, not this commit's frees; the cib/spaceman free
+// counts move by (reclaimed - allocated) while the volume allocated-count still
+// moves by netConsumed (the queued blocks leave the volume but not the device).
+ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f,
+                                                   QStringList* blockers) {
+    QVector<uint64_t> freed =
+        oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
+    freed += f.freedDataBlocks;
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
+        f.ctx.image,
+        f.ctx.geometry,
+        findEphemeralPaddrByOid(
+            f.ctx.image, f.ctx.geometry, f.ctx.live, kApfsFormatFqMainTreeOid, blockers),
+        blockers);
+    const ApfsMainFqAdvance mainFq =
+        advanceMainFreeQueue(liveMainFq, freed, f.newXid, kMainFqRollbackWindow);
+    return {mainFq, static_cast<int64_t>(freed.size())};
+}
+
+// CAB tier: re-emit cab 0 into its group slot (offset 2) pointing at the freshly
+// rotated cib 0 and report the new cab-0 address (which the spaceman cab-address
+// array must use) via *newAddr0. Below the CAB tier (*newAddr0 already holds the
+// new cib 0) this is a no-op. Byte-identical to the inline branch it replaces.
+bool finalizeRotateCab0(const ApfsFsCommitFinalize& f,
+                        const ApfsIpRotation& rotation,
+                        uint64_t* newAddr0,
+                        QStringList* blockers) {
+    if (f.ctx.layout.cabCount > 0) {
+        const uint64_t newCab0 = rotation.newCib + 2;
+        if (!writeRotatedCab0({.image = f.ctx.image,
+                               .geometry = f.ctx.geometry,
+                               .liveCab0 = f.ctx.liveCab0,
+                               .newCab0 = newCab0,
+                               .newCib0 = rotation.newCib,
+                               .newXid = f.newXid},
+                              blockers)) {
+            return false;
+        }
+        *newAddr0 = newCab0;
+    }
+    return true;
+}
+
 bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                       ApfsInPlaceCheckpointResult* result,
                       QStringList* blockers) {
@@ -5108,57 +5289,15 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                 (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
     const ApfsIpRotation rotation =
         computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
-    if (!writeFileInsertCowChain({.image = f.ctx.image,
-                                  .geometry = f.ctx.geometry,
-                                  .newXid = f.newXid,
-                                  .live = f.ctx.chain,
-                                  .fsNodes = f.fsNodes,
-                                  .newBlocks = f.newBlocks.mid(0, nodeCount + 5),
-                                  .files = f.files,
-                                  .allocBlockDelta = netConsumed,
-                                  .extentRefNew = f.extentRefNew,
-                                  .fileCountDelta = f.fileCountDelta,
-                                  .directoryCountDelta = f.directoryCountDelta,
-                                  .nextObjIdDelta = f.nextObjIdDelta},
-                                 blockers)) {
+    if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
         return false;
     }
-    QVector<uint64_t> freed =
-        oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
-    freed += f.freedDataBlocks;
-    // Queue this commit's freed blocks on the main free-queue (they stay allocated
-    // in the bitmap so an interrupted commit's predecessor keeps them) and reclaim
-    // only the runs that have aged past the rollback window. The bitmap therefore
-    // releases the reclaimed runs, not this commit's frees; the cib/spaceman free
-    // counts move by (reclaimed - allocated) while the volume allocated-count still
-    // moves by netConsumed (the queued blocks leave the volume but not the device).
-    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
-        f.ctx.image,
-        f.ctx.geometry,
-        findEphemeralPaddrByOid(
-            f.ctx.image, f.ctx.geometry, f.ctx.live, kApfsFormatFqMainTreeOid, blockers),
-        blockers);
-    const ApfsMainFqAdvance mainFq =
-        advanceMainFreeQueue(liveMainFq, freed, f.newXid, kMainFqRollbackWindow);
-    const int64_t netQueued = static_cast<int64_t>(freed.size()) -
-                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const ApfsFinalizeFreeQueue fq = advanceFinalizeMainFreeQueue(f, blockers);
+    const ApfsMainFqAdvance& mainFq = fq.mainFq;
+    const int64_t netQueued = fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    // Once the rotation has touched the spare slot, the IP bitmap cumulatively marks
-    // the immutable cibs (cib_count - 1), the fully-reserved overflow chunk bitmaps
-    // (M - 2 on the overflow tier, the boundary chunk now rides in the group), and all
-    // three rotation group slots (3 * groupSize, with 2 ghost groups held by the IP
-    // free-queue + the live group), contiguous from ip_base. A non-overflow multi-chunk
-    // spill additionally marks chunk 1's bitmap slot. Single-CIB reduces to 6 (0x3f).
     const uint64_t groupSize = f.ctx.layout.ipGroupStride;
-    const uint64_t extraBitmaps = f.ctx.layout.metadataChunks > 1 ? f.ctx.layout.metadataChunks - 2
-                                                                  : 0;
-    // The IP region is contiguous from ip_base: immutable cibs (cib_count - 1),
-    // immutable cabs (cab_count - 1, CAB tier), the fully-reserved chunk bitmaps, then
-    // all three rotation group slots (3 * groupSize). A non-overflow spill adds chunk 1.
-    const uint64_t immutableCabCount = f.ctx.layout.cabCount > 0 ? f.ctx.layout.cabCount - 1 : 0;
-    const uint64_t ipBitmapUsage =
-        (f.ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps + 3 * groupSize +
-        (f.ctx.layout.allocChunk == 0 && f.chunk1BitmapBlock != 0 ? 1 : 0);
+    const uint64_t ipBitmapUsage = computeFinalizeIpBitmapUsage(f, groupSize);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,
@@ -5175,18 +5314,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     // pointing at the new cib 0, and re-point the spaceman's cab-address array at the
     // new cab 0 (not the cib). Below the CAB tier the spaceman addresses cib 0 inline.
     uint64_t newAddr0 = rotation.newCib;
-    if (f.ctx.layout.cabCount > 0) {
-        const uint64_t newCab0 = rotation.newCib + 2;
-        if (!writeRotatedCab0({.image = f.ctx.image,
-                               .geometry = f.ctx.geometry,
-                               .liveCab0 = f.ctx.liveCab0,
-                               .newCab0 = newCab0,
-                               .newCib0 = rotation.newCib,
-                               .newXid = f.newXid},
-                              blockers)) {
-            return false;
-        }
-        newAddr0 = newCab0;
+    if (!finalizeRotateCab0(f, rotation, &newAddr0, blockers)) {
+        return false;
     }
     return advanceCheckpoint({.image = f.ctx.image,
                               .geometry = f.ctx.geometry,
@@ -5856,25 +5985,27 @@ uint64_t resolveResizeGrowDelta(QIODevice* image, uint64_t newSizeBytes, QString
 // counts, the spaceman main device's block + free counts, and nx_block_count by the same
 // delta; the new blocks are already free (0) in the carried-forward chunk bitmap. No
 // file-system metadata moves.
-bool commitInPlaceResizeGrow(QIODevice* image,
-                             uint64_t growDeltaBlocks,
-                             ApfsInPlaceCheckpointResult* result,
-                             QStringList* blockers) {
+// Validates the resize-grow request, loads the commit context into *ctx, enforces
+// the single-chunk in-chunk-grow constraint, and grows the backing image/device.
+// Byte-identical to the inline preflight it replaces.
+bool preflightResizeGrow(QIODevice* image,
+                         uint64_t growDeltaBlocks,
+                         ApfsFsCommitContext* ctx,
+                         QStringList* blockers) {
     if (growDeltaBlocks == 0) {
         blockers->append(QStringLiteral("APFS resize-grow: the grow amount must be non-zero"));
         return false;
     }
-    ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, ctx, blockers)) {
         return false;
     }
-    if (ctx.layout.cibCount != 1 || ctx.layout.cabCount != 0 || ctx.layout.allocChunk != 0) {
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 || ctx->layout.allocChunk != 0) {
         blockers->append(QStringLiteral(
             "APFS resize-grow: only an in-chunk grow of a single-chunk container is supported in "
             "this increment (a chunk-adding grow reshapes the spaceman internal pool)"));
         return false;
     }
-    const uint64_t oldBlockCount = ctx.geometry.blockCount;
+    const uint64_t oldBlockCount = ctx->geometry.blockCount;
     if (oldBlockCount + growDeltaBlocks > kApfsSpacemanBlocksPerChunk) {
         blockers->append(
             QStringLiteral("APFS resize-grow: the new size would add a chunk (exceeds the single "
@@ -5884,10 +6015,22 @@ bool commitInPlaceResizeGrow(QIODevice* image,
         return false;
     }
     auto* fileDevice = qobject_cast<QFileDevice*>(image);
-    if (fileDevice == nullptr || !fileDevice->resize(static_cast<qint64>(
-                                     (oldBlockCount + growDeltaBlocks) * ctx.geometry.blockSize))) {
+    if (fileDevice == nullptr ||
+        !fileDevice->resize(
+            static_cast<qint64>((oldBlockCount + growDeltaBlocks) * ctx->geometry.blockSize))) {
         blockers->append(
             QStringLiteral("APFS resize-grow: unable to grow the backing image/device"));
+        return false;
+    }
+    return true;
+}
+
+bool commitInPlaceResizeGrow(QIODevice* image,
+                             uint64_t growDeltaBlocks,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!preflightResizeGrow(image, growDeltaBlocks, &ctx, blockers)) {
         return false;
     }
     const uint64_t newXid = ctx.live.xid + 1;
@@ -7276,10 +7419,11 @@ void appendCheckpointMapEntryBlocker(const GeneratedApfsLayoutContext& context,
         context.blockers);
 }
 
-void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context,
-                                       const GeneratedApfsLayoutBlocks& blocks) {
-    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayoutForBlockCount(
-        context.geometry.blockSize, context.geometry.blockCount);
+// Validates the nxsb's checkpoint descriptor/data geometry, reaper OID, and
+// ephemeral info. Byte-identical to the inline blocker sequence it replaces.
+void appendGeneratedNxsbCheckpointBlockers(const GeneratedApfsLayoutContext& context,
+                                           const GeneratedApfsLayoutBlocks& blocks,
+                                           const ApfsFormatEphemeralLayout& ephemeral) {
     appendGeneratedLayoutBlocker(
         le32(blocks.nxsb, kApfsNxXpDescBlocksOffset) == kApfsFormatCheckpointDescBlocks &&
             le64(blocks.nxsb, kApfsNxXpDescBaseOffset) == kApfsFormatCheckpointDescBaseBlock &&
@@ -7302,6 +7446,13 @@ void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context
                                                               context.geometry.blockSize),
                                  QStringLiteral("APFS generated/minimal ephemeral info mismatch"),
                                  context.blockers);
+}
+
+// Validates the checkpoint-map header/entries, reaper, and chunk-info blocks, plus
+// the nxsb copy. Byte-identical to the inline blocker sequence it replaces.
+void appendGeneratedCheckpointMapBlockers(const GeneratedApfsLayoutContext& context,
+                                          const GeneratedApfsLayoutBlocks& blocks,
+                                          const ApfsFormatEphemeralLayout& ephemeral) {
     appendGeneratedHeaderBlockers({.block = &blocks.checkpointMap,
                                    .blockIndex = kApfsFormatCheckpointMapBlock,
                                    .expectedOid = kApfsFormatCheckpointMapBlock,
@@ -7349,6 +7500,14 @@ void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context
         blocks.nxsbCopy == blocks.nxsb,
         QStringLiteral("APFS generated/minimal checkpoint superblock copy must match block zero"),
         context.blockers);
+}
+
+void appendGeneratedCheckpointBlockers(const GeneratedApfsLayoutContext& context,
+                                       const GeneratedApfsLayoutBlocks& blocks) {
+    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayoutForBlockCount(
+        context.geometry.blockSize, context.geometry.blockCount);
+    appendGeneratedNxsbCheckpointBlockers(context, blocks, ephemeral);
+    appendGeneratedCheckpointMapBlockers(context, blocks, ephemeral);
 }
 
 void appendGeneratedOmapSnapshotStateBlockers(const QByteArray& omap,
@@ -8939,264 +9098,44 @@ void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
     blocks->append({enc.volumeKbBlock, enc.volumeKeybagBlock});
 }
 
-QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
-                                          uint64_t blockCount,
-                                          const QString& volumeName,
-                                          QStringList* blockers) {
-    const QByteArray containerUuid = randomApfsUuid();
-    const QByteArray volumeUuid = randomApfsUuid();
-    // The internal pool grows to 3*(chunk_count+cib_count) blocks; every object
-    // placed after the internal pool shifts by the same delta so the IP region
-    // and the post-pool metadata never overlap (apfsck marks the whole IP region
-    // used). Multi-CIB (>126 chunks) widens each rotation slot to cib_count cibs.
-    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                                kApfsSpacemanBlocksPerChunk;
-    const ApfsMultiCibLayout mcib = computeMultiCibLayout(chunkCount);
-    const uint64_t ipDelta = generatedIpDelta(chunkCount, mcib.cibCount, mcib.cabCount);
-    // The spaceman ephemeral object spans one block until its inline cib-address array
-    // overflows (the ~2.9 TiB metadata-overflow band), then a second; the genesis and
-    // live checkpoint-data ephemerals after each spaceman shift by spacemanBlocks-1 so
-    // every certified single-block tier stays byte-identical.
-    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayout(
-        request.block_size_bytes, chunkCount, mcib.cibCount, mcib.cabCount);
-    const uint64_t spacemanBlocks = ephemeral.spacemanBlocks;
-    const uint32_t spacemanByteSize =
-        static_cast<uint32_t>(request.block_size_bytes * spacemanBlocks);
-    const uint64_t genesisSpacemanBlock = ephemeral.genesisSpaceman;
-    const uint64_t genesisReaperBlock = ephemeral.genesisReaper;
-    const uint64_t liveSpacemanBlock = ephemeral.liveSpaceman;
-    const uint64_t liveReaperBlock = ephemeral.liveReaper;
-    const uint64_t fqIpTreeBlock = ephemeral.fqIpTree;
-    const uint64_t fqMainTreeBlock = ephemeral.fqMainTree;
-    // The genesis rotation group the live checkpoint holds in sm_fq[IP] = the group
-    // stride (cib0 + bitmap, +cab0/boundary). apfsck marks these used via the
-    // free-queue, so the count must match the ghost-group size emitted in the layout.
-    const uint64_t ghostIpFreeCount = mcib.ipGroupStride;
-    const uint64_t ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
-    const uint64_t ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
-    const uint64_t ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
-    const uint64_t volOmap = kApfsFormatVolumeOmapBlock + ipDelta;
-    const uint64_t volOmapTree = kApfsFormatVolumeOmapTreeBlock + ipDelta;
-    const uint64_t extentRef = kApfsFormatExtentRefTreeBlock + ipDelta;
-    const uint64_t snapMeta = kApfsFormatSnapMetaTreeBlock + ipDelta;
-    const uint64_t rootTree = kApfsFormatRootTreeBlock + ipDelta;
-    const uint64_t volSuper = kApfsFormatVolumeSuperblockBlock + ipDelta;
-    const uint64_t containerOmap = kApfsFormatContainerOmapBlock + ipDelta;
-    const uint64_t containerOmapTree = kApfsFormatContainerOmapTreeBlock + ipDelta;
-    const uint64_t seedData = kApfsFormatSeedFileDataBlock + ipDelta;
-    // Multi-volume (A4): each additional volume gets its own six-block set placed in
-    // the previously-free region right after the first volume's reserved prefix
-    // (volume object map + its tree, extent-ref tree, snap-meta tree, root tree, and
-    // volume superblock), plus its own virtual superblock/root-tree OIDs and a unique
-    // UUID. They share the container space manager; the reserved prefix grows to cover
-    // them. The first volume keeps the certified single-volume OIDs/positions, so an
-    // empty additional_volume_names list is byte-identical to the prior layout.
-    const ExtraApfsVolumes extras = layOutExtraApfsVolumes(request.additional_volume_names,
-                                                           seedData);
-    // A6: resolve the encryption plan. The two keybags take the blocks after the
-    // reserved metadata prefix, so the space manager's reserved count (free count +
-    // allocation bitmap) accounts for them; the fs-tree mapping is flagged
-    // OMAP_VAL_ENCRYPTED. Unencrypted leaves every value default -> byte-identical.
-    const ApfsFormatEncryption enc = prepareFormatEncryption(
-        request, seedData + extras.blockCount, containerUuid, volumeUuid, blockers);
-    const uint64_t reservedSeed = seedData + extras.blockCount + enc.reservedDelta;
-    const QVector<ApfsObjectMapEntry> volumeMappings{
-        {kApfsFormatRootTreeOid, kApfsFormatXid, rootTree, enc.omapFlag}};
-    const uint64_t containerNextOid = kApfsNxMinimumNextOid +
-                                      2 * static_cast<uint64_t>(extras.volumes.size());
-    QVector<ApfsObjectMapEntry> containerMappings{{kApfsFormatVolumeOid, kApfsFormatXid, volSuper}};
-    QVector<uint64_t> fsOids{kApfsFormatVolumeOid};
-    for (const auto& extra : extras.volumes) {
-        containerMappings.append({extra.volumeOid, kApfsFormatXid, extra.volSuper});
-        fsOids.append(extra.volumeOid);
-    }
-    // Checkpoint-data ring: genesis holds spacemanBlocks + 1 (reaper) blocks; live holds
-    // spacemanBlocks + 3 (reaper + the two free-queue trees) right after it. For a
-    // single-block spaceman these reduce to the certified 0/2/2 and 2/4/6.
-    const uint32_t genesisDataLen = static_cast<uint32_t>(spacemanBlocks + 1);
-    const uint32_t liveDataIndex = static_cast<uint32_t>(spacemanBlocks + 1);
-    const uint32_t liveDataLen = static_cast<uint32_t>(spacemanBlocks + 3);
-    const uint32_t liveDataNext = static_cast<uint32_t>(2 * spacemanBlocks + 4);
-    const QByteArray nxsb = buildNxSuperblock(request.block_size_bytes,
-                                              blockCount,
-                                              containerUuid,
-                                              {.dataIndex = liveDataIndex,
-                                               .dataLen = liveDataLen,
-                                               .dataNext = liveDataNext,
-                                               .omapOid = containerOmap,
-                                               .fsOids = fsOids,
-                                               .nextOid = containerNextOid,
-                                               .keylockerPaddr = enc.containerKbBlock,
-                                               .keylockerBlocks = enc.keylockerBlocks},
-                                              blockers);
-    const QByteArray genesisNxsb = buildNxSuperblock(request.block_size_bytes,
-                                                     blockCount,
-                                                     containerUuid,
-                                                     {.xid = kApfsFormatGenesisXid,
-                                                      .descIndex = 0,
-                                                      .descNext = 2,
-                                                      .dataIndex = 0,
-                                                      .dataLen = genesisDataLen,
-                                                      .dataNext = genesisDataLen,
-                                                      .omapOid = ghostOmap,
-                                                      .fsOid = 0,
-                                                      .nextOid = kApfsFormatGenesisNextOid},
-                                                     blockers);
-    const QVector<ApfsCheckpointMapEntry> genesisMappings{
-        {kApfsObjectTypeSpaceman,
-         0,
-         kApfsFormatSpacemanOid,
-         genesisSpacemanBlock,
-         spacemanByteSize},
-        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, genesisReaperBlock}};
-    const QVector<ApfsCheckpointMapEntry> liveMappings{
-        {kApfsObjectTypeSpaceman, 0, kApfsFormatSpacemanOid, liveSpacemanBlock, spacemanByteSize},
-        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, liveReaperBlock},
-        {kApfsObjectTypeBtreeEphemeral,
-         kApfsObjectSubtypeFreeQueue,
-         kApfsFormatFqIpTreeOid,
-         fqIpTreeBlock},
-        {kApfsObjectTypeBtreeEphemeral,
-         kApfsObjectSubtypeFreeQueue,
-         kApfsFormatFqMainTreeOid,
-         fqMainTreeBlock}};
-    // The spaceman objects span spacemanBlocks blocks; the first block goes in the block
-    // list here and any continuation block is appended after (writeBlock takes one block
-    // at a time, but the object header + fletcher64 already cover the whole object).
-    const QByteArray genesisSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                                                              .blockCount = blockCount,
-                                                              .reservedBlocks = ghostReserved,
-                                                              .xid = kApfsFormatGenesisXid,
-                                                              .genesis = true,
-                                                              .cibAddrs = mcib.ghostCibs,
-                                                              .cabCount = mcib.cabCount,
-                                                              .cabAddrs = mcib.ghostCabs},
-                                                             blockers);
-    const QByteArray liveSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
-                                                           .blockCount = blockCount,
-                                                           .reservedBlocks = reservedSeed,
-                                                           .xid = kApfsFormatXid,
-                                                           .genesis = false,
-                                                           .cibAddrs = mcib.liveCibs,
-                                                           .cabCount = mcib.cabCount,
-                                                           .cabAddrs = mcib.liveCabs,
-                                                           .ghostIpFreeCount = ghostIpFreeCount},
-                                                          blockers);
-    QVector<ApfsImageBlock> blocks{
-        {kApfsFormatNxsbBlock, nxsb},
-        {kApfsFormatGenesisMapBlock,
-         buildCheckpointMapBlock(request.block_size_bytes,
-                                 kApfsFormatGenesisMapBlock,
-                                 kApfsFormatGenesisXid,
-                                 genesisMappings,
-                                 blockers)},
-        {kApfsFormatGenesisNxsbBlock, genesisNxsb},
-        {kApfsFormatCheckpointMapBlock,
-         buildCheckpointMapBlock(request.block_size_bytes,
-                                 kApfsFormatCheckpointMapBlock,
-                                 kApfsFormatXid,
-                                 liveMappings,
-                                 blockers)},
-        {kApfsFormatCheckpointNxsbCopyBlock, nxsb},
-        {genesisSpacemanBlock,
-         genesisSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
-        {genesisReaperBlock,
-         buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
-        {liveSpacemanBlock, liveSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
-        {liveReaperBlock, buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
-        {fqIpTreeBlock,
-         buildFreeQueueTreeBlock(request.block_size_bytes,
-                                 kApfsFormatFqIpTreeOid,
-                                 mcib.ghostCibs.first(),
-                                 ghostIpFreeCount,
-                                 blockers)},
-        {fqMainTreeBlock,
-         buildFreeQueueTreeBlock(
-             request.block_size_bytes, kApfsFormatFqMainTreeOid, ghostOmap, 2, blockers)},
-        {ghostOmap,
-         buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                              .oid = ghostOmap,
-                              .treeBlock = ghostOmapTree,
-                              .xid = kApfsFormatGenesisXid,
-                              .omapFlags = 1},
-                             blockers)},
-        {ghostOmapTree,
-         buildObjectMapTreeBlock(
-             request.block_size_bytes, ghostOmapTree, {}, kApfsFormatGenesisXid, blockers)},
-        {volOmap,
-         buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                              .oid = volOmap,
-                              .treeBlock = volOmapTree,
-                              .xid = kApfsFormatXid,
-                              .omapFlags = 0},
-                             blockers)},
-        {volOmapTree,
-         buildObjectMapTreeBlock(
-             request.block_size_bytes, volOmapTree, volumeMappings, kApfsFormatXid, blockers)},
-        {extentRef,
-         buildEmptyVariableTreeBlock(
-             request.block_size_bytes, extentRef, kApfsObjectSubtypeExtentRef, blockers)},
-        {snapMeta,
-         buildEmptyVariableTreeBlock(
-             request.block_size_bytes, snapMeta, kApfsObjectSubtypeSnapMeta, blockers)},
-        {rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers, enc.enabled)},
-        {volSuper,
-         buildVolumeSuperblock({.blockSize = request.block_size_bytes,
-                                .volumeName = volumeName,
-                                .volumeUuid = volumeUuid,
-                                .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
-                                .volumeOmapBlock = volOmap,
-                                .extentRefTreeBlock = extentRef,
-                                .snapMetaTreeBlock = snapMeta,
-                                .fsFlags = enc.fsFlags},
-                               blockers)},
-        {containerOmap,
-         buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                              .oid = containerOmap,
-                              .treeBlock = containerOmapTree,
-                              .xid = kApfsFormatXid,
-                              .omapFlags = 1},
-                             blockers)},
-        {containerOmapTree,
-         buildObjectMapTreeBlock(request.block_size_bytes,
-                                 containerOmapTree,
-                                 containerMappings,
-                                 kApfsFormatXid,
-                                 blockers)}};
-
-    // Multi-volume (A4): each additional volume's six metadata blocks. Mirror the
-    // first volume's structures with this volume's own OIDs/UUID/index. Each volume's
-    // object map (a physical object, OID = block) resolves its own root-tree OID to
-    // its empty root tree; the extent-ref and snap-meta trees are physical objects.
+// Multi-volume (A4): each additional volume's six metadata blocks. Mirror the
+// first volume's structures with this volume's own OIDs/UUID/index. Each volume's
+// object map (a physical object, OID = block) resolves its own root-tree OID to
+// its empty root tree; the extent-ref and snap-meta trees are physical objects.
+// Byte-identical to the inline loop it replaces (no-op when extras is empty).
+void appendExtraVolumeBlocks(QVector<ApfsImageBlock>* blocks,
+                             const PartitionApfsImageFormatRequest& request,
+                             const ExtraApfsVolumes& extras,
+                             QStringList* blockers) {
     for (const auto& extra : extras.volumes) {
         const QVector<ApfsObjectMapEntry> extraVolumeMappings{
             {extra.rootTreeOid, kApfsFormatXid, extra.rootTree}};
-        blocks.append({extra.volOmap,
-                       buildObjectMapBlock({.blockSize = request.block_size_bytes,
-                                            .oid = extra.volOmap,
-                                            .treeBlock = extra.volOmapTree,
-                                            .xid = kApfsFormatXid,
-                                            .omapFlags = 0},
-                                           blockers)});
-        blocks.append({extra.volOmapTree,
-                       buildObjectMapTreeBlock(request.block_size_bytes,
-                                               extra.volOmapTree,
-                                               extraVolumeMappings,
-                                               kApfsFormatXid,
-                                               blockers)});
-        blocks.append({extra.extentRef,
-                       buildEmptyVariableTreeBlock(request.block_size_bytes,
-                                                   extra.extentRef,
-                                                   kApfsObjectSubtypeExtentRef,
-                                                   blockers)});
-        blocks.append(
+        blocks->append({extra.volOmap,
+                        buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                                             .oid = extra.volOmap,
+                                             .treeBlock = extra.volOmapTree,
+                                             .xid = kApfsFormatXid,
+                                             .omapFlags = 0},
+                                            blockers)});
+        blocks->append({extra.volOmapTree,
+                        buildObjectMapTreeBlock(request.block_size_bytes,
+                                                extra.volOmapTree,
+                                                extraVolumeMappings,
+                                                kApfsFormatXid,
+                                                blockers)});
+        blocks->append({extra.extentRef,
+                        buildEmptyVariableTreeBlock(request.block_size_bytes,
+                                                    extra.extentRef,
+                                                    kApfsObjectSubtypeExtentRef,
+                                                    blockers)});
+        blocks->append(
             {extra.snapMeta,
              buildEmptyVariableTreeBlock(
                  request.block_size_bytes, extra.snapMeta, kApfsObjectSubtypeSnapMeta, blockers)});
-        blocks.append({extra.rootTree,
-                       buildEmptyRootTreeBlockForVolume(
-                           request.block_size_bytes, extra.rootTreeOid, blockers)});
-        blocks.append(
+        blocks->append({extra.rootTree,
+                        buildEmptyRootTreeBlockForVolume(
+                            request.block_size_bytes, extra.rootTreeOid, blockers)});
+        blocks->append(
             {extra.volSuper,
              buildVolumeSuperblock({.blockSize = request.block_size_bytes,
                                     .volumeName = extra.name,
@@ -9210,148 +9149,587 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
                                     .rootTreeOid = extra.rootTreeOid},
                                    blockers)});
     }
+}
 
-    // Continuation blocks of any multi-block (overflow) spaceman object. The header +
-    // fletcher64 stamped over the whole object live in the first block (already in the
-    // list above); these are the raw remaining blocks of the same contiguous object.
-    for (uint64_t i = 1; i < spacemanBlocks; ++i) {
+// Bundles the genesis/live spaceman object spans for the continuation-block writer so
+// it stays within the parameter-count gate. Same values the inline loop used.
+struct ApfsSpacemanContinuationParams {
+    uint64_t spacemanBlocks;
+    uint64_t genesisSpacemanBlock;
+    uint64_t liveSpacemanBlock;
+    const QByteArray& genesisSpacemanObj;
+    const QByteArray& liveSpacemanObj;
+};
+
+// Continuation blocks of any multi-block (overflow) spaceman object. The header +
+// fletcher64 stamped over the whole object live in the first block (already in the
+// list); these are the raw remaining blocks of the same contiguous object.
+// Byte-identical to the inline loop it replaces (no-op when spacemanBlocks == 1).
+void appendSpacemanContinuationBlocks(QVector<ApfsImageBlock>* blocks,
+                                      const PartitionApfsImageFormatRequest& request,
+                                      const ApfsSpacemanContinuationParams& p) {
+    for (uint64_t i = 1; i < p.spacemanBlocks; ++i) {
         const qsizetype off = static_cast<qsizetype>(i * request.block_size_bytes);
-        blocks.append(
-            {genesisSpacemanBlock + i,
-             genesisSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
-        blocks.append({liveSpacemanBlock + i,
-                       liveSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
+        blocks->append(
+            {p.genesisSpacemanBlock + i,
+             p.genesisSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
+        blocks->append(
+            {p.liveSpacemanBlock + i,
+             p.liveSpacemanObj.mid(off, static_cast<qsizetype>(request.block_size_bytes))});
     }
+}
 
-    // Internal-pool chunk-info blocks + chunk-0 allocation bitmaps. cib 0 (chunk
-    // 0's allocation cib) gets a genesis (xid 1) and a live (xid 2) copy in its
-    // rotation slots; cib 1..N-1 describe the all-free upper chunks and are emitted
-    // ONCE as immutable blocks. Single-CIB reduces to the certified {185,186} ghost
-    // / {187,188} live blocks (no immutable cibs).
-    const uint64_t cib0Span = std::min<uint64_t>(kApfsSpacemanChunksPerCib, chunkCount);
+struct ApfsInternalPoolBlocksParams {
+    QVector<ApfsImageBlock>* blocks;
+    const PartitionApfsImageFormatRequest& request;
+    uint64_t blockCount;
+    uint64_t chunkCount;
+    const ApfsMultiCibLayout& mcib;
+    uint64_t ghostReserved;
+    uint64_t reservedSeed;
+    uint64_t seedData;
+};
+
+// Emits the internal-pool chunk-info blocks (genesis/live cib 0 + immutable cibs),
+// the ip allocation bitmaps, the per-chunk allocation bitmaps (chunk 0, overflow
+// chunks, boundary chunk), and the CAB-tier cib-address blocks. Byte-identical to
+// the inline sequence it replaces.
+// Internal-pool chunk-info blocks + ip allocation bitmaps. cib 0 (chunk 0's
+// allocation cib) gets a genesis (xid 1) and a live (xid 2) copy in its rotation
+// slots; cib 1..N-1 describe the all-free upper chunks and are emitted ONCE as
+// immutable blocks. Single-CIB reduces to the certified {185,186} ghost / {187,188}
+// live blocks (no immutable cibs). Byte-identical to the inline sequence it replaces.
+void appendChunkInfoBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+    const PartitionApfsImageFormatRequest& request = p.request;
+    const ApfsMultiCibLayout& mcib = p.mcib;
+    QVector<ApfsImageBlock>* blocks = p.blocks;
+    const uint64_t cib0Span = std::min<uint64_t>(kApfsSpacemanChunksPerCib, p.chunkCount);
     // ip allocation bitmaps: ring slot 0 = genesis, slot 1 = live, each ip_bm_size
     // blocks (only the first holds usage bits; the IP usage is contiguous from
     // ip_base so it stays inside the first bitmap block). Larger bitmaps shift the
     // live slot from ip_bm_base + 1 to ip_bm_base + ip_bm_size.
-    const uint64_t ipBmSize = ipBitmapSizeBlocks(chunkCount, mcib.cibCount, mcib.cabCount);
-    blocks.append({kApfsFormatIpBitmapBaseBlock,
-                   buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
-    blocks.append({kApfsFormatIpBitmapBaseBlock + ipBmSize,
-                   buildIpBitmapBlock(request.block_size_bytes, mcib.liveIpUsage)});
-    blocks.append({mcib.ghostCibs.first(),
-                   buildChunkInfoBlock({.blockSize = request.block_size_bytes,
-                                        .blockCount = blockCount,
-                                        .reservedBlocks = ghostReserved,
-                                        .xid = kApfsFormatGenesisXid,
-                                        .selfBlock = mcib.ghostCibs.first(),
-                                        .bitmapBlock = mcib.ghostBitmap,
-                                        .chunkStart = 0,
-                                        .chunkSpan = cib0Span,
-                                        .cibIndex = 0,
-                                        .metadataChunks = mcib.metadataChunks,
-                                        .extraChunkBitmaps = mcib.extraChunkBitmaps,
-                                        .boundaryBitmap = mcib.ghostBoundaryBitmap},
-                                       blockers)});
-    blocks.append({mcib.liveCibs.first(),
-                   buildChunkInfoBlock({.blockSize = request.block_size_bytes,
-                                        .blockCount = blockCount,
-                                        .reservedBlocks = reservedSeed,
-                                        .xid = kApfsFormatXid,
-                                        .selfBlock = mcib.liveCibs.first(),
-                                        .bitmapBlock = mcib.liveBitmap,
-                                        .chunkStart = 0,
-                                        .chunkSpan = cib0Span,
-                                        .cibIndex = 0,
-                                        .metadataChunks = mcib.metadataChunks,
-                                        .extraChunkBitmaps = mcib.extraChunkBitmaps,
-                                        .boundaryBitmap = mcib.liveBoundaryBitmap},
-                                       blockers)});
+    const uint64_t ipBmSize = ipBitmapSizeBlocks(p.chunkCount, mcib.cibCount, mcib.cabCount);
+    blocks->append({kApfsFormatIpBitmapBaseBlock,
+                    buildIpBitmapBlock(request.block_size_bytes, mcib.genesisIpUsage)});
+    blocks->append({kApfsFormatIpBitmapBaseBlock + ipBmSize,
+                    buildIpBitmapBlock(request.block_size_bytes, mcib.liveIpUsage)});
+    blocks->append({mcib.ghostCibs.first(),
+                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                         .blockCount = p.blockCount,
+                                         .reservedBlocks = p.ghostReserved,
+                                         .xid = kApfsFormatGenesisXid,
+                                         .selfBlock = mcib.ghostCibs.first(),
+                                         .bitmapBlock = mcib.ghostBitmap,
+                                         .chunkStart = 0,
+                                         .chunkSpan = cib0Span,
+                                         .cibIndex = 0,
+                                         .metadataChunks = mcib.metadataChunks,
+                                         .extraChunkBitmaps = mcib.extraChunkBitmaps,
+                                         .boundaryBitmap = mcib.ghostBoundaryBitmap},
+                                        blockers)});
+    blocks->append({mcib.liveCibs.first(),
+                    buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                         .blockCount = p.blockCount,
+                                         .reservedBlocks = p.reservedSeed,
+                                         .xid = kApfsFormatXid,
+                                         .selfBlock = mcib.liveCibs.first(),
+                                         .bitmapBlock = mcib.liveBitmap,
+                                         .chunkStart = 0,
+                                         .chunkSpan = cib0Span,
+                                         .cibIndex = 0,
+                                         .metadataChunks = mcib.metadataChunks,
+                                         .extraChunkBitmaps = mcib.extraChunkBitmaps,
+                                         .boundaryBitmap = mcib.liveBoundaryBitmap},
+                                        blockers)});
     for (qsizetype i = 0; i < mcib.immutableCibs.size(); ++i) {
         const uint64_t cibIndex = static_cast<uint64_t>(i) + 1;
         const uint64_t chunkStart = cibIndex * kApfsSpacemanChunksPerCib;
         const uint64_t chunkSpan = std::min<uint64_t>(kApfsSpacemanChunksPerCib,
-                                                      chunkCount - chunkStart);
-        blocks.append({mcib.immutableCibs.at(i),
-                       buildChunkInfoBlock({.blockSize = request.block_size_bytes,
-                                            .blockCount = blockCount,
-                                            .reservedBlocks = 0,
-                                            .xid = kApfsFormatGenesisXid,
-                                            .selfBlock = mcib.immutableCibs.at(i),
-                                            .bitmapBlock = 0,
-                                            .chunkStart = chunkStart,
-                                            .chunkSpan = chunkSpan,
-                                            .cibIndex = cibIndex},
-                                           blockers)});
+                                                      p.chunkCount - chunkStart);
+        blocks->append({mcib.immutableCibs.at(i),
+                        buildChunkInfoBlock({.blockSize = request.block_size_bytes,
+                                             .blockCount = p.blockCount,
+                                             .reservedBlocks = 0,
+                                             .xid = kApfsFormatGenesisXid,
+                                             .selfBlock = mcib.immutableCibs.at(i),
+                                             .bitmapBlock = 0,
+                                             .chunkStart = chunkStart,
+                                             .chunkSpan = chunkSpan,
+                                             .cibIndex = cibIndex},
+                                            blockers)});
     }
+}
+
+// Per-chunk allocation bitmaps: chunk-0 genesis/live, the overflow chunks 1..M-1,
+// and the boundary chunk's genesis/live rotating bitmaps. Each marks that chunk's
+// slice of the reserved prefix. Byte-identical to the inline sequence it replaces.
+void appendChunkBitmapBlocks(const ApfsInternalPoolBlocksParams& p) {
+    const PartitionApfsImageFormatRequest& request = p.request;
+    const ApfsMultiCibLayout& mcib = p.mcib;
+    QVector<ApfsImageBlock>* blocks = p.blocks;
     // Chunk-0 allocation bitmaps mark only chunk 0's slice of the reserved prefix
     // (clamped to 32768 so a multi-chunk prefix does not overrun the bitmap block).
-    blocks.append(
+    blocks->append(
         {mcib.ghostBitmap,
-         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(ghostReserved, 0))});
-    blocks.append(
+         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(p.ghostReserved, 0))});
+    blocks->append(
         {mcib.liveBitmap,
-         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(reservedSeed, 0))});
+         buildChunkBitmapBlock(request.block_size_bytes, chunkReservedBlocks(p.reservedSeed, 0))});
     // Metadata-overflow: immutable per-chunk bitmaps for chunks 1..M-1 (each marks
     // that chunk's slice of the reserved prefix).
     for (qsizetype i = 0; i < mcib.extraChunkBitmaps.size(); ++i) {
         const uint64_t chunk = static_cast<uint64_t>(i) + 1;
-        blocks.append({mcib.extraChunkBitmaps.at(i),
-                       buildChunkBitmapBlock(request.block_size_bytes,
-                                             chunkReservedBlocks(seedData, chunk))});
+        blocks->append({mcib.extraChunkBitmaps.at(i),
+                        buildChunkBitmapBlock(request.block_size_bytes,
+                                              chunkReservedBlocks(p.seedData, chunk))});
     }
     // Multi-chunk overflow (CAB included): the boundary chunk (M-1) gets genesis + live
     // rotating bitmaps (the spare group slot stays free for the first commit). Each
     // marks the boundary chunk's slice of its checkpoint's reserved prefix.
     if (mcib.ghostBoundaryBitmap != 0) {
-        blocks.append(
+        blocks->append(
             {mcib.ghostBoundaryBitmap,
              buildChunkBitmapBlock(request.block_size_bytes,
-                                   chunkReservedBlocks(ghostReserved, mcib.boundaryChunk))});
-        blocks.append({mcib.liveBoundaryBitmap,
-                       buildChunkBitmapBlock(request.block_size_bytes,
-                                             chunkReservedBlocks(seedData, mcib.boundaryChunk))});
+                                   chunkReservedBlocks(p.ghostReserved, mcib.boundaryChunk))});
+        blocks->append(
+            {mcib.liveBoundaryBitmap,
+             buildChunkBitmapBlock(request.block_size_bytes,
+                                   chunkReservedBlocks(p.seedData, mcib.boundaryChunk))});
     }
-    // CAB tier (cib_count > 507): emit the chunk-info ADDRESS blocks the spaceman
-    // points at. cab 0 rotates with cib 0 (genesis + live copies); cabs 1..N-1 are
-    // immutable. Each CAB holds up to 507 cib block numbers from the matching
-    // checkpoint's cib list - only cib 0 differs genesis vs live, so the immutable
-    // cabs are identical in both lists and emitted once.
+}
+
+// CAB tier (cib_count > 507): emit the chunk-info ADDRESS blocks the spaceman
+// points at. cab 0 rotates with cib 0 (genesis + live copies); cabs 1..N-1 are
+// immutable. Each CAB holds up to 507 cib block numbers from the matching
+// checkpoint's cib list - only cib 0 differs genesis vs live, so the immutable
+// cabs are identical in both lists and emitted once. Byte-identical to the inline
+// branch it replaces (no-op below the CAB tier).
+void appendCabAddrBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+    const PartitionApfsImageFormatRequest& request = p.request;
+    const ApfsMultiCibLayout& mcib = p.mcib;
+    QVector<ApfsImageBlock>* blocks = p.blocks;
     if (mcib.cabCount > 0) {
         const auto cibSlice = [](const QVector<uint64_t>& cibs, uint64_t cabIndex) {
             const qsizetype start = static_cast<qsizetype>(cabIndex) * kApfsSpacemanCibsPerCab;
             const qsizetype len = std::min<qsizetype>(kApfsSpacemanCibsPerCab, cibs.size() - start);
             return cibs.mid(start, len);
         };
-        blocks.append({mcib.ghostCab0,
-                       buildCibAddrBlock({.blockSize = request.block_size_bytes,
-                                          .selfBlock = mcib.ghostCab0,
-                                          .xid = kApfsFormatGenesisXid,
-                                          .cabIndex = 0,
-                                          .cibAddrs = cibSlice(mcib.ghostCibs, 0)},
-                                         blockers)});
-        blocks.append({mcib.liveCab0,
-                       buildCibAddrBlock({.blockSize = request.block_size_bytes,
-                                          .selfBlock = mcib.liveCab0,
-                                          .xid = kApfsFormatXid,
-                                          .cabIndex = 0,
-                                          .cibAddrs = cibSlice(mcib.liveCibs, 0)},
-                                         blockers)});
+        blocks->append({mcib.ghostCab0,
+                        buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                           .selfBlock = mcib.ghostCab0,
+                                           .xid = kApfsFormatGenesisXid,
+                                           .cabIndex = 0,
+                                           .cibAddrs = cibSlice(mcib.ghostCibs, 0)},
+                                          blockers)});
+        blocks->append({mcib.liveCab0,
+                        buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                           .selfBlock = mcib.liveCab0,
+                                           .xid = kApfsFormatXid,
+                                           .cabIndex = 0,
+                                           .cibAddrs = cibSlice(mcib.liveCibs, 0)},
+                                          blockers)});
         for (qsizetype i = 0; i < mcib.immutableCabs.size(); ++i) {
             const uint64_t cabIndex = static_cast<uint64_t>(i) + 1;
-            blocks.append({mcib.immutableCabs.at(i),
-                           buildCibAddrBlock({.blockSize = request.block_size_bytes,
-                                              .selfBlock = mcib.immutableCabs.at(i),
-                                              .xid = kApfsFormatGenesisXid,
-                                              .cabIndex = static_cast<uint32_t>(cabIndex),
-                                              .cibAddrs = cibSlice(mcib.liveCibs, cabIndex)},
-                                             blockers)});
+            blocks->append({mcib.immutableCabs.at(i),
+                            buildCibAddrBlock({.blockSize = request.block_size_bytes,
+                                               .selfBlock = mcib.immutableCabs.at(i),
+                                               .xid = kApfsFormatGenesisXid,
+                                               .cabIndex = static_cast<uint32_t>(cabIndex),
+                                               .cibAddrs = cibSlice(mcib.liveCibs, cabIndex)},
+                                              blockers)});
         }
     }
+}
+
+void appendInternalPoolBlocks(const ApfsInternalPoolBlocksParams& p, QStringList* blockers) {
+    appendChunkInfoBlocks(p, blockers);
+    appendChunkBitmapBlocks(p);
+    appendCabAddrBlocks(p, blockers);
+}
+
+// The fully-resolved block layout for an empty container: random UUIDs, the
+// multi-CIB/CAB layout, every post-internal-pool object's block number, the extra
+// volumes, the encryption plan, the container/volume omap mappings, and the
+// pre-built superblock/spaceman byte arrays. computeEmptyFormatPlan fills it; the
+// base-block and append helpers consume it.
+struct ApfsEmptyFormatPlan {
+    QByteArray containerUuid;
+    QByteArray volumeUuid;
+    uint64_t chunkCount{0};
+    ApfsMultiCibLayout mcib;
+    uint64_t spacemanBlocks{0};
+    uint64_t genesisSpacemanBlock{0};
+    uint64_t genesisReaperBlock{0};
+    uint64_t liveSpacemanBlock{0};
+    uint64_t liveReaperBlock{0};
+    uint64_t fqIpTreeBlock{0};
+    uint64_t fqMainTreeBlock{0};
+    uint64_t ghostIpFreeCount{0};
+    uint64_t ghostOmap{0};
+    uint64_t ghostOmapTree{0};
+    uint64_t ghostReserved{0};
+    uint64_t volOmap{0};
+    uint64_t volOmapTree{0};
+    uint64_t extentRef{0};
+    uint64_t snapMeta{0};
+    uint64_t rootTree{0};
+    uint64_t volSuper{0};
+    uint64_t containerOmap{0};
+    uint64_t containerOmapTree{0};
+    uint64_t seedData{0};
+    uint64_t reservedSeed{0};
+    ExtraApfsVolumes extras;
+    ApfsFormatEncryption enc;
+    QVector<ApfsObjectMapEntry> volumeMappings;
+    QVector<ApfsObjectMapEntry> containerMappings;
+    QVector<ApfsCheckpointMapEntry> genesisMappings;
+    QVector<ApfsCheckpointMapEntry> liveMappings;
+    QByteArray nxsb;
+    QByteArray genesisNxsb;
+    QByteArray genesisSpacemanObj;
+    QByteArray liveSpacemanObj;
+};
+
+// Fills the random UUIDs, multi-CIB/CAB layout, ephemeral spaceman/reaper/free-queue
+// block numbers, and every post-internal-pool object's block number into *p.
+// Byte-identical to the inline prologue it replaces.
+void resolveEmptyFormatBlockNumbers(const PartitionApfsImageFormatRequest& request,
+                                    uint64_t blockCount,
+                                    ApfsEmptyFormatPlan* p) {
+    p->containerUuid = randomApfsUuid();
+    p->volumeUuid = randomApfsUuid();
+    // The internal pool grows to 3*(chunk_count+cib_count) blocks; every object
+    // placed after the internal pool shifts by the same delta so the IP region
+    // and the post-pool metadata never overlap (apfsck marks the whole IP region
+    // used). Multi-CIB (>126 chunks) widens each rotation slot to cib_count cibs.
+    p->chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk;
+    p->mcib = computeMultiCibLayout(p->chunkCount);
+    const uint64_t ipDelta = generatedIpDelta(p->chunkCount, p->mcib.cibCount, p->mcib.cabCount);
+    // The spaceman ephemeral object spans one block until its inline cib-address array
+    // overflows (the ~2.9 TiB metadata-overflow band), then a second; the genesis and
+    // live checkpoint-data ephemerals after each spaceman shift by spacemanBlocks-1 so
+    // every certified single-block tier stays byte-identical.
+    const ApfsFormatEphemeralLayout ephemeral = apfsFormatEphemeralLayout(
+        request.block_size_bytes, p->chunkCount, p->mcib.cibCount, p->mcib.cabCount);
+    p->spacemanBlocks = ephemeral.spacemanBlocks;
+    p->genesisSpacemanBlock = ephemeral.genesisSpaceman;
+    p->genesisReaperBlock = ephemeral.genesisReaper;
+    p->liveSpacemanBlock = ephemeral.liveSpaceman;
+    p->liveReaperBlock = ephemeral.liveReaper;
+    p->fqIpTreeBlock = ephemeral.fqIpTree;
+    p->fqMainTreeBlock = ephemeral.fqMainTree;
+    // The genesis rotation group the live checkpoint holds in sm_fq[IP] = the group
+    // stride (cib0 + bitmap, +cab0/boundary). apfsck marks these used via the
+    // free-queue, so the count must match the ghost-group size emitted in the layout.
+    p->ghostIpFreeCount = p->mcib.ipGroupStride;
+    p->ghostOmap = kApfsFormatGhostContainerOmapBlock + ipDelta;
+    p->ghostOmapTree = kApfsFormatGhostContainerOmapTreeBlock + ipDelta;
+    p->ghostReserved = kApfsFormatGhostReservedBlocks + ipDelta;
+    p->volOmap = kApfsFormatVolumeOmapBlock + ipDelta;
+    p->volOmapTree = kApfsFormatVolumeOmapTreeBlock + ipDelta;
+    p->extentRef = kApfsFormatExtentRefTreeBlock + ipDelta;
+    p->snapMeta = kApfsFormatSnapMetaTreeBlock + ipDelta;
+    p->rootTree = kApfsFormatRootTreeBlock + ipDelta;
+    p->volSuper = kApfsFormatVolumeSuperblockBlock + ipDelta;
+    p->containerOmap = kApfsFormatContainerOmapBlock + ipDelta;
+    p->containerOmapTree = kApfsFormatContainerOmapTreeBlock + ipDelta;
+    p->seedData = kApfsFormatSeedFileDataBlock + ipDelta;
+}
+
+// Fills the extra volumes, encryption plan, omap/checkpoint mappings, and the
+// pre-built nxsb/spaceman byte arrays into *p (the block numbers must already be
+// resolved). Byte-identical to the inline sequence it replaces.
+// Bundles the caller's already-computed nxsb inputs (container block count, fs OIDs,
+// next container OID) so the nxsb builder stays within the parameter-count gate. Same
+// values the inline code passed.
+struct ApfsEmptyFormatNxsbInputs {
+    uint64_t blockCount;
+    const QVector<uint64_t>& fsOids;
+    uint64_t containerNextOid;
+};
+
+// Builds the live + genesis nx superblocks into *pp from the resolved extras, enc
+// plan, and container mappings. fsOids/containerNextOid are the caller's already
+// computed values. Byte-identical to the inline nxsb builds it replaces.
+void buildEmptyFormatNxsbs(const PartitionApfsImageFormatRequest& request,
+                           const ApfsEmptyFormatNxsbInputs& in,
+                           ApfsEmptyFormatPlan* pp,
+                           QStringList* blockers) {
+    ApfsEmptyFormatPlan& p = *pp;
+    const uint64_t blockCount = in.blockCount;
+    const QVector<uint64_t>& fsOids = in.fsOids;
+    const uint64_t containerNextOid = in.containerNextOid;
+    // Checkpoint-data ring: genesis holds spacemanBlocks + 1 (reaper) blocks; live holds
+    // spacemanBlocks + 3 (reaper + the two free-queue trees) right after it. For a
+    // single-block spaceman these reduce to the certified 0/2/2 and 2/4/6.
+    const uint32_t genesisDataLen = static_cast<uint32_t>(p.spacemanBlocks + 1);
+    const uint32_t liveDataIndex = static_cast<uint32_t>(p.spacemanBlocks + 1);
+    const uint32_t liveDataLen = static_cast<uint32_t>(p.spacemanBlocks + 3);
+    const uint32_t liveDataNext = static_cast<uint32_t>(2 * p.spacemanBlocks + 4);
+    p.nxsb = buildNxSuperblock(request.block_size_bytes,
+                               blockCount,
+                               p.containerUuid,
+                               {.dataIndex = liveDataIndex,
+                                .dataLen = liveDataLen,
+                                .dataNext = liveDataNext,
+                                .omapOid = p.containerOmap,
+                                .fsOids = fsOids,
+                                .nextOid = containerNextOid,
+                                .keylockerPaddr = p.enc.containerKbBlock,
+                                .keylockerBlocks = p.enc.keylockerBlocks},
+                               blockers);
+    p.genesisNxsb = buildNxSuperblock(request.block_size_bytes,
+                                      blockCount,
+                                      p.containerUuid,
+                                      {.xid = kApfsFormatGenesisXid,
+                                       .descIndex = 0,
+                                       .descNext = 2,
+                                       .dataIndex = 0,
+                                       .dataLen = genesisDataLen,
+                                       .dataNext = genesisDataLen,
+                                       .omapOid = p.ghostOmap,
+                                       .fsOid = 0,
+                                       .nextOid = kApfsFormatGenesisNextOid},
+                                      blockers);
+}
+
+// Builds the genesis + live spaceman objects into *pp. The objects span
+// spacemanBlocks blocks; the first block goes in the block list and any
+// continuation block is appended after (writeBlock takes one block at a time, but
+// the object header + fletcher64 already cover the whole object). Byte-identical to
+// the inline buildSpacemanBlock calls it replaces.
+void buildEmptyFormatSpacemanObjects(const PartitionApfsImageFormatRequest& request,
+                                     uint64_t blockCount,
+                                     ApfsEmptyFormatPlan* pp,
+                                     QStringList* blockers) {
+    ApfsEmptyFormatPlan& p = *pp;
+    p.genesisSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                                               .blockCount = blockCount,
+                                               .reservedBlocks = p.ghostReserved,
+                                               .xid = kApfsFormatGenesisXid,
+                                               .genesis = true,
+                                               .cibAddrs = p.mcib.ghostCibs,
+                                               .cabCount = p.mcib.cabCount,
+                                               .cabAddrs = p.mcib.ghostCabs},
+                                              blockers);
+    p.liveSpacemanObj = buildSpacemanBlock({.blockSize = request.block_size_bytes,
+                                            .blockCount = blockCount,
+                                            .reservedBlocks = p.reservedSeed,
+                                            .xid = kApfsFormatXid,
+                                            .genesis = false,
+                                            .cibAddrs = p.mcib.liveCibs,
+                                            .cabCount = p.mcib.cabCount,
+                                            .cabAddrs = p.mcib.liveCabs,
+                                            .ghostIpFreeCount = p.ghostIpFreeCount},
+                                           blockers);
+}
+
+void resolveEmptyFormatSuperblocks(const PartitionApfsImageFormatRequest& request,
+                                   uint64_t blockCount,
+                                   ApfsEmptyFormatPlan* pp,
+                                   QStringList* blockers) {
+    ApfsEmptyFormatPlan& p = *pp;
+    const uint32_t spacemanByteSize =
+        static_cast<uint32_t>(request.block_size_bytes * p.spacemanBlocks);
+    // Multi-volume (A4): each additional volume gets its own six-block set placed in
+    // the previously-free region right after the first volume's reserved prefix
+    // (volume object map + its tree, extent-ref tree, snap-meta tree, root tree, and
+    // volume superblock), plus its own virtual superblock/root-tree OIDs and a unique
+    // UUID. They share the container space manager; the reserved prefix grows to cover
+    // them. The first volume keeps the certified single-volume OIDs/positions, so an
+    // empty additional_volume_names list is byte-identical to the prior layout.
+    p.extras = layOutExtraApfsVolumes(request.additional_volume_names, p.seedData);
+    // A6: resolve the encryption plan. The two keybags take the blocks after the
+    // reserved metadata prefix, so the space manager's reserved count (free count +
+    // allocation bitmap) accounts for them; the fs-tree mapping is flagged
+    // OMAP_VAL_ENCRYPTED. Unencrypted leaves every value default -> byte-identical.
+    p.enc = prepareFormatEncryption(
+        request, p.seedData + p.extras.blockCount, p.containerUuid, p.volumeUuid, blockers);
+    p.reservedSeed = p.seedData + p.extras.blockCount + p.enc.reservedDelta;
+    p.volumeMappings = {{kApfsFormatRootTreeOid, kApfsFormatXid, p.rootTree, p.enc.omapFlag}};
+    const uint64_t containerNextOid = kApfsNxMinimumNextOid +
+                                      2 * static_cast<uint64_t>(p.extras.volumes.size());
+    p.containerMappings = {{kApfsFormatVolumeOid, kApfsFormatXid, p.volSuper}};
+    QVector<uint64_t> fsOids{kApfsFormatVolumeOid};
+    for (const auto& extra : p.extras.volumes) {
+        p.containerMappings.append({extra.volumeOid, kApfsFormatXid, extra.volSuper});
+        fsOids.append(extra.volumeOid);
+    }
+    buildEmptyFormatNxsbs(
+        request,
+        {.blockCount = blockCount, .fsOids = fsOids, .containerNextOid = containerNextOid},
+        pp,
+        blockers);
+    p.genesisMappings = {{kApfsObjectTypeSpaceman,
+                          0,
+                          kApfsFormatSpacemanOid,
+                          p.genesisSpacemanBlock,
+                          spacemanByteSize},
+                         {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, p.genesisReaperBlock}};
+    p.liveMappings = {
+        {kApfsObjectTypeSpaceman, 0, kApfsFormatSpacemanOid, p.liveSpacemanBlock, spacemanByteSize},
+        {kApfsObjectTypeReaper, 0, kApfsFormatReaperOid, p.liveReaperBlock},
+        {kApfsObjectTypeBtreeEphemeral,
+         kApfsObjectSubtypeFreeQueue,
+         kApfsFormatFqIpTreeOid,
+         p.fqIpTreeBlock},
+        {kApfsObjectTypeBtreeEphemeral,
+         kApfsObjectSubtypeFreeQueue,
+         kApfsFormatFqMainTreeOid,
+         p.fqMainTreeBlock}};
+    buildEmptyFormatSpacemanObjects(request, blockCount, pp, blockers);
+}
+
+ApfsEmptyFormatPlan computeEmptyFormatPlan(const PartitionApfsImageFormatRequest& request,
+                                           uint64_t blockCount,
+                                           QStringList* blockers) {
+    ApfsEmptyFormatPlan p;
+    resolveEmptyFormatBlockNumbers(request, blockCount, &p);
+    resolveEmptyFormatSuperblocks(request, blockCount, &p, blockers);
+    return p;
+}
+
+// The container/checkpoint blocks: block 0, the genesis + live checkpoint maps and
+// nxsb copies, the spaceman/reaper first blocks, and the two free-queue trees.
+// Byte-identical to the head of the inline initializer list it replaces.
+QVector<ApfsImageBlock> buildEmptyFormatCheckpointBlocks(
+    const ApfsEmptyFormatPlan& p,
+    const PartitionApfsImageFormatRequest& request,
+    QStringList* blockers) {
+    return {{kApfsFormatNxsbBlock, p.nxsb},
+            {kApfsFormatGenesisMapBlock,
+             buildCheckpointMapBlock(request.block_size_bytes,
+                                     kApfsFormatGenesisMapBlock,
+                                     kApfsFormatGenesisXid,
+                                     p.genesisMappings,
+                                     blockers)},
+            {kApfsFormatGenesisNxsbBlock, p.genesisNxsb},
+            {kApfsFormatCheckpointMapBlock,
+             buildCheckpointMapBlock(request.block_size_bytes,
+                                     kApfsFormatCheckpointMapBlock,
+                                     kApfsFormatXid,
+                                     p.liveMappings,
+                                     blockers)},
+            {kApfsFormatCheckpointNxsbCopyBlock, p.nxsb},
+            {p.genesisSpacemanBlock,
+             p.genesisSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
+            {p.genesisReaperBlock,
+             buildReaperBlock(request.block_size_bytes, kApfsFormatGenesisXid, blockers)},
+            {p.liveSpacemanBlock,
+             p.liveSpacemanObj.left(static_cast<qsizetype>(request.block_size_bytes))},
+            {p.liveReaperBlock,
+             buildReaperBlock(request.block_size_bytes, kApfsFormatXid, blockers)},
+            {p.fqIpTreeBlock,
+             buildFreeQueueTreeBlock(request.block_size_bytes,
+                                     kApfsFormatFqIpTreeOid,
+                                     p.mcib.ghostCibs.first(),
+                                     p.ghostIpFreeCount,
+                                     blockers)},
+            {p.fqMainTreeBlock,
+             buildFreeQueueTreeBlock(
+                 request.block_size_bytes, kApfsFormatFqMainTreeOid, p.ghostOmap, 2, blockers)}};
+}
+
+// The volume/object-map blocks: the ghost + live + container object maps and trees,
+// the extent-ref / snap-meta trees, the root tree, and the volume superblock.
+// Byte-identical to the tail of the inline initializer list it replaces.
+QVector<ApfsImageBlock> buildEmptyFormatVolumeBlocks(const ApfsEmptyFormatPlan& p,
+                                                     const PartitionApfsImageFormatRequest& request,
+                                                     const QString& volumeName,
+                                                     QStringList* blockers) {
+    return {
+        {p.ghostOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = p.ghostOmap,
+                              .treeBlock = p.ghostOmapTree,
+                              .xid = kApfsFormatGenesisXid,
+                              .omapFlags = 1},
+                             blockers)},
+        {p.ghostOmapTree,
+         buildObjectMapTreeBlock(
+             request.block_size_bytes, p.ghostOmapTree, {}, kApfsFormatGenesisXid, blockers)},
+        {p.volOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = p.volOmap,
+                              .treeBlock = p.volOmapTree,
+                              .xid = kApfsFormatXid,
+                              .omapFlags = 0},
+                             blockers)},
+        {p.volOmapTree,
+         buildObjectMapTreeBlock(
+             request.block_size_bytes, p.volOmapTree, p.volumeMappings, kApfsFormatXid, blockers)},
+        {p.extentRef,
+         buildEmptyVariableTreeBlock(
+             request.block_size_bytes, p.extentRef, kApfsObjectSubtypeExtentRef, blockers)},
+        {p.snapMeta,
+         buildEmptyVariableTreeBlock(
+             request.block_size_bytes, p.snapMeta, kApfsObjectSubtypeSnapMeta, blockers)},
+        {p.rootTree, buildEmptyRootTreeBlock(request.block_size_bytes, blockers, p.enc.enabled)},
+        {p.volSuper,
+         buildVolumeSuperblock({.blockSize = request.block_size_bytes,
+                                .volumeName = volumeName,
+                                .volumeUuid = p.volumeUuid,
+                                .allocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks,
+                                .volumeOmapBlock = p.volOmap,
+                                .extentRefTreeBlock = p.extentRef,
+                                .snapMetaTreeBlock = p.snapMeta,
+                                .fsFlags = p.enc.fsFlags},
+                               blockers)},
+        {p.containerOmap,
+         buildObjectMapBlock({.blockSize = request.block_size_bytes,
+                              .oid = p.containerOmap,
+                              .treeBlock = p.containerOmapTree,
+                              .xid = kApfsFormatXid,
+                              .omapFlags = 1},
+                             blockers)},
+        {p.containerOmapTree,
+         buildObjectMapTreeBlock(request.block_size_bytes,
+                                 p.containerOmapTree,
+                                 p.containerMappings,
+                                 kApfsFormatXid,
+                                 blockers)}};
+}
+
+// Builds the base block set (block 0 through the container object-map tree) for an
+// empty container from the resolved plan. Byte-identical to the inline initializer
+// list it replaces.
+QVector<ApfsImageBlock> buildEmptyFormatBaseBlocks(const ApfsEmptyFormatPlan& p,
+                                                   const PartitionApfsImageFormatRequest& request,
+                                                   const QString& volumeName,
+                                                   QStringList* blockers) {
+    QVector<ApfsImageBlock> blocks = buildEmptyFormatCheckpointBlocks(p, request, blockers);
+    blocks += buildEmptyFormatVolumeBlocks(p, request, volumeName, blockers);
+    return blocks;
+}
+
+QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
+                                          uint64_t blockCount,
+                                          const QString& volumeName,
+                                          QStringList* blockers) {
+    const ApfsEmptyFormatPlan p = computeEmptyFormatPlan(request, blockCount, blockers);
+    QVector<ApfsImageBlock> blocks = buildEmptyFormatBaseBlocks(p, request, volumeName, blockers);
+    appendExtraVolumeBlocks(&blocks, request, p.extras, blockers);
+    appendSpacemanContinuationBlocks(&blocks,
+                                     request,
+                                     {.spacemanBlocks = p.spacemanBlocks,
+                                      .genesisSpacemanBlock = p.genesisSpacemanBlock,
+                                      .liveSpacemanBlock = p.liveSpacemanBlock,
+                                      .genesisSpacemanObj = p.genesisSpacemanObj,
+                                      .liveSpacemanObj = p.liveSpacemanObj});
+    appendInternalPoolBlocks({.blocks = &blocks,
+                              .request = request,
+                              .blockCount = blockCount,
+                              .chunkCount = p.chunkCount,
+                              .mcib = p.mcib,
+                              .ghostReserved = p.ghostReserved,
+                              .reservedSeed = p.reservedSeed,
+                              .seedData = p.seedData},
+                             blockers);
     // A6: AES-XTS-encrypt the volume file-system tree with the VEK (its omap value
     // already carries OMAP_VAL_ENCRYPTED) and place the two keybag blocks. Everything
     // else - the container, the volume superblock, the object maps, the extent-ref /
     // snap-meta trees - stays plaintext, exactly as a real macOS FileVault volume.
-    applyFormatEncryption(&blocks, enc, rootTree);
+    applyFormatEncryption(&blocks, p.enc, p.rootTree);
     return blocks;
 }
 
@@ -11798,6 +12176,42 @@ PartitionApfsImageRepairResult PartitionApfsWriter::repairImageOnlyObjectChecksu
     return result;
 }
 
+// Copies the source to the scratch image, opens it, runs the root-file write, and
+// finalizes the result. Byte-identical to the inline tail it replaces (early-returns
+// on copy/open failure without finalizing, exactly as before).
+void runImageOnlyRootFileScratchWrite(const PartitionApfsImageRootFileWriteRequest& request,
+                                      const QString& cleanFileName,
+                                      const PartitionApfsFileReadResult& rootListing,
+                                      PartitionApfsImageFileWriteResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("file-write"),
+                            &result->blockers)) {
+        return;
+    }
+
+    QFile image;
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("file-write"),
+                          &image,
+                          &result->blockers)) {
+        return;
+    }
+
+    QStringList writeBlockers;
+    runRootFileWriteOnScratch({.image = &image,
+                               .sourceImagePath = result->source_image_path,
+                               .fileName = cleanFileName,
+                               .fileData = request.file_data,
+                               .rootListing = rootListing,
+                               .writtenDataBlocks = &result->written_data_blocks},
+                              &writeBlockers);
+    image.close();
+    result->blockers.append(writeBlockers);
+    appendFileWriteReadback(result->written_image_path, cleanFileName, request.file_data, result);
+    finalizeFileWriteResult(result);
+}
+
 PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootFile(
     const PartitionApfsImageRootFileWriteRequest& request) {
     PartitionApfsImageFileWriteResult result;
@@ -11846,32 +12260,43 @@ PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootFile(
         return result;
     }
 
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("file-write"),
-                            &result.blockers)) {
-        return result;
+    runImageOnlyRootFileScratchWrite(request, cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Copies the source to the scratch image, opens it, runs the root-file delete, and
+// finalizes the result. Byte-identical to the inline tail it replaces (early-returns
+// on copy/open failure without finalizing, exactly as before).
+void runImageOnlyRootFileScratchDelete(const QString& cleanFileName,
+                                       const PartitionApfsFileReadResult& rootListing,
+                                       PartitionApfsImageFileDeleteResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("file-delete"),
+                            &result->blockers)) {
+        return;
     }
 
     QFile image;
-    if (!openScratchImage(
-            result.written_image_path, QLatin1StringView("file-write"), &image, &result.blockers)) {
-        return result;
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("file-delete"),
+                          &image,
+                          &result->blockers)) {
+        return;
     }
 
-    QStringList writeBlockers;
-    runRootFileWriteOnScratch({.image = &image,
-                               .sourceImagePath = result.source_image_path,
-                               .fileName = cleanFileName,
-                               .fileData = request.file_data,
-                               .rootListing = *rootListing,
-                               .writtenDataBlocks = &result.written_data_blocks},
-                              &writeBlockers);
+    QStringList deleteBlockers;
+    runRootFileDeleteOnScratch({.image = &image,
+                                .sourceImagePath = result->source_image_path,
+                                .fileName = cleanFileName,
+                                .rootListing = rootListing,
+                                .targetSizeBytes = result->deleted_file_bytes,
+                                .freedDataBlocks = &result->freed_data_blocks},
+                               &deleteBlockers);
     image.close();
-    result.blockers.append(writeBlockers);
-    appendFileWriteReadback(result.written_image_path, cleanFileName, request.file_data, &result);
-    finalizeFileWriteResult(&result);
-    return result;
+    result->blockers.append(deleteBlockers);
+    appendFileDeleteReadback(result->written_image_path, cleanFileName, result);
+    finalizeFileDeleteResult(result);
 }
 
 PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootFile(
@@ -11927,34 +12352,47 @@ PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootFile(
     result.deleted_file_bytes = deletedEntry.size_bytes;
     result.deleted_file_sha256 = bytesSha256Hex(deletedData);
 
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("file-delete"),
-                            &result.blockers)) {
-        return result;
+    runImageOnlyRootFileScratchDelete(cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Copies the source to the scratch image, opens it, runs the root-directory child
+// rewrite, and finalizes the result. Byte-identical to the inline tail it replaces
+// (early-returns on copy/open failure without finalizing, exactly as before).
+void runImageOnlyRootDirectoryFileScratchWrite(
+    const PartitionApfsImageRootDirectoryFileWriteRequest& request,
+    const QString& cleanDirectoryName,
+    const QString& cleanFileName,
+    const PartitionApfsFileReadResult& rootListing,
+    PartitionApfsImageFileWriteResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("directory-file-write"),
+                            &result->blockers)) {
+        return;
     }
 
     QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("file-delete"),
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("directory-file-write"),
                           &image,
-                          &result.blockers)) {
-        return result;
+                          &result->blockers)) {
+        return;
     }
-
-    QStringList deleteBlockers;
-    runRootFileDeleteOnScratch({.image = &image,
-                                .sourceImagePath = result.source_image_path,
-                                .fileName = cleanFileName,
-                                .rootListing = *rootListing,
-                                .targetSizeBytes = result.deleted_file_bytes,
-                                .freedDataBlocks = &result.freed_data_blocks},
-                               &deleteBlockers);
+    QStringList writeBlockers;
+    runRootDirectoryFileRewriteOnScratch({.image = &image,
+                                          .sourceImagePath = result->source_image_path,
+                                          .directoryName = cleanDirectoryName,
+                                          .fileName = cleanFileName,
+                                          .fileData = request.file_data,
+                                          .rootListing = rootListing,
+                                          .changedDataBlocks = &result->written_data_blocks},
+                                         &writeBlockers);
     image.close();
-    result.blockers.append(deleteBlockers);
-    appendFileDeleteReadback(result.written_image_path, cleanFileName, &result);
-    finalizeFileDeleteResult(&result);
-    return result;
+    result->blockers.append(writeBlockers);
+    appendDirectoryFileWriteReadback(
+        result->written_image_path, cleanDirectoryName, cleanFileName, request.file_data, result);
+    finalizeFileWriteResult(result);
 }
 
 PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootDirectoryFile(
@@ -12008,35 +12446,47 @@ PartitionApfsImageFileWriteResult PartitionApfsWriter::writeImageOnlyRootDirecto
     if (!rootListing.has_value()) {
         return result;
     }
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("directory-file-write"),
-                            &result.blockers)) {
-        return result;
+    runImageOnlyRootDirectoryFileScratchWrite(
+        request, cleanDirectoryName, cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Copies the source to the scratch image, opens it, runs the root-directory child
+// delete (rewrite with deleteFile=true), and finalizes the result. Byte-identical to
+// the inline tail it replaces (early-returns on copy/open failure, exactly as before).
+void runImageOnlyRootDirectoryFileScratchDelete(const QString& cleanDirectoryName,
+                                                const QString& cleanFileName,
+                                                const PartitionApfsFileReadResult& rootListing,
+                                                PartitionApfsImageFileDeleteResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("directory-file-delete"),
+                            &result->blockers)) {
+        return;
     }
 
     QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("directory-file-write"),
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("directory-file-delete"),
                           &image,
-                          &result.blockers)) {
-        return result;
+                          &result->blockers)) {
+        return;
     }
-    QStringList writeBlockers;
+    QStringList deleteBlockers;
     runRootDirectoryFileRewriteOnScratch({.image = &image,
-                                          .sourceImagePath = result.source_image_path,
+                                          .sourceImagePath = result->source_image_path,
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
-                                          .fileData = request.file_data,
-                                          .rootListing = *rootListing,
-                                          .changedDataBlocks = &result.written_data_blocks},
-                                         &writeBlockers);
+                                          .rootListing = rootListing,
+                                          .targetSizeBytes = result->deleted_file_bytes,
+                                          .changedDataBlocks = &result->freed_data_blocks,
+                                          .deleteFile = true},
+                                         &deleteBlockers);
     image.close();
-    result.blockers.append(writeBlockers);
-    appendDirectoryFileWriteReadback(
-        result.written_image_path, cleanDirectoryName, cleanFileName, request.file_data, &result);
-    finalizeFileWriteResult(&result);
-    return result;
+    result->blockers.append(deleteBlockers);
+    appendDirectoryFileDeleteReadback(
+        result->written_image_path, cleanDirectoryName, cleanFileName, result);
+    finalizeFileDeleteResult(result);
 }
 
 PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootDirectoryFile(
@@ -12097,36 +12547,48 @@ PartitionApfsImageFileDeleteResult PartitionApfsWriter::deleteImageOnlyRootDirec
     }
     result.deleted_file_bytes = deletedEntry.size_bytes;
     result.deleted_file_sha256 = bytesSha256Hex(deletedData);
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("directory-file-delete"),
-                            &result.blockers)) {
-        return result;
+    runImageOnlyRootDirectoryFileScratchDelete(
+        cleanDirectoryName, cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Copies the source to the scratch image, opens it, runs the root-directory child
+// patch (rewrite with the patched payload), and finalizes the result. Byte-identical
+// to the inline tail it replaces (early-returns on copy/open failure, exactly as
+// before).
+void runImageOnlyRootDirectoryFileScratchPatch(const QString& cleanDirectoryName,
+                                               const QString& cleanFileName,
+                                               const QByteArray& patchedData,
+                                               const PartitionApfsFileReadResult& rootListing,
+                                               PartitionApfsImageFilePatchResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("directory-file-patch"),
+                            &result->blockers)) {
+        return;
     }
 
     QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("directory-file-delete"),
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("directory-file-patch"),
                           &image,
-                          &result.blockers)) {
-        return result;
+                          &result->blockers)) {
+        return;
     }
-    QStringList deleteBlockers;
+    QStringList patchBlockers;
     runRootDirectoryFileRewriteOnScratch({.image = &image,
-                                          .sourceImagePath = result.source_image_path,
+                                          .sourceImagePath = result->source_image_path,
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
-                                          .rootListing = *rootListing,
-                                          .targetSizeBytes = result.deleted_file_bytes,
-                                          .changedDataBlocks = &result.freed_data_blocks,
-                                          .deleteFile = true},
-                                         &deleteBlockers);
+                                          .fileData = patchedData,
+                                          .rootListing = rootListing,
+                                          .changedDataBlocks = &result->written_data_blocks},
+                                         &patchBlockers);
     image.close();
-    result.blockers.append(deleteBlockers);
-    appendDirectoryFileDeleteReadback(
-        result.written_image_path, cleanDirectoryName, cleanFileName, &result);
-    finalizeFileDeleteResult(&result);
-    return result;
+    result->blockers.append(patchBlockers);
+    appendDirectoryFilePatchReadback(
+        result->written_image_path, cleanDirectoryName, cleanFileName, patchedData, result);
+    finalizeFilePatchResult(result);
 }
 
 PartitionApfsImageFilePatchResult PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
@@ -12187,34 +12649,8 @@ PartitionApfsImageFilePatchResult PartitionApfsWriter::patchImageOnlyRootDirecto
         !applyDirectoryFilePatchPayload(request, patchedEntry, &patchedData, &result)) {
         return result;
     }
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("directory-file-patch"),
-                            &result.blockers)) {
-        return result;
-    }
-
-    QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("directory-file-patch"),
-                          &image,
-                          &result.blockers)) {
-        return result;
-    }
-    QStringList patchBlockers;
-    runRootDirectoryFileRewriteOnScratch({.image = &image,
-                                          .sourceImagePath = result.source_image_path,
-                                          .directoryName = cleanDirectoryName,
-                                          .fileName = cleanFileName,
-                                          .fileData = patchedData,
-                                          .rootListing = *rootListing,
-                                          .changedDataBlocks = &result.written_data_blocks},
-                                         &patchBlockers);
-    image.close();
-    result.blockers.append(patchBlockers);
-    appendDirectoryFilePatchReadback(
-        result.written_image_path, cleanDirectoryName, cleanFileName, patchedData, &result);
-    finalizeFilePatchResult(&result);
+    runImageOnlyRootDirectoryFileScratchPatch(
+        cleanDirectoryName, cleanFileName, patchedData, *rootListing, &result);
     return result;
 }
 
@@ -12286,6 +12722,45 @@ PartitionApfsImageFilePatchResult PartitionApfsWriter::patchImageOnlyRootFile(
     return result;
 }
 
+// Copies the source to the scratch image, opens it, runs the root-directory create
+// or delete rewrite (createDirectory selects which), reads it back, and finalizes the
+// result. Byte-identical to the inline create/delete tails it replaces (the
+// operation label and createDirectory flag are the only differences; the readback
+// is selected by createDirectory exactly as the two inline tails did).
+void runImageOnlyRootDirectoryScratchMutation(QLatin1StringView operation,
+                                              const QString& cleanDirectoryName,
+                                              const PartitionApfsFileReadResult& rootListing,
+                                              bool createDirectory,
+                                              PartitionApfsImageDirectoryMutationResult* result) {
+    if (!copyToScratchImage(
+            result->source_image_path, result->written_image_path, operation, &result->blockers)) {
+        return;
+    }
+
+    QFile image;
+    if (!openScratchImage(result->written_image_path, operation, &image, &result->blockers)) {
+        return;
+    }
+    QStringList writeBlockers;
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = &image,
+            .sourceImagePath = result->source_image_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = rootListing,
+            .createDirectory = createDirectory,
+        },
+        &writeBlockers);
+    image.close();
+    result->blockers.append(writeBlockers);
+    if (createDirectory) {
+        appendDirectoryCreateReadback(result->written_image_path, cleanDirectoryName, result);
+    } else {
+        appendDirectoryDeleteReadback(result->written_image_path, cleanDirectoryName, result);
+    }
+    finalizeDirectoryMutationResult(result);
+}
+
 PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::createImageOnlyRootDirectory(
     const PartitionApfsImageRootDirectoryMutationRequest& request) {
     PartitionApfsImageDirectoryMutationResult result;
@@ -12332,34 +12807,8 @@ PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::createImageOnlyRo
     if (!rootListing.has_value()) {
         return result;
     }
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("directory-create"),
-                            &result.blockers)) {
-        return result;
-    }
-
-    QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("directory-create"),
-                          &image,
-                          &result.blockers)) {
-        return result;
-    }
-    QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch(
-        {
-            .image = &image,
-            .sourceImagePath = result.source_image_path,
-            .directoryName = cleanDirectoryName,
-            .rootListing = *rootListing,
-            .createDirectory = true,
-        },
-        &writeBlockers);
-    image.close();
-    result.blockers.append(writeBlockers);
-    appendDirectoryCreateReadback(result.written_image_path, cleanDirectoryName, &result);
-    finalizeDirectoryMutationResult(&result);
+    runImageOnlyRootDirectoryScratchMutation(
+        QLatin1StringView("directory-create"), cleanDirectoryName, *rootListing, true, &result);
     return result;
 }
 
@@ -12409,35 +12858,40 @@ PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::deleteImageOnlyRo
     if (!rootListing.has_value()) {
         return result;
     }
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("directory-delete"),
-                            &result.blockers)) {
-        return result;
+    runImageOnlyRootDirectoryScratchMutation(
+        QLatin1StringView("directory-delete"), cleanDirectoryName, *rootListing, false, &result);
+    return result;
+}
+
+// Copies the source to the scratch image, opens it, changes the volume label, reads
+// it back, and finalizes the result. Byte-identical to the inline tail it replaces
+// (early-returns on copy/open failure without finalizing, exactly as before).
+void runImageOnlyVolumeLabelScratchChange(uint64_t sourceSizeBytes,
+                                          PartitionApfsImageVolumeLabelResult* result) {
+    if (!copyToScratchImage(result->source_image_path,
+                            result->written_image_path,
+                            QLatin1StringView("volume-label"),
+                            &result->blockers)) {
+        return;
     }
 
     QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("directory-delete"),
+    if (!openScratchImage(result->written_image_path,
+                          QLatin1StringView("volume-label"),
                           &image,
-                          &result.blockers)) {
-        return result;
+                          &result->blockers)) {
+        return;
     }
-    QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch(
-        {
-            .image = &image,
-            .sourceImagePath = result.source_image_path,
-            .directoryName = cleanDirectoryName,
-            .rootListing = *rootListing,
-            .createDirectory = false,
-        },
-        &writeBlockers);
+    QStringList labelBlockers;
+    runVolumeLabelChangeOnTarget(
+        &image, sourceSizeBytes, result->new_volume_name, &result->old_volume_name, &labelBlockers);
     image.close();
-    result.blockers.append(writeBlockers);
-    appendDirectoryDeleteReadback(result.written_image_path, cleanDirectoryName, &result);
-    finalizeDirectoryMutationResult(&result);
-    return result;
+    result->blockers.append(labelBlockers);
+    appendVolumeLabelReadback(result->written_image_path,
+                              result->new_volume_name,
+                              QLatin1StringView("volume-label"),
+                              &result->blockers);
+    finalizeVolumeLabelResult(result);
 }
 
 PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLabel(
@@ -12482,34 +12936,36 @@ PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLa
         return result;
     }
 
-    if (!copyToScratchImage(result.source_image_path,
-                            result.written_image_path,
-                            QLatin1StringView("volume-label"),
-                            &result.blockers)) {
-        return result;
-    }
-
-    QFile image;
-    if (!openScratchImage(result.written_image_path,
-                          QLatin1StringView("volume-label"),
-                          &image,
-                          &result.blockers)) {
-        return result;
-    }
-    QStringList labelBlockers;
-    runVolumeLabelChangeOnTarget(&image,
-                                 static_cast<uint64_t>(source.info.size()),
-                                 result.new_volume_name,
-                                 &result.old_volume_name,
-                                 &labelBlockers);
-    image.close();
-    result.blockers.append(labelBlockers);
-    appendVolumeLabelReadback(result.written_image_path,
-                              result.new_volume_name,
-                              QLatin1StringView("volume-label"),
-                              &result.blockers);
-    finalizeVolumeLabelResult(&result);
+    runImageOnlyVolumeLabelScratchChange(static_cast<uint64_t>(source.info.size()), &result);
     return result;
+}
+
+// Opens the raw file-write target read-write, runs the root-file write, reads it
+// back, and sets result->ok. Byte-identical to the inline tail it replaces
+// (early-returns with the open-error blocker on open failure, exactly as before).
+void runRawRootFileTargetWrite(const PartitionApfsRawRootFileWriteRequest& request,
+                               const QString& cleanFileName,
+                               const PartitionApfsFileReadResult& rootListing,
+                               PartitionApfsRawFileWriteResult* result) {
+    QString openError;
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
+    if (!target) {
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw file-write target: %1").arg(openError));
+        return;
+    }
+    QStringList writeBlockers;
+    runRootFileWriteOnScratch({.image = target.get(),
+                               .sourceImagePath = result->target_path,
+                               .fileName = cleanFileName,
+                               .fileData = request.file_data,
+                               .rootListing = rootListing,
+                               .writtenDataBlocks = &result->written_data_blocks},
+                              &writeBlockers);
+    target->close();
+    result->blockers.append(writeBlockers);
+    appendRawFileWriteReadback(result->target_path, cleanFileName, request.file_data, result);
+    result->ok = result->blockers.isEmpty();
 }
 
 PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootFile(
@@ -12563,25 +13019,7 @@ PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootFile(
         return result;
     }
 
-    QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
-    if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw file-write target: %1").arg(openError));
-        return result;
-    }
-    QStringList writeBlockers;
-    runRootFileWriteOnScratch({.image = target.get(),
-                               .sourceImagePath = result.target_path,
-                               .fileName = cleanFileName,
-                               .fileData = request.file_data,
-                               .rootListing = *rootListing,
-                               .writtenDataBlocks = &result.written_data_blocks},
-                              &writeBlockers);
-    target->close();
-    result.blockers.append(writeBlockers);
-    appendRawFileWriteReadback(result.target_path, cleanFileName, request.file_data, &result);
-    result.ok = result.blockers.isEmpty();
+    runRawRootFileTargetWrite(request, cleanFileName, *rootListing, &result);
     return result;
 }
 
@@ -12654,6 +13092,39 @@ PartitionApfsRawFileDeleteResult PartitionApfsWriter::deleteRawRootFile(
     return result;
 }
 
+// Opens the raw directory-file-write target read-write, runs the root-directory
+// child rewrite, reads it back, and sets result->ok. Byte-identical to the inline
+// tail it replaces (early-returns with the open-error blocker on open failure).
+void runRawRootDirectoryFileTargetWrite(
+    const PartitionApfsRawRootDirectoryFileWriteRequest& request,
+    const QString& cleanDirectoryName,
+    const QString& cleanFileName,
+    const PartitionApfsFileReadResult& rootListing,
+    PartitionApfsRawFileWriteResult* result) {
+    QString openError;
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
+    if (!target) {
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw directory-file-write target: %1")
+                .arg(openError));
+        return;
+    }
+    QStringList writeBlockers;
+    runRootDirectoryFileRewriteOnScratch({.image = target.get(),
+                                          .sourceImagePath = result->target_path,
+                                          .directoryName = cleanDirectoryName,
+                                          .fileName = cleanFileName,
+                                          .fileData = request.file_data,
+                                          .rootListing = rootListing,
+                                          .changedDataBlocks = &result->written_data_blocks},
+                                         &writeBlockers);
+    target->close();
+    result->blockers.append(writeBlockers);
+    appendRawDirectoryFileWriteReadback(
+        result->target_path, cleanDirectoryName, cleanFileName, request.file_data, result);
+    result->ok = result->blockers.isEmpty();
+}
+
 PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootDirectoryFile(
     const PartitionApfsRawRootDirectoryFileWriteRequest& request) {
     PartitionApfsRawFileWriteResult result;
@@ -12708,29 +13179,42 @@ PartitionApfsRawFileWriteResult PartitionApfsWriter::writeRawRootDirectoryFile(
         return result;
     }
 
+    runRawRootDirectoryFileTargetWrite(
+        request, cleanDirectoryName, cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Opens the raw directory-file-delete target read-write, runs the root-directory
+// child delete (rewrite with deleteFile=true), reads it back, and sets result->ok.
+// Byte-identical to the inline tail it replaces (early-returns with the open-error
+// blocker on open failure).
+void runRawRootDirectoryFileTargetDelete(const QString& cleanDirectoryName,
+                                         const QString& cleanFileName,
+                                         const PartitionApfsFileReadResult& rootListing,
+                                         PartitionApfsRawFileDeleteResult* result) {
     QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
     if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw directory-file-write target: %1")
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw directory-file-delete target: %1")
                 .arg(openError));
-        return result;
+        return;
     }
-    QStringList writeBlockers;
+    QStringList deleteBlockers;
     runRootDirectoryFileRewriteOnScratch({.image = target.get(),
-                                          .sourceImagePath = result.target_path,
+                                          .sourceImagePath = result->target_path,
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
-                                          .fileData = request.file_data,
-                                          .rootListing = *rootListing,
-                                          .changedDataBlocks = &result.written_data_blocks},
-                                         &writeBlockers);
+                                          .rootListing = rootListing,
+                                          .targetSizeBytes = result->deleted_file_bytes,
+                                          .changedDataBlocks = &result->freed_data_blocks,
+                                          .deleteFile = true},
+                                         &deleteBlockers);
     target->close();
-    result.blockers.append(writeBlockers);
-    appendRawDirectoryFileWriteReadback(
-        result.target_path, cleanDirectoryName, cleanFileName, request.file_data, &result);
-    result.ok = result.blockers.isEmpty();
-    return result;
+    result->blockers.append(deleteBlockers);
+    appendRawDirectoryFileDeleteReadback(
+        result->target_path, cleanDirectoryName, cleanFileName, result);
+    result->ok = result->blockers.isEmpty();
 }
 
 PartitionApfsRawFileDeleteResult PartitionApfsWriter::deleteRawRootDirectoryFile(
@@ -12786,30 +13270,41 @@ PartitionApfsRawFileDeleteResult PartitionApfsWriter::deleteRawRootDirectoryFile
     result.deleted_file_bytes = deletedEntry.size_bytes;
     result.deleted_file_sha256 = bytesSha256Hex(deletedData);
 
+    runRawRootDirectoryFileTargetDelete(cleanDirectoryName, cleanFileName, *rootListing, &result);
+    return result;
+}
+
+// Opens the raw directory-file-patch target read-write, runs the root-directory
+// child rewrite with the patched payload, reads it back, and sets result->ok.
+// Byte-identical to the inline tail it replaces (early-returns with the open-error
+// blocker on open failure).
+void runRawRootDirectoryFileTargetPatch(const QString& cleanDirectoryName,
+                                        const QString& cleanFileName,
+                                        const QByteArray& patchedData,
+                                        const PartitionApfsFileReadResult& rootListing,
+                                        PartitionApfsRawFilePatchResult* result) {
     QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
     if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw directory-file-delete target: %1")
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw directory-file-patch target: %1")
                 .arg(openError));
-        return result;
+        return;
     }
-    QStringList deleteBlockers;
+    QStringList patchBlockers;
     runRootDirectoryFileRewriteOnScratch({.image = target.get(),
-                                          .sourceImagePath = result.target_path,
+                                          .sourceImagePath = result->target_path,
                                           .directoryName = cleanDirectoryName,
                                           .fileName = cleanFileName,
-                                          .rootListing = *rootListing,
-                                          .targetSizeBytes = result.deleted_file_bytes,
-                                          .changedDataBlocks = &result.freed_data_blocks,
-                                          .deleteFile = true},
-                                         &deleteBlockers);
+                                          .fileData = patchedData,
+                                          .rootListing = rootListing,
+                                          .changedDataBlocks = &result->written_data_blocks},
+                                         &patchBlockers);
     target->close();
-    result.blockers.append(deleteBlockers);
-    appendRawDirectoryFileDeleteReadback(
-        result.target_path, cleanDirectoryName, cleanFileName, &result);
-    result.ok = result.blockers.isEmpty();
-    return result;
+    result->blockers.append(patchBlockers);
+    appendRawDirectoryFilePatchReadback(
+        result->target_path, cleanDirectoryName, cleanFileName, patchedData, result);
+    result->ok = result->blockers.isEmpty();
 }
 
 PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootDirectoryFile(
@@ -12873,29 +13368,37 @@ PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootDirectoryFile(
         return result;
     }
 
+    runRawRootDirectoryFileTargetPatch(
+        cleanDirectoryName, cleanFileName, patchedData, *rootListing, &result);
+    return result;
+}
+
+// Opens the raw file-patch target read-write, runs the root-file rewrite with the
+// patched payload, reads it back, and sets result->ok. Byte-identical to the inline
+// tail it replaces (early-returns with the open-error blocker on open failure).
+void runRawRootFileTargetPatch(const QString& cleanFileName,
+                               const QByteArray& patchedData,
+                               const PartitionApfsFileReadResult& rootListing,
+                               PartitionApfsRawFilePatchResult* result) {
     QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
     if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw directory-file-patch target: %1")
-                .arg(openError));
-        return result;
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw file-patch target: %1").arg(openError));
+        return;
     }
     QStringList patchBlockers;
-    runRootDirectoryFileRewriteOnScratch({.image = target.get(),
-                                          .sourceImagePath = result.target_path,
-                                          .directoryName = cleanDirectoryName,
-                                          .fileName = cleanFileName,
-                                          .fileData = patchedData,
-                                          .rootListing = *rootListing,
-                                          .changedDataBlocks = &result.written_data_blocks},
-                                         &patchBlockers);
+    runRootFileWriteOnScratch({.image = target.get(),
+                               .sourceImagePath = result->target_path,
+                               .fileName = cleanFileName,
+                               .fileData = patchedData,
+                               .rootListing = rootListing,
+                               .writtenDataBlocks = &result->written_data_blocks},
+                              &patchBlockers);
     target->close();
-    result.blockers.append(patchBlockers);
-    appendRawDirectoryFilePatchReadback(
-        result.target_path, cleanDirectoryName, cleanFileName, patchedData, &result);
-    result.ok = result.blockers.isEmpty();
-    return result;
+    result->blockers.append(patchBlockers);
+    appendRawFilePatchReadback(result->target_path, cleanFileName, patchedData, result);
+    result->ok = result->blockers.isEmpty();
 }
 
 PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootFile(
@@ -12954,26 +13457,55 @@ PartitionApfsRawFilePatchResult PartitionApfsWriter::patchRawRootFile(
         return result;
     }
 
-    QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
-    if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw file-patch target: %1").arg(openError));
-        return result;
-    }
-    QStringList patchBlockers;
-    runRootFileWriteOnScratch({.image = target.get(),
-                               .sourceImagePath = result.target_path,
-                               .fileName = cleanFileName,
-                               .fileData = patchedData,
-                               .rootListing = *rootListing,
-                               .writtenDataBlocks = &result.written_data_blocks},
-                              &patchBlockers);
-    target->close();
-    result.blockers.append(patchBlockers);
-    appendRawFilePatchReadback(result.target_path, cleanFileName, patchedData, &result);
-    result.ok = result.blockers.isEmpty();
+    runRawRootFileTargetPatch(cleanFileName, patchedData, *rootListing, &result);
     return result;
+}
+
+// Opens the raw directory-create/delete target read-write, runs the root-directory
+// rewrite (createDirectory selects which), reads it back, and sets result->ok.
+// Byte-identical to the inline create/delete tails it replaces (the open-error
+// blocker uses `operation`; the read-back check and message are selected by
+// createDirectory exactly as the two inline tails did).
+void runRawRootDirectoryTargetMutation(QLatin1StringView operation,
+                                       const QString& cleanDirectoryName,
+                                       const PartitionApfsFileReadResult& rootListing,
+                                       bool createDirectory,
+                                       PartitionApfsRawDirectoryMutationResult* result) {
+    QString openError;
+    auto target = openFileOrRawDeviceReadWrite(result->target_path, &openError);
+    if (!target) {
+        result->blockers.append(
+            QStringLiteral("Unable to open APFS raw %1 target: %2").arg(operation).arg(openError));
+        return;
+    }
+    QStringList writeBlockers;
+    runRootDirectoryRewriteOnScratch(
+        {
+            .image = target.get(),
+            .sourceImagePath = result->target_path,
+            .directoryName = cleanDirectoryName,
+            .rootListing = rootListing,
+            .createDirectory = createDirectory,
+        },
+        &writeBlockers);
+    target->close();
+    result->blockers.append(writeBlockers);
+    if (result->blockers.isEmpty()) {
+        const auto entry = rootDirectoryReadbackEntry(
+            result->target_path, cleanDirectoryName, operation, &result->blockers);
+        if (createDirectory) {
+            if (!entry.has_value() || !entry->directory) {
+                result->blockers.append(QStringLiteral(
+                    "APFS raw directory-create read-back did not find the target directory"));
+            }
+        } else {
+            if (entry.has_value()) {
+                result->blockers.append(QStringLiteral(
+                    "APFS raw directory-delete read-back still found target directory"));
+            }
+        }
+    }
+    result->ok = result->blockers.isEmpty();
 }
 
 PartitionApfsRawDirectoryMutationResult PartitionApfsWriter::createRawRootDirectory(
@@ -13018,36 +13550,8 @@ PartitionApfsRawDirectoryMutationResult PartitionApfsWriter::createRawRootDirect
         return result;
     }
 
-    QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
-    if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw directory-create target: %1").arg(openError));
-        return result;
-    }
-    QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch(
-        {
-            .image = target.get(),
-            .sourceImagePath = result.target_path,
-            .directoryName = cleanDirectoryName,
-            .rootListing = *rootListing,
-            .createDirectory = true,
-        },
-        &writeBlockers);
-    target->close();
-    result.blockers.append(writeBlockers);
-    if (result.blockers.isEmpty()) {
-        const auto entry = rootDirectoryReadbackEntry(result.target_path,
-                                                      cleanDirectoryName,
-                                                      QLatin1StringView("directory-create"),
-                                                      &result.blockers);
-        if (!entry.has_value() || !entry->directory) {
-            result.blockers.append(QStringLiteral(
-                "APFS raw directory-create read-back did not find the target directory"));
-        }
-    }
-    result.ok = result.blockers.isEmpty();
+    runRawRootDirectoryTargetMutation(
+        QLatin1StringView("directory-create"), cleanDirectoryName, *rootListing, true, &result);
     return result;
 }
 
@@ -13093,36 +13597,8 @@ PartitionApfsRawDirectoryMutationResult PartitionApfsWriter::deleteRawRootDirect
         return result;
     }
 
-    QString openError;
-    auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
-    if (!target) {
-        result.blockers.append(
-            QStringLiteral("Unable to open APFS raw directory-delete target: %1").arg(openError));
-        return result;
-    }
-    QStringList writeBlockers;
-    runRootDirectoryRewriteOnScratch(
-        {
-            .image = target.get(),
-            .sourceImagePath = result.target_path,
-            .directoryName = cleanDirectoryName,
-            .rootListing = *rootListing,
-            .createDirectory = false,
-        },
-        &writeBlockers);
-    target->close();
-    result.blockers.append(writeBlockers);
-    if (result.blockers.isEmpty()) {
-        const auto entry = rootDirectoryReadbackEntry(result.target_path,
-                                                      cleanDirectoryName,
-                                                      QLatin1StringView("directory-delete"),
-                                                      &result.blockers);
-        if (entry.has_value()) {
-            result.blockers.append(
-                QStringLiteral("APFS raw directory-delete read-back still found target directory"));
-        }
-    }
-    result.ok = result.blockers.isEmpty();
+    runRawRootDirectoryTargetMutation(
+        QLatin1StringView("directory-delete"), cleanDirectoryName, *rootListing, false, &result);
     return result;
 }
 
@@ -13186,6 +13662,43 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
     return result;
 }
 
+// Reads the repair geometry from the open target, validates it against the expected
+// container size, and (if the generated-layout guard passes) repairs the object
+// checksums, recording the scanned/repaired counts. Appends any repair blockers to
+// result->blockers. Byte-identical to the inline scan body it replaces.
+void runRawRepairChecksumScanOnTarget(QIODevice* target,
+                                      uint64_t targetContainerBytes,
+                                      PartitionApfsRawRepairResult* result) {
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList repairBlockers;
+    if (readApfsRepairGeometry(target, &blockSize, &blockCount, &repairBlockers)) {
+        if (blockSize != kSupportedApfsBlockSizeBytes ||
+            blockCount != targetContainerBytes / blockSize) {
+            repairBlockers.append(QStringLiteral(
+                "APFS raw repair target geometry does not match expected target size"));
+        } else if (!appendGeneratedApfsLayoutBlockers(target,
+                                                      {.blockSize = blockSize,
+                                                       .blockCount = blockCount},
+                                                      QLatin1StringView("repair"),
+                                                      true,
+                                                      &repairBlockers)) {
+            result->scanned_blocks = 0;
+            result->repaired_checksum_blocks = 0;
+        } else {
+            ApfsRepairCounters counters;
+            repairGeneratedApfsObjectChecksumBlocks(target,
+                                                    {.blockSize = blockSize,
+                                                     .blockCount = blockCount},
+                                                    &counters,
+                                                    &repairBlockers);
+            result->scanned_blocks = counters.scannedBlocks;
+            result->repaired_checksum_blocks = counters.repairedBlocks;
+        }
+    }
+    result->blockers.append(repairBlockers);
+}
+
 PartitionApfsRawRepairResult PartitionApfsWriter::repairRawObjectChecksums(
     const PartitionApfsRawRepairRequest& request) {
     PartitionApfsRawRepairResult result;
@@ -13226,35 +13739,8 @@ PartitionApfsRawRepairResult PartitionApfsWriter::repairRawObjectChecksums(
         return result;
     }
 
-    uint32_t blockSize = 0;
-    uint64_t blockCount = 0;
-    QStringList repairBlockers;
-    if (readApfsRepairGeometry(target.get(), &blockSize, &blockCount, &repairBlockers)) {
-        if (blockSize != kSupportedApfsBlockSizeBytes ||
-            blockCount != request.target_container_bytes / blockSize) {
-            repairBlockers.append(QStringLiteral(
-                "APFS raw repair target geometry does not match expected target size"));
-        } else if (!appendGeneratedApfsLayoutBlockers(target.get(),
-                                                      {.blockSize = blockSize,
-                                                       .blockCount = blockCount},
-                                                      QLatin1StringView("repair"),
-                                                      true,
-                                                      &repairBlockers)) {
-            result.scanned_blocks = 0;
-            result.repaired_checksum_blocks = 0;
-        } else {
-            ApfsRepairCounters counters;
-            repairGeneratedApfsObjectChecksumBlocks(target.get(),
-                                                    {.blockSize = blockSize,
-                                                     .blockCount = blockCount},
-                                                    &counters,
-                                                    &repairBlockers);
-            result.scanned_blocks = counters.scannedBlocks;
-            result.repaired_checksum_blocks = counters.repairedBlocks;
-        }
-    }
+    runRawRepairChecksumScanOnTarget(target.get(), request.target_container_bytes, &result);
     target->close();
-    result.blockers.append(repairBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -13856,6 +14342,31 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     return result;
 }
 
+// Validates the in-place commit source (using the in-place commit size cap), the
+// separate-output guard, and the source-detection guard for the given operation
+// label. Returns false (with the appropriate blocker appended) on any failure.
+// Byte-identical to the inline validate/output/detect preamble it replaces.
+bool validateImageOnlyCommitSource(QLatin1StringView operation,
+                                   PartitionApfsImageCheckpointCommitResult* result) {
+    const auto source = validateImageOnlySource(
+        result->source_image_path, operation, &result->blockers, kApfsInPlaceCommitMaxBytes);
+    if (!source.ok) {
+        return false;
+    }
+    if (!appendSeparateOutputBlockers(
+            source.info, result->written_image_path, operation, &result->blockers)) {
+        return false;
+    }
+    if (!detectApfsImageSource(result->source_image_path,
+                               static_cast<uint64_t>(source.info.size()),
+                               operation,
+                               &result->blockers)
+             .has_value()) {
+        return false;
+    }
+    return true;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileInsert(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -13876,24 +14387,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
             QStringLiteral("APFS file-insert-commit payload exceeds the current size cap"));
         return result;
     }
-    const auto source = validateImageOnlySource(result.source_image_path,
-                                                QLatin1StringView("file-insert-commit"),
-                                                &result.blockers,
-                                                kApfsInPlaceCommitMaxBytes);
-    if (!source.ok) {
-        return result;
-    }
-    if (!appendSeparateOutputBlockers(source.info,
-                                      result.written_image_path,
-                                      QLatin1StringView("file-insert-commit"),
-                                      &result.blockers)) {
-        return result;
-    }
-    if (!detectApfsImageSource(result.source_image_path,
-                               static_cast<uint64_t>(source.info.size()),
-                               QLatin1StringView("file-insert-commit"),
-                               &result.blockers)
-             .has_value()) {
+    if (!validateImageOnlyCommitSource(QLatin1StringView("file-insert-commit"), &result)) {
         return result;
     }
     if (!copyToScratchImage(result.source_image_path,
@@ -13950,24 +14444,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
             cloneName, QLatin1StringView("file-clone-commit"), &result.blockers)) {
         return result;
     }
-    const auto source = validateImageOnlySource(result.source_image_path,
-                                                QLatin1StringView("file-clone-commit"),
-                                                &result.blockers,
-                                                kApfsInPlaceCommitMaxBytes);
-    if (!source.ok) {
-        return result;
-    }
-    if (!appendSeparateOutputBlockers(source.info,
-                                      result.written_image_path,
-                                      QLatin1StringView("file-clone-commit"),
-                                      &result.blockers)) {
-        return result;
-    }
-    if (!detectApfsImageSource(result.source_image_path,
-                               static_cast<uint64_t>(source.info.size()),
-                               QLatin1StringView("file-clone-commit"),
-                               &result.blockers)
-             .has_value()) {
+    if (!validateImageOnlyCommitSource(QLatin1StringView("file-clone-commit"), &result)) {
         return result;
     }
 
@@ -14024,24 +14501,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
             linkName, QLatin1StringView("file-hardlink-commit"), &result.blockers)) {
         return result;
     }
-    const auto source = validateImageOnlySource(result.source_image_path,
-                                                QLatin1StringView("file-hardlink-commit"),
-                                                &result.blockers,
-                                                kApfsInPlaceCommitMaxBytes);
-    if (!source.ok) {
-        return result;
-    }
-    if (!appendSeparateOutputBlockers(source.info,
-                                      result.written_image_path,
-                                      QLatin1StringView("file-hardlink-commit"),
-                                      &result.blockers)) {
-        return result;
-    }
-    if (!detectApfsImageSource(result.source_image_path,
-                               static_cast<uint64_t>(source.info.size()),
-                               QLatin1StringView("file-hardlink-commit"),
-                               &result.blockers)
-             .has_value()) {
+    if (!validateImageOnlyCommitSource(QLatin1StringView("file-hardlink-commit"), &result)) {
         return result;
     }
 
@@ -14169,24 +14629,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
             newName, QLatin1StringView("file-rename-commit"), &result.blockers)) {
         return result;
     }
-    const auto source = validateImageOnlySource(result.source_image_path,
-                                                QLatin1StringView("file-rename-commit"),
-                                                &result.blockers,
-                                                kApfsInPlaceCommitMaxBytes);
-    if (!source.ok) {
-        return result;
-    }
-    if (!appendSeparateOutputBlockers(source.info,
-                                      result.written_image_path,
-                                      QLatin1StringView("file-rename-commit"),
-                                      &result.blockers)) {
-        return result;
-    }
-    if (!detectApfsImageSource(result.source_image_path,
-                               static_cast<uint64_t>(source.info.size()),
-                               QLatin1StringView("file-rename-commit"),
-                               &result.blockers)
-             .has_value()) {
+    if (!validateImageOnlyCommitSource(QLatin1StringView("file-rename-commit"), &result)) {
         return result;
     }
     QVector<ApfsRootFilePayload> allFiles;

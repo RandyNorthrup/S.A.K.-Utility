@@ -96,6 +96,8 @@ private:
     // -- UI Setup --
     void setupUi();
     void createSearchBar(QVBoxLayout* layout);
+    void createSearchTargetRow(QVBoxLayout* searchLayout);
+    void connectSearchBarSignals();
     void createThreePanelSplitter(QVBoxLayout* layout);
     void createFileExplorer();
     void createResultsTree();

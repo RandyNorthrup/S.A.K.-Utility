@@ -18,6 +18,12 @@ FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent
     commandRow->setContentsMargins(0, 0, 0, 0);
     commandRow->setSpacing(ui::kSpacingSmall);
 
+    createTargetButtons(commandRow);
+    createMutationButtons(commandRow);
+    createViewButtons(commandRow);
+}
+
+void FileExplorerCommandBar::createTargetButtons(QHBoxLayout* commandRow) {
     m_sidebar_toggle_button = new QPushButton(this);
     m_sidebar_toggle_button->setObjectName(QStringLiteral("fileExplorerSidebarToggleButton"));
     m_sidebar_toggle_button->setIcon(
@@ -50,7 +56,9 @@ FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent
     commandRow->addWidget(m_add_manual_button);
 
     commandRow->addSpacing(ui::kSpacingDefault);
+}
 
+void FileExplorerCommandBar::createMutationButtons(QHBoxLayout* commandRow) {
     m_new_folder_button = new QPushButton(tr("New Folder"), this);
     m_new_folder_button->setObjectName(QStringLiteral("fileExplorerNewFolderButton"));
     m_new_folder_button->setIcon(
@@ -87,7 +95,9 @@ FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent
     m_delete_button->setStyleSheet(ui::kSecondaryButtonStyle);
     commandRow->addWidget(m_delete_button);
     commandRow->addStretch(1);
+}
 
+void FileExplorerCommandBar::createViewButtons(QHBoxLayout* commandRow) {
     m_view_button = new QToolButton(this);
     m_view_button->setObjectName(QStringLiteral("fileExplorerViewButton"));
     m_view_button->setText(tr("View"));

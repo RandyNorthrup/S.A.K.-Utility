@@ -20,6 +20,16 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(ui::kSpacingSmall);
 
+    buildStateLabel(layout);
+    buildModels();
+    buildItemViews();
+    applyItemSize();
+    layout->addWidget(m_view_stack, 1);
+    buildStatusLabel(layout);
+    connectSignals();
+}
+
+void FileExplorerPane::buildStateLabel(QVBoxLayout* layout) {
     m_state_label = new QLabel(this);
     m_state_label->setObjectName(QStringLiteral("fileExplorerStateLabel"));
     m_state_label->setAccessibleName(tr("Explorer loading, empty, and error state"));
@@ -27,7 +37,9 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     m_state_label->setVisible(false);
     m_state_label->setStyleSheet(ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     layout->addWidget(m_state_label);
+}
 
+void FileExplorerPane::buildModels() {
     m_item_model = new FileExplorerItemModel(this);
     m_sort_filter_model = new FileExplorerSortFilterModel(this);
     m_sort_filter_model->setSourceModel(m_item_model);
@@ -35,7 +47,9 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     m_columns_preview_proxy = new FileExplorerSortFilterModel(this);
     m_columns_preview_proxy->setSourceModel(m_columns_preview_model);
     m_selection_model = new QItemSelectionModel(m_sort_filter_model, this);
+}
 
+void FileExplorerPane::buildItemViews() {
     m_view_stack = new QStackedWidget(this);
     m_details_view = new FileExplorerDetailsView(this);
     m_details_view->setModel(m_sort_filter_model);
@@ -68,9 +82,9 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     columnsLayout->addWidget(m_columns_view, 1);
     columnsLayout->addWidget(m_columns_preview_view, 1);
     m_view_stack->addWidget(m_columns_container);
-    applyItemSize();
-    layout->addWidget(m_view_stack, 1);
+}
 
+void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {
     m_status_label = new QLabel(tr("No target selected"), this);
     m_status_label->setObjectName(QStringLiteral("fileExplorerStatusLabel"));
     m_status_label->setAccessibleName(tr("Explorer status"));
@@ -78,7 +92,9 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     m_status_label->setStyleSheet(
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     layout->addWidget(m_status_label);
+}
 
+void FileExplorerPane::connectSignals() {
     connect(m_selection_model,
             &QItemSelectionModel::selectionChanged,
             this,

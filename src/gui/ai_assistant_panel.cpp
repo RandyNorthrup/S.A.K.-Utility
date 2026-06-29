@@ -471,7 +471,7 @@ int promptKeywordScore(const QString& normalized, const QStringList& needles) {
     return score;
 }
 
-QVector<QPair<QString, QStringList>> roleKeywordGroups() {
+QVector<QPair<QString, QStringList>> reportAndSecurityRoleKeywordGroups() {
     return {
         {QStringLiteral("Customer Report Writer"),
          {QStringLiteral("report"),
@@ -496,6 +496,11 @@ QVector<QPair<QString, QStringList>> roleKeywordGroups() {
           QStringLiteral("threat"),
           QStringLiteral("quarantine"),
           QStringLiteral("vulnerability")}},
+    };
+}
+
+QVector<QPair<QString, QStringList>> deploymentAndRepairRoleKeywordGroups() {
+    return {
         {QStringLiteral("Software Deployment Technician"),
          {QStringLiteral("install"),
           QStringLiteral("uninstall"),
@@ -531,6 +536,11 @@ QVector<QPair<QString, QStringList>> roleKeywordGroups() {
           QStringLiteral("service"),
           QStringLiteral("registry"),
           QStringLiteral("repair windows")}},
+    };
+}
+
+QVector<QPair<QString, QStringList>> diagnosticRoleKeywordGroups() {
+    return {
         {QStringLiteral("Diagnostic Technician"),
          {QStringLiteral("health check"),
           QStringLiteral("diagnose pc"),
@@ -547,6 +557,11 @@ QVector<QPair<QString, QStringList>> roleKeywordGroups() {
           QStringLiteral("hardware"),
           QStringLiteral("pnp"),
           QStringLiteral("usb")}},
+    };
+}
+
+QVector<QPair<QString, QStringList>> peripheralAndPerformanceRoleKeywordGroups() {
+    return {
         {QStringLiteral("Audio Device Technician"),
          {QStringLiteral("audio"),
           QStringLiteral("sound"),
@@ -572,6 +587,15 @@ QVector<QPair<QString, QStringList>> roleKeywordGroups() {
           QStringLiteral("pc technician"),
           QStringLiteral("technician task")}},
     };
+}
+
+QVector<QPair<QString, QStringList>> roleKeywordGroups() {
+    QVector<QPair<QString, QStringList>> groups;
+    groups.append(reportAndSecurityRoleKeywordGroups());
+    groups.append(deploymentAndRepairRoleKeywordGroups());
+    groups.append(diagnosticRoleKeywordGroups());
+    groups.append(peripheralAndPerformanceRoleKeywordGroups());
+    return groups;
 }
 
 QString bestRoleFromScores(const QHash<QString, int>& scores) {

@@ -144,6 +144,220 @@ int firstTargetRow(QListWidget* list) {
     return -1;
 }
 
+void verifyShellCoreWidgetsExist(sak::FileManagementExplorerPanel& panel) {
+    QVERIFY(child<QListWidget>(&panel, "fileExplorerTargetList"));
+    QVERIFY(child<QLineEdit>(&panel, "fileExplorerPathEdit"));
+    QVERIFY(child<QTableView>(&panel, "fileExplorerTable"));
+    QVERIFY(child<QListView>(&panel, "fileExplorerListView"));
+    QVERIFY(child<QListView>(&panel, "fileExplorerGridView"));
+    QVERIFY(child<QListView>(&panel, "fileExplorerCardsView"));
+    QVERIFY(child<QListView>(&panel, "fileExplorerColumnsView"));
+    QVERIFY(child<QListView>(&panel, "fileExplorerColumnsPreviewView"));
+    QVERIFY(child<QTabWidget>(&panel, "fileExplorerDetailsTabs"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerSidebarToggleButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerDetailsToggleButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerSearchButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerCommandButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerOpenButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerCopyPathButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerRefreshButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerNewFolderButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerWriteFileButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerRenameButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerDeleteButton"));
+    QVERIFY(child<QToolButton>(&panel, "fileExplorerViewButton"));
+    QVERIFY(child<QLabel>(&panel, "fileExplorerSummaryLabel"));
+    QVERIFY(child<QLabel>(&panel, "fileExplorerStatusLabel"));
+}
+
+void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) {
+    auto* details = child<QTabWidget>(&panel, "fileExplorerDetailsTabs");
+    auto* table = child<QTableView>(&panel, "fileExplorerTable");
+    QCOMPARE(details->count(), 4);
+    QCOMPARE(table->selectionMode(), QAbstractItemView::ExtendedSelection);
+    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPreviewText"));
+    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPropertiesText"));
+    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerSafetyText"));
+    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerEvidenceText"));
+}
+
+struct ViewModeWidgets {
+    QTableView* table;
+    QListView* list;
+    QListView* grid;
+    QListView* cards;
+    QListView* columns;
+    QListView* columnsPreview;
+};
+
+void switchThroughViewModesAndVerifyVisibility(sak::FileExplorerPane* pane,
+                                               QToolButton* view,
+                                               QAction* listAction,
+                                               const ViewModeWidgets& widgets) {
+    listAction->trigger();
+    QApplication::processEvents();
+    QTRY_VERIFY(widgets.list->isVisible());
+    QVERIFY(!widgets.table->isVisible());
+    if (pane->sharedSelectionModel()->model() &&
+        pane->sharedSelectionModel()->model()->rowCount() > 0) {
+        QCOMPARE(pane->sharedSelectionModel()->selectedRows().size(), 1);
+    }
+
+    actionStartingWith(view->menu(), QStringLiteral("Grid"))->trigger();
+    QApplication::processEvents();
+    QTRY_VERIFY(widgets.grid->isVisible());
+
+    actionStartingWith(view->menu(), QStringLiteral("Cards"))->trigger();
+    QApplication::processEvents();
+    QTRY_VERIFY(widgets.cards->isVisible());
+
+    actionStartingWith(view->menu(), QStringLiteral("Columns"))->trigger();
+    QApplication::processEvents();
+    QTRY_VERIFY(widgets.columns->isVisible());
+    QVERIFY(widgets.columnsPreview->isVisible());
+
+    actionStartingWith(view->menu(), QStringLiteral("Adaptive"))->trigger();
+    QApplication::processEvents();
+    QTRY_VERIFY(widgets.grid->isVisible());
+    QCOMPARE(pane->viewMode(), sak::FileExplorerViewMode::Adaptive);
+}
+
+void verifyPersistedAdaptiveViewMode() {
+    QSettings savedModeSettings;
+    savedModeSettings.beginGroup(QStringLiteral("FileManagementExplorer"));
+    savedModeSettings.beginGroup(QStringLiteral("View"));
+    const QStringList locationGroups = savedModeSettings.childGroups();
+    QCOMPARE(locationGroups.size(), 1);
+    savedModeSettings.beginGroup(locationGroups.first());
+    QCOMPARE(savedModeSettings.value(QStringLiteral("ViewMode")).toString(),
+             QStringLiteral("adaptive"));
+    savedModeSettings.endGroup();
+    savedModeSettings.endGroup();
+    savedModeSettings.endGroup();
+}
+
+void verifyRestoredPaneMatchesPersistedSettings() {
+    sak::FileManagementExplorerPanel restored;
+    restored.resize(900, 600);
+    restored.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&restored));
+    auto* restoredPane = restored.findChild<sak::FileExplorerPane*>();
+    QVERIFY(restoredPane);
+    QCOMPARE(restoredPane->viewMode(), sak::FileExplorerViewMode::Adaptive);
+    QCOMPARE(restoredPane->itemSizePx(), 96);
+    QCOMPARE(restoredPane->showFileExtensions(), false);
+}
+
+QVector<sak::FileExplorerCommandId> bundledIconMappedCommands() {
+    return QVector<sak::FileExplorerCommandId>{
+        sak::FileExplorerCommandId::Open,
+        sak::FileExplorerCommandId::OpenInNewTab,
+        sak::FileExplorerCommandId::CopyItemPath,
+        sak::FileExplorerCommandId::Refresh,
+        sak::FileExplorerCommandId::NewFolder,
+        sak::FileExplorerCommandId::WriteFile,
+        sak::FileExplorerCommandId::Rename,
+        sak::FileExplorerCommandId::Delete,
+        sak::FileExplorerCommandId::ViewDetails,
+        sak::FileExplorerCommandId::ViewList,
+        sak::FileExplorerCommandId::ViewGrid,
+        sak::FileExplorerCommandId::ViewCards,
+        sak::FileExplorerCommandId::ViewColumns,
+        sak::FileExplorerCommandId::ViewAdaptive,
+        sak::FileExplorerCommandId::TogglePreviewPane,
+        sak::FileExplorerCommandId::ToggleDualPane,
+    };
+}
+
+void verifyBundledIconForCommand(sak::FileExplorerCommandId command) {
+    const QString key = sak::FileExplorerIconRegistry::iconKeyForCommand(command);
+    QVERIFY2(!key.isEmpty(), qPrintable(sak::FileExplorerCommandRegistry::commandIdName(command)));
+
+    const auto descriptor = sak::FileExplorerIconRegistry::descriptorForKey(key);
+    QVERIFY2(!descriptor.resource_path.isEmpty(), qPrintable(key));
+    QVERIFY2(descriptor.resource_path.startsWith(QStringLiteral(":/icons/icons/files/")),
+             qPrintable(descriptor.resource_path));
+    QVERIFY2(descriptor.upstream_source.startsWith(
+                 QStringLiteral("src/Files.App.Controls/ThemedIcon/Styles/")),
+             qPrintable(descriptor.upstream_source));
+    QCOMPARE(descriptor.license, QStringLiteral("MIT"));
+    QVERIFY2(!sak::FileExplorerIconRegistry::iconForCommand(command).isNull(), qPrintable(key));
+}
+
+void verifyNamedIconDescriptors() {
+    const auto refreshDescriptor =
+        sak::FileExplorerIconRegistry::descriptorForKey(QStringLiteral("refresh"));
+    QCOMPARE(refreshDescriptor.upstream_key, QStringLiteral("App.ThemedIcons.Refresh"));
+    QCOMPARE(refreshDescriptor.upstream_source,
+             QStringLiteral("src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"));
+    QVERIFY(!sak::FileExplorerIconRegistry::iconForKey(QStringLiteral("panel-left")).isNull());
+    QVERIFY(!sak::FileExplorerIconRegistry::iconForKey(QStringLiteral("more")).isNull());
+    for (const QString& key : {QStringLiteral("view-details-28"),
+                               QStringLiteral("view-list-28"),
+                               QStringLiteral("view-grid-28"),
+                               QStringLiteral("view-cards-28"),
+                               QStringLiteral("view-columns-28"),
+                               QStringLiteral("favorite"),
+                               QStringLiteral("status-warning"),
+                               QStringLiteral("properties-general"),
+                               QStringLiteral("properties-security")}) {
+        const auto descriptor = sak::FileExplorerIconRegistry::descriptorForKey(key);
+        QVERIFY2(!descriptor.resource_path.isEmpty(), qPrintable(key));
+        QVERIFY2(!sak::FileExplorerIconRegistry::iconForKey(key).isNull(), qPrintable(key));
+    }
+}
+
+void verifyAllDescriptorIconsRenderVisiblePixels() {
+    const auto descriptors = sak::FileExplorerIconRegistry::descriptors();
+    for (const auto& descriptor : descriptors) {
+        const QIcon icon = sak::FileExplorerIconRegistry::iconForKey(descriptor.key);
+        QVERIFY2(!icon.isNull(), qPrintable(descriptor.key));
+        for (const int size : {16, 20, 24, 32}) {
+            QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Normal)),
+                     qPrintable(descriptor.key));
+            QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Disabled)),
+                     qPrintable(descriptor.key));
+            QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Active)),
+                     qPrintable(descriptor.key));
+            QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Selected)),
+                     qPrintable(descriptor.key));
+        }
+    }
+}
+
+void verifyShellAccessibilityAndIcons(sak::FileManagementExplorerPanel& panel) {
+    auto* summary = child<QLabel>(&panel, "fileExplorerSummaryLabel");
+    auto* sidebarToggle = child<QPushButton>(&panel, "fileExplorerSidebarToggleButton");
+    auto* detailsToggle = child<QPushButton>(&panel, "fileExplorerDetailsToggleButton");
+    auto* search = child<QPushButton>(&panel, "fileExplorerSearchButton");
+    auto* command = child<QPushButton>(&panel, "fileExplorerCommandButton");
+    auto* open = child<QPushButton>(&panel, "fileExplorerOpenButton");
+    auto* copyPath = child<QPushButton>(&panel, "fileExplorerCopyPathButton");
+    auto* refresh = child<QPushButton>(&panel, "fileExplorerRefreshButton");
+    auto* newFolder = child<QPushButton>(&panel, "fileExplorerNewFolderButton");
+    auto* writeFile = child<QPushButton>(&panel, "fileExplorerWriteFileButton");
+    auto* rename = child<QPushButton>(&panel, "fileExplorerRenameButton");
+    auto* deleteButton = child<QPushButton>(&panel, "fileExplorerDeleteButton");
+    auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+    QVERIFY(!summary->accessibleName().isEmpty());
+    QVERIFY(!sidebarToggle->accessibleName().isEmpty());
+    QVERIFY(!detailsToggle->toolTip().isEmpty());
+    QVERIFY(!search->toolTip().isEmpty());
+    QVERIFY(!command->toolTip().isEmpty());
+    QVERIFY(!view->toolTip().isEmpty());
+    QVERIFY(!sidebarToggle->icon().isNull());
+    QVERIFY(!detailsToggle->icon().isNull());
+    QVERIFY(!command->icon().isNull());
+    QVERIFY(!open->icon().isNull());
+    QVERIFY(!copyPath->icon().isNull());
+    QVERIFY(!refresh->icon().isNull());
+    QVERIFY(!newFolder->icon().isNull());
+    QVERIFY(!writeFile->icon().isNull());
+    QVERIFY(!rename->icon().isNull());
+    QVERIFY(!deleteButton->icon().isNull());
+    QVERIFY(!view->icon().isNull());
+}
+
 }  // namespace
 
 class FileManagementExplorerPanelTests : public QObject {
@@ -163,152 +377,21 @@ private Q_SLOTS:
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
-        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
-        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
-        auto* table = child<QTableView>(&panel, "fileExplorerTable");
-        auto* list = child<QListView>(&panel, "fileExplorerListView");
-        auto* grid = child<QListView>(&panel, "fileExplorerGridView");
-        auto* cards = child<QListView>(&panel, "fileExplorerCardsView");
-        auto* columns = child<QListView>(&panel, "fileExplorerColumnsView");
-        auto* columnsPreview = child<QListView>(&panel, "fileExplorerColumnsPreviewView");
-        auto* details = child<QTabWidget>(&panel, "fileExplorerDetailsTabs");
-        auto* sidebarToggle = child<QPushButton>(&panel, "fileExplorerSidebarToggleButton");
-        auto* detailsToggle = child<QPushButton>(&panel, "fileExplorerDetailsToggleButton");
-        auto* search = child<QPushButton>(&panel, "fileExplorerSearchButton");
-        auto* command = child<QPushButton>(&panel, "fileExplorerCommandButton");
-        auto* open = child<QPushButton>(&panel, "fileExplorerOpenButton");
-        auto* copyPath = child<QPushButton>(&panel, "fileExplorerCopyPathButton");
-        auto* refresh = child<QPushButton>(&panel, "fileExplorerRefreshButton");
-        auto* newFolder = child<QPushButton>(&panel, "fileExplorerNewFolderButton");
-        auto* writeFile = child<QPushButton>(&panel, "fileExplorerWriteFileButton");
-        auto* rename = child<QPushButton>(&panel, "fileExplorerRenameButton");
-        auto* deleteButton = child<QPushButton>(&panel, "fileExplorerDeleteButton");
-        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
-        auto* summary = child<QLabel>(&panel, "fileExplorerSummaryLabel");
-        auto* status = child<QLabel>(&panel, "fileExplorerStatusLabel");
-
-        QVERIFY(targetList);
-        QVERIFY(pathEdit);
-        QVERIFY(table);
-        QVERIFY(list);
-        QVERIFY(grid);
-        QVERIFY(cards);
-        QVERIFY(columns);
-        QVERIFY(columnsPreview);
-        QVERIFY(details);
-        QVERIFY(sidebarToggle);
-        QVERIFY(detailsToggle);
-        QVERIFY(search);
-        QVERIFY(command);
-        QVERIFY(open);
-        QVERIFY(copyPath);
-        QVERIFY(refresh);
-        QVERIFY(newFolder);
-        QVERIFY(writeFile);
-        QVERIFY(rename);
-        QVERIFY(deleteButton);
-        QVERIFY(view);
-        QVERIFY(summary);
-        QVERIFY(status);
-        QCOMPARE(details->count(), 4);
-        QCOMPARE(table->selectionMode(), QAbstractItemView::ExtendedSelection);
-        QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPreviewText"));
-        QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPropertiesText"));
-        QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerSafetyText"));
-        QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerEvidenceText"));
-        QVERIFY(!summary->accessibleName().isEmpty());
-        QVERIFY(!sidebarToggle->accessibleName().isEmpty());
-        QVERIFY(!detailsToggle->toolTip().isEmpty());
-        QVERIFY(!search->toolTip().isEmpty());
-        QVERIFY(!command->toolTip().isEmpty());
-        QVERIFY(!view->toolTip().isEmpty());
-        QVERIFY(!sidebarToggle->icon().isNull());
-        QVERIFY(!detailsToggle->icon().isNull());
-        QVERIFY(!command->icon().isNull());
-        QVERIFY(!open->icon().isNull());
-        QVERIFY(!copyPath->icon().isNull());
-        QVERIFY(!refresh->icon().isNull());
-        QVERIFY(!newFolder->icon().isNull());
-        QVERIFY(!writeFile->icon().isNull());
-        QVERIFY(!rename->icon().isNull());
-        QVERIFY(!deleteButton->icon().isNull());
-        QVERIFY(!view->icon().isNull());
+        verifyShellCoreWidgetsExist(panel);
+        verifyShellDetailsAndPreviewPanes(panel);
+        verifyShellAccessibilityAndIcons(panel);
         captureBaseline(&panel, QStringLiteral("desktop"));
     }
 
     void filesCommunityIconRegistryMapsBundledAssets() {
-        const QVector<sak::FileExplorerCommandId> mappedCommands{
-            sak::FileExplorerCommandId::Open,
-            sak::FileExplorerCommandId::OpenInNewTab,
-            sak::FileExplorerCommandId::CopyItemPath,
-            sak::FileExplorerCommandId::Refresh,
-            sak::FileExplorerCommandId::NewFolder,
-            sak::FileExplorerCommandId::WriteFile,
-            sak::FileExplorerCommandId::Rename,
-            sak::FileExplorerCommandId::Delete,
-            sak::FileExplorerCommandId::ViewDetails,
-            sak::FileExplorerCommandId::ViewList,
-            sak::FileExplorerCommandId::ViewGrid,
-            sak::FileExplorerCommandId::ViewCards,
-            sak::FileExplorerCommandId::ViewColumns,
-            sak::FileExplorerCommandId::ViewAdaptive,
-            sak::FileExplorerCommandId::TogglePreviewPane,
-            sak::FileExplorerCommandId::ToggleDualPane,
-        };
+        const QVector<sak::FileExplorerCommandId> mappedCommands = bundledIconMappedCommands();
 
         for (const auto command : mappedCommands) {
-            const QString key = sak::FileExplorerIconRegistry::iconKeyForCommand(command);
-            QVERIFY2(!key.isEmpty(),
-                     qPrintable(sak::FileExplorerCommandRegistry::commandIdName(command)));
-
-            const auto descriptor = sak::FileExplorerIconRegistry::descriptorForKey(key);
-            QVERIFY2(!descriptor.resource_path.isEmpty(), qPrintable(key));
-            QVERIFY2(descriptor.resource_path.startsWith(QStringLiteral(":/icons/icons/files/")),
-                     qPrintable(descriptor.resource_path));
-            QVERIFY2(descriptor.upstream_source.startsWith(
-                         QStringLiteral("src/Files.App.Controls/ThemedIcon/Styles/")),
-                     qPrintable(descriptor.upstream_source));
-            QCOMPARE(descriptor.license, QStringLiteral("MIT"));
-            QVERIFY2(!sak::FileExplorerIconRegistry::iconForCommand(command).isNull(),
-                     qPrintable(key));
+            verifyBundledIconForCommand(command);
         }
 
-        const auto refreshDescriptor =
-            sak::FileExplorerIconRegistry::descriptorForKey(QStringLiteral("refresh"));
-        QCOMPARE(refreshDescriptor.upstream_key, QStringLiteral("App.ThemedIcons.Refresh"));
-        QCOMPARE(refreshDescriptor.upstream_source,
-                 QStringLiteral("src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"));
-        QVERIFY(!sak::FileExplorerIconRegistry::iconForKey(QStringLiteral("panel-left")).isNull());
-        QVERIFY(!sak::FileExplorerIconRegistry::iconForKey(QStringLiteral("more")).isNull());
-        for (const QString& key : {QStringLiteral("view-details-28"),
-                                   QStringLiteral("view-list-28"),
-                                   QStringLiteral("view-grid-28"),
-                                   QStringLiteral("view-cards-28"),
-                                   QStringLiteral("view-columns-28"),
-                                   QStringLiteral("favorite"),
-                                   QStringLiteral("status-warning"),
-                                   QStringLiteral("properties-general"),
-                                   QStringLiteral("properties-security")}) {
-            const auto descriptor = sak::FileExplorerIconRegistry::descriptorForKey(key);
-            QVERIFY2(!descriptor.resource_path.isEmpty(), qPrintable(key));
-            QVERIFY2(!sak::FileExplorerIconRegistry::iconForKey(key).isNull(), qPrintable(key));
-        }
-
-        const auto descriptors = sak::FileExplorerIconRegistry::descriptors();
-        for (const auto& descriptor : descriptors) {
-            const QIcon icon = sak::FileExplorerIconRegistry::iconForKey(descriptor.key);
-            QVERIFY2(!icon.isNull(), qPrintable(descriptor.key));
-            for (const int size : {16, 20, 24, 32}) {
-                QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Normal)),
-                         qPrintable(descriptor.key));
-                QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Disabled)),
-                         qPrintable(descriptor.key));
-                QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Active)),
-                         qPrintable(descriptor.key));
-                QVERIFY2(hasVisiblePixel(icon.pixmap(size, size, QIcon::Selected)),
-                         qPrintable(descriptor.key));
-            }
-        }
+        verifyNamedIconDescriptors();
+        verifyAllDescriptorIconsRenderVisiblePixels();
         QVERIFY(sak::FileExplorerIconRegistry::descriptors().size() >= mappedCommands.size());
     }
 
@@ -415,44 +498,12 @@ private Q_SLOTS:
             QVERIFY(listAction->isEnabled());
         }
 
-        listAction->trigger();
-        QApplication::processEvents();
-        QTRY_VERIFY(list->isVisible());
-        QVERIFY(!table->isVisible());
-        if (pane->sharedSelectionModel()->model() &&
-            pane->sharedSelectionModel()->model()->rowCount() > 0) {
-            QCOMPARE(pane->sharedSelectionModel()->selectedRows().size(), 1);
-        }
-
-        actionStartingWith(view->menu(), QStringLiteral("Grid"))->trigger();
-        QApplication::processEvents();
-        QTRY_VERIFY(grid->isVisible());
-
-        actionStartingWith(view->menu(), QStringLiteral("Cards"))->trigger();
-        QApplication::processEvents();
-        QTRY_VERIFY(cards->isVisible());
-
-        actionStartingWith(view->menu(), QStringLiteral("Columns"))->trigger();
-        QApplication::processEvents();
-        QTRY_VERIFY(columns->isVisible());
-        QVERIFY(columnsPreview->isVisible());
-
-        actionStartingWith(view->menu(), QStringLiteral("Adaptive"))->trigger();
-        QApplication::processEvents();
-        QTRY_VERIFY(grid->isVisible());
-        QCOMPARE(pane->viewMode(), sak::FileExplorerViewMode::Adaptive);
-
-        QSettings savedModeSettings;
-        savedModeSettings.beginGroup(QStringLiteral("FileManagementExplorer"));
-        savedModeSettings.beginGroup(QStringLiteral("View"));
-        const QStringList locationGroups = savedModeSettings.childGroups();
-        QCOMPARE(locationGroups.size(), 1);
-        savedModeSettings.beginGroup(locationGroups.first());
-        QCOMPARE(savedModeSettings.value(QStringLiteral("ViewMode")).toString(),
-                 QStringLiteral("adaptive"));
-        savedModeSettings.endGroup();
-        savedModeSettings.endGroup();
-        savedModeSettings.endGroup();
+        switchThroughViewModesAndVerifyVisibility(
+            pane,
+            view,
+            listAction,
+            ViewModeWidgets{table, list, grid, cards, columns, columnsPreview});
+        verifyPersistedAdaptiveViewMode();
 
         auto* slider =
             view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
@@ -468,15 +519,7 @@ private Q_SLOTS:
         QApplication::processEvents();
         QCOMPARE(pane->showFileExtensions(), false);
 
-        sak::FileManagementExplorerPanel restored;
-        restored.resize(900, 600);
-        restored.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&restored));
-        auto* restoredPane = restored.findChild<sak::FileExplorerPane*>();
-        QVERIFY(restoredPane);
-        QCOMPARE(restoredPane->viewMode(), sak::FileExplorerViewMode::Adaptive);
-        QCOMPARE(restoredPane->itemSizePx(), 96);
-        QCOMPARE(restoredPane->showFileExtensions(), false);
+        verifyRestoredPaneMatchesPersistedSettings();
     }
 
     void sidebarGroupsExposeFilesLikeTargets() {

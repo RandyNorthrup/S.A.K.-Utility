@@ -497,25 +497,16 @@ public:
         if (!extentsChunks.has_value()) {
             return result;
         }
-        const auto bitmapChunks = writeUpdatedAllocationBitmapBytes(plan->allocation_bytes);
-        if (!bitmapChunks.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        const auto freeBlockChunks =
-            writeVolumeHeaderCounter(kHfsFreeBlocksOffset,
-                                     m_volume.free_blocks,
-                                     static_cast<int>(plan->released_blocks),
-                                     &result.blockers);
-        if (!freeBlockChunks.has_value()) {
+        const auto releaseChunks =
+            writeAllocationRelease(plan->allocation_bytes, plan->released_blocks, &result.blockers);
+        if (!releaseChunks.has_value()) {
             return result;
         }
         if (!appendAllocatedFileDeleteReadBack(
                 plan->record, plan->mutation.insert_node_number, plan->released_blocks, &result)) {
             return result;
         }
-        result.chunks_written = *wipeChunks + *catalogChunks + *extentsChunks + *bitmapChunks +
-                                *freeBlockChunks;
+        result.chunks_written = *wipeChunks + *catalogChunks + *extentsChunks + *releaseChunks;
         result.warnings.append(m_warnings);
         result.warnings.append(options.secure_wipe_deleted_blocks
                                    ? QStringLiteral("HFS+ file deleted after zeroing released "
@@ -778,28 +769,8 @@ public:
         }
 
         result.before_sha256 = sha256Hex(record->inline_data);
-        const auto sizeChunks = writeForkBytes(m_volume.attributes_fork,
-                                               kHfsAttributesFileId,
-                                               kHfsDataForkType,
-                                               record->inline_size_offset,
-                                               be32Bytes(static_cast<uint32_t>(data.size())));
-        if (!sizeChunks.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        const auto dataChunks = writeForkBytes(m_volume.attributes_fork,
-                                               kHfsAttributesFileId,
-                                               kHfsDataForkType,
-                                               record->inline_data_offset,
-                                               data);
-        if (!dataChunks.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        const auto zeroChunks = zeroInlineAttributeTail(*record,
-                                                        static_cast<uint64_t>(data.size()));
-        if (!zeroChunks.has_value()) {
-            result.blockers.append(m_blockers);
+        const auto writtenChunks = writeInlineAttributeValueBytes(*record, data, &result.blockers);
+        if (!writtenChunks.has_value()) {
             return result;
         }
 
@@ -815,12 +786,44 @@ public:
 
         result.after_sha256 = sha256Hex(readBack.data);
         result.bytes_written = static_cast<uint64_t>(data.size());
-        result.chunks_written = *sizeChunks + *dataChunks + *zeroChunks;
+        result.chunks_written = *writtenChunks;
         result.warnings = m_warnings;
         result.warnings.append(QStringLiteral(
             "HFS+ inline attribute value changed only within existing record capacity"));
         result.ok = result.blockers.isEmpty();
         return result;
+    }
+
+    // Writes the new inline-attribute value in place: the 32-bit length field, then the value
+    // bytes, then zeroing of the stale tail within the record's existing capacity. Returns the
+    // total chunk count on success, or std::nullopt (with blockers appended) on failure. The order
+    // of these three writes is load-bearing for fsck certification.
+    [[nodiscard]] std::optional<int> writeInlineAttributeValueBytes(
+        const HfsAttributeRecord& record, const QByteArray& data, QStringList* blockers) {
+        const auto sizeChunks = writeForkBytes(m_volume.attributes_fork,
+                                               kHfsAttributesFileId,
+                                               kHfsDataForkType,
+                                               record.inline_size_offset,
+                                               be32Bytes(static_cast<uint32_t>(data.size())));
+        if (!sizeChunks.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        const auto dataChunks = writeForkBytes(m_volume.attributes_fork,
+                                               kHfsAttributesFileId,
+                                               kHfsDataForkType,
+                                               record.inline_data_offset,
+                                               data);
+        if (!dataChunks.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        const auto zeroChunks = zeroInlineAttributeTail(record, static_cast<uint64_t>(data.size()));
+        if (!zeroChunks.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        return *sizeChunks + *dataChunks + *zeroChunks;
     }
 
     [[nodiscard]] PartitionHfsAttributeWriteResult replaceForkAttributeValueWithinAllocatedBlocks(
@@ -2836,35 +2839,8 @@ private:
         if (!mainPayload.has_value()) {
             return std::nullopt;
         }
-        const uint16_t threadType = source.directory() ? kHfsCatalogFolderThreadRecord
-                                                       : kHfsCatalogFileThreadRecord;
 
-        HfsCatalogTreeEdit edit;
-        edit.removals.append({source.parent_id, source.name});
-        edit.insertions.append(
-            HfsRawCatalogRecord{.parent_id = resolved->destination_parent_id,
-                                .name = resolved->destination.name,
-                                .record_type = source.record_type,
-                                .catalog_id = source.catalog_id,
-                                .bytes = hfsCatalogRecordBytes(resolved->destination_parent_id,
-                                                               resolved->destination.name,
-                                                               *mainPayload)});
-        edit.replacements.append(HfsRawCatalogRecord{
-            .parent_id = source.catalog_id,
-            .name = QString(),
-            .record_type = threadType,
-            .catalog_id = 0,
-            .bytes = hfsCatalogRecordBytes(source.catalog_id,
-                                           QString(),
-                                           hfsCatalogThreadRecord(threadType,
-                                                                  resolved->destination_parent_id,
-                                                                  resolved->destination.name))});
-        if (source.parent_id != resolved->destination_parent_id) {
-            edit.valence_updates.append({source.parent_id, -1});
-            edit.valence_updates.append({resolved->destination_parent_id, 1});
-        }
-        edit.read_back_parent_id = resolved->destination_parent_id;
-        edit.read_back_name = resolved->destination.name;
+        const HfsCatalogTreeEdit edit = buildCatalogRenameMoveEdit(source, *resolved, *mainPayload);
         const auto mutation = finishCatalogTreeMutation(&*model, edit, blockers, warnings);
         if (!mutation.has_value()) {
             return std::nullopt;
@@ -2875,6 +2851,46 @@ private:
                                         resolved->destination_parent_id,
                                         resolved->source_record.parent_id !=
                                             resolved->destination_parent_id};
+    }
+
+    // Builds the catalog B-tree edit for a rename/move: drop the source key, insert the renamed
+    // record under the destination parent, replace the file/folder thread record with one pointing
+    // at the new parent+name, and (when the parent changes) adjust both folders' valence. The exact
+    // record bytes and operation set are load-bearing for fsck certification.
+    [[nodiscard]] HfsCatalogTreeEdit buildCatalogRenameMoveEdit(
+        const HfsCatalogRecord& source,
+        const HfsCatalogRenameMoveResolved& resolved,
+        const QByteArray& mainPayload) const {
+        const uint16_t threadType = source.directory() ? kHfsCatalogFolderThreadRecord
+                                                       : kHfsCatalogFileThreadRecord;
+
+        HfsCatalogTreeEdit edit;
+        edit.removals.append({source.parent_id, source.name});
+        edit.insertions.append(
+            HfsRawCatalogRecord{.parent_id = resolved.destination_parent_id,
+                                .name = resolved.destination.name,
+                                .record_type = source.record_type,
+                                .catalog_id = source.catalog_id,
+                                .bytes = hfsCatalogRecordBytes(resolved.destination_parent_id,
+                                                               resolved.destination.name,
+                                                               mainPayload)});
+        edit.replacements.append(HfsRawCatalogRecord{
+            .parent_id = source.catalog_id,
+            .name = QString(),
+            .record_type = threadType,
+            .catalog_id = 0,
+            .bytes = hfsCatalogRecordBytes(source.catalog_id,
+                                           QString(),
+                                           hfsCatalogThreadRecord(threadType,
+                                                                  resolved.destination_parent_id,
+                                                                  resolved.destination.name))});
+        if (source.parent_id != resolved.destination_parent_id) {
+            edit.valence_updates.append({source.parent_id, -1});
+            edit.valence_updates.append({resolved.destination_parent_id, 1});
+        }
+        edit.read_back_parent_id = resolved.destination_parent_id;
+        edit.read_back_name = resolved.destination.name;
+        return edit;
     }
 
     [[nodiscard]] std::optional<QByteArray> catalogRecordPayload(const HfsRawCatalogRecord& raw,
@@ -3509,6 +3525,27 @@ private:
             return 0;
         }
         return wipeReleasedExtentsWithReadBack(extents, blockers);
+    }
+
+    // Persists the freed allocation for a single-file delete: writes the updated allocation-bitmap
+    // bytes, then decrements the volume-header free-block counter by the released-block count.
+    // Returns the combined chunk count, or std::nullopt (with blockers appended) on failure. The
+    // free-block write is issued unconditionally (matching the original delta=0 behavior).
+    [[nodiscard]] std::optional<int> writeAllocationRelease(
+        const QVector<HfsAllocationBitmapByte>& allocationBytes,
+        uint64_t releasedBlocks,
+        QStringList* blockers) {
+        const auto bitmapChunks = writeUpdatedAllocationBitmapBytes(allocationBytes);
+        if (!bitmapChunks.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        const auto freeBlockChunks = writeVolumeHeaderCounter(
+            kHfsFreeBlocksOffset, m_volume.free_blocks, static_cast<int>(releasedBlocks), blockers);
+        if (!freeBlockChunks.has_value()) {
+            return std::nullopt;
+        }
+        return *bitmapChunks + *freeBlockChunks;
     }
 
     [[nodiscard]] std::optional<int> writeReleasedFreeBlockCounter(uint64_t releasedBlocks,
@@ -6441,6 +6478,11 @@ private:
             mutation.post_commit_writes.append(
                 HfsBTreeNodeWrite{freed, QByteArray(model->tree.node_size, '\0')});
         }
+        // The delete drained the final leaf: the tree collapsed to no records and
+        // the emptied leaf node was returned to the B-tree free-node pool. A delete
+        // that leaves other attributes keeps at least one leaf, so free_tree stays
+        // false and the "leaf was freed" warning is not emitted.
+        mutation.free_tree = model->leaves.isEmpty() && !model->freed_nodes.isEmpty();
         composeAttributesTreeHeader(*model, shape, leafRecords, &mutation);
         return mutation;
     }
@@ -7866,47 +7908,73 @@ private:
         }
         result.before_sha256 = sha256Hex(*before);
 
-        const auto dataChunks =
-            writeForkBytesWithinAllocated(fork, record->catalog_id, forkType, 0, data);
-        if (!dataChunks.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        const auto zeroChunks =
-            zeroStaleTail(*record, selector, static_cast<uint64_t>(data.size()));
-        if (!zeroChunks.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        const auto metadataChunks =
-            updateCatalogFileForkLogicalSize(*record, selector, static_cast<uint64_t>(data.size()));
-        if (!metadataChunks.has_value()) {
-            result.blockers.append(m_blockers);
+        const HfsAllocatedForkWriteTarget forkTarget{*record, selector, fork, forkType};
+        if (!writeCatalogForkWithinAllocatedBlocks(forkTarget, data, &result)) {
             return result;
         }
 
-        HfsForkData resizedFork = fork;
-        resizedFork.logical_size = static_cast<uint64_t>(data.size());
-        const auto after =
-            readForkBytes(resizedFork, record->catalog_id, forkType, 0, resizedFork.logical_size);
-        if (!after.has_value()) {
-            result.blockers.append(m_blockers);
-            return result;
-        }
-        if (*after != data) {
-            result.blockers.append(
-                QStringLiteral("HFS+ resize write read-back verification failed"));
-            result.blockers.append(m_blockers);
-            return result;
-        }
-
-        result.after_sha256 = sha256Hex(*after);
-        result.bytes_written = static_cast<uint64_t>(data.size());
-        result.chunks_written = *dataChunks + *zeroChunks + *metadataChunks;
         result.warnings = m_warnings;
         result.warnings.append(allocatedForkResizeWarning(selector));
         result.ok = result.blockers.isEmpty();
         return result;
+    }
+
+    // Bundles the fork-target arguments (catalog record, selector, fork data, and fork-type byte)
+    // for writeCatalogForkWithinAllocatedBlocks so the helper stays within the parameter limit.
+    // Members are const-references to the caller's live values: no copies, byte-identical behavior.
+    struct HfsAllocatedForkWriteTarget {
+        const HfsCatalogRecord& record;
+        HfsForkSelector selector;
+        const HfsForkData& fork;
+        uint8_t forkType;
+    };
+
+    // Writes the new fork payload into the file's existing allocation (data, then stale-tail
+    // zeroing, then logical-size metadata), read-back-verifies it, and records bytes/chunks on
+    // `result`. Returns false (with blockers appended) on any failure. The order of writes is
+    // load-bearing for fsck certification and must not change.
+    [[nodiscard]] bool writeCatalogForkWithinAllocatedBlocks(
+        const HfsAllocatedForkWriteTarget& target,
+        const QByteArray& data,
+        PartitionHfsFileWriteResult* result) {
+        const auto dataChunks = writeForkBytesWithinAllocated(
+            target.fork, target.record.catalog_id, target.forkType, 0, data);
+        if (!dataChunks.has_value()) {
+            result->blockers.append(m_blockers);
+            return false;
+        }
+        const auto zeroChunks =
+            zeroStaleTail(target.record, target.selector, static_cast<uint64_t>(data.size()));
+        if (!zeroChunks.has_value()) {
+            result->blockers.append(m_blockers);
+            return false;
+        }
+        const auto metadataChunks = updateCatalogFileForkLogicalSize(
+            target.record, target.selector, static_cast<uint64_t>(data.size()));
+        if (!metadataChunks.has_value()) {
+            result->blockers.append(m_blockers);
+            return false;
+        }
+
+        HfsForkData resizedFork = target.fork;
+        resizedFork.logical_size = static_cast<uint64_t>(data.size());
+        const auto after = readForkBytes(
+            resizedFork, target.record.catalog_id, target.forkType, 0, resizedFork.logical_size);
+        if (!after.has_value()) {
+            result->blockers.append(m_blockers);
+            return false;
+        }
+        if (*after != data) {
+            result->blockers.append(
+                QStringLiteral("HFS+ resize write read-back verification failed"));
+            result->blockers.append(m_blockers);
+            return false;
+        }
+
+        result->after_sha256 = sha256Hex(*after);
+        result->bytes_written = static_cast<uint64_t>(data.size());
+        result->chunks_written = *dataChunks + *zeroChunks + *metadataChunks;
+        return true;
     }
 
     [[nodiscard]] PartitionHfsFileWriteResult replaceCatalogForkWithAllocationGrowth(

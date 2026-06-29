@@ -31,6 +31,7 @@ class QMenu;
 class QPoint;
 class QAction;
 class QToolButton;
+class QVBoxLayout;
 
 namespace sak {
 
@@ -69,6 +70,12 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void buildCommandAndNavBars(QWidget* center, QVBoxLayout* center_layout);
+    void buildContentArea(QWidget* center, QVBoxLayout* center_layout);
+    void connectUiSignals();
+    void connectToolbarSignals();
+    void connectNavigationSignals();
+    void connectPaneSignals();
     void installCommandShortcuts();
     void setTargets(QVector<FileManagementTarget> targets);
     void appendTarget(const FileManagementTarget& target);
@@ -104,6 +111,7 @@ private:
                                   FileExplorerCommandId command,
                                   const FileExplorerCommandContext& context);
     void rebuildViewMenu(const FileExplorerCommandContext& context);
+    void appendItemSizeMenuRow(QMenu* menu);
     void executeCommand(FileExplorerCommandId command);
     bool dispatchNavigationCommand(FileExplorerCommandId command);
     bool dispatchSelectionCommand(FileExplorerCommandId command);
