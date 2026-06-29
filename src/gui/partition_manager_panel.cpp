@@ -3930,6 +3930,9 @@ struct FormatPartitionWidgets {
     QComboBox* swap_page_size{nullptr};
     QLineEdit* label{nullptr};
     QLineEdit* apfs_additional_volumes{nullptr};
+    QCheckBox* apfs_encrypt{nullptr};
+    QLineEdit* apfs_volume_password{nullptr};
+    QLineEdit* apfs_recovery_key{nullptr};
     QCheckBox* full_format{nullptr};
     QCheckBox* raw_format_confirm{nullptr};
 };
@@ -4052,6 +4055,16 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.apfs_additional_volumes->setAccessibleName(QObject::tr("Additional APFS volume names"));
     widgets.apfs_additional_volumes->setPlaceholderText(
         QObject::tr("Comma-separated extra volume names (one space manager)"));
+    widgets.apfs_encrypt = new QCheckBox(QObject::tr("Encrypt (FileVault)"), &dialog);
+    widgets.apfs_encrypt->setAccessibleName(QObject::tr("Encrypt APFS volume with FileVault"));
+    widgets.apfs_volume_password = new QLineEdit(&dialog);
+    widgets.apfs_volume_password->setEchoMode(QLineEdit::Password);
+    widgets.apfs_volume_password->setAccessibleName(QObject::tr("APFS volume password"));
+    widgets.apfs_volume_password->setPlaceholderText(QObject::tr("Volume password"));
+    widgets.apfs_recovery_key = new QLineEdit(&dialog);
+    widgets.apfs_recovery_key->setEchoMode(QLineEdit::Password);
+    widgets.apfs_recovery_key->setAccessibleName(QObject::tr("APFS personal recovery key"));
+    widgets.apfs_recovery_key->setPlaceholderText(QObject::tr("Optional personal recovery key"));
     widgets.full_format = new QCheckBox(QObject::tr("Full format"), &dialog);
     widgets.full_format->setAccessibleName(QObject::tr("Full format"));
     widgets.raw_format_confirm = new QCheckBox(
@@ -4065,6 +4078,9 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     dialog.formLayout()->addRow(QObject::tr("Label:"), widgets.label);
     dialog.formLayout()->addRow(QObject::tr("Additional APFS volumes:"),
                                 widgets.apfs_additional_volumes);
+    dialog.formLayout()->addRow(QString(), widgets.apfs_encrypt);
+    dialog.formLayout()->addRow(QObject::tr("Volume password:"), widgets.apfs_volume_password);
+    dialog.formLayout()->addRow(QObject::tr("Recovery key:"), widgets.apfs_recovery_key);
     dialog.formLayout()->addRow(QString(), widgets.full_format);
     dialog.formLayout()->addRow(QString(), widgets.raw_format_confirm);
     return widgets;
@@ -4077,8 +4093,16 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     const bool swapSelected = rawKind == RawFormatKind::Swap;
     const bool apfsSelected = isApfsFilesystem(widgets.file_system->currentText());
 
+    const bool encryptChecked = apfsSelected && widgets.apfs_encrypt->isChecked();
+
     widgets.apfs_additional_volumes->setVisible(apfsSelected);
     widgets.apfs_additional_volumes->setEnabled(apfsSelected);
+    widgets.apfs_encrypt->setVisible(apfsSelected);
+    widgets.apfs_encrypt->setEnabled(apfsSelected);
+    widgets.apfs_volume_password->setVisible(encryptChecked);
+    widgets.apfs_volume_password->setEnabled(encryptChecked);
+    widgets.apfs_recovery_key->setVisible(encryptChecked);
+    widgets.apfs_recovery_key->setEnabled(encryptChecked);
     widgets.allocation_unit->setEnabled(!rawSelected);
     widgets.full_format->setEnabled(!rawSelected);
     widgets.swap_page_size->setVisible(swapSelected);
@@ -4086,7 +4110,9 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     widgets.raw_format_confirm->setVisible(rawSelected);
     widgets.raw_format_confirm->setAccessibleName(rawFormatConfirmationAccessibleName(rawKind));
     widgets.raw_format_confirm->setText(rawFormatConfirmationText(rawKind));
-    dialog.setAcceptEnabled(!rawSelected || widgets.raw_format_confirm->isChecked());
+    const bool encryptReady = !encryptChecked || !widgets.apfs_volume_password->text().isEmpty();
+    dialog.setAcceptEnabled((!rawSelected || widgets.raw_format_confirm->isChecked()) &&
+                            encryptReady);
     dialog.setPreviewText(formatPartitionPreviewText(widgets, rawKind));
 }
 
@@ -4103,6 +4129,8 @@ void connectFormatPartitionControls(PartitionOperationDialog& dialog,
     QObject::connect(widgets.label, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(
         widgets.apfs_additional_volumes, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.apfs_encrypt, &QCheckBox::toggled, &dialog, updatePreview);
+    QObject::connect(widgets.apfs_volume_password, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(widgets.raw_format_confirm, &QCheckBox::toggled, &dialog, updatePreview);
 }
 
@@ -4143,6 +4171,14 @@ QJsonObject formatPartitionPayload(const FormatPartitionWidgets& widgets,
             apfsAdditionalVolumesArray(widgets.apfs_additional_volumes);
         if (!additionalVolumes.isEmpty()) {
             payload[QStringLiteral("apfs_additional_volume_names")] = additionalVolumes;
+        }
+        if (widgets.apfs_encrypt->isChecked()) {
+            payload[QStringLiteral("apfs_encrypt_volume")] = true;
+            payload[QStringLiteral("apfs_volume_password")] = widgets.apfs_volume_password->text();
+            const QString recoveryKey = widgets.apfs_recovery_key->text();
+            if (!recoveryKey.isEmpty()) {
+                payload[QStringLiteral("apfs_recovery_key")] = recoveryKey;
+            }
         }
     }
     if (isLinuxSwapFilesystem(fileSystem)) {

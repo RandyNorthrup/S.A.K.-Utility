@@ -1812,6 +1812,7 @@ private Q_SLOTS:
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
     void apfsWriter_formatsUnlockableEncryptedVolume();
+    void apfsWriter_rawFormatHonorsVolumePassword();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
     void apfsWriter_recoveryKeyUnlocksEncryptedVolume();
     void apfsKeybag_failsClosedOnMalformedEntry();
@@ -3030,6 +3031,59 @@ void verifyApfsMultiVolumeFormatScripts(const PartitionScriptBuilder* builder,
             PartitionOperationType::Format, smallMultiVolumeTarget, multiVolumePayload));
     QVERIFY(!smallMultiVolumeFormat.valid());
     QVERIFY(smallMultiVolumeFormat.blockers.join(' ').contains(QStringLiteral("512 MiB")));
+}
+
+// A6 promotion: an opt-in FileVault format threads the password (and optional recovery key)
+// through the production format-raw route as PartitionScript credentials -- materialized to a
+// locked temp file at execution, never plaintext in the script text -- and stays inside the
+// certified single-chunk tier.
+void verifyApfsEncryptedFormatScripts(const PartitionScriptBuilder* builder,
+                                      const PartitionTarget& target) {
+    PartitionTarget encTarget = target;
+    encTarget.size_bytes = 128ULL * 1024ULL * 1024ULL;
+    QJsonObject encPayload = baseExtToolPayload();
+    encPayload[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    encPayload[QStringLiteral("apfs_encrypt_volume")] = true;
+    encPayload[QStringLiteral("apfs_volume_password")] = QStringLiteral("sakpass1234");
+    encPayload[QStringLiteral("apfs_recovery_key")] = QStringLiteral("RKEY-RKEY-RKEY");
+    const auto encFormat = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, encTarget, encPayload));
+    QVERIFY2(encFormat.valid(), qPrintable(encFormat.blockers.join(QStringLiteral("; "))));
+    QVERIFY(encFormat.script.contains(QStringLiteral("-VolumePasswordFile")));
+    QVERIFY(encFormat.script.contains(QStringLiteral("-RecoveryKeyFile")));
+    QVERIFY(encFormat.script.contains(QStringLiteral("--volume-password-file")));
+    // The secrets never appear in the generated script text.
+    QVERIFY(!encFormat.script.contains(QStringLiteral("sakpass1234")));
+    QVERIFY(!encFormat.script.contains(QStringLiteral("RKEY-RKEY-RKEY")));
+    // They travel as credentials the executor materializes to a locked temp file.
+    QCOMPARE(encFormat.credential_files.size(), 2);
+    QCOMPARE(encFormat.credential_files.at(0).secret, QStringLiteral("sakpass1234"));
+    QVERIFY(encFormat.script.contains(encFormat.credential_files.at(0).placeholder));
+
+    // Encrypt opt-in without a password fails closed.
+    QJsonObject noPwPayload = encPayload;
+    noPwPayload.remove(QStringLiteral("apfs_volume_password"));
+    const auto noPw = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, encTarget, noPwPayload));
+    QVERIFY(!noPw.valid());
+    QVERIFY(noPw.blockers.join(' ').contains(QStringLiteral("volume password")));
+
+    // Encryption stays in the certified single-chunk tier; larger encrypted targets block.
+    PartitionTarget bigEncTarget = target;
+    bigEncTarget.size_bytes = 256ULL * 1024ULL * 1024ULL;
+    const auto bigEnc = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, bigEncTarget, encPayload));
+    QVERIFY(!bigEnc.valid());
+    QVERIFY(bigEnc.blockers.join(' ').contains(QStringLiteral("128 MiB")));
+
+    // A plaintext format carries no credentials and no encryption arguments.
+    QJsonObject plainPayload = baseExtToolPayload();
+    plainPayload[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    const auto plain = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Format, encTarget, plainPayload));
+    QVERIFY2(plain.valid(), qPrintable(plain.blockers.join(QStringLiteral("; "))));
+    QVERIFY(plain.credential_files.isEmpty());
+    QVERIFY(!plain.script.contains(QStringLiteral("-VolumePasswordFile")));
 }
 
 void verifyExtRepairScript(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
@@ -9897,6 +9951,7 @@ void verifyApfsEncryptedVolumeUnlock(const QString& img,
                                      const QByteArray& password,
                                      const QByteArray& kekBlob,
                                      const QByteArray& vekBlob);
+void verifyApfsImageUnlockableWithPassword(const QString& img, const QByteArray& password);
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
@@ -9921,42 +9976,7 @@ void PartitionManagerCoreTests::apfsWriter_formatsUnlockableEncryptedVolume() {
                  .ok,
              "format encrypted volume");
 
-    // nx_keylocker @ 0x510 points at the container keybag.
-    const QByteArray nxsb = readApfsImageBlock(img, 0);
-    const QByteArray nxUuid = nxsb.mid(0x48, 16);
-    const uint64_t keylocker = apfsLe64(nxsb, 0x510);
-    QVERIFY(keylocker != 0);
-
-    // Decrypt + parse the container keybag (XTS key = container UUID).
-    const QList<KeybagEntry> containerEntries = parseKeybagBlock(
-        xtsDecryptBlock(nxUuid + nxUuid, keylocker, readApfsImageBlock(img, keylocker)));
-    QCOMPARE(containerEntries.size(), 2);
-    QByteArray volUuid;
-    QByteArray vekBlob;
-    uint64_t volumeKbBlock = 0;
-    for (const auto& e : containerEntries) {
-        if (e.tag == kKbTagVolumeKey) {
-            volUuid = e.uuid;
-            vekBlob = e.keydata;
-        } else if (e.tag == kKbTagVolumeUnlockRecords) {
-            volumeKbBlock = apfsLe64(e.keydata, 0);
-        }
-    }
-    QVERIFY(!vekBlob.isEmpty());
-    QVERIFY(volumeKbBlock != 0);
-
-    // Decrypt + parse the per-volume keybag (XTS key = volume UUID) -> KEK blob.
-    const QList<KeybagEntry> volumeEntries = parseKeybagBlock(
-        xtsDecryptBlock(volUuid + volUuid, volumeKbBlock, readApfsImageBlock(img, volumeKbBlock)));
-    QByteArray kekBlob;
-    for (const auto& e : volumeEntries) {
-        if (e.tag == kKbTagVolumeUnlockRecords) {
-            kekBlob = e.keydata;
-        }
-    }
-    QVERIFY(!kekBlob.isEmpty());
-
-    verifyApfsEncryptedVolumeUnlock(img, password, kekBlob, vekBlob);
+    verifyApfsImageUnlockableWithPassword(img, password);
 }
 
 namespace {
@@ -9998,7 +10018,89 @@ void verifyApfsEncryptedVolumeUnlock(const QString& img,
     QVERIFY(!aesKeyUnwrap(wrongDerived, kek.wrappedKey).has_value());
 }
 
+// Do exactly what the macOS kernel does on mount: walk the on-disk keybag chain, derive the
+// VEK from the password, and AES-XTS-decrypt the fs-tree to a valid checksum-correct node.
+// Shared by the image-path and raw-path A6 format tests (each format randomizes the VEK/salt/
+// UUIDs, so unlockability -- not byte-equality -- is the certifiable property).
+void verifyApfsImageUnlockableWithPassword(const QString& img, const QByteArray& password) {
+    using namespace sak::apfs_crypto;
+    using namespace sak::apfs_keybag;
+    // nx_keylocker @ 0x510 points at the container keybag.
+    const QByteArray nxsb = readApfsImageBlock(img, 0);
+    const QByteArray nxUuid = nxsb.mid(0x48, 16);
+    const uint64_t keylocker = apfsLe64(nxsb, 0x510);
+    QVERIFY(keylocker != 0);
+    // Decrypt + parse the container keybag (XTS key = container UUID).
+    const QList<KeybagEntry> containerEntries = parseKeybagBlock(
+        xtsDecryptBlock(nxUuid + nxUuid, keylocker, readApfsImageBlock(img, keylocker)));
+    QCOMPARE(containerEntries.size(), 2);
+    QByteArray volUuid;
+    QByteArray vekBlob;
+    uint64_t volumeKbBlock = 0;
+    for (const auto& e : containerEntries) {
+        if (e.tag == kKbTagVolumeKey) {
+            volUuid = e.uuid;
+            vekBlob = e.keydata;
+        } else if (e.tag == kKbTagVolumeUnlockRecords) {
+            volumeKbBlock = apfsLe64(e.keydata, 0);
+        }
+    }
+    QVERIFY(!vekBlob.isEmpty());
+    QVERIFY(volumeKbBlock != 0);
+    // Decrypt + parse the per-volume keybag (XTS key = volume UUID) -> KEK blob.
+    const QList<KeybagEntry> volumeEntries = parseKeybagBlock(
+        xtsDecryptBlock(volUuid + volUuid, volumeKbBlock, readApfsImageBlock(img, volumeKbBlock)));
+    QByteArray kekBlob;
+    for (const auto& e : volumeEntries) {
+        if (e.tag == kKbTagVolumeUnlockRecords) {
+            kekBlob = e.keydata;
+        }
+    }
+    QVERIFY(!kekBlob.isEmpty());
+    verifyApfsEncryptedVolumeUnlock(img, password, kekBlob, vekBlob);
+}
+
 }  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_rawFormatHonorsVolumePassword() {
+    // A6 I1: the RAW format entry point (formatExistingContainerTarget, the one the production
+    // format-raw route invokes) honors --volume-password -- it lands the same kernel-unlockable
+    // encrypted bytes on a confirmed raw target. Each format randomizes the VEK/salt/UUIDs, so
+    // the certifiable property is unlockability, not byte-equality with the image path.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString rawPath = QDir(temp.path()).filePath(QStringLiteral("enc-raw.apfs"));
+    const QByteArray password = QByteArrayLiteral("sakpass1234");
+    constexpr uint64_t kContainerBytes = 64ULL * 1024ULL * 1024ULL;
+
+    QFile rawTarget(rawPath);
+    QVERIFY(rawTarget.open(QIODevice::WriteOnly));
+    QVERIFY(rawTarget.resize(static_cast<qint64>(kContainerBytes)));
+    rawTarget.close();
+
+    // Confirmation is mandatory: the raw entry fails closed without the wipe acknowledgement.
+    const auto unconfirmed = PartitionApfsWriter::formatExistingImageOnlyContainer(
+        {.image_path = rawPath,
+         .target_container_bytes = kContainerBytes,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKENC"),
+         .volume_password = QString::fromUtf8(password),
+         .options = options});
+    QVERIFY(!unconfirmed.ok);
+    QVERIFY(unconfirmed.blockers.join(' ').contains(QStringLiteral("confirmation")));
+
+    const auto rawFormat = PartitionApfsWriter::formatExistingImageOnlyContainer(
+        {.image_path = rawPath,
+         .target_container_bytes = kContainerBytes,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKENC"),
+         .volume_password = QString::fromUtf8(password),
+         .target_wipe_confirmed = true,
+         .options = options});
+    QVERIFY2(rawFormat.ok, qPrintable(rawFormat.blockers.join(QStringLiteral("; "))));
+    verifyApfsImageUnlockableWithPassword(rawPath, password);
+}
 
 void PartitionManagerCoreTests::apfsReader_decryptsEncryptedVolumeWithCredential() {
     // A6 read-side: the S.A.K. APFS reader itself (not just the macOS kernel)
@@ -11049,6 +11151,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsExtToolScriptsWithManifestGa
     verifyHfsFormatAndRepairScripts(&builder, target);
     verifyApfsFormatAndRepairScripts(&builder, target);
     verifyApfsMultiVolumeFormatScripts(&builder, target);
+    verifyApfsEncryptedFormatScripts(&builder, target);
     verifyExtRepairScript(&builder, target);
     verifyExtResizeScripts(&builder, target);
     verifyExtTargetPathGates(&builder, target);
@@ -12305,6 +12408,23 @@ void verifyHfsAndSwapSafetyGates(const PartitionInventory& inventory,
     preview = previewNonNativeOperation(
         inventory, PartitionOperationType::CheckFileSystem, target, apfsFormat);
     QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
+
+    // A6: opting into FileVault without a password fails closed at the validator.
+    QJsonObject apfsEncryptNoPassword = apfsFormat;
+    apfsEncryptNoPassword[QStringLiteral("apfs_encrypt_volume")] = true;
+    preview = previewNonNativeOperation(
+        inventory, PartitionOperationType::Format, target, apfsEncryptNoPassword);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("volume password")));
+
+    // A6: the encrypt flag is only meaningful for APFS; on any other file system it blocks.
+    QJsonObject extEncrypt = payload;
+    extEncrypt[QStringLiteral("apfs_encrypt_volume")] = true;
+    extEncrypt[QStringLiteral("apfs_volume_password")] = QStringLiteral("sakpass1234");
+    preview =
+        previewNonNativeOperation(inventory, PartitionOperationType::Format, target, extEncrypt);
+    QVERIFY(!preview.canApply());
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("only supported for APFS")));
 }
 
 void verifyExtShrinkUsageSafetyGate(const PartitionInventory* inventory,

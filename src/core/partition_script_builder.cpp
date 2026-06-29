@@ -61,7 +61,22 @@ constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_con
 constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
 constexpr auto kApfsCompressZlibPayload = "apfs_compress_zlib";
 constexpr auto kApfsSnapshotNamePayload = "apfs_snapshot_name";
+// A6 (A-f): opt-in FileVault format. The encrypt flag GATES encryption so an ordinary
+// format never silently encrypts; the password/recovery-key travel as PartitionScript
+// credentials (locked temp file at execution), never inline in the script text.
+constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
+constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
+constexpr auto kApfsRecoveryKeyPayload = "apfs_recovery_key";
+// Placeholder tokens the executor substitutes with each credential's locked temp-file path.
+constexpr auto kApfsVolumePasswordPlaceholder = "__SAK_APFS_VOLUME_PASSWORD_FILE__";
+constexpr auto kApfsRecoveryKeyPlaceholder = "__SAK_APFS_RECOVERY_KEY_FILE__";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
+// A6 FileVault was Apple-certified only at the single-chunk tier (the encryption unit tests and
+// the macOS-kernel unlock/mount cert all used 64-128 MiB volumes). The keybag reserved-prefix
+// accounting has not been validated against the multi-CIB / CAB spaceman, so a production
+// encrypted format stays inside that certified single-chunk ceiling and fails closed above it;
+// the unencrypted format keeps the full 64 MiB - 24 TiB range.
+constexpr uint64_t kMaximumApfsGeneratedEncryptedFormatBytes = 128ULL * 1024ULL * 1024ULL;
 // fsck_apfs requires nx_max_file_systems == ceil(container_bytes / 512 MiB); each volume in
 // an A4 multi-volume container consumes one nx_max_file_systems slot.
 constexpr uint64_t kApfsVolumeSizingSpanBytes = 512ULL * 1024ULL * 1024ULL;
@@ -391,6 +406,40 @@ ApfsAdditionalVolumesArg resolveApfsAdditionalVolumes(const PartitionOperation& 
     return result;
 }
 
+// A6: resolve the opt-in FileVault encryption arguments for a raw format. When the encrypt
+// flag is unset the format stays plaintext (no args, no credentials). When set, the password
+// (and optional recovery key) become PartitionScript credentials passed by locked temp-file
+// path, so no secret is ever written into the generated script text.
+struct ApfsFormatEncryptionArg {
+    QString blocker;
+    QString powershell_args;
+    QList<PartitionScriptCredential> credentials;
+};
+
+ApfsFormatEncryptionArg resolveApfsFormatEncryption(const PartitionOperation& operation) {
+    ApfsFormatEncryptionArg out;
+    if (!payloadBool(operation, QString::fromLatin1(kApfsEncryptVolumePayload))) {
+        return out;
+    }
+    const QString password = payloadString(operation,
+                                           QString::fromLatin1(kApfsVolumePasswordPayload));
+    if (password.isEmpty()) {
+        out.blocker = QStringLiteral("APFS encrypted format requires a volume password");
+        return out;
+    }
+    out.credentials.append({QString::fromLatin1(kApfsVolumePasswordPlaceholder), password});
+    out.powershell_args = QStringLiteral(" -VolumePasswordFile '%1'")
+                              .arg(QString::fromLatin1(kApfsVolumePasswordPlaceholder));
+    const QString recoveryKey = payloadString(operation,
+                                              QString::fromLatin1(kApfsRecoveryKeyPayload));
+    if (!recoveryKey.isEmpty()) {
+        out.credentials.append({QString::fromLatin1(kApfsRecoveryKeyPlaceholder), recoveryKey});
+        out.powershell_args += QStringLiteral(" -RecoveryKeyFile '%1'")
+                                   .arg(QString::fromLatin1(kApfsRecoveryKeyPlaceholder));
+    }
+    return out;
+}
+
 PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                                          const QString& label) {
     const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
@@ -413,11 +462,26 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
         return invalidPartitionScript(extraVolumes.blocker);
     }
 
+    const ApfsFormatEncryptionArg encryption = resolveApfsFormatEncryption(operation);
+    if (!encryption.blocker.isEmpty()) {
+        return invalidPartitionScript(encryption.blocker);
+    }
+    if (!encryption.credentials.isEmpty() &&
+        operation.target.size_bytes > kMaximumApfsGeneratedEncryptedFormatBytes) {
+        return invalidPartitionScript(QStringLiteral(
+            "APFS FileVault-encrypted format is certified for single-chunk containers up to "
+            "128 MiB; larger encrypted targets remain blocked"));
+    }
+
     const QString targetPath = rawPartitionTargetPath(operation);
     PartitionScript out;
-    out.preview = QStringLiteral("Format Disk %1 Partition %2 as APFS with S.A.K. APFS writer")
+    out.preview = QStringLiteral("Format Disk %1 Partition %2 as %3 APFS with S.A.K. APFS writer")
                       .arg(operation.target.disk_number)
-                      .arg(operation.target.partition_number);
+                      .arg(operation.target.partition_number)
+                      .arg(encryption.credentials.isEmpty()
+                               ? QStringLiteral("plaintext")
+                               : QStringLiteral("FileVault-encrypted"));
+    out.credential_files = encryption.credentials;
     out.script = commonHeader(out.preview) +
                  requirePartitionIdentity(operation.target.disk_number,
                                           operation.target.partition_number,
@@ -428,11 +492,12 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                      "$targetSizeBytes = [uint64]$p.Size\n"
                      "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $targetPath "
                      "-SizeBytes $targetSizeBytes -VolumeName %2 -AdditionalVolumeNames %3 "
-                     "-EvidenceId 'ui.apfs-generated-raw-format'\n"
+                     "-EvidenceId 'ui.apfs-generated-raw-format'%4\n"
                      "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
                           PartitionScriptBuilder::quotePowerShell(label),
-                          extraVolumes.powershell_list);
+                          extraVolumes.powershell_list,
+                          encryption.powershell_args);
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe format-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
@@ -1388,6 +1453,12 @@ QString apfsWriterCliArgConditionals() {
         "        $args += @('--additional-volume-name', $extraVolume)\n"
         "      }\n"
         "    }\n"
+        "    if (-not [string]::IsNullOrWhiteSpace($VolumePasswordFile)) {\n"
+        "      $args += @('--volume-password-file', $VolumePasswordFile)\n"
+        "    }\n"
+        "    if (-not [string]::IsNullOrWhiteSpace($RecoveryKeyFile)) {\n"
+        "      $args += @('--recovery-key-file', $RecoveryKeyFile)\n"
+        "    }\n"
         "  }\n"
         "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
         "'patch-raw-root-directory-file', "
@@ -1445,7 +1516,8 @@ QString apfsWriterCliFunctionScript() {
                "[string]$VolumeName, [string]$EvidenceId, [string]$FileName = '', "
                "[string]$DirectoryName = '', [string]$PayloadFile = '', "
                "[uint64]$PatchOffsetBytes = 0, [string[]]$AdditionalVolumeNames = @(), "
-               "[switch]$CompressZlib, [string]$SnapshotName = '')\n"
+               "[switch]$CompressZlib, [string]$SnapshotName = '', "
+               "[string]$VolumePasswordFile = '', [string]$RecoveryKeyFile = '')\n"
                "  $cliPath = %1\n"
                "  if (-not (Test-Path -LiteralPath $cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing: {0}' -f $cliPath)\n"

@@ -10,10 +10,14 @@
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
+#include <QDir>
 #include <QJsonObject>
+#include <QTemporaryFile>
 #include <QUuid>
 
 #include <algorithm>
+#include <memory>
+#include <vector>
 
 namespace sak {
 
@@ -53,6 +57,64 @@ void markCancelled(PartitionExecutionResult* result) {
     result->cancelled = true;
     result->message = QStringLiteral("Partition operation batch cancelled");
 }
+
+// Materializes a script's PartitionScriptCredential secrets into locked temp files for the
+// lifetime of one execution, substituting each placeholder in the script with its temp path.
+// On destruction it overwrites each file with zeros and removes it, so a credential (e.g. a
+// FileVault format password) never persists on disk and never appears in the script text or
+// any child-process command line. A no-op (the script is returned verbatim) when the script
+// carries no credentials, so every existing operation is byte-for-byte unaffected.
+class StagedScriptCredentials {
+public:
+    explicit StagedScriptCredentials(const PartitionScript& script) : m_script(script.script) {
+        for (const auto& credential : script.credential_files) {
+            auto file = std::make_unique<QTemporaryFile>(
+                QDir::tempPath() + QStringLiteral("/sak-apfs-cred-XXXXXX.tmp"));
+            file->setAutoRemove(true);
+            if (!file->open()) {
+                m_ok = false;
+                m_error = QStringLiteral("Unable to stage encryption credential file");
+                return;
+            }
+            // Best-effort owner-only permissions; %TEMP% is already user-scoped on Windows.
+            file->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+            const QByteArray secret = credential.secret.toUtf8();
+            file->write(secret);
+            file->flush();
+            // Release the parent handle so the writer child can open the file; the
+            // QTemporaryFile object keeps the path alive until this guard is destroyed.
+            file->close();
+            m_script.replace(credential.placeholder, QDir::toNativeSeparators(file->fileName()));
+            m_secret_sizes.push_back(secret.size());
+            m_files.push_back(std::move(file));
+        }
+    }
+
+    StagedScriptCredentials(const StagedScriptCredentials&) = delete;
+    StagedScriptCredentials& operator=(const StagedScriptCredentials&) = delete;
+
+    ~StagedScriptCredentials() {
+        for (std::size_t i = 0; i < m_files.size(); ++i) {
+            if (m_files[i]->open()) {
+                m_files[i]->write(QByteArray(m_secret_sizes[i], '\0'));
+                m_files[i]->flush();
+                m_files[i]->close();
+            }
+        }
+        // QTemporaryFile destructors remove the files.
+    }
+
+    [[nodiscard]] bool ok() const noexcept { return m_ok; }
+    [[nodiscard]] const QString& error() const noexcept { return m_error; }
+    [[nodiscard]] const QString& script() const noexcept { return m_script; }
+
+private:
+    QString m_script;
+    std::vector<std::unique_ptr<QTemporaryFile>> m_files;
+    std::vector<int> m_secret_sizes;
+    bool m_ok{true};
+    QString m_error;
+};
 }  // namespace
 
 PartitionExecutor::PartitionExecutor(QObject* parent) : QObject(parent) {}
@@ -132,11 +194,16 @@ PartitionExecutionStep PartitionExecutor::executeScript(const PartitionOperation
 PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionOperation& operation,
                                                                 const PartitionScript& script) {
     auto step = newScriptExecutionStep(operation);
+    StagedScriptCredentials credentials(script);
+    if (!credentials.ok()) {
+        step.error_message = credentials.error();
+        return step;
+    }
     ElevationBroker broker;
     connect(&broker, &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
     setActiveBroker(&broker);
     QJsonObject payload;
-    payload[QStringLiteral("command")] = script.script;
+    payload[QStringLiteral("command")] = credentials.script();
     payload[QStringLiteral("timeout_seconds")] = std::max(script.timeout_seconds,
                                                           kDefaultPartitionTaskTimeoutSeconds);
     payload[QStringLiteral("max_output_bytes")] = kMaxPartitionTaskOutputBytes;
@@ -166,10 +233,17 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
 PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOperation& operation,
                                                              const PartitionScript& script) {
     auto step = newScriptExecutionStep(operation);
-    const auto proc = runPowerShell(
-        script.script, script.timeout_seconds * kMillisecondsPerSecond, true, true, [this]() {
-            return m_cancelled.load(std::memory_order_relaxed);
-        });
+    StagedScriptCredentials credentials(script);
+    if (!credentials.ok()) {
+        step.error_message = credentials.error();
+        return step;
+    }
+    const auto proc =
+        runPowerShell(credentials.script(),
+                      script.timeout_seconds * kMillisecondsPerSecond,
+                      true,
+                      true,
+                      [this]() { return m_cancelled.load(std::memory_order_relaxed); });
     step.success = proc.succeeded();
     step.stdout_text = proc.std_out;
     step.stderr_text = proc.std_err;

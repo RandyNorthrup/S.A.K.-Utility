@@ -15,11 +15,21 @@ namespace sak {
 struct PartitionFileSystemToolCommand;
 struct ExternalFileSystemToolScriptRequest;
 
+// A secret the executor must materialize to a locked temp file just before running the
+// script: it replaces `placeholder` in `script` with the temp file's path, then shred-deletes
+// the file afterward. Keeps credentials (e.g. a FileVault format password) out of the script
+// text and off every child-process command line.
+struct PartitionScriptCredential {
+    QString placeholder;
+    QString secret;
+};
+
 struct PartitionScript {
     QString script;
     QString dry_run_script;
     QString preview;
     QStringList blockers;
+    QList<PartitionScriptCredential> credential_files;
     int timeout_seconds{kPartitionDefaultTaskTimeoutSeconds};
 
     [[nodiscard]] bool valid() const noexcept { return blockers.isEmpty() && !script.isEmpty(); }

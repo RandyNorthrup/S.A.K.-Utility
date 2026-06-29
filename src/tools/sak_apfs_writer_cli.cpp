@@ -452,6 +452,8 @@ struct CliParserOptions {
     const QCommandLineOption* compress_zlib{nullptr};
     const QCommandLineOption* volume_password{nullptr};
     const QCommandLineOption* recovery_key{nullptr};
+    const QCommandLineOption* volume_password_file{nullptr};
+    const QCommandLineOption* recovery_key_file{nullptr};
     const QCommandLineOption* sparse_size{nullptr};
     const QCommandLineOption* xattr{nullptr};
 };
@@ -540,6 +542,25 @@ std::optional<CliMutationInputs> mutationInputsFromParser(const QCommandLinePars
         *fileName, *directoryName, *payload, patchOffset.value_or(0), patchOffsetError};
 }
 
+// Resolve a credential value: when the *-file option is set, return that file's exact UTF-8
+// bytes (so the secret never lands on the command line or in any generated script text);
+// otherwise fall back to the inline --volume-password / --recovery-key value.
+QString credentialFromParser(const QCommandLineParser& parser,
+                             const QCommandLineOption& directOption,
+                             const QCommandLineOption& fileOption,
+                             QString* error) {
+    const QString filePath = parser.value(fileOption).trimmed();
+    if (filePath.isEmpty()) {
+        return parser.value(directOption);
+    }
+    QFile credentialFile(filePath);
+    if (!credentialFile.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Unable to read credential file: %1").arg(filePath);
+        return QString();
+    }
+    return QString::fromUtf8(credentialFile.readAll());
+}
+
 std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& parser,
                                                   const CliParserOptions& options,
                                                   QString* error) {
@@ -559,6 +580,16 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
     if (!mutation.has_value()) {
         return std::nullopt;
     }
+    const QString volumePassword = credentialFromParser(
+        parser, *options.volume_password, *options.volume_password_file, error);
+    if (!error->isEmpty()) {
+        return std::nullopt;
+    }
+    const QString recoveryKey =
+        credentialFromParser(parser, *options.recovery_key, *options.recovery_key_file, error);
+    if (!error->isEmpty()) {
+        return std::nullopt;
+    }
     return CliInvocation{.command = *command,
                          .target_path = *target,
                          .target_size_bytes = numeric->size,
@@ -576,8 +607,8 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
                          .patch_offset_error = mutation->patch_offset_error,
                          .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
                          .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
-                         .volume_password = parser.value(*options.volume_password),
-                         .recovery_key = parser.value(*options.recovery_key),
+                         .volume_password = volumePassword,
+                         .recovery_key = recoveryKey,
                          .confirm_target = parser.isSet(*options.confirm),
                          .allow_raw_target = parser.isSet(*options.allow_raw),
                          .compress_zlib = parser.isSet(*options.compress_zlib),
@@ -618,6 +649,8 @@ QJsonObject buildFormatRawReport(const CliInvocation& invocation) {
                              .block_size_bytes = invocation.block_size_bytes,
                              .volume_name = invocation.volume_name,
                              .additional_volume_names = invocation.additional_volume_names,
+                             .volume_password = invocation.volume_password,
+                             .recovery_key = invocation.recovery_key,
                              .target_wipe_confirmed = invocation.confirm_target,
                              .allow_raw_device_target = invocation.allow_raw_target,
                              .options = rawWriteOptions(invocation.evidence_id)}));
@@ -2232,6 +2265,18 @@ struct CliOptions {
                        "the volume then unlocks by either the password or this recovery key; for "
                        "format-image. Credential-in, never stored."),
         QStringLiteral("recovery-key")};
+    QCommandLineOption volumePasswordFile{
+        {QStringLiteral("volume-password-file")},
+        QStringLiteral("Read the FileVault volume password from this file's exact UTF-8 bytes "
+                       "instead of --volume-password (keeps the credential off the command line "
+                       "and out of any script text); for format-image/format-raw."),
+        QStringLiteral("path")};
+    QCommandLineOption recoveryKeyFile{
+        {QStringLiteral("recovery-key-file")},
+        QStringLiteral("Read the personal-recovery-key from this file's exact UTF-8 bytes instead "
+                       "of --recovery-key (same off-command-line handling); for "
+                       "format-image/format-raw."),
+        QStringLiteral("path")};
     QCommandLineOption sparseSize{
         {QStringLiteral("sparse-size")},
         QStringLiteral("Insert the file sparse with a trailing hole: its extents cover --payload "
@@ -2268,6 +2313,8 @@ void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
                        options.compressZlib,
                        options.volumePassword,
                        options.recoveryKey,
+                       options.volumePasswordFile,
+                       options.recoveryKeyFile,
                        options.sparseSize,
                        options.xattr});
     parser.addPositionalArgument(
@@ -2308,6 +2355,8 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
                                  .compress_zlib = &options.compressZlib,
                                  .volume_password = &options.volumePassword,
                                  .recovery_key = &options.recoveryKey,
+                                 .volume_password_file = &options.volumePasswordFile,
+                                 .recovery_key_file = &options.recoveryKeyFile,
                                  .sparse_size = &options.sparseSize,
                                  .xattr = &options.xattr},
                                 error);

@@ -34,6 +34,8 @@ constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
 constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
+constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
+constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
 constexpr auto kHfsPathPayload = "hfs_path";
@@ -1352,6 +1354,26 @@ void validateImageRestoreContentBlockers(const PartitionInfoEx& partition,
                  QStringLiteral("Create Image destination cannot be on the source partition"));
 }
 
+// A6: a Format that opts into FileVault encryption must carry a non-empty password and target
+// APFS; otherwise the operation fails closed rather than emitting an inconsistent format.
+bool apfsEncryptedFormatRequested(const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::Format &&
+           payloadBool(operation, QString::fromLatin1(kApfsEncryptVolumePayload));
+}
+
+bool apfsEncryptedFormatMissingPassword(const PartitionOperation& operation) {
+    return apfsEncryptedFormatRequested(operation) &&
+           operation.payload.value(QString::fromLatin1(kApfsVolumePasswordPayload))
+               .toString()
+               .isEmpty();
+}
+
+bool apfsEncryptedFormatWrongFileSystem(const PartitionOperation& operation) {
+    return apfsEncryptedFormatRequested(operation) &&
+           !isApfsFileSystemToken(
+               operation.payload.value(QStringLiteral("file_system")).toString());
+}
+
 void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
                                           const PartitionOperation& operation,
                                           PartitionValidationResult* result) {
@@ -1383,6 +1405,12 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  nonNativeResizeShrinkNeedsUsageMetadata(partition, operation),
                  QStringLiteral("Ext shrink requires detected filesystem usage metadata"));
+    addBlockerIf(result,
+                 apfsEncryptedFormatMissingPassword(operation),
+                 QStringLiteral("APFS encrypted format requires a volume password"));
+    addBlockerIf(result,
+                 apfsEncryptedFormatWrongFileSystem(operation),
+                 QStringLiteral("Volume encryption is only supported for APFS format"));
 }
 
 void validateApfsRootMutationContentBlockers(const PartitionOperation& operation,
