@@ -1,0 +1,25 @@
+{
+    "status": "Passed",
+    "gate_id": "external.apfs-a7-raw-physical",
+    "tier": "A7 / A-g, A-h: APFS raw in-place clone + hard link + container resize (I1 production raw path)",
+    "destructive": true,
+    "host": "S.A.K. sak_apfs_writer_cli.exe ran the production raw commit commands (commit-raw-file-clone, commit-raw-file-hardlink, commit-raw-resize) against a real Windows raw device -- the disposable Seagate Expansion USB (PhysicalDrive2, serial NAAA3QVK) -- and the macOS Sequoia kernel (apfs_kext, qemu/KVM recovery) auto-mounted the resulting bare container, read the clone + hard link byte-for-byte, saw the grown size, and Apple fsck_apfs validated container + volume.",
+    "change": "A7's clone/hard link/resize were previously certified image-only (commitImageOnly*). This certifies the I1 production RAW path end to end: commitRawFileClone / commitRawFileHardlink / commitRawResize, exposed through the writer CLI as commit-raw-file-clone / commit-raw-file-hardlink / commit-raw-resize, run on an actual \\\\.\\PhysicalDrive raw device (not the test seam, not an image file). On the disposable USB the writer formatted a 64 MiB bare APFS container (SAKA7RAW), inserted src.bin, then cloned it to clone.bin, hard-linked it to link.bin, and grew the container to 96 MiB -- all via the certified crash-safe COW commit core through openRawInPlaceCommitTarget (identity + destructive-confirmation + raw-opt-in gates). preflightResizeGrow's deviceAlreadySized path verified the raw device already spanned the new size (a block device cannot be resized) and raised only the container's claim. The container was dd'd to an image and attached to the recovery VM.",
+    "evidence_host": {
+        "raw_commands": "sak_apfs_writer_cli.exe format-raw + commit-raw-file-insert + commit-raw-file-clone + commit-raw-file-hardlink + commit-raw-resize against \\\\.\\PhysicalDrive2 all returned ok:true, advancing the checkpoint xid 2 -> 6 (insert 3, clone 4, hard link 5, resize 6).",
+        "apfsck": "host apfsprogs apfsck -cw on the dd'd container exited 0 (oc_count=6 walked=6).",
+        "payload_md5": "d5f3e2aed1c5f8159f30d55ed3353d64 (host MD5 of the 31-byte source payload)."
+    },
+    "evidence_kernel": {
+        "mount_resize": "macOS Recovery Terminal: 'diskutil apfs list' -> APFS Container Reference disk1, Size (Capacity Ceiling) 100663296 B (100.7 MB) = 96 MiB (grown from the 64 MiB format) -> the kernel reads the RESIZED container; volume SAKA7RAW auto-mounted at /Volumes/SAKA7RAW.",
+        "clone_hardlink_md5": "md5 of /Volumes/SAKA7RAW/{src,clone,link}.bin all equal d5f3e2aed1c5f8159f30d55ed3353d64 (kernel computed; A7-MD5-MATCH) -- the clone shares the source data stream and the hard link resolves to the same content.",
+        "inode_topology": "stat: src.bin inode=16 nlink=2, link.bin inode=16 nlink=2 (the hard link: two names, ONE inode, link count 2); clone.bin inode=17 nlink=1 (the clone: its OWN inode sharing the data stream, NOT a hard link) -- the kernel-validated clone-vs-hard-link distinction.",
+        "fsck": "Apple native 'fsck_apfs -n /dev/rdisk1' after unmount: 'Checking the snapshot metadata', 'Checking the fsroot tree', 'Checking the extent ref tree', 'Verifying volume object map space', 'The volume /dev/rdisk1s1 with UUID EAD23184-5A79-4004-B0A2-1CE1E77EA2BE appears to be OK', 'Verifying allocated space', 'The container /dev/rdisk1 appears to be OK'.",
+        "screenshots": [
+            "a7-raw-clone-hardlink-md5.png",
+            "a7-raw-fsck-PASS.png"
+        ]
+    },
+    "evidence_unit": "tests/unit/test_partition_manager_core.cpp: apfsWriter_rawA7CloneHardlinkResizeMutateConfirmedTarget (raw clone + hard link share the payload across three names via the test seam, then resize grows + the files survive); verifyApfsCloneHardlinkResizeScripts (the production Apply route emits commit-raw-file-clone/-hardlink with --new-file-name + commit-raw-resize, fail-closed without a new name). Core suite 158/158; clang-format / lizard / cppcheck clean.",
+    "completed_at_utc": "2026-06-29T00:00:00Z"
+}
