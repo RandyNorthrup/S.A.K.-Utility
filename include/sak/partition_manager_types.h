@@ -106,6 +106,9 @@ enum class PartitionOperationType {
     HfsReplaceInlineAttribute,
     HfsReplaceForkAttribute,
     HfsGrowForkAttribute,
+    HfsCreateSymlink,
+    HfsCreateHardlink,
+    HfsDeleteHardlink,
 };
 
 enum class OperationRisk {

@@ -291,6 +291,9 @@ constexpr const char* kHfsRenameMoveCatalogEntryMode = "rename-move-catalog-entr
 constexpr const char* kHfsReplaceInlineAttributeMode = "replace-inline-attribute";
 constexpr const char* kHfsReplaceForkAttributeMode = "replace-fork-attribute";
 constexpr const char* kHfsGrowForkAttributeMode = "grow-fork-attribute";
+constexpr const char* kHfsCreateSymlinkMode = "create-symlink";
+constexpr const char* kHfsCreateHardlinkMode = "create-hardlink";
+constexpr const char* kHfsDeleteHardlinkMode = "delete-hardlink";
 constexpr const char* kActionDefaultTooltipProperty = "partitionActionDefaultTooltip";
 constexpr const char* kActionRequiresDriveLetterProperty = "partitionActionRequiresDriveLetter";
 constexpr const char* kActionWindowsNativeFilesystemProperty =
@@ -10287,6 +10290,9 @@ PartitionOperationType hfsMutationTypeForMode(const QString& mode) {
          PartitionOperationType::HfsReplaceForkAttribute},
         {QString::fromLatin1(kHfsGrowForkAttributeMode),
          PartitionOperationType::HfsGrowForkAttribute},
+        {QString::fromLatin1(kHfsCreateSymlinkMode), PartitionOperationType::HfsCreateSymlink},
+        {QString::fromLatin1(kHfsCreateHardlinkMode), PartitionOperationType::HfsCreateHardlink},
+        {QString::fromLatin1(kHfsDeleteHardlinkMode), PartitionOperationType::HfsDeleteHardlink},
     };
     return kTypes.value(mode, PartitionOperationType::HfsReplaceFile);
 }
@@ -10310,7 +10316,9 @@ bool hfsMutationNeedsPath(PartitionOperationType type) {
 }
 
 bool hfsMutationNeedsDestinationPath(PartitionOperationType type) {
-    return type == PartitionOperationType::HfsRenameMoveCatalogEntry;
+    return type == PartitionOperationType::HfsRenameMoveCatalogEntry ||
+           type == PartitionOperationType::HfsCreateSymlink ||
+           type == PartitionOperationType::HfsCreateHardlink;
 }
 
 bool hfsMutationIsAttribute(PartitionOperationType type) {
@@ -10369,7 +10377,13 @@ QString hfsMutationPreviewTemplate(PartitionOperationType type) {
          QObject::tr("Queue HFS+ fork-backed attribute replacement within allocated blocks.")},
         {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
          QObject::tr(
-             "Queue HFS+ fork-backed attribute replacement with bounded allocation growth.")}};
+             "Queue HFS+ fork-backed attribute replacement with bounded allocation growth.")},
+        {static_cast<int>(PartitionOperationType::HfsCreateSymlink),
+         QObject::tr("Queue HFS+ symlink create for %1.")},
+        {static_cast<int>(PartitionOperationType::HfsCreateHardlink),
+         QObject::tr("Queue HFS+ hardlink create for %1.")},
+        {static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
+         QObject::tr("Queue HFS+ hardlink delete for %1.")}};
     return kTemplates.value(static_cast<int>(type));
 }
 
@@ -10496,6 +10510,9 @@ void populateHfsFileMutationModes(QComboBox* mode) {
                   QString::fromLatin1(kHfsReplaceForkAttributeMode));
     mode->addItem(QObject::tr("Grow fork-backed attribute with free blocks"),
                   QString::fromLatin1(kHfsGrowForkAttributeMode));
+    mode->addItem(QObject::tr("Create symlink"), QString::fromLatin1(kHfsCreateSymlinkMode));
+    mode->addItem(QObject::tr("Create hardlink"), QString::fromLatin1(kHfsCreateHardlinkMode));
+    mode->addItem(QObject::tr("Delete hardlink"), QString::fromLatin1(kHfsDeleteHardlinkMode));
 }
 
 HfsFileMutationDialogWidgets createHfsFileMutationWidgets(PartitionOperationDialog& dialog,

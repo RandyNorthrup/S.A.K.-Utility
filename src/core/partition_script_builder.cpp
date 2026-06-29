@@ -529,6 +529,9 @@ bool isHfsFileMutationOperation(PartitionOperationType type) {
         {static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute), true},
         {static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute), true},
         {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute), true},
+        {static_cast<int>(PartitionOperationType::HfsCreateSymlink), true},
+        {static_cast<int>(PartitionOperationType::HfsCreateHardlink), true},
+        {static_cast<int>(PartitionOperationType::HfsDeleteHardlink), true},
     };
     return kTypes.contains(static_cast<int>(type));
 }
@@ -549,6 +552,14 @@ bool hfsFileMutationNeedsPath(PartitionOperationType type) {
     return type != PartitionOperationType::HfsReplaceInlineAttribute &&
            type != PartitionOperationType::HfsReplaceForkAttribute &&
            type != PartitionOperationType::HfsGrowForkAttribute;
+}
+
+// H5: a second HFS path argument (--destination-hfs-path) -- the move target for rename, the
+// link target for a symlink, the existing file for a hardlink.
+bool hfsMutationUsesDestination(PartitionOperationType type) {
+    return type == PartitionOperationType::HfsRenameMoveCatalogEntry ||
+           type == PartitionOperationType::HfsCreateSymlink ||
+           type == PartitionOperationType::HfsCreateHardlink;
 }
 
 bool hfsFileMutationIsAttribute(PartitionOperationType type) {
@@ -757,6 +768,21 @@ void appendHfsAttributeMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
                   QStringLiteral("Grow fork attribute")});
 }
 
+void appendHfsLinkMutationSpecs(QHash<int, HfsFileMutationSpec>& specs) {
+    specs.insert(static_cast<int>(PartitionOperationType::HfsCreateSymlink),
+                 {QStringLiteral("create-symlink-image"),
+                  QStringLiteral("ui.hfs.raw-symlink-create"),
+                  QStringLiteral("Create symlink")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsCreateHardlink),
+                 {QStringLiteral("create-hardlink-image"),
+                  QStringLiteral("ui.hfs.raw-hardlink-create"),
+                  QStringLiteral("Create hardlink")});
+    specs.insert(static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
+                 {QStringLiteral("delete-hardlink-image"),
+                  QStringLiteral("ui.hfs.raw-hardlink-delete"),
+                  QStringLiteral("Delete hardlink")});
+}
+
 const QHash<int, HfsFileMutationSpec>& hfsFileMutationSpecs() {
     static const QHash<int, HfsFileMutationSpec> kSpecs = [] {
         QHash<int, HfsFileMutationSpec> specs;
@@ -765,6 +791,7 @@ const QHash<int, HfsFileMutationSpec>& hfsFileMutationSpecs() {
         appendHfsFileLifecycleMutationSpecs(specs);
         appendHfsFolderMutationSpecs(specs);
         appendHfsAttributeMutationSpecs(specs);
+        appendHfsLinkMutationSpecs(specs);
         return specs;
     }();
     return kSpecs;
@@ -1200,7 +1227,7 @@ bool populateHfsMutationPathInput(const PartitionOperation& operation,
             return false;
         }
     }
-    if (operation.type == PartitionOperationType::HfsRenameMoveCatalogEntry) {
+    if (hfsMutationUsesDestination(operation.type)) {
         input->destination_hfs_path =
             payloadString(operation, QString::fromLatin1(kHfsDestinationPathPayload)).trimmed();
         if (input->destination_hfs_path.isEmpty()) {
@@ -1293,7 +1320,7 @@ QString hfsFileMutationInvoke(const PartitionOperation& operation,
         invoke += QStringLiteral(" -HfsPath %1")
                       .arg(PartitionScriptBuilder::quotePowerShell(input.hfs_path));
     }
-    if (operation.type == PartitionOperationType::HfsRenameMoveCatalogEntry) {
+    if (hfsMutationUsesDestination(operation.type)) {
         invoke += QStringLiteral(" -DestinationHfsPath %1")
                       .arg(PartitionScriptBuilder::quotePowerShell(input.destination_hfs_path));
     }
@@ -1464,7 +1491,8 @@ QString hfsWriterCliFunctionScript() {
                "    if ([string]::IsNullOrWhiteSpace($HfsPath)) { throw 'HFS path is required' }\n"
                "    $args += @('--hfs-path', $HfsPath)\n"
                "  }\n"
-               "  if ($Command -eq 'rename-catalog-entry-image') {\n"
+               "  if ($Command -in @('rename-catalog-entry-image', 'create-symlink-image', "
+               "'create-hardlink-image')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($DestinationHfsPath)) { "
                "throw 'HFS destination path is required' }\n"
                "    $args += @('--destination-hfs-path', $DestinationHfsPath)\n"
@@ -1473,7 +1501,8 @@ QString hfsWriterCliFunctionScript() {
                "'create-empty-file-image', 'delete-empty-file-image', "
                "'delete-file-image', "
                "'create-empty-folder-image', 'delete-empty-folder-image', "
-               "'delete-folder-tree-image', 'rename-catalog-entry-image')) {\n"
+               "'delete-folder-tree-image', 'rename-catalog-entry-image', "
+               "'create-symlink-image', 'create-hardlink-image', 'delete-hardlink-image')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'HFS payload file is "
                "required' }\n"
                "    $args += @('--payload-file', $PayloadFile)\n"
@@ -3375,7 +3404,10 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
                             PartitionOperationType::HfsRenameMoveCatalogEntry,
                             PartitionOperationType::HfsReplaceInlineAttribute,
                             PartitionOperationType::HfsReplaceForkAttribute,
-                            PartitionOperationType::HfsGrowForkAttribute}) {
+                            PartitionOperationType::HfsGrowForkAttribute,
+                            PartitionOperationType::HfsCreateSymlink,
+                            PartitionOperationType::HfsCreateHardlink,
+                            PartitionOperationType::HfsDeleteHardlink}) {
         builders->insert(static_cast<int>(type), &buildHfsFileMutationScript);
     }
 }

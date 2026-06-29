@@ -109,6 +109,9 @@ bool isDestructivePartitionOperation(PartitionOperationType type) {
         static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
         static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
         static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
+        static_cast<int>(PartitionOperationType::HfsCreateSymlink),
+        static_cast<int>(PartitionOperationType::HfsCreateHardlink),
+        static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
     };
     return kTypes.contains(static_cast<int>(type));
 }
@@ -309,6 +312,9 @@ bool isSupportedNonNativeFileSystemToolOperation(const PartitionOperation& opera
         PartitionOperationType::HfsReplaceInlineAttribute,
         PartitionOperationType::HfsReplaceForkAttribute,
         PartitionOperationType::HfsGrowForkAttribute,
+        PartitionOperationType::HfsCreateSymlink,
+        PartitionOperationType::HfsCreateHardlink,
+        PartitionOperationType::HfsDeleteHardlink,
     };
     return std::find(std::begin(kSupportedTypes), std::end(kSupportedTypes), operation.type) !=
            std::end(kSupportedTypes);
@@ -372,6 +378,9 @@ bool isHfsFileMutationOperation(PartitionOperationType type) {
         static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
         static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
         static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
+        static_cast<int>(PartitionOperationType::HfsCreateSymlink),
+        static_cast<int>(PartitionOperationType::HfsCreateHardlink),
+        static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
     };
     return kTypes.contains(static_cast<int>(type));
 }

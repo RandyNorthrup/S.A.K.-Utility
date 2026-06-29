@@ -104,6 +104,9 @@ QStringList hfsOperationNames() {
         QStringLiteral("HFS Replace Inline Attribute"),
         QStringLiteral("HFS Replace Fork Attribute"),
         QStringLiteral("HFS Grow Fork Attribute"),
+        QStringLiteral("HFS Create Symlink"),
+        QStringLiteral("HFS Create Hardlink"),
+        QStringLiteral("HFS Delete Hardlink"),
     };
 }
 

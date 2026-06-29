@@ -11480,6 +11480,40 @@ void verifyHfsAttributeScripts(const PartitionScriptBuilder* builder,
                                       QStringLiteral("com.apple.ResourceFork")}});
 }
 
+// H5 promotion: symlink/hardlink create route through the staged image commands with a
+// destination HFS path; delete-hardlink needs only the link path.
+void verifyHfsLinkMutationScripts(const PartitionScriptBuilder* builder,
+                                  const PartitionTarget& target) {
+    QJsonObject linkPayload = baseHfsFileMutationPayload();
+    linkPayload[QStringLiteral("hfs_destination_path")] = QStringLiteral("/target.txt");
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsCreateSymlink,
+                          .payload = linkPayload,
+                          .present = {QStringLiteral("create-symlink-image"),
+                                      QStringLiteral("-DestinationHfsPath"),
+                                      QStringLiteral("ui.hfs.raw-symlink-create")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsCreateHardlink,
+                          .payload = linkPayload,
+                          .present = {QStringLiteral("create-hardlink-image"),
+                                      QStringLiteral("-DestinationHfsPath"),
+                                      QStringLiteral("ui.hfs.raw-hardlink-create")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::HfsDeleteHardlink,
+                          .payload = baseHfsFileMutationPayload(),
+                          .present = {QStringLiteral("delete-hardlink-image"),
+                                      QStringLiteral("ui.hfs.raw-hardlink-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+
+    const auto missingTarget = builder->buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::HfsCreateSymlink, target, baseHfsFileMutationPayload()));
+    QVERIFY(!missingTarget.valid());
+    QVERIFY(missingTarget.blockers.join(' ').contains(QStringLiteral("destination HFS path")));
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::scriptBuilder_buildsHfsFileMutationScripts() {
@@ -11489,6 +11523,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsHfsFileMutationScripts() {
     verifyHfsFileForkMutationScripts(&builder, target);
     verifyHfsCreateDeleteScripts(&builder, target);
     verifyHfsFolderAndAttributeScripts(&builder, target);
+    verifyHfsLinkMutationScripts(&builder, target);
 
     QJsonObject forgedTarget = baseHfsFileMutationPayload();
     forgedTarget[QStringLiteral("target_path")] =

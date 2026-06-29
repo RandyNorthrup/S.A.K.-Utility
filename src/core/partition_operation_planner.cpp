@@ -134,6 +134,9 @@ void insertHfsRisks(QHash<int, OperationRisk>* risks) {
          OperationRisk::Destructive},
         {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
          OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::HfsCreateSymlink), OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::HfsCreateHardlink), OperationRisk::Destructive},
+        {static_cast<int>(PartitionOperationType::HfsDeleteHardlink), OperationRisk::Destructive},
     };
     insertRiskEntries(risks, entries);
 }
