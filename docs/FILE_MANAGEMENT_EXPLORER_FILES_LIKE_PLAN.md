@@ -323,7 +323,7 @@ Central action registry:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Local Windows | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | ext2/ext3/ext4 raw/image | Yes | Yes | Yes | No | No | No | No | Yes | No |
-| HFS+/HFSX raw/image | Yes | Yes | Yes | Certified slices | Certified slices | Certified slices | Certified slices | Yes | Certified slices |
+| HFS+/HFSX raw/image | Yes | Yes | Yes | Yes² | Yes² | Yes² | Yes² | Yes | Yes² |
 | APFS raw/image generated (≤32 TiB) | Yes | Yes | Yes | Yes¹ | Yes¹ | Yes¹ | Yes¹ | Yes | Yes¹ |
 | APFS arbitrary Apple media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
 | XFS/Btrfs current | Metadata only | No | No | No | No | No | No | No | No |
@@ -334,6 +334,14 @@ driver matrix A-b). Scope: root files + empty root directories + one level of
 root-directory children, on generated containers 64 MiB through a 32 TiB cap; the
 ~2.9–7.8 TiB metadata-overflow band and arbitrary non-generated Apple media
 remain fail-closed.
+
+² HFS+/HFSX full-driver writes — the HFS+ track (H1–H8) is Apple-certified
+end-to-end: streaming catalog/attributes/extents B-trees (depth/width-general,
+underflow merge), hardlinks/symlinks, big-endian journal replay, and the
+embedded-wrapper write edge, validated by Apple `fsck_hfs` + macOS-kernel RW
+mount and the H8 physical-USB destructive + crash/rollback gate. See the single
+capability-matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
+driver matrix rows H-a..H-h + milestone H8.
 
 UI must never hide unsupported write commands for raw targets. It should disable them and show exact blocker text in tooltip/details pane.
 

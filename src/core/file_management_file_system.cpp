@@ -28,7 +28,6 @@ namespace {
 constexpr int kDriveRootPrefixLength = 3;
 constexpr uint64_t kFileManagementMaxWriteBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumGeneratedApfsBytes = 64ULL * 1024ULL * 1024ULL;
-constexpr uint64_t kGeneratedApfsSingleChunkMaxBytes = 128ULL * 1024ULL * 1024ULL;
 
 QString normalizedPath(QString path) {
     path = path.trimmed();
@@ -140,7 +139,7 @@ bool computeWritableNonNative(const QString& fs, const FileManagementTarget& tar
     const bool apfsGeneratedWriteSizeSupported =
         fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition &&
         target.size_bytes >= kMinimumGeneratedApfsBytes &&
-        target.size_bytes <= kGeneratedApfsSingleChunkMaxBytes;
+        target.size_bytes <= kMaximumApfsGeneratedContainerBytes;
     return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") ||
            apfsGeneratedWriteSizeSupported;
 }
@@ -159,8 +158,8 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
     if (!target.can_write_files) {
         target.blockers.append(
             fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition
-                ? QStringLiteral("APFS File Explorer writes require a 64-128 MiB "
-                                 "S.A.K.-generated one-spaceman-chunk partition")
+                ? QStringLiteral("APFS File Explorer writes are limited to S.A.K.-generated "
+                                 "containers from 64 MiB through 24 TiB")
                 : QStringLiteral("File Management opens this target read-only"));
     } else if (!target.local_file_system) {
         target.blockers.append(

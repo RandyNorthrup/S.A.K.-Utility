@@ -27,6 +27,15 @@ inline constexpr int kPartitionLayoutHashPreviewChars = 10;
 inline constexpr int kPartitionCenterTableStretch = 3;
 inline constexpr int kPartitionByteDisplayPrecision = 2;
 
+// Shared ceiling for S.A.K.-generated APFS containers (format + in-place file
+// mutation). The certified writer formats and commits in place across the
+// single-CIB, multi-CIB, metadata-overflow, and CAB tiers up to this size
+// (Apple fsck_apfs + kernel RW mount, milestones A1/A2). Both the Partition
+// Manager format/mutation gate and the File Management write-capability gate
+// derive from this one value so they cannot drift apart.
+inline constexpr uint64_t kMaximumApfsGeneratedContainerBytes = 24ULL * 1024ULL * 1024ULL *
+                                                                1024ULL * 1024ULL;
+
 enum class PartitionOperationType {
     Create,
     Delete,

@@ -58,18 +58,17 @@ constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
 constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
 constexpr uint64_t kMinimumApfsGeneratedRawFormatBytes = 64ULL * 1024ULL * 1024ULL;
-constexpr uint64_t kMaximumApfsGeneratedSingleChunkBytes = 128ULL * 1024ULL * 1024ULL;
-// A1/A2 (multi-CIB + CAB spaceman) FORMAT is Apple-certified: the writer emits single-CIB,
-// multi-CIB, metadata-overflow, AND the CAB tier (cab_count > 0, the spaceman publishes a
-// cab-address array pointing at apfs_cib_addr_blocks). macOS fsck_apfs reports an 8 TiB
-// CAB container (cab_count 2) "appears to be OK" and the APFS kernel extension mounts it
-// read-write and commits to it; apfsprogs apfsck validates cab_count 2/3/4 clean through
-// 24 TiB. This pre-check stays inside that certified range (and below the writer's own
-// ~48 TiB ip-bitmap-ring ceiling, which is the precise fail-closed authority). In-place
-// root-file mutation stays single-chunk (kMaximumApfsGeneratedSingleChunkBytes) until the
-// A2 multi-CIB/CAB in-place commit path is wired into the production write commands.
-constexpr uint64_t kMaximumApfsGeneratedMultiCibFormatBytes = 24ULL * 1024ULL * 1024ULL * 1024ULL *
-                                                              1024ULL;
+// A1/A2 (multi-CIB + CAB spaceman) FORMAT and in-place root-file mutation are both
+// Apple-certified: the writer emits single-CIB, multi-CIB, metadata-overflow, AND the CAB
+// tier (cab_count > 0, the spaceman publishes a cab-address array pointing at
+// apfs_cib_addr_blocks). macOS fsck_apfs reports an 8 TiB CAB container (cab_count 2)
+// "appears to be OK" and the APFS kernel extension mounts it read-write and commits to it;
+// apfsprogs apfsck validates cab_count 2/3/4 clean through 24 TiB, and the in-place commit
+// engine round-trips a file insert into a 4 TiB metadata-overflow container (kernel mount +
+// fsck_apfs clean). The format AND in-place mutation gates both stay inside that certified
+// range (below the writer's own ~48 TiB ip-bitmap-ring ceiling, the precise fail-closed
+// authority), sourced from the shared sak::kMaximumApfsGeneratedContainerBytes.
+constexpr uint64_t kMaximumApfsGeneratedMultiCibFormatBytes = kMaximumApfsGeneratedContainerBytes;
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
 constexpr auto kHfsPathPayload = "hfs_path";
@@ -852,10 +851,10 @@ QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operat
         return QStringLiteral("APFS root-file mutation requires generated-layout confirmation");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
-        operation.target.size_bytes > kMaximumApfsGeneratedSingleChunkBytes) {
+        operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return QStringLiteral(
-            "APFS generated raw mutation currently supports one-spaceman-chunk targets "
-            "from 64 MiB through 128 MiB");
+            "APFS generated raw mutation supports single-CIB, multi-CIB, metadata-overflow, and "
+            "CAB-tier targets from 64 MiB through 24 TiB; larger targets remain blocked");
     }
     return {};
 }

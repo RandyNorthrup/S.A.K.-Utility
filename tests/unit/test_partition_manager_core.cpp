@@ -11184,6 +11184,28 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
         PartitionOperationType::ApfsWriteRootFile, target, missingLayout));
     QVERIFY(!blocked.valid());
     QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("generated-layout")));
+
+    // A1 promotion: in-place root-file mutation now runs on the certified multi-CIB /
+    // metadata-overflow / CAB COW engine, so the production mutation gate accepts targets
+    // above one spaceman chunk up to the shared 24 TiB ceiling (no longer 128 MiB-capped).
+    PartitionTarget multiCibTarget = target;
+    multiCibTarget.size_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+    const auto multiCibWrite = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::ApfsWriteRootFile,
+                                                 multiCibTarget,
+                                                 baseApfsRootFileMutationPayload()));
+    QVERIFY2(multiCibWrite.valid(), qPrintable(multiCibWrite.blockers.join(QStringLiteral("; "))));
+    QVERIFY(multiCibWrite.script.contains(QStringLiteral("commit-raw-file-write")));
+
+    // Above the 24 TiB ceiling the mutation gate still fails closed.
+    PartitionTarget oversizedTarget = target;
+    oversizedTarget.size_bytes = 30ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+    const auto oversizedWrite = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::ApfsWriteRootFile,
+                                                 oversizedTarget,
+                                                 baseApfsRootFileMutationPayload()));
+    QVERIFY(!oversizedWrite.valid());
+    QVERIFY(oversizedWrite.blockers.join(' ').contains(QStringLiteral("24 TiB")));
 }
 
 namespace {

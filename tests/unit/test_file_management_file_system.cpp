@@ -53,21 +53,39 @@ private Q_SLOTS:
         QVERIFY(!target.blockers.isEmpty());
     }
 
-    void apfsRawWritesRequireCertifiedGeneratedSize() {
-        const auto supported = sak::FileManagementFileSystemBridge::manualTarget(
+    void apfsRawWritesSpanCertifiedMultiCibRange() {
+        // A1/A2: the in-place COW engine is Apple-certified across the single-CIB,
+        // multi-CIB, metadata-overflow, and CAB tiers, so the File Explorer write gate
+        // must accept generated containers from 64 MiB through the 24 TiB ceiling.
+        const auto singleChunk = sak::FileManagementFileSystemBridge::manualTarget(
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
             QStringLiteral("APFS"),
             128ULL * 1024ULL * 1024ULL);
-        QVERIFY(supported.can_browse);
-        QVERIFY(supported.can_write_files);
+        QVERIFY(singleChunk.can_browse);
+        QVERIFY(singleChunk.can_write_files);
 
+        // Multi-CIB / metadata-overflow size that the pre-fix 128 MiB cap wrongly blocked.
+        const auto multiCib = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition4"),
+            QStringLiteral("APFS"),
+            4ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL);
+        QVERIFY(multiCib.can_write_files);
+
+        // Below the 64 MiB floor remains read-only.
+        const auto tooSmall = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition5"),
+            QStringLiteral("APFS"),
+            32ULL * 1024ULL * 1024ULL);
+        QVERIFY(!tooSmall.can_write_files);
+
+        // Above the 24 TiB ceiling remains fail-closed with the certified-range blocker.
         const auto oversized = sak::FileManagementFileSystemBridge::manualTarget(
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition3"),
             QStringLiteral("APFS"),
-            256ULL * 1024ULL * 1024ULL);
+            32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL);
         QVERIFY(oversized.can_browse);
         QVERIFY(!oversized.can_write_files);
-        QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("one-spaceman-chunk")));
+        QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("24 TiB")));
     }
 
     void inventoryPartitionBuildsRawAlias() {
