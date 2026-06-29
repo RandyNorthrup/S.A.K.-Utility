@@ -369,6 +369,7 @@ python_archive/**/*.egg-info/
 !compile_commands.json
 !resources/ai/workflows/*.json
 !resources/ai/providers/*.json
+!resources/icons/files/manifest.json
 !resources/ai/app_manifests/*.json
 !docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
 

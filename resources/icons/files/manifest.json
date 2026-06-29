@@ -1,0 +1,35 @@
+{
+  "upstream": {
+    "repository": "https://github.com/files-community/Files",
+    "commit": "8ea6d30"
+  },
+  "license": "MIT",
+  "assets": [
+    {"key": "open", "file": "resources/icons/files/open.svg", "upstream_key": "App.ThemedIcons.Open", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Open.xaml"},
+    {"key": "open-in-new-tab", "file": "resources/icons/files/open-in-new-tab.svg", "upstream_key": "App.ThemedIcons.OpenInTab", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Open.xaml"},
+    {"key": "copy-path", "file": "resources/icons/files/copy-path.svg", "upstream_key": "App.ThemedIcons.CopyAsPath", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"},
+    {"key": "refresh", "file": "resources/icons/files/refresh.svg", "upstream_key": "App.ThemedIcons.Refresh", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"},
+    {"key": "new-folder", "file": "resources/icons/files/new-folder.svg", "upstream_key": "App.ThemedIcons.New.Folder", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.New.xaml"},
+    {"key": "write-file", "file": "resources/icons/files/write-file.svg", "upstream_key": "App.ThemedIcons.New.File", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.New.xaml"},
+    {"key": "rename", "file": "resources/icons/files/rename.svg", "upstream_key": "App.ThemedIcons.Rename", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"},
+    {"key": "delete", "file": "resources/icons/files/delete.svg", "upstream_key": "App.ThemedIcons.Delete", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"},
+    {"key": "view-details", "file": "resources/icons/files/view-details.svg", "upstream_key": "App.ThemedIcons.IconLayout.Details", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"},
+    {"key": "view-list", "file": "resources/icons/files/view-list.svg", "upstream_key": "App.ThemedIcons.IconLayout.List", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"},
+    {"key": "view-grid", "file": "resources/icons/files/view-grid.svg", "upstream_key": "App.ThemedIcons.IconSize.Small", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"},
+    {"key": "view-cards", "file": "resources/icons/files/view-cards.svg", "upstream_key": "App.ThemedIcons.IconLayout.Tiles", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"},
+    {"key": "view-columns", "file": "resources/icons/files/view-columns.svg", "upstream_key": "App.ThemedIcons.IconLayout.Columns", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout.xaml"},
+    {"key": "view-details-28", "file": "resources/icons/files/view-details-28.svg", "upstream_key": "App.ThemedIcons.IconLayout.Details.28", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"},
+    {"key": "view-list-28", "file": "resources/icons/files/view-list-28.svg", "upstream_key": "App.ThemedIcons.IconLayout.List.28", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"},
+    {"key": "view-grid-28", "file": "resources/icons/files/view-grid-28.svg", "upstream_key": "App.ThemedIcons.IconLayout.Grid.28", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"},
+    {"key": "view-cards-28", "file": "resources/icons/files/view-cards-28.svg", "upstream_key": "App.ThemedIcons.IconLayout.Tiles.28", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"},
+    {"key": "view-columns-28", "file": "resources/icons/files/view-columns-28.svg", "upstream_key": "App.ThemedIcons.IconLayout.Columns.28", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.SizeLayout28.xaml"},
+    {"key": "panel-left", "file": "resources/icons/files/panel-left.svg", "upstream_key": "App.ThemedIcons.PanelLeft", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Panel.xaml"},
+    {"key": "details-pane", "file": "resources/icons/files/details-pane.svg", "upstream_key": "App.ThemedIcons.PanelRight", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Panel.xaml"},
+    {"key": "dual-pane", "file": "resources/icons/files/dual-pane.svg", "upstream_key": "App.ThemedIcons.Panes.Vertical", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.TabPane.xaml"},
+    {"key": "favorite", "file": "resources/icons/files/favorite.svg", "upstream_key": "App.ThemedIcons.Favorite", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Favorite.xaml"},
+    {"key": "status-warning", "file": "resources/icons/files/status-warning.svg", "upstream_key": "App.ThemedIcons.Status.Warning", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Status.xaml"},
+    {"key": "properties-general", "file": "resources/icons/files/properties-general.svg", "upstream_key": "App.ThemedIcons.Properties.General", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Properties.Dialog.xaml"},
+    {"key": "properties-security", "file": "resources/icons/files/properties-security.svg", "upstream_key": "App.ThemedIcons.Properties.Security", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Properties.Dialog.xaml"},
+    {"key": "more", "file": "resources/icons/files/more.svg", "upstream_key": "App.ThemedIcons.More", "source": "src/Files.App.Controls/ThemedIcon/Styles/Icons.Common.xaml"}
+  ]
+}
