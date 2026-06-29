@@ -10,6 +10,7 @@ Required before a release candidate is published:
 - Blocking-pattern guard passes.
 - Accessibility, raw style-token, raw style-literal, GUI magic-number, global magic-number, logged dialog, Partition Manager certification-matrix-integrity/commercial-destructive-feature-matrix/external-checklist/external-lab-package/certification-gap-report/VHD-preflight/certification-artifact-bundle/feature-matrix/evidence-payload/release-claim/strict-handoff, and Lizard gates pass.
 - Third-party license audit passes.
+- Full driver-level APFS (A1–A8) and HFS+/HFSX (H1–H8) write is Apple-certified — Apple `fsck_apfs`/`fsck_hfs` + macOS-kernel mount at every milestone, with physical-USB destructive + crash-interruption + rollback at the A8/H8 track gates (evidence `external.apfs-a8-physical`, `external.hfs-h8-physical`). The driver-capability matrix owner is `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; this is a distinct scope from the Partition Manager destructive-operations claim level.
 - Partition Manager non-native filesystem tools remain blocked unless
   `tools/filesystem/manifest.json` has pinned id/version/upstream/license/source-hash/binary-hash/file-system/operation metadata,
   matching bundled binary hashes, and hashed `runtime_files` for companion
@@ -75,14 +76,16 @@ Required before a release candidate is published:
   original Fletcher-64 APFS object checksum calculation/stamping/verification,
   deterministic image-only mutation plan generation, generated-layout
   queue/apply root-file, empty root-directory, root-directory child-file, and
-  volume-label mutation proof, but user-facing APFS encrypted/compressed files,
-  arbitrary APFS
-  write/repair/format/resize, deep XFS/Btrfs tool checks, XFS/Btrfs writes,
-  unbounded HFS+ folder-tree delete, complex HFS+ file delete, HFS+ B-tree
-  split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice, inline/broad HFS+
-  attribute growth, compressed-file writes, and recursive HFS+
-  extents-overflow-file overflow operations remain blocked pending workflow and
-  certification proof.
+  volume-label mutation proof; the full A1–A8 APFS driver track — inline
+  compression, credential-gated encryption, in-place file + directory mutation,
+  snapshots, multi-volume, clones/sparse/hard-links, and in-chunk resize — plus
+  the H1–H8 HFS+ track (streaming B-trees, underflow merge, hard-links/symlinks,
+  attribute overflow records, big-endian journal replay, wrapper write,
+  decmpfs read+write) are Apple-certified (see
+  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Deep XFS/Btrfs tool checks and
+  XFS/Btrfs writes remain blocked; APFS Fusion/Tier2, container shrink +
+  chunk-adding grow, and arbitrary non-generated Apple-media mutation at the
+  Apply layer stay fail-closed by design.
 - APFS writer infrastructure is release-allowed only while fail-closed:
   `PartitionApfsWriter` may compute/stamp/verify object checksums, build a
   deterministic image-only mutation plan shape, build a new APFS image-only
@@ -109,7 +112,7 @@ Required before a release candidate is published:
   options, destructive evidence, and raw hardware certification evidence. The
   APFS raw-format validation lane must run only through
   `scripts/run_partition_manager_apfs_raw_format_validation.ps1` or its UAC
-  launcher on pinned expendable APFS GPT media sized 64-128 MiB; passing this lane is required
+  launcher on pinned expendable APFS GPT media; passing this lane is required
   before any APFS raw format/write/patch/delete, empty-root-directory create/delete,
   root-directory-child-file write/patch/delete, volume-label change, or repair
   certifier claim can be made. The previous 2026-06-12 PDT / 2026-06-13 UTC
@@ -118,7 +121,10 @@ Required before a release candidate is published:
   spaceman geometry. Current Windows-side proof passed on JMicron serial
   `DD56419883A5B`, disk 2 partition 2, 134,217,728 bytes, at
   `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`;
-  Apple-native validation of that small target is still required. The accepted lane uses bounded APFS detection/root-listing readback, generated-layout-gated
+  Apple-native validation has since been completed across the full A1–A8 driver
+  track, incl. the A8 physical-USB destructive/crash/rollback gate
+  (`external.apfs-a8-physical`), so the 128 MiB JMicron run is retained as the
+  I1-era Windows-side evidence the multi-CIB/CAB geometry later superseded. The accepted lane uses bounded APFS detection/root-listing readback, generated-layout-gated
   root-file write/readback, generated-layout raw root-file byte-range patch,
   generated-layout empty root-directory create/delete with empty-listing and
   root-absence proof, root-directory child-file write/read/patch/delete proof with
@@ -148,8 +154,9 @@ Required before a release candidate is published:
   HFS+ on Best Buy serial `DD564198838A8`, disk 3 partition 3, passed the same
   lane plus rename at
   `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
-  APFS destructive File Management proof is Windows-side until macOS Recovery
-  validates the 64-128 MiB one-spaceman-chunk generated APFS test partition.
+  APFS destructive File Management proof is Apple-native certified across the
+  A1–A8 driver track (incl. the A8 physical-USB gate, `external.apfs-a8-physical`);
+  the earlier 128 MiB Windows-side run is retained as I1-era evidence.
   File Organizer generic moves remain local/mounted-file-API only.
 - Partition Manager ext/HFS+/APFS image browsers must open both normal image
   files and read-only Windows raw partition aliases through
@@ -498,25 +505,26 @@ negative-read-back hashes, generated-layout
 raw root-file write/patch/delete, empty root-directory create/delete, and
 root-directory child-file write/patch/delete plus volume-label change
 queue/apply routes, and generated-layout checksum repair only. Production helper
-physical proof must now use a 64-128 MiB one-spaceman-chunk generated APFS
-target. Current Windows-side proof is recorded at
-`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
-The previous JMicron `disk3-apfs-raw-format` evidence and latest helper run
-`run-20260612-192652` are Windows-side-only after Apple kernel rejection of the
-large generated spaceman geometry; Apple-native validation of the small target
-remains pending.
-The production helper now runs without broad protected/compressed/snapshot/
-multi-volume APFS allow flags; only S.A.K. generated single-volume layouts
-pass, while active snapshot/revert metadata, unsupported incompatible feature
-flags, and multi-volume containers remain blocked.
-Full arbitrary APFS/HFS+/XFS/Btrfs write support is not a current release
-claim. Release wording must keep XFS/Btrfs to read-only metadata, HFS+/HFSX to
-read-only browse/extract/export, sparse-staged format/repair, and the certified
-bounded HFS File slices only, and APFS to read-only browse/extract/export plus
-64-128 MiB one-spaceman-chunk generated-layout format/write/patch/delete,
-empty-root-directory create/delete, root-directory-child-file write/patch/delete,
-and repair queue/apply scope only unless a future milestone adds full
-driver/tool proof.
+physical proof is Apple-native certified across the A1–A8 driver track to a
+32 TiB cap, incl. the A8 physical-USB destructive/crash/rollback gate
+(`external.apfs-a8-physical`). The earlier 128 MiB JMicron Windows-side run
+(`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`)
+and `run-20260612-192652` are retained as the I1-era Windows-side evidence the
+multi-CIB/CAB geometry later superseded.
+The production helper does not blanket-enable protected/compressed/snapshot/
+multi-volume APFS mutation; each is reached only through its own certified
+operation-specific route (A3 snapshots, A4 multi-volume, A5 compression, A6
+credential-gated encryption — all Apple-certified), never blanket-on.
+Fusion/Tier2 multi-device stays out of scope and unsupported incompatible
+feature flags remain fail-closed.
+APFS and HFS+/HFSX are now full driver-level write-certified (A1–A8 / H1–H8 —
+see `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Release wording must keep
+XFS/Btrfs to read-only metadata, and may state full driver-level APFS + HFS+/HFSX
+read/write with the standing hard boundaries: APFS Fusion/Tier2 multi-device out
+of scope, encryption credential-gated, sealed-system-volume writes behind a typed
+seal-invalidation confirmation, APFS writes gated to S.A.K. generated-layout
+containers at the Apply layer, and APFS container shrink + chunk-adding grow as
+documented follow-ons.
 
 APFS image-offset proof also passed on 2026-06-06 UTC against
 `temp\Sonoma 14.dmg` using `--input-offset-bytes 1233310720`; evidence:

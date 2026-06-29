@@ -1,22 +1,30 @@
 # Partition Manager Cross-Filesystem Support Plan
 
-Status: Milestone A/B plus ext2/ext3/ext4 create/format/repair/grow/shrink, Linux swap create/format queue wiring, HFS+/HFSX bundled sparse-staged create/format/repair wiring, HFS+ image-only data-fork overwrite plus data/resource-fork allocated-block grow/shrink/truncate, bounded fork-backed-attribute allocation growth, constrained empty-file and empty-folder catalog create/delete, single-leaf catalog rename/move, bounded file create with data-fork allocation, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release, core support and helper bridge, APFS read-only browse/extract/export, APFS image-only format scratch-image generation, APFS image-only root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change with payload/read-back, directory-empty, label read-back, or negative-read-back proof, APFS image-only object-checksum repair, generated APFS create/format/repair queue wiring, and generated-layout APFS raw root-file write/patch/delete plus empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label Apply wiring are implemented; ext VM/Linux proof for ext2/ext3/ext4, Linux swap image-level compatibility proof, Linux swap raw-partition VM proof, HFS+/HFSX image-level tool proof, physical USB ext2/ext3/ext4 plus Linux swap destructive proof, physical HFS+/HFSX sparse-staged destructive proof, offset-based raw-probe helper proof, physical HFS+/APFS read-only plus HFS selected-attribute and APFS bounded export proof, HFS+ image-only same-size initial-extent and extents-overflow overwrite unit proof, HFS+ image-only data/resource-fork allocated-block grow/shrink/truncate replacement proof, HFS+ bounded initial-extent data/resource/fork-backed-attribute allocation-growth proof, HFS+ empty-file/non-empty-file/empty-folder create-delete plus single-leaf catalog rename/move, bounded folder-tree delete, and secure released-block wipe catalog mutation unit proof, HFS staged raw data/resource/inline/fork-backed-attribute plus single-leaf catalog rename/move and bounded secure delete physical Apply proof, HFS writer CLI fail-closed plus successful helper write/read-back, catalog rename, and bounded folder-tree delete CTest coverage, APFS generated-format-image plus multi-block seed-file certifier proof, APFS generated-image root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label proof, APFS generated-image checksum-repair proof, APFS raw format/write/patch/delete/empty-directory-create/delete/root-directory-child-file-write-patch-delete/volume-label-change/repair proof on pinned expendable media with non-empty directory delete blocked, APFS writer CLI self-test coverage for image format, image volume-label change, root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, repair, and raw-path refusal, APFS writer CLI physical format/repair proof, and APFS raw volume-label Apply proof are recorded.
+Status: **APFS (A1–A8) and HFS+/HFSX (H1–H8) are full driver-level write-certified as of 2026-06-28** — Apple `fsck_apfs`/`fsck_hfs` + macOS-kernel mount at every milestone, and physical-USB destructive + crash-interruption + rollback at the A8/H8 track gates on disposable media; the capability matrix is owned by [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md). Standing hard boundaries (by design): Fusion/Tier2 multi-device out of scope, encryption credential-gated, sealed-system-volume writes behind a typed confirmation. The historical engine record follows. Milestone A/B plus ext2/ext3/ext4 create/format/repair/grow/shrink, Linux swap create/format queue wiring, HFS+/HFSX bundled sparse-staged create/format/repair wiring, HFS+ image-only data-fork overwrite plus data/resource-fork allocated-block grow/shrink/truncate, bounded fork-backed-attribute allocation growth, constrained empty-file and empty-folder catalog create/delete, single-leaf catalog rename/move, bounded file create with data-fork allocation, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release, core support and helper bridge, APFS read-only browse/extract/export, APFS image-only format scratch-image generation, APFS image-only root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change with payload/read-back, directory-empty, label read-back, or negative-read-back proof, APFS image-only object-checksum repair, generated APFS create/format/repair queue wiring, and generated-layout APFS raw root-file write/patch/delete plus empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label Apply wiring are implemented; ext VM/Linux proof for ext2/ext3/ext4, Linux swap image-level compatibility proof, Linux swap raw-partition VM proof, HFS+/HFSX image-level tool proof, physical USB ext2/ext3/ext4 plus Linux swap destructive proof, physical HFS+/HFSX sparse-staged destructive proof, offset-based raw-probe helper proof, physical HFS+/APFS read-only plus HFS selected-attribute and APFS bounded export proof, HFS+ image-only same-size initial-extent and extents-overflow overwrite unit proof, HFS+ image-only data/resource-fork allocated-block grow/shrink/truncate replacement proof, HFS+ bounded initial-extent data/resource/fork-backed-attribute allocation-growth proof, HFS+ empty-file/non-empty-file/empty-folder create-delete plus single-leaf catalog rename/move, bounded folder-tree delete, and secure released-block wipe catalog mutation unit proof, HFS staged raw data/resource/inline/fork-backed-attribute plus single-leaf catalog rename/move and bounded secure delete physical Apply proof, HFS writer CLI fail-closed plus successful helper write/read-back, catalog rename, and bounded folder-tree delete CTest coverage, APFS generated-format-image plus multi-block seed-file certifier proof, APFS generated-image root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label proof, APFS generated-image checksum-repair proof, APFS raw format/write/patch/delete/empty-directory-create/delete/root-directory-child-file-write-patch-delete/volume-label-change/repair proof on pinned expendable media with non-empty directory delete blocked, APFS writer CLI self-test coverage for image format, image volume-label change, root-file write/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, repair, and raw-path refusal, APFS writer CLI physical format/repair proof, and APFS raw volume-label Apply proof are recorded.
 
-Current APFS raw-write boundary: the original 51 GB generated-raw claim was
+Current APFS write boundary: the original 51 GB generated-raw claim was
 invalidated by a `spaceman_sanity_check` rejection; the A1 multi-CIB
-space-manager and the A2 in-place COW commit engine have since been implemented
-and Apple-certified (`fsck_apfs` + kernel RW mount across single-CIB → multi-CIB
-→ metadata-overflow → CAB tier, on physical 238 GB / 2-4 TB / 8 TB USB). As of
-the A2-3 production wiring (2026-06-20), generated APFS raw **format, repair, and
-in-place file + directory mutation** — root-file write/patch/delete, empty
+space-manager and the A2 in-place COW commit engine were then implemented and
+Apple-certified (`fsck_apfs` + kernel RW mount across single-CIB → multi-CIB →
+metadata-overflow → CAB tier, on physical 238 GB / 2–4 TB / 8 TB USB), including
+the ~2.9–7.8 TiB metadata-overflow band (FORMAT + in-place COMMIT, 4 TiB
+Apple-certified — the former "dead zone" is closed). APFS format, repair, and
+in-place file + directory mutation — root-file write/patch/delete, empty
 root-directory create/delete, root-directory child-file write/delete, rename,
-and the File Management bridge's APFS file + directory routes — all run on the
-certified crash-safe COW engine, supported from 64 MiB through a 32 TiB cap. The
-writer's geometry gate is the precise authority; the ~2.9–7.8 TiB
-metadata-overflow inline cib-array band and arbitrary non-generated Apple APFS
-mutation remain fail-closed. The single capability-matrix owner is
+cross-directory move, and the object-id-preserving byte-range patch — all run on
+the certified crash-safe COW engine and are wired through **both** the File
+Management bridge and the Partition Manager queue, supported from 64 MiB through
+a 32 TiB cap. A3 snapshots (create/delete/revert), A4 multi-volume, A5 inline
+zlib compression, A6 credential-gated FileVault encryption, and A7 clones /
+sparse files / hard-links / xattr-ACL / in-chunk container resize are each
+Apple-certified, and the A8 physical-USB multi-volume + snapshot destructive +
+crash + rollback gate closed the APFS track on 2026-06-28. Remaining fail-closed
+**by design**: Fusion / multi-device Tier2 (out of scope, no rig); encryption
+requires the user credential; a sealed/signed system volume needs a typed
+seal-invalidation confirmation; container shrink and chunk-adding grow are
+documented follow-ons. The single capability-matrix owner is
 [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md) (driver
-matrix A-b / milestone A2).
+matrix, milestones A1–A8).
 
 2026-06-09 engine milestone update: the first certifiable slices of the
 2026-06-08 hard-boundary milestones are now implemented and test-proven.
@@ -269,9 +277,10 @@ Windows-side-only after Apple kernel validation rejected that generated layout:
 Current Windows-side small-target raw proof passed on JMicron serial
 `DD56419883A5B`, Disk 2 Partition 2, 134,217,728 bytes, at
 `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
-Apple-native raw volume-label proof still requires macOS Recovery validation of
-that 64-128 MiB generated APFS target. This does not approve arbitrary Apple
-APFS metadata mutation.
+(The broad APFS write track A1–A8 has since been Apple-native certified through
+the A8 physical-USB destructive/crash/rollback gate; volume-label change remains
+on the legacy raw writer because it is not a checkpoint mutation. See the matrix
+owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md).)
 HFS+ data-fork, resource-fork, inline-attribute, and fork-backed-attribute mutation including bounded fork-backed-attribute growth is now wired to
 the Partition Manager Apply path for selected HFS+/HFSX raw partitions through
 the `HFS File` action. It reads the direct or wrapped HFS+/HFSX volume header,
@@ -288,8 +297,8 @@ updates parent valence when both parent records are present, blocks root-folder
 rename/move, blocks destination collisions, and blocks moving a folder into
 itself or a descendant. Unit coverage proves same-parent file rename,
 cross-parent file move with read-back, and folder rename; the helper self-test
-proves CLI rename with listing/read-back. Broad catalog B-tree split/rebalance
-remains blocked.
+proves CLI rename with listing/read-back. Broad catalog B-tree split and
+underflow merge/rebalance are now Apple-certified (H2/H3).
 APFS existing-image in-place format and raw-partition generated format are now
 implemented with explicit wipe confirmation, stale-edge zeroing, post-format
 APFS detection, requested volume-name listing, and empty-root browse proof.
@@ -457,10 +466,12 @@ Windows-side-only because Apple kernel validation rejected the generated
 spaceman geometry. Current Windows-side raw APFS proof passed on the 128 MiB
 JMicron slice at
 `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
-Current raw APFS claims cover only generated/minimal single-volume APFS targets
-created by S.A.K. inside the 64-128 MiB one-spaceman-chunk envelope, not
-arbitrary encrypted, compressed, snapshotted, multi-volume, or larger generated
-APFS; Apple-native validation of the small target is still pending.
+The 64-128 MiB one-spaceman-chunk envelope and the "Apple-native validation
+pending" notes above are the I1-era (2026-06-13) raw-APFS state; they were
+superseded by the A1 multi-CIB/CAB space manager (32 TiB cap) and full A1–A8
+Apple-native certification through the A8 physical-USB destructive/crash/rollback
+gate (2026-06-28). See the matrix owner
+[APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md).
 `sak_apfs_writer_cli.exe` is the production Apply bridge for generated APFS
 create/format, generated-layout checksum repair, generated-layout raw
 root-file write/patch/delete plus empty root-directory create/delete,
@@ -484,21 +495,20 @@ create/replace/byte-range patch/delete, generated-image empty root-directory
 create/delete, generated-image root-directory child-file write/patch/delete,
 non-empty-directory delete blocking, missing-delete blocking, checksum repair
 after intentional metadata corruption, and raw-command refusal for normal file
-paths, including raw volume-label refusal on normal file paths. A pinned
-physical helper proof must stay inside a 64-128 MiB generated APFS target. The
-current 128 MiB JMicron Windows-side raw-format proof is recorded at
-`artifacts/file-management-live-certification/disk2-apfs-128mb-raw-format/report.json`.
-The previous JMicron helper evidence at
-`artifacts/file-management-live-certification/disk3-apfs-raw-format/report.json`
-and latest helper run `run-20260612-192652` are retained as Windows-side-only
-evidence after Apple rejected the large generated layout; Apple-native
-validation of the small generated target remains pending.
+paths, including raw volume-label refusal on normal file paths. Pinned physical helper proofs are no longer capped at 64-128 MiB; the A1–A8
+lanes are Apple-certified to a 32 TiB cap, with the A8 physical-USB
+destructive/crash/rollback gate passed on disposable media (2026-06-28). The
+128 MiB JMicron Windows-side raw-format proof
+(`artifacts/file-management-live-certification/disk2-apfs-128mb-raw-format/report.json`)
+and the earlier `run-20260612-192652` run remain in the record as the I1-era
+Windows-side evidence that the multi-CIB/CAB geometry later superseded.
 Hardening note: the production APFS helper does not blanket-enable protected,
-compressed, snapshot, or multi-volume APFS mutation options. Generated APFS v2
-single-volume containers are allowed through the generated-layout proof path;
-active snapshot/revert metadata, unsupported incompatible feature flags, and
-multi-volume containers remain blocked unless a future operation-specific proof
-explicitly covers them.
+compressed, snapshot, or multi-volume APFS mutation. Each is reached only
+through its own certified, operation-specific path and flag — A3 snapshots
+(create/delete/revert), A4 multi-volume, A5 inline compression, A6
+credential-gated FileVault encryption, A7 clones/sparse/hard-links/resize — all
+Apple-certified, never blanket-on. Fusion/Tier2 multi-device remains out of
+scope and unsupported incompatible feature flags remain fail-closed.
 The writer also has a structured image-only execution-evidence gate, so a plan
 or generated scratch image cannot be treated as executable unless the evidence
 ID, operation, target path, structure mapping, checksum vectors, source/scratch
@@ -533,15 +543,17 @@ and host launcher `scripts/launch_partition_manager_vm_gate_host.ps1`; it writes
 SWAPSPACE2 metadata to an app-style raw partition target, verifies the raw
 header, runs the S.A.K. probe certifier, and clears the disposable VM disk back
 to RAW.
-XFS/Btrfs write paths and non-generated APFS write paths remain blocked until
-destructive certification or tool proof is complete. Generated-layout APFS
-create/format, repair, root-file write/patch/delete, empty-directory
-create/delete, root-directory child-file write/patch/delete, and volume-label
-change are approved only through the explicit S.A.K. generated-layout helper
-path. HFS+/HFSX format
-and repair are approved through the
-bundled hfsprogs sparse-staging path, image-level proof, and physical
-raw-partition destructive proof.
+XFS/Btrfs write paths remain blocked until destructive certification or tool
+proof is complete; the APFS in-place COW mutation engine (A2) and the full A1–A8
+driver operations are now Apple-certified and wired through the production Apply
+path. APFS create/format, repair, in-place file + directory mutation
+(write/patch/delete/rename/move), snapshots, multi-volume, inline compression,
+credential-gated encryption, clones/sparse/hard-links, in-chunk resize, and
+volume-label change are approved only through the explicit S.A.K. helper path
+with raw-target identity, generated-layout confirmation, and raw hardware
+evidence. HFS+/HFSX format and repair are approved through the bundled hfsprogs
+sparse-staging path, image-level proof, and physical raw-partition destructive
+proof.
 
 ## Enterprise Arbitrary-Write Scope
 
@@ -559,35 +571,44 @@ Current release-approved non-native write scope is:
   with manifest/hash gates and VM/Linux proof.
 - Linux swap create/format through original SWAPSPACE2 metadata writer with VM
   proof.
-- HFS+/HFSX create/format/repair through bundled hfsprogs sparse staging with
-  image and physical raw-partition proof, plus staged selected-partition
-  data-fork, resource-fork, inline-attribute, fork-backed-attribute replacement, and bounded
-  fork-backed-attribute growth for HFS+ records through `sak_hfs_writer_cli.exe`.
-- APFS generated/minimal create/format, helper-level bounded generated-image
-  root-file write/replace/byte-range patch/delete, empty root-directory
-  create/delete, root-directory child-file write/patch/delete, and volume-label
-  change, certification-lane bounded generated-layout raw root-file
-  write/patch/delete, empty root-directory create/delete, root-directory
-  child-file write/patch/delete helper plumbing, generated-layout volume-label
-  helper plumbing, and generated-layout checksum repair through original S.A.K.
-  writer code and helper proof. Raw patch/delete/child-file hardware proof is
-  recorded by the guarded destructive lane; raw volume-label hardware proof is
-  still pending.
+- HFS+/HFSX full driver-level write (H1–H8, Apple-certified): create/format/
+  repair through bundled hfsprogs sparse staging; streaming catalog / attributes
+  / extents-overflow B-trees of arbitrary depth/width with underflow
+  merge/rebalance; data/resource-fork and inline/fork-backed-attribute write plus
+  attribute overflow records; hard-links, symlinks, and complex/hard-linked
+  delete; little- and big-endian journal replay; the embedded HFS-wrapper write
+  edge; decmpfs read+write of all types — through `sak_hfs_writer_cli.exe`, with
+  image + physical raw-partition proof and the H8 physical-USB
+  destructive/crash/rollback gate.
+- APFS full driver-level write (A1–A8, Apple-certified): multi-CIB / CAB space
+  manager to a 32 TiB cap; in-place crash-safe COW checkpoint mutation of files
+  and directories (create/delete/write/rename/cross-directory move/object-id-
+  preserving byte-range patch) wired through both the File Management bridge and
+  the Partition Manager queue; snapshots (create/delete/revert); multi-volume
+  containers; inline zlib compression; credential-gated FileVault encryption (the
+  secret is never persisted and never appears in script text); file clones /
+  sparse files / hard-links / xattr-ACL / in-chunk container resize; and
+  checksum repair — through original S.A.K. writer code, with image + physical
+  raw-USB proof and the A8 physical-USB destructive/crash/rollback gate.
+  Volume-label change remains on the legacy raw writer (not a checkpoint
+  mutation).
 
-Current enterprise blockers for arbitrary write are:
+Remaining enterprise write blockers (everything above is certified):
 
-- APFS: arbitrary Apple APFS mutation remains blocked for non-generated
-  containers, snapshots/revert state, encrypted/protected volumes, compressed
-  files, multi-volume containers, arbitrary object-map updates, arbitrary
-  resize, and full checkpoint replay.
-- HFS+/HFSX: catalog root-leaf split for one-level trees, broad allocation
-  growth through bounded extents-overflow insertion, overflow-record removal
-  on delete, and decmpfs type-3/type-4 compressed round trips are implemented
-  with unit, CLI, and fsck_hfs proof. Catalog/extents mutation on trees deeper
-  than one level (including any catalog mutation after a split), B-tree
-  merge/rebalance on delete, inline/broad attribute growth, attribute-tree
-  overflow records, journal replay, decmpfs lzvn/lzfse codecs, and recursive
-  extents-overflow-file overflow remain blocked.
+- APFS: Fusion / multi-device Tier2 containers (out of scope, detect + fail
+  closed, no cert rig). By design: encrypted volumes require the user
+  credential, and a sealed/signed system volume is writable only behind a typed
+  seal-invalidation confirmation. Container shrink and chunk-adding grow are
+  documented follow-ons (in-chunk grow is certified). All other APFS driver
+  operations — multi-CIB/CAB to 32 TiB, in-place COW file + directory mutation,
+  snapshots, multi-volume, compression, credential-gated encryption,
+  clones/sparse/hard-links, in-chunk resize — are Apple-certified (A1–A8).
+- HFS+/HFSX: none remaining for the driver scope — H1–H8 are Apple-certified
+  (streaming catalog/attributes/extents B-trees, underflow merge/rebalance,
+  hard-links/symlinks, attribute overflow records, little- and big-endian
+  journal replay, decmpfs all types, embedded-wrapper write). Non-gating
+  follow-ons: catalog map-node growth beyond ~32000 nodes and incremental
+  (non-rebuild) B-tree split for efficiency.
 - XFS: format/repair/write remains blocked until a Windows-portable approved
   xfsprogs path or original implementation has destructive proof. Read-only
   metadata checks remain the shipped scope.
@@ -659,20 +680,18 @@ with SHA-256 `e2aed0d76e90c81c39f9916d56a8f1631c440aec356877ea7dae197b069ea64f`,
 and exported `/Fonts` from APFS with bounded caps. The same physical lane now
 records `validation_requirements` and `probe_limits` in the report so required
 optional proofs are auditable.
-APFS arbitrary-media writes remain blocked until the writer preflight has
-matching operation-specific proof for non-generated containers, file writes,
-and resize. Generated/minimal APFS raw format, bounded root-file write/patch/
-delete, root-directory child-file, volume-label, and checksum repair are
-hardware-certifiable only inside the 64-128 MiB one-spaceman-chunk envelope;
-the previous large-target proof is Windows-side-only after Apple validation
-rejected its spaceman geometry. The 128 MiB JMicron Windows-side raw-format
-proof now passes, but Apple-native validation of that small generated target is
-still pending.
-Full arbitrary APFS/HFS+/XFS/Btrfs write support is not a current release
-claim. Release wording must keep XFS/Btrfs to read-only metadata, HFS+/HFSX to
-read-only browse plus sparse-staged format/repair, and APFS to 64-128 MiB
-one-spaceman-chunk generated-layout format/write/patch/delete/repair helper scope only unless a future milestone
-adds full driver/tool proof.
+APFS and HFS+/HFSX writes are now full driver-level certified end to end (see
+the matrix owner
+[APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)). The
+former 64–128 MiB one-spaceman-chunk envelope was superseded by the A1
+multi-CIB/CAB space manager (32 TiB cap) and Apple-native validation through the
+A8 physical-USB destructive/crash/rollback gate; the in-place COW engine
+mutates files and directories on the certified tiers, validated by Apple
+`fsck_apfs` + macOS-kernel mount.
+Release wording must keep XFS/Btrfs to read-only metadata, and may now state
+full driver-level APFS + HFS+/HFSX read/write with the standing hard boundaries
+(Fusion/Tier2 out of scope; encryption credential-gated; sealed-system-volume
+writes only behind a typed seal-invalidation confirmation).
 Evidence:
 `artifacts/partition-manager-certification/vm-lab/external-evidence/external.apple-filesystem-physical/report.json`.
 APFS free-space reporting now also handles real containers whose space-manager
@@ -702,11 +721,14 @@ root entries, and passed selected-file plus selected-attribute read proof. This
 proves HFS+ and APFS metadata, HFS+ and APFS selected-file reads, HFS+
 selected-attribute reads, and APFS bounded export on physical media.
 HFS+/HFSX sparse-staged format/repair proof is tracked separately in the
-guarded hfsprogs destructive lane; unbounded HFS+ folder-tree delete, complex HFS+ file delete,
-B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice, inline/broad HFS+ attribute growth,
-compressed-file writes,
-arbitrary APFS mutation, non-generated APFS file writes, APFS resize, APFS
-encrypted/compressed files, and arbitrary Apple APFS repair remain blocked.
+guarded hfsprogs destructive lane. The HFS+ operations once listed here as
+blocked — folder-tree delete, complex/hard-linked file delete, B-tree split +
+underflow merge/rebalance, broad allocation growth, inline/broad attribute
+growth + overflow records, and decmpfs compressed-file writes — and the APFS
+operations — in-place file + directory mutation, in-chunk resize, snapshots,
+multi-volume, inline compression, and credential-gated encryption — are all now
+Apple-certified (H1–H8 / A1–A8). Fusion/Tier2 APFS multi-device stays out of
+scope.
 Generated APFS create/format, generated-layout volume-label change, and
 generated-layout checksum repair are wired
 through `sak_apfs_writer_cli.exe`, Pending Operations, safety validation, Apply
@@ -1065,7 +1087,7 @@ Still open:
 | Btrfs | btrfs-progs feature support tracks kernel/progs versions and includes creation/check tooling; `btrfs check --readonly` is the safe default, while repair is explicitly dangerous. The Btrfs primary superblock at 64 KiB exposes total/used bytes, devices, sector/node/leaf sizes, flags, UUID, generation, and label. | Current parser exposes read-only superblock metadata. Defer runtime check/format/repair until a Windows-portable build is proven. Read-only check only; repair disabled by default. |
 | HFS+ | hfsutils is classic HFS only and explicitly does not support HFS+. libfshfs supports read-only HFS+ / HFSX 10.3+ and is LGPL-3.0-or-later, but is experimental and does not support every compression variant. Apple TN1150 defines the HFS+ volume header at byte 1024, the HFS wrapper embedded-volume fields, the catalog as a B-tree, the file record `dataFork` and `resourceFork`, the extents overflow file as a fixed-key B-tree keyed by file ID, fork type, and fork start block, and an optional attributes B-tree whose key layout was never fully finalized. | Current path uses original S.A.K. header, wrapper, catalog consistency, attributes key/value scanning, initial extent, extents-overflow parsing for catalog/data/resource/attribute reads, existing-fork bounded writes, bounded file create with data, single-leaf catalog rename/move, and constrained empty-file/empty-folder catalog create/delete, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release. Bundled hfsprogs handles format and fsck-style check/repair; evaluate libfshfs-style work only for corruption-tolerant recovery, broader HFS+ variants, or future expanded file-write proof. |
 | HFS+ format/repair | hfsprogs/newfs_hfs/fsck_hfs exist from Apple-derived sources in Debian hfsprogs 540.1.linux3-6. | Current bundle builds `newfs_hfs` and `fsck_hfs` for Windows/MSYS, ships source/patch/runtime notices, validates image-level HFS+/HFSX output with the S.A.K. probe certifier, and routes raw app operations through sparse staging plus manifest/hash/safety gates. Physical raw-partition proof passed on an expendable USB NVMe HFS partition. |
-| APFS | Apple's reference defines the NXSB container superblock fields for block size, block count, feature flags, UUID, next object ID, next transaction ID, checkpoint block counts, checkpoint bases/next/start/lengths, object-map OID, and file-system OID array. It also defines the shared object header and Fletcher-64 object checksum, object-map fields for flags/snapshot counts/tree OIDs/revert XIDs, APSB volume superblock fields, B-tree node header fields, root `btree_info_t`, directory records, inodes, file extent records, and spaceman chunk/CIB geometry. libfsapfs is experimental, read-only, LGPL-3.0-or-later, and does not support several modern APFS features. | Current parser exposes read-only container/checkpoint ring/object-map/volume-OID metadata, bounded probe-window volume-superblock candidate metadata, referenced-object-header preflight, visible object-map tree anchors, visible referenced root/non-root B-tree node headers, root `btree_info_t`, metadata object-checksum validation on APFS object blocks, root/directory browsing, and selected-file extraction for normal unencrypted/uncompressed file extents. Current writer supports generated/minimal APFS image create/format, generated-image root-file create/replace/byte-range patch/delete, generated-image empty root-directory create/delete, generated-image root-directory child-file write/patch/delete, generated-image volume-label change, generated/minimal one-spaceman-chunk raw root-file write/patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change through Apply when generated-layout proof is captured, and checksum repair; generated raw targets larger than 128 MiB and arbitrary Apple APFS write support remain blocked. |
+| APFS | Apple's reference defines the NXSB container superblock fields for block size, block count, feature flags, UUID, next object ID, next transaction ID, checkpoint block counts, checkpoint bases/next/start/lengths, object-map OID, and file-system OID array. It also defines the shared object header and Fletcher-64 object checksum, object-map fields for flags/snapshot counts/tree OIDs/revert XIDs, APSB volume superblock fields, B-tree node header fields, root `btree_info_t`, directory records, inodes, file extent records, and spaceman chunk/CIB geometry. libfsapfs is experimental, read-only, LGPL-3.0-or-later, and does not support several modern APFS features. | Current parser exposes read-only container/checkpoint ring/object-map/volume-OID metadata, bounded probe-window volume-superblock candidate metadata, referenced-object-header preflight, visible object-map tree anchors, visible referenced root/non-root B-tree node headers, root `btree_info_t`, metadata object-checksum validation on APFS object blocks, root/directory browsing, and selected-file extraction for normal unencrypted/uncompressed file extents. Current writer provides full driver-level APFS write (A1–A8, Apple-certified): multi-CIB/CAB create/format/repair to a 32 TiB cap, in-place crash-safe COW file + directory mutation (write/replace/byte-range patch/delete/rename/cross-directory move, object id preserved) wired through both the File Management bridge and the Partition Manager queue, snapshots (create/delete/revert), multi-volume containers, inline zlib compression, credential-gated FileVault encryption, and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize; validated by Apple `fsck_apfs` + macOS-kernel mount + the A8 physical-USB destructive/crash/rollback gate. Fusion/Tier2 multi-device containers are out of scope (detect + fail closed). |
 
 ## Supported Formats Roadmap
 
@@ -1078,8 +1100,8 @@ Still open:
 | XFS | Current | Current read-only superblock metadata and original metadata consistency check | Blocked by design | Blocked by design | Shipped scope is read-only metadata only. Deep `xfs_repair -n`, format, and repair require a Windows-portable approved tool plus destructive proof before exposure. |
 | Btrfs | Current | Current read-only superblock metadata and original metadata consistency check | Blocked by design | Blocked by design | Shipped scope is read-only metadata only. Deep `btrfs check --readonly` requires a Windows-portable approved tool; repair stays disabled because upstream tooling treats repair as expert-only and high risk. |
 | Linux swap | Current | Current read-only header metadata | Current confirmed queue/apply path | N/A | Original SWAPSPACE2 v1 formatter writes version, last-page, UUID, label, and page-size-bound signature after explicit confirmation; repair is not applicable. |
-| HFS+ / HFSX | Current direct and wrapper detection | Current header metadata, catalog consistency checks, attributes B-tree key scans with fork/inline metadata reporting, catalog listing, selected data/resource-fork extraction, selected attribute-value extraction, bounded recursive directory export with `.rsrc` sidecars, catalog/data/resource/attribute extents-overflow support, image-only same-size data-fork overwrite, image-only data/resource-fork allocated-block grow/shrink/truncate replacement, image-only bounded initial-extent allocation-growth replacement, image-only inline-attribute replacement, image-only fork-backed attribute replacement within existing allocated blocks, image-only bounded fork-backed attribute allocation growth, image-only bounded file create with data, image-only single-leaf catalog rename/move, and constrained empty-file/empty-folder catalog create/delete, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release core/helper support | Current confirmed queue/apply path | Current confirmed queue/apply path | `newfs_hfs` formats and `fsck_hfs` repairs through sparse staging for raw partition targets after confirmation. Existing-file data-fork overwrite, data/resource-fork replacement/truncate, bounded initial-extent allocation growth, inline-attribute replacement, fork-backed attribute replacement within existing allocated blocks, bounded fork-backed attribute allocation growth, bounded file create with data, single-leaf catalog rename/move, empty-file/folder create/delete, allocated-file delete, optional released-block zeroing, and bounded folder-tree delete are exposed through `sak_hfs_writer_cli.exe` and wired to staged raw Apply for selected HFS+/HFSX partitions. Arbitrary-depth catalog B-tree split, rebalance, and node-pool growth (depth-4 / >256-leaf certified through the production bridge with Apple `fsck_hfs` + kernel RW mount) are now confirmed. Inline/broad attribute growth, compressed-file writes, unbounded folder-tree delete, complex file delete, attribute-tree B-tree split, broad allocation growth beyond the bounded initial-extent slice, recursive extents-overflow-file overflow, and APFS-style behavior remain blocked. |
-| APFS | Current | Current read-only container/checkpoint ring/object-map/volume-OID metadata, bounded probe-window volume-superblock candidate metadata, referenced-object-header preflight, visible object-map tree-anchor metadata, visible referenced root/non-root B-tree node headers, root `btree_info_t`, metadata object-checksum validation on APFS object blocks, directory browse, selected-file extraction, bounded recursive directory export, fail-closed writer certification preflight, operation-specific mutation plans, generated APFS format scratch-image build/verify support with optional multi-block seed-file read-back for certification, image-only root-file add/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change proof plus one-spaceman-chunk raw-target generated root-file add/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change Apply plumbing for generated/minimal APFS with bounded existing root-file/directory preservation, deleted data-region zeroing, helper-level payload/read-back/deleted-file/directory-empty/old-new-label/negative-read-back hashes, non-empty directory delete blocking, and supported-object-checksum repair proof for generated/minimal APFS | Current one-spaceman-chunk (64-128 MiB) generated/minimal APFS create and format plus generated-layout root-file write/patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change through queue/apply via `sak_apfs_writer_cli.exe` | Current one-spaceman-chunk generated/minimal APFS checksum repair through queue/apply; arbitrary APFS repair blocked | Encrypted/compressed files, arbitrary Apple APFS writes, non-generated file/folder writes, generated raw targets larger than 128 MiB until multi-CIB spaceman proof, resize, and broad hardware APFS mutation remain blocked until operation-specific proof exists. |
+| HFS+ / HFSX | Current direct and wrapper detection | Current header metadata, catalog consistency checks, attributes B-tree key scans with fork/inline metadata reporting, catalog listing, selected data/resource-fork extraction, selected attribute-value extraction, bounded recursive directory export with `.rsrc` sidecars, catalog/data/resource/attribute extents-overflow support, image-only same-size data-fork overwrite, image-only data/resource-fork allocated-block grow/shrink/truncate replacement, image-only bounded initial-extent allocation-growth replacement, image-only inline-attribute replacement, image-only fork-backed attribute replacement within existing allocated blocks, image-only bounded fork-backed attribute allocation growth, image-only bounded file create with data, image-only single-leaf catalog rename/move, and constrained empty-file/empty-folder catalog create/delete, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release core/helper support | Current confirmed queue/apply path | Current confirmed queue/apply path | `newfs_hfs` formats and `fsck_hfs` repairs through sparse staging for raw partition targets after confirmation. Existing-file data-fork overwrite, data/resource-fork replacement/truncate, bounded initial-extent allocation growth, inline-attribute replacement, fork-backed attribute replacement within existing allocated blocks, bounded fork-backed attribute allocation growth, bounded file create with data, single-leaf catalog rename/move, empty-file/folder create/delete, allocated-file delete, optional released-block zeroing, and bounded folder-tree delete are exposed through `sak_hfs_writer_cli.exe` and wired to staged raw Apply for selected HFS+/HFSX partitions. Arbitrary-depth catalog/attributes/extents B-tree split, underflow merge/rebalance, and node-pool growth, inline/broad attribute growth + attribute-tree overflow records, decmpfs compressed-file writes (all types), complex/hard-linked file delete and folder-tree delete, hard-links/symlinks, the fragmenting allocator with multi-leaf extents, little- and big-endian journal replay, and the embedded HFS-wrapper write edge are all Apple-certified (H1–H8) by Apple `fsck_hfs` + macOS-kernel RW mount and the H8 physical-USB destructive/crash/rollback gate — the HFS+ track is full driver-level. Non-gating follow-ons: catalog map-node growth beyond ~32000 nodes and incremental (non-rebuild) split. |
+| APFS | Current | Current read-only container/checkpoint ring/object-map/volume-OID metadata, bounded probe-window volume-superblock candidate metadata, referenced-object-header preflight, visible object-map tree-anchor metadata, visible referenced root/non-root B-tree node headers, root `btree_info_t`, metadata object-checksum validation on APFS object blocks, directory browse, selected-file extraction, bounded recursive directory export, fail-closed writer certification preflight, operation-specific mutation plans, generated APFS format scratch-image build/verify support with optional multi-block seed-file read-back for certification, image-only root-file add/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change proof plus one-spaceman-chunk raw-target generated root-file add/replace/byte-range patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label change Apply plumbing for generated/minimal APFS with bounded existing root-file/directory preservation, deleted data-region zeroing, helper-level payload/read-back/deleted-file/directory-empty/old-new-label/negative-read-back hashes, non-empty directory delete blocking, and supported-object-checksum repair proof for generated/minimal APFS | Current multi-CIB/CAB APFS create/format to a 32 TiB cap plus in-place crash-safe COW file + directory mutation, snapshots, multi-volume, inline compression, credential-gated encryption, clones/sparse/hard-links, and in-chunk container resize through queue/apply via `sak_apfs_writer_cli.exe` | Current APFS checksum repair through queue/apply to the 32 TiB cap | APFS A1–A8 are Apple-certified (multi-CIB/CAB to 32 TiB, in-place COW file + directory mutation, snapshots, multi-volume, inline zlib compression, credential-gated FileVault encryption, clones/sparse/hard-links, in-chunk resize), validated by Apple `fsck_apfs` + macOS-kernel mount and the A8 physical-USB destructive/crash/rollback gate. Fusion/Tier2 multi-device is out of scope; container shrink and chunk-adding grow are documented follow-ons. |
 
 ## Architecture
 
@@ -1377,9 +1399,10 @@ Repair policy:
       pinned expendable APFS partitions. Physical proof passed Windows-side on a
       128 MiB JMicron USB APFS partition with bounded APFS detection/root-listing
       readback; the previous large-partition result is Windows-side-only because
-      Apple rejected the generated spaceman geometry. Current raw APFS
-      destructive proof must stay inside a 64-128 MiB one-spaceman-chunk
-      partition until multi-CIB support is implemented and Apple-validated.
+      Apple rejected the generated spaceman geometry. (That 64-128 MiB
+      one-spaceman-chunk constraint was a point-in-time gate, now satisfied: the
+      A1 multi-CIB/CAB space manager is implemented and A1–A8 are Apple-validated
+      to a 32 TiB cap.)
 - [x] Extend the APFS raw destructive lane to write one bounded root regular
       file to generated/minimal raw APFS, verify read-back hash, intentionally
       corrupt one generated APFS metadata checksum block, repair it in place,
@@ -1391,9 +1414,10 @@ Repair policy:
 - [x] Extend the APFS raw destructive lane and certifier routes for bounded
       generated/minimal root-file byte-range patch and delete with exact
       read-back or negative-read-back validation. Local tests prove fail-closed
-      raw target rejection; physical proof under `external.apfs-raw-format` is
-      valid only for the 64-128 MiB one-spaceman-chunk envelope until the
-      Apple-native large-target defect is fixed.
+      raw target rejection; physical proof under `external.apfs-raw-format` was
+      the 64-128 MiB one-spaceman-chunk envelope, and the Apple-native
+      large-target geometry was subsequently fixed and certified to 32 TiB
+      (A1–A8).
 - [x] Add APFS generated-image seed-file write proof for one root regular file
       backed by a contiguous multi-block extent and certifier read-back
       validation.
@@ -1436,9 +1460,10 @@ Repair policy:
       route: volume snapshot-metadata tree OID, revert XID/superblock OID,
       snapshot count, and volume flags must be zero, and both object maps must
       carry no snapshot or pending-revert state. Tampered images fail closed
-      with explicit snapshot/revert/encryption blockers; unit tamper tests pass,
-      and physical raw APFS proof must now use the 64-128 MiB one-spaceman-chunk
-      target envelope before Apple-native certification is claimed.
+      with explicit snapshot/revert/encryption blockers; unit tamper tests pass.
+      (This generated-layout zero-pinning was the pre-A3/A4/A6 default; snapshots,
+      multi-volume, and credential-gated encryption are now each individually
+      certified through their own operation-specific routes, A1–A8.)
 - [x] Correct the read-only detector's APFS object-map snapshot field offsets
       to the on-disk `omap_phys` layout (`om_tree_oid` 0x30, snapshot tree
       0x38, most-recent snapshot 0x40, pending revert 0x48/0x50) so
@@ -1558,19 +1583,24 @@ Repair policy:
 - Keep ext read-only browse/extract/export on original S.A.K. parser code so
   users do not need mounts, drivers, WSL, package managers, or external runtime
   tools for read-only file recovery.
-- Keep raw unbounded HFS+ folder-tree delete, complex HFS+ file delete, B-tree
-  split/rebalance, inline/broad HFS+ attribute growth, and HFS+
-  broad allocation growth beyond the bounded initial-extent slice out of the shipped scope. Image-only data-fork overwrite,
-  data/resource-fork allocated-block grow/shrink/truncate replacement,
-  inline-attribute replacement, fork-backed attribute replacement/growth, bounded file create with data, single-leaf catalog rename/move, and constrained empty-file/empty-folder catalog create/delete, allocated-file delete with allocation-bitmap release, optional released-block zeroing for file/folder-tree delete, and bounded folder-tree delete with allocation-bitmap release are the certified core writer slices; any expanded raw/UI mutation path needs its own
+- HFS+ folder-tree delete, complex/hard-linked file delete, B-tree split +
+  underflow merge/rebalance, inline/broad attribute growth + overflow records,
+  hard-links/symlinks, the fragmenting allocator with multi-leaf extents,
+  little- and big-endian journal replay, the embedded-wrapper write edge, and
+  decmpfs read+write of all types are all certified and shipped (H1–H8). The
+  standing rule holds for any FURTHER expansion beyond the certified driver
+  scope (e.g. catalog map-node growth beyond ~32000 nodes): it needs its own
   design, queue operation, safety validator, Apply review, destructive media
   proof, and docs.
-- Keep APFS encrypted/compressed reads and arbitrary APFS write/repair/format/resize
-  out of the shipped scope. Current production mutation support is limited to
-  S.A.K. generated-layout create/format, checksum repair, and bounded root-file
-  write/patch/delete, empty root-directory create/delete, and root-directory
-  child-file write/patch/delete plus volume-label change through explicit
-  confirmation and generated-layout guards.
+- APFS write/repair/format, in-place file + directory mutation, snapshots,
+  multi-volume, inline compression, credential-gated encryption,
+  clones/sparse/hard-links, and in-chunk resize are certified and shipped
+  (A1–A8), each reached only through its own operation-specific route with
+  explicit confirmation, raw-target identity, and generated-layout/destructive
+  guards. Fusion/Tier2 multi-device stays out of scope; container shrink and
+  chunk-adding grow are documented follow-ons; encrypted volumes require the
+  user credential, and sealed-system-volume writes need a typed
+  seal-invalidation confirmation.
 - Keep Linux live ISO/WSL validation as a separate certification lane, not a
   runtime dependency and not a mandatory local release-readiness step.
 - Keep the runtime filesystem-tool manifest hand-authored for the current tool
