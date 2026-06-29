@@ -40,6 +40,8 @@ compile_commands.json
 CTestTestfile.cmake
 install_manifest.txt
 *.cmake
+# Build script invoked by a POST_BUILD -P command; must be tracked despite *.cmake
+!cmake/copy_tools_bundle.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild

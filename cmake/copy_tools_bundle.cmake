@@ -1,0 +1,19 @@
+if(NOT DEFINED SAK_TOOLS_SOURCE)
+    message(FATAL_ERROR "SAK_TOOLS_SOURCE is required")
+endif()
+
+if(NOT DEFINED SAK_TOOLS_DESTINATION)
+    message(FATAL_ERROR "SAK_TOOLS_DESTINATION is required")
+endif()
+
+if(NOT EXISTS "${SAK_TOOLS_SOURCE}")
+    message(FATAL_ERROR "Bundled tools source does not exist: ${SAK_TOOLS_SOURCE}")
+endif()
+
+file(REMOVE_RECURSE "${SAK_TOOLS_DESTINATION}")
+file(MAKE_DIRECTORY "${SAK_TOOLS_DESTINATION}")
+
+file(COPY "${SAK_TOOLS_SOURCE}/"
+    DESTINATION "${SAK_TOOLS_DESTINATION}"
+    PATTERN "_build" EXCLUDE
+)
