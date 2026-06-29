@@ -17,7 +17,7 @@ In scope:
 - Manual raw/image targets.
 - ext2/ext3/ext4 read-only browse/read/export.
 - HFS+/HFSX browse/read plus certified explicit write operations.
-- APFS browse/read plus certified full driver-level write operations (A1–A8; see the matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)).
+- APFS browse/read plus certified full driver-level write operations (A1-A8; see the matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)).
 - XFS/Btrfs metadata-only targets with clear disabled browse/write states until readers exist.
 - Files-style UI shell: sidebar, command bar, omnibar, tabs, dual pane, view layout picker, context menu, preview/details pane, properties, keyboard shortcuts, and command palette.
 - S.A.K.-owned implementation in Qt/C++, borrowing Files interaction patterns and visual language rather than embedding the Files WinUI app.
@@ -154,7 +154,7 @@ Current backend proof is stronger than the UI:
 - File Management target bridge can browse/read supported mounted/raw/image targets.
 - Duplicate Finder and Advanced Search can target supported raw/image readers.
 - HFS+ live File Explorer write/read/search/rename/delete proof passed.
-- APFS File Explorer write/read/search/delete proof passed; the APFS driver track (A1–A8) is Apple-native certified through the A8 physical-USB destructive/crash/rollback gate (2026-06-28), superseding the earlier 128 MiB Windows-side-only proof.
+- APFS File Explorer write/read/search/delete proof passed; the APFS driver track (A1-A8) is Apple-native certified through the A8 physical-USB destructive/crash/rollback gate (2026-06-28), superseding the earlier 128 MiB Windows-side-only proof.
 
 Current gap: the shell now looks and behaves like a primary file manager, but later milestones still need deeper multi-level Columns polish, tabs, dual pane, richer omnibar search results, richer previews, copy-out/import queues, icon render parity, and final live-device certification.
 
@@ -322,31 +322,31 @@ Central action registry:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Local Windows | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | ext2/ext3/ext4 raw/image | Yes | Yes | Yes | No | No | No | No | Yes | No |
-| HFS+/HFSX raw/image | Yes | Yes | Yes | Yes² | Yes² | Yes² | Yes² | Yes | Yes² |
-| APFS raw/image generated (≤32 TiB) | Yes | Yes | Yes | Yes¹ | Yes¹ | Yes¹ | Yes¹ | Yes | Yes¹ |
+| HFS+/HFSX raw/image | Yes | Yes | Yes | Yes[2] | Yes[2] | Yes[2] | Yes[2] | Yes | Yes[2] |
+| APFS raw/image generated (<=32 TiB) | Yes | Yes | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
 | APFS arbitrary Apple media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
 | XFS/Btrfs current | Metadata only | No | No | No | No | No | No | No | No |
 
-¹ Certified crash-safe in-place COW checkpoint engine (milestones A1–A8 — see the
+[1] Certified crash-safe in-place COW checkpoint engine (milestones A1-A8 - see the
 single capability-matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
 driver matrix rows A-a..A-h). Certified scope on S.A.K. generated-layout
-containers, 64 MiB through a 32 TiB cap (the former ~2.9–7.8 TiB
+containers, 64 MiB through a 32 TiB cap (the former ~2.9-7.8 TiB
 metadata-overflow dead zone is closed): in-place file + directory
 create/delete/write/rename/cross-directory move/object-id-preserving patch,
 snapshots (create/delete/revert), multi-volume containers, inline zlib
 compression, credential-gated FileVault encryption, file clones / sparse files /
-hard-links / xattr-ACL, and in-chunk container resize — validated by Apple
+hard-links / xattr-ACL, and in-chunk container resize - validated by Apple
 `fsck_apfs` + macOS-kernel mount and the A8 physical-USB destructive + crash +
 rollback gate. Production writes carry an explicit generated-layout
 confirmation, so mutation of **arbitrary non-generated Apple media stays
 fail-closed at the Apply layer** (the COW engine is certified; the production
-exposure is intentionally generated-layout-only — hence the "APFS arbitrary
+exposure is intentionally generated-layout-only - hence the "APFS arbitrary
 Apple media" row stays No for writes). Also fail-closed by design: Fusion/Tier2
 multi-device (out of scope, no rig); encryption requires the user credential; a
 sealed/signed system volume needs a typed seal-invalidation confirmation;
 container shrink and chunk-adding grow are documented follow-ons.
 
-² HFS+/HFSX full-driver writes — the HFS+ track (H1–H8) is Apple-certified
+[2] HFS+/HFSX full-driver writes - the HFS+ track (H1-H8) is Apple-certified
 end-to-end: streaming catalog/attributes/extents B-trees (depth/width-general,
 underflow merge), hardlinks/symlinks, big-endian journal replay, and the
 embedded-wrapper write edge, validated by Apple `fsck_hfs` + macOS-kernel RW
@@ -643,7 +643,7 @@ Hard rules:
 - Read-only parser paths stay read-only.
 - Raw/non-native writes require explicit command, explicit confirmation, and capability proof.
 - No generic organizer moves on raw/non-native targets.
-- APFS writes run on the certified A1–A8 in-place COW engine (multi-CIB/CAB to a 32 TiB cap, Apple-validated through the A8 physical-USB gate), gated to S.A.K. generated-layout targets with explicit confirmation; arbitrary non-generated Apple media, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
+- APFS writes run on the certified A1-A8 in-place COW engine (multi-CIB/CAB to a 32 TiB cap, Apple-validated through the A8 physical-USB gate), gated to S.A.K. generated-layout targets with explicit confirmation; arbitrary non-generated Apple media, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
 - Every destructive command shows target identity, file system, operation, selected item count, and irreversibility.
 - Bulk destructive operations require typed confirmation for raw targets.
 - Operation results must include warnings/blockers and update status/log panes.

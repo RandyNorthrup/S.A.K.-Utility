@@ -177,7 +177,7 @@ through 128 MiB; larger generated raw targets remain blocked because Apple
 kernel validation rejected the previous 51 GB generated spaceman geometry even
 though Windows-side detection accepted it.
 That ceiling is now lifted for the validated multi-chunk range: the writer emits multi-spaceman-chunk single-CIB containers, and the new geometry passed Apple-native validation in a qemu/KVM macOS Sequoia recovery VM (apfs.kext 2332.101.1) on 2026-06-14 UTC. Each S.A.K.-written container was attached as a bare raw SATA disk; macOS auto-synthesized and auto-mounted every container read-write (the volume superblock records `last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container ... appears to be OK` for all of: 64 MiB single-chunk (`SAK1`), 256 MiB multi-chunk (`SAK2CHUNK`), and 1 GiB eight-chunk (`SAK8`). A kernel read-write round-trip (mount, `mkdir` + `touch`, `sync`, unmount) advanced the checkpoint transaction id (4 to 8 on the single-chunk container, 4 to 7 on the 256 MiB multi-chunk) and `fsck_apfs` still reported the container OK afterward, proving the kernel can mutate the S.A.K.-written container and keep it consistent. Evidence: `artifacts\partition-manager-certification\vm-lab\apple-tool-evidence\report.json` plus the paired `*.fsck_apfs-PASS.png` and `*kernel-rw-roundtrip-PASS.png` screendumps. This is Apple-native VM validation on virtual SATA media; the physical-USB destructive Apple-native lane, plus crash-injection and rollback-boundary evidence, are still required before the certification matrix flips to a full APFS raw-write `yes`. The writer now emits a cryptographically-random v4 UUID per container and volume at format and reads the on-disk UUID back during mutation (no deterministic UUID code remains): two same-size, same-name containers produced distinct UUIDs, a mutation round-trip preserved the on-disk UUID byte-for-byte, and the random-UUID shipping output was re-certified in the same VM (`SAK1`/`SAK2CHUNK`/`SAK8` all `fsck_apfs` OK with `*.random-uuid.fsck_apfs-PASS.png` evidence).
-A crash/rollback test was also run on 2026-06-14 UTC: with the 1 GiB `SAK8` container mounted read-write, a `mkfile 900m` write was started and qemu was hard-killed (`pkill -9`) mid-write to simulate power loss. On reboot macOS auto-mounted `SAK8` again (APFS checkpoint recovery), and `fsck_apfs` reported `The container /dev/rdisk0 appears to be OK` (checkpoint transaction id 5) - the uncommitted mid-write data rolled back to the last valid checkpoint with no corruption, proving the S.A.K.-written container participates correctly in APFS copy-on-write checkpoint atomicity (evidence `apfs.sak8-crash-rollback.fsck_apfs-PASS.png`). The physical-USB destructive Apple-native lane was then completed on 2026-06-14 UTC against the disposable JMicron Tech USB disk (Windows Disk 3, user-authorized destruction). A 128 MiB S.A.K. APFS container (volume `SAKUSB`, random UUID) was written to the disk's Apple_APFS GPT partition, the whole physical disk was attached to WSL2 with `wsl --mount --bare \\.\PHYSICALDRIVE3` and passed to the macOS recovery VM as a raw SATA disk; macOS recognized it as `Apple_APFS Container disk3` on physical `/dev/disk2s2`, auto-mounted `SAKUSB` read-write (`last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container /dev/rdisk2s2 appears to be OK` (evidence `apfs.sakusb-physical-jmicron.fsck_apfs-PASS.png`). With Apple `fsck_apfs`, kernel read-write mount, physical-USB-destructive, crash, and rollback all now demonstrated on Apple's own tools (recorded in `apple-tool-evidence\report.json` under `evidence_chain_complete`), the full evidence required by the locked scope for the APFS multi-chunk space-manager capability (driver matrix A-a / milestone A1) was collected and human-reviewed on 2026-06-14, and that cell is flipped to certified in `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` (single-CIB multi-chunk, 64 MiB–1 GiB validated; the multi-CIB/CAB tier, the full-driver A8 gate, and the in-place-COW / snapshot / multi-volume / encryption rows A-b..A-h remain open).
+A crash/rollback test was also run on 2026-06-14 UTC: with the 1 GiB `SAK8` container mounted read-write, a `mkfile 900m` write was started and qemu was hard-killed (`pkill -9`) mid-write to simulate power loss. On reboot macOS auto-mounted `SAK8` again (APFS checkpoint recovery), and `fsck_apfs` reported `The container /dev/rdisk0 appears to be OK` (checkpoint transaction id 5) - the uncommitted mid-write data rolled back to the last valid checkpoint with no corruption, proving the S.A.K.-written container participates correctly in APFS copy-on-write checkpoint atomicity (evidence `apfs.sak8-crash-rollback.fsck_apfs-PASS.png`). The physical-USB destructive Apple-native lane was then completed on 2026-06-14 UTC against the disposable JMicron Tech USB disk (Windows Disk 3, user-authorized destruction). A 128 MiB S.A.K. APFS container (volume `SAKUSB`, random UUID) was written to the disk's Apple_APFS GPT partition, the whole physical disk was attached to WSL2 with `wsl --mount --bare \\.\PHYSICALDRIVE3` and passed to the macOS recovery VM as a raw SATA disk; macOS recognized it as `Apple_APFS Container disk3` on physical `/dev/disk2s2`, auto-mounted `SAKUSB` read-write (`last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container /dev/rdisk2s2 appears to be OK` (evidence `apfs.sakusb-physical-jmicron.fsck_apfs-PASS.png`). With Apple `fsck_apfs`, kernel read-write mount, physical-USB-destructive, crash, and rollback all now demonstrated on Apple's own tools (recorded in `apple-tool-evidence\report.json` under `evidence_chain_complete`), the full evidence required by the locked scope for the APFS multi-chunk space-manager capability (driver matrix A-a / milestone A1) was collected and human-reviewed on 2026-06-14, and that cell is flipped to certified in `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` (single-CIB multi-chunk, 64 MiB-1 GiB validated; the multi-CIB/CAB tier, the full-driver A8 gate, and the in-place-COW / snapshot / multi-volume / encryption rows A-b..A-h remain open).
 The A2 generated-APFS CAB tier was Apple-certified on 2026-06-18 UTC, completing the
 multi-CIB/CAB FORMAT lane left open above. Containers larger than ~7.8 TiB need more than
 507 chunk-info blocks, so the spaceman can no longer list the cib addresses inline; the
@@ -251,7 +251,7 @@ JSON output, and refresh evidence. Generated-image root-file
 create/replace/byte-range patch/delete and generated-image empty root-directory
 create/delete plus generated-image volume-label change remain helper-exposed
 with payload/read-back, directory-empty, old/new-label, or negative-read-back
-hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded — the in-place COW engine and A1–A8 driver operations are Apple-certified, with arbitrary non-generated media fail-closed only at the production Apply layer. See the full driver-level capstone below.)
+hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded - the in-place COW engine and A1-A8 driver operations are Apple-certified, with arbitrary non-generated media fail-closed only at the production Apply layer. See the full driver-level capstone below.)
 The helper no longer blanket-enables protected, compressed, snapshot, or
 multi-volume APFS mutation options; generated APFS v2 single-volume layouts pass
 through the generated-layout proof path, while active snapshot/revert metadata,
@@ -301,7 +301,7 @@ exit code 8 only for that explicitly allowed journaled workflow, copied one
 sparse range back, and verified raw read-back SHA-256 hashes.
 Apple-native HFS+ validation was added on 2026-06-14 UTC in the qemu/KVM macOS Sequoia recovery VM: Apple `newfs_hfs` created a 1 GiB non-journaled HFS+ volume (`SAKHFS`, baseline `fsck_hfs` OK), `sak_hfs_writer_cli.exe create-file-image` (userspace, no kernel driver) added `/sak-cert.txt` (54 bytes) and synchronized the alternate volume header, macOS then auto-mounted the mutated volume and `cat` returned the exact written payload (Apple's HFS+ kernel driver read the S.A.K.-written file byte-for-byte), and `fsck_hfs -f` reported `The volume SAKHFS appears to be OK`. Evidence: `artifacts\partition-manager-certification\vm-lab\apple-tool-evidence\hfs.sak-create-file.kernel-mount-readback-PASS.png` and `hfs.sak-create-file.fsck_hfs-PASS.png`. The created file initially recorded `_unknown` owner and an epoch mtime; the writer was then updated (2026-06-14) to stamp the catalog create/contentMod/attributeMod/access dates with the real time and HFSPlusBSDInfo `owner=0 group=0 fileMode=0o100644` (files) / `0o040755` (folders). Byte-level verification of a freshly created record confirmed `createDate=2026-06-14 07:43:25, owner=0, group=0, mode=0x81a4`, and clang-format/lizard/cppcheck plus the full test suite pass. Bounded initial-extent
 data/resource/fork-backed-attribute allocation growth, single-leaf catalog rename/move,
-and bounded file create/delete are covered by core/helper tests. (These HFS+ operations — unbounded file/folder create/delete, complex/hard-linked file delete, B-tree split + underflow merge/rebalance, inline/broad attribute growth + overflow records, decmpfs compressed-file writes, and broad allocation growth — were subsequently certified: H1–H8 are Apple-certified incl. the H8 physical-USB gate. See the full driver-level capstone below.)
+and bounded file create/delete are covered by core/helper tests. (These HFS+ operations - unbounded file/folder create/delete, complex/hard-linked file delete, B-tree split + underflow merge/rebalance, inline/broad attribute growth + overflow records, decmpfs compressed-file writes, and broad allocation growth - were subsequently certified: H1-H8 are Apple-certified incl. the H8 physical-USB gate. See the full driver-level capstone below.)
 The supplemental destructive APFS raw-format proof lane is
 `scripts/run_partition_manager_apfs_raw_format_validation.ps1`, with
 `scripts/launch_partition_manager_apfs_raw_format_validation_local.ps1` for UAC
@@ -317,7 +317,7 @@ generated APFS target with spaceman checkpoint/container corruption. Current
 Windows-side small-target proof passed on JMicron serial `DD56419883A5B`, Disk 2
 Partition 2, 134,217,728 bytes, with report
 `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`.
-Apple-native validation has since been completed across the full A1–A8 driver
+Apple-native validation has since been completed across the full A1-A8 driver
 track, incl. the A8 physical-USB destructive/crash/rollback gate
 (`external.apfs-a8-physical`).
 The APFS writer CLI self-test now also covers generated-image volume-label
@@ -329,7 +329,7 @@ Physical raw APFS volume-label Apply proof is recorded in
 from guarded run `run-20260612-192652`; that large-target proof is
 Windows-side-only. Current 128 MiB Windows-side raw-format proof is recorded at
 `artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`;
-Apple-native validation has since been completed across the A1–A8 driver track
+Apple-native validation has since been completed across the A1-A8 driver track
 (`external.apfs-a8-physical`), so this 128 MiB run is retained as I1-era
 Windows-side evidence.
 The read-only APFS browser uses the same Fletcher-64 object-checksum verifier
@@ -559,7 +559,7 @@ existing-volume cluster-size backup/reformat/restore/hash verification, direct
 HDD defrag execution, and BitLocker mutation paths, but release notes must not call those destructive
 paths 100% hardware-certified until strict VHD plus all external gates pass.
 
-### Full driver-level APFS + HFS+/HFSX write — complete (A1–A8 / H1–H8)
+### Full driver-level APFS + HFS+/HFSX write - complete (A1-A8 / H1-H8)
 
 As of 2026-06-28, both Apple filesystem write tracks are full driver-level
 Apple-certified, each milestone proven by Apple `fsck_apfs` / `fsck_hfs` and
@@ -587,7 +587,7 @@ inline zlib `com.apple.decmpfs` compression (`external.apfs-compression`); A6
 credential-gated FileVault encryption (`external.apfs-encryption`); A7 clones /
 sparse files / hard-links / xattr-ACL / in-chunk container resize
 (`external.apfs-a7-kernel-cert`, `external.apfs-a7-raw-physical`); A8 the
-physical-USB full-driver gate — a S.A.K. multi-volume + snapshot container on a
+physical-USB full-driver gate - a S.A.K. multi-volume + snapshot container on a
 disposable 7.3 TiB USB: the macOS kernel mounted both volumes, read the file,
 and enumerated the snapshot; Apple `fsck_apfs` was clean; then a kernel write +
 qemu-kill power-loss + reboot survived byte-exact with post-crash `fsck_apfs`
@@ -601,7 +601,7 @@ complex delete (`external.hfs-hardlinks-symlinks`); H6 attribute overflow
 records + broad attribute growth (`external.hfs-attribute-overflow-multileaf`);
 H7 big-endian journal replay + embedded HFS-wrapper write edge
 (`external.hfs-bigendian-journal-wrapper`); H8 the physical-USB full-driver
-gate — Apple `newfs_hfs` journaled volume on the disposable USB, S.A.K. mutate,
+gate - Apple `newfs_hfs` journaled volume on the disposable USB, S.A.K. mutate,
 kernel auto-mount + read + Apple `fsck_hfs` clean, then kernel write + qemu-kill
 + reboot journal-replayed and the file survived byte-exact, fsck clean again
 (`external.hfs-h8-physical`).

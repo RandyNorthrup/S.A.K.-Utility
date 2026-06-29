@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Swiss Army Knife Utility** ï¿½ A portable Windows toolkit for PC technicians, IT pros, and sysadmins.
+**Swiss Army Knife Utility** - A portable Windows toolkit for PC technicians, IT pros, and sysadmins.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/)
@@ -12,7 +12,7 @@
 [![Version](https://img.shields.io/badge/Version-0.9.1.9-orange.svg)](VERSION)
 [![Tests](https://img.shields.io/badge/Tests-133%20passing-brightgreen.svg)](tests/)
 
-Migration ï¿½ Maintenance ï¿½ Recovery ï¿½ Imaging ï¿½ Deployment ï¿½ one portable toolkit.
+Migration - Maintenance - Recovery - Imaging - Deployment - one portable toolkit.
 
 </div>
 
@@ -39,7 +39,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **File Management** | Organize mounted files by extension, find duplicates across mounted or supported raw/image file-system targets, browse supported file systems in a native explorer with full driver-level certified HFS+/HFSX and APFS write actions, and run grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
 | **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
-| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser ï¿½ no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
+| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser - no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
 | **Modern UI** | Windows 11-style rounded corners, light/dark themes, fixed 300x300 px custom splash screen, shared Icons8 control icons, and responsive layouts. |
 
 ---
@@ -86,7 +86,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 ```text
 1. Download the latest ZIP from Releases.
 2. Extract anywhere (USB drive, desktop, network share).
-3. Run sak_utility.exe ï¿½ runs as a standard user; individual features prompt for elevation when needed.
+3. Run sak_utility.exe - runs as a standard user; individual features prompt for elevation when needed.
 ```
 
 > **Code Signing:** Official release artifacts should be signed by the release workflow when Azure Trusted Signing credentials are available. Local and manual builds may be unsigned.
@@ -190,11 +190,11 @@ The AI Assistant panel is the first tab in S.A.K. Utility when `SAK_ENABLE_AI_AS
 
 Guided wizards for comprehensive user-profile migration with smart filtering, AES-256 encryption, and NTFS permission handling.
 
-**Backup Wizard** ï¿½ Scan and select user profiles, customize per-user data categories (Desktop, Documents, AppData, browsers, email, and more), configure filters, compression, and encryption, then execute with real-time progress and cancellation support.
+**Backup Wizard** - Scan and select user profiles, customize per-user data categories (Desktop, Documents, AppData, browsers, email, and more), configure filters, compression, and encryption, then execute with real-time progress and cancellation support.
 
-**Restore Wizard** ï¿½ Map source users to destination users (auto-map or manual), configure merge behavior, select data categories, handle NTFS permissions, and restore with detailed logging.
+**Restore Wizard** - Map source users to destination users (auto-map or manual), configure merge behavior, select data categories, handle NTFS permissions, and restore with detailed logging.
 
-**Quick Tools** ï¿½ Integrated one-click actions:
+**Quick Tools** - Integrated one-click actions:
 
 | Tool | Description |
 |---|---|
@@ -205,25 +205,25 @@ Guided wizards for comprehensive user-profile migration with smart filtering, AE
 
 ### Application Management
 
-Three subtabs ï¿½ **App Installation**, **Advanced Uninstall**, and **Vulnerability Scanner** ï¿½ under one panel.
+Three subtabs - **App Installation**, **Advanced Uninstall**, and **Vulnerability Scanner** - under one panel.
 
 #### App Installation
 
 Scan installed apps, match them to Chocolatey packages, and bulk-install on a new PC.
 
-1. **Scan** ï¿½ Queries HKLM/HKCU Uninstall registry keys; extracts name, version, publisher.
-2. **Match** ï¿½ `PackageMatcher` with curated mappings (high/medium/low/manual confidence).
-3. **Backup** ï¿½ Optional data backup via `UserProfileBackupWizard` (browser profiles, IDE settings, etc.).
-4. **Export** ï¿½ JSON migration report portable to the target machine.
-5. **Install** ï¿½ Embedded Chocolatey with retry logic and exponential backoff.
-6. **Restore** ï¿½ `UserProfileRestoreWizard` maps source paths to target paths and restores data.
+1. **Scan** - Queries HKLM/HKCU Uninstall registry keys; extracts name, version, publisher.
+2. **Match** - `PackageMatcher` with curated mappings (high/medium/low/manual confidence).
+3. **Backup** - Optional data backup via `UserProfileBackupWizard` (browser profiles, IDE settings, etc.).
+4. **Export** - JSON migration report portable to the target machine.
+5. **Install** - Embedded Chocolatey with retry logic and exponential backoff.
+6. **Restore** - `UserProfileRestoreWizard` maps source paths to target paths and restores data.
 
-**Offline Deploy** ï¿½ Build deployment bundles for air-gapped or bandwidth-limited environments:
+**Offline Deploy** - Build deployment bundles for air-gapped or bandwidth-limited environments:
 
 | Mode | Description |
 |---|---|
 | **Build Bundle** | Downloads .nupkg packages with internalized dependencies for offline Chocolatey install |
-| **Direct Download** | Downloads the actual installer binaries (EXE/MSI) directly ï¿½ supports URL-based, embedded-binary, and meta-package patterns |
+| **Direct Download** | Downloads the actual installer binaries (EXE/MSI) directly - supports URL-based, embedded-binary, and meta-package patterns |
 
 Includes preset package lists (Office PC, Developer, Media, etc.) and curated package catalogs with search.
 
@@ -255,19 +255,19 @@ Deep application removal with leftover scanning, cleanup, and system protection.
 | Mode | Description |
 |---|---|
 | **Standard** | Runs the native uninstaller with optional auto-cleanup of detected leftovers |
-| **Forced** | Bypasses the native uninstaller ï¿½ removes registry entries and leftover artifacts directly |
+| **Forced** | Bypasses the native uninstaller - removes registry entries and leftover artifacts directly |
 | **Batch** | Queue multiple programs and process sequentially with full logging |
 
 **Leftover Scanner**
 - Three depth levels: **Safe** (common paths/registry), **Moderate** (broader pattern matching), **Advanced** (deep scan with registry diff)
 - Detects: files, folders, registry keys/values, services, scheduled tasks, firewall rules, startup entries, shell extensions
 - Risk-level color coding: Safe (green), Review (yellow), Risky (red)
-- Registry Snapshot Engine ï¿½ captures pre/post uninstall diffs to detect leftover changes
+- Registry Snapshot Engine - captures pre/post uninstall diffs to detect leftover changes
 
 **Cleanup & Deletion**
 - Select All, Select Safe Only, Deselect All, or manual per-item selection
-- Recycle Bin support ï¿½ files routed via `SHFileOperationW` with `FOF_ALLOWUNDO` (registry and service entries are always permanent)
-- Locked file handling ï¿½ files that cannot be removed are automatically scheduled for deletion on reboot via `MoveFileExW` with `MOVEFILE_DELAY_UNTIL_REBOOT`
+- Recycle Bin support - files routed via `SHFileOperationW` with `FOF_ALLOWUNDO` (registry and service entries are always permanent)
+- Locked file handling - files that cannot be removed are automatically scheduled for deletion on reboot via `MoveFileExW` with `MOVEFILE_DELAY_UNTIL_REBOOT`
 - User notification of reboot-pending items
 
 **Uninstall Settings**
@@ -280,7 +280,7 @@ Deep application removal with leftover scanning, cleanup, and system protection.
 | **Default Scan Level** | Safe / Moderate / Advanced |
 | **Display** | Show system components in the program list |
 
-**Context Menu** ï¿½ Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
+**Context Menu** - Uninstall, Forced Uninstall, Add to Queue, Open Install Location, Copy Program Name, Copy Uninstall Command, Show Properties, Remove Registry Entry
 
 ---
 
@@ -317,7 +317,7 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 - Real-time thermal monitoring with auto-abort at configurable limit
 - Error-count abort thresholds
 
-**System Maintenance** ï¿½ Integrated one-click actions:
+**System Maintenance** - Integrated one-click actions:
 
 | Tool | Description |
 |---|---|
@@ -331,9 +331,9 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 - Step-by-step progress with live status
 
 **Report Export**
-- **HTML** ï¿½ Styled report with hardware summary, SMART health, benchmark scores, and stress test results
-- **JSON** ï¿½ Machine-readable structured data for automation
-- **CSV** ï¿½ RFC 4180 compliant, importable into Excel or data pipelines
+- **HTML** - Styled report with hardware summary, SMART health, benchmark scores, and stress test results
+- **JSON** - Machine-readable structured data for automation
+- **CSV** - RFC 4180 compliant, importable into Excel or data pipelines
 
 ---
 
@@ -358,7 +358,7 @@ Modern disk and partition workspace for technician-safe Windows storage work. Th
 - SSD ReTrim/optimization and clear-level wipe paths for free space, partitions, and non-system disks, with warnings when SSD purge/secure-erase semantics require vendor tooling
 - Selection-aware sidebar buttons plus table and disk-map right-click menus expose supported disk, partition, and unallocated actions backed by queued operation generation, Explore, safety blocker reasons where validation fails, plus a copyable Properties dialog with disk, partition, volume, SMART, flag, and free-space details
 - Advanced Windows-supported actions include file-system checks, surface tests, hide/unhide, active/inactive, partition type ID changes, initialize-disk, and delete-all-partitions
-- Cross-filesystem support is tracked in [docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md) and the driver-capability matrix is owned by [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): no runtime installs, no driver dependency, bundled/open-source or original-code tools only, and all write/repair paths route through the Partition Manager queue, safety validators, Apply review, and certification harness. ext2/ext3/ext4 supports detection, browse/extract/export, read-only `e2fsck`, confirmed create/format/repair, confirmed grow, and confirmed same-start shrink through bundled e2fsprogs. Linux swap supports read-only metadata plus confirmed original SWAPSPACE2 create/format. HFS+/HFSX is full driver-level write-certified (H1–H8 — Apple `fsck_hfs` + macOS-kernel RW mount, with physical-USB destructive/crash/rollback at the H8 gate): read+write catalog/attribute/resource-fork workflows; streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; data/resource-fork and inline/fork-backed-attribute write plus attribute overflow records; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types through `sak_hfs_writer_cli.exe`, plus sparse-staged create/format/repair through bundled hfsprogs. APFS is full driver-level write-certified (A1–A8 — Apple `fsck_apfs` + macOS-kernel mount, with physical-USB destructive/crash/rollback at the A8 gate): read-only metadata/browse/extract/export plus multi-CIB/CAB create/format and checksum repair to a 32 TiB cap, in-place crash-safe COW mutation of files and directories (write/patch/delete/rename/cross-directory move/object-id-preserving patch), snapshots (create/delete/revert), multi-volume containers, inline zlib compression, credential-gated FileVault encryption, and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize through queue/apply via `sak_apfs_writer_cli.exe`, gated to S.A.K. generated-layout containers with explicit confirmation. Remaining fail-closed by design: APFS Fusion/Tier2 multi-device (out of scope, no rig), encryption without the user credential, sealed-system-volume writes without a typed seal-invalidation confirmation, APFS container shrink and chunk-adding grow (documented follow-ons), arbitrary non-generated Apple-media mutation at the Apply layer, and XFS/Btrfs writes plus deep XFS/Btrfs tool checks (read-only metadata stays the shipped scope).
+- Cross-filesystem support is tracked in [docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md) and the driver-capability matrix is owned by [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): no runtime installs, no driver dependency, bundled/open-source or original-code tools only, and all write/repair paths route through the Partition Manager queue, safety validators, Apply review, and certification harness. ext2/ext3/ext4 supports detection, browse/extract/export, read-only `e2fsck`, confirmed create/format/repair, confirmed grow, and confirmed same-start shrink through bundled e2fsprogs. Linux swap supports read-only metadata plus confirmed original SWAPSPACE2 create/format. HFS+/HFSX is full driver-level write-certified (H1-H8 - Apple `fsck_hfs` + macOS-kernel RW mount, with physical-USB destructive/crash/rollback at the H8 gate): read+write catalog/attribute/resource-fork workflows; streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; data/resource-fork and inline/fork-backed-attribute write plus attribute overflow records; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types through `sak_hfs_writer_cli.exe`, plus sparse-staged create/format/repair through bundled hfsprogs. APFS is full driver-level write-certified (A1-A8 - Apple `fsck_apfs` + macOS-kernel mount, with physical-USB destructive/crash/rollback at the A8 gate): read-only metadata/browse/extract/export plus multi-CIB/CAB create/format and checksum repair to a 32 TiB cap, in-place crash-safe COW mutation of files and directories (write/patch/delete/rename/cross-directory move/object-id-preserving patch), snapshots (create/delete/revert), multi-volume containers, inline zlib compression, credential-gated FileVault encryption, and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize through queue/apply via `sak_apfs_writer_cli.exe`, gated to S.A.K. generated-layout containers with explicit confirmation. Remaining fail-closed by design: APFS Fusion/Tier2 multi-device (out of scope, no rig), encryption without the user credential, sealed-system-volume writes without a typed seal-invalidation confirmation, APFS container shrink and chunk-adding grow (documented follow-ons), arbitrary non-generated Apple-media mutation at the Apply layer, and XFS/Btrfs writes plus deep XFS/Btrfs tool checks (read-only metadata stays the shipped scope).
 
 **Safety**
 - Destructive operations queue first and execute only through cancellable Apply
@@ -398,8 +398,8 @@ Create bootable USB drives from disk images.
   - Kali Linux
   - SystemRescue, Clonezilla, GParted Live, ShredOS
   - Ventoy (multi-boot USB creator)
-- **Windows USB Creator** ï¿½ NTFS format, ISO extraction, `bootsect.exe` boot sector, UEFI structure, verification of critical files
-- **Generic writer** ï¿½ Raw sector I/O with streaming decompression (bootable for Linux and other ISOs)
+- **Windows USB Creator** - NTFS format, ISO extraction, `bootsect.exe` boot sector, UEFI structure, verification of critical files
+- **Generic writer** - Raw sector I/O with streaming decompression (bootable for Linux and other ISOs)
 - **Safety:** System-drive protection, multi-select for parallel flash
 
 ---
@@ -408,19 +408,19 @@ Create bootable USB drives from disk images.
 
 Current File Management has four subtabs: **File Organizer**, **Duplicate Finder**, **File Explorer**, and **Advanced Search**.
 
-The File Management target layer recognizes mounted Windows-native volumes plus disk/partition inventory targets and manual raw/image targets. ext2/ext3/ext4, HFS+/HFSX, and APFS browse and read through the same original S.A.K. readers used by Partition Manager. Generic organizer moves stay limited to local/mounted file APIs; raw/non-native writes are exposed only as explicit File Explorer create/write/rename/delete actions where certified. HFS+/HFSX and APFS writes run the full driver-level write engines (HFS+ H1–H8, APFS A1–A8, Apple-certified — see [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)); APFS writes are gated to S.A.K. generated-layout containers (multi-CIB/CAB to a 32 TiB cap) with explicit confirmation, while arbitrary non-generated Apple media, Fusion/Tier2 multi-device, and unprovided-credential encrypted volumes stay fail-closed.
+The File Management target layer recognizes mounted Windows-native volumes plus disk/partition inventory targets and manual raw/image targets. ext2/ext3/ext4, HFS+/HFSX, and APFS browse and read through the same original S.A.K. readers used by Partition Manager. Generic organizer moves stay limited to local/mounted file APIs; raw/non-native writes are exposed only as explicit File Explorer create/write/rename/delete actions where certified. HFS+/HFSX and APFS writes run the full driver-level write engines (HFS+ H1-H8, APFS A1-A8, Apple-certified - see [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)); APFS writes are gated to S.A.K. generated-layout containers (multi-CIB/CAB to a 32 TiB cap) with explicit confirmation, while arbitrary non-generated Apple media, Fusion/Tier2 multi-device, and unprovided-credential encrypted volumes stay fail-closed.
 
 
 #### File Organizer
 
 Organize files by extension into configurable categories.
 
-- Default categories: Images, Documents, Audio, Video, Archives, Code ï¿½ fully customizable with user-defined extensions
+- Default categories: Images, Documents, Audio, Video, Archives, Code - fully customizable with user-defined extensions
 - Collision handling: rename, skip, or overwrite
-- Preview mode ï¿½ see what would happen without moving anything
+- Preview mode - see what would happen without moving anything
 - Confirmation dialog before destructive operations (shows file count and collision strategy)
-- Category validation ï¿½ detects empty mappings and duplicate category names
-- Reset to Defaults ï¿½ one-click restore of built-in category mappings
+- Category validation - detects empty mappings and duplicate category names
+- Reset to Defaults - one-click restore of built-in category mappings
 
 #### Duplicate Finder
 
@@ -433,7 +433,7 @@ Detect duplicate files via content-based hashing.
 - Summary: duplicate count, wasted space, scrollable results for large scans
 
 **Cross-Operation Safety**
-- Organizer and duplicate finder share mutual locking ï¿½ running one disables the other to prevent conflicts
+- Organizer and duplicate finder share mutual locking - running one disables the other to prevent conflicts
 - Cancel support for both operations
 
 #### File Explorer
@@ -453,18 +453,18 @@ Detect duplicate files via content-based hashing.
 
 Enterprise-grade grep-style file content search with a three-panel interface: file explorer, results tree, and preview pane.
 
-- **Text content search** ï¿½ Line-by-line search with configurable context window (0ï¿½10 lines before/after)
-- **Regex support** ï¿½ Full QRegularExpression engine with case-sensitive, whole-word, and multiline options
-- **Regex Pattern Library** ï¿½ 8 built-in patterns (emails, URLs, IPv4, phone numbers, dates, hex, numbers, words) plus custom user-defined patterns with JSON persistence
-- **Binary/hex search** ï¿½ Search binary files for text or hex patterns with hex-context display
-- **Image metadata search** ï¿½ Search EXIF/GPS metadata in image files
-- **File metadata search** ï¿½ Search metadata in PDF, Office, audio/video files
-- **Archive search** ï¿½ Search inside ZIP/EPUB archives with deflate decompression (handles real-world .docx, .xlsx, .pptx, .odt, .epub)
-- **File explorer** ï¿½ Drive and directory navigation with lazy-loading tree, context menus
-- **Results tree** ï¿½ Grouped by file with 8 sort modes (path, match count, file size, date modified)
-- **Preview pane** ï¿½ Monospace file preview with yellow/orange match highlighting, previous/next navigation with wrapping, line numbers with `>>>` match indicators
+- **Text content search** - Line-by-line search with configurable context window (0-10 lines before/after)
+- **Regex support** - Full QRegularExpression engine with case-sensitive, whole-word, and multiline options
+- **Regex Pattern Library** - 8 built-in patterns (emails, URLs, IPv4, phone numbers, dates, hex, numbers, words) plus custom user-defined patterns with JSON persistence
+- **Binary/hex search** - Search binary files for text or hex patterns with hex-context display
+- **Image metadata search** - Search EXIF/GPS metadata in image files
+- **File metadata search** - Search metadata in PDF, Office, audio/video files
+- **Archive search** - Search inside ZIP/EPUB archives with deflate decompression (handles real-world .docx, .xlsx, .pptx, .odt, .epub)
+- **File explorer** - Drive and directory navigation with lazy-loading tree, context menus
+- **Results tree** - Grouped by file with 8 sort modes (path, match count, file size, date modified)
+- **Preview pane** - Monospace file preview with yellow/orange match highlighting, previous/next navigation with wrapping, line numbers with `>>>` match indicators
 - **File-system targets** - Search mounted volumes plus supported raw/image ext2/ext3/ext4, HFS+/HFSX, and APFS file systems
-- **Search history** ï¿½ Last 50 searches persisted via ConfigManager
+- **Search history** - Last 50 searches persisted via ConfigManager
 
 ---
 
@@ -490,8 +490,8 @@ Three-tab network panel covering diagnostics, adapter configuration, and WiFi cr
 | **Network Share Browser** | Discover SMB shares on a host; test access permissions |
 
 **Report Generation**
-- **HTML** ï¿½ Styled report with all cached diagnostic results and adapter info
-- **JSON** ï¿½ Machine-readable structured data
+- **HTML** - Styled report with all cached diagnostic results and adapter info
+- **JSON** - Machine-readable structured data
 - Technician name, ticket number, and notes metadata fields
 
 #### Network Adapters
@@ -504,16 +504,16 @@ Adapter inspector with ethernet backup, restore, and network reset.
 - Capture adapter IP/DNS/gateway settings to a portable JSON file
 - Restore settings to the same or a different adapter on any machine via `netsh` commands
 - Supports DHCP and static configurations, primary and secondary DNS servers
-- Cross-machine portability ï¿½ back up on one PC, restore on another
-- **Reset Network Settings** ï¿½ One-click reset: flushes DNS, resets TCP/IP stack, Winsock, firewall, and adapters
+- Cross-machine portability - back up on one PC, restore on another
+- **Reset Network Settings** - One-click reset: flushes DNS, resets TCP/IP stack, Winsock, firewall, and adapters
 
 #### WiFi Manager
 
 WiFi credential manager with QR code generator and cross-platform network profile export.
 
-**Network Details** ï¿½ Enter Location label, SSID, Password (show/hide toggle), Security type (WPA/WPA2/WPA3, WEP, Open), and Hidden network flag.
+**Network Details** - Enter Location label, SSID, Password (show/hide toggle), Security type (WPA/WPA2/WPA3, WEP, Open), and Hidden network flag.
 
-**Saved Networks Table** ï¿½ Store multiple WiFi configs with search/filter, inline editing, and tri-state select-all. Save/load entire table to/from JSON.
+**Saved Networks Table** - Store multiple WiFi configs with search/filter, inline editing, and tri-state select-all. Save/load entire table to/from JSON.
 
 **QR Code Generation**
 - Single-network QR for immediate phone/tablet connection
@@ -525,26 +525,26 @@ WiFi credential manager with QR code generator and cross-platform network profil
 - Add selected networks directly to Windows known WiFi profiles via netsh WLAN profile XML
 - Generate macOS `.mobileconfig` plist files (single or multiple networks per profile)
 
-**Windows Integration** ï¿½ Scan existing Windows known profiles and import them into the table for backup/management.
+**Windows Integration** - Scan existing Windows known profiles and import them into the table for backup/management.
 
 ---
 
 ### Email Tools
 
-Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes ï¿½ no Outlook or MAPI libraries required.
+Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes - no Outlook or MAPI libraries required.
 
 **Supported Formats**
-- **PST** ï¿½ Outlook Personal Storage (Unicode and ANSI)
-- **OST** ï¿½ Outlook Offline Storage
-- **MBOX** ï¿½ RFC 4155 (Thunderbird, Apple Mail, Linux mail clients)
+- **PST** - Outlook Personal Storage (Unicode and ANSI)
+- **OST** - Outlook Offline Storage
+- **MBOX** - RFC 4155 (Thunderbird, Apple Mail, Linux mail clients)
 
-**File Scanner** ï¿½ Automatically discovers PST/OST/MBOX files in common locations (user home, desktop, recent paths); select which to open.
+**File Scanner** - Automatically discovers PST/OST/MBOX files in common locations (user home, desktop, recent paths); select which to open.
 
-**Folder Tree** ï¿½ Navigable hierarchy with typed icons (Inbox, Sent Items, Drafts, Deleted Items, Junk Email, Calendar, Contacts, etc.)
+**Folder Tree** - Navigable hierarchy with typed icons (Inbox, Sent Items, Drafts, Deleted Items, Junk Email, Calendar, Contacts, etc.)
 
-**Item List** ï¿½ Sortable table with checkbox multi-select, Subject, From, Date, Size, and Type. Use `Save Selected Email` beside the preview `Images` toggle to export checked messages.
+**Item List** - Sortable table with checkbox multi-select, Subject, From, Date, Size, and Type. Use `Save Selected Email` beside the preview `Images` toggle to export checked messages.
 
-**Preview Pane** ï¿½ Four tabs:
+**Preview Pane** - Four tabs:
 
 | Tab | Content |
 |---|---|
@@ -553,13 +553,13 @@ Browse, search, and export data from Outlook PST/OST archives and MBOX mailboxes
 | **Properties** | MAPI property names and values for forensics/analysis |
 | **Attachments** | File list with individual or batch save |
 
-**Search** ï¿½ Full-text search across subjects, bodies, senders, recipients, and attachment names. Filter by item type, date range, has-attachment, and folder scope.
+**Search** - Full-text search across subjects, bodies, senders, recipients, and attachment names. Filter by item type, date range, has-attachment, and folder scope.
 
-**Contacts Dialog** ï¿½ Searchable address book with sortable columns (name, email, company, phone) and export to VCF or CSV.
+**Contacts Dialog** - Searchable address book with sortable columns (name, email, company, phone) and export to VCF or CSV.
 
-**Calendar Dialog** ï¿½ Three view modes (month, week, day) with event highlighting, half-hour grid lines, and column separators. Navigate by date, click events to view details, and export to ICS or CSV.
+**Calendar Dialog** - Three view modes (month, week, day) with event highlighting, half-hour grid lines, and column separators. Navigate by date, click events to view details, and export to ICS or CSV.
 
-**Attachments Browser** ï¿½ Scans all emails in the mail file and presents every attachment in a searchable, filterable list with checkbox selection. Type filter (images, documents, archives, etc.), filename search, and right-click context menu with Save Attachment, View Containing Email (navigates to the source message), and Copy Filename.
+**Attachments Browser** - Scans all emails in the mail file and presents every attachment in a searchable, filterable list with checkbox selection. Type filter (images, documents, archives, etc.), filename search, and right-click context menu with Save Attachment, View Containing Email (navigates to the source message), and Copy Filename.
 
 **Export Formats**
 
@@ -594,7 +594,7 @@ Multi-threaded bulk OST/PST conversion engine integrated as a second tab in the 
 | **IMAP Upload** | Direct upload to IMAP servers (Office 365, Gmail, Yahoo) |
 
 **Key Features**
-- Multi-threaded conversion with configurable worker count (1ï¿½8 threads)
+- Multi-threaded conversion with configurable worker count (1-8 threads)
 - Deleted item recovery (soft and hard delete scanning)
 - PST splitting for large archives with configurable size limits
 - IMAP cloud upload with PLAIN, LOGIN, and XOAUTH2 authentication
@@ -607,7 +607,7 @@ Multi-threaded bulk OST/PST conversion engine integrated as a second tab in the 
 
 ### Settings
 
-Settings are configured per-panel ï¿½ each panel that needs configuration provides its own settings dialog or inline controls.
+Settings are configured per-panel - each panel that needs configuration provides its own settings dialog or inline controls.
 
 | Panel | Settings |
 |---|---|
@@ -622,7 +622,7 @@ Settings are configured per-panel ï¿½ each panel that needs configuration pro
 | Layer | Implementation |
 |---|---|
 | **File encryption** | AES-256-CBC via Windows BCrypt with PBKDF2 key derivation |
-| **Secure memory** | `SecureString` / `SecureBuffer` ï¿½ zero-fill on destruction, page locking via `VirtualLock` |
+| **Secure memory** | `SecureString` / `SecureBuffer` - zero-fill on destruction, page locking via `VirtualLock` |
 | **Input validation** | Path sanitization, IP/port validation, Chocolatey name format checks |
 | **Elevation** | Per-task elevation via elevated helper process with Named Pipes IPC; `asInvoker` manifest with on-demand UAC prompts |
 | **AI credential storage** | OpenAI API key encrypted with Windows DPAPI and stored in the portable app `data/credentials/` directory with owner-only file permissions |
@@ -845,14 +845,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ### Planned Features (detailed plans in `docs/`)
 
-- **File Converter Tab** ï¿½ Universal offline file conversion for documents, images, audio, video, spreadsheets, and PDFs with batch processing and quality controls. Adds a new tab to the File Management panel. See [FILE_CONVERTER_TAB_PLAN.md](docs/FILE_CONVERTER_TAB_PLAN.md).
-- **macOS Bootable USB** ï¿½ Create macOS bootable USB drives from macOS installer images. See [MACOS_BOOTABLE_USB_PLAN.md](docs/MACOS_BOOTABLE_USB_PLAN.md).
+- **File Converter Tab** - Universal offline file conversion for documents, images, audio, video, spreadsheets, and PDFs with batch processing and quality controls. Adds a new tab to the File Management panel. See [FILE_CONVERTER_TAB_PLAN.md](docs/FILE_CONVERTER_TAB_PLAN.md).
+- **macOS Bootable USB** - Create macOS bootable USB drives from macOS installer images. See [MACOS_BOOTABLE_USB_PLAN.md](docs/MACOS_BOOTABLE_USB_PLAN.md).
 
 ---
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** ï¿½ see [LICENSE](LICENSE) for the full text.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** - see [LICENSE](LICENSE) for the full text.
 
 Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
@@ -860,31 +860,31 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 
 ## Acknowledgments
 
-- [**Qt**](https://www.qt.io/) ï¿½ Cross-platform UI framework (LGPL v3)
-- [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) ï¿½ QR code generator by Project Nayuki (MIT)
-- [**win32-mcp-server**](https://github.com/RandyNorthrup/win32-mcp-server) ï¿½ Portable Windows automation MCP server (MIT)
-- [**Context7 MCP**](https://github.com/upstash/context7) ï¿½ Remote code documentation MCP provider (MIT source; no app API key required)
-- [**Microsoft Learn MCP**](https://learn.microsoft.com/en-us/training/support/mcp) ï¿½ Remote Microsoft documentation MCP provider
-- [**aria2**](https://aria2.github.io/) ï¿½ Multi-connection download manager (GPLv2)
-- [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) ï¿½ UUP-to-ISO converter by OSTooling (MIT)
-- [**wimlib / libwim**](https://wimlib.net/) ï¿½ WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
-- [**smartmontools**](https://www.smartmontools.org/) ï¿½ SMART disk diagnostics (GPLv2)
-- [**iPerf3**](https://iperf.fr/) ï¿½ LAN bandwidth testing (BSD 3-Clause)
-- [**Icons8**](https://icons8.com/) ï¿½ UI icons (Icons8 Free License with attribution)
-- [**Chocolatey**](https://chocolatey.org/) ï¿½ Windows package manager (Apache 2.0)
-- [**zlib**](https://www.zlib.net/) ï¿½ Compression library (zlib License)
-- [**bzip2**](https://sourceware.org/bzip2/) ï¿½ Compression library (BSD-style)
-- [**XZ Utils**](https://tukaani.org/xz/) ï¿½ LZMA compression (0BSD / Public Domain)
-- [**vcpkg**](https://vcpkg.io/) ï¿½ C++ dependency manager (MIT)
-- [**CMake**](https://cmake.org/) ï¿½ Build system (BSD 3-Clause)
-- **Microsoft** ï¿½ Windows BCrypt API, PowerShell, Windows SDK, ADK tools (cdimage, imagex, bcdedit, cabarc)
+- [**Qt**](https://www.qt.io/) - Cross-platform UI framework (LGPL v3)
+- [**qrcodegen**](https://www.nayuki.io/page/qr-code-generator-library) - QR code generator by Project Nayuki (MIT)
+- [**win32-mcp-server**](https://github.com/RandyNorthrup/win32-mcp-server) - Portable Windows automation MCP server (MIT)
+- [**Context7 MCP**](https://github.com/upstash/context7) - Remote code documentation MCP provider (MIT source; no app API key required)
+- [**Microsoft Learn MCP**](https://learn.microsoft.com/en-us/training/support/mcp) - Remote Microsoft documentation MCP provider
+- [**aria2**](https://aria2.github.io/) - Multi-connection download manager (GPLv2)
+- [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) - UUP-to-ISO converter by OSTooling (MIT)
+- [**wimlib / libwim**](https://wimlib.net/) - WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
+- [**smartmontools**](https://www.smartmontools.org/) - SMART disk diagnostics (GPLv2)
+- [**iPerf3**](https://iperf.fr/) - LAN bandwidth testing (BSD 3-Clause)
+- [**Icons8**](https://icons8.com/) - UI icons (Icons8 Free License with attribution)
+- [**Chocolatey**](https://chocolatey.org/) - Windows package manager (Apache 2.0)
+- [**zlib**](https://www.zlib.net/) - Compression library (zlib License)
+- [**bzip2**](https://sourceware.org/bzip2/) - Compression library (BSD-style)
+- [**XZ Utils**](https://tukaani.org/xz/) - LZMA compression (0BSD / Public Domain)
+- [**vcpkg**](https://vcpkg.io/) - C++ dependency manager (MIT)
+- [**CMake**](https://cmake.org/) - Build system (BSD 3-Clause)
+- **Microsoft** - Windows BCrypt API, PowerShell, Windows SDK, ADK tools (cdimage, imagex, bcdedit, cabarc)
 
 ---
 
 ## Author
 
 **Randy Northrup**
-[GitHub](https://github.com/RandyNorthrup) ï¿½ [S.A.K.-Utility](https://github.com/RandyNorthrup/S.A.K.-Utility)
+[GitHub](https://github.com/RandyNorthrup) - [S.A.K.-Utility](https://github.com/RandyNorthrup/S.A.K.-Utility)
 
 ---
 
