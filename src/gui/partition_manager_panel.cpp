@@ -141,6 +141,9 @@ constexpr int kActionsPaneWidth = 304;
 constexpr int kRibbonIconSize = 30;
 constexpr int kRibbonButtonWidth = 74;
 constexpr int kRibbonButtonHeight = 72;
+// Horizontal padding added around a ribbon button's label so a wider caption (e.g.
+// "Scan Disks") is never elided; the button grows past kRibbonButtonWidth to fit.
+constexpr int kRibbonButtonTextPadding = 16;
 constexpr int kActionIconSize = 16;
 constexpr int kActionLinkHeight = 22;
 constexpr int kDiskIconSize = 34;
@@ -546,6 +549,7 @@ struct ApfsRootFileMutationState {
     bool enabled{false};
     QString target_path;
     QString reason;
+    uint64_t partition_size_bytes{0};
 };
 
 bool isExtFilesystem(const QString& fileSystem) {
@@ -849,6 +853,7 @@ ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<Partitio
     }
     state.enabled = true;
     state.reason = QObject::tr("Queue an APFS container action.");
+    state.partition_size_bytes = partition ? partition->size_bytes : 0;
     return state;
 }
 
@@ -8176,7 +8181,8 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::wizardActi
                            {actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Data Recovery"),
                            kIconRecovery,
-                           tr("Recover files from an image or raw volume/device path"),
+                           tr("Standalone tool: scan an image or raw volume and restore found "
+                              "files now (runs immediately, not added to the queue)"),
                            &PartitionManagerPanel::onDataRecovery,
                            {actionTargetKindList({kActionTargetAny})}),
             makeActionSpec(tr("Extend Partition Wizard"),
@@ -8528,14 +8534,19 @@ QToolButton* PartitionManagerPanel::createRibbonButton(QWidget* parent,
     button->setIconSize(QSize(kRibbonIconSize, kRibbonIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     button->setAutoRaise(true);
+    // Grow the button past the base width when the caption needs it, so labels like
+    // "Scan Disks" are shown in full rather than elided.
+    const int captionWidth = button->fontMetrics().horizontalAdvance(text) +
+                             kRibbonButtonTextPadding;
+    const int buttonWidth = std::max(kRibbonButtonWidth, captionWidth);
     button->setProperty("iconPath", icon_path);
     button->setProperty("iconSource", QStringLiteral("Icons8 SVG"));
     button->setProperty("iconModes", QStringLiteral("Normal,Disabled,Active,Selected"));
-    button->setProperty("ribbonButtonWidth", kRibbonButtonWidth);
+    button->setProperty("ribbonButtonWidth", buttonWidth);
     button->setProperty("ribbonButtonHeight", kRibbonButtonHeight);
     button->setAccessibleName(text);
     button->setToolTip(tooltip);
-    button->setFixedSize(kRibbonButtonWidth, kRibbonButtonHeight);
+    button->setFixedSize(buttonWidth, kRibbonButtonHeight);
     return button;
 }
 
@@ -9763,6 +9774,7 @@ struct ApfsRootFileMutationDialogWidgets {
     QComboBox* mode{nullptr};
     QLineEdit* name{nullptr};
     QCheckBox* confirm{nullptr};
+    uint64_t partition_size_bytes{0};
 };
 
 struct ApfsRootFileMutationRequest {
@@ -9796,7 +9808,9 @@ bool apfsMutationIsVolumeLabel(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsChangeVolumeLabel;
 }
 
-QString apfsMutationPreview(PartitionOperationType type, const QString& name) {
+QString apfsMutationPreview(PartitionOperationType type,
+                            const QString& name,
+                            uint64_t partitionSizeBytes) {
     switch (type) {
     case PartitionOperationType::ApfsChangeVolumeLabel:
         return QObject::tr("Queue APFS volume-label change to %1.").arg(name);
@@ -9807,7 +9821,10 @@ QString apfsMutationPreview(PartitionOperationType type, const QString& name) {
     case PartitionOperationType::ApfsSnapshotRevert:
         return QObject::tr("Queue APFS revert to snapshot %1.").arg(name);
     case PartitionOperationType::ApfsResizeContainer:
-        return QObject::tr("Queue APFS container resize to fill the partition.");
+        return QObject::tr(
+                   "Queue APFS container resize to fill the partition (target %1). "
+                   "Requires a generated container that does not already fill it.")
+            .arg(formatPartitionBytes(partitionSizeBytes));
     default:
         return {};
     }
@@ -9845,12 +9862,15 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
     const auto type = apfsMutationTypeForMode(widgets.mode->currentData().toString());
     const bool resizeMode = apfsMutationIsResize(type);
     widgets.name->setEnabled(!resizeMode);
-    widgets.name->setVisible(!resizeMode);
+    // Hide the whole "Name:" row (label included) when the mode takes no name.
+    widgets.dialog->formLayout()->setRowVisible(widgets.name, !resizeMode);
     widgets.name->setPlaceholderText(apfsMutationNamePlaceholder(type));
     const QString name = widgets.name->text().trimmed();
     widgets.dialog->setAcceptEnabled(apfsMutationDialogCanAccept(widgets, type, name));
     widgets.dialog->setPreviewText(
-        apfsMutationPreview(type, name.isEmpty() ? apfsMutationFallbackName(type) : name));
+        apfsMutationPreview(type,
+                            name.isEmpty() ? apfsMutationFallbackName(type) : name,
+                            widgets.partition_size_bytes));
 }
 
 void populateApfsRootFileMutationModes(QComboBox* mode) {
@@ -9895,7 +9915,8 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     dialog.formLayout()->addRow(QObject::tr("Name:"), name);
     dialog.formLayout()->addRow(QString(), confirm);
 
-    const ApfsRootFileMutationDialogWidgets widgets{&dialog, mode, name, confirm};
+    const ApfsRootFileMutationDialogWidgets widgets{
+        &dialog, mode, name, confirm, state.partition_size_bytes};
     connectApfsRootFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
@@ -10351,14 +10372,16 @@ void PartitionManagerPanel::onConvertPrimaryLogical() {
     }
     const bool currentlyLogical = partition->type_name.contains(QStringLiteral("Logical"),
                                                                 Qt::CaseInsensitive);
+    const QString currentLayout = currentlyLogical ? QStringLiteral("logical")
+                                                   : QStringLiteral("primary");
     const QString targetLayout = currentlyLogical ? QStringLiteral("primary")
                                                   : QStringLiteral("logical");
     PartitionOperationDialog dialog(
         tr("Convert Primary/Logical"),
         targetIdentityText(target, disk, partition),
-        tr("Backs up the selected single-volume MBR data disk, rebuilds as %1, restores files, "
-           "compares SHA-256 manifests, and repair-scans.")
-            .arg(targetLayout),
+        tr("Backs up the selected single-volume MBR data disk, rebuilds it from %1 to %2, restores "
+           "files, compares SHA-256 manifests, and repair-scans.")
+            .arg(currentLayout, targetLayout),
         this);
     const auto widgets = addBackupRestoreControls(
         dialog,
@@ -10370,8 +10393,9 @@ void PartitionManagerPanel::onConvertPrimaryLogical() {
         const QString backup = QDir::toNativeSeparators(widgets.backup_directory->text().trimmed());
         const bool canQueue = backupIsOffPartitionVolume(backup, *partition) &&
                               widgets.confirmation->isChecked();
-        widgets.status->setText(
-            tr("Target layout: %1. Backup must be outside the selected volume.").arg(targetLayout));
+        widgets.status->setText(tr("Converting from %1 to %2. Backup must be outside the selected "
+                                   "volume.")
+                                    .arg(currentLayout, targetLayout));
         dialog.setAcceptEnabled(canQueue);
         dialog.setPreviewText(
             tr("Back up %1:, clear disk %2, recreate as %3, restore files, verify hashes.")
@@ -11003,17 +11027,73 @@ void PartitionManagerPanel::onOptimizeSsd() {
                    withValue(QStringLiteral("drive_letter"), mountPoint.left(1)));
 }
 
+// Lets the user pick the wipe scope explicitly instead of inferring it from mount state:
+// a disk wipe erases the whole disk; a partition wipe is either free-space-only (keeps the
+// existing files) or the entire partition. Returns nullopt if the user cancels.
+std::optional<PartitionOperationType> showWipeSelectionDialog(QWidget* parent,
+                                                              const PartitionTarget& target,
+                                                              const QString& targetText) {
+    if (target.kind == PartitionTargetKind::Disk) {
+        PartitionOperationDialog dialog(
+            QObject::tr("Wipe Disk"),
+            targetText,
+            QObject::tr("Securely erases the entire disk and every partition on it."),
+            parent);
+        auto* confirm = new QCheckBox(
+            QObject::tr("I understand this erases the entire disk and all of its partitions."),
+            &dialog);
+        confirm->setAccessibleName(QObject::tr("Confirm wipe disk"));
+        dialog.formLayout()->addRow(QString(), confirm);
+        dialog.setAcceptEnabled(false);
+        QObject::connect(confirm, &QCheckBox::toggled, &dialog, [&dialog](bool on) {
+            dialog.setAcceptEnabled(on);
+        });
+        if (dialog.exec() != QDialog::Accepted) {
+            return std::nullopt;
+        }
+        return PartitionOperationType::WipeDisk;
+    }
+
+    PartitionOperationDialog dialog(QObject::tr("Wipe Partition"),
+                                    targetText,
+                                    QObject::tr(
+                                        "Choose how much of the selected partition to erase."),
+                                    parent);
+    auto* mode = new QComboBox(&dialog);
+    mode->setAccessibleName(QObject::tr("Wipe scope"));
+    mode->addItem(QObject::tr("Free space only (keep existing files)"), QStringLiteral("free"));
+    mode->addItem(QObject::tr("Entire partition (erase all data)"), QStringLiteral("partition"));
+    // Default to free-space for a mounted volume, full wipe for an unmounted one.
+    mode->setCurrentIndex(target.drive_letter.isEmpty() ? 1 : 0);
+    auto* confirm = new QCheckBox(QObject::tr("I understand the selected data is securely erased."),
+                                  &dialog);
+    confirm->setAccessibleName(QObject::tr("Confirm wipe partition"));
+    dialog.formLayout()->addRow(QObject::tr("Scope:"), mode);
+    dialog.formLayout()->addRow(QString(), confirm);
+    dialog.setAcceptEnabled(false);
+    QObject::connect(confirm, &QCheckBox::toggled, &dialog, [&dialog](bool on) {
+        dialog.setAcceptEnabled(on);
+    });
+    if (dialog.exec() != QDialog::Accepted) {
+        return std::nullopt;
+    }
+    return mode->currentData().toString() == QStringLiteral("partition")
+               ? PartitionOperationType::WipePartition
+               : PartitionOperationType::WipeFreeSpace;
+}
+
 void PartitionManagerPanel::onWipeSelected() {
     const auto target = selectedTarget();
     if (!target) {
         return;
     }
-    const auto type = target->kind == PartitionTargetKind::Disk
-                          ? PartitionOperationType::WipeDisk
-                          : (target->drive_letter.isEmpty()
-                                 ? PartitionOperationType::WipePartition
-                                 : PartitionOperationType::WipeFreeSpace);
-    queueOperation(type);
+    const QString targetText = targetIdentityText(target, selectedDisk(), selectedPartition());
+    const auto type = showWipeSelectionDialog(this, *target, targetText);
+    if (!type.has_value()) {
+        Q_EMIT statusMessage(tr("Wipe cancelled"), sak::kTimerStatusDefaultMs);
+        return;
+    }
+    queueOperation(*type);
 }
 
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {

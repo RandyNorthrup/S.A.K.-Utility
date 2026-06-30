@@ -120,14 +120,25 @@ private:
         Unallocated,
     };
 
+    // Per-action enablement gates for a Partition Manager action link. Each bool tags the
+    // button with a property that updateSpecialTargetButtonState() (partition_manager_panel.cpp)
+    // routes to the matching enablement check; at most one of the routed flags should be set.
     struct ActionLinkOptions {
+        // Target kinds the action applies to (disk / partition / volume / unallocated).
         QStringList target_kinds;
+        // Action requires the selected volume to have a mounted drive letter.
         bool requires_drive_letter{false};
+        // Action applies only to Windows-native file systems (NTFS/exFAT/FAT32).
         bool windows_native_filesystem{false};
+        // Action is the filesystem resize/move path (extra ext-resize support gating).
         bool resize_filesystem{false};
+        // Action inspects read-only non-native metadata (no write).
         bool inspect_non_native_filesystem{false};
+        // Action browses a read-only non-native (HFS+/APFS/ext) file system.
         bool browse_non_native_filesystem{false};
+        // Action runs the non-native check/repair path (fsck-class tools).
         bool check_non_native_filesystem{false};
+        // Action queues an APFS container op (label/snapshot/resize) on a generated container.
         bool apfs_root_file_mutation{false};
     };
 

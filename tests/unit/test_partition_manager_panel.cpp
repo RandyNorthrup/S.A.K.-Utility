@@ -81,6 +81,7 @@ private Q_SLOTS:
     void unallocatedAllocateFreeSpaceQueuesAdjacentEngines();
     void formerCommercialCompatibilityActionsQueueDirectEngines();
     void createDialogExposesSynchronizedHandleControls();
+    void wipeActionLetsUserChooseScope();
 };
 
 namespace {
@@ -1489,6 +1490,9 @@ void PartitionManagerPanelTests::ribbonButtonsUseIcons8SvgSources() {
         QCOMPARE(button->property("ribbonButtonHeight").toInt(), button->minimumHeight());
         QVERIFY2(button->minimumHeight() >= 64,
                  "Ribbon buttons should have one consistent commercial-toolbar height");
+        QVERIFY2(button->minimumWidth() >= button->fontMetrics().horizontalAdvance(it.key()),
+                 qPrintable(
+                     QStringLiteral("Ribbon label must not be truncated: %1").arg(it.key())));
     }
 }
 
@@ -1794,11 +1798,12 @@ void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
     QVERIFY2(hasActionButton(
                  buttons, QStringLiteral("Explore Partition"), QStringLiteral("Open in Explorer")),
              "Explore should be a real sidebar action");
-    QVERIFY2(
-        hasActionButton(buttons,
-                        QStringLiteral("Data Recovery"),
-                        QStringLiteral("Recover files from an image or raw volume/device path")),
-        "Data Recovery should expose image and raw path recovery");
+    QVERIFY2(hasActionButton(buttons,
+                             QStringLiteral("Data Recovery"),
+                             QStringLiteral("Standalone tool: scan an image or raw volume and "
+                                            "restore found files now (runs immediately, not added "
+                                            "to the queue)")),
+             "Data Recovery should expose image and raw path recovery");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Disk Benchmark"),
                              QStringLiteral("Open Benchmark and Diagnostics")),
@@ -2284,6 +2289,36 @@ void PartitionManagerPanelTests::createDialogExposesSynchronizedHandleControls()
     QVERIFY(result.size_synced);
     QVERIFY(result.location_synced);
     QVERIFY(result.preview_drag_synced);
+}
+
+void PartitionManagerPanelTests::wipeActionLetsUserChooseScope() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    bool inspected = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Wipe dialog should open");
+        auto* mode = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Wipe scope"));
+        QVERIFY2(mode != nullptr, "Wipe scope selector should exist for a partition target");
+        const int index = mode->findText(QStringLiteral("Entire partition (erase all data)"));
+        QVERIFY(index >= 0);
+        mode->setCurrentIndex(index);
+        auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
+                                                        QStringLiteral("Confirm wipe partition"));
+        QVERIFY(confirm != nullptr);
+        confirm->setChecked(true);
+        inspected = true;
+        dialog->accept();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onWipeSelected", Qt::DirectConnection));
+    QVERIFY(inspected);
+    verifySingleQueuedOperation(&panel, QStringLiteral("Wipe Partition"));
 }
 
 QTEST_MAIN(PartitionManagerPanelTests)
