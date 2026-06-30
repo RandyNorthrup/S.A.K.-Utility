@@ -1789,6 +1789,7 @@ private Q_SLOTS:
     void apfsWriter_blocksGeneratedLayoutWithSnapshotState();
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
+    void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
@@ -8042,6 +8043,66 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransa
     QCOMPARE(apfsLe64(nxsb4, 0x10), 4ULL);
     QCOMPARE(apfsLe32(nxsb4, 0x88), 6U);   // descriptor index advanced one pair
     QCOMPARE(apfsLe32(nxsb4, 0x90), 10U);  // data index advanced one quad
+}
+
+void PartitionManagerCoreTests::apfsWriter_checkpointDataRingWrapsOnRepeatedCommit() {
+    // The checkpoint data ring is 160 blocks and each commit consumes four, so it fills after
+    // ~39 commits. Past that the engine must WRAP the new checkpoint's ephemerals back to the
+    // ring start (the old fail-closed "ring would wrap" path) and keep committing - every commit
+    // succeeds, the data index wraps to a low value at least once, and the container still reads
+    // and checksums clean afterward. Driven through the raw in-place path so each write is one
+    // checkpoint commit with no per-commit image clone.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString container = QDir(temp.path()).filePath(QStringLiteral("a2-ringwrap.apfs"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = container,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("RingWrap"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+
+    struct RawTargetPredicateGuard {
+        ~RawTargetPredicateGuard() {
+            PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+        }
+    } guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [container](const QString& path) { return path == container; });
+
+    bool wrapped = false;
+    uint32_t prevIndex = apfsLe32(readApfsImageBlock(container, 0), 0x90);
+    for (int i = 0; i < 60; ++i) {
+        const auto commit = PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = container,
+             .target_container_bytes = bytes,
+             .file_name = QStringLiteral("seed.txt"),
+             .file_data = QByteArrayLiteral("ring-wrap-commit"),
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target = true,
+             .options = rawOptions});
+        QVERIFY2(commit.ok,
+                 qPrintable(QStringLiteral("commit %1: %2")
+                                .arg(i)
+                                .arg(commit.blockers.join(QStringLiteral("; ")))));
+        const QByteArray nxsb = readApfsImageBlock(container, 0);
+        QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+        const uint32_t index = apfsLe32(nxsb, 0x90);
+        if (index < prevIndex) {
+            wrapped = true;
+        }
+        prevIndex = index;
+    }
+    QVERIFY2(wrapped, "checkpoint data ring never wrapped over 60 in-place commits");
+
+    // After wrapping the container still reads and reports its volume + file.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(container, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("RingWrap"));
 }
 
 namespace {

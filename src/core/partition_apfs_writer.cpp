@@ -3393,9 +3393,10 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
 void advanceNxSuperblockCheckpoint(QByteArray* nxsb,
                                    const ApfsLiveCheckpoint& live,
                                    uint64_t newXid,
-                                   uint32_t ephemeralCount) {
+                                   uint32_t ephemeralCount,
+                                   uint32_t dataIndexStart) {
     const uint32_t newDescIndex = live.descNext;
-    const uint32_t newDataIndex = live.dataNext;
+    const uint32_t newDataIndex = dataIndexStart;
     writeLe64(nxsb, kApfsObjectXidOffset, newXid);
     writeLe64(nxsb, kApfsNxNextXidOffset, newXid + 1);
     writeLe32(nxsb, kApfsNxXpDescIndexOffset, newDescIndex);
@@ -3433,6 +3434,9 @@ struct ApfsCheckpointAdvanceRequest {
     // A7 (A-g) in-chunk grow: blocks added to nx_block_count + the spaceman main device
     // (0 = no resize). Applied to the carried-forward nx_superblock + spaceman.
     int64_t blockCountDelta{0};
+    // Ring-relative start index for this checkpoint's ephemeral data (== live.dataNext, or 0
+    // when the data ring wrapped). Set by advanceCheckpoint before the nx_superblock deltas.
+    uint32_t dataIndexStart{0};
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -3472,7 +3476,8 @@ void applyNxSuperblockCheckpointDeltas(ApfsCheckpointAdvanceRequest& request,
                                        uint64_t newXid,
                                        uint32_t ephemeralBlocks,
                                        const ApfsRepairGeometry& geometry) {
-    advanceNxSuperblockCheckpoint(&request.nxsb, live, newXid, ephemeralBlocks);
+    advanceNxSuperblockCheckpoint(
+        &request.nxsb, live, newXid, ephemeralBlocks, request.dataIndexStart);
     if (request.blockCountDelta != 0) {
         // A7 (A-g) in-chunk grow: the container gained blocks within the existing chunk.
         const uint64_t grownBlockCount = le64(request.nxsb, kApfsNxBlockCountOffset) +
@@ -3507,12 +3512,21 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     // The data-ring length is the total block span of the ephemerals, which exceeds the
     // entry count once the spaceman is multi-block (the metadata-overflow dead zone).
     const uint64_t ephemeralBlocks = checkpointDataBlockSpan(checkpointMap, geometry.blockSize);
-    if (live.dataNext + ephemeralBlocks > live.dataBlocks) {
-        blockers->append(
-            QStringLiteral("APFS in-place commit: checkpoint data ring would wrap (unsupported in "
-                           "this increment)"));
-        return false;
+    // The checkpoint data ring is circular. When the next contiguous run would pass the ring
+    // end, wrap this checkpoint's ephemerals back to the ring start - the checkpoint map records
+    // every object's paddr individually, so they need not abut dataNext, exactly as Apple's
+    // apfs.kext does when the descriptor/data area fills. Fail closed only if a single checkpoint
+    // cannot fit the ring, or wrapping would clobber the live checkpoint block 0 still points at.
+    uint32_t dataStart = live.dataNext;
+    if (static_cast<uint64_t>(live.dataNext) + ephemeralBlocks > live.dataBlocks) {
+        if (ephemeralBlocks > live.dataBlocks || live.dataIndex < ephemeralBlocks) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: checkpoint data ring too small for this checkpoint"));
+            return false;
+        }
+        dataStart = 0;
     }
+    request.dataIndexStart = dataStart;
     const uint64_t newXid = live.xid + 1;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
@@ -3521,7 +3535,7 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           geometry,
                                           live.dataBase,
                                           newXid,
-                                          live.dataNext,
+                                          dataStart,
                                           request.spacemanFreeDelta,
                                           request.newCibAddr,
                                           request.cibCount,
