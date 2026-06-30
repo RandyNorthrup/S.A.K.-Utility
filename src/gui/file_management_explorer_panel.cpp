@@ -59,7 +59,6 @@ namespace {
 
 constexpr int kExplorerPreviewMaxBytes = 1024 * 1024;
 constexpr int kExplorerListMaxEntries = 10'000;
-constexpr qint64 kExplorerWriteMaxBytes = 64LL * 1024LL * 1024LL;
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kCommandIdRole = Qt::UserRole + 3;
@@ -1867,7 +1866,7 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         return;
     }
     const QFileInfo sourceInfo(sourcePath);
-    if (sourceInfo.size() > kExplorerWriteMaxBytes) {
+    if (sourceInfo.size() > static_cast<qint64>(kMaximumNonNativeFileWriteBytes)) {
         sak::showWarningLogged(this,
                                tr("Write File"),
                                tr("File exceeds the 64 MiB File Explorer write cap."));

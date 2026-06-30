@@ -36,6 +36,19 @@ inline constexpr int kPartitionByteDisplayPrecision = 2;
 // 24 TiB == 24 * 1024^4 == (24ULL << 40).
 inline constexpr uint64_t kMaximumApfsGeneratedContainerBytes = 24ULL << 40;
 
+// Minimum S.A.K.-generated APFS container size. Single source for the UI size
+// guard, the File Management write gate, and the script-builder format guard.
+inline constexpr uint64_t kMinimumApfsGeneratedContainerBytes = 64ULL * 1024ULL * 1024ULL;
+
+// Maximum payload for a single File Management raw/non-native file write (HFS+/APFS).
+inline constexpr uint64_t kMaximumNonNativeFileWriteBytes = 64ULL * 1024ULL * 1024ULL;
+
+// Single source of truth for the user-facing APFS generated-container capacity
+// range, so Partition Manager, File Management, and registry messages cannot drift.
+[[nodiscard]] inline QString apfsCapacityRangeText() {
+    return QStringLiteral("64 MiB through 24 TiB");
+}
+
 enum class PartitionOperationType {
     Create,
     Delete,

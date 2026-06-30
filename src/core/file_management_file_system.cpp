@@ -26,8 +26,10 @@ namespace sak {
 namespace {
 
 constexpr int kDriveRootPrefixLength = 3;
-constexpr uint64_t kFileManagementMaxWriteBytes = 64ULL * 1024ULL * 1024ULL;
-constexpr uint64_t kMinimumGeneratedApfsBytes = 64ULL * 1024ULL * 1024ULL;
+// Sourced from the shared constants (partition_manager_types.h) so the File
+// Management write gate cannot drift from the rest of the codebase.
+constexpr uint64_t kFileManagementMaxWriteBytes = kMaximumNonNativeFileWriteBytes;
+constexpr uint64_t kMinimumGeneratedApfsBytes = kMinimumApfsGeneratedContainerBytes;
 // APFS File Management mutation is limited to a root file (1 path part) or one
 // level of directory child (2 parts: directory + file).
 constexpr int kApfsMaxPathDepth = 2;
@@ -161,8 +163,9 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
     if (!target.can_write_files) {
         target.blockers.append(
             fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition
-                ? QStringLiteral("APFS File Explorer writes are limited to S.A.K.-generated "
-                                 "containers from 64 MiB through 24 TiB")
+                ? QStringLiteral("APFS File Explorer writes are limited to APFS containers created "
+                                 "by this tool (%1)")
+                      .arg(apfsCapacityRangeText())
                 : QStringLiteral("File Management opens this target read-only"));
     } else if (!target.local_file_system) {
         target.blockers.append(
