@@ -133,6 +133,8 @@ private:
     void promptCurrentFolderFilter();
     void showCommandPalette();
     void updateDetailsPane();
+    void updatePreviewPane(const FileManagementTarget& target,
+                           const FileExplorerSelection& selection);
     [[nodiscard]] QStringList buildDetailsProperties(const FileManagementTarget& target,
                                                      const FileExplorerSelection& selection) const;
     [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
@@ -178,6 +180,11 @@ private:
     QPlainTextEdit* m_safety_text{nullptr};
     QPlainTextEdit* m_evidence_text{nullptr};
     QTabWidget* m_details_tabs{nullptr};
+    // Path of the file currently rendered in the preview pane, so selection churn does not
+    // re-read the same file; empty when no single readable file is selected.
+    QString m_last_preview_path;
+    // Result of the most recent mutation, surfaced in the Evidence tab (path + hashes).
+    FileManagementMutationResult m_last_mutation;
     FileExplorerItemModel* m_item_model{nullptr};
     QVector<FileManagementTarget> m_targets;
     QString m_current_path{QStringLiteral("/")};

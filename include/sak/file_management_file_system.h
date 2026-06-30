@@ -90,6 +90,15 @@ struct FileManagementMutationResult {
     QStringList warnings;
 };
 
+/// @brief A rendered, display-ready preview of a file's leading bytes.
+/// Text content is shown verbatim; binary content is shown as a hex+ASCII dump.
+struct FileManagementPreview {
+    QString text;             ///< Display string: decoded text, or a hex+ASCII dump for binary.
+    bool is_binary{false};    ///< True when the bytes were rendered as a hex dump.
+    bool truncated{false};    ///< True when more bytes exist past the previewed window.
+    uint64_t shown_bytes{0};  ///< Number of source bytes represented in @ref text.
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -112,6 +121,11 @@ public:
     [[nodiscard]] static FileManagementReadResult readFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);
+    /// Render @p data (already capped to a preview window by the caller) into a display-ready
+    /// preview: decoded UTF-8/Latin-1 text when the bytes look textual, otherwise a hex+ASCII
+    /// dump. @p truncated marks that the source file has more bytes past this window.
+    [[nodiscard]] static FileManagementPreview renderPreview(const QByteArray& data,
+                                                             bool truncated);
     [[nodiscard]] static FileManagementMutationResult createDirectory(
         const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteDirectory(

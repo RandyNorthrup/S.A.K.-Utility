@@ -88,6 +88,41 @@ private Q_SLOTS:
         QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("24 TiB")));
     }
 
+    void renderPreviewDecodesTextAndDumpsBinary() {
+        // Text bytes decode verbatim, are not flagged binary, and carry the caller's
+        // truncation flag through.
+        const auto text = sak::FileManagementFileSystemBridge::renderPreview(
+            QByteArrayLiteral("line one\nline two\n"), false);
+        QVERIFY(!text.is_binary);
+        QVERIFY(!text.truncated);
+        QCOMPARE(text.text, QStringLiteral("line one\nline two\n"));
+        QCOMPARE(text.shown_bytes, static_cast<uint64_t>(18));
+
+        const auto truncatedText =
+            sak::FileManagementFileSystemBridge::renderPreview(QByteArrayLiteral("partial"), true);
+        QVERIFY(!truncatedText.is_binary);
+        QVERIFY(truncatedText.truncated);
+
+        // A NUL byte forces the hex+ASCII dump path; the dump carries the offset column,
+        // the hex for the leading byte, and the printable ASCII gutter.
+        QByteArray binary("AB\x00\x01Z", 5);
+        const auto dump = sak::FileManagementFileSystemBridge::renderPreview(binary, false);
+        QVERIFY(dump.is_binary);
+        QVERIFY2(dump.text.contains(QStringLiteral("00000000")), qPrintable(dump.text));
+        QVERIFY2(dump.text.contains(QStringLiteral("41 42")), qPrintable(dump.text));
+        QVERIFY2(dump.text.contains(QStringLiteral("|AB..Z|")), qPrintable(dump.text));
+    }
+
+    void renderPreviewHexDumpCapsLargeBinary() {
+        // A binary payload larger than the hex-dump window is capped and marked truncated,
+        // and shown_bytes reflects only the dumped window.
+        QByteArray big(9000, '\x00');
+        const auto dump = sak::FileManagementFileSystemBridge::renderPreview(big, false);
+        QVERIFY(dump.is_binary);
+        QVERIFY(dump.truncated);
+        QCOMPARE(dump.shown_bytes, static_cast<uint64_t>(4096));
+    }
+
     void inventoryPartitionBuildsRawAlias() {
         sak::PartitionInventory inventory;
         sak::PartitionDiskInfo disk;

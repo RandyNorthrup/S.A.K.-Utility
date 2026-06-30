@@ -175,7 +175,11 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
     auto* table = child<QTableView>(&panel, "fileExplorerTable");
     QCOMPARE(details->count(), 4);
     QCOMPARE(table->selectionMode(), QAbstractItemView::ExtendedSelection);
-    QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPreviewText"));
+    auto* preview = child<QPlainTextEdit>(&panel, "fileExplorerPreviewText");
+    QVERIFY(preview);
+    // The persistent preview pane is always populated by the auto-preview wiring (a hint when
+    // no single readable file is selected), never left blank for the user to wonder about.
+    QVERIFY2(!preview->toPlainText().trimmed().isEmpty(), qPrintable(preview->toPlainText()));
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPropertiesText"));
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerSafetyText"));
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerEvidenceText"));

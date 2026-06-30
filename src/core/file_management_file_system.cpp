@@ -619,6 +619,72 @@ FileManagementReadResult FileManagementFileSystemBridge::readFile(
     return result;
 }
 
+namespace {
+
+constexpr int kPreviewHexDumpBytes = 4096;
+constexpr int kPreviewHexBytesPerRow = 16;
+
+// Heuristic: a NUL byte, or more than 5% C0 control bytes (excluding tab/newline/return),
+// marks the bytes as binary and routes them to the hex dump instead of a text decode.
+bool looksBinary(const QByteArray& data) {
+    int controls = 0;
+    for (const char ch : data) {
+        const auto u = static_cast<unsigned char>(ch);
+        if (u == 0) {
+            return true;
+        }
+        if (u < 0x09 || (u > 0x0D && u < 0x20) || u == 0x7F) {
+            ++controls;
+        }
+    }
+    return !data.isEmpty() && controls * 20 > data.size();
+}
+
+// One "OFFSET  HH HH ... |ascii|" row for up to kPreviewHexBytesPerRow bytes at @p offset.
+QString hexDumpRow(const QByteArray& data, int offset) {
+    QString hex;
+    QString ascii;
+    for (int col = 0; col < kPreviewHexBytesPerRow; ++col) {
+        if (offset + col < data.size()) {
+            const auto u = static_cast<unsigned char>(data.at(offset + col));
+            hex += QStringLiteral("%1 ").arg(u, 2, 16, QLatin1Char('0'));
+            ascii += (u >= 0x20 && u < 0x7F) ? QChar(u) : QLatin1Char('.');
+        } else {
+            hex += QStringLiteral("   ");
+        }
+    }
+    return QStringLiteral("%1  %2 |%3|").arg(offset, 8, 16, QLatin1Char('0')).arg(hex, ascii);
+}
+
+QString hexDump(const QByteArray& window) {
+    QStringList rows;
+    for (int offset = 0; offset < window.size(); offset += kPreviewHexBytesPerRow) {
+        rows << hexDumpRow(window, offset);
+    }
+    return rows.join(QLatin1Char('\n'));
+}
+
+}  // namespace
+
+FileManagementPreview FileManagementFileSystemBridge::renderPreview(const QByteArray& data,
+                                                                    bool truncated) {
+    FileManagementPreview preview;
+    preview.shown_bytes = static_cast<uint64_t>(data.size());
+    preview.truncated = truncated;
+    if (!looksBinary(data)) {
+        preview.text = QString::fromUtf8(data);
+        return preview;
+    }
+    preview.is_binary = true;
+    const QByteArray window = data.left(kPreviewHexDumpBytes);
+    if (window.size() < data.size()) {
+        preview.truncated = true;
+        preview.shown_bytes = static_cast<uint64_t>(window.size());
+    }
+    preview.text = hexDump(window);
+    return preview;
+}
+
 FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
     const FileManagementTarget& target, const QString& path) {
     const QString fs = normalizedFileSystem(target.file_system);

@@ -1146,6 +1146,10 @@ void FileManagementExplorerPanel::logMessage(const QString& message) {
 
 void FileManagementExplorerPanel::showMutationResult(const QString& title,
                                                      const FileManagementMutationResult& result) {
+    // Record for the Evidence tab and force the preview to re-read (a mutation may have changed
+    // the bytes of the currently selected file).
+    m_last_mutation = result;
+    m_last_preview_path.clear();
     QStringList details;
     details.append(result.blockers);
     details.append(result.warnings);
@@ -1568,6 +1572,39 @@ void FileManagementExplorerPanel::showCommandPalette() {
     executeCommand(current->data(kCommandIdRole).value<FileExplorerCommandId>());
 }
 
+namespace {
+
+// One-entry metadata block for the Properties tab (name, kind, size, dates, identifier, link).
+QStringList describeEntry(const FileManagementEntry& entry) {
+    QStringList lines;
+    const QString kind = entry.directory        ? FileManagementExplorerPanel::tr("Folder")
+                         : entry.symlink        ? FileManagementExplorerPanel::tr("Symbolic link")
+                         : entry.type.isEmpty() ? FileManagementExplorerPanel::tr("File")
+                                                : entry.type;
+    lines.append(FileManagementExplorerPanel::tr("Name: %1").arg(entry.name));
+    lines.append(FileManagementExplorerPanel::tr("Kind: %1").arg(kind));
+    if (!entry.directory) {
+        lines.append(FileManagementExplorerPanel::tr("Size: %1 bytes").arg(entry.size_bytes));
+    }
+    if (entry.modified_time.isValid()) {
+        lines.append(FileManagementExplorerPanel::tr("Modified: %1")
+                         .arg(entry.modified_time.toString(Qt::ISODate)));
+    }
+    if (entry.created_time.isValid()) {
+        lines.append(FileManagementExplorerPanel::tr("Created: %1")
+                         .arg(entry.created_time.toString(Qt::ISODate)));
+    }
+    if (!entry.identifier.isEmpty()) {
+        lines.append(FileManagementExplorerPanel::tr("Identifier: %1").arg(entry.identifier));
+    }
+    if (!entry.link_target.isEmpty()) {
+        lines.append(FileManagementExplorerPanel::tr("Link target: %1").arg(entry.link_target));
+    }
+    return lines;
+}
+
+}  // namespace
+
 QStringList FileManagementExplorerPanel::buildDetailsProperties(
     const FileManagementTarget& target, const FileExplorerSelection& selection) const {
     QStringList properties;
@@ -1581,7 +1618,10 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
     properties.append(tr("Path: %1").arg(m_current_path));
     properties.append(
         tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
-    if (!selection.isEmpty()) {
+    if (selection.count() == 1) {
+        properties.append(QString());
+        properties.append(describeEntry(selection.entries.first()));
+    } else if (!selection.isEmpty()) {
         properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
         properties.append(selection.paths().join(QStringLiteral("\n")));
     }
@@ -1619,10 +1659,26 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
 QStringList FileManagementExplorerPanel::buildDetailsEvidence(
     const FileManagementTarget& target) const {
     QStringList evidence;
-    evidence.append(tr("Command-route evidence attaches in later certification milestones."));
     if (!target.root_path.isEmpty()) {
         evidence.append(tr("Target ID: %1").arg(target.id));
         evidence.append(tr("Source: %1").arg(target.source));
+    }
+    if (m_last_mutation.path.isEmpty()) {
+        evidence.append(tr("No File Explorer mutation has run this session."));
+        return evidence;
+    }
+    evidence.append(QString());
+    evidence.append(tr("Last operation path: %1").arg(m_last_mutation.path));
+    evidence.append(tr("Result: %1").arg(m_last_mutation.ok ? tr("ok") : tr("blocked")));
+    if (m_last_mutation.bytes_written > 0) {
+        evidence.append(tr("Bytes written: %1").arg(m_last_mutation.bytes_written));
+    }
+    if (!m_last_mutation.after_sha256.isEmpty()) {
+        evidence.append(tr("SHA-256: %1").arg(m_last_mutation.after_sha256));
+    }
+    if (!m_last_mutation.warnings.isEmpty()) {
+        evidence.append(
+            tr("Warnings: %1").arg(m_last_mutation.warnings.join(QStringLiteral("; "))));
     }
     return evidence;
 }
@@ -1641,9 +1697,7 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     if (m_evidence_text) {
         m_evidence_text->setPlainText(buildDetailsEvidence(target).join(QStringLiteral("\n")));
     }
-    if (m_preview_text && m_preview_text->toPlainText().isEmpty()) {
-        m_preview_text->setPlainText(tr("Select a readable file and choose Preview."));
-    }
+    updatePreviewPane(target, selection);
     if (m_status_label) {
         if (target.root_path.isEmpty()) {
             m_status_label->setText(tr("No target selected"));
@@ -1656,6 +1710,48 @@ void FileManagementExplorerPanel::updateDetailsPane() {
                          target.can_write_files ? tr("enabled") : tr("blocked")));
         }
     }
+}
+
+void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& target,
+                                                    const FileExplorerSelection& selection) {
+    if (!m_preview_text) {
+        return;
+    }
+    if (selection.count() != 1) {
+        m_last_preview_path.clear();
+        m_preview_text->setPlainText(selection.isEmpty()
+                                         ? tr("Select a readable file to preview its contents.")
+                                         : tr("%1 items selected.").arg(selection.count()));
+        return;
+    }
+    const FileManagementEntry entry = selection.entries.first();
+    if (entry.directory || !entry.regular_file) {
+        m_last_preview_path.clear();
+        m_preview_text->setPlainText(tr("%1 is not a previewable file.").arg(entry.name));
+        return;
+    }
+    if (entry.path == m_last_preview_path) {
+        return;
+    }
+    const auto read =
+        FileManagementFileSystemBridge::readFile(target, entry.path, kExplorerPreviewMaxBytes);
+    if (!read.ok) {
+        m_last_preview_path.clear();
+        m_preview_text->setPlainText(
+            tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
+        return;
+    }
+    m_last_preview_path = entry.path;
+    const bool capped = read.data.size() >= kExplorerPreviewMaxBytes;
+    const auto preview = FileManagementFileSystemBridge::renderPreview(read.data, capped);
+    QString header = tr("%1 - %2 bytes - %3")
+                         .arg(entry.name,
+                              QString::number(entry.size_bytes),
+                              preview.is_binary ? tr("binary (hex)") : tr("text"));
+    if (preview.truncated) {
+        header += tr(" - preview truncated to %1 bytes").arg(preview.shown_bytes);
+    }
+    m_preview_text->setPlainText(header + QStringLiteral("\n\n") + preview.text);
 }
 
 void FileManagementExplorerPanel::updateActionButtons() {
