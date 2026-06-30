@@ -15039,11 +15039,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     }
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
-    if (!collectExistingFullFsTree(result.written_image_path,
-                                   cleanDirectoryName,
-                                   &existingFiles,
-                                   &directories,
-                                   &result.blockers)) {
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!prepareDirectoryCreate(
+            {result.written_image_path, &existingFiles, &directories, &result.blockers},
+            request.parent_directory_path,
+            cleanDirectoryName,
+            &parentDirectoryId)) {
         return result;
     }
     auto target =
@@ -15059,10 +15060,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceDirectoryCreate(target.get(),
-                                     {existingFiles, directories, cleanDirectoryName},
-                                     &commit,
-                                     &commitBlockers)) {
+    if (commitInPlaceDirectoryCreate(
+            target.get(),
+            {existingFiles, directories, cleanDirectoryName, parentDirectoryId},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

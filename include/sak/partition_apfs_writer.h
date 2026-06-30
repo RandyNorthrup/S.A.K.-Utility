@@ -638,6 +638,9 @@ struct PartitionApfsRawDirectoryMutationCommitRequest {
     QString target_path;
     uint64_t target_container_bytes{0};
     QString directory_name;
+    // Parent directory the new directory is created under; empty = container root,
+    // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
+    QString parent_directory_path;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

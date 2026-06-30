@@ -398,6 +398,7 @@ struct CliInvocation {
     QString output_image_path;
     QString file_name;
     QString directory_name;
+    QString parent_directory_path;
     QString new_file_name;
     QString destination_directory_name;
     QByteArray payload;
@@ -441,6 +442,7 @@ struct CliParserOptions {
     const QCommandLineOption* output_image{nullptr};
     const QCommandLineOption* file_name{nullptr};
     const QCommandLineOption* directory_name{nullptr};
+    const QCommandLineOption* parent_directory_path{nullptr};
     const QCommandLineOption* new_file_name{nullptr};
     const QCommandLineOption* destination_directory_name{nullptr};
     const QCommandLineOption* payload{nullptr};
@@ -590,30 +592,31 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
     if (!error->isEmpty()) {
         return std::nullopt;
     }
-    return CliInvocation{.command = *command,
-                         .target_path = *target,
-                         .target_size_bytes = numeric->size,
-                         .block_size_bytes = numeric->block_size,
-                         .volume_name = parser.value(*options.volume_name),
-                         .additional_volume_names = parser.values(*options.additional_volume_name),
-                         .output_image_path = parser.value(*options.output_image).trimmed(),
-                         .file_name = mutation->file_name,
-                         .directory_name = mutation->directory_name,
-                         .new_file_name = parser.value(*options.new_file_name).trimmed(),
-                         .destination_directory_name =
-                             parser.value(*options.destination_directory_name).trimmed(),
-                         .payload = mutation->payload,
-                         .patch_offset_bytes = mutation->patch_offset,
-                         .patch_offset_error = mutation->patch_offset_error,
-                         .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
-                         .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
-                         .volume_password = volumePassword,
-                         .recovery_key = recoveryKey,
-                         .confirm_target = parser.isSet(*options.confirm),
-                         .allow_raw_target = parser.isSet(*options.allow_raw),
-                         .compress_zlib = parser.isSet(*options.compress_zlib),
-                         .sparse_logical_size = parser.value(*options.sparse_size).toULongLong(),
-                         .xattrs = parseXattrOptions(parser.values(*options.xattr))};
+    return CliInvocation{
+        .command = *command,
+        .target_path = *target,
+        .target_size_bytes = numeric->size,
+        .block_size_bytes = numeric->block_size,
+        .volume_name = parser.value(*options.volume_name),
+        .additional_volume_names = parser.values(*options.additional_volume_name),
+        .output_image_path = parser.value(*options.output_image).trimmed(),
+        .file_name = mutation->file_name,
+        .directory_name = mutation->directory_name,
+        .parent_directory_path = parser.value(*options.parent_directory_path).trimmed(),
+        .new_file_name = parser.value(*options.new_file_name).trimmed(),
+        .destination_directory_name = parser.value(*options.destination_directory_name).trimmed(),
+        .payload = mutation->payload,
+        .patch_offset_bytes = mutation->patch_offset,
+        .patch_offset_error = mutation->patch_offset_error,
+        .snapshot_name = parser.value(*options.snapshot_name).trimmed(),
+        .evidence_id = evidenceIdForCommand(parser, *options.evidence, *command),
+        .volume_password = volumePassword,
+        .recovery_key = recoveryKey,
+        .confirm_target = parser.isSet(*options.confirm),
+        .allow_raw_target = parser.isSet(*options.allow_raw),
+        .compress_zlib = parser.isSet(*options.compress_zlib),
+        .sparse_logical_size = parser.value(*options.sparse_size).toULongLong(),
+        .xattrs = parseXattrOptions(parser.values(*options.xattr))};
 }
 
 QJsonObject buildFormatImageReport(const CliInvocation& invocation) {
@@ -1332,6 +1335,7 @@ std::optional<QJsonObject> buildCommitDirectoryCreateReport(const CliInvocation&
         {.source_image_path = invocation.target_path,
          .written_image_path = invocation.output_image_path,
          .directory_name = invocation.directory_name,
+         .parent_directory_path = invocation.parent_directory_path,
          .options = imageWriteOptions(invocation.evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -1738,6 +1742,7 @@ std::optional<QJsonObject> buildCommitRawDirectoryCreateReport(const CliInvocati
         {.target_path = invocation.target_path,
          .target_container_bytes = invocation.target_size_bytes,
          .directory_name = invocation.directory_name,
+         .parent_directory_path = invocation.parent_directory_path,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -2267,6 +2272,11 @@ struct CliOptions {
         {QStringLiteral("directory-name")},
         QStringLiteral("Root directory name for generated APFS directory or child-file mutations."),
         QStringLiteral("name")};
+    QCommandLineOption parentDirectoryPath{
+        {QStringLiteral("parent-directory-path")},
+        QStringLiteral("Parent directory the new directory nests under (empty = container root, "
+                       "\"/docs\" or \"/docs/sub\"); for create-image/raw-root-directory."),
+        QStringLiteral("path")};
     QCommandLineOption newFileName{{QStringLiteral("new-file-name")},
                                    QStringLiteral(
                                        "Destination file name for a generated APFS file move."),
@@ -2347,6 +2357,7 @@ void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
                        options.outputImage,
                        options.fileName,
                        options.directoryName,
+                       options.parentDirectoryPath,
                        options.newFileName,
                        options.destinationDirectoryName,
                        options.payload,
@@ -2390,6 +2401,7 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
                                  .output_image = &options.outputImage,
                                  .file_name = &options.fileName,
                                  .directory_name = &options.directoryName,
+                                 .parent_directory_path = &options.parentDirectoryPath,
                                  .new_file_name = &options.newFileName,
                                  .destination_directory_name = &options.destinationDirectoryName,
                                  .payload = &options.payload,
