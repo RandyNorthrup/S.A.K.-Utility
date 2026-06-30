@@ -507,3 +507,6 @@ scripts/sign-config.ps1
 !package_mappings.json
 !resources/icon.ico
 !resources/sak_utility.rc
+
+# Local Qt 6.10.3 verification build tree
+build-qt610/

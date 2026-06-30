@@ -1,0 +1,7 @@
+# Bundled filesystem tools (e2fsprogs / hfsprogs): binaries AND their companion
+# text files (NOTICE, *.patch, *.md, license texts) are hashed byte-for-byte
+# against tools/filesystem/manifest.json. core.autocrlf must never rewrite their
+# line endings or the runtime-file hash check fails on Windows checkouts (CI +
+# local). Treat the whole tree as binary so checkout preserves the exact bytes
+# the manifest recorded.
+tools/filesystem/** -text
