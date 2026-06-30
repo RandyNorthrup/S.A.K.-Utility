@@ -28,6 +28,25 @@ EXCLUDED_PARTS = {
 }
 ALLOWED_LITERALS = {"-1", "-1.0", "0", "0.0", "1", "1.0"}
 
+# On-disk binary-format and crypto modules. These legitimately use raw hex field
+# offsets and magic/signature constants throughout (APFS/HFS on-disk structures,
+# FileVault keybag + AES/PBKDF2 crypto). Hand-naming every offset here is high-risk
+# churn against the Apple-certified byte-exact output -- a single mis-named offset
+# writes wrong bytes and fails fsck -- so these files are exempt from the
+# magic-number rule, mirroring the file allowlist the GUI magic-number checker
+# (scripts/check_gui_magic_numbers.ps1) already uses for layout code.
+EXEMPT_FILES = {
+    "src/core/partition_apfs_writer.cpp",
+    "include/sak/partition_apfs_writer.h",
+    "src/core/partition_apfs_file_system_reader.cpp",
+    "include/sak/apfs_compression.h",
+    "src/core/apfs_keybag.cpp",
+    "src/core/apfs_crypto.cpp",
+    "include/sak/partition_hfs_internal.h",
+    "include/sak/partition_hfs_core.h",
+    "include/sak/partition_hfs_case_folding.h",
+}
+
 NUMERIC_LITERAL_RE = re.compile(
     r"""
     (?<![A-Za-z0-9_])
@@ -229,6 +248,8 @@ def scan(root: Path, scan_roots: list[str]) -> list[Violation]:
             continue
         for path in current_root.rglob("*"):
             if path.is_file() and should_scan(path):
+                if repo_path(path, root) in EXEMPT_FILES:
+                    continue
                 violations.extend(scan_file(path))
     return violations
 

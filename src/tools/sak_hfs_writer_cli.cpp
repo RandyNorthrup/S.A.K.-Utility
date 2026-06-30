@@ -206,10 +206,12 @@ void appendLinkJournalAndBatchRunners(FileCommandRunnerTable& runners) {
     runners.insert(QStringLiteral("create-empty-files-image"), [](const CliInvocation& invocation) {
         sak::PartitionHfsFileWriteResult result;
         const QString pad(std::max(0, invocation.name_pad), QLatin1Char('x'));
+        constexpr int kIndexFieldWidth = 4;
+        constexpr int kDecimalBase = 10;
         for (int index = 0; index < invocation.file_count; ++index) {
             const QString path = QStringLiteral("%1-%2-%3.txt")
                                      .arg(invocation.hfs_path)
-                                     .arg(index, 4, 10, QLatin1Char('0'))
+                                     .arg(index, kIndexFieldWidth, kDecimalBase, QLatin1Char('0'))
                                      .arg(pad);
             result = sak::PartitionHfsFileSystemWriter::createEmptyFileFromImage(
                 invocation.target_image_path, path, writeOptions(invocation));

@@ -28,6 +28,9 @@ namespace {
 constexpr int kDriveRootPrefixLength = 3;
 constexpr uint64_t kFileManagementMaxWriteBytes = 64ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumGeneratedApfsBytes = 64ULL * 1024ULL * 1024ULL;
+// APFS File Management mutation is limited to a root file (1 path part) or one
+// level of directory child (2 parts: directory + file).
+constexpr int kApfsMaxPathDepth = 2;
 
 QString normalizedPath(QString path) {
     path = path.trimmed();
@@ -78,7 +81,7 @@ bool isApfsPathSupported(const QString& path, bool directory) {
         clean.prepend(QLatin1Char('/'));
     }
     const auto parts = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    return directory ? parts.size() == 1 : parts.size() == 1 || parts.size() == 2;
+    return directory ? parts.size() == 1 : parts.size() == 1 || parts.size() == kApfsMaxPathDepth;
 }
 
 QStringList apfsParts(const QString& path) {
@@ -810,8 +813,8 @@ FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
                                              const QString& cleanDestination) {
     const auto sourceParts = apfsParts(cleanSource);
     const auto destParts = apfsParts(cleanDestination);
-    if (sourceParts.isEmpty() || sourceParts.size() > 2 || destParts.isEmpty() ||
-        destParts.size() > 2) {
+    if (sourceParts.isEmpty() || sourceParts.size() > kApfsMaxPathDepth || destParts.isEmpty() ||
+        destParts.size() > kApfsMaxPathDepth) {
         return mutationBlocked(QStringLiteral("apfs"),
                                cleanSource,
                                QStringLiteral("APFS File Management rename/move is limited to root "
@@ -821,9 +824,11 @@ FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
         PartitionApfsWriter::commitRawFileMove(
             {.target_path = target.root_path,
              .target_container_bytes = target.size_bytes,
-             .source_directory_name = sourceParts.size() == 2 ? sourceParts.value(0) : QString(),
+             .source_directory_name = sourceParts.size() == kApfsMaxPathDepth ? sourceParts.value(0)
+                                                                              : QString(),
              .file_name = sourceParts.last(),
-             .destination_directory_name = destParts.size() == 2 ? destParts.value(0) : QString(),
+             .destination_directory_name =
+                 destParts.size() == kApfsMaxPathDepth ? destParts.value(0) : QString(),
              .new_file_name = destParts.last(),
              .target_mutation_confirmed = true,
              .allow_raw_device_target = isRawDevicePath(target.root_path),

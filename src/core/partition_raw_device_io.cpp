@@ -331,7 +331,8 @@ bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
     FILE_ALLOCATED_RANGE_BUFFER query{};
     query.FileOffset.QuadPart = 0;
     query.Length.QuadPart = size;
-    std::vector<FILE_ALLOCATED_RANGE_BUFFER> ranges(1024);
+    constexpr int kInitialAllocatedRangeCount = 1024;
+    std::vector<FILE_ALLOCATED_RANGE_BUFFER> ranges(kInitialAllocatedRangeCount);
     qint64 scanStart = 0;
     while (scanStart < size) {
         query.FileOffset.QuadPart = scanStart;
@@ -420,7 +421,8 @@ namespace {
 // Copy one source data region [offset, offset+length) to the destination at the same
 // offset (the rest of the destination stays a hole).
 bool copyDataRegionPosix(int in, int out, off_t offset, off_t length) {
-    std::vector<char> buffer(4u * 1024u * 1024u);
+    constexpr size_t kSparseCopyChunkBytes = 4u * 1024u * 1024u;
+    std::vector<char> buffer(kSparseCopyChunkBytes);
     off_t done = 0;
     while (done < length) {
         const size_t want =

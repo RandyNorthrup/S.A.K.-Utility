@@ -17,7 +17,7 @@ namespace sak {
 
 FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     layout->setSpacing(ui::kSpacingSmall);
 
     buildStateLabel(layout);
@@ -71,7 +71,8 @@ void FileExplorerPane::buildItemViews() {
     m_columns_container = new QWidget(this);
     m_columns_container->setObjectName(QStringLiteral("fileExplorerColumnsContainer"));
     auto* columnsLayout = new QHBoxLayout(m_columns_container);
-    columnsLayout->setContentsMargins(0, 0, 0, 0);
+    columnsLayout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     columnsLayout->setSpacing(ui::kSpacingSmall);
     m_columns_view = new QListView(m_columns_container);
     configureListView(m_columns_view,

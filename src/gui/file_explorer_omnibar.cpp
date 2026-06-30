@@ -14,7 +14,7 @@ namespace sak {
 
 FileExplorerOmnibar::FileExplorerOmnibar(QWidget* parent) : QWidget(parent) {
     auto* pathRow = new QHBoxLayout(this);
-    pathRow->setContentsMargins(0, 0, 0, 0);
+    pathRow->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     pathRow->setSpacing(ui::kSpacingSmall);
 
     m_back_button = new QPushButton(this);

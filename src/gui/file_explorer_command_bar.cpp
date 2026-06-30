@@ -15,7 +15,8 @@ namespace sak {
 
 FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent) {
     auto* commandRow = new QHBoxLayout(this);
-    commandRow->setContentsMargins(0, 0, 0, 0);
+    commandRow->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     commandRow->setSpacing(ui::kSpacingSmall);
 
     createTargetButtons(commandRow);

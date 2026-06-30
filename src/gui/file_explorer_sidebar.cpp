@@ -4,6 +4,7 @@
 #include "sak/file_explorer_sidebar.h"
 
 #include "sak/layout_constants.h"
+#include "sak/style_constants.h"
 
 #include <QVBoxLayout>
 
@@ -14,8 +15,8 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
     setMaximumWidth(kFileExplorerSidebarMaxW);
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(0);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingNone);
 
     m_target_list = new QListWidget(this);
     m_target_list->setObjectName(QStringLiteral("fileExplorerTargetList"));

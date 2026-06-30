@@ -10,6 +10,11 @@
 namespace sak {
 namespace {
 
+// Windows drive-root path parsing ("C:/"): the separator after the drive letter
+// sits at index 2, and the drive root "C:/" is 3 characters long.
+constexpr int kWindowsDriveSeparatorIndex = 2;
+constexpr int kWindowsDriveRootLength = 3;
+
 QString remoteParentPath(const QString& normalized_path) {
     if (normalized_path == QStringLiteral("/")) {
         return QStringLiteral("/");
@@ -33,9 +38,10 @@ QString localParentPath(const QString& normalized_path) {
     if (separator < 0) {
         return QString();
     }
-    if (separator == 2 && normalized_path.size() >= 3 &&
+    if (separator == kWindowsDriveSeparatorIndex &&
+        normalized_path.size() >= kWindowsDriveRootLength &&
         normalized_path.at(1) == QLatin1Char(':')) {
-        return normalized_path.left(3);
+        return normalized_path.left(kWindowsDriveRootLength);
     }
     return separator == 0 ? QStringLiteral("/") : normalized_path.left(separator);
 }

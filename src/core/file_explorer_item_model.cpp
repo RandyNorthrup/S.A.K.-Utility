@@ -195,7 +195,8 @@ Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
 }
 
 void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
-    if (column < 0 || column >= ColumnCount || m_entries.size() < 2) {
+    constexpr int kMinSortableEntryCount = 2;
+    if (column < 0 || column >= ColumnCount || m_entries.size() < kMinSortableEntryCount) {
         return;
     }
 
@@ -267,8 +268,9 @@ QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry
 }
 
 QString FileExplorerItemModel::sizeText(const uint64_t bytes) {
+    constexpr int kSizeTextDecimals = 2;
     if (bytes >= sak::kBytesPerGB) {
-        return QStringLiteral("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', 2);
+        return QStringLiteral("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', kSizeTextDecimals);
     }
     if (bytes >= sak::kBytesPerMB) {
         return QStringLiteral("%1 MB").arg(bytes / sak::kBytesPerMBf, 0, 'f', 1);

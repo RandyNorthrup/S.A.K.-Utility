@@ -33,8 +33,8 @@ inline constexpr int kPartitionByteDisplayPrecision = 2;
 // (Apple fsck_apfs + kernel RW mount, milestones A1/A2). Both the Partition
 // Manager format/mutation gate and the File Management write-capability gate
 // derive from this one value so they cannot drift apart.
-inline constexpr uint64_t kMaximumApfsGeneratedContainerBytes = 24ULL * 1024ULL * 1024ULL *
-                                                                1024ULL * 1024ULL;
+// 24 TiB == 24 * 1024^4 == (24ULL << 40).
+inline constexpr uint64_t kMaximumApfsGeneratedContainerBytes = 24ULL << 40;
 
 enum class PartitionOperationType {
     Create,

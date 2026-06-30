@@ -65,6 +65,15 @@ constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kCommandIdRole = Qt::UserRole + 3;
 constexpr int kCommandEnabledRole = Qt::UserRole + 4;
 constexpr int kCommandBlockerRole = Qt::UserRole + 5;
+
+// Shell layout + control constants.
+constexpr int kViewIdDigestChars = 24;
+constexpr int kCenterPaneStretchIndex = 2;
+constexpr int kSidebarCollapseWidth = 720;
+constexpr int kDetailsTabsCollapseWidth = 920;
+constexpr int kMaxRecentTargetIds = 10;
+constexpr int kSizeSliderSingleStep = 8;
+constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
 constexpr const char* kFavoriteTargetIdsKey = "FavoriteTargetIds";
 constexpr const char* kRecentTargetIdsKey = "RecentTargetIds";
@@ -328,7 +337,7 @@ QString locationViewSettingsGroup(const FileExplorerLocation& location) {
     const QString raw = QStringLiteral("%1\n%2").arg(location.target_id.value, location.path);
     const QByteArray digest =
         QCryptographicHash::hash(raw.toUtf8(), QCryptographicHash::Sha256).toHex();
-    return QStringLiteral("View/%1").arg(QString::fromLatin1(digest.left(24)));
+    return QStringLiteral("View/%1").arg(QString::fromLatin1(digest.left(kViewIdDigestChars)));
 }
 
 void selectRowInView(QAbstractItemView* view, const int row) {
@@ -377,7 +386,8 @@ void FileManagementExplorerPanel::setupUi() {
 
     auto* center = new QWidget(m_shell_splitter);
     auto* centerLayout = new QVBoxLayout(center);
-    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     centerLayout->setSpacing(ui::kSpacingSmall);
     m_shell_splitter->addWidget(center);
 
@@ -439,7 +449,7 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
     m_shell_splitter->addWidget(m_details_tabs);
     m_shell_splitter->setStretchFactor(0, 0);
     m_shell_splitter->setStretchFactor(1, 1);
-    m_shell_splitter->setStretchFactor(2, 0);
+    m_shell_splitter->setStretchFactor(kCenterPaneStretchIndex, 0);
 }
 
 void FileManagementExplorerPanel::connectUiSignals() {
@@ -555,10 +565,10 @@ void FileManagementExplorerPanel::connectPaneSignals() {
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     const int width = event ? event->size().width() : this->width();
-    if (m_sidebar && width < 720) {
+    if (m_sidebar && width < kSidebarCollapseWidth) {
         m_sidebar->setVisible(false);
     }
-    if (m_details_tabs && width < 920) {
+    if (m_details_tabs && width < kDetailsTabsCollapseWidth) {
         m_details_tabs->setVisible(false);
     }
 }
@@ -755,7 +765,7 @@ void FileManagementExplorerPanel::rememberRecentTarget(const QString& target_id)
     }
     m_recent_target_ids.removeAll(clean);
     m_recent_target_ids.prepend(clean);
-    while (m_recent_target_ids.size() > 10) {
+    while (m_recent_target_ids.size() > kMaxRecentTargetIds) {
         m_recent_target_ids.removeLast();
     }
     m_last_target_id = clean;
@@ -1280,8 +1290,8 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     sizeSlider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
     sizeSlider->setAccessibleName(tr("Explorer item size"));
     sizeSlider->setRange(kFileExplorerItemSizeMin, kFileExplorerItemSizeMax);
-    sizeSlider->setSingleStep(8);
-    sizeSlider->setPageStep(16);
+    sizeSlider->setSingleStep(kSizeSliderSingleStep);
+    sizeSlider->setPageStep(kSizeSliderPageStep);
     sizeSlider->setValue(m_pane_state.view.item_size_px);
     sizeLabel->setBuddy(sizeSlider);
     sizeLayout->addWidget(sizeLabel);

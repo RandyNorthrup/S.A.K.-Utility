@@ -19,6 +19,9 @@
 
 namespace sak {
 
+/// Default upper bound on entries returned by a single directory listing.
+inline constexpr int kDefaultFileManagementListEntries = 1000;
+
 enum class FileManagementTargetKind {
     LocalPath,
     Partition,
@@ -102,9 +105,10 @@ public:
     [[nodiscard]] static QString normalizedFileSystem(const QString& file_system);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
 
-    [[nodiscard]] static FileManagementListResult listDirectory(const FileManagementTarget& target,
-                                                                const QString& path = {},
-                                                                int max_entries = 1000);
+    [[nodiscard]] static FileManagementListResult listDirectory(
+        const FileManagementTarget& target,
+        const QString& path = {},
+        int max_entries = kDefaultFileManagementListEntries);
     [[nodiscard]] static FileManagementReadResult readFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);
