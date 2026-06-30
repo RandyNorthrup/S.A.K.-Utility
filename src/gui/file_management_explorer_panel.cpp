@@ -2120,7 +2120,7 @@ void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_i
     if (!target.blockers.isEmpty()) {
         lines.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
     }
-    QMessageBox::information(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
+    sak::showInformationLogged(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
 }
 
 void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& position) {

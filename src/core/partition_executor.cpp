@@ -25,6 +25,25 @@ namespace {
 constexpr int kDefaultPartitionTaskTimeoutSeconds = 1800;
 constexpr int kMaxPartitionTaskOutputBytes = 1024 * 1024;
 
+// Resolve a non-empty failure reason for a failed elevated operation:
+// structured helper error -> structured data error -> script stderr -> exit code.
+QString resolveElevatedFailureMessage(const QString& helperError,
+                                      const QString& structuredError,
+                                      const QString& stderrText,
+                                      int exitCode) {
+    if (!helperError.isEmpty()) {
+        return helperError;
+    }
+    if (!structuredError.isEmpty()) {
+        return structuredError;
+    }
+    const QString trimmed = stderrText.trimmed();
+    if (!trimmed.isEmpty()) {
+        return trimmed;
+    }
+    return QStringLiteral("Operation failed (exit code %1) with no error output").arg(exitCode);
+}
+
 PartitionExecutionStep blockedExecutionStep(const PartitionOperation& operation,
                                             const QStringList& blockers) {
     PartitionExecutionStep step;
@@ -218,10 +237,15 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
                    elevated->data.value(QStringLiteral("exit_code")).toInt(-1) == 0;
     step.stdout_text = elevated->data.value(QStringLiteral("stdout")).toString();
     step.stderr_text = elevated->data.value(QStringLiteral("stderr")).toString();
-    step.error_message = elevated->error_message;
-    if (!step.success && step.error_message.isEmpty()) {
-        step.error_message = elevated->data.value(QStringLiteral("error_message")).toString();
-    }
+    // On failure, surface the real reason so an elevated operation never reports an
+    // empty error (matches the local path).
+    step.error_message = step.success
+                             ? elevated->error_message
+                             : resolveElevatedFailureMessage(
+                                   elevated->error_message,
+                                   elevated->data.value(QStringLiteral("error_message")).toString(),
+                                   step.stderr_text,
+                                   elevated->data.value(QStringLiteral("exit_code")).toInt(-1));
     if (elevated->data.value(QStringLiteral("cancelled")).toBool(false) ||
         m_cancelled.load(std::memory_order_relaxed)) {
         step.success = false;
@@ -257,6 +281,10 @@ PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOper
 
 void PartitionExecutor::setActiveBroker(ElevationBroker* broker) {
     std::lock_guard<std::mutex> lock(m_active_broker_mutex);
+    // Stores a borrowed pointer by design: every caller that passes a local
+    // ElevationBroker clears it with setActiveBroker(nullptr) before that broker is
+    // destroyed, so m_active_broker never dangles.
+    // cppcheck-suppress danglingLifetime
     m_active_broker = broker;
 }
 

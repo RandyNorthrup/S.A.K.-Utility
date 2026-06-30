@@ -130,8 +130,12 @@ enum FileRecoveryColumn {
 };
 
 constexpr int kDefaultCreateSizeMb = 1024;
-constexpr int kMaxSizeInputMb = 4 * 1024 * 1024;
 constexpr int kMegabyteBytes = 1024 * 1024;
+// Size-input ceiling derived from the single authoritative APFS container cap
+// (kMaximumApfsGeneratedContainerBytes = 24 TiB) so the spinbox can never diverge
+// from it. The actual operation is still bounded by the target disk/partition size.
+constexpr int kMaxSizeInputMb =
+    static_cast<int>(kMaximumApfsGeneratedContainerBytes / static_cast<uint64_t>(kMegabyteBytes));
 constexpr int kMaxPartitionNumberInput = 256;
 constexpr int kActionsPaneWidth = 304;
 constexpr int kRibbonIconSize = 30;
