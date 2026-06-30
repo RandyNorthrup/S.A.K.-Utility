@@ -256,11 +256,6 @@ bool isViewModeCommand(const FileExplorerCommandId command) {
     return std::ranges::find(kViewCommands, command) != kViewCommands.end();
 }
 
-bool isOpenElsewhereCommand(const FileExplorerCommandId command) {
-    using enum FileExplorerCommandId;
-    return command == OpenInNewTab || command == OpenInSecondPane || command == ToggleDualPane;
-}
-
 bool isLocalFsTarget(const FileManagementTarget& target) {
     return target.local_file_system;
 }
@@ -480,10 +475,14 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
         ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     center_layout->addWidget(m_summary_label);
 
-    m_pane = new FileExplorerPane(center);
+    m_pane_splitter = new QSplitter(Qt::Horizontal, center);
+    m_pane_splitter->setObjectName(QStringLiteral("fileExplorerPaneSplitter"));
+    m_pane_a = new FileExplorerPane(m_pane_splitter);
+    m_pane_splitter->addWidget(m_pane_a);
+    m_pane = m_pane_a;
     m_item_model = m_pane->itemModel();
     m_status_label = m_pane->statusLabel();
-    center_layout->addWidget(m_pane, 1);
+    center_layout->addWidget(m_pane_splitter, 1);
 
     m_details_pane = new FileExplorerDetailsPane(m_shell_splitter);
     m_details_tabs = m_details_pane;
@@ -500,7 +499,7 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
 void FileManagementExplorerPanel::connectUiSignals() {
     connectToolbarSignals();
     connectNavigationSignals();
-    connectPaneSignals();
+    connectPaneSignals(m_pane_a, 0);
 }
 
 void FileManagementExplorerPanel::connectToolbarSignals() {
@@ -578,33 +577,50 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
             &FileManagementExplorerPanel::onDeleteClicked);
 }
 
-void FileManagementExplorerPanel::connectPaneSignals() {
-    if (m_pane->sharedSelectionModel()) {
-        connect(m_pane->sharedSelectionModel(),
+void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int pane_index) {
+    if (pane->sharedSelectionModel()) {
+        connect(pane->sharedSelectionModel(),
                 &QItemSelectionModel::selectionChanged,
                 this,
-                [this]() { updateActionButtons(); });
+                [this, pane, pane_index]() {
+                    // Only a real (non-empty) selection promotes a pane to active, so an empty
+                    // selection signal (e.g. a model reset on the hidden second pane) never steals
+                    // focus from the pane the user is working in.
+                    if (pane->sharedSelectionModel() &&
+                        pane->sharedSelectionModel()->hasSelection()) {
+                        activatePane(pane_index);
+                    }
+                    updateActionButtons();
+                });
     }
-    for (auto* view : m_pane->itemViews()) {
+    for (auto* view : pane->itemViews()) {
         if (!view) {
             continue;
         }
-        connect(view,
-                &QAbstractItemView::doubleClicked,
-                this,
-                &FileManagementExplorerPanel::onItemDoubleClicked);
+        connect(view, &QAbstractItemView::doubleClicked, this, [this, pane_index](const auto& mi) {
+            activatePane(pane_index);
+            onItemDoubleClicked(mi);
+        });
         connect(view,
                 &QWidget::customContextMenuRequested,
                 this,
-                &FileManagementExplorerPanel::onTableContextMenuRequested);
+                [this, pane_index](const QPoint& point) {
+                    activatePane(pane_index);
+                    onTableContextMenuRequested(point);
+                });
     }
-    connect(m_pane,
+    connect(pane,
             &FileExplorerPane::columnsDirectoryPreviewRequested,
             this,
-            &FileManagementExplorerPanel::loadColumnsPreview);
-    connect(m_pane, &FileExplorerPane::columnsChildActivated, this, [this](const QString& path) {
-        loadDirectory(path);
-    });
+            [this, pane_index](const QString& path) {
+                activatePane(pane_index);
+                loadColumnsPreview(path);
+            });
+    connect(
+        pane, &FileExplorerPane::columnsChildActivated, this, [this, pane_index](const auto& p) {
+            activatePane(pane_index);
+            loadDirectory(p);
+        });
 }
 
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
@@ -1047,6 +1063,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     }
 
     const quint64 listing_revision = ++m_listing_revision;
+    const int load_pane = m_active_pane_index;
     ++m_columns_preview_revision;
     if (m_pane) {
         m_pane->clearColumnsPreview();
@@ -1060,9 +1077,11 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     connect(watcher,
             &QFutureWatcher<FileManagementListResult>::finished,
             this,
-            [this, watcher, listing_revision]() {
+            [this, watcher, listing_revision, load_pane]() {
                 watcher->deleteLater();
-                if (listing_revision != m_listing_revision) {
+                // Drop the result if a newer load superseded it, or the user switched the active
+                // pane mid-load (the data belongs to the other pane).
+                if (listing_revision != m_listing_revision || load_pane != m_active_pane_index) {
                     return;
                 }
                 populateTable(watcher->result());
@@ -1232,6 +1251,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.pane = m_pane_state;
     context.pane.selection = currentSelection();
     context.can_create_tabs = true;
+    context.can_use_dual_pane = true;
     return context;
 }
 
@@ -1443,16 +1463,19 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
 
 bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
     const FileExplorerCommandId command) {
-    if (command == FileExplorerCommandId::OpenInNewTab) {
+    switch (command) {
+    case FileExplorerCommandId::OpenInNewTab:
         openCurrentLocationInNewTab();
         return true;
-    }
-    if (isOpenElsewhereCommand(command)) {
-        Q_EMIT statusMessage(FileExplorerCommandRegistry::command(command).status_text,
-                             sak::kTimerStatusMessageMs);
+    case FileExplorerCommandId::OpenInSecondPane:
+        openSelectionInSecondPane();
         return true;
+    case FileExplorerCommandId::ToggleDualPane:
+        toggleDualPane();
+        return true;
+    default:
+        return false;
     }
-    return false;
 }
 
 bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerCommandId command) {
@@ -2075,6 +2098,82 @@ void FileManagementExplorerPanel::onTabCloseRequested(int index) {
     if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
         restoreTab(m_tabs.at(m_active_tab));
     }
+}
+
+void FileManagementExplorerPanel::ensureSecondPane() {
+    if (m_pane_b) {
+        return;
+    }
+    m_pane_b = new FileExplorerPane(m_pane_splitter);
+    m_pane_splitter->addWidget(m_pane_b);
+    connectPaneSignals(m_pane_b, 1);
+}
+
+void FileManagementExplorerPanel::activatePane(int index) {
+    if (index == m_active_pane_index || index < 0 || index > 1 || !m_pane_a) {
+        return;
+    }
+    if (index == 1 && !m_pane_b) {
+        return;
+    }
+    std::swap(m_pane_state, m_secondary_state);
+    m_active_pane_index = index;
+    m_pane = (index == 0) ? m_pane_a : m_pane_b;
+    m_item_model = m_pane->itemModel();
+    m_status_label = m_pane->statusLabel();
+    m_current_path = m_pane_state.location.path;
+    if (m_path_edit) {
+        m_path_edit->setText(m_current_path);
+    }
+    highlightActivePane();
+    updateActionButtons();
+}
+
+void FileManagementExplorerPanel::highlightActivePane() {
+    if (!m_pane_a) {
+        return;
+    }
+    const QString border = QStringLiteral("FileExplorerPane { border: 1px solid %1; }")
+                               .arg(QString::fromLatin1(ui::kColorAccentWindows));
+    m_pane_a->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 0 ? border : QString());
+    if (m_pane_b) {
+        m_pane_b->setStyleSheet(m_dual_pane_enabled && m_active_pane_index == 1 ? border
+                                                                                : QString());
+    }
+}
+
+void FileManagementExplorerPanel::toggleDualPane() {
+    if (!m_dual_pane_enabled) {
+        ensureSecondPane();
+        m_dual_pane_enabled = true;
+        m_pane_b->show();
+        m_secondary_state = m_pane_state;
+        m_secondary_state.back_stack.clear();
+        m_secondary_state.forward_stack.clear();
+        activatePane(1);
+        loadDirectory(m_pane_state.location.path, false);
+        return;
+    }
+    if (m_active_pane_index == 1) {
+        activatePane(0);
+    }
+    m_dual_pane_enabled = false;
+    m_pane_b->hide();
+    highlightActivePane();
+}
+
+void FileManagementExplorerPanel::openSelectionInSecondPane() {
+    const QString path = selectedIsDirectory() ? selectedPath() : m_current_path;
+    if (!m_dual_pane_enabled) {
+        ensureSecondPane();
+        m_dual_pane_enabled = true;
+        m_pane_b->show();
+        m_secondary_state = m_pane_state;
+        m_secondary_state.back_stack.clear();
+        m_secondary_state.forward_stack.clear();
+    }
+    activatePane(1);
+    loadDirectory(path, false);
 }
 
 void FileManagementExplorerPanel::onPathReturnPressed() {

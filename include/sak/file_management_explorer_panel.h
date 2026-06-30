@@ -77,7 +77,7 @@ private:
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();
-    void connectPaneSignals();
+    void connectPaneSignals(FileExplorerPane* pane, int pane_index);
     void installCommandShortcuts();
     void setTargets(QVector<FileManagementTarget> targets);
     void appendTarget(const FileManagementTarget& target);
@@ -154,6 +154,11 @@ private:
     void updateActionButtons();
     void logMessage(const QString& message);
     void buildTabBar(QVBoxLayout* center_layout);
+    void ensureSecondPane();
+    void activatePane(int index);
+    void toggleDualPane();
+    void openSelectionInSecondPane();
+    void highlightActivePane();
     [[nodiscard]] FileExplorerTabState captureCurrentTab() const;
     [[nodiscard]] QString tabTitleForCurrentLocation() const;
     void restoreTab(const FileExplorerTabState& tab);
@@ -168,6 +173,15 @@ private:
     FileExplorerCommandBar* m_command_bar{nullptr};
     FileExplorerOmnibar* m_omnibar{nullptr};
     FileExplorerPane* m_pane{nullptr};
+    // Dual-pane: two physical panes in a splitter. m_pane always points at the ACTIVE pane
+    // (m_pane_a or m_pane_b), so all existing single-pane logic operates on the active pane;
+    // m_secondary_state holds the inactive pane's location/history/view, swapped on activation.
+    FileExplorerPane* m_pane_a{nullptr};
+    FileExplorerPane* m_pane_b{nullptr};
+    QSplitter* m_pane_splitter{nullptr};
+    FileExplorerPaneState m_secondary_state;
+    int m_active_pane_index{0};
+    bool m_dual_pane_enabled{false};
     FileExplorerDetailsPane* m_details_pane{nullptr};
     QListWidget* m_target_list{nullptr};
     QSplitter* m_shell_splitter{nullptr};
