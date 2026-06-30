@@ -6,7 +6,9 @@
 
 #pragma once
 
+#include <QLabel>
 #include <QPlainTextEdit>
+#include <QStackedWidget>
 #include <QTabWidget>
 
 namespace sak {
@@ -18,14 +20,23 @@ public:
     explicit FileExplorerDetailsPane(QWidget* parent = nullptr);
 
     [[nodiscard]] QPlainTextEdit* previewText() const;
+    [[nodiscard]] QLabel* previewImage() const;
+    [[nodiscard]] QLabel* previewCaption() const;
     [[nodiscard]] QPlainTextEdit* propertiesText() const;
     [[nodiscard]] QPlainTextEdit* safetyText() const;
     [[nodiscard]] QPlainTextEdit* evidenceText() const;
 
+    /// Switch the Preview tab between the text/hex view (false) and the image view (true).
+    void showImagePreview(bool image);
+
 private:
     QPlainTextEdit* makeDetailsText(const QString& accessible_name);
+    QWidget* buildPreviewTab();
 
     QPlainTextEdit* m_preview_text{nullptr};
+    QLabel* m_preview_caption{nullptr};
+    QLabel* m_preview_image{nullptr};
+    QStackedWidget* m_preview_stack{nullptr};
     QPlainTextEdit* m_properties_text{nullptr};
     QPlainTextEdit* m_safety_text{nullptr};
     QPlainTextEdit* m_evidence_text{nullptr};

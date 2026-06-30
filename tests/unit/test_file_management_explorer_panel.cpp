@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
+#include <QStackedWidget>
 #include <QTableView>
 #include <QTabWidget>
 #include <QTimer>
@@ -374,6 +375,20 @@ private Q_SLOTS:
     }
 
     void init() { resetExplorerPanelSettings(); }
+
+    void detailsPanePreviewSwitchesBetweenTextAndImage() {
+        sak::FileExplorerDetailsPane pane;
+        QVERIFY(pane.previewText());
+        QVERIFY(pane.previewImage());
+        QVERIFY(pane.previewCaption());
+        auto* stack = pane.findChild<QStackedWidget*>(QStringLiteral("fileExplorerPreviewStack"));
+        QVERIFY(stack);
+        // The Preview tab hosts a text/hex view (index 0) and an image view (index 1).
+        pane.showImagePreview(true);
+        QCOMPARE(stack->currentIndex(), 1);
+        pane.showImagePreview(false);
+        QCOMPARE(stack->currentIndex(), 0);
+    }
 
     void shellCreatesFilesLikeRegions() {
         sak::FileManagementExplorerPanel panel;

@@ -29,12 +29,15 @@
 #include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImage>
 #include <QInputDialog>
 #include <QItemSelection>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QSettings>
 #include <QShortcut>
@@ -58,6 +61,7 @@ namespace sak {
 namespace {
 
 constexpr int kExplorerPreviewMaxBytes = 1024 * 1024;
+constexpr int kExplorerImagePreviewMaxPx = 480;
 constexpr int kExplorerListMaxEntries = 10'000;
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
@@ -1639,10 +1643,21 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
         tr("Write state: %1").arg(target.can_write_files ? tr("enabled") : tr("blocked")));
     safety.append(tr("Read state: %1").arg(target.can_read_files ? tr("enabled") : tr("blocked")));
     safety.append(tr("Browse state: %1").arg(target.can_browse ? tr("enabled") : tr("blocked")));
+    if (!target.local_file_system) {
+        safety.append(
+            tr("Raw/non-native target: create, write, rename, and delete require "
+               "explicit confirmation and commit through the certified writers; "
+               "browsing and reads stay non-destructive."));
+    }
     if (!target.blockers.isEmpty()) {
-        safety.append(tr("Blockers: %1").arg(target.blockers.join(QStringLiteral("; "))));
+        safety.append(QString());
+        safety.append(tr("Why some actions are unavailable:"));
+        for (const QString& blocker : target.blockers) {
+            safety.append(tr("- %1").arg(blocker));
+        }
     }
     const auto context = commandContext();
+    safety.append(QString());
     for (const FileExplorerCommandId command : {FileExplorerCommandId::NewFolder,
                                                 FileExplorerCommandId::WriteFile,
                                                 FileExplorerCommandId::Rename,
@@ -1714,20 +1729,17 @@ void FileManagementExplorerPanel::updateDetailsPane() {
 
 void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& target,
                                                     const FileExplorerSelection& selection) {
-    if (!m_preview_text) {
+    if (!m_preview_text || !m_details_pane) {
         return;
     }
     if (selection.count() != 1) {
-        m_last_preview_path.clear();
-        m_preview_text->setPlainText(selection.isEmpty()
-                                         ? tr("Select a readable file to preview its contents.")
-                                         : tr("%1 items selected.").arg(selection.count()));
+        showPreviewHint(selection.isEmpty() ? tr("Select a readable file to preview its contents.")
+                                            : tr("%1 items selected.").arg(selection.count()));
         return;
     }
     const FileManagementEntry entry = selection.entries.first();
     if (entry.directory || !entry.regular_file) {
-        m_last_preview_path.clear();
-        m_preview_text->setPlainText(tr("%1 is not a previewable file.").arg(entry.name));
+        showPreviewHint(tr("%1 is not a previewable file.").arg(entry.name));
         return;
     }
     if (entry.path == m_last_preview_path) {
@@ -1736,22 +1748,65 @@ void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& 
     const auto read =
         FileManagementFileSystemBridge::readFile(target, entry.path, kExplorerPreviewMaxBytes);
     if (!read.ok) {
-        m_last_preview_path.clear();
-        m_preview_text->setPlainText(
+        showPreviewHint(
             tr("Preview unavailable: %1").arg(read.blockers.join(QStringLiteral("; "))));
         return;
     }
     m_last_preview_path = entry.path;
-    const bool capped = read.data.size() >= kExplorerPreviewMaxBytes;
-    const auto preview = FileManagementFileSystemBridge::renderPreview(read.data, capped);
-    QString header = tr("%1 - %2 bytes - %3")
-                         .arg(entry.name,
-                              QString::number(entry.size_bytes),
-                              preview.is_binary ? tr("binary (hex)") : tr("text"));
-    if (preview.truncated) {
-        header += tr(" - preview truncated to %1 bytes").arg(preview.shown_bytes);
+    renderPreviewForEntry(entry, read.data);
+}
+
+void FileManagementExplorerPanel::showPreviewHint(const QString& message) {
+    m_last_preview_path.clear();
+    m_details_pane->showImagePreview(false);
+    if (auto* caption = m_details_pane->previewCaption()) {
+        caption->clear();
     }
-    m_preview_text->setPlainText(header + QStringLiteral("\n\n") + preview.text);
+    if (m_preview_text) {
+        m_preview_text->setPlainText(message);
+    }
+}
+
+void FileManagementExplorerPanel::renderPreviewForEntry(const FileManagementEntry& entry,
+                                                        const QByteArray& bytes) {
+    QImage image;
+    if (image.loadFromData(bytes) && !image.isNull()) {
+        showImagePreviewForEntry(entry, image);
+        return;
+    }
+    const bool capped = bytes.size() >= kExplorerPreviewMaxBytes;
+    const auto preview = FileManagementFileSystemBridge::renderPreview(bytes, capped);
+    QString caption = tr("%1 - %2 bytes - %3")
+                          .arg(entry.name,
+                               QString::number(entry.size_bytes),
+                               preview.is_binary ? tr("binary (hex)") : tr("text"));
+    if (preview.truncated) {
+        caption += tr(" - showing %1 bytes").arg(preview.shown_bytes);
+    }
+    m_details_pane->showImagePreview(false);
+    if (auto* label = m_details_pane->previewCaption()) {
+        label->setText(caption);
+    }
+    m_preview_text->setPlainText(preview.text);
+}
+
+void FileManagementExplorerPanel::showImagePreviewForEntry(const FileManagementEntry& entry,
+                                                           const QImage& image) {
+    if (auto* label = m_details_pane->previewImage()) {
+        const QPixmap pixmap = QPixmap::fromImage(image);
+        label->setPixmap(pixmap.scaled(kExplorerImagePreviewMaxPx,
+                                       kExplorerImagePreviewMaxPx,
+                                       Qt::KeepAspectRatio,
+                                       Qt::SmoothTransformation));
+    }
+    if (auto* caption = m_details_pane->previewCaption()) {
+        caption->setText(tr("%1 - %2 x %3 image - %4 bytes")
+                             .arg(entry.name)
+                             .arg(image.width())
+                             .arg(image.height())
+                             .arg(entry.size_bytes));
+    }
+    m_details_pane->showImagePreview(true);
 }
 
 void FileManagementExplorerPanel::updateActionButtons() {

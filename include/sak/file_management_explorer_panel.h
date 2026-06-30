@@ -32,6 +32,7 @@ class QPoint;
 class QAction;
 class QToolButton;
 class QVBoxLayout;
+class QImage;
 
 namespace sak {
 
@@ -135,6 +136,9 @@ private:
     void updateDetailsPane();
     void updatePreviewPane(const FileManagementTarget& target,
                            const FileExplorerSelection& selection);
+    void showPreviewHint(const QString& message);
+    void renderPreviewForEntry(const FileManagementEntry& entry, const QByteArray& bytes);
+    void showImagePreviewForEntry(const FileManagementEntry& entry, const QImage& image);
     [[nodiscard]] QStringList buildDetailsProperties(const FileManagementTarget& target,
                                                      const FileExplorerSelection& selection) const;
     [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
