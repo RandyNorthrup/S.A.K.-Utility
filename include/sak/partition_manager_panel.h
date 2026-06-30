@@ -74,7 +74,6 @@ private Q_SLOTS:
     void onBrowseNonNativeFileSystem();
     void onCheckNonNativeFileSystem();
     void onApfsRootFileMutation();
-    void onHfsFileMutation();
     void onSurfaceTest();
     void onSpaceAnalyzer();
     void onSetPartitionHidden();
@@ -130,7 +129,6 @@ private:
         bool browse_non_native_filesystem{false};
         bool check_non_native_filesystem{false};
         bool apfs_root_file_mutation{false};
-        bool hfs_file_mutation{false};
     };
 
     struct ActionLinkSpec {

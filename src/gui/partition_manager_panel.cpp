@@ -242,7 +242,6 @@ constexpr int kSpaceAnalyzerExploreActionIndex = 1;
 constexpr int kSpaceAnalyzerCopyActionIndex = 2;
 constexpr int kFileRecoveryDialogMinWidth = 620;
 constexpr int kFileRecoveryDialogMinHeight = 420;
-constexpr int kApfsRootFilePayloadMinHeight = 96;
 
 const QColor kPartitionColorGptPrimary{42, 151, 207};
 const QColor kPartitionColorLogical{35, 196, 211};
@@ -263,44 +262,12 @@ constexpr const char* kInspectNonNativeFilesystemActionProperty =
 constexpr const char* kBrowseNonNativeFilesystemActionProperty =
     "partitionBrowseNonNativeFilesystemAction";
 constexpr const char* kApfsRootFileMutationActionProperty = "partitionApfsRootFileMutationAction";
-constexpr const char* kHfsFileMutationActionProperty = "partitionHfsFileMutationAction";
 constexpr const char* kHfsCatalogCheckOperation = "hfs-catalog-check";
-constexpr const char* kApfsRootFileWriteMode = "write";
-constexpr const char* kApfsRootFilePatchMode = "patch";
-constexpr const char* kApfsRootFileDeleteMode = "delete";
-constexpr const char* kApfsRootDirectoryFileWriteMode = "write-directory-file";
-constexpr const char* kApfsRootDirectoryFilePatchMode = "patch-directory-file";
-constexpr const char* kApfsRootDirectoryFileDeleteMode = "delete-directory-file";
-constexpr const char* kApfsRootDirectoryCreateMode = "create-directory";
-constexpr const char* kApfsRootDirectoryDeleteMode = "delete-directory";
 constexpr const char* kApfsVolumeLabelMode = "change-volume-label";
 constexpr const char* kApfsSnapshotCreateMode = "snapshot-create";
 constexpr const char* kApfsSnapshotDeleteMode = "snapshot-delete";
 constexpr const char* kApfsSnapshotRevertMode = "snapshot-revert";
-constexpr const char* kApfsCloneRootFileMode = "clone-root-file";
-constexpr const char* kApfsHardlinkRootFileMode = "hardlink-root-file";
 constexpr const char* kApfsResizeContainerMode = "resize-container";
-constexpr const char* kHfsOverwriteFileMode = "overwrite-file";
-constexpr const char* kHfsReplaceFileMode = "replace-file";
-constexpr const char* kHfsGrowFileMode = "grow-file";
-constexpr const char* kHfsTruncateFileMode = "truncate-file";
-constexpr const char* kHfsReplaceResourceForkMode = "replace-resource-fork";
-constexpr const char* kHfsGrowResourceForkMode = "grow-resource-fork";
-constexpr const char* kHfsTruncateResourceForkMode = "truncate-resource-fork";
-constexpr const char* kHfsCreateEmptyFileMode = "create-empty-file";
-constexpr const char* kHfsCreateFileMode = "create-file";
-constexpr const char* kHfsDeleteEmptyFileMode = "delete-empty-file";
-constexpr const char* kHfsDeleteFileMode = "delete-file";
-constexpr const char* kHfsCreateEmptyFolderMode = "create-empty-folder";
-constexpr const char* kHfsDeleteEmptyFolderMode = "delete-empty-folder";
-constexpr const char* kHfsDeleteFolderTreeMode = "delete-folder-tree";
-constexpr const char* kHfsRenameMoveCatalogEntryMode = "rename-move-catalog-entry";
-constexpr const char* kHfsReplaceInlineAttributeMode = "replace-inline-attribute";
-constexpr const char* kHfsReplaceForkAttributeMode = "replace-fork-attribute";
-constexpr const char* kHfsGrowForkAttributeMode = "grow-fork-attribute";
-constexpr const char* kHfsCreateSymlinkMode = "create-symlink";
-constexpr const char* kHfsCreateHardlinkMode = "create-hardlink";
-constexpr const char* kHfsDeleteHardlinkMode = "delete-hardlink";
 constexpr const char* kActionDefaultTooltipProperty = "partitionActionDefaultTooltip";
 constexpr const char* kActionRequiresDriveLetterProperty = "partitionActionRequiresDriveLetter";
 constexpr const char* kActionWindowsNativeFilesystemProperty =
@@ -439,10 +406,6 @@ bool isApfsRootFileMutationAction(const QAbstractButton* button) {
     return button && button->property(kApfsRootFileMutationActionProperty).toBool();
 }
 
-bool isHfsFileMutationAction(const QAbstractButton* button) {
-    return button && button->property(kHfsFileMutationActionProperty).toBool();
-}
-
 bool isExtFilesystem(const QString& fileSystem);
 
 struct ContextActionSpec {
@@ -502,7 +465,7 @@ PartitionActionAvailability fileSystemActionAvailability(const QString& fileSyst
 
     if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(fileSystem)) {
         return {false,
-                QObject::tr("%1 resize is not certified. Non-Windows resize currently supports "
+                QObject::tr("%1 resize is not supported yet. Non-Windows resize currently supports "
                             "ext2/ext3/ext4 only.")
                     .arg(fileSystem)};
     }
@@ -585,15 +548,6 @@ struct ApfsRootFileMutationState {
     QString reason;
 };
 
-struct HfsFileMutationState {
-    bool enabled{false};
-    QString file_system;
-    QString target_path;
-    bool wrapped{false};
-    bool journaled{false};
-    QString reason;
-};
-
 bool isExtFilesystem(const QString& fileSystem) {
     const QString token = fileSystem.trimmed().toLower();
     return token == QStringLiteral("ext2") || token == QStringLiteral("ext3") ||
@@ -641,8 +595,8 @@ void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
     if (isApfsFilesystem(state->file_system) &&
         !hasGeneratedApfsRepairEvidence(state->metadata_details)) {
         state->repair_reason = QObject::tr(
-            "APFS repair is enabled only for S.A.K. generated APFS layouts with captured "
-            "layout evidence; arbitrary Apple APFS repair remains blocked.");
+            "APFS repair is available only for APFS containers created by this tool; repairing "
+            "other APFS containers is not supported.");
         return;
     }
 
@@ -700,7 +654,7 @@ bool fillInternalMetadataCheckState(NonNativeFilesystemCheckState* state) {
     }
     if (!hasMetadataSanityEvidence(state->metadata_details)) {
         state->reason = QObject::tr(
-                            "No captured %1 metadata sanity evidence is available; refresh disk "
+                            "No %1 metadata check results are available yet; refresh the disk "
                             "inventory first.")
                             .arg(state->file_system);
         return true;
@@ -879,12 +833,12 @@ ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<Partitio
     }
     if (!hasGeneratedApfsRepairEvidence(volume->file_system_details)) {
         state.reason = QObject::tr(
-            "APFS generated file mutation is enabled only for S.A.K. generated APFS layouts.");
+            "APFS container actions are available only for APFS containers created by this tool.");
         return state;
     }
     if (!partitionAllowsNonNativeRepair(*partition)) {
         state.reason = QObject::tr(
-            "APFS generated file mutation is disabled for system, boot, EFI, MSR, recovery, "
+            "APFS container actions are disabled for system, boot, EFI, MSR, recovery, "
             "or read-only partitions.");
         return state;
     }
@@ -894,40 +848,7 @@ ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<Partitio
         return state;
     }
     state.enabled = true;
-    state.reason = QObject::tr("Queue generated APFS root-file write, patch, or delete.");
-    return state;
-}
-
-bool detailsContainYes(const QStringList& details, const QString& key) {
-    return details.join(QLatin1Char('\n')).contains(key + QStringLiteral(": Yes"));
-}
-
-HfsFileMutationState hfsFileMutationState(const std::optional<PartitionTarget>& target,
-                                          const PartitionInfoEx* partition) {
-    Q_UNUSED(target);
-    HfsFileMutationState state;
-    const auto* volume = selectedFilesystemVolume(partition);
-    if (!volume || !isHfsFilesystem(volume->file_system)) {
-        state.reason = QObject::tr("Select an HFS+ or HFSX partition.");
-        return state;
-    }
-    if (!partitionAllowsNonNativeRepair(*partition)) {
-        state.reason = QObject::tr(
-            "HFS+ file mutation is disabled for system, boot, EFI, MSR, recovery, "
-            "or read-only partitions.");
-        return state;
-    }
-    state.target_path = nonNativeFilesystemWriteTargetPath(partition);
-    if (state.target_path.isEmpty()) {
-        state.reason = QObject::tr("Selected HFS+ partition does not expose a raw target path.");
-        return state;
-    }
-    state.file_system = volume->file_system.trimmed();
-    state.wrapped = detailsContainYes(volume->file_system_details, QStringLiteral("HFS wrapper"));
-    state.journaled = detailsContainYes(volume->file_system_details, QStringLiteral("Journaled"));
-    state.enabled = true;
-    state.reason =
-        QObject::tr("Queue HFS+ staged file, resource fork, or inline attribute mutation.");
+    state.reason = QObject::tr("Queue an APFS container action.");
     return state;
 }
 
@@ -1037,28 +958,10 @@ void updateApfsRootFileMutationButton(QAbstractButton* button,
     button->setAccessibleDescription(reason);
 }
 
-void updateHfsFileMutationButton(QAbstractButton* button,
-                                 bool operationRunning,
-                                 const std::optional<PartitionTarget>& target,
-                                 const PartitionInfoEx* partition) {
-    const auto state = hfsFileMutationState(target, partition);
-    const bool enabled = state.enabled && !operationRunning;
-    button->setEnabled(enabled);
-    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
-                                            : state.reason;
-    button->setToolTip(reason);
-    button->setStatusTip(reason);
-    button->setAccessibleDescription(reason);
-}
-
 bool updateSpecialTargetButtonState(QAbstractButton* button,
                                     bool operationRunning,
                                     const std::optional<PartitionTarget>& target,
                                     const PartitionInfoEx* partition) {
-    if (isHfsFileMutationAction(button)) {
-        updateHfsFileMutationButton(button, operationRunning, target, partition);
-        return true;
-    }
     if (isApfsRootFileMutationAction(button)) {
         updateApfsRootFileMutationButton(button, operationRunning, target, partition);
         return true;
@@ -3128,13 +3031,6 @@ void addNonNativeRepairMode(QComboBox* mode, const NonNativeFilesystemCheckState
     }
 }
 
-QString nonNativeRepairToolId(const QString& fileSystem) {
-    if (isApfsFilesystem(fileSystem)) {
-        return QStringLiteral("sak_apfs_writer_cli");
-    }
-    return isHfsFilesystem(fileSystem) ? QStringLiteral("fsck_hfs") : QStringLiteral("e2fsck");
-}
-
 QString nonNativeRepairFamilyLabel(const QString& fileSystem) {
     if (isApfsFilesystem(fileSystem)) {
         return QStringLiteral("APFS");
@@ -3142,20 +3038,18 @@ QString nonNativeRepairFamilyLabel(const QString& fileSystem) {
     return isHfsFilesystem(fileSystem) ? QStringLiteral("HFS+") : QStringLiteral("ext");
 }
 
-QString nonNativeRepairConfirmationText(const QString& fileSystem, const QString& toolId) {
+QString nonNativeRepairConfirmationText(const QString& fileSystem) {
     if (isHfsFilesystem(fileSystem)) {
         return QObject::tr(
-                   "I understand this will stage a sparse HFS image, run bundled %1, "
-                   "and write repaired metadata back on Apply.")
-            .arg(toolId);
+            "I understand this will check and repair the HFS+ file system and "
+            "write any fixes back on Apply.");
     }
     if (isApfsFilesystem(fileSystem)) {
         return QObject::tr(
-                   "I understand this will run %1 against only S.A.K. generated APFS metadata "
-                   "and write repaired checksums back on Apply.")
-            .arg(toolId);
+            "I understand this will check and repair the APFS container and "
+            "write any fixes back on Apply.");
     }
-    return QObject::tr("I understand this will run bundled %1 repair on Apply.").arg(toolId);
+    return QObject::tr("I understand this will check and repair the ext file system on Apply.");
 }
 
 std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
@@ -3173,10 +3067,9 @@ std::optional<NonNativeFilesystemCheckRequest> showNonNativeCheckRequestDialog(
 
     auto* targetPath = new QLineEdit(state.target_path, &dialog);
     targetPath->setAccessibleName(QObject::tr("Non-Windows filesystem target path"));
-    const QString repairTool = nonNativeRepairToolId(state.file_system);
     const QString repairFamily = nonNativeRepairFamilyLabel(state.file_system);
-    auto* repairConfirm =
-        new QCheckBox(nonNativeRepairConfirmationText(state.file_system, repairTool), &dialog);
+    auto* repairConfirm = new QCheckBox(nonNativeRepairConfirmationText(state.file_system),
+                                        &dialog);
     repairConfirm->setAccessibleName(QObject::tr("Confirm %1 filesystem repair").arg(repairFamily));
     dialog.formLayout()->addRow(QObject::tr("Mode:"), mode);
     dialog.formLayout()->addRow(QObject::tr("Target path:"), targetPath);
@@ -3380,6 +3273,12 @@ QComboBox* createPartitionTypeSelector(QWidget* parent, const PartitionDiskInfo*
     return combo;
 }
 
+QString fullFormatTooltip() {
+    return QObject::tr(
+        "Writes zeros to every sector before formatting. Much slower than a quick "
+        "format, but fully clears the previous contents of the partition.");
+}
+
 QComboBox* createAllocationUnitSelector(QWidget* parent) {
     auto* combo = new QComboBox(parent);
     combo->setAccessibleName(QObject::tr("Cluster size"));
@@ -3551,10 +3450,12 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     widgets.label = new QLineEdit(QStringLiteral("Data"), &dialog);
     widgets.label->setAccessibleName(QObject::tr("Partition label"));
     widgets.drive_letter = createDriveLetterSelector(&dialog);
-    widgets.full_format = new QCheckBox(QObject::tr("Full format"), &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Full format"));
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+                                        &dialog);
+    widgets.full_format->setAccessibleName(QObject::tr("Overwrite all sectors"));
+    widgets.full_format->setToolTip(fullFormatTooltip());
     widgets.raw_format_confirm = new QCheckBox(
-        QObject::tr("I understand this will run bundled mke2fs against the raw partition."),
+        QObject::tr("I understand this erases the partition and creates a new ext file system."),
         &dialog);
     widgets.raw_format_confirm->setAccessibleName(QObject::tr("Confirm ext filesystem format"));
 
@@ -3584,14 +3485,14 @@ void applyRawFormatControlState(PartitionOperationDialog& dialog,
 QString createPartitionFormatText(const CreatePartitionWidgets& widgets, RawFormatKind rawKind) {
     switch (rawKind) {
     case RawFormatKind::Ext:
-        return QObject::tr(" Format with bundled mke2fs.");
+        return QObject::tr(" Format as a Linux ext file system.");
     case RawFormatKind::Hfs:
-        return QObject::tr(" Format through sparse staging with bundled newfs_hfs.");
+        return QObject::tr(" Format as an HFS+ file system.");
     case RawFormatKind::Swap:
         return QObject::tr(" Write Linux SWAPSPACE2 metadata with %1 byte pages.")
             .arg(widgets.swap_page_size->currentText());
     case RawFormatKind::Apfs:
-        return QObject::tr(" Format with S.A.K. generated APFS metadata.");
+        return QObject::tr(" Format as an APFS container.");
     case RawFormatKind::None:
         break;
     }
@@ -3979,19 +3880,21 @@ QString rawFormatConfirmationAccessibleName(RawFormatKind kind) {
 QString rawFormatConfirmationText(RawFormatKind kind) {
     switch (kind) {
     case RawFormatKind::Ext:
-        return QObject::tr("I understand this will run bundled mke2fs against the raw partition.");
+        return QObject::tr(
+            "I understand this erases the partition and creates a new ext file "
+            "system.");
     case RawFormatKind::Hfs:
         return QObject::tr(
-            "I understand this will stage a sparse HFS image with bundled newfs_hfs and write "
-            "the resulting metadata to the raw partition.");
+            "I understand this erases the partition and creates a new HFS+ file "
+            "system.");
     case RawFormatKind::Swap:
         return QObject::tr(
             "I understand this will overwrite the first swap page with Linux "
             "SWAPSPACE2 metadata.");
     case RawFormatKind::Apfs:
         return QObject::tr(
-            "I understand this will run the S.A.K. APFS writer helper and "
-            "overwrite the selected raw partition with generated APFS metadata.");
+            "I understand this erases the partition and creates a new APFS "
+            "container.");
     case RawFormatKind::None:
         return {};
     }
@@ -4001,18 +3904,16 @@ QString rawFormatConfirmationText(RawFormatKind kind) {
 QString formatPartitionPreviewText(const FormatPartitionWidgets& widgets, RawFormatKind kind) {
     switch (kind) {
     case RawFormatKind::Ext:
-        return QObject::tr("Format as %1 with bundled mke2fs and label \"%2\".")
+        return QObject::tr("Format as %1 with label \"%2\".")
             .arg(widgets.file_system->currentText(), widgets.label->text());
     case RawFormatKind::Hfs:
-        return QObject::tr(
-                   "Format as %1 through sparse staging with bundled newfs_hfs and label \"%2\".")
+        return QObject::tr("Format as %1 with label \"%2\".")
             .arg(widgets.file_system->currentText(), widgets.label->text());
     case RawFormatKind::Swap:
         return QObject::tr("Format as Linux swap with page size %1 and label \"%2\".")
             .arg(widgets.swap_page_size->currentText(), widgets.label->text());
     case RawFormatKind::Apfs:
-        return QObject::tr("Format as APFS with S.A.K. generated metadata and label \"%1\".")
-            .arg(widgets.label->text());
+        return QObject::tr("Format as APFS with label \"%1\".").arg(widgets.label->text());
     case RawFormatKind::None:
         return QObject::tr("Format as %1 with label \"%2\" and %3.")
             .arg(widgets.file_system->currentText(),
@@ -4029,6 +3930,9 @@ QComboBox* createLinuxSwapPageSizeSelector(QWidget* parent) {
                      QStringLiteral("16384"),
                      QStringLiteral("65536")});
     combo->setAccessibleName(QObject::tr("Linux swap page size"));
+    combo->setToolTip(
+        QObject::tr("Linux swap page size in bytes. Use 4096 for most systems; it "
+                    "must match the target machine's memory page size."));
     return combo;
 }
 
@@ -4072,10 +3976,12 @@ FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dial
     widgets.apfs_recovery_key->setEchoMode(QLineEdit::Password);
     widgets.apfs_recovery_key->setAccessibleName(QObject::tr("APFS personal recovery key"));
     widgets.apfs_recovery_key->setPlaceholderText(QObject::tr("Optional personal recovery key"));
-    widgets.full_format = new QCheckBox(QObject::tr("Full format"), &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Full format"));
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+                                        &dialog);
+    widgets.full_format->setAccessibleName(QObject::tr("Overwrite all sectors"));
+    widgets.full_format->setToolTip(fullFormatTooltip());
     widgets.raw_format_confirm = new QCheckBox(
-        QObject::tr("I understand this will run bundled mke2fs against the raw partition."),
+        QObject::tr("I understand this erases the partition and creates a new ext file system."),
         &dialog);
     widgets.raw_format_confirm->setAccessibleName(QObject::tr("Confirm ext filesystem format"));
 
@@ -5058,8 +4964,10 @@ QuickPartitionWidgets addQuickPartitionControls(PartitionOperationDialog& dialog
     widgets.allocation_unit = createAllocationUnitSelector(&dialog);
     widgets.label_prefix = new QLineEdit(QStringLiteral("Data"), &dialog);
     widgets.label_prefix->setAccessibleName(QObject::tr("Quick partition label prefix"));
-    widgets.full_format = new QCheckBox(QObject::tr("Full format"), &dialog);
-    widgets.full_format->setAccessibleName(QObject::tr("Quick partition full format"));
+    widgets.full_format = new QCheckBox(QObject::tr("Overwrite all sectors (slow secure format)"),
+                                        &dialog);
+    widgets.full_format->setAccessibleName(QObject::tr("Quick partition overwrite all sectors"));
+    widgets.full_format->setToolTip(fullFormatTooltip());
 
     addQuickPartitionFormRows(dialog, widgets, presetRow);
     refreshQuickPartitionPresetSelector(widgets);
@@ -5343,8 +5251,8 @@ void addResizeAdjacentFreeControl(PartitionOperationDialog& dialog,
 void addResizeExtAndStatusControls(PartitionOperationDialog& dialog,
                                    ResizePartitionWidgets* widgets) {
     widgets->non_native_confirmation =
-        new QCheckBox(QObject::tr("I understand this will resize the partition and then run "
-                                  "bundled resize2fs on the ext file system."),
+        new QCheckBox(QObject::tr("I understand this will resize the partition and then resize "
+                                  "the ext file system to match."),
                       &dialog);
     widgets->non_native_confirmation->setAccessibleName(
         QObject::tr("Confirm ext filesystem resize"));
@@ -5401,21 +5309,19 @@ QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
         const uint64_t targetBytes = selectedResizeTargetBytes(widgets);
         if (mode != adjacentResizeMode()) {
             return QObject::tr(
-                "Ext resize supports same-start adjacent resize only. Move and donor rebuild "
-                "remain blocked "
-                "until destructive VM certification.");
+                "Ext resize supports growing or shrinking in place only. Move and donor "
+                "rebuild are not available for ext partitions.");
         }
         if (targetBytes < widgets.current_bytes) {
             return QObject::tr(
-                "Ext shrink will run e2fsck, shrink the file system with bundled resize2fs, "
-                "then shrink the partition and recheck it.");
+                "Ext shrink will check the file system, shrink it, then shrink the partition "
+                "and recheck it.");
         }
         if (!widgets.non_native_confirmation || !widgets.non_native_confirmation->isChecked()) {
             return QObject::tr("Confirm ext filesystem resize before queueing.");
         }
         return QObject::tr(
-            "Ext grow will resize the partition, verify the bundled resize2fs hash, then grow the "
-            "file system.");
+            "Ext grow will resize the partition, then grow the file system to fill it.");
     }
     if (mode == moveStartResizeMode()) {
         return QObject::tr(
@@ -8287,9 +8193,6 @@ QToolButton* PartitionManagerPanel::createConfiguredActionLink(QWidget* parent,
     if (spec.options.apfs_root_file_mutation) {
         button->setProperty(kApfsRootFileMutationActionProperty, true);
     }
-    if (spec.options.hfs_file_mutation) {
-        button->setProperty(kHfsFileMutationActionProperty, true);
-    }
     m_targetButtons.append(button);
     return button;
 }
@@ -8487,24 +8390,11 @@ PartitionManagerPanel::nonNativeFilesystemActionSpecs() const {
                         false,
                         false,
                         true}),
-        makeActionSpec(tr("APFS File"),
+        makeActionSpec(tr("APFS Container"),
                        kIconProperties,
-                       tr("Queue generated APFS root-file write, patch, or delete"),
+                       tr("Queue an APFS container action: volume label, snapshot, or resize"),
                        &PartitionManagerPanel::onApfsRootFileMutation,
                        {actionTargetKindList({kActionTargetPartition}),
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        true}),
-        makeActionSpec(tr("HFS File"),
-                       kIconProperties,
-                       tr("Queue staged HFS+ file, resource fork, or inline attribute mutation"),
-                       &PartitionManagerPanel::onHfsFileMutation,
-                       {actionTargetKindList({kActionTargetPartition}),
-                        false,
                         false,
                         false,
                         false,
@@ -9572,13 +9462,8 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
     addContextMenuAction(
         menu,
         this,
-        {tr("APFS File"), kIconProperties, apfsMutation.enabled, apfsMutation.reason},
+        {tr("APFS Container"), kIconProperties, apfsMutation.enabled, apfsMutation.reason},
         [this]() { onApfsRootFileMutation(); });
-    const auto hfsMutation = hfsFileMutationState(selectedTarget(), selectedPartition());
-    addContextMenuAction(menu,
-                         this,
-                         {tr("HFS File"), kIconProperties, hfsMutation.enabled, hfsMutation.reason},
-                         [this]() { onHfsFileMutation(); });
 }
 
 void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
@@ -9893,7 +9778,7 @@ struct NonNativeCheckAction {
 
 QString metadataConsistencyStatusText(const NonNativeFilesystemCheckState& state) {
     if (hasMetadataSanityWarnings(state.metadata_details)) {
-        return QObject::tr("Reviewed %1 metadata sanity warnings").arg(state.file_system);
+        return QObject::tr("Reviewed %1 metadata check warnings").arg(state.file_system);
     }
     return QObject::tr("Reviewed %1 metadata consistency").arg(state.file_system);
 }
@@ -9954,55 +9839,25 @@ NonNativeCheckAction resolveNonNativeCheckAction(QWidget* parent,
 struct ApfsRootFileMutationDialogWidgets {
     PartitionOperationDialog* dialog{nullptr};
     QComboBox* mode{nullptr};
-    QLineEdit* directory_name{nullptr};
-    QLineEdit* file_name{nullptr};
-    QTextEdit* payload{nullptr};
-    QLineEdit* patch_offset{nullptr};
-    QCheckBox* compress{nullptr};
+    QLineEdit* name{nullptr};
     QCheckBox* confirm{nullptr};
 };
 
 struct ApfsRootFileMutationRequest {
-    PartitionOperationType type{PartitionOperationType::ApfsWriteRootFile};
-    QString directory_name;
-    QString entry_name;
-    QString payload_text;
-    uint64_t patch_offset_bytes{0};
-    bool compress_zlib{false};
+    PartitionOperationType type{PartitionOperationType::ApfsChangeVolumeLabel};
+    QString name;
 };
-
-// A5: inline zlib transparent compression (com.apple.decmpfs) only applies to new file
-// writes (commit-raw-file-write / commit-raw-directory-child-write), not patch/delete.
-bool apfsMutationSupportsCompression(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsWriteRootFile ||
-           type == PartitionOperationType::ApfsWriteRootDirectoryFile;
-}
 
 PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
     static const QHash<QString, PartitionOperationType> kModes = {
-        {QString::fromLatin1(kApfsRootFilePatchMode), PartitionOperationType::ApfsPatchRootFile},
-        {QString::fromLatin1(kApfsRootFileDeleteMode), PartitionOperationType::ApfsDeleteRootFile},
-        {QString::fromLatin1(kApfsRootDirectoryFileWriteMode),
-         PartitionOperationType::ApfsWriteRootDirectoryFile},
-        {QString::fromLatin1(kApfsRootDirectoryFilePatchMode),
-         PartitionOperationType::ApfsPatchRootDirectoryFile},
-        {QString::fromLatin1(kApfsRootDirectoryFileDeleteMode),
-         PartitionOperationType::ApfsDeleteRootDirectoryFile},
-        {QString::fromLatin1(kApfsRootDirectoryCreateMode),
-         PartitionOperationType::ApfsCreateRootDirectory},
-        {QString::fromLatin1(kApfsRootDirectoryDeleteMode),
-         PartitionOperationType::ApfsDeleteRootDirectory},
         {QString::fromLatin1(kApfsVolumeLabelMode), PartitionOperationType::ApfsChangeVolumeLabel},
         {QString::fromLatin1(kApfsSnapshotCreateMode), PartitionOperationType::ApfsSnapshotCreate},
         {QString::fromLatin1(kApfsSnapshotDeleteMode), PartitionOperationType::ApfsSnapshotDelete},
         {QString::fromLatin1(kApfsSnapshotRevertMode), PartitionOperationType::ApfsSnapshotRevert},
-        {QString::fromLatin1(kApfsCloneRootFileMode), PartitionOperationType::ApfsCloneRootFile},
-        {QString::fromLatin1(kApfsHardlinkRootFileMode),
-         PartitionOperationType::ApfsHardlinkRootFile},
         {QString::fromLatin1(kApfsResizeContainerMode),
          PartitionOperationType::ApfsResizeContainer},
     };
-    return kModes.value(mode, PartitionOperationType::ApfsWriteRootFile);
+    return kModes.value(mode, PartitionOperationType::ApfsChangeVolumeLabel);
 }
 
 bool apfsMutationIsSnapshot(PartitionOperationType type) {
@@ -10011,223 +9866,77 @@ bool apfsMutationIsSnapshot(PartitionOperationType type) {
            type == PartitionOperationType::ApfsSnapshotRevert;
 }
 
-// A7: clone + hard link take a source file (file_name field) and a new name (directory_name
-// field); resize grows the container to fill the partition and needs no file fields.
-bool apfsMutationIsLink(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsCloneRootFile ||
-           type == PartitionOperationType::ApfsHardlinkRootFile;
-}
-
 bool apfsMutationIsResize(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsResizeContainer;
-}
-
-bool apfsMutationNeedsPayload(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsWriteRootFile ||
-           type == PartitionOperationType::ApfsWriteRootDirectoryFile ||
-           type == PartitionOperationType::ApfsPatchRootDirectoryFile ||
-           type == PartitionOperationType::ApfsPatchRootFile;
-}
-
-bool apfsMutationIsDirectory(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsCreateRootDirectory ||
-           type == PartitionOperationType::ApfsDeleteRootDirectory;
-}
-
-bool apfsMutationIsDirectoryFile(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsWriteRootDirectoryFile ||
-           type == PartitionOperationType::ApfsPatchRootDirectoryFile ||
-           type == PartitionOperationType::ApfsDeleteRootDirectoryFile;
 }
 
 bool apfsMutationIsVolumeLabel(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsChangeVolumeLabel;
 }
 
-QString apfsSpecialMutationPreview(PartitionOperationType type, const QString& entryName) {
+QString apfsMutationPreview(PartitionOperationType type, const QString& name) {
     switch (type) {
     case PartitionOperationType::ApfsChangeVolumeLabel:
-        return QObject::tr("Queue APFS generated volume-label change to %1.").arg(entryName);
-    case PartitionOperationType::ApfsCloneRootFile:
-        return QObject::tr("Queue APFS generated root-file clone of %1.").arg(entryName);
-    case PartitionOperationType::ApfsHardlinkRootFile:
-        return QObject::tr("Queue APFS generated root-file hard link to %1.").arg(entryName);
+        return QObject::tr("Queue APFS volume-label change to %1.").arg(name);
+    case PartitionOperationType::ApfsSnapshotCreate:
+        return QObject::tr("Queue APFS snapshot create named %1.").arg(name);
+    case PartitionOperationType::ApfsSnapshotDelete:
+        return QObject::tr("Queue APFS snapshot delete of %1.").arg(name);
+    case PartitionOperationType::ApfsSnapshotRevert:
+        return QObject::tr("Queue APFS revert to snapshot %1.").arg(name);
     case PartitionOperationType::ApfsResizeContainer:
-        return QObject::tr("Queue APFS generated container resize to fill the partition.");
+        return QObject::tr("Queue APFS container resize to fill the partition.");
     default:
         return {};
     }
 }
 
-QString apfsMutationPreview(PartitionOperationType type, const QString& entryName) {
-    const QString special = apfsSpecialMutationPreview(type, entryName);
-    if (!special.isEmpty()) {
-        return special;
-    }
-    switch (type) {
-    case PartitionOperationType::ApfsWriteRootFile:
-        return QObject::tr("Queue APFS generated root-file write for %1.").arg(entryName);
-    case PartitionOperationType::ApfsPatchRootFile:
-        return QObject::tr("Queue APFS generated root-file patch for %1.").arg(entryName);
-    case PartitionOperationType::ApfsDeleteRootFile:
-        return QObject::tr("Queue APFS generated root-file delete for %1.").arg(entryName);
-    case PartitionOperationType::ApfsWriteRootDirectoryFile:
-        return QObject::tr("Queue APFS generated root-directory child-file write for %1.")
-            .arg(entryName);
-    case PartitionOperationType::ApfsPatchRootDirectoryFile:
-        return QObject::tr("Queue APFS generated root-directory child-file patch for %1.")
-            .arg(entryName);
-    case PartitionOperationType::ApfsDeleteRootDirectoryFile:
-        return QObject::tr("Queue APFS generated root-directory child-file delete for %1.")
-            .arg(entryName);
-    case PartitionOperationType::ApfsCreateRootDirectory:
-        return QObject::tr("Queue APFS generated empty root-directory create for %1.")
-            .arg(entryName);
-    case PartitionOperationType::ApfsDeleteRootDirectory:
-        return QObject::tr("Queue APFS generated empty root-directory delete for %1.")
-            .arg(entryName);
-    default:
-        return {};
-    }
-}
-
-std::optional<uint64_t> parsedPatchOffset(const QString& text) {
-    bool ok = false;
-    const uint64_t value = text.trimmed().toULongLong(&ok);
-    return ok ? std::optional<uint64_t>(value) : std::nullopt;
-}
-
-void applyApfsMutationModeControls(const ApfsRootFileMutationDialogWidgets& widgets,
-                                   PartitionOperationType type) {
-    const bool needsPayload = apfsMutationNeedsPayload(type);
-    const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
-                           type == PartitionOperationType::ApfsPatchRootDirectoryFile;
-    // directory_name doubles as the new (clone/link) name for link modes; resize takes no
-    // file fields (it grows the container to fill the partition).
-    const bool directoryNameMode = apfsMutationIsDirectoryFile(type) || apfsMutationIsLink(type);
-    const bool resizeMode = apfsMutationIsResize(type);
-    const bool compressMode = apfsMutationSupportsCompression(type);
-    widgets.payload->setEnabled(needsPayload);
-    widgets.payload->setVisible(needsPayload);
-    widgets.patch_offset->setEnabled(patchMode);
-    widgets.patch_offset->setVisible(patchMode);
-    widgets.file_name->setEnabled(!resizeMode);
-    widgets.file_name->setVisible(!resizeMode);
-    widgets.directory_name->setEnabled(directoryNameMode);
-    widgets.directory_name->setVisible(directoryNameMode);
-    widgets.compress->setEnabled(compressMode);
-    widgets.compress->setVisible(compressMode);
-}
-
-QString apfsMutationFilePlaceholder(PartitionOperationType type) {
-    if (apfsMutationIsDirectory(type)) {
-        return QObject::tr("Root directory name");
-    }
-    if (apfsMutationIsDirectoryFile(type)) {
-        return QObject::tr("Child file name");
-    }
+QString apfsMutationNamePlaceholder(PartitionOperationType type) {
     if (apfsMutationIsVolumeLabel(type)) {
-        return QObject::tr("Volume label");
+        return QObject::tr("New volume label");
     }
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("Snapshot name");
     }
-    if (apfsMutationIsLink(type)) {
-        return QObject::tr("Source file name");
-    }
-    if (apfsMutationIsResize(type)) {
-        return QObject::tr("(not used for resize)");
-    }
-    return QObject::tr("Root file name");
-}
-
-QString apfsMutationPreviewName(PartitionOperationType type,
-                                const QString& directoryName,
-                                const QString& entryName) {
-    if (!apfsMutationIsDirectoryFile(type) || directoryName.isEmpty() || entryName.isEmpty()) {
-        return entryName;
-    }
-    return QStringLiteral("%1/%2").arg(directoryName, entryName);
+    return QObject::tr("(not used for resize)");
 }
 
 QString apfsMutationFallbackName(PartitionOperationType type) {
-    if (apfsMutationIsDirectory(type)) {
-        return QObject::tr("(root directory)");
-    }
-    if (apfsMutationIsDirectoryFile(type)) {
-        return QObject::tr("(directory/file)");
-    }
     if (apfsMutationIsVolumeLabel(type)) {
         return QObject::tr("(volume label)");
     }
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("(snapshot)");
     }
-    if (apfsMutationIsResize(type)) {
-        return QObject::tr("(container)");
-    }
-    return QObject::tr("(root file)");
-}
-
-bool apfsMutationHasRequiredOffset(const ApfsRootFileMutationDialogWidgets& widgets,
-                                   PartitionOperationType type) {
-    const bool patchMode = type == PartitionOperationType::ApfsPatchRootFile ||
-                           type == PartitionOperationType::ApfsPatchRootDirectoryFile;
-    return !patchMode || parsedPatchOffset(widgets.patch_offset->text()).has_value();
+    return QObject::tr("(container)");
 }
 
 bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widgets,
                                  PartitionOperationType type,
-                                 const QString& directoryName,
-                                 const QString& entryName) {
-    const bool needsPayload = apfsMutationNeedsPayload(type);
-    const bool directoryNameMode = apfsMutationIsDirectoryFile(type) || apfsMutationIsLink(type);
-    const bool hasPayload = !needsPayload || !widgets.payload->toPlainText().isEmpty();
-    const bool hasDirectory = !directoryNameMode || !directoryName.isEmpty();
-    // Resize takes no names; every other mode needs the file/entry name.
-    const bool hasEntry = apfsMutationIsResize(type) || !entryName.isEmpty();
-    return hasEntry && hasDirectory && hasPayload && apfsMutationHasRequiredOffset(widgets, type) &&
-           widgets.confirm->isChecked();
+                                 const QString& name) {
+    // Resize takes no name; label and snapshot modes need one.
+    const bool hasName = apfsMutationIsResize(type) || !name.isEmpty();
+    return hasName && widgets.confirm->isChecked();
 }
 
 void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& widgets) {
     const auto type = apfsMutationTypeForMode(widgets.mode->currentData().toString());
-    applyApfsMutationModeControls(widgets, type);
-    widgets.file_name->setPlaceholderText(apfsMutationFilePlaceholder(type));
-    widgets.directory_name->setPlaceholderText(apfsMutationIsLink(type)
-                                                   ? QObject::tr("New (clone/link) name")
-                                                   : QObject::tr("Root directory name"));
-    const QString entryName = widgets.file_name->text().trimmed();
-    const QString directoryName = widgets.directory_name->text().trimmed();
-    const QString previewName = apfsMutationPreviewName(type, directoryName, entryName);
-    widgets.dialog->setAcceptEnabled(
-        apfsMutationDialogCanAccept(widgets, type, directoryName, entryName));
-    widgets.dialog->setPreviewText(apfsMutationPreview(
-        type, previewName.isEmpty() ? apfsMutationFallbackName(type) : previewName));
+    const bool resizeMode = apfsMutationIsResize(type);
+    widgets.name->setEnabled(!resizeMode);
+    widgets.name->setVisible(!resizeMode);
+    widgets.name->setPlaceholderText(apfsMutationNamePlaceholder(type));
+    const QString name = widgets.name->text().trimmed();
+    widgets.dialog->setAcceptEnabled(apfsMutationDialogCanAccept(widgets, type, name));
+    widgets.dialog->setPreviewText(
+        apfsMutationPreview(type, name.isEmpty() ? apfsMutationFallbackName(type) : name));
 }
 
 void populateApfsRootFileMutationModes(QComboBox* mode) {
-    mode->setAccessibleName(QObject::tr("APFS generated file mutation mode"));
-    mode->addItem(QObject::tr("Write root file"), QString::fromLatin1(kApfsRootFileWriteMode));
-    mode->addItem(QObject::tr("Patch root file"), QString::fromLatin1(kApfsRootFilePatchMode));
-    mode->addItem(QObject::tr("Delete root file"), QString::fromLatin1(kApfsRootFileDeleteMode));
-    mode->addItem(QObject::tr("Write file in root directory"),
-                  QString::fromLatin1(kApfsRootDirectoryFileWriteMode));
-    mode->addItem(QObject::tr("Patch file in root directory"),
-                  QString::fromLatin1(kApfsRootDirectoryFilePatchMode));
-    mode->addItem(QObject::tr("Delete file in root directory"),
-                  QString::fromLatin1(kApfsRootDirectoryFileDeleteMode));
-    mode->addItem(QObject::tr("Create empty root directory"),
-                  QString::fromLatin1(kApfsRootDirectoryCreateMode));
-    mode->addItem(QObject::tr("Delete empty root directory"),
-                  QString::fromLatin1(kApfsRootDirectoryDeleteMode));
+    mode->setAccessibleName(QObject::tr("APFS container action mode"));
     mode->addItem(QObject::tr("Change volume label"), QString::fromLatin1(kApfsVolumeLabelMode));
     mode->addItem(QObject::tr("Create snapshot"), QString::fromLatin1(kApfsSnapshotCreateMode));
     mode->addItem(QObject::tr("Delete snapshot"), QString::fromLatin1(kApfsSnapshotDeleteMode));
     mode->addItem(QObject::tr("Revert to snapshot"), QString::fromLatin1(kApfsSnapshotRevertMode));
-    mode->addItem(QObject::tr("Clone root file"), QString::fromLatin1(kApfsCloneRootFileMode));
-    mode->addItem(QObject::tr("Hard link root file"),
-                  QString::fromLatin1(kApfsHardlinkRootFileMode));
     mode->addItem(QObject::tr("Resize container to fill partition"),
                   QString::fromLatin1(kApfsResizeContainerMode));
 }
@@ -10238,53 +9947,33 @@ void connectApfsRootFileMutationDialog(PartitionOperationDialog& dialog,
         syncApfsRootFileMutationDialog(widgets);
     };
     QObject::connect(widgets.mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
-    QObject::connect(widgets.directory_name, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.file_name, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.payload, &QTextEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.patch_offset, &QLineEdit::textChanged, &dialog, updatePreview);
+    QObject::connect(widgets.name, &QLineEdit::textChanged, &dialog, updatePreview);
     QObject::connect(widgets.confirm, &QCheckBox::toggled, &dialog, updatePreview);
     syncApfsRootFileMutationDialog(widgets);
 }
 
 std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     QWidget* parent, const ApfsRootFileMutationState& state) {
-    PartitionOperationDialog dialog(
-        QObject::tr("APFS Generated File"),
-        state.target_path,
-        QObject::tr("Queue a S.A.K. generated APFS file or directory mutation."),
-        parent);
+    PartitionOperationDialog dialog(QObject::tr("APFS Container"),
+                                    state.target_path,
+                                    QObject::tr("Queue an APFS container action."),
+                                    parent);
     auto* mode = new QComboBox(&dialog);
     populateApfsRootFileMutationModes(mode);
 
-    auto* directoryName = new QLineEdit(&dialog);
-    directoryName->setAccessibleName(QObject::tr("APFS root directory name"));
-    auto* fileName = new QLineEdit(&dialog);
-    fileName->setAccessibleName(QObject::tr("APFS file or directory name"));
-    auto* payload = new QTextEdit(&dialog);
-    payload->setAcceptRichText(false);
-    payload->setAccessibleName(QObject::tr("APFS file payload text"));
-    payload->setMinimumHeight(kApfsRootFilePayloadMinHeight);
-    auto* patchOffset = new QLineEdit(QStringLiteral("0"), &dialog);
-    patchOffset->setAccessibleName(QObject::tr("APFS root file patch byte offset"));
-    auto* compress = new QCheckBox(QObject::tr("Store compressed (inline zlib com.apple.decmpfs)"),
-                                   &dialog);
-    compress->setAccessibleName(QObject::tr("Compress APFS file with inline zlib"));
+    auto* name = new QLineEdit(&dialog);
+    name->setAccessibleName(QObject::tr("APFS container action name"));
     auto* confirm = new QCheckBox(
-        QObject::tr("I understand this only supports S.A.K. generated APFS layouts and will "
-                    "mutate the selected raw partition on Apply."),
+        QObject::tr("I understand this writes the requested change directly to the selected APFS "
+                    "container on Apply."),
         &dialog);
-    confirm->setAccessibleName(QObject::tr("Confirm APFS generated file mutation"));
+    confirm->setAccessibleName(QObject::tr("Confirm APFS container action"));
 
-    dialog.formLayout()->addRow(QObject::tr("Mode:"), mode);
-    dialog.formLayout()->addRow(QObject::tr("Directory:"), directoryName);
-    dialog.formLayout()->addRow(QObject::tr("Name:"), fileName);
-    dialog.formLayout()->addRow(QObject::tr("Payload:"), payload);
-    dialog.formLayout()->addRow(QObject::tr("Patch offset:"), patchOffset);
-    dialog.formLayout()->addRow(QString(), compress);
+    dialog.formLayout()->addRow(QObject::tr("Action:"), mode);
+    dialog.formLayout()->addRow(QObject::tr("Name:"), name);
     dialog.formLayout()->addRow(QString(), confirm);
 
-    const ApfsRootFileMutationDialogWidgets widgets{
-        &dialog, mode, directoryName, fileName, payload, patchOffset, compress, confirm};
+    const ApfsRootFileMutationDialogWidgets widgets{&dialog, mode, name, confirm};
     connectApfsRootFileMutationDialog(dialog, widgets);
 
     if (dialog.exec() != QDialog::Accepted) {
@@ -10292,31 +9981,7 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
     }
 
     const auto type = apfsMutationTypeForMode(mode->currentData().toString());
-    return ApfsRootFileMutationRequest{type,
-                                       directoryName->text().trimmed(),
-                                       fileName->text().trimmed(),
-                                       payload->toPlainText(),
-                                       parsedPatchOffset(patchOffset->text()).value_or(0),
-                                       compress->isChecked() &&
-                                           apfsMutationSupportsCompression(type)};
-}
-
-// Volume-label / snapshot / resize modes finish the payload with their one extra field (or
-// none for resize); returns nullopt for the file/directory modes that fall through below.
-std::optional<QJsonObject> apfsSpecialModePayload(QJsonObject payload,
-                                                  const ApfsRootFileMutationRequest& request) {
-    if (apfsMutationIsVolumeLabel(request.type)) {
-        payload[QStringLiteral("label")] = request.entry_name;
-        return payload;
-    }
-    if (apfsMutationIsSnapshot(request.type)) {
-        payload[QStringLiteral("apfs_snapshot_name")] = request.entry_name;
-        return payload;
-    }
-    if (apfsMutationIsResize(request.type)) {
-        return payload;  // resize grows the container to fill the partition; no file arguments
-    }
-    return std::nullopt;
+    return ApfsRootFileMutationRequest{type, name->text().trimmed()};
 }
 
 QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
@@ -10326,434 +9991,10 @@ QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
                         {QStringLiteral("target_path"), state.target_path},
                         {QStringLiteral("target_wipe_confirmed"), true},
                         {QStringLiteral("apfs_generated_layout_confirmed"), true}};
-    if (auto special = apfsSpecialModePayload(payload, request)) {
-        return *special;
-    }
-    payload[QStringLiteral("apfs_root_file_name")] = request.entry_name;
-    if (apfsMutationIsDirectory(request.type)) {
-        payload[QStringLiteral("apfs_root_directory_name")] = request.entry_name;
-    }
-    if (apfsMutationIsDirectoryFile(request.type)) {
-        payload[QStringLiteral("apfs_root_directory_name")] = request.directory_name;
-    }
-    if (apfsMutationIsLink(request.type)) {
-        payload[QStringLiteral("apfs_root_file_new_name")] = request.directory_name;
-    }
-    if (apfsMutationNeedsPayload(request.type)) {
-        payload[QStringLiteral("apfs_root_file_payload_text")] = request.payload_text;
-    }
-    if (request.compress_zlib) {
-        payload[QStringLiteral("apfs_compress_zlib")] = true;
-    }
-    if (request.type == PartitionOperationType::ApfsPatchRootFile ||
-        request.type == PartitionOperationType::ApfsPatchRootDirectoryFile) {
-        payload[QStringLiteral("apfs_root_file_patch_offset_bytes")] =
-            QString::number(request.patch_offset_bytes);
-    }
-    return payload;
-}
-
-struct HfsFileMutationDialogWidgets {
-    PartitionOperationDialog* dialog{nullptr};
-    QComboBox* mode{nullptr};
-    QLineEdit* hfs_path{nullptr};
-    QLineEdit* destination_hfs_path{nullptr};
-    QTextEdit* payload{nullptr};
-    QLineEdit* file_id{nullptr};
-    QLineEdit* attribute_name{nullptr};
-    QCheckBox* allow_journaled{nullptr};
-    QCheckBox* allow_wrapped{nullptr};
-    QCheckBox* secure_wipe{nullptr};
-    QCheckBox* confirm{nullptr};
-};
-
-struct HfsFileMutationRequest {
-    PartitionOperationType type{PartitionOperationType::HfsReplaceFile};
-    QString hfs_path;
-    QString destination_hfs_path;
-    QString payload_text;
-    uint64_t file_id{0};
-    QString attribute_name;
-    bool allow_journaled{false};
-    bool allow_wrapped{false};
-    bool secure_wipe{false};
-};
-
-PartitionOperationType hfsMutationTypeForMode(const QString& mode) {
-    static const QHash<QString, PartitionOperationType> kTypes{
-        {QString::fromLatin1(kHfsOverwriteFileMode), PartitionOperationType::HfsOverwriteFile},
-        {QString::fromLatin1(kHfsReplaceFileMode), PartitionOperationType::HfsReplaceFile},
-        {QString::fromLatin1(kHfsGrowFileMode), PartitionOperationType::HfsGrowFile},
-        {QString::fromLatin1(kHfsTruncateFileMode), PartitionOperationType::HfsTruncateFile},
-        {QString::fromLatin1(kHfsReplaceResourceForkMode),
-         PartitionOperationType::HfsReplaceResourceFork},
-        {QString::fromLatin1(kHfsGrowResourceForkMode),
-         PartitionOperationType::HfsGrowResourceFork},
-        {QString::fromLatin1(kHfsTruncateResourceForkMode),
-         PartitionOperationType::HfsTruncateResourceFork},
-        {QString::fromLatin1(kHfsCreateEmptyFileMode), PartitionOperationType::HfsCreateEmptyFile},
-        {QString::fromLatin1(kHfsCreateFileMode), PartitionOperationType::HfsCreateFile},
-        {QString::fromLatin1(kHfsDeleteEmptyFileMode), PartitionOperationType::HfsDeleteEmptyFile},
-        {QString::fromLatin1(kHfsDeleteFileMode), PartitionOperationType::HfsDeleteFile},
-        {QString::fromLatin1(kHfsCreateEmptyFolderMode),
-         PartitionOperationType::HfsCreateEmptyFolder},
-        {QString::fromLatin1(kHfsDeleteEmptyFolderMode),
-         PartitionOperationType::HfsDeleteEmptyFolder},
-        {QString::fromLatin1(kHfsDeleteFolderTreeMode),
-         PartitionOperationType::HfsDeleteFolderTree},
-        {QString::fromLatin1(kHfsRenameMoveCatalogEntryMode),
-         PartitionOperationType::HfsRenameMoveCatalogEntry},
-        {QString::fromLatin1(kHfsReplaceInlineAttributeMode),
-         PartitionOperationType::HfsReplaceInlineAttribute},
-        {QString::fromLatin1(kHfsReplaceForkAttributeMode),
-         PartitionOperationType::HfsReplaceForkAttribute},
-        {QString::fromLatin1(kHfsGrowForkAttributeMode),
-         PartitionOperationType::HfsGrowForkAttribute},
-        {QString::fromLatin1(kHfsCreateSymlinkMode), PartitionOperationType::HfsCreateSymlink},
-        {QString::fromLatin1(kHfsCreateHardlinkMode), PartitionOperationType::HfsCreateHardlink},
-        {QString::fromLatin1(kHfsDeleteHardlinkMode), PartitionOperationType::HfsDeleteHardlink},
-    };
-    return kTypes.value(mode, PartitionOperationType::HfsReplaceFile);
-}
-
-bool hfsMutationNeedsPayload(PartitionOperationType type) {
-    return type == PartitionOperationType::HfsOverwriteFile ||
-           type == PartitionOperationType::HfsReplaceFile ||
-           type == PartitionOperationType::HfsGrowFile ||
-           type == PartitionOperationType::HfsCreateFile ||
-           type == PartitionOperationType::HfsReplaceResourceFork ||
-           type == PartitionOperationType::HfsGrowResourceFork ||
-           type == PartitionOperationType::HfsReplaceInlineAttribute ||
-           type == PartitionOperationType::HfsReplaceForkAttribute ||
-           type == PartitionOperationType::HfsGrowForkAttribute;
-}
-
-bool hfsMutationNeedsPath(PartitionOperationType type) {
-    return type != PartitionOperationType::HfsReplaceInlineAttribute &&
-           type != PartitionOperationType::HfsReplaceForkAttribute &&
-           type != PartitionOperationType::HfsGrowForkAttribute;
-}
-
-bool hfsMutationNeedsDestinationPath(PartitionOperationType type) {
-    return type == PartitionOperationType::HfsRenameMoveCatalogEntry ||
-           type == PartitionOperationType::HfsCreateSymlink ||
-           type == PartitionOperationType::HfsCreateHardlink;
-}
-
-bool hfsMutationIsAttribute(PartitionOperationType type) {
-    return type == PartitionOperationType::HfsReplaceInlineAttribute ||
-           type == PartitionOperationType::HfsReplaceForkAttribute ||
-           type == PartitionOperationType::HfsGrowForkAttribute;
-}
-
-bool hfsMutationCanSecureWipe(PartitionOperationType type) {
-    return type == PartitionOperationType::HfsDeleteFile ||
-           type == PartitionOperationType::HfsDeleteFolderTree;
-}
-
-std::optional<uint64_t> parsedPositiveInteger(const QString& text) {
-    bool ok = false;
-    const uint64_t value = text.trimmed().toULongLong(&ok);
-    return ok && value > 0 ? std::optional<uint64_t>(value) : std::nullopt;
-}
-
-QString hfsMutationPreviewTemplate(PartitionOperationType type) {
-    static const QHash<int, QString> kTemplates{
-        {static_cast<int>(PartitionOperationType::HfsOverwriteFile),
-         QObject::tr("Queue HFS+ same-size data-fork overwrite for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsReplaceFile),
-         QObject::tr("Queue HFS+ allocated-block data-fork replacement for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsGrowFile),
-         QObject::tr("Queue HFS+ data-fork replacement with bounded allocation growth for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsTruncateFile),
-         QObject::tr("Queue HFS+ data-fork truncate for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsReplaceResourceFork),
-         QObject::tr("Queue HFS+ allocated-block resource-fork replacement for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsGrowResourceFork),
-         QObject::tr(
-             "Queue HFS+ resource-fork replacement with bounded allocation growth for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsTruncateResourceFork),
-         QObject::tr("Queue HFS+ resource-fork truncate for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsCreateEmptyFile),
-         QObject::tr("Queue HFS+ empty-file create for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsCreateFile),
-         QObject::tr("Queue HFS+ file create with bounded data-fork allocation for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsDeleteEmptyFile),
-         QObject::tr("Queue HFS+ empty-file delete for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsDeleteFile),
-         QObject::tr("Queue HFS+ allocated-file delete for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsCreateEmptyFolder),
-         QObject::tr("Queue HFS+ empty-folder create for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsDeleteEmptyFolder),
-         QObject::tr("Queue HFS+ empty-folder delete for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsDeleteFolderTree),
-         QObject::tr("Queue HFS+ folder-tree delete with block release for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsRenameMoveCatalogEntry),
-         QObject::tr("Queue HFS+ catalog rename/move for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsReplaceInlineAttribute),
-         QObject::tr("Queue HFS+ inline attribute replacement.")},
-        {static_cast<int>(PartitionOperationType::HfsReplaceForkAttribute),
-         QObject::tr("Queue HFS+ fork-backed attribute replacement within allocated blocks.")},
-        {static_cast<int>(PartitionOperationType::HfsGrowForkAttribute),
-         QObject::tr(
-             "Queue HFS+ fork-backed attribute replacement with bounded allocation growth.")},
-        {static_cast<int>(PartitionOperationType::HfsCreateSymlink),
-         QObject::tr("Queue HFS+ symlink create for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsCreateHardlink),
-         QObject::tr("Queue HFS+ hardlink create for %1.")},
-        {static_cast<int>(PartitionOperationType::HfsDeleteHardlink),
-         QObject::tr("Queue HFS+ hardlink delete for %1.")}};
-    return kTemplates.value(static_cast<int>(type));
-}
-
-QString hfsMutationPreview(PartitionOperationType type, const QString& hfsPath) {
-    const QString previewTemplate = hfsMutationPreviewTemplate(type);
-    return previewTemplate.contains(QStringLiteral("%1")) ? previewTemplate.arg(hfsPath)
-                                                          : previewTemplate;
-}
-
-void setHfsMutationFieldActive(QWidget* field, bool active) {
-    field->setEnabled(active);
-    field->setVisible(active);
-}
-
-bool hfsMutationPathReady(const HfsFileMutationDialogWidgets& widgets, bool needsPath) {
-    if (!needsPath) {
-        return true;
-    }
-    return !widgets.hfs_path->text().trimmed().isEmpty();
-}
-
-bool hfsMutationPayloadReady(const HfsFileMutationDialogWidgets& widgets, bool needsPayload) {
-    if (!needsPayload) {
-        return true;
-    }
-    return !widgets.payload->toPlainText().isEmpty();
-}
-
-bool hfsMutationAttributeReady(const HfsFileMutationDialogWidgets& widgets, bool attributeMode) {
-    if (!attributeMode) {
-        return true;
-    }
-    return parsedPositiveInteger(widgets.file_id->text()).has_value() &&
-           !widgets.attribute_name->text().trimmed().isEmpty();
-}
-
-bool hfsMutationDialogReady(const HfsFileMutationDialogWidgets& widgets,
-                            bool needsPath,
-                            bool needsPayload,
-                            bool needsDestinationPath,
-                            bool attributeMode) {
-    if (!widgets.confirm->isChecked()) {
-        return false;
-    }
-    if (!hfsMutationPathReady(widgets, needsPath)) {
-        return false;
-    }
-    if (needsDestinationPath && widgets.destination_hfs_path->text().trimmed().isEmpty()) {
-        return false;
-    }
-    if (!hfsMutationPayloadReady(widgets, needsPayload)) {
-        return false;
-    }
-    return hfsMutationAttributeReady(widgets, attributeMode);
-}
-
-QString hfsMutationPreviewPath(const HfsFileMutationDialogWidgets& widgets) {
-    const QString path = widgets.hfs_path->text().trimmed();
-    if (!path.isEmpty()) {
-        return path;
-    }
-    return QObject::tr("(HFS path)");
-}
-
-QString hfsMutationDialogPreviewText(const HfsFileMutationDialogWidgets& widgets,
-                                     PartitionOperationType type,
-                                     bool secureWipeMode) {
-    QString preview = hfsMutationPreview(type, hfsMutationPreviewPath(widgets));
-    if (secureWipeMode && widgets.secure_wipe->isChecked()) {
-        preview += QObject::tr(" Released blocks will be zeroed before release.");
-    }
-    return preview;
-}
-
-void syncHfsFileMutationDialog(const HfsFileMutationDialogWidgets& widgets) {
-    const auto type = hfsMutationTypeForMode(widgets.mode->currentData().toString());
-    const bool needsPayload = hfsMutationNeedsPayload(type);
-    const bool needsPath = hfsMutationNeedsPath(type);
-    const bool needsDestinationPath = hfsMutationNeedsDestinationPath(type);
-    const bool attributeMode = hfsMutationIsAttribute(type);
-    const bool secureWipeMode = hfsMutationCanSecureWipe(type);
-
-    setHfsMutationFieldActive(widgets.hfs_path, needsPath);
-    setHfsMutationFieldActive(widgets.destination_hfs_path, needsDestinationPath);
-    setHfsMutationFieldActive(widgets.payload, needsPayload);
-    setHfsMutationFieldActive(widgets.file_id, attributeMode);
-    setHfsMutationFieldActive(widgets.attribute_name, attributeMode);
-    setHfsMutationFieldActive(widgets.secure_wipe, secureWipeMode);
-
-    widgets.dialog->setAcceptEnabled(hfsMutationDialogReady(
-        widgets, needsPath, needsPayload, needsDestinationPath, attributeMode));
-    widgets.dialog->setPreviewText(hfsMutationDialogPreviewText(widgets, type, secureWipeMode));
-}
-
-void populateHfsFileMutationModes(QComboBox* mode) {
-    mode->setAccessibleName(QObject::tr("HFS file mutation mode"));
-    mode->addItem(QObject::tr("Replace data fork within allocated blocks"),
-                  QString::fromLatin1(kHfsReplaceFileMode));
-    mode->addItem(QObject::tr("Grow data fork with free blocks"),
-                  QString::fromLatin1(kHfsGrowFileMode));
-    mode->addItem(QObject::tr("Overwrite data fork same size"),
-                  QString::fromLatin1(kHfsOverwriteFileMode));
-    mode->addItem(QObject::tr("Truncate data fork"), QString::fromLatin1(kHfsTruncateFileMode));
-    mode->addItem(QObject::tr("Replace resource fork within allocated blocks"),
-                  QString::fromLatin1(kHfsReplaceResourceForkMode));
-    mode->addItem(QObject::tr("Grow resource fork with free blocks"),
-                  QString::fromLatin1(kHfsGrowResourceForkMode));
-    mode->addItem(QObject::tr("Truncate resource fork"),
-                  QString::fromLatin1(kHfsTruncateResourceForkMode));
-    mode->addItem(QObject::tr("Create empty file"), QString::fromLatin1(kHfsCreateEmptyFileMode));
-    mode->addItem(QObject::tr("Create file with data"), QString::fromLatin1(kHfsCreateFileMode));
-    mode->addItem(QObject::tr("Delete empty file"), QString::fromLatin1(kHfsDeleteEmptyFileMode));
-    mode->addItem(QObject::tr("Delete file"), QString::fromLatin1(kHfsDeleteFileMode));
-    mode->addItem(QObject::tr("Create empty folder"),
-                  QString::fromLatin1(kHfsCreateEmptyFolderMode));
-    mode->addItem(QObject::tr("Delete empty folder"),
-                  QString::fromLatin1(kHfsDeleteEmptyFolderMode));
-    mode->addItem(QObject::tr("Delete folder tree"), QString::fromLatin1(kHfsDeleteFolderTreeMode));
-    mode->addItem(QObject::tr("Rename or move catalog entry"),
-                  QString::fromLatin1(kHfsRenameMoveCatalogEntryMode));
-    mode->addItem(QObject::tr("Replace inline attribute"),
-                  QString::fromLatin1(kHfsReplaceInlineAttributeMode));
-    mode->addItem(QObject::tr("Replace fork-backed attribute"),
-                  QString::fromLatin1(kHfsReplaceForkAttributeMode));
-    mode->addItem(QObject::tr("Grow fork-backed attribute with free blocks"),
-                  QString::fromLatin1(kHfsGrowForkAttributeMode));
-    mode->addItem(QObject::tr("Create symlink"), QString::fromLatin1(kHfsCreateSymlinkMode));
-    mode->addItem(QObject::tr("Create hardlink"), QString::fromLatin1(kHfsCreateHardlinkMode));
-    mode->addItem(QObject::tr("Delete hardlink"), QString::fromLatin1(kHfsDeleteHardlinkMode));
-}
-
-HfsFileMutationDialogWidgets createHfsFileMutationWidgets(PartitionOperationDialog& dialog,
-                                                          const HfsFileMutationState& state) {
-    auto* mode = new QComboBox(&dialog);
-    populateHfsFileMutationModes(mode);
-
-    auto* hfsPath = new QLineEdit(QStringLiteral("/hello.txt"), &dialog);
-    hfsPath->setAccessibleName(QObject::tr("HFS file path"));
-    auto* destinationHfsPath = new QLineEdit(QStringLiteral("/renamed.txt"), &dialog);
-    destinationHfsPath->setAccessibleName(QObject::tr("HFS destination path"));
-    auto* payload = new QTextEdit(&dialog);
-    payload->setAcceptRichText(false);
-    payload->setAccessibleName(QObject::tr("HFS mutation payload text"));
-    payload->setMinimumHeight(kApfsRootFilePayloadMinHeight);
-    auto* fileId = new QLineEdit(&dialog);
-    fileId->setAccessibleName(QObject::tr("HFS attribute file ID"));
-    auto* attributeName = new QLineEdit(&dialog);
-    attributeName->setAccessibleName(QObject::tr("HFS attribute name"));
-    auto* allowJournaled = new QCheckBox(QObject::tr("Allow journaled HFS+ staging"), &dialog);
-    allowJournaled->setAccessibleName(QObject::tr("Allow journaled HFS+ staging"));
-    allowJournaled->setChecked(state.journaled);
-    auto* allowWrapped = new QCheckBox(QObject::tr("Allow classic HFS wrapper"), &dialog);
-    allowWrapped->setAccessibleName(QObject::tr("Allow classic HFS wrapper"));
-    allowWrapped->setChecked(state.wrapped);
-    auto* secureWipe = new QCheckBox(QObject::tr("Zero released file blocks before delete"),
-                                     &dialog);
-    secureWipe->setAccessibleName(QObject::tr("Zero released HFS blocks before delete"));
-    auto* confirm = new QCheckBox(
-        QObject::tr("I understand this stages the selected raw HFS+ partition, mutates the staged "
-                    "image, then writes changed HFS ranges back on Apply."),
-        &dialog);
-    confirm->setAccessibleName(QObject::tr("Confirm HFS staged file mutation"));
-
-    dialog.formLayout()->addRow(QObject::tr("Mode:"), mode);
-    dialog.formLayout()->addRow(QObject::tr("HFS path:"), hfsPath);
-    dialog.formLayout()->addRow(QObject::tr("Destination:"), destinationHfsPath);
-    dialog.formLayout()->addRow(QObject::tr("Payload:"), payload);
-    dialog.formLayout()->addRow(QObject::tr("File ID:"), fileId);
-    dialog.formLayout()->addRow(QObject::tr("Attribute:"), attributeName);
-    dialog.formLayout()->addRow(QString(), allowJournaled);
-    dialog.formLayout()->addRow(QString(), allowWrapped);
-    dialog.formLayout()->addRow(QString(), secureWipe);
-    dialog.formLayout()->addRow(QString(), confirm);
-
-    return HfsFileMutationDialogWidgets{&dialog,
-                                        mode,
-                                        hfsPath,
-                                        destinationHfsPath,
-                                        payload,
-                                        fileId,
-                                        attributeName,
-                                        allowJournaled,
-                                        allowWrapped,
-                                        secureWipe,
-                                        confirm};
-}
-
-void connectHfsFileMutationDialog(PartitionOperationDialog& dialog,
-                                  const HfsFileMutationDialogWidgets& widgets) {
-    auto updatePreview = [widgets]() {
-        syncHfsFileMutationDialog(widgets);
-    };
-    QObject::connect(widgets.mode, &QComboBox::currentTextChanged, &dialog, updatePreview);
-    QObject::connect(widgets.hfs_path, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.destination_hfs_path, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.payload, &QTextEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.file_id, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.attribute_name, &QLineEdit::textChanged, &dialog, updatePreview);
-    QObject::connect(widgets.secure_wipe, &QCheckBox::toggled, &dialog, updatePreview);
-    QObject::connect(widgets.confirm, &QCheckBox::toggled, &dialog, updatePreview);
-    syncHfsFileMutationDialog(widgets);
-}
-
-std::optional<HfsFileMutationRequest> showHfsFileMutationDialog(QWidget* parent,
-                                                                const HfsFileMutationState& state) {
-    PartitionOperationDialog dialog(QObject::tr("HFS File"),
-                                    state.target_path,
-                                    QObject::tr("Queue a staged HFS+ file mutation."),
-                                    parent);
-    const HfsFileMutationDialogWidgets widgets = createHfsFileMutationWidgets(dialog, state);
-    connectHfsFileMutationDialog(dialog, widgets);
-
-    if (dialog.exec() != QDialog::Accepted) {
-        return std::nullopt;
-    }
-
-    const auto type = hfsMutationTypeForMode(widgets.mode->currentData().toString());
-    return HfsFileMutationRequest{type,
-                                  widgets.hfs_path->text().trimmed(),
-                                  widgets.destination_hfs_path->text().trimmed(),
-                                  widgets.payload->toPlainText(),
-                                  parsedPositiveInteger(widgets.file_id->text()).value_or(0),
-                                  widgets.attribute_name->text().trimmed(),
-                                  widgets.allow_journaled->isChecked(),
-                                  widgets.allow_wrapped->isChecked(),
-                                  widgets.secure_wipe->isChecked()};
-}
-
-QJsonObject hfsFileMutationPayload(const HfsFileMutationState& state,
-                                   const HfsFileMutationRequest& request) {
-    QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
-                        {QStringLiteral("file_system"), state.file_system},
-                        {QStringLiteral("target_path"), state.target_path},
-                        {QStringLiteral("target_wipe_confirmed"), true},
-                        {QStringLiteral("hfs_allow_journaled_volume"), request.allow_journaled},
-                        {QStringLiteral("hfs_allow_wrapped_volume"), request.allow_wrapped}};
-    if (hfsMutationNeedsPath(request.type)) {
-        payload[QStringLiteral("hfs_path")] = request.hfs_path;
-    }
-    if (hfsMutationNeedsPayload(request.type)) {
-        payload[QStringLiteral("hfs_payload_text")] = request.payload_text;
-    }
-    if (hfsMutationNeedsDestinationPath(request.type)) {
-        payload[QStringLiteral("hfs_destination_path")] = request.destination_hfs_path;
-    }
-    if (hfsMutationIsAttribute(request.type)) {
-        payload[QStringLiteral("hfs_file_id")] = QString::number(request.file_id);
-        payload[QStringLiteral("hfs_attribute_name")] = request.attribute_name;
-    }
-    if (hfsMutationCanSecureWipe(request.type) && request.secure_wipe) {
-        payload[QStringLiteral("hfs_secure_wipe_released_blocks")] = true;
+    if (apfsMutationIsVolumeLabel(request.type)) {
+        payload[QStringLiteral("label")] = request.name;
+    } else if (apfsMutationIsSnapshot(request.type)) {
+        payload[QStringLiteral("apfs_snapshot_name")] = request.name;
     }
     return payload;
 }
@@ -10794,35 +10035,17 @@ void PartitionManagerPanel::onApfsRootFileMutation() {
     const auto* partition = selectedPartition();
     const auto state = apfsRootFileMutationState(selectedTarget(), partition);
     if (!state.enabled) {
-        showWarningLogged(this, tr("APFS File"), state.reason);
+        showWarningLogged(this, tr("APFS Container"), state.reason);
         return;
     }
 
     const auto request = showApfsRootFileMutationDialog(this, state);
     if (!request.has_value()) {
-        Q_EMIT statusMessage(tr("APFS generated file mutation cancelled"),
-                             sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(tr("APFS container action cancelled"), sak::kTimerStatusDefaultMs);
         return;
     }
 
     queueOperation(request->type, apfsRootFileMutationPayload(state, *request));
-}
-
-void PartitionManagerPanel::onHfsFileMutation() {
-    const auto* partition = selectedPartition();
-    const auto state = hfsFileMutationState(selectedTarget(), partition);
-    if (!state.enabled) {
-        showWarningLogged(this, tr("HFS File"), state.reason);
-        return;
-    }
-
-    const auto request = showHfsFileMutationDialog(this, state);
-    if (!request.has_value()) {
-        Q_EMIT statusMessage(tr("HFS file mutation cancelled"), sak::kTimerStatusDefaultMs);
-        return;
-    }
-
-    queueOperation(request->type, hfsFileMutationPayload(state, *request));
 }
 
 void PartitionManagerPanel::onSurfaceTest() {
@@ -11390,9 +10613,9 @@ void PartitionManagerPanel::onExtendPartitionWizard() {
     if (adjacentFreeBytesAfter(disk, partition) == 0) {
         showWarningLogged(this,
                           tr("Extend Partition Wizard"),
-                          tr("No adjacent free space follows the selected partition. Donor-space "
-                             "extension remains blocked until the offline move engine is "
-                             "certified for direct execution."));
+                          tr("No free space follows the selected partition, so it cannot be "
+                             "extended directly. Use Allocate Free Space to move free space next "
+                             "to this partition first, or shrink the following partition."));
         return;
     }
     onResizePartition();

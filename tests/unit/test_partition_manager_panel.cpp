@@ -72,8 +72,6 @@ private Q_SLOTS:
     void propertiesAndInspectShowRawFilesystemSanityNotes();
     void extFilesystemWriteActionsQueueWithConfirmation() const;
     void apfsRootFileMutationActionGatesGeneratedLayouts();
-    void hfsFileMutationActionQueuesStagedWrite();
-    void hfsEmptyFileMutationModesQueueWithoutPayload();
     void manageBitLockerShowsStatusDialog();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
@@ -685,7 +683,7 @@ void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
     QVERIFY(check->isEnabled());
     QVERIFY(check->toolTip().contains(QStringLiteral("fsck_hfs")));
     QVERIFY(!resize->isEnabled());
-    QVERIFY(resize->toolTip().contains(QStringLiteral("HFS+ resize is not certified")));
+    QVERIFY(resize->toolTip().contains(QStringLiteral("HFS+ resize is not supported yet")));
     QVERIFY(!nativeCheck->isEnabled());
     QVERIFY(nativeCheck->toolTip().contains(QStringLiteral("Non-Windows filesystem actions")));
     QVERIFY(!changeCluster->isEnabled());
@@ -1017,40 +1015,12 @@ sak::PartitionInventory generatedApfsInventoryFixture() {
     return inventory;
 }
 
-void verifyApfsRootMutationModeItems(QComboBox* mode) {
-    QCOMPARE(mode->currentText(), QStringLiteral("Write root file"));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Write file in root directory")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Patch file in root directory")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Delete file in root directory")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Create empty root directory")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Delete empty root directory")));
-    QVERIFY(comboHasItem(mode, QStringLiteral("Change volume label")));
-}
-
-void exerciseApfsRootMutationModeVisibility(QComboBox* mode,
-                                            QLineEdit* fileName,
-                                            QTextEdit* payload,
-                                            QLineEdit* directoryName,
-                                            QLineEdit* patchOffset) {
-    mode->setCurrentText(QStringLiteral("Write file in root directory"));
-    QVERIFY(directoryName->isVisible());
-    directoryName->setText(QStringLiteral("Proof Folder"));
-    QCOMPARE(fileName->placeholderText(), QStringLiteral("Child file name"));
-    mode->setCurrentText(QStringLiteral("Patch file in root directory"));
-    QVERIFY(directoryName->isVisible());
-    QVERIFY(payload->isVisible());
-    QVERIFY(patchOffset->isVisible());
-    QCOMPARE(fileName->placeholderText(), QStringLiteral("Child file name"));
-    mode->setCurrentText(QStringLiteral("Create empty root directory"));
-    QVERIFY(!payload->isVisible());
-    QVERIFY(!directoryName->isVisible());
-    QVERIFY(!patchOffset->isVisible());
-    mode->setCurrentText(QStringLiteral("Change volume label"));
-    QVERIFY(!payload->isVisible());
-    QVERIFY(!directoryName->isVisible());
-    QVERIFY(!patchOffset->isVisible());
-    QCOMPARE(fileName->placeholderText(), QStringLiteral("Volume label"));
-    mode->setCurrentText(QStringLiteral("Write root file"));
+void verifyApfsContainerModeItems(QComboBox* mode) {
+    QCOMPARE(mode->currentText(), QStringLiteral("Change volume label"));
+    QVERIFY(comboHasItem(mode, QStringLiteral("Create snapshot")));
+    QVERIFY(comboHasItem(mode, QStringLiteral("Delete snapshot")));
+    QVERIFY(comboHasItem(mode, QStringLiteral("Revert to snapshot")));
+    QVERIFY(comboHasItem(mode, QStringLiteral("Resize container to fill partition")));
 }
 
 void queueApfsRootFileMutationAndVerify() {
@@ -1061,73 +1031,30 @@ void queueApfsRootFileMutationAndVerify() {
     table->selectRow(1);
     QApplication::processEvents();
 
-    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS File"));
-    QVERIFY2(button != nullptr, "APFS File action should exist");
+    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS Container"));
+    QVERIFY2(button != nullptr, "APFS Container action should exist");
     QVERIFY(button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("generated APFS")));
+    QVERIFY(button->toolTip().contains(QStringLiteral("APFS container action")));
 
     bool inspected = false;
     QTimer::singleShot(0, [&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "APFS generated file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(
-            dialog, QStringLiteral("APFS generated file mutation mode"));
-        QVERIFY(mode != nullptr);
-        verifyApfsRootMutationModeItems(mode);
-        auto* fileName =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS file or directory name"));
-        QVERIFY(fileName != nullptr);
-        fileName->setText(QStringLiteral("panel-test.txt"));
-        auto* payload = findAccessibleWidget<QTextEdit>(dialog,
-                                                        QStringLiteral("APFS file payload text"));
-        QVERIFY(payload != nullptr);
-        auto* directoryName =
-            findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("APFS root directory name"));
-        QVERIFY(directoryName != nullptr);
-        auto* patchOffset = findAccessibleWidget<QLineEdit>(
-            dialog, QStringLiteral("APFS root file patch byte offset"));
-        QVERIFY(patchOffset != nullptr);
-        exerciseApfsRootMutationModeVisibility(mode, fileName, payload, directoryName, patchOffset);
-        payload->setPlainText(QStringLiteral("panel payload"));
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm APFS generated file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Write Root File"));
-}
-
-void queueHfsFileMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("HFS+ staged file")));
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
+        QVERIFY2(dialog != nullptr, "APFS container dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
+                                                     QStringLiteral("APFS container action mode"));
         QVERIFY(mode != nullptr);
-        QCOMPARE(mode->currentText(), QStringLiteral("Replace data fork within allocated blocks"));
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        hfsPath->setText(QStringLiteral("/panel-test.txt"));
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        payload->setPlainText(QStringLiteral("panel hfs payload"));
+        verifyApfsContainerModeItems(mode);
+        auto* name = findAccessibleWidget<QLineEdit>(dialog,
+                                                     QStringLiteral("APFS container action name"));
+        QVERIFY(name != nullptr);
+        // Resize hides the name field; snapshot/label require it.
+        mode->setCurrentText(QStringLiteral("Resize container to fill partition"));
+        QVERIFY(!name->isVisible());
+        mode->setCurrentText(QStringLiteral("Create snapshot"));
+        QVERIFY(name->isVisible());
+        name->setText(QStringLiteral("panel-snap"));
         auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
+            dialog, QStringLiteral("Confirm APFS container action"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
@@ -1135,369 +1062,7 @@ void queueHfsFileMutationAndVerify() {
     });
     button->click();
     QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Replace File"));
-}
-
-void queueHfsAllocationGrowthMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
-        QVERIFY(mode != nullptr);
-        const int index = mode->findText(QStringLiteral("Grow data fork with free blocks"));
-        QVERIFY(index >= 0);
-        mode->setCurrentIndex(index);
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        hfsPath->setText(QStringLiteral("/panel-growth.bin"));
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        payload->setPlainText(QStringLiteral("panel hfs allocation growth payload"));
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Grow File"));
-}
-
-void queueHfsCreateFileMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
-        QVERIFY(mode != nullptr);
-        const int index = mode->findText(QStringLiteral("Create file with data"));
-        QVERIFY(index >= 0);
-        mode->setCurrentIndex(index);
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        hfsPath->setText(QStringLiteral("/panel-created-data.txt"));
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        QVERIFY(payload->isVisible());
-        payload->setPlainText(QStringLiteral("panel created file payload"));
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
-        QVERIFY(preview != nullptr);
-        QVERIFY(preview->text().contains(QStringLiteral("file create")));
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Create File"));
-}
-
-void queueHfsForkAttributeMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
-        QVERIFY(mode != nullptr);
-        const int modeIndex = mode->findText(QStringLiteral("Replace fork-backed attribute"));
-        QVERIFY2(modeIndex >= 0, "fork-backed attribute mode should exist");
-        mode->setCurrentIndex(modeIndex);
-
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        QVERIFY(!hfsPath->isVisible());
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        QVERIFY(payload->isVisible());
-        payload->setPlainText(QStringLiteral("panel fork attribute payload"));
-        auto* fileId = findAccessibleWidget<QLineEdit>(dialog,
-                                                       QStringLiteral("HFS attribute file ID"));
-        QVERIFY(fileId != nullptr);
-        QVERIFY(fileId->isVisible());
-        fileId->setText(QStringLiteral("17"));
-        auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
-                                                              QStringLiteral("HFS attribute name"));
-        QVERIFY(attributeName != nullptr);
-        QVERIFY(attributeName->isVisible());
-        attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
-        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
-        QVERIFY(preview != nullptr);
-        QVERIFY(preview->text().contains(QStringLiteral("fork-backed attribute")));
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        QApplication::processEvents();
-        auto* buttons = dialog->findChild<QDialogButtonBox*>();
-        QVERIFY(buttons != nullptr);
-        auto* accept = buttons->button(QDialogButtonBox::Ok);
-        QVERIFY(accept != nullptr);
-        QVERIFY(accept->isEnabled());
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Replace Fork Attribute"));
-}
-
-void queueHfsForkAttributeGrowthMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
-        QVERIFY(mode != nullptr);
-        const int modeIndex =
-            mode->findText(QStringLiteral("Grow fork-backed attribute with free blocks"));
-        QVERIFY2(modeIndex >= 0, "fork-backed attribute growth mode should exist");
-        mode->setCurrentIndex(modeIndex);
-
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        QVERIFY(!hfsPath->isVisible());
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        QVERIFY(payload->isVisible());
-        payload->setPlainText(QStringLiteral("panel fork attribute growth payload"));
-        auto* fileId = findAccessibleWidget<QLineEdit>(dialog,
-                                                       QStringLiteral("HFS attribute file ID"));
-        QVERIFY(fileId != nullptr);
-        QVERIFY(fileId->isVisible());
-        fileId->setText(QStringLiteral("17"));
-        auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
-                                                              QStringLiteral("HFS attribute name"));
-        QVERIFY(attributeName != nullptr);
-        QVERIFY(attributeName->isVisible());
-        attributeName->setText(QStringLiteral("com.apple.ResourceFork"));
-        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
-        QVERIFY(preview != nullptr);
-        QVERIFY(preview->text().contains(QStringLiteral("allocation growth")));
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        QApplication::processEvents();
-        auto* buttons = dialog->findChild<QDialogButtonBox*>();
-        QVERIFY(buttons != nullptr);
-        auto* accept = buttons->button(QDialogButtonBox::Ok);
-        QVERIFY(accept != nullptr);
-        QVERIFY(accept->isEnabled());
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Grow Fork Attribute"));
-}
-
-void queueHfsRenameMoveMutationAndVerify() {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        auto* mode = findAccessibleWidget<QComboBox>(dialog,
-                                                     QStringLiteral("HFS file mutation mode"));
-        QVERIFY(mode != nullptr);
-        const int modeIndex = mode->findText(QStringLiteral("Rename or move catalog entry"));
-        QVERIFY2(modeIndex >= 0, "HFS rename/move mode should exist");
-        mode->setCurrentIndex(modeIndex);
-
-        auto* hfsPath = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-        QVERIFY(hfsPath != nullptr);
-        QVERIFY(hfsPath->isVisible());
-        hfsPath->setText(QStringLiteral("/panel-source.txt"));
-
-        auto* destination = findAccessibleWidget<QLineEdit>(dialog,
-                                                            QStringLiteral("HFS destination path"));
-        QVERIFY(destination != nullptr);
-        QVERIFY(destination->isVisible());
-        QVERIFY(destination->isEnabled());
-        destination->setText(QStringLiteral("/Panel Folder/panel-renamed.txt"));
-
-        auto* payload =
-            findAccessibleWidget<QTextEdit>(dialog, QStringLiteral("HFS mutation payload text"));
-        QVERIFY(payload != nullptr);
-        QVERIFY(!payload->isVisible());
-        QVERIFY(!payload->isEnabled());
-
-        auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
-        QVERIFY(preview != nullptr);
-        QVERIFY(preview->text().contains(QStringLiteral("catalog rename/move")));
-
-        auto* confirm = findAccessibleWidget<QCheckBox>(
-            dialog, QStringLiteral("Confirm HFS staged file mutation"));
-        QVERIFY(confirm != nullptr);
-        confirm->setChecked(true);
-        QApplication::processEvents();
-
-        auto* buttons = dialog->findChild<QDialogButtonBox*>();
-        QVERIFY(buttons != nullptr);
-        auto* accept = buttons->button(QDialogButtonBox::Ok);
-        QVERIFY(accept != nullptr);
-        QVERIFY(accept->isEnabled());
-
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, QStringLiteral("HFS Rename/Move Catalog Entry"));
-}
-
-void selectHfsEmptyFileMode(QDialog* dialog, const QString& modeText, const QString& hfsPath) {
-    auto* mode = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("HFS file mutation mode"));
-    QVERIFY(mode != nullptr);
-    const int modeIndex = mode->findText(modeText);
-    QVERIFY2(modeIndex >= 0, "HFS empty-file mutation mode should exist");
-    mode->setCurrentIndex(modeIndex);
-
-    auto* hfsPathInput = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS file path"));
-    QVERIFY(hfsPathInput != nullptr);
-    QVERIFY(hfsPathInput->isVisible());
-    QVERIFY(hfsPathInput->isEnabled());
-    hfsPathInput->setText(hfsPath);
-}
-
-void verifyHfsEmptyFileHiddenControls(QDialog* dialog) {
-    auto* destination = findAccessibleWidget<QLineEdit>(dialog,
-                                                        QStringLiteral("HFS destination path"));
-    QVERIFY(destination != nullptr);
-    QVERIFY(!destination->isVisible());
-    QVERIFY(!destination->isEnabled());
-
-    auto* payload = findAccessibleWidget<QTextEdit>(dialog,
-                                                    QStringLiteral("HFS mutation payload text"));
-    QVERIFY(payload != nullptr);
-    QVERIFY(!payload->isVisible());
-    QVERIFY(!payload->isEnabled());
-
-    auto* fileId = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("HFS attribute file ID"));
-    QVERIFY(fileId != nullptr);
-    QVERIFY(!fileId->isVisible());
-    auto* attributeName = findAccessibleWidget<QLineEdit>(dialog,
-                                                          QStringLiteral("HFS attribute name"));
-    QVERIFY(attributeName != nullptr);
-    QVERIFY(!attributeName->isVisible());
-}
-
-void verifyHfsEmptyFileSecureWipeAndPreview(QDialog* dialog,
-                                            const QString& modeText,
-                                            const QString& expectedPreviewText) {
-    auto* secureWipe = findAccessibleWidget<QCheckBox>(
-        dialog, QStringLiteral("Zero released HFS blocks before delete"));
-    QVERIFY(secureWipe != nullptr);
-    const bool secureWipeExpected = modeText == QStringLiteral("Delete file") ||
-                                    modeText == QStringLiteral("Delete folder tree");
-    QCOMPARE(secureWipe->isVisible(), secureWipeExpected);
-    QCOMPARE(secureWipe->isEnabled(), secureWipeExpected);
-    if (secureWipeExpected) {
-        secureWipe->setChecked(true);
-        QApplication::processEvents();
-    }
-
-    auto* preview = findAccessibleWidget<QLabel>(dialog, QStringLiteral("Operation preview"));
-    QVERIFY(preview != nullptr);
-    QVERIFY(preview->text().contains(expectedPreviewText));
-    if (secureWipeExpected) {
-        QVERIFY(preview->text().contains(QStringLiteral("Released blocks will be zeroed")));
-    }
-}
-
-void confirmAndAcceptHfsEmptyFileDialog(QDialog* dialog) {
-    auto* confirm =
-        findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm HFS staged file mutation"));
-    QVERIFY(confirm != nullptr);
-    confirm->setChecked(true);
-    QApplication::processEvents();
-
-    auto* buttons = dialog->findChild<QDialogButtonBox*>();
-    QVERIFY(buttons != nullptr);
-    auto* accept = buttons->button(QDialogButtonBox::Ok);
-    QVERIFY(accept != nullptr);
-    QVERIFY(accept->isEnabled());
-}
-
-void queueHfsEmptyFileMutationAndVerify(const QString& modeText,
-                                        const QString& hfsPath,
-                                        const QString& expectedQueueText,
-                                        const QString& expectedPreviewText) {
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("HFS+"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(button->isEnabled());
-
-    bool inspected = false;
-    QTimer::singleShot(0, [&]() {
-        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-        QVERIFY2(dialog != nullptr, "HFS file dialog should open");
-        selectHfsEmptyFileMode(dialog, modeText, hfsPath);
-        verifyHfsEmptyFileHiddenControls(dialog);
-        verifyHfsEmptyFileSecureWipeAndPreview(dialog, modeText, expectedPreviewText);
-        confirmAndAcceptHfsEmptyFileDialog(dialog);
-        inspected = true;
-        dialog->accept();
-    });
-    button->click();
-    QVERIFY(inspected);
-    verifySingleQueuedOperation(&panel, expectedQueueText);
+    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Snapshot Create"));
 }
 
 void queueExtResizeAndVerify(bool grow) {
@@ -2435,55 +2000,10 @@ void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts
     table->selectRow(1);
     QApplication::processEvents();
 
-    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS File"));
-    QVERIFY2(button != nullptr, "APFS File action should exist");
+    auto* button = findToolButtonByName(&panel, QStringLiteral("APFS Container"));
+    QVERIFY2(button != nullptr, "APFS Container action should exist");
     QVERIFY(!button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("S.A.K. generated APFS layouts")));
-}
-
-void PartitionManagerPanelTests::hfsFileMutationActionQueuesStagedWrite() {
-    queueHfsFileMutationAndVerify();
-    queueHfsAllocationGrowthMutationAndVerify();
-    queueHfsCreateFileMutationAndVerify();
-    queueHfsForkAttributeMutationAndVerify();
-    queueHfsForkAttributeGrowthMutationAndVerify();
-    queueHfsRenameMoveMutationAndVerify();
-
-    sak::PartitionManagerPanel panel;
-    configureRawWritePanel(&panel, QStringLiteral("APFS"));
-    QApplication::processEvents();
-
-    auto* button = findToolButtonByName(&panel, QStringLiteral("HFS File"));
-    QVERIFY2(button != nullptr, "HFS File action should exist");
-    QVERIFY(!button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("Select an HFS+ or HFSX partition")));
-}
-
-void PartitionManagerPanelTests::hfsEmptyFileMutationModesQueueWithoutPayload() {
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Create empty file"),
-                                       QStringLiteral("/panel-created.txt"),
-                                       QStringLiteral("HFS Create Empty File"),
-                                       QStringLiteral("empty-file create"));
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete empty file"),
-                                       QStringLiteral("/panel-created.txt"),
-                                       QStringLiteral("HFS Delete Empty File"),
-                                       QStringLiteral("empty-file delete"));
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete file"),
-                                       QStringLiteral("/panel-created.txt"),
-                                       QStringLiteral("HFS Delete File"),
-                                       QStringLiteral("allocated-file delete"));
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Create empty folder"),
-                                       QStringLiteral("/Panel Folder"),
-                                       QStringLiteral("HFS Create Empty Folder"),
-                                       QStringLiteral("empty-folder create"));
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete empty folder"),
-                                       QStringLiteral("/Panel Folder"),
-                                       QStringLiteral("HFS Delete Empty Folder"),
-                                       QStringLiteral("empty-folder delete"));
-    queueHfsEmptyFileMutationAndVerify(QStringLiteral("Delete folder tree"),
-                                       QStringLiteral("/Panel Folder"),
-                                       QStringLiteral("HFS Delete Folder Tree"),
-                                       QStringLiteral("folder-tree delete"));
+    QVERIFY(button->toolTip().contains(QStringLiteral("created by this tool")));
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
