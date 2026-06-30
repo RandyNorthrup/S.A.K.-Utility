@@ -883,6 +883,11 @@ struct ApfsRootDirectoryPayload {
     QString directoryName;
     uint64_t directoryId{0};
     uint64_t privateId{0};
+    // Object id of the directory that contains this one. Root children carry
+    // kApfsRootDirectoryId (the default), so a flat or single-level tree is
+    // byte-identical to the certified layout; nested directories carry their real
+    // parent's object id.
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};
 };
 
 uint32_t crc32cWord(uint32_t crc, uint32_t word) {
@@ -1414,12 +1419,12 @@ void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
                                 const ApfsRootDirectoryPayload& directory,
                                 int32_t childCount) {
     records->append({fsKey(directory.directoryId, kApfsRecordInode),
-                     inodeValue({.parentId = kApfsRootDirectoryId,
+                     inodeValue({.parentId = directory.parentDirectoryId,
                                  .privateId = directory.privateId,
                                  .mode = kApfsModeDirectory,
                                  .name = directory.directoryName,
                                  .childOrLinkCount = childCount})});
-    records->append({directoryEntryKey(kApfsRootDirectoryId, directory.directoryName),
+    records->append({directoryEntryKey(directory.parentDirectoryId, directory.directoryName),
                      directoryEntryValue(directory.directoryId, kApfsDirTypeDirectory)});
 }
 
@@ -1481,14 +1486,14 @@ void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
 // Sorted file-system record set: the base volume entities (tree-root entity
 // oid 1 dirents, root + private directory inodes) plus one record group per
 // file/directory.
-// Count the direct children a directory inode reports: files whose parent is that
-// directory id. The root directory (id 2) additionally parents every top-level
-// directory. A flat root (every file parented to root, no directories) reduces to
+// Count the direct children a directory inode reports: files and subdirectories whose
+// parent is that directory id. Each is grouped by parentDirectoryId, so this is correct
+// at any depth. A flat root (every file parented to root, no directories) reduces to
 // files.size(), byte-identical to the certified single-level layout.
 int32_t directChildCount(uint64_t directoryId,
                          const QVector<ApfsRootFilePayload>& files,
-                         qsizetype extraSubdirectories) {
-    int32_t count = static_cast<int32_t>(extraSubdirectories);
+                         const QVector<ApfsRootDirectoryPayload>& directories) {
+    int32_t count = 0;
     for (const auto& file : files) {
         if (file.parentDirectoryId == directoryId) {
             ++count;
@@ -1499,6 +1504,12 @@ int32_t directChildCount(uint64_t directoryId,
             if (link.parentId == directoryId) {
                 ++count;
             }
+        }
+    }
+    // Each subdirectory is a dentry in its own parent directory.
+    for (const auto& directory : directories) {
+        if (directory.parentDirectoryId == directoryId) {
+            ++count;
         }
     }
     return count;
@@ -1529,12 +1540,12 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(const QVector<ApfsRootFilePayload>
         {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("private-dir")),
          directoryEntryValue(kApfsPrivateDirectoryId, kApfsDirTypeDirectory)},
         {fsKey(kApfsRootDirectoryId, kApfsRecordInode),
-         inodeValue({.parentId = kApfsTreeRootEntityId,
-                     .privateId = kApfsRootDirectoryId,
-                     .mode = kApfsModeDirectory,
-                     .name = QStringLiteral("root"),
-                     .childOrLinkCount =
-                         directChildCount(kApfsRootDirectoryId, files, directories.size())})},
+         inodeValue(
+             {.parentId = kApfsTreeRootEntityId,
+              .privateId = kApfsRootDirectoryId,
+              .mode = kApfsModeDirectory,
+              .name = QStringLiteral("root"),
+              .childOrLinkCount = directChildCount(kApfsRootDirectoryId, files, directories)})},
         {fsKey(kApfsPrivateDirectoryId, kApfsRecordInode),
          inodeValue({.parentId = kApfsTreeRootEntityId,
                      .privateId = kApfsPrivateDirectoryId,
@@ -1547,7 +1558,7 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(const QVector<ApfsRootFilePayload>
     for (const auto& directory : directories) {
         appendRootDirectoryRecords(&records,
                                    directory,
-                                   directChildCount(directory.directoryId, files, 0));
+                                   directChildCount(directory.directoryId, files, directories));
     }
     if (includeCryptoState) {
         records.append(defaultVolumeCryptoStateRecord());
@@ -6768,6 +6779,9 @@ struct ApfsDirectoryCreateRequest {
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> existingDirectories;
     QString directoryName;
+    // Object id of the directory the new one is created under; kApfsRootDirectoryId
+    // (the default) creates it at the container root.
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};
 };
 
 // A2-3.2: create one empty root directory with a true in-place copy-on-write commit.
@@ -6797,7 +6811,8 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
     QVector<ApfsRootDirectoryPayload> directories = request.existingDirectories;
     directories.append({.directoryName = request.directoryName.trimmed(),
                         .directoryId = newDirId,
-                        .privateId = newDirId});
+                        .privateId = newDirId,
+                        .parentDirectoryId = request.parentDirectoryId});
     QVector<ApfsFsTreeNode> fsNodes;
     if (!buildFsTreeNodes(
             {ctx.geometry.blockSize, files, directories, ctx.firstLeafOid}, &fsNodes, blockers)) {
@@ -6826,6 +6841,44 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                             blockers);
 }
 
+// Resolve the root-level directory a delete targets (a nested directory sharing the name is
+// preserved) and gather the directories that remain. Fails closed if the named directory is
+// absent or still holds any child - a child file OR a child subdirectory - because deleting
+// a non-empty directory would orphan its subtree. Callers empty it via the child paths first.
+bool resolveDeletableRootDirectory(const ApfsDirectoryCreateRequest& request,
+                                   QVector<ApfsRootDirectoryPayload>* remainingDirectories,
+                                   QStringList* blockers) {
+    const QString name = request.directoryName.trimmed();
+    uint64_t targetDirId = 0;
+    for (const auto& directory : request.existingDirectories) {
+        if (directory.parentDirectoryId == kApfsRootDirectoryId &&
+            directory.directoryName == name) {
+            targetDirId = directory.directoryId;
+        } else {
+            remainingDirectories->append(directory);
+        }
+    }
+    if (targetDirId == 0) {
+        blockers->append(
+            QStringLiteral("APFS directory-delete-commit: directory '%1' was not found").arg(name));
+        return false;
+    }
+    const auto isChildFile = [targetDirId](const ApfsRootFilePayload& file) {
+        return file.parentDirectoryId == targetDirId;
+    };
+    const auto isChildDir = [targetDirId](const ApfsRootDirectoryPayload& directory) {
+        return directory.parentDirectoryId == targetDirId;
+    };
+    if (std::any_of(request.existingFiles.cbegin(), request.existingFiles.cend(), isChildFile) ||
+        std::any_of(
+            request.existingDirectories.cbegin(), request.existingDirectories.cend(), isChildDir)) {
+        blockers->append(
+            QStringLiteral("APFS directory-delete-commit: directory '%1' is not empty").arg(name));
+        return false;
+    }
+    return true;
+}
+
 // A2-3.2: delete one empty root directory with a true in-place copy-on-write commit.
 // The directory is dropped from the preserved full tree, root's valence falls by one,
 // and the volume directory count decreases. Fails closed if the directory is missing or
@@ -6838,28 +6891,9 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
     if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
-    const QString name = request.directoryName.trimmed();
-    uint64_t targetDirId = 0;
     QVector<ApfsRootDirectoryPayload> remainingDirectories;
-    for (const auto& directory : request.existingDirectories) {
-        if (directory.directoryName == name) {
-            targetDirId = directory.directoryId;
-        } else {
-            remainingDirectories.append(directory);
-        }
-    }
-    if (targetDirId == 0) {
-        blockers->append(
-            QStringLiteral("APFS directory-delete-commit: directory '%1' was not found").arg(name));
+    if (!resolveDeletableRootDirectory(request, &remainingDirectories, blockers)) {
         return false;
-    }
-    for (const auto& file : request.existingFiles) {
-        if (file.parentDirectoryId == targetDirId) {
-            blockers->append(
-                QStringLiteral("APFS directory-delete-commit: directory '%1' is not empty")
-                    .arg(name));
-            return false;
-        }
     }
     QVector<ApfsRootFilePayload> files;
     if (!recoverPreservedFiles(
@@ -6948,61 +6982,73 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
 }
 
 
-// Enumerate the full one-level tree of a generated container - root regular files plus
-// each root directory and the regular files it contains - so an in-place commit can
-// round-trip directories and their children instead of dropping them. Files carry their
-// parentDirectoryId (the root directory id, or the owning directory's object id);
-// directories carry their object id. Nested subdirectories are not supported yet and
-// fail closed. A flat-root container yields an empty directory list, byte-identical to
-// the certified single-level layout.
+// Recursively enumerate a directory subtree of a generated container, collecting every
+// regular file (with its parent directory's object id) and every subdirectory (with its
+// own object id and its parent's object id) so an in-place commit round-trips the whole
+// tree at any depth instead of dropping or blocking it. dirPath is the directory's path
+// ("/" for the container root); dirObjectId is its inode id (kApfsRootDirectoryId for the
+// root). A directory whose listing hits the entry cap is refused rather than silently
+// truncated (preserving a partial directory would corrupt the committed tree).
+// Output sink for a full-tree collection: the source image path plus the file and
+// directory vectors being filled and the blocker list. Bundling them keeps the recursive
+// collector within the argument-count budget.
+struct ApfsTreeCollect {
+    QString sourcePath;
+    QVector<ApfsRootFilePayload>* files{nullptr};
+    QVector<ApfsRootDirectoryPayload>* directories{nullptr};
+    QStringList* blockers{nullptr};
+};
+
+bool collectDirectorySubtree(const ApfsTreeCollect& sink,
+                             const QString& dirPath,
+                             uint64_t dirObjectId) {
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        sink.sourcePath, dirPath, kApfsWriteRootListingMaxEntries);
+    if (!listing.ok) {
+        sink.blockers->append(listing.blockers.value(
+            0, QStringLiteral("APFS in-place commit: unable to read directory '%1'").arg(dirPath)));
+        return false;
+    }
+    if (listing.entries.size() >= kApfsWriteRootListingMaxEntries) {
+        sink.blockers->append(
+            QStringLiteral("APFS in-place commit: directory '%1' has too many entries to "
+                           "preserve safely")
+                .arg(dirPath));
+        return false;
+    }
+    for (const auto& entry : listing.entries) {
+        if (entry.directory) {
+            sink.directories->append({.directoryName = entry.name,
+                                      .directoryId = entry.object_id,
+                                      .privateId = entry.object_id,
+                                      .parentDirectoryId = dirObjectId});
+            const QString childPath = (dirPath == QStringLiteral("/") ? QString() : dirPath) +
+                                      QStringLiteral("/") + entry.name;
+            if (!collectDirectorySubtree(sink, childPath, entry.object_id)) {
+                return false;
+            }
+        } else if (entry.regular_file) {
+            sink.files->append({.fileName = entry.name,
+                                .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
+                                .parentDirectoryId = dirObjectId,
+                                .fileId = entry.object_id});
+        }
+    }
+    return true;
+}
+
+// Enumerate the full tree of a generated container at any depth - regular files (each with
+// its parent directory id) plus directories (each with its own and its parent id) - so an
+// in-place commit round-trips nested directories and their children instead of dropping
+// them. A flat-root container yields an empty directory list, byte-identical to the
+// certified single-level layout.
 bool collectFullFsTree(const QString& sourcePath,
                        QVector<ApfsRootFilePayload>* files,
                        QVector<ApfsRootDirectoryPayload>* directories,
                        QStringList* blockers) {
-    const auto rootListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
-        sourcePath, QStringLiteral("/"), kApfsWriteRootListingMaxEntries);
-    if (!rootListing.ok) {
-        blockers->append(rootListing.blockers.value(
-            0, QStringLiteral("APFS in-place commit: unable to read the existing tree")));
-        return false;
-    }
-    for (const auto& entry : rootListing.entries) {
-        if (entry.directory) {
-            directories->append({.directoryName = entry.name,
-                                 .directoryId = entry.object_id,
-                                 .privateId = entry.object_id});
-            const auto childListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
-                sourcePath, QStringLiteral("/") + entry.name, kApfsWriteRootListingMaxEntries);
-            if (!childListing.ok) {
-                blockers->append(childListing.blockers.value(
-                    0,
-                    QStringLiteral("APFS in-place commit: unable to read directory '%1'")
-                        .arg(entry.name)));
-                return false;
-            }
-            for (const auto& child : childListing.entries) {
-                if (child.directory) {
-                    blockers->append(
-                        QStringLiteral("APFS in-place commit does not yet preserve nested "
-                                       "subdirectories (in '%1')")
-                            .arg(entry.name));
-                    return false;
-                }
-                if (child.regular_file) {
-                    files->append(
-                        {.fileName = child.name,
-                         .data = QByteArray(static_cast<qsizetype>(child.size_bytes), '\0'),
-                         .parentDirectoryId = entry.object_id,
-                         .fileId = child.object_id});
-                }
-            }
-        } else if (entry.regular_file) {
-            files->append({.fileName = entry.name,
-                           .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
-                           .fileId = entry.object_id});
-        }
-    }
-    return true;
+    return collectDirectorySubtree({sourcePath, files, directories, blockers},
+                                   QStringLiteral("/"),
+                                   kApfsRootDirectoryId);
 }
 
 // A7 (A-h) clone: the shared data stream id and logical size a clone inherits from its
@@ -7056,13 +7102,15 @@ uint64_t resolveHardlinkTargetId(const QVector<ApfsRootFilePayload>& existingFil
     return 0;
 }
 
-// Full one-level tree for a chained insert; fails closed if the new root file name
-// already exists as a root file or directory.
-// The object id of the named root directory in a collected tree, or 0 if absent.
+// The object id of the named ROOT-level directory in a collected tree, or 0 if absent.
+// A mutation targets a root-level directory by name, so this matches only directories
+// whose parent is the container root - a nested directory that happens to share the name
+// is ignored.
 uint64_t resolveDirectoryId(const QVector<ApfsRootDirectoryPayload>& directories,
                             const QString& directoryName) {
     for (const auto& directory : directories) {
-        if (directory.directoryName == directoryName) {
+        if (directory.parentDirectoryId == kApfsRootDirectoryId &&
+            directory.directoryName == directoryName) {
             return directory.directoryId;
         }
     }
@@ -7075,6 +7123,34 @@ uint64_t resolveParentId(const QVector<ApfsRootDirectoryPayload>& directories,
                          const QString& directoryName) {
     return directoryName.isEmpty() ? kApfsRootDirectoryId
                                    : resolveDirectoryId(directories, directoryName);
+}
+
+// Resolve a directory PATH ("", "/", "/docs", "/docs/sub") to its object id by walking the
+// collected tree from the container root, matching each path component to a child directory
+// of the current parent. Returns kApfsRootDirectoryId for the root/empty path, or 0 if any
+// component is missing.
+uint64_t resolveDirectoryIdByPath(const QVector<ApfsRootDirectoryPayload>& directories,
+                                  const QString& path) {
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty() || trimmed == QStringLiteral("/")) {
+        return kApfsRootDirectoryId;
+    }
+    uint64_t parentId = kApfsRootDirectoryId;
+    const QStringList components = trimmed.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (const QString& component : components) {
+        uint64_t childId = 0;
+        for (const auto& directory : directories) {
+            if (directory.parentDirectoryId == parentId && directory.directoryName == component) {
+                childId = directory.directoryId;
+                break;
+            }
+        }
+        if (childId == 0) {
+            return 0;
+        }
+        parentId = childId;
+    }
+    return parentId;
 }
 
 bool collectExistingFullFsTree(const QString& sourcePath,
@@ -7094,13 +7170,67 @@ bool collectExistingFullFsTree(const QString& sourcePath,
         }
     }
     for (const auto& directory : *directories) {
-        if (directory.directoryName == newFileName) {
+        if (directory.parentDirectoryId == kApfsRootDirectoryId &&
+            directory.directoryName == newFileName) {
             blockers->append(
                 QStringLiteral("APFS file-insert-commit: a directory named '%1' already exists")
                     .arg(newFileName));
             return false;
         }
     }
+    return true;
+}
+
+// True if a file or directory named `name` already exists directly under `parentId` in a
+// collected tree.
+bool nameExistsInParent(const QVector<ApfsRootFilePayload>& files,
+                        const QVector<ApfsRootDirectoryPayload>& directories,
+                        uint64_t parentId,
+                        const QString& name) {
+    for (const auto& directory : directories) {
+        if (directory.parentDirectoryId == parentId && directory.directoryName == name) {
+            return true;
+        }
+    }
+    for (const auto& file : files) {
+        if (file.parentDirectoryId == parentId && file.fileName == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Collect the existing tree for a directory-create commit and resolve the object id of the
+// parent the new directory will be created under. An empty parent path creates at the
+// container root (with the certified root-name collision guard). A non-empty parent path
+// nests under that directory, failing closed if the parent is missing or already contains a
+// child of the same name.
+bool prepareDirectoryCreate(const ApfsTreeCollect& sink,
+                            const QString& parentPath,
+                            const QString& directoryName,
+                            uint64_t* parentIdOut) {
+    if (parentPath.trimmed().isEmpty()) {
+        *parentIdOut = kApfsRootDirectoryId;
+        return collectExistingFullFsTree(
+            sink.sourcePath, directoryName, sink.files, sink.directories, sink.blockers);
+    }
+    if (!collectFullFsTree(sink.sourcePath, sink.files, sink.directories, sink.blockers)) {
+        return false;
+    }
+    const uint64_t parentId = resolveDirectoryIdByPath(*sink.directories, parentPath);
+    if (parentId == 0) {
+        sink.blockers->append(
+            QStringLiteral("APFS directory-create-commit: parent directory '%1' was not found")
+                .arg(parentPath.trimmed()));
+        return false;
+    }
+    if (nameExistsInParent(*sink.files, *sink.directories, parentId, directoryName)) {
+        sink.blockers->append(
+            QStringLiteral("APFS directory-create-commit: '%1' already exists in '%2'")
+                .arg(directoryName, parentPath.trimmed()));
+        return false;
+    }
+    *parentIdOut = parentId;
     return true;
 }
 
@@ -13890,7 +14020,6 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     PartitionApfsImageCheckpointCommitResult result;
     result.source_image_path = request.source_image_path.trimmed();
     result.written_image_path = request.written_image_path.trimmed();
-
     const QString cleanDirectoryName = request.directory_name.trimmed();
     if (!appendRootDirectoryNameBlockers(
             cleanDirectoryName, QLatin1StringView("directory-create-commit"), &result.blockers)) {
@@ -13918,11 +14047,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     }
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
-    if (!collectExistingFullFsTree(result.source_image_path,
-                                   cleanDirectoryName,
-                                   &existingFiles,
-                                   &directories,
-                                   &result.blockers)) {
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!prepareDirectoryCreate(
+            {result.source_image_path, &existingFiles, &directories, &result.blockers},
+            request.parent_directory_path,
+            cleanDirectoryName,
+            &parentDirectoryId)) {
         return result;
     }
     if (!copyToScratchImage(result.source_image_path,
@@ -13941,7 +14071,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceDirectoryCreate(
-            &image, {existingFiles, directories, cleanDirectoryName}, &commit, &commitBlockers)) {
+            &image,
+            {existingFiles, directories, cleanDirectoryName, parentDirectoryId},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

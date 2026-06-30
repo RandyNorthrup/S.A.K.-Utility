@@ -347,6 +347,9 @@ struct PartitionApfsImageRootDirectoryMutationRequest {
     QString source_image_path;
     QString written_image_path;
     QString directory_name;
+    // Parent directory the new directory is created under; empty = container root,
+    // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
+    QString parent_directory_path;
     PartitionApfsWriteOptions options;
 };
 

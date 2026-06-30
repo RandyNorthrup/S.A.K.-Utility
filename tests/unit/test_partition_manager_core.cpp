@@ -1792,6 +1792,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
+    void apfsWriter_inPlaceNestedDirectoryRoundTrip();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
@@ -8301,6 +8302,144 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree()
          .directory_name = QStringLiteral("folder"),
          .options = options});
     QVERIFY(!dup.ok);
+}
+
+namespace {
+
+// Build a generated container carrying a nested tree: root.txt, second.txt, and /docs with
+// a child file a.txt plus a nested empty subdirectory /docs/sub. second.txt is written LAST
+// (an unrelated root-file commit) so the nested tree must be preserved through it. Returns
+// the final image path.
+void buildApfsNestedTreeContainer(const QDir& dir,
+                                  const PartitionApfsWriteOptions& options,
+                                  QString* finalOut) {
+    const QString base = dir.filePath(QStringLiteral("a2nd-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("A2ND"),
+                 .options = options})
+                .ok);
+    const QString s1 = dir.filePath(QStringLiteral("a2nd-1.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = base,
+                                                       .written_image_path = s1,
+                                                       .file_name = QStringLiteral("root.txt"),
+                                                       .file_data = QByteArrayLiteral("root me"),
+                                                       .options = options})
+            .ok);
+    const QString s2 = dir.filePath(QStringLiteral("a2nd-2.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = s1,
+                 .written_image_path = s2,
+                 .directory_name = QStringLiteral("docs"),
+                 .options = options})
+                .ok);
+    const QString s3 = dir.filePath(QStringLiteral("a2nd-3.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                {.source_image_path = s2,
+                 .written_image_path = s3,
+                 .directory_name = QStringLiteral("docs"),
+                 .file_name = QStringLiteral("a.txt"),
+                 .file_data = QByteArrayLiteral("child-a"),
+                 .options = options})
+                .ok);
+    // Nested directory /docs/sub created under a parent path (the new capability).
+    const QString s4 = dir.filePath(QStringLiteral("a2nd-4.apfs"));
+    const auto nested = PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+        {.source_image_path = s3,
+         .written_image_path = s4,
+         .directory_name = QStringLiteral("sub"),
+         .parent_directory_path = QStringLiteral("/docs"),
+         .options = options});
+    QVERIFY2(nested.ok, qPrintable(nested.blockers.join(QStringLiteral("; "))));
+    const QString s5 = dir.filePath(QStringLiteral("a2nd-5.apfs"));
+    const auto preserve =
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = s4,
+                                                       .written_image_path = s5,
+                                                       .file_name = QStringLiteral("second.txt"),
+                                                       .file_data = QByteArrayLiteral("second me"),
+                                                       .options = options});
+    QVERIFY2(preserve.ok, qPrintable(preserve.blockers.join(QStringLiteral("; "))));
+    *finalOut = s5;
+}
+
+// Verify the full nested tree round-trips through the reader: root entries, /docs children
+// (a.txt + the sub directory), and the empty /docs/sub.
+void verifyApfsNestedTreePreserved(const QString& image) {
+    const auto root =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(image, QStringLiteral("/"), 20);
+    QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
+    QStringList rootNames;
+    for (const auto& entry : root.entries) {
+        rootNames << entry.name;
+    }
+    QVERIFY2(rootNames.contains(QStringLiteral("root.txt")), qPrintable(rootNames.join(",")));
+    QVERIFY2(rootNames.contains(QStringLiteral("second.txt")), qPrintable(rootNames.join(",")));
+    QVERIFY2(rootNames.contains(QStringLiteral("docs")), qPrintable(rootNames.join(",")));
+
+    const auto docs =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(image, QStringLiteral("/docs"), 20);
+    QVERIFY2(docs.ok, qPrintable(docs.blockers.join(QStringLiteral("; "))));
+    QStringList docsNames;
+    bool sawSubDir = false;
+    for (const auto& entry : docs.entries) {
+        docsNames << entry.name;
+        if (entry.name == QStringLiteral("sub") && entry.directory) {
+            sawSubDir = true;
+        }
+    }
+    QVERIFY2(docsNames.contains(QStringLiteral("a.txt")), qPrintable(docsNames.join(",")));
+    QVERIFY2(sawSubDir, qPrintable(docsNames.join(",")));
+
+    const auto sub = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        image, QStringLiteral("/docs/sub"), 20);
+    QVERIFY2(sub.ok, qPrintable(sub.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(sub.entries.size(), 0);
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceNestedDirectoryRoundTrip() {
+    // Recursive directory preservation: a nested directory tree (/docs/sub plus a file in
+    // /docs) survives an unrelated root-file commit instead of failing closed, and the
+    // nested directory can itself be created under a parent path. Mirrors a real volume that
+    // already carries a nested tree (e.g. .Spotlight-V100). Reader round-trip is the host
+    // proof; macOS-kernel mount + fsck_apfs is the VM cert.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+
+    QString built;
+    buildApfsNestedTreeContainer(dir, options, &built);
+    verifyApfsNestedTreePreserved(built);
+
+    // Hardened delete: a directory whose only child is a SUBDIRECTORY is non-empty, so the
+    // delete fails closed rather than orphaning the subtree (fsck_apfs would reject orphans).
+    const QString box = dir.filePath(QStringLiteral("a2nd-box.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = built,
+                 .written_image_path = box,
+                 .directory_name = QStringLiteral("box"),
+                 .options = options})
+                .ok);
+    const QString boxInner = dir.filePath(QStringLiteral("a2nd-box-inner.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = box,
+                 .written_image_path = boxInner,
+                 .directory_name = QStringLiteral("inner"),
+                 .parent_directory_path = QStringLiteral("/box"),
+                 .options = options})
+                .ok);
+    const auto deleteNonEmpty = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+        {.source_image_path = boxInner,
+         .written_image_path = dir.filePath(QStringLiteral("a2nd-del.apfs")),
+         .directory_name = QStringLiteral("box"),
+         .options = options});
+    QVERIFY2(!deleteNonEmpty.ok,
+             "deleting a directory that contains only a subdirectory must fail closed");
 }
 
 namespace {
