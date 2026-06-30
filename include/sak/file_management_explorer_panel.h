@@ -33,6 +33,7 @@ class QAction;
 class QToolButton;
 class QVBoxLayout;
 class QImage;
+class QTabBar;
 
 namespace sak {
 
@@ -117,6 +118,7 @@ private:
     bool dispatchNavigationCommand(FileExplorerCommandId command);
     bool dispatchSelectionCommand(FileExplorerCommandId command);
     bool dispatchFileViewCommand(FileExplorerCommandId command);
+    bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
     void toggleHiddenItems();
     void toggleFileExtensions();
@@ -151,8 +153,18 @@ private:
     void showTargetPropertiesAtIndex(int target_index);
     void updateActionButtons();
     void logMessage(const QString& message);
+    void buildTabBar(QVBoxLayout* center_layout);
+    [[nodiscard]] FileExplorerTabState captureCurrentTab() const;
+    [[nodiscard]] QString tabTitleForCurrentLocation() const;
+    void restoreTab(const FileExplorerTabState& tab);
+    void updateActiveTabLabel();
+    void openCurrentLocationInNewTab();
+    void onTabSwitched(int index);
+    void onTabCloseRequested(int index);
+    [[nodiscard]] int findTargetIndexById(const QString& target_id) const;
 
     FileExplorerSidebar* m_sidebar{nullptr};
+    QTabBar* m_tab_bar{nullptr};
     FileExplorerCommandBar* m_command_bar{nullptr};
     FileExplorerOmnibar* m_omnibar{nullptr};
     FileExplorerPane* m_pane{nullptr};
@@ -199,6 +211,12 @@ private:
     quint64 m_listing_revision{0};
     quint64 m_columns_preview_revision{0};
     int m_current_target_index{-1};
+    // Open explorer tabs; each carries an independent target+path+history+view via its primary
+    // pane state. m_active_tab indexes the visible tab; m_restoring_tab suppresses the tab-switch
+    // save/restore while a restore is already in flight.
+    QVector<FileExplorerTabState> m_tabs;
+    int m_active_tab{0};
+    bool m_restoring_tab{false};
 };
 
 }  // namespace sak

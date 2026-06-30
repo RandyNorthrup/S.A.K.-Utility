@@ -30,6 +30,7 @@
 #include <QSettings>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTableView>
 #include <QTabWidget>
 #include <QTimer>
@@ -388,6 +389,30 @@ private Q_SLOTS:
         QCOMPARE(stack->currentIndex(), 1);
         pane.showImagePreview(false);
         QCOMPARE(stack->currentIndex(), 0);
+    }
+
+    void explorerTabsOpenAndSwitch() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* tabs = child<QTabBar>(&panel, "fileExplorerTabBar");
+        auto* newTab = child<QPushButton>(&panel, "fileExplorerNewTabButton");
+        QVERIFY(tabs);
+        QVERIFY(newTab);
+        QCOMPARE(tabs->count(), 1);
+
+        // The new-tab button opens a second tab and makes it active.
+        newTab->click();
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 2);
+        QCOMPARE(tabs->currentIndex(), 1);
+
+        // Switching back to the first tab restores it without error.
+        tabs->setCurrentIndex(0);
+        QApplication::processEvents();
+        QCOMPARE(tabs->currentIndex(), 0);
     }
 
     void shellCreatesFilesLikeRegions() {

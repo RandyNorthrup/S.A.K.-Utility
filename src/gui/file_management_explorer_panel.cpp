@@ -44,6 +44,7 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
+#include <QTabBar>
 #include <QTableView>
 #include <QtConcurrent>
 #include <QTimer>
@@ -429,7 +430,48 @@ void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
     center_layout->addWidget(m_omnibar);
 }
 
+void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
+    auto* row = new QWidget(this);
+    auto* row_layout = new QHBoxLayout(row);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setSpacing(ui::kSpacingTight);
+
+    m_tab_bar = new QTabBar(row);
+    m_tab_bar->setObjectName(QStringLiteral("fileExplorerTabBar"));
+    m_tab_bar->setAccessibleName(tr("Explorer tabs"));
+    m_tab_bar->setTabsClosable(true);
+    m_tab_bar->setMovable(true);
+    m_tab_bar->setExpanding(false);
+    m_tab_bar->setDrawBase(false);
+    m_tab_bar->addTab(tr("New Tab"));
+    row_layout->addWidget(m_tab_bar, 1);
+
+    auto* new_tab = new QPushButton(tr("+"), row);
+    new_tab->setObjectName(QStringLiteral("fileExplorerNewTabButton"));
+    new_tab->setAccessibleName(tr("Open a new explorer tab"));
+    new_tab->setToolTip(tr("Open a new tab at the current location"));
+    new_tab->setFixedWidth(ui::kUiButtonHeightMini);
+    row_layout->addWidget(new_tab, 0);
+
+    center_layout->addWidget(row);
+
+    m_tabs.clear();
+    m_tabs.append(FileExplorerTabState{});
+    m_active_tab = 0;
+
+    connect(m_tab_bar, &QTabBar::currentChanged, this, &FileManagementExplorerPanel::onTabSwitched);
+    connect(m_tab_bar,
+            &QTabBar::tabCloseRequested,
+            this,
+            &FileManagementExplorerPanel::onTabCloseRequested);
+    connect(new_tab,
+            &QPushButton::clicked,
+            this,
+            &FileManagementExplorerPanel::openCurrentLocationInNewTab);
+}
+
 void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout* center_layout) {
+    buildTabBar(center_layout);
     m_summary_label = new QLabel(tr("No target selected"), this);
     m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
     m_summary_label->setWordWrap(true);
@@ -1012,6 +1054,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
     }
     m_summary_label->setText(tr("Loading %1...").arg(m_current_path));
     updateActionButtons();
+    updateActiveTabLabel();
 
     auto* watcher = new QFutureWatcher<FileManagementListResult>(this);
     connect(watcher,
@@ -1188,6 +1231,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.target = currentTarget();
     context.pane = m_pane_state;
     context.pane.selection = currentSelection();
+    context.can_create_tabs = true;
     return context;
 }
 
@@ -1397,14 +1441,26 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
     }
 }
 
-bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerCommandId command) {
-    if (isViewModeCommand(command)) {
-        setExplorerViewMode(modeForCommand(command));
+bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
+    const FileExplorerCommandId command) {
+    if (command == FileExplorerCommandId::OpenInNewTab) {
+        openCurrentLocationInNewTab();
         return true;
     }
     if (isOpenElsewhereCommand(command)) {
         Q_EMIT statusMessage(FileExplorerCommandRegistry::command(command).status_text,
                              sak::kTimerStatusMessageMs);
+        return true;
+    }
+    return false;
+}
+
+bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerCommandId command) {
+    if (isViewModeCommand(command)) {
+        setExplorerViewMode(modeForCommand(command));
+        return true;
+    }
+    if (dispatchOpenElsewhereCommand(command)) {
         return true;
     }
     switch (command) {
@@ -1925,6 +1981,100 @@ void FileManagementExplorerPanel::onTargetChanged(int index) {
     const auto target = m_targets.at(target_index);
     rememberRecentTarget(FileExplorerTargetId::fromTarget(target).value);
     loadDirectory(target.local_file_system ? target.root_path : QStringLiteral("/"), false);
+}
+
+int FileManagementExplorerPanel::findTargetIndexById(const QString& target_id) const {
+    for (int index = 0; index < m_targets.size(); ++index) {
+        if (FileExplorerTargetId::fromTarget(m_targets.at(index)).value == target_id) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+QString FileManagementExplorerPanel::tabTitleForCurrentLocation() const {
+    const auto target = currentTarget();
+    if (target.root_path.isEmpty()) {
+        return tr("New Tab");
+    }
+    const QString leaf =
+        m_current_path.section(QLatin1Char('/'), -1, -1, QString::SectionSkipEmpty);
+    return leaf.isEmpty() ? target.label : leaf;
+}
+
+FileExplorerTabState FileManagementExplorerPanel::captureCurrentTab() const {
+    FileExplorerTabState tab;
+    tab.primary = m_pane_state;
+    tab.title = tabTitleForCurrentLocation();
+    return tab;
+}
+
+void FileManagementExplorerPanel::updateActiveTabLabel() {
+    if (!m_tab_bar || m_active_tab < 0 || m_active_tab >= m_tab_bar->count()) {
+        return;
+    }
+    const QString title = tabTitleForCurrentLocation();
+    m_tab_bar->setTabText(m_active_tab, title);
+    m_tab_bar->setTabToolTip(m_active_tab, m_current_path);
+    if (m_active_tab < m_tabs.size()) {
+        m_tabs[m_active_tab].title = title;
+    }
+}
+
+void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
+    m_restoring_tab = true;
+    const int target_index = findTargetIndexById(tab.primary.location.target_id.value);
+    m_current_target_index = target_index;
+    m_pane_state = tab.primary;
+    if (m_target_list && target_index >= 0) {
+        const QSignalBlocker blocker(m_target_list);
+        selectTargetById(tab.primary.location.target_id.value);
+    }
+    loadDirectory(tab.primary.location.path, false);
+    m_restoring_tab = false;
+}
+
+void FileManagementExplorerPanel::onTabSwitched(int index) {
+    if (m_restoring_tab || index < 0 || index >= m_tabs.size() || index == m_active_tab) {
+        return;
+    }
+    if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
+        m_tabs[m_active_tab] = captureCurrentTab();
+    }
+    m_active_tab = index;
+    restoreTab(m_tabs.at(index));
+}
+
+void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
+    if (!m_tab_bar) {
+        return;
+    }
+    if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
+        m_tabs[m_active_tab] = captureCurrentTab();
+    }
+    FileExplorerTabState fresh = captureCurrentTab();
+    if (selectedIsDirectory()) {
+        fresh.primary.location.path = selectedPath();
+        fresh.primary.back_stack.clear();
+        fresh.primary.forward_stack.clear();
+    }
+    fresh.title = tr("New Tab");
+    m_tabs.append(fresh);
+    m_tab_bar->addTab(fresh.title);
+    m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
+}
+
+void FileManagementExplorerPanel::onTabCloseRequested(int index) {
+    if (!m_tab_bar || m_tabs.size() <= 1 || index < 0 || index >= m_tabs.size()) {
+        return;
+    }
+    const QSignalBlocker blocker(m_tab_bar);
+    m_tabs.remove(index);
+    m_tab_bar->removeTab(index);
+    m_active_tab = m_tab_bar->currentIndex();
+    if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
+        restoreTab(m_tabs.at(m_active_tab));
+    }
 }
 
 void FileManagementExplorerPanel::onPathReturnPressed() {
