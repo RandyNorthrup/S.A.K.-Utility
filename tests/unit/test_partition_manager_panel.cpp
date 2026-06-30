@@ -100,14 +100,11 @@ struct CreateDialogInspection {
     bool inspected{false};
     bool has_size_handle{false};
     bool has_location_handle{false};
-    bool has_non_native_file_systems{false};
-    bool raw_create_controls_toggle{false};
-    bool swap_create_controls_toggle{false};
+    bool windows_native_file_systems_only{false};
     bool size_synced{false};
     bool location_synced{false};
     bool preview_drag_synced{false};
     QString file_system_items;
-    QString raw_toggle_state;
 };
 
 template <typename Widget>
@@ -269,18 +266,6 @@ bool comboHasItem(const QComboBox* combo, const QString& text) {
     return false;
 }
 
-void setComboItem(QComboBox* combo, const QString& text) {
-    if (!combo) {
-        return;
-    }
-    for (int index = 0; index < combo->count(); ++index) {
-        if (combo->itemText(index).compare(text, Qt::CaseInsensitive) == 0) {
-            combo->setCurrentIndex(index);
-            return;
-        }
-    }
-}
-
 QString comboItemsText(const QComboBox* combo) {
     QStringList items;
     for (int index = 0; combo && index < combo->count(); ++index) {
@@ -303,66 +288,27 @@ QComboBox* findCreateFileSystemCombo(QDialog* dialog) {
     const auto combos = dialog->findChildren<QComboBox*>();
     for (auto* combo : combos) {
         if (comboHasItem(combo, QStringLiteral("NTFS")) &&
-            comboHasItem(combo, QStringLiteral("ext4"))) {
+            comboHasItem(combo, QStringLiteral("FAT32")) &&
+            comboHasItem(combo, QStringLiteral("exFAT"))) {
             return combo;
         }
     }
     return nullptr;
 }
 
-QCheckBox* findCreateRawConfirm(QDialog* dialog) {
-    auto* confirm =
-        findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm ext filesystem format"));
-    if (confirm) {
-        return confirm;
-    }
-    return findAccessibleWidget<QCheckBox>(dialog, QStringLiteral("Confirm raw filesystem format"));
-}
-
 void inspectCreateFileSystems(QDialog* dialog, CreateDialogInspection* result) {
     const auto* fileSystem = findCreateFileSystemCombo(dialog);
     result->file_system_items = fileSystem ? comboItemsText(fileSystem)
                                            : comboInventoryText(dialog);
-    result->has_non_native_file_systems = fileSystem &&
-                                          comboHasItem(fileSystem, QStringLiteral("ext4")) &&
-                                          comboHasItem(fileSystem, QStringLiteral("HFSX")) &&
-                                          comboHasItem(fileSystem, QStringLiteral("Linux swap")) &&
-                                          comboHasItem(fileSystem, QStringLiteral("APFS"));
-}
-
-void inspectCreateRawControls(QDialog* dialog, CreateDialogInspection* result) {
-    auto* fileSystem = findCreateFileSystemCombo(dialog);
-    auto* allocationUnit = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Cluster size"));
-    auto* driveLetter = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Drive letter"));
-    auto* confirm = findCreateRawConfirm(dialog);
-    auto* swapPageSize = findAccessibleWidget<QComboBox>(dialog,
-                                                         QStringLiteral("Linux swap page size"));
-    result->raw_toggle_state =
-        QStringLiteral("fileSystem=%1 allocation=%2 drive=%3 confirm=%4 swap=%5")
-            .arg(fileSystem != nullptr)
-            .arg(allocationUnit != nullptr)
-            .arg(driveLetter != nullptr)
-            .arg(confirm != nullptr)
-            .arg(swapPageSize != nullptr);
-    if (!fileSystem || !allocationUnit || !driveLetter || !confirm || !swapPageSize) {
-        return;
-    }
-
-    setComboItem(fileSystem, QStringLiteral("ext4"));
-    QApplication::processEvents();
-    result->raw_create_controls_toggle = confirm->isVisible() && !allocationUnit->isEnabled() &&
-                                         !driveLetter->isEnabled();
-    result->raw_toggle_state =
-        result->raw_toggle_state +
-        QStringLiteral("; confirmVisible=%1 allocationEnabled=%2 driveEnabled=%3")
-            .arg(confirm->isVisible())
-            .arg(allocationUnit->isEnabled())
-            .arg(driveLetter->isEnabled());
-    setComboItem(fileSystem, QStringLiteral("Linux swap"));
-    QApplication::processEvents();
-    result->swap_create_controls_toggle = swapPageSize->isVisible() && confirm->isVisible() &&
-                                          confirm->accessibleName() ==
-                                              QStringLiteral("Confirm Linux swap format");
+    // Create formats Windows-native file systems only; non-native formatting moved to Format.
+    result->windows_native_file_systems_only =
+        fileSystem && comboHasItem(fileSystem, QStringLiteral("NTFS")) &&
+        comboHasItem(fileSystem, QStringLiteral("exFAT")) &&
+        comboHasItem(fileSystem, QStringLiteral("FAT32")) &&
+        !comboHasItem(fileSystem, QStringLiteral("ext4")) &&
+        !comboHasItem(fileSystem, QStringLiteral("HFSX")) &&
+        !comboHasItem(fileSystem, QStringLiteral("APFS")) &&
+        !comboHasItem(fileSystem, QStringLiteral("Linux swap"));
 }
 
 void inspectCreateHandleControls(QDialog* dialog, CreateDialogInspection* result) {
@@ -393,7 +339,6 @@ void inspectCreateHandleControls(QDialog* dialog, CreateDialogInspection* result
 
 void inspectCreateDialog(QDialog* dialog, CreateDialogInspection* result) {
     inspectCreateFileSystems(dialog, result);
-    inspectCreateRawControls(dialog, result);
     inspectCreateHandleControls(dialog, result);
     result->inspected = true;
 }
@@ -2335,9 +2280,7 @@ void PartitionManagerPanelTests::createDialogExposesSynchronizedHandleControls()
     QVERIFY(result.inspected);
     QVERIFY(result.has_size_handle);
     QVERIFY(result.has_location_handle);
-    QVERIFY2(result.has_non_native_file_systems, qPrintable(result.file_system_items));
-    QVERIFY2(result.raw_create_controls_toggle, qPrintable(result.raw_toggle_state));
-    QVERIFY(result.swap_create_controls_toggle);
+    QVERIFY2(result.windows_native_file_systems_only, qPrintable(result.file_system_items));
     QVERIFY(result.size_synced);
     QVERIFY(result.location_synced);
     QVERIFY(result.preview_drag_synced);

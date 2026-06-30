@@ -3109,11 +3109,9 @@ struct CreatePartitionWidgets {
     QComboBox* partition_type{nullptr};
     QComboBox* file_system{nullptr};
     QComboBox* allocation_unit{nullptr};
-    QComboBox* swap_page_size{nullptr};
     QLineEdit* label{nullptr};
     QComboBox* drive_letter{nullptr};
     QCheckBox* full_format{nullptr};
-    QCheckBox* raw_format_confirm{nullptr};
     OperationSizePreviewWidget* size_preview{nullptr};
 };
 
@@ -3313,17 +3311,14 @@ QString selectedPartitionTypeText(const QComboBox* combo) {
 
 QComboBox* createCreatePartitionFileSystemSelector(QWidget* parent) {
     auto* combo = new QComboBox(parent);
-    combo->addItems({QStringLiteral("NTFS"),
-                     QStringLiteral("exFAT"),
-                     QStringLiteral("FAT32"),
-                     QStringLiteral("ext2"),
-                     QStringLiteral("ext3"),
-                     QStringLiteral("ext4"),
-                     QStringLiteral("HFS+"),
-                     QStringLiteral("HFSX"),
-                     QStringLiteral("APFS"),
-                     QStringLiteral("Linux swap")});
+    // Create formats Windows-native file systems only. Non-Windows file systems
+    // (ext/HFS+/APFS/Linux swap) and advanced options (encryption, multi-volume) are
+    // handled by the single Format action on the created partition.
+    combo->addItems({QStringLiteral("NTFS"), QStringLiteral("exFAT"), QStringLiteral("FAT32")});
     combo->setAccessibleName(QObject::tr("File system"));
+    combo->setToolTip(
+        QObject::tr("To format as ext, HFS+, APFS, or Linux swap, create the partition, then use "
+                    "the Format action."));
     return combo;
 }
 
@@ -3365,26 +3360,7 @@ QString defaultFileSystemForPartitionType(const QString& value) {
         value == partitionTypePayloadValue(QStringLiteral("mbr"), QStringLiteral("IFS"))) {
         return QStringLiteral("NTFS");
     }
-    if (value == partitionTypePayloadValue(QStringLiteral("gpt"), gptApfsType())) {
-        return QStringLiteral("APFS");
-    }
     return QString();
-}
-
-void selectApfsPartitionTypeIfDefault(const CreatePartitionWidgets& widgets) {
-    if (!isApfsFilesystem(widgets.file_system->currentText())) {
-        return;
-    }
-    const QString apfsType = partitionTypePayloadValue(QStringLiteral("gpt"), gptApfsType());
-    const QString currentType = widgets.partition_type->currentData().toString();
-    if (!currentType.isEmpty() &&
-        currentType != partitionTypePayloadValue(QStringLiteral("gpt"), gptBasicDataType())) {
-        return;
-    }
-    const int apfsIndex = widgets.partition_type->findData(apfsType);
-    if (apfsIndex >= 0) {
-        widgets.partition_type->setCurrentIndex(apfsIndex);
-    }
 }
 
 void applyPartitionTypeFileSystemDefault(const CreatePartitionWidgets& widgets) {
@@ -3394,7 +3370,6 @@ void applyPartitionTypeFileSystemDefault(const CreatePartitionWidgets& widgets) 
         widgets.file_system->currentText().compare(targetFileSystem, Qt::CaseInsensitive) != 0) {
         widgets.file_system->setCurrentText(targetFileSystem);
     }
-    selectApfsPartitionTypeIfDefault(widgets);
 }
 
 void addCreatePartitionFormRows(const PartitionOperationDialog& dialog,
@@ -3406,11 +3381,9 @@ void addCreatePartitionFormRows(const PartitionOperationDialog& dialog,
     dialog.formLayout()->addRow(QObject::tr("Partition type:"), widgets.partition_type);
     dialog.formLayout()->addRow(QObject::tr("File system:"), widgets.file_system);
     dialog.formLayout()->addRow(QObject::tr("Cluster size:"), widgets.allocation_unit);
-    dialog.formLayout()->addRow(QObject::tr("Swap page size:"), widgets.swap_page_size);
     dialog.formLayout()->addRow(QObject::tr("Label:"), widgets.label);
     dialog.formLayout()->addRow(QObject::tr("Drive letter:"), widgets.drive_letter);
     dialog.formLayout()->addRow(QString(), widgets.full_format);
-    dialog.formLayout()->addRow(QString(), widgets.raw_format_confirm);
 }
 
 CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dialog,
@@ -3446,7 +3419,6 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     widgets.partition_type = createPartitionTypeSelector(&dialog, disk);
     widgets.file_system = createCreatePartitionFileSystemSelector(&dialog);
     widgets.allocation_unit = createAllocationUnitSelector(&dialog);
-    widgets.swap_page_size = createLinuxSwapPageSizeSelector(&dialog);
     widgets.label = new QLineEdit(QStringLiteral("Data"), &dialog);
     widgets.label->setAccessibleName(QObject::tr("Partition label"));
     widgets.drive_letter = createDriveLetterSelector(&dialog);
@@ -3454,10 +3426,6 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
                                         &dialog);
     widgets.full_format->setAccessibleName(QObject::tr("Overwrite all sectors"));
     widgets.full_format->setToolTip(fullFormatTooltip());
-    widgets.raw_format_confirm = new QCheckBox(
-        QObject::tr("I understand this erases the partition and creates a new ext file system."),
-        &dialog);
-    widgets.raw_format_confirm->setAccessibleName(QObject::tr("Confirm ext filesystem format"));
 
     addCreatePartitionFormRows(dialog, widgets);
     widgets.size_preview = new OperationSizePreviewWidget(&dialog);
@@ -3465,46 +3433,10 @@ CreatePartitionWidgets addCreatePartitionControls(PartitionOperationDialog& dial
     return widgets;
 }
 
-void applyRawFormatControlState(PartitionOperationDialog& dialog,
-                                const CreatePartitionWidgets& widgets,
-                                RawFormatKind rawKind) {
-    const bool rawSelected = rawKind != RawFormatKind::None;
-    const bool swapSelected = rawKind == RawFormatKind::Swap;
-
-    widgets.allocation_unit->setEnabled(!rawSelected);
-    widgets.drive_letter->setEnabled(!rawSelected);
-    widgets.full_format->setEnabled(!rawSelected);
-    widgets.swap_page_size->setVisible(swapSelected);
-    widgets.swap_page_size->setEnabled(swapSelected);
-    widgets.raw_format_confirm->setVisible(rawSelected);
-    widgets.raw_format_confirm->setAccessibleName(rawFormatConfirmationAccessibleName(rawKind));
-    widgets.raw_format_confirm->setText(rawFormatConfirmationText(rawKind));
-    dialog.setAcceptEnabled(!rawSelected || widgets.raw_format_confirm->isChecked());
-}
-
-QString createPartitionFormatText(const CreatePartitionWidgets& widgets, RawFormatKind rawKind) {
-    switch (rawKind) {
-    case RawFormatKind::Ext:
-        return QObject::tr(" Format as a Linux ext file system.");
-    case RawFormatKind::Hfs:
-        return QObject::tr(" Format as an HFS+ file system.");
-    case RawFormatKind::Swap:
-        return QObject::tr(" Write Linux SWAPSPACE2 metadata with %1 byte pages.")
-            .arg(widgets.swap_page_size->currentText());
-    case RawFormatKind::Apfs:
-        return QObject::tr(" Format as an APFS container.");
-    case RawFormatKind::None:
-        break;
-    }
-    return QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
-}
-
 void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                                   const CreatePartitionWidgets& widgets,
                                   uint64_t free_bytes) {
     applyPartitionTypeFileSystemDefault(widgets);
-    const RawFormatKind rawKind = rawFormatKindForFileSystem(widgets.file_system->currentText());
-    applyRawFormatControlState(dialog, widgets, rawKind);
 
     const uint64_t requestedBytes = static_cast<uint64_t>(widgets.size_mb->value()) *
                                     kMegabyteBytes;
@@ -3534,7 +3466,8 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                                         .arg(formatPartitionBytes(requestedBytes),
                                              formatPartitionBytes(beforeBytes + afterBytes)),
                                     beforeBytes}});
-    const QString formatText = createPartitionFormatText(widgets, rawKind);
+    const QString formatText =
+        QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
                               .arg(widgets.size_mb->value())
                               .arg(selectedPartitionTypeText(widgets.partition_type),
@@ -3552,15 +3485,6 @@ QJsonObject createPartitionPayload(const CreatePartitionWidgets& widgets) {
     payload[QStringLiteral("file_system")] = widgets.file_system->currentText();
     payload[QStringLiteral("allocation_unit_bytes")] =
         QString::number(selectedAllocationUnitBytes(widgets.allocation_unit));
-    const RawFormatKind rawKind = rawFormatKindForFileSystem(widgets.file_system->currentText());
-    if (rawKind != RawFormatKind::None) {
-        payload[QStringLiteral("non_native_file_system_tool")] = true;
-        payload[QStringLiteral("target_wipe_confirmed")] = widgets.raw_format_confirm->isChecked();
-    }
-    if (rawKind == RawFormatKind::Swap) {
-        payload[QStringLiteral("linux_swap_page_size_bytes")] =
-            widgets.swap_page_size->currentText();
-    }
     const QString typeValue = widgets.partition_type->currentData().toString();
     if (typeValue.startsWith(QStringLiteral("gpt:"))) {
         payload[QStringLiteral("gpt_type")] = typeValue.mid(QStringLiteral("gpt:").size());
@@ -9618,9 +9542,7 @@ void PartitionManagerPanel::onCreatePartition() {
     connect(widgets.partition_type, &QComboBox::currentTextChanged, &dialog, updatePreview);
     connect(widgets.file_system, &QComboBox::currentTextChanged, &dialog, updatePreview);
     connect(widgets.allocation_unit, &QComboBox::currentTextChanged, &dialog, updatePreview);
-    connect(widgets.swap_page_size, &QComboBox::currentTextChanged, &dialog, updatePreview);
     connect(widgets.label, &QLineEdit::textChanged, &dialog, updatePreview);
-    connect(widgets.raw_format_confirm, &QCheckBox::toggled, &dialog, updatePreview);
     updatePreview();
     if (dialog.exec() != QDialog::Accepted) {
         return;
