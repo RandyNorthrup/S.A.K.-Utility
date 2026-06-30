@@ -83,7 +83,9 @@ bool isApfsPathSupported(const QString& path, bool directory) {
         clean.prepend(QLatin1Char('/'));
     }
     const auto parts = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    return directory ? parts.size() == 1 : parts.size() == 1 || parts.size() == kApfsMaxPathDepth;
+    // Directories may nest to any depth: the certified COW engine resolves the parent path and
+    // fails closed if a parent is missing, so only an empty (root) path is rejected here.
+    return directory ? parts.size() >= 1 : parts.size() == 1 || parts.size() == kApfsMaxPathDepth;
 }
 
 QStringList apfsParts(const QString& path) {
@@ -639,16 +641,22 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
         if (!isApfsPathSupported(cleanPath, true)) {
             return mutationBlocked(fs,
                                    cleanPath,
-                                   QStringLiteral("APFS File Management directory create is "
-                                                  "limited to root directories"));
+                                   QStringLiteral(
+                                       "APFS File Management directory create needs a name"));
         }
         const auto parts = apfsParts(cleanPath);
-        // Root directories use the certified crash-safe in-place COW engine.
+        // The new directory's own name is the last path component; everything before it is the
+        // parent path the certified crash-safe COW engine nests it under (empty = container root).
+        const QString parentPath = parts.size() > 1
+                                       ? QLatin1Char('/') +
+                                             parts.mid(0, parts.size() - 1).join(QLatin1Char('/'))
+                                       : QString();
         return fromApfsCommitResult(
             PartitionApfsWriter::commitRawDirectoryCreate(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
+                 .directory_name = parts.last(),
+                 .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),

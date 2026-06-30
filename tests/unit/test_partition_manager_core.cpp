@@ -1793,6 +1793,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceNestedDirectoryRoundTrip();
+    void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
@@ -9296,6 +9297,71 @@ void PartitionManagerCoreTests::apfsWriter_rawCommitWrappersFailClosedWithoutRaw
     QVERIFY(!imageOnlyReject.ok);
     QVERIFY(
         imageOnlyReject.blockers.join(QLatin1Char(' ')).contains(QStringLiteral("non-image-only")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_rawNestedDirectoryCreate() {
+    // The raw directory-create wrapper honors parent_directory_path: a directory created under
+    // an existing parent nests there. This is the path the File Management bridge drives for a
+    // nested "New Folder" (name = last path component, parent = the rest). A missing parent
+    // fails closed (no silent root-level create).
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString container = QDir(temp.path()).filePath(QStringLiteral("a2nestraw.apfs"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = container,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("A2NR"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+
+    struct RawTargetPredicateGuard {
+        ~RawTargetPredicateGuard() {
+            PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+        }
+    } guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [container](const QString& path) { return path == container; });
+
+    QVERIFY2(PartitionApfsWriter::commitRawDirectoryCreate(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .directory_name = QStringLiteral("docs"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw create docs");
+    QVERIFY2(PartitionApfsWriter::commitRawDirectoryCreate(
+                 {.target_path = container,
+                  .target_container_bytes = bytes,
+                  .directory_name = QStringLiteral("sub"),
+                  .parent_directory_path = QStringLiteral("/docs"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw create docs/sub");
+
+    const auto docs = PartitionApfsFileSystemReader::listDirectoryFromImage(container,
+                                                                            QStringLiteral("/docs"),
+                                                                            20);
+    QVERIFY2(docs.ok, qPrintable(docs.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(docs.entries.size(), 1);
+    QCOMPARE(docs.entries.first().name, QStringLiteral("sub"));
+    QVERIFY(docs.entries.first().directory);
+
+    const auto orphan = PartitionApfsWriter::commitRawDirectoryCreate(
+        {.target_path = container,
+         .target_container_bytes = bytes,
+         .directory_name = QStringLiteral("leaf"),
+         .parent_directory_path = QStringLiteral("/nope"),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = rawOptions});
+    QVERIFY(!orphan.ok);
 }
 
 namespace {
