@@ -4546,18 +4546,31 @@ uint64_t spilledChunkSlot(const ApfsFileInsertAllocation& alloc, uint64_t chunk)
     return 0;
 }
 
-// The allocated blocks that landed in data chunk `chunkIndex` (>= 1) - their data
+// The blocks in `blocks` that fall inside data chunk `chunkIndex` (>= 1) - their data
 // spilled past chunk 0, so they are tracked by that chunk's own bitmap, not chunk 0's.
-QVector<uint64_t> chunkAllocatedBlocks(const ApfsFileInsertAllocation& alloc, uint64_t chunkIndex) {
+QVector<uint64_t> blocksInChunk(const QVector<uint64_t>& blocks,
+                                uint64_t chunk0Blocks,
+                                uint64_t chunkIndex) {
     QVector<uint64_t> out;
-    const uint64_t lo = chunkIndex * alloc.layout.chunk0Blocks;
-    const uint64_t hi = lo + alloc.layout.chunk0Blocks;
-    for (uint64_t block : alloc.allocated) {
+    const uint64_t lo = chunkIndex * chunk0Blocks;
+    const uint64_t hi = lo + chunk0Blocks;
+    for (uint64_t block : blocks) {
         if (block >= lo && block < hi) {
             out.append(block);
         }
     }
     return out;
+}
+
+// The allocated blocks that landed in data chunk `chunkIndex` (>= 1).
+QVector<uint64_t> chunkAllocatedBlocks(const ApfsFileInsertAllocation& alloc, uint64_t chunkIndex) {
+    return blocksInChunk(alloc.allocated, alloc.layout.chunk0Blocks, chunkIndex);
+}
+
+// The freed blocks that fall inside data chunk `chunkIndex` (>= 1) - a delete/overwrite of a
+// spilled file releases data blocks past chunk 0, which must clear in that chunk's own bitmap.
+QVector<uint64_t> chunkFreedBlocks(const ApfsFileInsertAllocation& alloc, uint64_t chunkIndex) {
+    return blocksInChunk(alloc.freed, alloc.layout.chunk0Blocks, chunkIndex);
 }
 
 // Sorted, unique data-chunk indices (>= 1) this commit spilled into (empty when the
@@ -4577,8 +4590,26 @@ QVector<uint64_t> spilledChunkIndices(const QVector<uint64_t>& blocks, uint64_t 
     return chunks;
 }
 
-QVector<uint64_t> spilledChunkIndices(const ApfsFileInsertAllocation& alloc) {
-    return spilledChunkIndices(alloc.allocated, alloc.layout.chunk0Blocks);
+// The sorted, unique set of spilled data chunks (>= 1) this commit TOUCHES: the union of
+// the chunks it allocated into and the chunks it freed from. A multi-chunk free (a spilled
+// file deleted/overwritten) releases data blocks past chunk 0, so those chunks join the
+// touched set even when nothing new is allocated into them. On a chunk-0-only commit both
+// inputs are empty and this reduces to the certified allocation-only spilled set.
+QVector<uint64_t> touchedSpilledChunkIndices(const QVector<uint64_t>& allocated,
+                                             const QVector<uint64_t>& freed,
+                                             uint64_t chunk0Blocks) {
+    QVector<uint64_t> chunks = spilledChunkIndices(allocated, chunk0Blocks);
+    for (uint64_t c : spilledChunkIndices(freed, chunk0Blocks)) {
+        if (!chunks.contains(c)) {
+            chunks.append(c);
+        }
+    }
+    std::sort(chunks.begin(), chunks.end());
+    return chunks;
+}
+
+QVector<uint64_t> touchedSpilledChunkIndices(const ApfsFileInsertAllocation& alloc) {
+    return touchedSpilledChunkIndices(alloc.allocated, alloc.freed, alloc.layout.chunk0Blocks);
 }
 
 // Overflow-tier rotated cib: chunk 0 stays full (free unchanged), its bitmap just
@@ -4608,6 +4639,43 @@ bool writeRotatedCibOverflow(QByteArray* cib,
         alloc.image, alloc.geometry, alloc.rotation.newCib, cib, blockers);
 }
 
+// The correction cib 0's free count needs on top of cibFreeDelta, which assumed EVERY
+// allocated and reclaimed-freed block hit chunk 0. Each spilled chunk's allocated blocks did
+// not consume chunk-0 free (add them back), and its freed blocks did not raise chunk-0 free
+// (remove them). Their bitmaps are reserved IP slots already marked used in chunk 0, so they
+// never move chunk 0's free count. On a chunk-0-only commit `spilled` is empty and this is 0
+// (byte-identical).
+int64_t spilledChunk0FreeAdjust(const ApfsFileInsertAllocation& alloc,
+                                const QVector<uint64_t>& spilled) {
+    int64_t adjust = 0;
+    for (uint64_t c : spilled) {
+        adjust += chunkAllocatedBlocks(alloc, c).size();
+        adjust -= chunkFreedBlocks(alloc, c).size();
+    }
+    return adjust;
+}
+
+// Update spilled data chunk `chunk`'s cib entry (local index `entryIndex`) in `cib`: move its
+// free count by (freed - allocated) in it, point ci_bitmap_addr at the planned free-pool slot,
+// and stamp ci_xid at the commit xid. A delete raises free; a write lowers it; the fully-freed
+// chunk keeps a real (all-free) bitmap (the ci_bitmap_addr==0 compaction is a later follow-on).
+void updateSpilledChunkCibEntry(QByteArray* cib,
+                                const ApfsFileInsertAllocation& alloc,
+                                uint64_t chunk,
+                                uint64_t entryIndex) {
+    const int64_t delta = static_cast<int64_t>(chunkFreedBlocks(alloc, chunk).size()) -
+                          static_cast<int64_t>(chunkAllocatedBlocks(alloc, chunk).size());
+    const qsizetype entryC = kApfsChunkInfoEntriesOffset +
+                             static_cast<qsizetype>(entryIndex) * kApfsChunkInfoEntryStride;
+    writeLe32(cib,
+              entryC + kApfsChunkInfoEntryFreeCountOffset,
+              static_cast<uint32_t>(
+                  static_cast<int64_t>(le32(*cib, entryC + kApfsChunkInfoEntryFreeCountOffset)) +
+                  delta));
+    writeLe64(cib, entryC + kApfsChunkInfoEntryBitmapAddrOffset, spilledChunkSlot(alloc, chunk));
+    writeLe64(cib, entryC, alloc.newXid);
+}
+
 // Write the rotated chunk-info block: read the live cib, adjust chunk 0's free count
 // (and chunk 1's, on a multi-chunk overflow), re-point chunk 0's bitmap_addr at the
 // new rotated bitmap slot (and chunk 1's at its fresh physical bitmap block), re-stamp
@@ -4621,16 +4689,8 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     if (alloc.layout.allocChunk != 0) {
         return writeRotatedCibOverflow(&cib, alloc, blockers);
     }
-    const QVector<uint64_t> spilled = spilledChunkIndices(alloc);
-    int64_t totalSpill = 0;
-    for (uint64_t c : spilled) {
-        totalSpill += chunkAllocatedBlocks(alloc, c).size();
-    }
-    // cibFreeDelta assumed every allocation hit chunk 0; move the spilled data (chunks
-    // 1..K) back out of chunk 0's free count (each spill chunk's bitmap is a reserved
-    // internal-pool slot already marked used in chunk 0, so it does not change chunk 0's
-    // free count).
-    const int64_t chunk0Delta = alloc.cibFreeDelta + totalSpill;
+    const QVector<uint64_t> spilled = touchedSpilledChunkIndices(alloc);
+    const int64_t chunk0Delta = alloc.cibFreeDelta + spilledChunk0FreeAdjust(alloc, spilled);
     const qsizetype freeOffset = kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset;
     writeLe32(&cib,
               freeOffset,
@@ -4652,26 +4712,18 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     // its ci_xid at the commit xid: fsck requires the cib's object xid to equal the
     // most recent chunk xid (cib only changes if a chunk changes).
     writeLe64(&cib, kApfsChunkInfoEntriesOffset, alloc.newXid);
-    // Each spilled data chunk c THIS cib (cib 0) OWNS gets its free count reduced by its
-    // allocation and its bitmap_addr pointed at the free-pool slot the planner assigned it (a
-    // fresh chunk reuses the lowest free slot = the certified fixed slot; a repeated spill gets
-    // a NEW free-pool slot so the previous checkpoint's slot is never overwritten in place),
-    // re-stamped at the commit xid. S4b: chunks owned by a cib k>0 are updated in the COW'd cib
-    // k (writeCowedCibKBlocks), not here - keeping this byte-identical for cib-0-only spills.
+    // Each spilled data chunk c THIS cib (cib 0) OWNS gets its free count adjusted by
+    // (freed - allocated) in it, its bitmap_addr pointed at the free-pool slot the planner
+    // assigned it (a fresh chunk reuses the lowest free slot = the certified fixed slot; a
+    // repeated spill gets a NEW free-pool slot so the previous checkpoint's slot is never
+    // overwritten in place), re-stamped at the commit xid. S4b: chunks owned by a cib k>0 are
+    // updated in the COW'd cib k (writeCowedCibKBlocks), not here - keeping this byte-identical
+    // for cib-0-only spills.
     for (uint64_t c : spilled) {
         if (c / kApfsSpacemanChunksPerCib != 0) {
             continue;
         }
-        const int count = static_cast<int>(chunkAllocatedBlocks(alloc, c).size());
-        const qsizetype entryC = kApfsChunkInfoEntriesOffset +
-                                 static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
-        writeLe32(&cib,
-                  entryC + kApfsChunkInfoEntryFreeCountOffset,
-                  static_cast<uint32_t>(
-                      static_cast<int64_t>(le32(cib, entryC + kApfsChunkInfoEntryFreeCountOffset)) -
-                      count));
-        writeLe64(&cib, entryC + kApfsChunkInfoEntryBitmapAddrOffset, spilledChunkSlot(alloc, c));
-        writeLe64(&cib, entryC, alloc.newXid);
+        updateSpilledChunkCibEntry(&cib, alloc, c, c);
     }
     // The cib is a physical object: its o_oid must equal its block address, so it
     // has to move with the rotation (or a rolled-back checkpoint whose live cib is
@@ -4701,21 +4753,11 @@ bool writeOneCowedCibK(const ApfsFileInsertAllocation& alloc,
         blockers->append(QStringLiteral("APFS in-place commit: cannot read cib for copy-on-write"));
         return false;
     }
-    for (uint64_t c : spilledChunkIndices(alloc)) {
+    for (uint64_t c : touchedSpilledChunkIndices(alloc)) {
         if (c / kApfsSpacemanChunksPerCib != k) {
             continue;
         }
-        const int count = static_cast<int>(chunkAllocatedBlocks(alloc, c).size());
-        const qsizetype entryC = kApfsChunkInfoEntriesOffset +
-                                 static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) *
-                                     kApfsChunkInfoEntryStride;
-        writeLe32(&cib,
-                  entryC + kApfsChunkInfoEntryFreeCountOffset,
-                  static_cast<uint32_t>(
-                      static_cast<int64_t>(le32(cib, entryC + kApfsChunkInfoEntryFreeCountOffset)) -
-                      count));
-        writeLe64(&cib, entryC + kApfsChunkInfoEntryBitmapAddrOffset, spilledChunkSlot(alloc, c));
-        writeLe64(&cib, entryC, alloc.newXid);
+        updateSpilledChunkCibEntry(&cib, alloc, c, c % kApfsSpacemanChunksPerCib);
     }
     writeLe64(&cib, kApfsObjectOidOffset, newSlot);
     writeLe64(&cib, kApfsObjectXidOffset, alloc.newXid);
@@ -4805,13 +4847,15 @@ bool applyOverflowAllocation(const ApfsFileInsertAllocation& alloc, QStringList*
     return writeRotatedCib(alloc, blockers);
 }
 
-// Materialize each spilled data chunk's allocation bitmap, copied-on-write from the chunk's
-// CURRENT bitmap (readChunkAllocationBitmap returns an implicit-all-free block when the
-// chunk's ci_bitmap_addr is still 0) with this commit's allocated bits set, written to the
-// free-pool slot the S3 planner assigned (spilledChunkSlot). A fresh chunk lands at the
-// lowest free slot (= the certified fixed slot for a single-commit spill); a repeated spill
-// COWs the current live bitmap forward into a DIFFERENT free-pool slot, leaving the previous
-// checkpoint's slot intact (crash-safe).
+// Materialize each TOUCHED spilled data chunk's allocation bitmap, copied-on-write from the
+// chunk's CURRENT bitmap (readChunkAllocationBitmap returns an implicit-all-free block when the
+// chunk's ci_bitmap_addr is still 0) with this commit's allocated bits SET and its freed bits
+// CLEARED, written to the free-pool slot the S3 planner assigned (spilledChunkSlot). A fresh
+// chunk lands at the lowest free slot (= the certified fixed slot for a single-commit spill);
+// a repeated spill (or a delete that frees only into this chunk) COWs the current live bitmap
+// forward into a DIFFERENT free-pool slot, leaving the previous checkpoint's slot intact
+// (crash-safe). A fully-freed chunk keeps a real all-free bitmap here (ci_bitmap_addr==0
+// compaction is a later follow-on).
 bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
                                     const QVector<uint64_t>& spilled,
                                     QStringList* blockers) {
@@ -4828,6 +4872,10 @@ bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
         QByteArray chunkBitmap = readChunkAllocationBitmap(
             alloc.image, alloc.geometry, ownerCib, c % kApfsSpacemanChunksPerCib, blockers);
         const uint64_t chunkBase = c * alloc.layout.chunk0Blocks;
+        for (uint64_t block : chunkFreedBlocks(alloc, c)) {
+            const uint64_t bit = block - chunkBase;
+            chunkBitmap[static_cast<qsizetype>(bit / 8)] &= static_cast<char>(~(1 << (bit % 8)));
+        }
         for (uint64_t block : chunkAllocatedBlocks(alloc, c)) {
             const uint64_t bit = block - chunkBase;
             chunkBitmap[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
@@ -4849,22 +4897,21 @@ bool applyFileInsertAllocation(const ApfsFileInsertAllocation& alloc, QStringLis
             alloc.image, alloc.geometry, alloc.rotation.liveBitmap, &bitmap, blockers)) {
         return false;
     }
-    // Chunk 0's bitmap tracks the chunk-0 allocations; each spilled data chunk's data is
-    // tracked by its own bitmap (materialized below). The spilled chunks' bitmap slots
-    // live in chunk 0's reserved prefix, already marked used, so they are not added here.
-    // freed blocks are always the old chain in chunk 0.
-    QVector<uint64_t> chunk0Allocated;
-    for (uint64_t block : alloc.allocated) {
-        if (block < alloc.layout.chunk0Blocks) {
-            chunk0Allocated.append(block);
-        }
-    }
-    flipChunkBitmapBits(&bitmap, alloc.freed, chunk0Allocated);
+    // Chunk 0's bitmap tracks the chunk-0 allocations AND the chunk-0 frees; each spilled
+    // data chunk's data is tracked by its own bitmap (materialized below). The spilled chunks'
+    // bitmap slots live in chunk 0's reserved prefix, already marked used, so they are not
+    // touched here. A freed block in a spilled chunk (a deleted/overwritten multi-chunk file)
+    // is cleared in THAT chunk's bitmap (materializeSpilledChunkBitmaps), never in chunk 0 -
+    // clearing it here would corrupt chunk 0's bitmap out of bounds and miss the real bit.
+    QVector<uint64_t> chunk0Allocated =
+        blocksInChunk(alloc.allocated, alloc.layout.chunk0Blocks, 0);
+    QVector<uint64_t> chunk0Freed = blocksInChunk(alloc.freed, alloc.layout.chunk0Blocks, 0);
+    flipChunkBitmapBits(&bitmap, chunk0Freed, chunk0Allocated);
     if (!writeApfsRepairBlock(
             alloc.image, alloc.geometry, alloc.rotation.newBitmap, bitmap, blockers)) {
         return false;
     }
-    const QVector<uint64_t> spilled = spilledChunkIndices(alloc);
+    const QVector<uint64_t> spilled = touchedSpilledChunkIndices(alloc);
     if (!spilled.isEmpty() && !materializeSpilledChunkBitmaps(alloc, spilled, blockers)) {
         return false;
     }
@@ -5968,18 +6015,19 @@ QSet<uint64_t> spillPlanExcludedBlocks(const ApfsFsCommitContext& ctx,
     return excluded;
 }
 
-// COW the cibs k>0 that own a chunk this commit spilled into: assign each a fresh free-pool
-// slot (never its current one, so the previous checkpoint's cib is left intact), record the
-// repoint for the spaceman cib-array, and free its old address onto sm_fq[IP]. Cib 0 rotates
-// through its own group, so it is skipped here.
+// COW the cibs k>0 that own a chunk this commit TOUCHED (spilled into OR freed from): assign
+// each a fresh free-pool slot (never its current one, so the previous checkpoint's cib is left
+// intact), record the repoint for the spaceman cib-array, and free its old address onto
+// sm_fq[IP]. Cib 0 rotates through its own group, so it is skipped here.
 bool planCibKCopyOnWrite(const ApfsFsCommitFinalize& f,
-                         const ApfsIpFreePoolGeometry& geo,
+                         const QVector<uint64_t>& freed,
                          QSet<uint64_t>* excluded,
                          ApfsSpilledChunkPlan* plan,
                          QStringList* blockers) {
     const ApfsFsCommitContext& ctx = f.ctx;
+    const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
     QVector<uint64_t> touchedCibs;
-    for (uint64_t c : spilledChunkIndices(f.newBlocks, ctx.layout.chunk0Blocks)) {
+    for (uint64_t c : touchedSpilledChunkIndices(f.newBlocks, freed, ctx.layout.chunk0Blocks)) {
         const uint64_t k = cibIndexForChunk(c);
         if (k != 0 && !touchedCibs.contains(k)) {
             touchedCibs.append(k);
@@ -6000,23 +6048,27 @@ bool planCibKCopyOnWrite(const ApfsFsCommitFinalize& f,
     return true;
 }
 
-// Plan the free-pool bitmap COW for the data chunks this commit spills into. A fresh chunk
-// (current ci_bitmap_addr 0) takes the lowest free-pool slot - which is the certified fixed
-// slot for a single-commit spill, so byte-identity holds - and frees nothing. A repeated
-// spill into an already-spilled chunk takes a DIFFERENT free-pool slot (never the current one,
-// so the previous checkpoint's slot is never overwritten in place) and frees the old slot
-// onto sm_fq[IP]. The free-pool pick excludes the reserved region, every current live spill
-// slot, every current cib k>0 address, and every IP-FQ ghost. S4b additionally copies-on-writes
-// each cib k>0 that owns a spilled chunk and re-points the spaceman cib-array entry.
+// Plan the free-pool bitmap COW for the data chunks this commit TOUCHES (spills into OR frees
+// from). A fresh chunk (current ci_bitmap_addr 0) takes the lowest free-pool slot - which is
+// the certified fixed slot for a single-commit spill, so byte-identity holds - and frees
+// nothing. A repeated spill (or a delete/overwrite that frees data past chunk 0) COWs the
+// chunk's current live bitmap into a DIFFERENT free-pool slot (never the current one, so the
+// previous checkpoint's slot is never overwritten in place) and frees the old slot onto
+// sm_fq[IP]. A freed-from chunk always already carries a live bitmap (it held the file's data),
+// so its `current` is non-zero. The free-pool pick excludes the reserved region, every current
+// live spill slot, every current cib k>0 address, and every IP-FQ ghost. S4b additionally
+// copies-on-writes each cib k>0 that owns a touched chunk and re-points the spaceman cib-array
+// entry. On a chunk-0-only commit the touched set is empty and the plan stays byte-identical.
 bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
                              const ApfsIpRotation& rotation,
+                             const QVector<uint64_t>& freed,
                              ApfsSpilledChunkPlan* plan,
                              QStringList* blockers) {
     const ApfsFsCommitContext& ctx = f.ctx;
     const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
     const QVector<uint64_t> liveSpilled = liveSpilledChunkIndices(ctx, blockers);
     QSet<uint64_t> excluded = spillPlanExcludedBlocks(ctx, geo, rotation, liveSpilled, blockers);
-    for (uint64_t c : spilledChunkIndices(f.newBlocks, ctx.layout.chunk0Blocks)) {
+    for (uint64_t c : touchedSpilledChunkIndices(f.newBlocks, freed, ctx.layout.chunk0Blocks)) {
         const uint64_t current = liveChunkBitmapAddr(ctx, c, blockers);
         const uint64_t slot = lowestFreeIpBlock(geo, excluded);
         if (slot == 0) {
@@ -6033,7 +6085,7 @@ bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
             plan->freedOldSlots.append(current);
         }
     }
-    if (!planCibKCopyOnWrite(f, geo, &excluded, plan, blockers)) {
+    if (!planCibKCopyOnWrite(f, freed, &excluded, plan, blockers)) {
         return false;
     }
     QVector<uint64_t> extraUsed =
@@ -6045,15 +6097,26 @@ bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
     return true;
 }
 
+// The precomputed inputs the finalize tail threads into apply + checkpoint: the crash-safe
+// cib/bitmap rotation, the spilled/freed-chunk COW plan, and the main free-queue advance (whose
+// reclaimed set the plan and the apply must agree on).
+struct ApfsFinalizeApply {
+    ApfsIpRotation rotation;
+    ApfsSpilledChunkPlan plan;
+    ApfsFinalizeFreeQueue fq;
+};
+
 // The finalize tail: write the COW chain, advance the main free-queue, apply the
 // file-insert allocation, rotate cab 0 (CAB tier), and advance the checkpoint. Split
 // from finalizeFsCommit to keep each within the complexity budget; the S3 spill plan
 // (COW'd bitmap slots + freed old slots + exact IP used-set) threads through.
 bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
-                             const ApfsIpRotation& rotation,
-                             const ApfsSpilledChunkPlan& plan,
+                             const ApfsFinalizeApply& in,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
+    const ApfsIpRotation& rotation = in.rotation;
+    const ApfsSpilledChunkPlan& plan = in.plan;
+    const ApfsFinalizeFreeQueue& fq = in.fq;
     const qsizetype nodeCount = f.fsNodes.size();
     const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
                                static_cast<int64_t>(f.ctx.oldFsNodes.size());
@@ -6062,7 +6125,6 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
     if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
         return false;
     }
-    const ApfsFinalizeFreeQueue fq = advanceFinalizeMainFreeQueue(f, blockers);
     const ApfsMainFqAdvance& mainFq = fq.mainFq;
     const int64_t netQueued = fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
@@ -6128,14 +6190,21 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     }
     const ApfsIpRotation rotation =
         computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
-    // Keystone S3: single-CIB (allocChunk 0) commits COW each spilled-chunk bitmap into a
-    // free-pool slot and mark the exact sparse IP used-set; the overflow tier keeps its
-    // certified fixed-slot + prefix path (plan empty).
+    // The main free-queue advance is computed here (not inside finalizeApplyAndAdvance) so the
+    // spill plan knows this commit's RECLAIMED freed blocks: a multi-chunk file deleted a
+    // rollback window ago is reclaimed now, and its spilled data chunks must be planned a
+    // free-pool bitmap COW just like the allocated chunks. The reclaimed set is what
+    // applyFileInsertAllocation flips into the bitmaps, so plan and apply see the same freed.
+    const ApfsFinalizeFreeQueue fq = advanceFinalizeMainFreeQueue(f, blockers);
+    // Keystone S3: single-CIB (allocChunk 0) commits COW each touched-chunk bitmap (spilled
+    // into OR freed from) into a free-pool slot and mark the exact sparse IP used-set; the
+    // overflow tier keeps its certified fixed-slot + prefix path (plan empty).
     ApfsSpilledChunkPlan plan;
-    if (f.ctx.layout.allocChunk == 0 && !planSpilledChunkBitmaps(f, rotation, &plan, blockers)) {
+    if (f.ctx.layout.allocChunk == 0 &&
+        !planSpilledChunkBitmaps(f, rotation, fq.mainFq.reclaimed, &plan, blockers)) {
         return false;
     }
-    return finalizeApplyAndAdvance(f, rotation, plan, result, blockers);
+    return finalizeApplyAndAdvance(f, {rotation, plan, fq}, result, blockers);
 }
 
 // Pass 1 of an insert: build the merged file list with a placeholder data-start
@@ -6679,10 +6748,18 @@ struct ApfsSnapshotCheckpointTail {
     uint64_t chunk1BitmapBlock{0};
 };
 
-// Shared snapshot commit tail (create + delete): thread the freed/allocated block sets
-// through the main free-queue, the allocation bitmap, the CIB/spaceman free counts, and
-// the checkpoint - the same crash-safe machinery the file-mutating commits use. The COW
-// chain must already be written; this advances the checkpoint that publishes it.
+// Shared snapshot commit tail (create + delete + revert): thread the freed/allocated block
+// sets through the main free-queue, the allocation bitmap, the CIB/spaceman free counts, and
+// the checkpoint - the same crash-safe machinery the file-mutating commits use. The COW chain
+// must already be written; this advances the checkpoint that publishes it.
+//
+// Every snapshot freed/allocated block is chunk-0 metadata (volume superblock, omap
+// header/tree, snap-meta tree, container omap header/tree, extent-ref) - a snapshot never
+// frees or allocates file DATA extents, which are the only blocks that spill past chunk 0.
+// applyFileInsertAllocation's freed argument is mainFq.reclaimed, itself drawn from that
+// chunk-0-only freed set, so the chunk-0 bitmap flip here never sees a spilled block and needs
+// no per-chunk routing (the multi-chunk-free fix applies only to the file-mutating tail). No
+// spilledSlots/cibRepoints are passed, so the multi-chunk apply paths stay untouched.
 bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
@@ -16654,6 +16731,40 @@ quint64 PartitionApfsWriter::readGeneratedChunkBitmapAddr(const QString& image_p
                             static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
                                 kApfsChunkInfoEntryStride;
     return le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+}
+
+quint64 PartitionApfsWriter::readGeneratedChunkFreeCount(const QString& image_path,
+                                                         quint64 chunk_index) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return 0;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return 0;
+    }
+    // Resolve the chunk-info block that OWNS this chunk (cib chunk_index/126) from the live
+    // cib-array, then index the entry local to it (chunk_index % 126), same as the bitmap-addr
+    // reader; return its ci_free_count.
+    const uint64_t ownerCibIndex = chunk_index / kApfsSpacemanChunksPerCib;
+    const QVector<uint64_t> addrs =
+        readLiveSpacemanCibArray(&image, geometry, nxsb, ownerCibIndex + 1, &blockers);
+    const uint64_t ownerAddr = addrs.value(static_cast<qsizetype>(ownerCibIndex), 0);
+    QByteArray cib(blockSize, '\0');
+    if (ownerAddr == 0 || !readApfsRepairBlock(&image, geometry, ownerAddr, &cib, &blockers)) {
+        return 0;
+    }
+    const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                            static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
+                                kApfsChunkInfoEntryStride;
+    return le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset);
 }
 
 quint64 PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(const QString& image_path,

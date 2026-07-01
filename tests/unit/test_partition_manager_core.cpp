@@ -1798,6 +1798,8 @@ private Q_SLOTS:
     void apfsWriter_gapSpillMarksExactBitmap();
     void apfsWriter_multiCibSpillsAcrossCib0Chunks();
     void apfsWriter_spillsIntoCib1OwnedChunk();
+    void apfsWriter_deletedSpilledFileFreesSpilledChunks();
+    void apfsWriter_deletedCibKSpilledFileFreesChunk();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8583,6 +8585,43 @@ void commitAndReadSpillPrefix(const QString& img,
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, spillFixtureChunk().left(read.data.size()));
 }
+
+// Delete root file `name` from the raw spill container `img` (sized `bytes`).
+bool deleteSpillFile(const QString& img, uint64_t bytes, const QString& name) {
+    return PartitionApfsWriter::commitRawFileDelete({.target_path = img,
+                                                     .target_container_bytes = bytes,
+                                                     .file_name = name,
+                                                     .target_mutation_confirmed = true,
+                                                     .allow_raw_device_target = true,
+                                                     .options = certifiedApfsRawCommitOptions()})
+        .ok;
+}
+
+// Commit a small (one-block) deterministic root file `name` to the raw spill container `img`.
+// Used to age the main free-queue past the rollback window without spilling.
+bool commitSmallSpillAging(const QString& img, uint64_t bytes, const QString& name) {
+    QByteArray small(4096, Qt::Uninitialized);
+    for (qsizetype i = 0; i < small.size(); ++i) {
+        small[i] = static_cast<char>((i * 37 + name.size()) & 0xFF);
+    }
+    return PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                    .target_container_bytes = bytes,
+                                                    .file_name = name,
+                                                    .file_data = small,
+                                                    .target_mutation_confirmed = true,
+                                                    .allow_raw_device_target = true,
+                                                    .options = certifiedApfsRawCommitOptions()})
+        .ok;
+}
+
+// Run `count` small aging commits (aging_0..aging_N) so a freed run older than the rollback
+// window (4) is reclaimed into its owning chunk's bitmap.
+void ageSpillFreeQueue(const QString& img, uint64_t bytes, int count) {
+    for (int i = 0; i < count; ++i) {
+        QVERIFY2(commitSmallSpillAging(img, bytes, QStringLiteral("aging_%1").arg(i)),
+                 qPrintable(QStringLiteral("aging commit %1 failed").arg(i)));
+    }
+}
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_spillsIntoCib1OwnedChunk() {
@@ -8627,6 +8666,93 @@ void PartitionManagerCoreTests::apfsWriter_spillsIntoCib1OwnedChunk() {
         PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.entries.size(), 2);
+}
+
+void PartitionManagerCoreTests::apfsWriter_deletedSpilledFileFreesSpilledChunks() {
+    // Multi-chunk FREE regression guard (the OOB flip bug): a 260 MiB file spills across
+    // chunks 0..2, then is DELETED. Its freed data extents (in chunks 1 and 2) ride the main
+    // free-queue and, a rollback window (4) later, are reclaimed. Before the fix, the reclaimed
+    // spilled blocks were flipped in CHUNK 0's bitmap - writing far out of bounds (block index
+    // >= 32768) and never clearing the real bit in the spilled chunk - which apfsck/fsck catch.
+    // After the fix each freed block clears in its OWNING chunk's bitmap and RAISES that chunk's
+    // ci_free_count. The image persists (SAK_MC_CERT_DIR) so host apfsck verifies both states.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("mcfree.img"));
+    const QString p1 = dir.filePath(QStringLiteral("mcfree_p1.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, 260ULL * 1024ULL * 1024ULL);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QVERIFY2(
+        commitSpillFile(img, bytes, QStringLiteral("big.bin"), p1, 260ULL * 1024ULL * 1024ULL).ok,
+        "spill commit");
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 2) != 0,
+             "no spill into chunk 2");
+    const quint64 c1Free0 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 1);
+    const quint64 c2Free0 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 2);
+    // Delete the spilled file - its data blocks in chunks 1 and 2 queue onto the main free-queue.
+    QVERIFY2(deleteSpillFile(img, bytes, QStringLiteral("big.bin")), "delete spilled file");
+    // Age past the rollback window (>= 5 small commits) so the freed spilled blocks reclaim.
+    ageSpillFreeQueue(img, bytes, 6);
+    // Every commit stayed ok and the container is still readable (the aging files are present).
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(listing.entries.size() == 6, "aging files missing / big.bin not deleted");
+    // The decisive assertion: chunks 1 and 2's free counts ROSE (their data bits were cleared in
+    // their OWN bitmaps). The OOB bug never touched them, so their free count stayed flat.
+    const quint64 c1Free1 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 1);
+    const quint64 c2Free1 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 2);
+    QVERIFY2(c1Free1 > c1Free0,
+             qPrintable(QStringLiteral("chunk 1 free count did not rise (%1 -> %2)")
+                            .arg(c1Free0)
+                            .arg(c1Free1)));
+    QVERIFY2(c2Free1 > c2Free0,
+             qPrintable(QStringLiteral("chunk 2 free count did not rise (%1 -> %2)")
+                            .arg(c2Free0)
+                            .arg(c2Free1)));
+}
+
+void PartitionManagerCoreTests::apfsWriter_deletedCibKSpilledFileFreesChunk() {
+    // Env-gated (16 GiB+): a file whose data reaches a chunk cib k>0 owns (chunk 126, owned by
+    // cib 1) is deleted and aged; the freed cib-1 chunk must clear correctly (its free count
+    // rises and cib 1 is COW'd on the freeing commit). Persists the image for host apfsck.
+    const QString envDir = qEnvironmentVariable("SAK_MCFREE_CERT_DIR");
+    if (envDir.isEmpty()) {
+        QSKIP("cib-k multi-chunk free cert needs SAK_MCFREE_CERT_DIR (~16 GiB sparse container)");
+    }
+    const QDir dir(envDir);
+    const uint64_t bytes = 256ULL * 32'768ULL * 4096ULL;           // cib 1 owns chunks 126..251
+    QVERIFY(PartitionApfsWriter::computeContainerGeometry(bytes / 4096).cib_count >= 2);
+    const uint64_t p1Bytes = 128ULL * 128ULL * 1024ULL * 1024ULL;  // reaches into cib 1
+    const QString img = dir.filePath(QStringLiteral("mcfree_cibk.img"));
+    const QString p1 = dir.filePath(QStringLiteral("mcfree_cibk_p1.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, p1Bytes);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    commitAndReadSpillPrefix(img, bytes, QStringLiteral("cibk.bin"), p1, p1Bytes);
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 126) != 0,
+             "chunk 126 (cib 1) never got a spill bitmap");
+    const quint64 c126Free0 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 126);
+    const quint64 cib1Before = PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(img, 1);
+    QVERIFY2(deleteSpillFile(img, bytes, QStringLiteral("cibk.bin")), "delete cib-k spilled file");
+    ageSpillFreeQueue(img, bytes, 6);
+    const quint64 c126Free1 = PartitionApfsWriter::readGeneratedChunkFreeCount(img, 126);
+    const quint64 cib1After = PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(img, 1);
+    QVERIFY2(c126Free1 > c126Free0,
+             qPrintable(QStringLiteral("chunk 126 free count did not rise (%1 -> %2)")
+                            .arg(c126Free0)
+                            .arg(c126Free1)));
+    QVERIFY2(cib1After != cib1Before, "cib 1 was not copied-on-written when its chunk freed");
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(listing.entries.size() == 6, "cibk.bin not deleted / aging files missing");
 }
 
 namespace {
