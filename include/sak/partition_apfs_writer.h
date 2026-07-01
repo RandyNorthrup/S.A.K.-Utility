@@ -896,6 +896,18 @@ public:
     ///        through the IP slots). Walks the live checkpoint-map to the
     ///        ephemeral spaceman. Returns 0 on read failure.
     [[nodiscard]] static quint64 readGeneratedLiveCibAddr(const QString& image_path);
+    /// \brief The current ci_bitmap_addr of data chunk @p chunk_index in the live
+    ///        chunk-info block of the generated container at @p image_path (0 when
+    ///        the chunk is still implicit-all-free). Diagnostic for the keystone S3
+    ///        free-pool spilled-bitmap COW: a repeated spill re-points this at a
+    ///        different internal-pool block than the previous checkpoint used.
+    [[nodiscard]] static quint64 readGeneratedChunkBitmapAddr(const QString& image_path,
+                                                              quint64 chunk_index);
+    /// \brief The internal-pool free-queue (sm_fq[IP]) ghost paddrs the live
+    ///        checkpoint of the generated container at @p image_path holds pending
+    ///        reclamation. Diagnostic for the keystone S3 COW: the old spilled-chunk
+    ///        bitmap slot a repeated spill retired must appear here.
+    [[nodiscard]] static QVector<quint64> readGeneratedIpFreeQueueGhosts(const QString& image_path);
     [[nodiscard]] static QStringList enterpriseCertificationRequirements();
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,

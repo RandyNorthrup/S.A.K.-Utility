@@ -3268,8 +3268,9 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
         writeLe16(spaceman, bmAddrOff + static_cast<qsizetype>(i) * 2, newSlots.at(i));
         writeLe64(spaceman, xidOff + static_cast<qsizetype>(i) * 8, ctx.newXid);
     }
-    // The whole ip usage (ipBitmapUsage contiguous blocks) fits the first bitmap
-    // block; the remaining bmSize-1 copies are all-zero.
+    // The whole ip usage (the exact ipUsedSet, all indices below one block's worth of
+    // bits for the certified tiers) fits the first bitmap block; the remaining bmSize-1
+    // copies are all-zero.
     for (uint64_t i = 0; i < bmSize; ++i) {
         const QByteArray bmp =
             i == 0 ? buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet)
@@ -4460,7 +4461,25 @@ struct ApfsFileInsertAllocation {
     // A7 (A-g) in-chunk grow: blocks added to chunk 0's ci_block_count (the device grew
     // within the existing chunk). 0 for every non-resize commit.
     int64_t chunk0BlockCountDelta{0};
+    // Keystone S3 free-pool spilled-bitmap COW: chunk index -> the internal-pool block this
+    // commit's copy-on-written allocation bitmap for that data chunk is written to. A fresh
+    // chunk (ci_bitmap_addr 0) gets the lowest free IP slot (= the certified fixed slot for a
+    // single-commit spill, so byte-identity holds); a repeated spill into an already-spilled
+    // chunk gets a DIFFERENT free-pool slot (COW, not in place), and its old slot is pushed
+    // onto sm_fq[IP]. Empty when this commit does not spill (writeRotatedCib/materialize skip).
+    QVector<QPair<uint64_t, uint64_t>> spilledSlots;
 };
+
+// The internal-pool block this commit's copy-on-written bitmap for spilled data chunk `c`
+// is written to (from the planned chunk -> slot map). Every spilled chunk has an entry.
+uint64_t spilledChunkSlot(const ApfsFileInsertAllocation& alloc, uint64_t chunk) {
+    for (const QPair<uint64_t, uint64_t>& slot : alloc.spilledSlots) {
+        if (slot.first == chunk) {
+            return slot.second;
+        }
+    }
+    return 0;
+}
 
 // The allocated blocks that landed in data chunk `chunkIndex` (>= 1) - their data
 // spilled past chunk 0, so they are tracked by that chunk's own bitmap, not chunk 0's.
@@ -4569,8 +4588,10 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
     // most recent chunk xid (cib only changes if a chunk changes).
     writeLe64(&cib, kApfsChunkInfoEntriesOffset, alloc.newXid);
     // Each spilled data chunk c (1..K) gets its free count reduced by its allocation and
-    // its bitmap_addr pointed at a consecutive reserved slot (chunk 1 = the base slot,
-    // chunk c = base + c-1), re-stamped at the commit xid.
+    // its bitmap_addr pointed at the free-pool slot the S3 planner assigned it (a fresh
+    // chunk reuses the lowest free slot = the certified fixed slot; a repeated spill gets a
+    // NEW free-pool slot so the previous checkpoint's slot is never overwritten in place),
+    // re-stamped at the commit xid.
     for (uint64_t c : spilled) {
         const int count = static_cast<int>(chunkAllocatedBlocks(alloc, c).size());
         const qsizetype entryC = kApfsChunkInfoEntriesOffset +
@@ -4580,9 +4601,7 @@ bool writeRotatedCib(const ApfsFileInsertAllocation& alloc, QStringList* blocker
                   static_cast<uint32_t>(
                       static_cast<int64_t>(le32(cib, entryC + kApfsChunkInfoEntryFreeCountOffset)) -
                       count));
-        writeLe64(&cib,
-                  entryC + kApfsChunkInfoEntryBitmapAddrOffset,
-                  alloc.chunk1BitmapBlock + (c - 1));
+        writeLe64(&cib, entryC + kApfsChunkInfoEntryBitmapAddrOffset, spilledChunkSlot(alloc, c));
         writeLe64(&cib, entryC, alloc.newXid);
     }
     // The cib is a physical object: its o_oid must equal its block address, so it
@@ -4669,9 +4688,13 @@ bool applyOverflowAllocation(const ApfsFileInsertAllocation& alloc, QStringList*
     return writeRotatedCib(alloc, blockers);
 }
 
-// Materialize each spilled data chunk's allocation bitmap (a fresh chunk starts
-// implicit-all-free, bitmap_addr 0) with this commit's allocated bits set, written
-// to its consecutive reserved slot (chunk c -> base + c-1).
+// Materialize each spilled data chunk's allocation bitmap, copied-on-write from the chunk's
+// CURRENT bitmap (readChunkAllocationBitmap returns an implicit-all-free block when the
+// chunk's ci_bitmap_addr is still 0) with this commit's allocated bits set, written to the
+// free-pool slot the S3 planner assigned (spilledChunkSlot). A fresh chunk lands at the
+// lowest free slot (= the certified fixed slot for a single-commit spill); a repeated spill
+// COWs the current live bitmap forward into a DIFFERENT free-pool slot, leaving the previous
+// checkpoint's slot intact (crash-safe).
 bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
                                     const QVector<uint64_t>& spilled,
                                     QStringList* blockers) {
@@ -4688,11 +4711,8 @@ bool materializeSpilledChunkBitmaps(const ApfsFileInsertAllocation& alloc,
             const uint64_t bit = block - chunkBase;
             chunkBitmap[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
         }
-        if (!writeApfsRepairBlock(alloc.image,
-                                  alloc.geometry,
-                                  alloc.chunk1BitmapBlock + (c - 1),
-                                  chunkBitmap,
-                                  blockers)) {
+        if (!writeApfsRepairBlock(
+                alloc.image, alloc.geometry, spilledChunkSlot(alloc, c), chunkBitmap, blockers)) {
             return false;
         }
     }
@@ -5501,14 +5521,14 @@ QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStrin
 // reduces to 6 (0x3f). Byte-identical to the inline computation it replaces.
 //
 // The spill-bitmap term counts EVERY data chunk that has a live materialized
-// allocation bitmap after this commit, not just the ones this commit spilled into.
-// A prior commit's spilled-chunk bitmaps stay live (their cib entries carry their
-// non-zero ci_bitmap_addr forward), so a later commit that does NOT spill must still
-// mark those slots used or apfsck (which rebuilds sm_ip_bitmap from each chunk's
-// ci_bitmap_addr) reports "bad ip allocation bitmap". The count = union of the live
-// spilled chunks (read from the live cib) and this commit's new spilled chunks; the
-// slots stay a contiguous prefix continuation (chunk c -> IP index base + c-1), so the
-// prefix used-set stays exact.
+// allocation bitmap after this commit, not just the ones this commit spilled into
+// (a prior commit's spilled-chunk bitmaps stay live via their cib ci_bitmap_addr).
+// The count = union of the live spilled chunks (read from the live cib) and this
+// commit's new spilled chunks. Since keystone S3 this return value is used ONLY as a
+// non-zero "advance the sm_ip_bitmap ring" gate (advanceIpBitmapRing) -- the actual
+// on-disk bits come from the exact index-keyed used-set buildSpillIpUsedSet writes
+// into ctx.ipUsedSet, NOT from a contiguous prefix of this count -- because S3 moved
+// spilled-chunk bitmaps to sparse free-pool slots that are no longer base + c-1.
 uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f,
                                       uint64_t groupSize,
                                       QStringList* blockers) {
@@ -5606,25 +5626,198 @@ bool finalizeRotateCab0(const ApfsFsCommitFinalize& f,
     return true;
 }
 
-bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
-                      ApfsInPlaceCheckpointResult* result,
-                      QStringList* blockers) {
-    const qsizetype nodeCount = f.fsNodes.size();
-    // Mutating a container that ALREADY carries a snapshot is a documented follow-on
-    // (multi-version volume omap + live-version reader); fail closed. The A8
-    // multi-volume + snapshot gate is met via mutate-then-snapshot.
-    if (liveVolumeHasSnapshot(f.ctx, blockers)) {
-        blockers->append(QStringLiteral(
-            "APFS in-place mutation of a container that already has a snapshot is not yet "
-            "supported; create the snapshot after the file mutations instead"));
+// Internal-pool geometry of a single-CIB generated container (the S3 spill tier): the
+// first IP block, the block count, and the first free-pool block after cib 0's three
+// rotation groups. The free pool is [freePoolBase, ipBase + ipBlockCount); spilled-chunk
+// bitmaps are copied-on-written into it. Immutable cibs/cabs/extra chunk bitmaps sit in
+// [ipBase, cib0Base); the rotation groups occupy [cib0Base, freePoolBase).
+struct ApfsIpFreePoolGeometry {
+    uint64_t ipBase{kApfsFormatIpBaseBlock};
+    uint64_t ipBlockCount{0};
+    uint64_t cib0Base{kApfsFormatIpBaseBlock};
+    uint64_t freePoolBase{kApfsFormatIpBaseBlock};
+};
+
+ApfsIpFreePoolGeometry computeIpFreePoolGeometry(const ApfsFsCommitContext& ctx) {
+    const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    ApfsIpFreePoolGeometry geo;
+    geo.ipBase = generatedIpBaseBlock(chunkCount, ctx.layout.cibCount, ctx.layout.cabCount);
+    geo.ipBlockCount = 3 * (chunkCount + ctx.layout.cibCount + ctx.layout.cabCount);
+    geo.cib0Base = ctx.layout.cib0Base;
+    geo.freePoolBase = ctx.layout.cib0Base + 3 * ctx.layout.ipGroupStride;
+    return geo;
+}
+
+// The S3 spilled-chunk bitmap plan: the new (copy-on-written) free-pool slot for each data
+// chunk this commit spills into, the old slots freed onto sm_fq[IP], and the exact
+// IP-relative used-set the sm_ip_bitmap ring advance must mark. Empty when the commit does
+// not spill.
+struct ApfsSpilledChunkPlan {
+    QVector<QPair<uint64_t, uint64_t>> chunkSlots;  // chunk -> new free-pool bitmap block
+    QVector<uint64_t> freedOldSlots;                // old spill slots pushed onto sm_fq[IP]
+    QVector<uint64_t> ipUsedSet;                    // exact IP-relative used-set (0-based)
+};
+
+// The lowest free-pool block not in `excluded`, or 0 if the pool is exhausted.
+uint64_t lowestFreeIpBlock(const ApfsIpFreePoolGeometry& geo, const QSet<uint64_t>& excluded) {
+    for (uint64_t block = geo.freePoolBase; block < geo.ipBase + geo.ipBlockCount; ++block) {
+        if (!excluded.contains(block)) {
+            return block;
+        }
+    }
+    return 0;
+}
+
+// The IP-FQ ghost paddrs the new checkpoint holds: the rolling two-deep rotation-slot window
+// (each ipGroupStride long) plus this commit's freed old spilled-chunk slots (length 1),
+// mirroring buildIpFreeQueueWindow. Every one must stay marked used and excluded from the
+// free-pool pick (apfsck aborts if a live ci_bitmap_addr equals an sm_fq[IP] ghost).
+QVector<uint64_t> ipFreeQueueGhostBlocks(const ApfsIpRotation& rotation,
+                                         uint64_t groupStride,
+                                         const QVector<uint64_t>& freedOldSlots) {
+    QVector<uint64_t> ghosts;
+    for (uint64_t base : {rotation.freeCib, rotation.liveCib}) {
+        for (uint64_t i = 0; i < groupStride; ++i) {
+            ghosts.append(base + i);
+        }
+    }
+    ghosts += freedOldSlots;
+    return ghosts;
+}
+
+// Blocks always reserved from the spill free-pool pick: the immutable IP prefix (cibs, cabs,
+// extra chunk bitmaps) and all three cib-0 rotation-group slots (the ghost/live/spare ring
+// the crash-safe rotation cycles through). These never hold a spilled-chunk bitmap.
+QSet<uint64_t> reservedIpRegionBlocks(const ApfsIpFreePoolGeometry& geo) {
+    QSet<uint64_t> reserved;
+    for (uint64_t block = geo.ipBase; block < geo.freePoolBase; ++block) {
+        reserved.insert(block);
+    }
+    return reserved;
+}
+
+// The exact IP-relative used-set the sm_ip_bitmap must mark after this commit: the new live
+// rotation group, every IP-FQ ghost, the immutable prefix, and each live-after-commit spilled
+// chunk's current bitmap slot. On a single-commit consecutive spill this equals {0..count-1}
+// (byte-identical to the retired prefix), and it stays exact once slots go non-contiguous.
+QVector<uint64_t> buildSpillIpUsedSet(const ApfsFsCommitContext& ctx,
+                                      const ApfsIpFreePoolGeometry& geo,
+                                      const ApfsIpRotation& rotation,
+                                      const QVector<uint64_t>& ghostBlocks,
+                                      const QVector<QPair<uint64_t, uint64_t>>& liveChunkSlots) {
+    QSet<uint64_t> used;
+    for (uint64_t block = geo.ipBase; block < geo.cib0Base; ++block) {
+        used.insert(block);  // immutable cibs/cabs/extra chunk bitmaps
+    }
+    for (uint64_t i = 0; i < ctx.layout.ipGroupStride; ++i) {
+        used.insert(rotation.newCib + i);  // the new live rotation group
+    }
+    for (uint64_t ghost : ghostBlocks) {
+        used.insert(ghost);
+    }
+    for (const QPair<uint64_t, uint64_t>& slot : liveChunkSlots) {
+        used.insert(slot.second);
+    }
+    QVector<uint64_t> relative;
+    relative.reserve(used.size());
+    for (uint64_t block : used) {
+        relative.append(block - geo.ipBase);
+    }
+    std::sort(relative.begin(), relative.end());
+    return relative;
+}
+
+// Each data chunk that carries a live bitmap after this commit paired with the block that
+// holds it: the chunks this commit spilled into use their freshly assigned slot; the chunks a
+// prior commit spilled into but this one did not keep their current (carried-forward) slot.
+QVector<QPair<uint64_t, uint64_t>> finalLiveChunkSlots(
+    const QByteArray& liveCib,
+    const QVector<uint64_t>& liveSpilled,
+    const QVector<QPair<uint64_t, uint64_t>>& chunkSlots) {
+    QVector<QPair<uint64_t, uint64_t>> live = chunkSlots;
+    for (uint64_t c : liveSpilled) {
+        const bool rewritten =
+            std::any_of(chunkSlots.cbegin(),
+                        chunkSlots.cend(),
+                        [c](const QPair<uint64_t, uint64_t>& s) { return s.first == c; });
+        if (!rewritten) {
+            const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                    static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
+            live.append({c, le64(liveCib, entry + kApfsChunkInfoEntryBitmapAddrOffset)});
+        }
+    }
+    return live;
+}
+
+// Plan the free-pool bitmap COW for the data chunks this commit spills into. A fresh chunk
+// (current ci_bitmap_addr 0) takes the lowest free-pool slot - which is the certified fixed
+// slot for a single-commit spill, so byte-identity holds - and frees nothing. A repeated
+// spill into an already-spilled chunk takes a DIFFERENT free-pool slot (never the current one,
+// so the previous checkpoint's slot is never overwritten in place) and frees the old slot
+// onto sm_fq[IP]. The free-pool pick excludes the reserved region, every current live spill
+// slot, and every IP-FQ ghost, so a live ci_bitmap_addr can never equal a ghost.
+bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
+                             const ApfsIpRotation& rotation,
+                             ApfsSpilledChunkPlan* plan,
+                             QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    const ApfsIpFreePoolGeometry geo = computeIpFreePoolGeometry(ctx);
+    QByteArray liveCib(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &liveCib, blockers)) {
         return false;
     }
+    const QVector<uint64_t> liveSpilled = liveSpilledChunkIndices(ctx, blockers);
+    QSet<uint64_t> excluded = reservedIpRegionBlocks(geo);
+    for (uint64_t c : liveSpilled) {
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
+        excluded.insert(le64(liveCib, entry + kApfsChunkInfoEntryBitmapAddrOffset));
+    }
+    for (uint64_t ghost : ipFreeQueueGhostBlocks(rotation, ctx.layout.ipGroupStride, {})) {
+        excluded.insert(ghost);
+    }
+    for (uint64_t c : spilledChunkIndices(f.newBlocks, ctx.layout.chunk0Blocks)) {
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
+        const uint64_t current = le64(liveCib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+        const uint64_t slot = lowestFreeIpBlock(geo, excluded);
+        if (slot == 0) {
+            blockers->append(
+                QStringLiteral("APFS in-place commit: internal-pool free pool exhausted for "
+                               "spilled-chunk bitmap"));
+            return false;
+        }
+        plan->chunkSlots.append({c, slot});
+        excluded.insert(slot);
+        if (current != 0) {
+            // The old slot moves onto sm_fq[IP]; it stays excluded (already inserted as a live
+            // spill slot above) so a later chunk in this same commit never picks it either.
+            plan->freedOldSlots.append(current);
+        }
+    }
+    const QVector<uint64_t> ghostBlocks =
+        ipFreeQueueGhostBlocks(rotation, ctx.layout.ipGroupStride, plan->freedOldSlots);
+    const QVector<QPair<uint64_t, uint64_t>> liveSlots =
+        finalLiveChunkSlots(liveCib, liveSpilled, plan->chunkSlots);
+    plan->ipUsedSet = buildSpillIpUsedSet(ctx, geo, rotation, ghostBlocks, liveSlots);
+    return true;
+}
+
+// The finalize tail: write the COW chain, advance the main free-queue, apply the
+// file-insert allocation, rotate cab 0 (CAB tier), and advance the checkpoint. Split
+// from finalizeFsCommit to keep each within the complexity budget; the S3 spill plan
+// (COW'd bitmap slots + freed old slots + exact IP used-set) threads through.
+bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
+                             const ApfsIpRotation& rotation,
+                             const ApfsSpilledChunkPlan& plan,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    const qsizetype nodeCount = f.fsNodes.size();
     const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
                                static_cast<int64_t>(f.ctx.oldFsNodes.size());
     const int64_t netConsumed = extraNodes +
                                 (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
-    const ApfsIpRotation rotation =
-        computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
     if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
         return false;
     }
@@ -5642,17 +5835,21 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                                     .allocated = f.newBlocks,
                                     .cibFreeDelta = freeDelta,
                                     .newXid = f.newXid,
-                                    .chunk1BitmapBlock = f.chunk1BitmapBlock},
+                                    .chunk1BitmapBlock = f.chunk1BitmapBlock,
+                                    .spilledSlots = plan.chunkSlots},
                                    blockers)) {
         return false;
     }
-    // CAB tier: cib 0 just rotated, so re-emit cab 0 into its group slot (offset 2)
-    // pointing at the new cib 0, and re-point the spaceman's cab-address array at the
-    // new cab 0 (not the cib). Below the CAB tier the spaceman addresses cib 0 inline.
+    // CAB tier: re-emit cab 0 into its group slot pointing at the rotated cib 0.
     uint64_t newAddr0 = rotation.newCib;
     if (!finalizeRotateCab0(f, rotation, &newAddr0, blockers)) {
         return false;
     }
+    // Exact S3 IP used-set on the single-CIB spill path (== the retired prefix on a
+    // consecutive single-commit spill, so byte-identity holds); overflow tier keeps the
+    // prefix. freedOldSlots pushes each repeated spill's old bitmap slot onto sm_fq[IP].
+    const QVector<uint64_t> ipUsedSet =
+        f.ctx.layout.allocChunk == 0 ? plan.ipUsedSet : ipBitmapPrefixSet(ipBitmapUsage);
     return advanceCheckpoint({.image = f.ctx.image,
                               .geometry = f.ctx.geometry,
                               .nxsb = f.ctx.nxsb,
@@ -5662,17 +5859,39 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
                               .newCibAddr = newAddr0,
                               .cibCount = f.ctx.layout.cibCount,
-                              // The whole rotation group (cib0 + bitmap + boundary)
-                              // frees as one stride-length run, so the IP free-queue
-                              // window covers the boundary bitmap - no separate entry.
                               .ipSlotStride = groupSize,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
+                              .extraFreedIpBlocks = plan.freedOldSlots,
                               .mainFqEntries = mainFq.entries,
-                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
+                              .ipUsedSet = ipUsedSet},
                              result,
                              blockers);
+}
+
+bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
+                      ApfsInPlaceCheckpointResult* result,
+                      QStringList* blockers) {
+    // Mutating a container that already carries a snapshot is a documented follow-on
+    // (multi-version volume omap + live-version reader); fail closed. The A8 multi-volume
+    // + snapshot gate is met via mutate-then-snapshot.
+    if (liveVolumeHasSnapshot(f.ctx, blockers)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place mutation of a container that already has a snapshot is not yet "
+            "supported; create the snapshot after the file mutations instead"));
+        return false;
+    }
+    const ApfsIpRotation rotation =
+        computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout);
+    // Keystone S3: single-CIB (allocChunk 0) commits COW each spilled-chunk bitmap into a
+    // free-pool slot and mark the exact sparse IP used-set; the overflow tier keeps its
+    // certified fixed-slot + prefix path (plan empty).
+    ApfsSpilledChunkPlan plan;
+    if (f.ctx.layout.allocChunk == 0 && !planSpilledChunkBitmaps(f, rotation, &plan, blockers)) {
+        return false;
+    }
+    return finalizeApplyAndAdvance(f, rotation, plan, result, blockers);
 }
 
 // Pass 1 of an insert: build the merged file list with a placeholder data-start
@@ -16157,6 +16376,62 @@ quint64 PartitionApfsWriter::readGeneratedLiveCibAddr(const QString& image_path)
         return 0;
     }
     return readLiveSpacemanCibAddr(&image, geometry, nxsb, &blockers);
+}
+
+quint64 PartitionApfsWriter::readGeneratedChunkBitmapAddr(const QString& image_path,
+                                                          quint64 chunk_index) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return 0;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return 0;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return 0;
+    }
+    const uint64_t liveCibAddr = readLiveSpacemanCibAddr(&image, geometry, nxsb, &blockers);
+    QByteArray cib(blockSize, '\0');
+    if (liveCibAddr == 0 || !readApfsRepairBlock(&image, geometry, liveCibAddr, &cib, &blockers)) {
+        return 0;
+    }
+    const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                            static_cast<qsizetype>(chunk_index) * kApfsChunkInfoEntryStride;
+    return le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+}
+
+QVector<quint64> PartitionApfsWriter::readGeneratedIpFreeQueueGhosts(const QString& image_path) {
+    QVector<quint64> ghosts;
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return ghosts;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return ghosts;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return ghosts;
+    }
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    const uint64_t fqIpTree =
+        findEphemeralPaddrByOid(&image, geometry, live, kApfsFormatFqIpTreeOid, &blockers);
+    for (const ApfsFreeQueueEntry& entry :
+         parseFreeQueueEntries(&image, geometry, fqIpTree, &blockers)) {
+        for (uint64_t i = 0; i < entry.length; ++i) {
+            ghosts.append(entry.paddr + i);
+        }
+    }
+    return ghosts;
 }
 
 }  // namespace sak

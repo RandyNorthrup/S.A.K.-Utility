@@ -1794,6 +1794,8 @@ private Q_SLOTS:
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
     void apfsWriter_backToBackFullSpillsSucceed();
+    void apfsWriter_repeatedSpillCowsChunkBitmap();
+    void apfsWriter_gapSpillMarksExactBitmap();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8398,6 +8400,123 @@ void PartitionManagerCoreTests::apfsWriter_backToBackFullSpillsSucceed() {
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, spillFixtureChunk().left(readBack.data.size()));
+}
+
+void PartitionManagerCoreTests::apfsWriter_repeatedSpillCowsChunkBitmap() {
+    // Keystone S3 crash-safe repeated spill: a SECOND commit whose data spills into a chunk
+    // an earlier commit already spilled into must COPY-ON-WRITE that chunk's allocation
+    // bitmap to a NEW internal-pool slot (never overwrite the block the previous checkpoint's
+    // cib still references) and retire the old slot onto sm_fq[IP]. The post-commit-2 image
+    // persists (SAK_MC_CERT_DIR) so host apfsck verifies no "block used twice" / bad ip bitmap.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("s3repeat.img"));
+    const QString p1 = dir.filePath(QStringLiteral("s3repeat_p1.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, 260ULL * 1024ULL * 1024ULL);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    // Commit 1: 260 MiB file spills across chunks 0, 1, 2 - chunk 2 gets its first bitmap.
+    QVERIFY2(
+        commitSpillFile(img, bytes, QStringLiteral("big1.bin"), p1, 260ULL * 1024ULL * 1024ULL).ok,
+        "commit 1 spill");
+    const quint64 chunk2AddrAfter1 = PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 2);
+    QVERIFY2(chunk2AddrAfter1 != 0, "commit 1 did not spill into chunk 2");
+    // Commit 2: an 80 MiB file whose data (chunk 0 is drained to the reserve) spills into the
+    // chunks with free space - chunk 2 among them, a REPEATED spill into an already-spilled
+    // chunk (reachable only post-S0).
+    const uint64_t p2Bytes = 80ULL * 1024ULL * 1024ULL;
+    const QString p2 = dir.filePath(QStringLiteral("s3repeat_p2.bin"));
+    writeSpillPayload(p2, p2Bytes);
+    QVERIFY2(commitSpillFile(img, bytes, QStringLiteral("big2.bin"), p2, p2Bytes).ok,
+             "commit 2 repeated spill");
+    // (a) Both files read back correctly.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    const auto read1 =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
+    QVERIFY2(read1.ok, qPrintable(read1.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read1.data, spillFixtureChunk().left(read1.data.size()));
+    const auto read2 =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
+    QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
+    // (b) Chunk 2's bitmap slot moved (COW, not in-place): commit-2's live cib points chunk 2
+    // at a DIFFERENT internal-pool block than commit-1 did.
+    const quint64 chunk2AddrAfter2 = PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 2);
+    QVERIFY2(chunk2AddrAfter2 != 0, "chunk 2 lost its bitmap");
+    QVERIFY2(chunk2AddrAfter2 != chunk2AddrAfter1,
+             qPrintable(QStringLiteral("chunk 2 bitmap was overwritten in place (%1), not COWd")
+                            .arg(chunk2AddrAfter1)));
+    // (c) The old chunk-2 slot is now a ghost on sm_fq[IP].
+    const QVector<quint64> ghosts = PartitionApfsWriter::readGeneratedIpFreeQueueGhosts(img);
+    QVERIFY2(
+        ghosts.contains(chunk2AddrAfter1),
+        qPrintable(
+            QStringLiteral("old chunk-2 slot %1 not found on sm_fq[IP]").arg(chunk2AddrAfter1)));
+    // A live ci_bitmap_addr must NEVER equal an sm_fq[IP] ghost (apfsck "used twice" guard).
+    QVERIFY2(!ghosts.contains(chunk2AddrAfter2),
+             "the live chunk-2 slot is also a free-queue ghost");
+}
+
+void PartitionManagerCoreTests::apfsWriter_gapSpillMarksExactBitmap() {
+    // Bug B (exact sparse ipUsedSet): the finalize IP used-set is now the EXACT set of live
+    // internal-pool blocks, not the contiguous prefix {0..count-1}. This test exercises a
+    // multi-commit live spill set (commit 1 spills chunks {1,2}; commit 2 re-COWs chunk 2 to a
+    // free-pool slot, so the live spilled-chunk bitmap slots are no longer a gapless prefix)
+    // and asserts host apfsck stays clean - the prefix-from-count would mark the wrong bits.
+    // The finalize call site no longer sources ipUsedSet from ipBitmapPrefixSet (grep-enforced
+    // in the review); a true {1,3} gap is unreachable through the public API because the spill
+    // allocator fills data chunks in ascending order (no chunk is skipped while a later one is
+    // used), so the reachable non-prefix case is the free-pool COW above.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("s3gap.img"));
+    const QString p1 = dir.filePath(QStringLiteral("s3gap_p1.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, 260ULL * 1024ULL * 1024ULL);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QVERIFY2(
+        commitSpillFile(img, bytes, QStringLiteral("big1.bin"), p1, 260ULL * 1024ULL * 1024ULL).ok,
+        "commit 1 spill {1,2}");
+    // A small root-file commit AFTER a spill: it spills nothing but must still mark the live
+    // chunk-{1,2} bitmap slots used (the exact set reads them from the live cib). The old
+    // prefix-from-count path over/under-marked once slots stopped being a gapless prefix.
+    QByteArray small(4096, Qt::Uninitialized);
+    for (qsizetype i = 0; i < small.size(); ++i) {
+        small[i] = static_cast<char>((i * 29 + 7) & 0xFF);
+    }
+    const auto commit2 =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("small.bin"),
+                                                 .file_data = small,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    // The live chunk-1 and chunk-2 bitmaps are still referenced (carried forward unchanged).
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 1) != 0,
+             "chunk 1 bitmap dropped after a non-spilling commit");
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 2) != 0,
+             "chunk 2 bitmap dropped after a non-spilling commit");
+    const auto readBig =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
+    QVERIFY2(readBig.ok, qPrintable(readBig.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBig.data, spillFixtureChunk().left(readBig.data.size()));
 }
 
 namespace {
