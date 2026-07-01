@@ -8327,19 +8327,6 @@ void appendFeatureBlockers(const PartitionFileSystemDetection& detection,
     }
 }
 
-bool apfsOperationRequiresPayloadCap(PartitionApfsWriteOperation operation) {
-    switch (operation) {
-    case PartitionApfsWriteOperation::CreateDirectory:
-    case PartitionApfsWriteOperation::DeleteDirectory:
-    case PartitionApfsWriteOperation::CreateFile:
-    case PartitionApfsWriteOperation::ReplaceFile:
-    case PartitionApfsWriteOperation::DeleteFile:
-        return true;
-    default:
-        return false;
-    }
-}
-
 bool apfsOperationTouchesExistingFileData(PartitionApfsWriteOperation operation) {
     switch (operation) {
     case PartitionApfsWriteOperation::ReplaceFile:
@@ -8374,13 +8361,10 @@ void appendApfsVolumeNameBlockers(const QString& volumeName,
 void appendOperationBlockers(PartitionApfsWriteOperation operation,
                              const PartitionApfsWriteOptions& options,
                              PartitionApfsWritePreflight* result) {
-    if (apfsOperationRequiresPayloadCap(operation) && options.max_payload_bytes == 0) {
-        result->blockers.append(
-            QStringLiteral("APFS file/directory mutation requires a bounded payload size"));
-    }
-    if (options.max_payload_bytes > kDefaultMaxApfsPayloadBytes) {
-        result->blockers.append(QStringLiteral("APFS payload exceeds current certification cap"));
-    }
+    // No artificial size cap: a write is bounded only by the container's free space
+    // (the multi-chunk allocator fails closed when the data chunks cannot hold it).
+    // max_payload_bytes stays an OPTIONAL RAM guard a buffered caller may set
+    // (0 = unbounded / container-bound); the streaming path never needs it.
     if (apfsOperationTouchesExistingFileData(operation) &&
         !options.allow_compressed_file_mutation) {
         result->blockers.append(QStringLiteral(
@@ -15345,7 +15329,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
                                     &result.blockers)) {
         return result;
     }
-    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+    const bool streaming = !request.file_data_path.trimmed().isEmpty();
+    // A streamed child payload is never held whole in RAM, so it has no fixed byte cap:
+    // its real bound is the container's free space (the multi-chunk allocator places it
+    // across chunks 0..K and fails closed when it will not fit). A buffered payload stays
+    // bounded to keep it in RAM.
+    if (!streaming && static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
         result.blockers.append(QStringLiteral(
             "APFS raw directory-child-write-commit payload exceeds the current size cap"));
         return result;
@@ -15375,11 +15364,16 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceRootFileWrite(
-            target.get(),
-            {allFiles, cleanFileName, request.file_data, directories, parentId},
-            &commit,
-            &commitBlockers)) {
+    if (commitInPlaceRootFileWrite(target.get(),
+                                   {allFiles,
+                                    cleanFileName,
+                                    request.file_data,
+                                    directories,
+                                    parentId,
+                                    request.file_data_path.trimmed(),
+                                    request.file_data_stream_size},
+                                   &commit,
+                                   &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

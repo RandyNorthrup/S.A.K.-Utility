@@ -115,7 +115,9 @@ sak::PartitionApfsWriteOptions apfsRawWriteOptions() {
     options.image_only = false;
     options.destructive_certification_evidence = true;
     options.raw_media_hardware_certification_evidence = true;
-    options.max_payload_bytes = kFileManagementMaxWriteBytes;
+    // No artificial payload cap: the APFS write is bounded only by the container's free
+    // space (the multi-chunk allocator fails closed when it will not fit). 0 = unbounded.
+    options.max_payload_bytes = 0;
     options.evidence_id = QStringLiteral("file-management.apfs.raw");
     return options;
 }
@@ -410,6 +412,90 @@ FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
                                      .options = apfsRawWriteOptions()}),
                                 cleanPath,
                                 static_cast<uint64_t>(data.size()));
+}
+
+// Streaming APFS write: the payload is pulled from @p hostPath block-by-block by the
+// certified multi-chunk COW engine (never held whole in RAM), so an arbitrarily large
+// file is bounded only by the container's free space.
+FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& target,
+                                                   const QString& cleanPath,
+                                                   const QString& hostPath,
+                                                   uint64_t size) {
+    const QString fs = QStringLiteral("apfs");
+    if (!isApfsPathSupported(cleanPath, false)) {
+        return mutationBlocked(fs,
+                               cleanPath,
+                               QStringLiteral("APFS File Management file write is limited "
+                                              "to root files or one root-directory child"));
+    }
+    const auto parts = apfsParts(cleanPath);
+    if (parts.size() == 1) {
+        return fromApfsCommitResult(
+            PartitionApfsWriter::commitRawFileWrite(
+                {.target_path = target.root_path,
+                 .target_container_bytes = target.size_bytes,
+                 .file_name = parts.value(0),
+                 .file_data_path = hostPath,
+                 .file_data_stream_size = size,
+                 .target_mutation_confirmed = true,
+                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .options = apfsRawWriteOptions()}),
+            cleanPath,
+            size);
+    }
+    return fromApfsCommitResult(PartitionApfsWriter::commitRawDirectoryChildWrite(
+                                    {.target_path = target.root_path,
+                                     .target_container_bytes = target.size_bytes,
+                                     .directory_name = parts.value(0),
+                                     .file_name = parts.value(1),
+                                     .file_data_path = hostPath,
+                                     .file_data_stream_size = size,
+                                     .target_mutation_confirmed = true,
+                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
+                                     .options = apfsRawWriteOptions()}),
+                                cleanPath,
+                                size);
+}
+
+// Streaming local-filesystem copy: host file -> destination through a fixed 1 MiB
+// window, so a multi-GB copy never holds the whole payload in RAM.
+FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
+                                                   const QString& hostPath) {
+    FileManagementMutationResult result;
+    result.path = destPath;
+    QFile src(hostPath);
+    QFile dst(destPath);
+    if (!src.open(QIODevice::ReadOnly)) {
+        result.blockers.append(
+            QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
+        return result;
+    }
+    if (!dst.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        result.blockers.append(QStringLiteral("Unable to write file: %1").arg(dst.errorString()));
+        return result;
+    }
+    QByteArray window(1 << 20, Qt::Uninitialized);
+    uint64_t written = 0;
+    for (;;) {
+        const qint64 n = src.read(window.data(), window.size());
+        if (n < 0) {
+            result.blockers.append(
+                QStringLiteral("Read error while streaming: %1").arg(src.errorString()));
+            return result;
+        }
+        if (n == 0) {
+            break;
+        }
+        if (dst.write(window.constData(), n) != n) {
+            result.blockers.append(
+                QStringLiteral("Short write while streaming file: %1").arg(destPath));
+            return result;
+        }
+        written += static_cast<uint64_t>(n);
+    }
+    result.bytes_written = written;
+    result.ok = true;
+    return result;
 }
 
 }  // namespace
@@ -786,11 +872,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
     const FileManagementTarget& target, const QString& path, const QByteArray& data) {
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
-    if (data.size() > static_cast<qsizetype>(kFileManagementMaxWriteBytes)) {
-        return mutationBlocked(fs,
-                               cleanPath,
-                               QStringLiteral("File write exceeds 64 MiB File Management cap"));
-    }
+    // No artificial File Management cap: each backend enforces its own real bound (APFS
+    // is container-bound; HFS caps inside its writer; a local write is host-FS-bound).
     if (target.local_file_system) {
         FileManagementMutationResult result;
         result.file_system = target.file_system;
@@ -819,6 +902,44 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         fs,
         cleanPath,
         QStringLiteral("File write is not supported for %1").arg(displayFileSystem(fs)));
+}
+
+FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPath(
+    const FileManagementTarget& target, const QString& path, const QString& host_file_path) {
+    const QString fs = normalizedFileSystem(target.file_system);
+    const QString cleanPath = displayPath(path);
+    const QFileInfo srcInfo(host_file_path);
+    if (!srcInfo.isFile()) {
+        return mutationBlocked(
+            fs, cleanPath, QStringLiteral("Source is not a readable file: %1").arg(host_file_path));
+    }
+    const uint64_t size = static_cast<uint64_t>(srcInfo.size());
+    // APFS and the local filesystem stream from the host file (peak RAM one window), so
+    // an arbitrarily large copy is bounded only by the destination's free space.
+    if (target.local_file_system) {
+        FileManagementMutationResult result = copyLocalFileStreamed(path, host_file_path);
+        result.file_system = target.file_system;
+        return result;
+    }
+    if (fs == QStringLiteral("apfs")) {
+        return writeApfsFileStreamed(target, cleanPath, host_file_path, size);
+    }
+    // HFS (and any other backend) has no streaming fork writer yet, so it reads the whole
+    // file; guard RAM by size before the read. The limit is that backend's honest current
+    // bound and is lifted once it gains a streaming writer.
+    if (size > kFileManagementMaxWriteBytes) {
+        return mutationBlocked(fs,
+                               cleanPath,
+                               QStringLiteral("Streaming write is not yet available for %1; the "
+                                              "file exceeds the buffered write limit")
+                                   .arg(displayFileSystem(fs)));
+    }
+    QFile src(host_file_path);
+    if (!src.open(QIODevice::ReadOnly)) {
+        return mutationBlocked(
+            fs, cleanPath, QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
+    }
+    return writeFile(target, path, src.readAll());
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(

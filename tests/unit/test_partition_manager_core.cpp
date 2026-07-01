@@ -1792,6 +1792,7 @@ private Q_SLOTS:
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
+    void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
@@ -8240,6 +8241,88 @@ void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunk
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, chunk.left(readBack.data.size()));
+}
+
+namespace {
+void createRawDocsDir(const QString& img,
+                      uint64_t bytes,
+                      const PartitionApfsWriteOptions& rawOptions) {
+    QVERIFY2(PartitionApfsWriter::commitRawDirectoryCreate(
+                 {.target_path = img,
+                  .target_container_bytes = bytes,
+                  .directory_name = QStringLiteral("docs"),
+                  .target_mutation_confirmed = true,
+                  .allow_raw_device_target = true,
+                  .options = rawOptions})
+                 .ok,
+             "raw create docs");
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_directoryChildStreamedWriteMatchesInMemory() {
+    // A directory child streamed from a host file (file_data_path) is byte-identical to
+    // the in-memory dir-child write, so the streaming plumbing inherits the certified
+    // engine's cert. Payload ~40 KiB, non-block-aligned.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    const QString base = dir.filePath(QStringLiteral("dcs-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("DCSEq"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    QByteArray payload(40'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 37 + 5) & 0xFF);
+    }
+    const QString payloadPath = dir.filePath(QStringLiteral("dc_payload.bin"));
+    {
+        QFile pf(payloadPath);
+        QVERIFY(pf.open(QIODevice::WriteOnly));
+        QCOMPARE(pf.write(payload), static_cast<qint64>(payload.size()));
+    }
+    const QString memImg = dir.filePath(QStringLiteral("dcs-mem.apfs"));
+    const QString streamImg = dir.filePath(QStringLiteral("dcs-file.apfs"));
+    QVERIFY(QFile::copy(base, memImg));
+    QVERIFY(QFile::copy(base, streamImg));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [memImg, streamImg](const QString& path) { return path == memImg || path == streamImg; });
+    createRawDocsDir(memImg, bytes, rawOptions);
+    createRawDocsDir(streamImg, bytes, rawOptions);
+    const auto memCommit =
+        PartitionApfsWriter::commitRawDirectoryChildWrite({.target_path = memImg,
+                                                           .target_container_bytes = bytes,
+                                                           .directory_name = QStringLiteral("docs"),
+                                                           .file_name = QStringLiteral("big.bin"),
+                                                           .file_data = payload,
+                                                           .target_mutation_confirmed = true,
+                                                           .allow_raw_device_target = true,
+                                                           .options = rawOptions});
+    QVERIFY2(memCommit.ok, qPrintable(memCommit.blockers.join(QStringLiteral("; "))));
+    const auto streamCommit = PartitionApfsWriter::commitRawDirectoryChildWrite(
+        {.target_path = streamImg,
+         .target_container_bytes = bytes,
+         .directory_name = QStringLiteral("docs"),
+         .file_name = QStringLiteral("big.bin"),
+         .file_data_path = payloadPath,
+         .file_data_stream_size = static_cast<uint64_t>(payload.size()),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = rawOptions});
+    QVERIFY2(streamCommit.ok, qPrintable(streamCommit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(streamCommit.new_xid, memCommit.new_xid);
+    QVERIFY2(fileSha256(memImg) == fileSha256(streamImg),
+             "streamed dir-child write is not byte-identical to the in-memory write");
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        streamImg, QStringLiteral("/docs/big.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, payload);
 }
 
 namespace {

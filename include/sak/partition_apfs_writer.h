@@ -660,6 +660,12 @@ struct PartitionApfsRawDirectoryChildWriteCommitRequest {
     QString directory_name;
     QString file_name;
     QByteArray file_data;
+    // Streaming write: when file_data_path is non-empty the payload is streamed from
+    // that host file (file_data_stream_size bytes) block-by-block instead of file_data,
+    // so a multi-GB child write never holds the whole payload in RAM. Empty path keeps
+    // the in-memory path unchanged. Mirrors PartitionApfsRawFileInsertCommitRequest.
+    QString file_data_path;
+    uint64_t file_data_stream_size{0};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

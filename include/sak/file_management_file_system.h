@@ -133,6 +133,12 @@ public:
     [[nodiscard]] static FileManagementMutationResult writeFile(const FileManagementTarget& target,
                                                                 const QString& path,
                                                                 const QByteArray& data);
+    /// Stream a host file into @p path on @p target without holding the payload in RAM.
+    /// APFS and the local filesystem stream block-by-block (peak RAM one window); other
+    /// backends read the file whole until they gain a streaming writer. Prefer this over
+    /// writeFile for copies whose size is not known-small.
+    [[nodiscard]] static FileManagementMutationResult writeFileFromHostPath(
+        const FileManagementTarget& target, const QString& path, const QString& host_file_path);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
     [[nodiscard]] static FileManagementMutationResult renameEntry(

@@ -41,6 +41,34 @@ private Q_SLOTS:
         QCOMPARE(QString::fromUtf8(read.data), QStringLiteral("hello target bridge"));
     }
 
+    void writeFileFromHostPathStreamsLocalCopyWithNoCap() {
+        // writeFileFromHostPath streams a host file into the destination through a fixed
+        // window (peak RAM one window), so the copy is byte-exact and has no size cap. The
+        // payload spans several 1 MiB windows and is not window-aligned.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QDir dir(temp.path());
+        const QString srcPath = dir.filePath(QStringLiteral("src.bin"));
+        QByteArray payload(3'000'000, Qt::Uninitialized);
+        for (qsizetype i = 0; i < payload.size(); ++i) {
+            payload[i] = static_cast<char>((i * 91 + 13) & 0xFF);
+        }
+        {
+            QFile sf(srcPath);
+            QVERIFY(sf.open(QIODevice::WriteOnly));
+            QCOMPARE(sf.write(payload), static_cast<qint64>(payload.size()));
+        }
+        const QString destPath = dir.filePath(QStringLiteral("dest.bin"));
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const auto result =
+            sak::FileManagementFileSystemBridge::writeFileFromHostPath(target, destPath, srcPath);
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(result.bytes_written, static_cast<uint64_t>(payload.size()));
+        QFile df(destPath);
+        QVERIFY(df.open(QIODevice::ReadOnly));
+        QCOMPARE(df.readAll(), payload);
+    }
+
     void manualApfsTargetIsReadOnlySearchableButNotOrganizable() {
         const auto target = sak::FileManagementFileSystemBridge::manualTarget(
             QStringLiteral("C:/fixtures/apfs.img"), QStringLiteral("APFS"));

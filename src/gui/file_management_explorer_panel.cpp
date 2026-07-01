@@ -2266,17 +2266,10 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         return;
     }
     const QFileInfo sourceInfo(sourcePath);
-    if (sourceInfo.size() > static_cast<qint64>(kMaximumNonNativeFileWriteBytes)) {
+    if (!sourceInfo.isFile()) {
         sak::showWarningLogged(this,
                                tr("Write File"),
-                               tr("File exceeds the 64 MiB File Explorer write cap."));
-        return;
-    }
-    QFile source(sourcePath);
-    if (!source.open(QIODevice::ReadOnly)) {
-        sak::showWarningLogged(this,
-                               tr("Write File"),
-                               tr("Unable to read source file: %1").arg(source.errorString()));
+                               tr("Unable to read source file: %1").arg(sourcePath));
         return;
     }
     bool ok = false;
@@ -2297,7 +2290,7 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
         return;
     }
     const auto result =
-        FileManagementFileSystemBridge::writeFile(target, targetPath, source.readAll());
+        FileManagementFileSystemBridge::writeFileFromHostPath(target, targetPath, sourcePath);
     showMutationResult(tr("Write File"), result);
     if (result.ok) {
         loadDirectory(m_current_path);
