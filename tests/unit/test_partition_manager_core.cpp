@@ -1797,6 +1797,7 @@ private Q_SLOTS:
     void apfsWriter_repeatedSpillCowsChunkBitmap();
     void apfsWriter_gapSpillMarksExactBitmap();
     void apfsWriter_multiCibSpillsAcrossCib0Chunks();
+    void apfsWriter_spillsIntoCib1OwnedChunk();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8565,6 +8566,67 @@ void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
+}
+
+namespace {
+// Commit a spill file `name` (payload at `payloadPath`, `payloadBytes`) into the multi-CIB
+// container `img` and assert it read back a byte-prefix that matches the fixture.
+void commitAndReadSpillPrefix(const QString& img,
+                              uint64_t bytes,
+                              const QString& name,
+                              const QString& payloadPath,
+                              uint64_t payloadBytes) {
+    QVERIFY2(commitSpillFile(img, bytes, name, payloadPath, payloadBytes).ok,
+             qPrintable(QStringLiteral("commit failed: %1").arg(name)));
+    const auto read =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/") + name, 1 << 20);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, spillFixtureChunk().left(read.data.size()));
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_spillsIntoCib1OwnedChunk() {
+    // S4b: the LAST file-size cap. A file's data now spills into ANY data chunk, including
+    // chunks a cib k>0 owns (cib 0 owns chunks 0..125, cib 1 owns 126..). Reaching chunk 126
+    // copies-on-writes cib 1 into a free-pool slot + re-points the spaceman cib-array entry.
+    // The ascending fill needs ~16 GiB of real payload to reach chunk 126, so it is heavy and
+    // runs only under SAK_S4B_CERT_DIR (the dir persists the image for host apfsck).
+    const QString envDir = qEnvironmentVariable("SAK_S4B_CERT_DIR");
+    if (envDir.isEmpty()) {
+        QSKIP("cib-1 spill cert needs SAK_S4B_CERT_DIR (creates a ~16 GiB sparse container)");
+    }
+    const QDir dir(envDir);
+    const uint64_t bytes = 256ULL * 32'768ULL * 4096ULL;  // 256 chunks -> cib 1 owns 126..251
+    QVERIFY(PartitionApfsWriter::computeContainerGeometry(bytes / 4096).cib_count >= 2);
+    // Fill chunks 1..128 (~16 GiB, 128 MiB/chunk) so file 1 reaches chunks cib 1 owns (>=126);
+    // file 2 (small) then spills into the next free cib-1 chunk (all cib-0 chunks are full).
+    const uint64_t p1Bytes = 128ULL * 128ULL * 1024ULL * 1024ULL;  // reaches into cib 1
+    const uint64_t p2Bytes = 256ULL * 1024ULL * 1024ULL;           // second spill, re-COW cib 1
+    const QString img = dir.filePath(QStringLiteral("s4b_cib1.img"));
+    const QString p1 = dir.filePath(QStringLiteral("s4b_p1.bin"));
+    const QString p2 = dir.filePath(QStringLiteral("s4b_p2.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, p1Bytes);
+    const quint64 cib1Genesis = PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(img, 1);
+    QVERIFY(cib1Genesis != 0);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    commitAndReadSpillPrefix(img, bytes, QStringLiteral("cib1a.bin"), p1, p1Bytes);
+    // Decisive proof the spill reached a chunk cib 1 owns: chunk 126 now carries a live
+    // bitmap AND the spaceman cib-array entry 1 moved off its genesis slot (cib 1 was COW'd).
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 126) != 0,
+             "chunk 126 never got a spill bitmap - the cib-1 cap was not lifted");
+    const quint64 cib1After1 = PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(img, 1);
+    QVERIFY2(cib1After1 != cib1Genesis, "cib 1 was not copied-on-written off its genesis slot");
+    writeSpillPayload(p2, p2Bytes);
+    commitAndReadSpillPrefix(img, bytes, QStringLiteral("cib1b.bin"), p2, p2Bytes);
+    // A second spill into cib 1 re-COWs it AGAIN to a different slot (crash-safe).
+    const quint64 cib1After2 = PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(img, 1);
+    QVERIFY2(cib1After2 != cib1After1, "the repeated cib-1 spill did not re-COW cib 1");
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
 }
 
 namespace {

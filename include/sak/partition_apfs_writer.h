@@ -903,6 +903,13 @@ public:
     ///        different internal-pool block than the previous checkpoint used.
     [[nodiscard]] static quint64 readGeneratedChunkBitmapAddr(const QString& image_path,
                                                               quint64 chunk_index);
+    /// \brief The live spaceman cib-address array entry @p cib_index (the current
+    ///        on-disk address of chunk-info block @p cib_index) of the generated
+    ///        container at @p image_path, 0 on error. Diagnostic for the keystone
+    ///        S4b cib-k copy-on-write: entry k>0 re-points at a free-pool slot once
+    ///        a spill reaches a chunk that cib owns.
+    [[nodiscard]] static quint64 readGeneratedSpacemanCibArrayEntry(const QString& image_path,
+                                                                    quint64 cib_index);
     /// \brief The internal-pool free-queue (sm_fq[IP]) ghost paddrs the live
     ///        checkpoint of the generated container at @p image_path holds pending
     ///        reclamation. Diagnostic for the keystone S3 COW: the old spilled-chunk
