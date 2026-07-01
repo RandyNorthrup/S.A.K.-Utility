@@ -1793,6 +1793,7 @@ private Q_SLOTS:
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
+    void apfsWriter_backToBackFullSpillsSucceed();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8254,6 +8255,16 @@ QByteArray spillFixtureChunk() {
     return chunk;
 }
 
+// Write a deterministic spill payload of `bytes` to `path`.
+void writeSpillPayload(const QString& path, uint64_t bytes) {
+    const QByteArray chunk = spillFixtureChunk();
+    QFile pf(path);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    for (uint64_t written = 0; written < bytes; written += chunk.size()) {
+        QCOMPARE(pf.write(chunk), static_cast<qint64>(chunk.size()));
+    }
+}
+
 // Format a fresh 3-chunk single-CIB container and stream a 260 MiB file into it so the
 // data spills across chunks 0..2 (commit 1). Persists the image at `img`.
 void formatSpillContainerWithBigFile(const QString& img,
@@ -8268,13 +8279,22 @@ void formatSpillContainerWithBigFile(const QString& img,
                  .volume_name = QStringLiteral("SpillUnwedge"),
                  .options = certifiedApfsImageOnlyOptions()})
                 .ok);
-    const QByteArray chunk = spillFixtureChunk();
-    QFile pf(payloadPath);
-    QVERIFY(pf.open(QIODevice::WriteOnly));
-    for (uint64_t written = 0; written < payloadBytes; written += chunk.size()) {
-        QCOMPARE(pf.write(chunk), static_cast<qint64>(chunk.size()));
-    }
-    pf.close();
+    writeSpillPayload(payloadPath, payloadBytes);
+}
+
+PartitionApfsImageCheckpointCommitResult commitSpillFile(const QString& img,
+                                                         uint64_t bytes,
+                                                         const QString& name,
+                                                         const QString& payloadPath,
+                                                         uint64_t payloadBytes) {
+    return PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                    .target_container_bytes = bytes,
+                                                    .file_name = name,
+                                                    .file_data_path = payloadPath,
+                                                    .file_data_stream_size = payloadBytes,
+                                                    .target_mutation_confirmed = true,
+                                                    .allow_raw_device_target = true,
+                                                    .options = certifiedApfsRawCommitOptions()});
 }
 }  // namespace
 
@@ -8342,6 +8362,42 @@ void PartitionManagerCoreTests::apfsWriter_fileCommitSucceedsAfterMultiChunkSpil
         img, QStringLiteral("/small.bin"), 1 << 20);
     QVERIFY2(readSmall.ok, qPrintable(readSmall.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readSmall.data, small);
+}
+
+void PartitionManagerCoreTests::apfsWriter_backToBackFullSpillsSucceed() {
+    // A SECOND full multi-chunk spill after a prior one must succeed. The first spill
+    // drained chunk 0 to the reserve; chunk0SpillTake now collapses the second spill's
+    // chunk-0 take to metaCount (all its data spills into the data chunks), sustained by
+    // free-queue reclaim. Before the refinement the second spill failed "not enough free
+    // space in chunk 0". The image persists (SAK_MC_CERT_DIR) for host apfsck.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("b2b.img"));
+    const QString p1 = dir.filePath(QStringLiteral("b2b_p1.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, 260ULL * 1024ULL * 1024ULL);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QVERIFY2(
+        commitSpillFile(img, bytes, QStringLiteral("big.bin"), p1, 260ULL * 1024ULL * 1024ULL).ok,
+        "first spill");
+    // Second FULL spill: an 80 MiB file whose data cannot fit chunk 0's reserve.
+    const uint64_t p2Bytes = 80ULL * 1024ULL * 1024ULL;
+    const QString p2 = dir.filePath(QStringLiteral("b2b_p2.bin"));
+    writeSpillPayload(p2, p2Bytes);
+    const auto commit2 = commitSpillFile(img, bytes, QStringLiteral("big2.bin"), p2, p2Bytes);
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    const auto readBack =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, spillFixtureChunk().left(readBack.data.size()));
 }
 
 namespace {

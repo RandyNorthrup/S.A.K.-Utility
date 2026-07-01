@@ -5339,18 +5339,22 @@ uint64_t chunk0MetadataReserve(int metaCount) {
     return std::max<uint64_t>(kChunk0MetadataReserveBlocks, perCommit);
 }
 
-// How many of a spilling commit's blocks to take from chunk 0: everything chunk 0 has
-// free, minus the reserved metadata headroom, but never fewer than metaCount (the
-// metadata chain itself must live in chunk 0) and never more than the commit needs. The
-// remainder spills into the data chunks. Returns 0 (caller fails closed) when chunk 0
-// cannot even hold the metadata plus the reserve.
+// How many of a spilling commit's blocks to take from chunk 0: leave the reserved
+// metadata headroom free when chunk 0 has room, but ALWAYS take at least metaCount (the
+// metadata chain must live in chunk 0) and never more than the commit needs; the
+// remainder spills into the data chunks. When chunk 0 is already low (a second full
+// spill after a prior one drained it to the reserve) the take collapses to metaCount and
+// ALL data spills - sustained indefinitely because the main free-queue reclaims each
+// commit's freed chunk-0 metadata a rollback window later. Returns 0 (caller fails
+// closed) only when chunk 0 cannot even hold the metadata chain.
 uint64_t chunk0SpillTake(uint64_t chunk0Avail, int metaCount, int need) {
-    const uint64_t reserve = chunk0MetadataReserve(metaCount);
-    if (chunk0Avail < static_cast<uint64_t>(metaCount) + reserve) {
+    if (chunk0Avail < static_cast<uint64_t>(metaCount)) {
         return 0;
     }
-    const uint64_t afterReserve = chunk0Avail - reserve;
-    return std::min<uint64_t>(afterReserve, static_cast<uint64_t>(need));
+    const uint64_t reserve = chunk0MetadataReserve(metaCount);
+    const uint64_t afterReserve = chunk0Avail > reserve ? chunk0Avail - reserve : 0;
+    const uint64_t take = std::max<uint64_t>(static_cast<uint64_t>(metaCount), afterReserve);
+    return std::min<uint64_t>(take, static_cast<uint64_t>(need));
 }
 
 bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
