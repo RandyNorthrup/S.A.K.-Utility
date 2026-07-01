@@ -2391,18 +2391,35 @@ QByteArray buildFrozenSnapshotSuperblock(const QByteArray& liveVolSb,
     return block;
 }
 
-QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
-    // Raw internal-pool usage bitmap: marks the first `usedBlocks` IP-region
-    // blocks used. The ghost checkpoint marks its own cib(s)+bitmap slot
-    // (single-CIB: 2 blocks -> 0x3); the live checkpoint additionally marks the
-    // ghost pair it still references via the IP free-queue (single-CIB: 4 ->
-    // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so
-    // the run can span several bytes.
+// Raw internal-pool usage bitmap from an EXACT set of used IP-relative block indices
+// (0-based from ip_base). apfsck rebuilds sm_ip_bitmap from the live cib/cab blocks,
+// each chunk's current ci_bitmap_addr, and the IP free-queue (spaceman.c), then
+// memcmp's it against this block - so the set need NOT be a contiguous prefix. The
+// crash-safe per-object 3-slot ring layout points chunk bitmaps at non-adjacent IP
+// slots, which this builder marks exactly.
+QByteArray buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
+                                         const QVector<uint64_t>& usedIpBlocks) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
-    for (uint64_t bit = 0; bit < usedBlocks; ++bit) {
+    for (uint64_t bit : usedIpBlocks) {
         block[static_cast<qsizetype>(bit / 8)] |= static_cast<char>(1 << (bit % 8));
     }
     return block;
+}
+
+QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
+    // Contiguous-prefix internal-pool usage bitmap: marks the first `usedBlocks`
+    // IP-region blocks used. The ghost checkpoint marks its own cib(s)+bitmap slot
+    // (single-CIB: 2 blocks -> 0x3); the live checkpoint additionally marks the
+    // ghost pair it still references via the IP free-queue (single-CIB: 4 ->
+    // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so
+    // the run can span several bytes. Delegates to the exact-set builder with the
+    // prefix {0..usedBlocks-1} (byte-identical to the hand-rolled loop it replaced).
+    QVector<uint64_t> prefix;
+    prefix.reserve(static_cast<qsizetype>(usedBlocks));
+    for (uint64_t bit = 0; bit < usedBlocks; ++bit) {
+        prefix.append(bit);
+    }
+    return buildIpBitmapBlockFromUsedSet(blockSize, prefix);
 }
 
 struct ApfsSpacemanParams {
