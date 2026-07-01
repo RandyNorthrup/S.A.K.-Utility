@@ -2406,6 +2406,20 @@ QByteArray buildIpBitmapBlockFromUsedSet(uint32_t blockSize,
     return block;
 }
 
+// The contiguous-prefix IP used-set {0..count-1}. The current (single-CIB / packed
+// multi-chunk) IP layout marks exactly this prefix - the live rotation-group slot,
+// immutable cibs, and packed spilled-chunk bitmap slots all sit at the front. The
+// keystone S3 replaces this with the exact sparse live set once spilled-chunk
+// bitmaps move to free-pool slots.
+QVector<uint64_t> ipBitmapPrefixSet(uint64_t count) {
+    QVector<uint64_t> prefix;
+    prefix.reserve(static_cast<qsizetype>(count));
+    for (uint64_t bit = 0; bit < count; ++bit) {
+        prefix.append(bit);
+    }
+    return prefix;
+}
+
 QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
     // Contiguous-prefix internal-pool usage bitmap: marks the first `usedBlocks`
     // IP-region blocks used. The ghost checkpoint marks its own cib(s)+bitmap slot
@@ -2414,12 +2428,7 @@ QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
     // 0xF). Multi-CIB scales the slot to cib_count cibs + one chunk-0 bitmap, so
     // the run can span several bytes. Delegates to the exact-set builder with the
     // prefix {0..usedBlocks-1} (byte-identical to the hand-rolled loop it replaced).
-    QVector<uint64_t> prefix;
-    prefix.reserve(static_cast<qsizetype>(usedBlocks));
-    for (uint64_t bit = 0; bit < usedBlocks; ++bit) {
-        prefix.append(bit);
-    }
-    return buildIpBitmapBlockFromUsedSet(blockSize, prefix);
+    return buildIpBitmapBlockFromUsedSet(blockSize, ipBitmapPrefixSet(usedBlocks));
 }
 
 struct ApfsSpacemanParams {
@@ -3205,6 +3214,11 @@ struct ApfsCheckpointCommitContext {
     // A7 (A-g) in-chunk grow: blocks added to the main device's sm_block_count (0 = no
     // resize). The matching free-count rise rides in spacemanFreeDelta.
     int64_t spacemanBlockCountDelta{0};
+    // Exact IP-relative used-set the sm_ip_bitmap ring advance writes (keystone S1):
+    // the live rotation-group slot + immutable cibs/cabs + each chunk's current
+    // ci_bitmap_addr + every IP free-queue ghost. When ipBitmapUsage != 0 this is the
+    // prefix {0..ipBitmapUsage-1} today; S3 makes it the exact sparse live set.
+    QVector<uint64_t> ipUsedSet;
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -3258,7 +3272,7 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     // block; the remaining bmSize-1 copies are all-zero.
     for (uint64_t i = 0; i < bmSize; ++i) {
         const QByteArray bmp =
-            i == 0 ? buildIpBitmapBlock(ctx.geometry.blockSize, ctx.ipBitmapUsage)
+            i == 0 ? buildIpBitmapBlockFromUsedSet(ctx.geometry.blockSize, ctx.ipUsedSet)
                    : QByteArray(static_cast<qsizetype>(ctx.geometry.blockSize), '\0');
         if (!writeApfsRepairBlock(ctx.image, ctx.geometry, base + newSlots.at(i), bmp, blockers)) {
             return false;
@@ -3466,6 +3480,9 @@ struct ApfsCheckpointAdvanceRequest {
     // Ring-relative start index for this checkpoint's ephemeral data (== live.dataNext, or 0
     // when the data ring wrapped). Set by advanceCheckpoint before the nx_superblock deltas.
     uint32_t dataIndexStart{0};
+    // Exact IP-relative used-set for the sm_ip_bitmap ring advance (keystone S1); must be
+    // set whenever ipBitmapUsage != 0. Today the prefix {0..ipBitmapUsage-1}; S3 sparse.
+    QVector<uint64_t> ipUsedSet;
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -3571,7 +3588,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           request.ipBitmapUsage,
                                           ipFqEntries,
                                           request.mainFqEntries,
-                                          request.blockCountDelta};
+                                          request.blockCountDelta,
+                                          request.ipUsedSet};
     if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
         return false;
     }
@@ -5562,7 +5580,8 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
-                              .mainFqEntries = mainFq.entries},
+                              .mainFqEntries = mainFq.entries,
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
                              result,
                              blockers);
 }
@@ -6175,7 +6194,8 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
-                              .mainFqEntries = mainFq.entries},
+                              .mainFqEntries = mainFq.entries,
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
                              result,
                              blockers);
 }
@@ -6315,7 +6335,8 @@ bool commitInPlaceResizeGrow(QIODevice* image,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
                               .prevFreedCibSlot = rotation.freeCib,
-                              .blockCountDelta = growDelta},
+                              .blockCountDelta = growDelta,
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
                              result,
                              blockers);
 }
