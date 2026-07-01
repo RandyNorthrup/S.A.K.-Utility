@@ -1790,6 +1790,7 @@ private Q_SLOTS:
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
+    void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
@@ -8103,6 +8104,84 @@ void PartitionManagerCoreTests::apfsWriter_checkpointDataRingWrapsOnRepeatedComm
         PartitionApfsFileSystemReader::listDirectoryFromImage(container, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("RingWrap"));
+}
+
+namespace {
+// Resets the raw-device test predicate on scope exit.
+struct ApfsRawTargetPredicateGuard {
+    ~ApfsRawTargetPredicateGuard() {
+        PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({});
+    }
+};
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_streamedFileWriteMatchesInMemoryByteForByte() {
+    // Streaming pulls the payload from a host file block-by-block (peak RAM one block).
+    // Proof = byte IDENTITY to the Apple-certified in-memory raw write, so streaming
+    // inherits its apfsck/kernel cert. Payload ~40 KiB non-block-aligned.
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    const auto imageOptions = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    const QString base = dir.filePath(QStringLiteral("stream-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("StreamEq"),
+                                                        .options = imageOptions})
+            .ok);
+    QByteArray payload(40'000, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 31 + 7) & 0xFF);
+    }
+    const QString payloadPath = dir.filePath(QStringLiteral("payload.bin"));
+    QFile pf(payloadPath);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    QCOMPARE(pf.write(payload), static_cast<qint64>(payload.size()));
+    pf.close();
+    // Two copies of the identical base (format randomizes the UUID -> same start bytes).
+    const QString memImg = dir.filePath(QStringLiteral("stream-mem.apfs"));
+    const QString streamImg = dir.filePath(QStringLiteral("stream-file.apfs"));
+    QVERIFY(QFile::copy(base, memImg));
+    QVERIFY(QFile::copy(base, streamImg));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [memImg, streamImg](const QString& path) { return path == memImg || path == streamImg; });
+    const auto memCommit =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = memImg,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("big.bin"),
+                                                 .file_data = payload,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = rawOptions});
+    QVERIFY2(memCommit.ok, qPrintable(memCommit.blockers.join(QStringLiteral("; "))));
+    const auto streamCommit = PartitionApfsWriter::commitRawFileWrite(
+        {.target_path = streamImg,
+         .target_container_bytes = bytes,
+         .file_name = QStringLiteral("big.bin"),
+         .file_data_path = payloadPath,
+         .file_data_stream_size = static_cast<uint64_t>(payload.size()),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = rawOptions});
+    QVERIFY2(streamCommit.ok, qPrintable(streamCommit.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(streamCommit.new_xid, memCommit.new_xid);
+    const auto hashFile = [](const QString& path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly)
+                   ? QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256)
+                   : QByteArray();
+    };
+    QVERIFY2(hashFile(memImg) == hashFile(streamImg),
+             "streamed file write is not byte-identical to the in-memory write");
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        streamImg, QStringLiteral("/big.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, payload);
 }
 
 namespace {

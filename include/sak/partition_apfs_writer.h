@@ -601,6 +601,12 @@ struct PartitionApfsRawFileInsertCommitRequest {
     uint64_t target_container_bytes{0};
     QString file_name;
     QByteArray file_data;
+    // Streaming write: when file_data_path is non-empty the payload is streamed from
+    // that host file (file_data_stream_size bytes) block-by-block instead of
+    // file_data, so a multi-GB write never holds the whole payload in RAM. file_data
+    // is ignored/empty in that case. Empty path keeps the in-memory path unchanged.
+    QString file_data_path;
+    uint64_t file_data_stream_size{0};
     // A5: insert the file transparently compressed (inline zlib decmpfs). See
     // PartitionApfsImageFileInsertCommitRequest::compress_zlib.
     bool compress_zlib{false};

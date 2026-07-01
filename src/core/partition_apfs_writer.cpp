@@ -861,6 +861,12 @@ struct ApfsRootFilePayload {
     // keeps a single-link file byte-identical.
     QVector<ApfsHardLinkName> additionalLinks;
     uint64_t primarySiblingId{0};
+    // Streaming write: the file's logical size when `data` carries no bytes (the
+    // payload is streamed block-by-block from a host file, not held in RAM). 0 =
+    // use data.size() (every in-memory path stays byte-identical). The data extents
+    // still come from dataExtents; this only feeds the inode logical size + the
+    // synthesized single-extent block count.
+    uint64_t logicalSizeOverride{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1275,11 +1281,18 @@ QByteArray fileExtentValue(uint64_t lengthBytes, uint64_t dataStartBlock) {
 
 // The data extents a file's records describe: an explicit multi-run list when
 // present, otherwise the single contiguous run rounded from the payload size.
+// The file's logical size in bytes: the streaming override when set (a file
+// source carries no bytes in `data`), else the in-memory payload size.
+uint64_t fileLogicalSize(const ApfsRootFilePayload& file) {
+    return file.logicalSizeOverride != 0 ? file.logicalSizeOverride
+                                         : static_cast<uint64_t>(file.data.size());
+}
+
 QVector<ApfsDataExtent> fileDataExtents(const ApfsRootFilePayload& file, uint32_t blockSize) {
     if (!file.dataExtents.isEmpty()) {
         return file.dataExtents;
     }
-    const uint64_t bytes = static_cast<uint64_t>(file.data.size());
+    const uint64_t bytes = fileLogicalSize(file);
     if (bytes == 0 || blockSize == 0) {
         return {};
     }
@@ -1360,8 +1373,7 @@ void appendHardLinkRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
 }
 
 void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
-    const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize
-                                             : static_cast<uint64_t>(file.data.size());
+    const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize : fileLogicalSize(file);
     const int32_t linkCount = 1 + static_cast<int32_t>(file.additionalLinks.size());
     records->append(
         {fsKey(file.fileId, kApfsRecordInode),
@@ -4317,18 +4329,82 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
     return true;
 }
 
+// A copyable pull source for a file's data payload. Either an in-memory buffer
+// (the certified path -- byte-identical to passing a QByteArray) or a host file
+// streamed block-by-block, so a multi-GB write never holds the whole payload in
+// RAM (peak RAM is one block regardless of file size). The struct is copied by
+// value inside ApfsFileInsertRequest/ApfsChainedListInput, so it carries a path
+// (not a QFile handle) and opens on demand.
+class ApfsFileDataSource {
+public:
+    ApfsFileDataSource() = default;
+
+    static ApfsFileDataSource fromBytes(QByteArray bytes) {
+        ApfsFileDataSource src;
+        src.m_size = static_cast<uint64_t>(bytes.size());
+        src.m_bytes = std::move(bytes);
+        return src;
+    }
+
+    static ApfsFileDataSource fromFile(QString path, uint64_t size) {
+        ApfsFileDataSource src;
+        src.m_isFile = true;
+        src.m_path = std::move(path);
+        src.m_size = size;
+        return src;
+    }
+
+    [[nodiscard]] uint64_t size() const { return m_size; }
+    [[nodiscard]] bool isEmpty() const { return m_size == 0; }
+    [[nodiscard]] bool isFile() const { return m_isFile; }
+    [[nodiscard]] const QByteArray& bytes() const { return m_bytes; }
+    [[nodiscard]] const QString& path() const { return m_path; }
+
+private:
+    QByteArray m_bytes;  // memory source (empty for a file source)
+    QString m_path;      // host file source (empty for a memory source)
+    uint64_t m_size{0};  // logical payload size in bytes
+    bool m_isFile{false};
+};
+
 // Write the file payload into its newly allocated data blocks (the final block
-// is zero-padded). A zero-length file allocates no data blocks.
+// is zero-padded). A zero-length file allocates no data blocks. dataBlocks may be
+// non-contiguous when free space is fragmented, but the SOURCE is read
+// sequentially (block i covers source bytes [i*bs, (i+1)*bs)), so a file source
+// is streamed with a single sequential pass and only one block is held in memory.
 bool writeApfsFileDataBlocks(QIODevice* image,
                              const ApfsRepairGeometry& geometry,
                              const QVector<uint64_t>& dataBlocks,
-                             const QByteArray& fileData,
+                             const ApfsFileDataSource& source,
                              QStringList* blockers) {
+    QFile file;
+    if (source.isFile() && !dataBlocks.isEmpty()) {
+        file.setFileName(source.path());
+        if (!file.open(QIODevice::ReadOnly)) {
+            blockers->append(QStringLiteral("APFS file-write: cannot open payload source '%1'")
+                                 .arg(source.path()));
+            return false;
+        }
+    }
     for (qsizetype index = 0; index < dataBlocks.size(); ++index) {
         QByteArray block(geometry.blockSize, '\0');
-        const qsizetype offset = index * geometry.blockSize;
-        const qsizetype bytes = qMin<qsizetype>(geometry.blockSize, fileData.size() - offset);
-        std::copy(fileData.cbegin() + offset, fileData.cbegin() + offset + bytes, block.begin());
+        if (source.isFile()) {
+            const qint64 got = file.read(block.data(), geometry.blockSize);
+            if (got < 0) {
+                blockers->append(
+                    QStringLiteral("APFS file-write: read error on payload source '%1'")
+                        .arg(source.path()));
+                return false;
+            }
+            // Bytes past `got` stay zero (final-block padding / short read at EOF).
+        } else {
+            const QByteArray& fileData = source.bytes();
+            const qsizetype offset = index * geometry.blockSize;
+            const qsizetype bytes = qMin<qsizetype>(geometry.blockSize, fileData.size() - offset);
+            std::copy(fileData.cbegin() + offset,
+                      fileData.cbegin() + offset + bytes,
+                      block.begin());
+        }
         if (!writeApfsRepairBlock(image, geometry, dataBlocks.at(index), block, blockers)) {
             return false;
         }
@@ -4727,6 +4803,24 @@ struct ApfsFileInsertRequest {
     // data or inode is allocated; two sibling ids are taken from the id pool (the
     // primary name's + the new name's) and the inode's link count rises to 2.
     uint64_t hardlinkTargetId{0};
+    // Streaming write: when streamPath is non-empty the payload is streamed from that
+    // host file block-by-block (streamSize bytes) instead of fileData, so a multi-GB
+    // write never holds the whole payload in RAM. fileData stays empty in that case.
+    // Every in-memory caller leaves streamPath empty, keeping the certified path
+    // byte-identical. Placed last so the positional aggregate init stays valid.
+    QString streamPath;
+    uint64_t streamSize{0};
+
+    // The payload's effective logical size (streamed size when streaming, else the
+    // in-memory buffer size).
+    [[nodiscard]] uint64_t payloadSize() const {
+        return streamPath.isEmpty() ? static_cast<uint64_t>(fileData.size()) : streamSize;
+    }
+    // The pull source the block-write loop consumes.
+    [[nodiscard]] ApfsFileDataSource payloadSource() const {
+        return streamPath.isEmpty() ? ApfsFileDataSource::fromBytes(fileData)
+                                    : ApfsFileDataSource::fromFile(streamPath, streamSize);
+    }
 };
 
 struct ApfsChainedListInput {
@@ -4774,6 +4868,31 @@ bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
 
 // Build the full root-file list for the commit: every existing file preserved
 // in place plus the new file, which is assigned the volume's next object id.
+// Append the plain (non-clone, non-hardlink) newly-inserted file. A memory payload
+// carries its bytes in `data` (byte-identical to the certified path); a streamed
+// payload carries none -- its logical size rides in logicalSizeOverride and its
+// extents in newDataExtents, so it streams to disk in writeApfsFileDataBlocks
+// without ever materializing in RAM.
+void appendInsertedFile(const ApfsChainedListInput& in,
+                        uint64_t newFileId,
+                        QVector<ApfsRootFilePayload>* files) {
+    const bool streamed = !in.request.streamPath.isEmpty();
+    files->append({.fileName = in.request.fileName.trimmed(),
+                   .data = streamed ? QByteArray() : in.request.fileData,
+                   .parentDirectoryId = in.request.newFileParentId,
+                   .fileId = newFileId,
+                   .privateId = newFileId,
+                   .dataStartBlock = in.newDataStart,
+                   .dataExtents = in.newDataExtents,
+                   .compressed = in.request.compressed,
+                   .decmpfsXattr = in.request.decmpfsXattr,
+                   .uncompressedSize = in.request.uncompressedSize,
+                   .xattrs = in.request.xattrs,
+                   .sparse = in.request.sparse,
+                   .sparseLogicalSize = in.request.sparseLogicalSize,
+                   .logicalSizeOverride = streamed ? in.request.streamSize : 0});
+}
+
 bool buildChainedFileList(const ApfsChainedListInput& in,
                           QVector<ApfsRootFilePayload>* files,
                           QStringList* blockers) {
@@ -4827,19 +4946,7 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
              .extraInodeFlags = kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned});
         return true;
     }
-    files->append({.fileName = in.request.fileName.trimmed(),
-                   .data = in.request.fileData,
-                   .parentDirectoryId = in.request.newFileParentId,
-                   .fileId = newFileId,
-                   .privateId = newFileId,
-                   .dataStartBlock = in.newDataStart,
-                   .dataExtents = in.newDataExtents,
-                   .compressed = in.request.compressed,
-                   .decmpfsXattr = in.request.decmpfsXattr,
-                   .uncompressedSize = in.request.uncompressedSize,
-                   .xattrs = in.request.xattrs,
-                   .sparse = in.request.sparse,
-                   .sparseLogicalSize = in.request.sparseLogicalSize});
+    appendInsertedFile(in, newFileId, files);
     return true;
 }
 
@@ -5404,7 +5511,7 @@ bool buildInsertFsNodes(const ApfsFsCommitContext& ctx,
                                 &out->files,
                                 blockers) &&
            writeApfsFileDataBlocks(
-               ctx.image, ctx.geometry, dataBlockList, request.fileData, blockers) &&
+               ctx.image, ctx.geometry, dataBlockList, request.payloadSource(), blockers) &&
            buildFsTreeNodes(
                {ctx.geometry.blockSize, out->files, request.directories, ctx.firstLeafOid},
                &out->nodes,
@@ -5429,8 +5536,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
-    const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.fileData.size()),
-                                                  ctx.geometry.blockSize);
+    const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     qsizetype nodeCount = 0;
     if (!sizeInsertFsTree(ctx, request, &nodeCount, blockers)) {
         return false;
@@ -6956,6 +7062,10 @@ struct ApfsRootFileWriteRequest {
     QByteArray fileData;
     QVector<ApfsRootDirectoryPayload> directories;     // preserved across the commit
     uint64_t parentDirectoryId{kApfsRootDirectoryId};  // root for a root file, else a directory id
+    // Streaming write: when streamPath is set the payload streams from that host file
+    // (streamSize bytes) instead of fileData; fileData stays empty. Empty = in-memory.
+    QString streamPath;
+    uint64_t streamSize{0};
 };
 
 bool commitInPlaceRootFileWrite(QIODevice* image,
@@ -6988,11 +7098,11 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
     } else {
         existing = request.allFiles;
     }
-    return commitInPlaceFileInsert(
-        image,
-        {existing, fileName, request.fileData, request.directories, parentId},
-        result,
-        blockers);
+    ApfsFileInsertRequest insert{
+        existing, fileName, request.fileData, request.directories, parentId};
+    insert.streamPath = request.streamPath;
+    insert.streamSize = request.streamSize;
+    return commitInPlaceFileInsert(image, insert, result, blockers);
 }
 
 
@@ -14877,7 +14987,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
             cleanFileName, QLatin1StringView("raw file-write-commit"), &result.blockers)) {
         return result;
     }
-    if (static_cast<uint64_t>(request.file_data.size()) > kApfsMaximumSeedFileBytes) {
+    const bool streaming = !request.file_data_path.trimmed().isEmpty();
+    const uint64_t payloadBytes = streaming ? request.file_data_stream_size
+                                            : static_cast<uint64_t>(request.file_data.size());
+    if (payloadBytes > kApfsMaximumSeedFileBytes) {
         result.blockers.append(
             QStringLiteral("APFS raw file-write-commit payload exceeds the current size cap"));
         return result;
@@ -14897,12 +15010,15 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
     if (!target) {
         return result;
     }
+    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    if (streaming) {
+        writeRequest.fileData.clear();
+        writeRequest.streamPath = request.file_data_path.trimmed();
+        writeRequest.streamSize = request.file_data_stream_size;
+    }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceRootFileWrite(target.get(),
-                                   {allFiles, cleanFileName, request.file_data, directories},
-                                   &commit,
-                                   &commitBlockers)) {
+    if (commitInPlaceRootFileWrite(target.get(), writeRequest, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
