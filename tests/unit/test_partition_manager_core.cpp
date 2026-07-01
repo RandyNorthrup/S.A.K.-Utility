@@ -1791,6 +1791,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
+    void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
@@ -8182,6 +8183,63 @@ void PartitionManagerCoreTests::apfsWriter_streamedFileWriteMatchesInMemoryByteF
         streamImg, QStringLiteral("/big.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunks() {
+    // The multi-chunk data allocator: a single streamed file larger than two 128 MiB
+    // allocation chunks spills across chunks 0, 1, 2..K, each materializing its own
+    // allocation bitmap. A 260 MiB file into a 384 MiB (3-chunk) container spans three
+    // data chunks - impossible under the old chunk-0+chunk-1 (256 MiB) allocator. The
+    // container image persists (SAK_MC_CERT_DIR) so host apfsck can verify the layout.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("mc.img"));
+    QFile::remove(img);
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("MultiChunk"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    const uint64_t payloadBytes = 260ULL * 1024ULL * 1024ULL;
+    const QString payloadPath = dir.filePath(QStringLiteral("mc_payload.bin"));
+    QFile pf(payloadPath);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    QByteArray chunk(1 << 20, Qt::Uninitialized);
+    for (qsizetype i = 0; i < chunk.size(); ++i) {
+        chunk[i] = static_cast<char>((i * 131 + 17) & 0xFF);
+    }
+    for (uint64_t written = 0; written < payloadBytes; written += chunk.size()) {
+        QCOMPARE(pf.write(chunk), static_cast<qint64>(chunk.size()));
+    }
+    pf.close();
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto commit =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("big.bin"),
+                                                 .file_data_path = payloadPath,
+                                                 .file_data_stream_size = payloadBytes,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().size_bytes, payloadBytes);
+    // Read back the first megabyte and confirm it matches the deterministic payload.
+    const auto readBack =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, chunk.left(readBack.data.size()));
 }
 
 namespace {
