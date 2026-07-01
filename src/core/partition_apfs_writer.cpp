@@ -5325,9 +5325,11 @@ bool allocateOverflowCommitBlocks(const ApfsFsCommitContext& ctx,
 // applyFileInsertAllocation). The chunk-1 bitmap is a physical chunk-0 block, as
 // Apple's large containers place per-chunk bitmaps, so the IP rotation is untouched.
 // Spill the still-unallocated data blocks across data chunks 1..K, each searched in
-// its own allocation bitmap, appended to *newBlocks. Single-CIB spills across every
-// data chunk (up to chunkCount-1); multi-CIB caps to chunk 1 (spilling into a chunk a
-// later cib owns is a documented follow-on, since only cib 0 rotates here).
+// its own allocation bitmap, appended to *newBlocks. Spill covers every data chunk cib
+// 0 owns (1..chunks_per_cib-1): a single-CIB container's chunks are all cib 0's, so the
+// bound is just chunkCount there; a multi-CIB container caps at chunks_per_cib because a
+// later cib's chunk needs that cib copied-on-written + its spaceman cib-array entry
+// re-pointed (S4b), which the cib-0-only rotation here does not yet do.
 void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
                          const QByteArray& cib,
                          int need,
@@ -5335,7 +5337,7 @@ void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
                          QStringList* blockers) {
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    const uint64_t maxSpillChunk = ctx.layout.cibCount == 1 ? chunkCount : 2;
+    const uint64_t maxSpillChunk = std::min<uint64_t>(chunkCount, kApfsSpacemanChunksPerCib);
     for (uint64_t c = 1; c < maxSpillChunk && newBlocks->size() < need; ++c) {
         const QByteArray chunkBitmap =
             readChunkAllocationBitmap(ctx.image, ctx.geometry, cib, c, blockers);
@@ -5407,8 +5409,8 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     // the chunk-0 reserved prefix (below seedData, so never data-allocated) and already
     // marked used in the chunk-0 bitmap, so no chunk-0 block is consumed. The base is
     // returned via *chunk1BitmapBlock; the finalize path derives K from the block
-    // addresses. Multi-CIB (> ~15 GiB) data spill into chunks a later cib owns is a
-    // documented follow-on: only cib 0's chunks rotate here, so cap the spill to chunk 1.
+    // addresses. The spill covers every chunk cib 0 owns (up to chunks_per_cib-1); data
+    // that would land in a chunk a later cib owns needs cib-k COW (S4b), capped below.
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     // Cap the chunk-0 portion so chunk 0 keeps a metadata headroom free (the data that
@@ -5488,6 +5490,11 @@ bool liveVolumeHasSnapshot(const ApfsFsCommitContext& ctx, QStringList* blockers
 // IP bitmap across every later commit until the chunk empties, so the finalize usage
 // count must include them. Reads the live cib; single-CIB spill tier only (allocChunk
 // 0), so the caller gates on that.
+//
+// Only cib 0's chunks (1..chunks_per_cib-1) can carry a live spill bitmap today (a later
+// cib's chunks rotate under S4b), so the scan stops at chunks_per_cib. That also keeps
+// the read inside cib 0's 126 chunk-info entries on a multi-CIB container, where an index
+// past 125 would read the block's trailing padding rather than a valid entry.
 QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStringList* blockers) {
     QVector<uint64_t> chunks;
     QByteArray cib(ctx.geometry.blockSize, '\0');
@@ -5496,7 +5503,8 @@ QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStrin
     }
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    for (uint64_t c = 1; c < chunkCount; ++c) {
+    const uint64_t scanEnd = std::min<uint64_t>(chunkCount, kApfsSpacemanChunksPerCib);
+    for (uint64_t c = 1; c < scanEnd; ++c) {
         const qsizetype entry = kApfsChunkInfoEntriesOffset +
                                 static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
         if (le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset) != 0) {

@@ -1796,6 +1796,7 @@ private Q_SLOTS:
     void apfsWriter_backToBackFullSpillsSucceed();
     void apfsWriter_repeatedSpillCowsChunkBitmap();
     void apfsWriter_gapSpillMarksExactBitmap();
+    void apfsWriter_multiCibSpillsAcrossCib0Chunks();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8267,8 +8268,9 @@ void writeSpillPayload(const QString& path, uint64_t bytes) {
     }
 }
 
-// Format a fresh 3-chunk single-CIB container and stream a 260 MiB file into it so the
-// data spills across chunks 0..2 (commit 1). Persists the image at `img`.
+// Format a fresh container sized to `bytes` (single- or multi-CIB, per the block count)
+// and write a `payloadBytes` file to `payloadPath` so a later commit spills it across
+// chunks 0..K. Persists the image at `img`.
 void formatSpillContainerWithBigFile(const QString& img,
                                      const QString& payloadPath,
                                      uint64_t bytes,
@@ -8517,6 +8519,52 @@ void PartitionManagerCoreTests::apfsWriter_gapSpillMarksExactBitmap() {
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
     QVERIFY2(readBig.ok, qPrintable(readBig.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBig.data, spillFixtureChunk().left(readBig.data.size()));
+}
+
+void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
+    // S4a: on a MULTI-CIB container (> chunks_per_cib chunks, so cib_count >= 2) a file used
+    // to be capped at chunk 1 (256 MiB) because only cib 0 rotated; the spill now covers every
+    // chunk cib 0 owns (1..chunks_per_cib-1). A 640 MiB file spills into chunks 0..4 - past the
+    // old chunk-1 cap - and a second file sustains the spill. Heavy (a ~16 GiB sparse container),
+    // so it runs only when SAK_S4_CERT_DIR is set; the dir persists both images for host apfsck.
+    const QString envDir = qEnvironmentVariable("SAK_S4_CERT_DIR");
+    if (envDir.isEmpty()) {
+        QSKIP("multi-CIB spill cert needs SAK_S4_CERT_DIR (creates a ~16 GiB sparse container)");
+    }
+    const QDir dir(envDir);
+    const uint64_t bytes = 127ULL * 32'768ULL * 4096ULL;  // 127 chunks -> cib_count 2
+    QCOMPARE(PartitionApfsWriter::computeContainerGeometry(bytes / 4096).cib_count,
+             static_cast<uint64_t>(2));
+    const uint64_t p1Bytes = 640ULL * 1024ULL * 1024ULL;  // spills chunks 0..4
+    const uint64_t p2Bytes = 512ULL * 1024ULL * 1024ULL;  // spills chunks 0..3
+    const QString img = dir.filePath(QStringLiteral("s4_multicib.img"));
+    const QString p1 = dir.filePath(QStringLiteral("s4_p1.bin"));
+    const QString p2 = dir.filePath(QStringLiteral("s4_p2.bin"));
+    formatSpillContainerWithBigFile(img, p1, bytes, p1Bytes);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QVERIFY2(commitSpillFile(img, bytes, QStringLiteral("big1.bin"), p1, p1Bytes).ok,
+             "commit 1: 640 MiB spill past chunk 1 on a multi-CIB container");
+    // The decisive proof the spill went past the old chunk-1 cap: chunks 2..4 now carry a
+    // live materialized bitmap (chunk 4 could never be reached under the old maxSpillChunk 2).
+    QVERIFY2(PartitionApfsWriter::readGeneratedChunkBitmapAddr(img, 4) != 0,
+             "chunk 4 never got a spill bitmap - the multi-CIB cap was not lifted");
+    const auto read1 =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big1.bin"), 1 << 20);
+    QVERIFY2(read1.ok, qPrintable(read1.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read1.data, spillFixtureChunk().left(read1.data.size()));
+    writeSpillPayload(p2, p2Bytes);
+    QVERIFY2(commitSpillFile(img, bytes, QStringLiteral("big2.bin"), p2, p2Bytes).ok,
+             "commit 2: a second multi-CIB spill must be sustained");
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 2);
+    const auto read2 =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
+    QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
 }
 
 namespace {
