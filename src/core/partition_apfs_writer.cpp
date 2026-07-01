@@ -5240,6 +5240,23 @@ struct ApfsCommitBlockSizing {
 // an interrupted commit's predecessor keeps its blocks (the truncation test).
 constexpr uint64_t kMainFqRollbackWindow = 4;
 
+// Chunk-0 metadata headroom a spilling commit must leave free. A multi-chunk spill
+// used to take EVERY free chunk-0 block (the data filled chunk 0, then chunks 1..K),
+// leaving chunk 0 with zero free blocks - so every later file commit failed to find
+// its metaCount metadata blocks in chunk 0 and the container was wedged for any
+// further mutation. Reserving R free chunk-0 blocks on the spill path (the extra data
+// that would have filled them spills into the data chunks instead) keeps chunk 0 able
+// to serve the next commit's metadata: a spill followed by non-spilling (add/delete/
+// modify) commits is sustainable, the main free-queue reclaiming freed old-chain chunk-0
+// metadata back into the reserve. Two FULL multi-chunk spills back-to-back (before the
+// rollback-window reclaim) still fail closed for lack of chunk-0 room - lifting that
+// needs metadata-in-a-data-chunk allocation (a follow-on), not a larger reserve; the
+// failure is fail-closed (no write, no corruption), a strict improvement over the total
+// wedge one spill used to leave. R = kChunk0MetadataReserveBlocks (2048 = 8 MiB) is
+// generous for a small/moderate mutation's metadata chain; the per-commit reserve grows
+// to metaCount*(window+2) when this commit's own metadata is larger.
+constexpr uint64_t kChunk0MetadataReserveBlocks = 2048;
+
 // Overflow tier (chunk 0 fully reserved): allocate the whole commit (metadata chain +
 // data) from the boundary chunk's free region [seedData, end-of-chunk) and assign the
 // rotated boundary-bitmap slot. That slot rides in cib 0's rotation group after cib 0,
@@ -5314,6 +5331,28 @@ void spillDataIntoChunks(const ApfsFsCommitContext& ctx,
     }
 }
 
+// The chunk-0 headroom a spilling commit reserves: at least the fixed 8 MiB pool, and
+// at least this commit's own metaCount across the whole rollback window plus a margin,
+// so a same-shape follow-on commit always finds its metadata blocks free in chunk 0.
+uint64_t chunk0MetadataReserve(int metaCount) {
+    const uint64_t perCommit = static_cast<uint64_t>(metaCount) * (kMainFqRollbackWindow + 2);
+    return std::max<uint64_t>(kChunk0MetadataReserveBlocks, perCommit);
+}
+
+// How many of a spilling commit's blocks to take from chunk 0: everything chunk 0 has
+// free, minus the reserved metadata headroom, but never fewer than metaCount (the
+// metadata chain itself must live in chunk 0) and never more than the commit needs. The
+// remainder spills into the data chunks. Returns 0 (caller fails closed) when chunk 0
+// cannot even hold the metadata plus the reserve.
+uint64_t chunk0SpillTake(uint64_t chunk0Avail, int metaCount, int need) {
+    const uint64_t reserve = chunk0MetadataReserve(metaCount);
+    if (chunk0Avail < static_cast<uint64_t>(metaCount) + reserve) {
+        return 0;
+    }
+    const uint64_t afterReserve = chunk0Avail - reserve;
+    return std::min<uint64_t>(afterReserve, static_cast<uint64_t>(need));
+}
+
 bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             const ApfsCommitBlockSizing& sizing,
                             QVector<uint64_t>* newBlocks,
@@ -5348,12 +5387,18 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
     // documented follow-on: only cib 0's chunks rotate here, so cap the spill to chunk 1.
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
-    if (chunkCount < 2 || chunk0Free.size() < metaCount) {
+    // Cap the chunk-0 portion so chunk 0 keeps a metadata headroom free (the data that
+    // would have filled it spills into the data chunks instead), otherwise a spill left
+    // chunk 0 with zero free blocks and wedged every later commit. The take is still
+    // >= metaCount, so the metadata chain (newBlocks[0..metaCount-1]) stays chunk-0.
+    const uint64_t chunk0Take =
+        chunk0SpillTake(static_cast<uint64_t>(chunk0Free.size()), metaCount, need);
+    if (chunkCount < 2 || chunk0Take == 0) {
         blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
         return false;
     }
     *chunk1BitmapBlock = kApfsFormatIpBaseBlock + ctx.layout.cibCount + 5;
-    *newBlocks = chunk0Free;
+    *newBlocks = chunk0Free.mid(0, static_cast<qsizetype>(chunk0Take));
     QByteArray cib(ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
         return false;
@@ -5413,6 +5458,30 @@ bool liveVolumeHasSnapshot(const ApfsFsCommitContext& ctx, QStringList* blockers
     return le32(volOmapHdr, kApfsOmapSnapshotCountOffset) > 0;
 }
 
+// Data chunks (>= 1) that already carry a live materialized allocation bitmap - a
+// prior spilling commit set their cib entry's ci_bitmap_addr non-zero (a fresh data
+// chunk starts implicit-all-free with ci_bitmap_addr 0). These slots stay used in the
+// IP bitmap across every later commit until the chunk empties, so the finalize usage
+// count must include them. Reads the live cib; single-CIB spill tier only (allocChunk
+// 0), so the caller gates on that.
+QVector<uint64_t> liveSpilledChunkIndices(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    QVector<uint64_t> chunks;
+    QByteArray cib(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveCib, &cib, blockers)) {
+        return chunks;
+    }
+    const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    for (uint64_t c = 1; c < chunkCount; ++c) {
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(c) * kApfsChunkInfoEntryStride;
+        if (le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset) != 0) {
+            chunks.append(c);
+        }
+    }
+    return chunks;
+}
+
 // Shared commit tail: write the COW fs-tree + object-map chain, swap the
 // allocation bitmap (old fs-tree nodes + object-map chain + freed data out, the
 // new blocks in), and advance the checkpoint. The net block change (extra
@@ -5426,16 +5495,32 @@ bool liveVolumeHasSnapshot(const ApfsFsCommitContext& ctx, QStringList* blockers
 // (3 * groupSize, with 2 ghost groups held by the IP free-queue + the live
 // group), and a non-overflow multi-chunk spill's chunk-1 slot. Single-CIB
 // reduces to 6 (0x3f). Byte-identical to the inline computation it replaces.
-uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f, uint64_t groupSize) {
+//
+// The spill-bitmap term counts EVERY data chunk that has a live materialized
+// allocation bitmap after this commit, not just the ones this commit spilled into.
+// A prior commit's spilled-chunk bitmaps stay live (their cib entries carry their
+// non-zero ci_bitmap_addr forward), so a later commit that does NOT spill must still
+// mark those slots used or apfsck (which rebuilds sm_ip_bitmap from each chunk's
+// ci_bitmap_addr) reports "bad ip allocation bitmap". The count = union of the live
+// spilled chunks (read from the live cib) and this commit's new spilled chunks; the
+// slots stay a contiguous prefix continuation (chunk c -> IP index base + c-1), so the
+// prefix used-set stays exact.
+uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f,
+                                      uint64_t groupSize,
+                                      QStringList* blockers) {
     const uint64_t extraBitmaps = f.ctx.layout.metadataChunks > 1 ? f.ctx.layout.metadataChunks - 2
                                                                   : 0;
     const uint64_t immutableCabCount = f.ctx.layout.cabCount > 0 ? f.ctx.layout.cabCount - 1 : 0;
-    // Each data chunk this commit spilled into consumes one reserved bitmap slot.
-    const uint64_t spillBitmaps =
-        f.ctx.layout.allocChunk == 0
-            ? static_cast<uint64_t>(
-                  spilledChunkIndices(f.newBlocks, f.ctx.layout.chunk0Blocks).size())
-            : 0;
+    uint64_t spillBitmaps = 0;
+    if (f.ctx.layout.allocChunk == 0) {
+        QVector<uint64_t> live = liveSpilledChunkIndices(f.ctx, blockers);
+        for (uint64_t c : spilledChunkIndices(f.newBlocks, f.ctx.layout.chunk0Blocks)) {
+            if (!live.contains(c)) {
+                live.append(c);
+            }
+        }
+        spillBitmaps = static_cast<uint64_t>(live.size());
+    }
     return (f.ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps + 3 * groupSize +
            spillBitmaps;
 }
@@ -5544,7 +5629,7 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     const int64_t netQueued = fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
     const uint64_t groupSize = f.ctx.layout.ipGroupStride;
-    const uint64_t ipBitmapUsage = computeFinalizeIpBitmapUsage(f, groupSize);
+    const uint64_t ipBitmapUsage = computeFinalizeIpBitmapUsage(f, groupSize, blockers);
     if (!applyFileInsertAllocation({.image = f.ctx.image,
                                     .geometry = f.ctx.geometry,
                                     .layout = f.ctx.layout,

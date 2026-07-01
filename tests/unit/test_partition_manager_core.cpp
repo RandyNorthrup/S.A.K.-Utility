@@ -1792,6 +1792,7 @@ private Q_SLOTS:
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
+    void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
     void apfsWriter_directoryChildStreamedWriteMatchesInMemory();
     void apfsWriter_inPlaceFileInsertCommitAddsReadableFile();
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
@@ -8241,6 +8242,106 @@ void PartitionManagerCoreTests::apfsWriter_multiChunkStreamedWriteSpansDataChunk
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, chunk.left(readBack.data.size()));
+}
+
+namespace {
+// A deterministic 1 MiB payload block for the spill-unwedge fixture.
+QByteArray spillFixtureChunk() {
+    QByteArray chunk(1 << 20, Qt::Uninitialized);
+    for (qsizetype i = 0; i < chunk.size(); ++i) {
+        chunk[i] = static_cast<char>((i * 131 + 17) & 0xFF);
+    }
+    return chunk;
+}
+
+// Format a fresh 3-chunk single-CIB container and stream a 260 MiB file into it so the
+// data spills across chunks 0..2 (commit 1). Persists the image at `img`.
+void formatSpillContainerWithBigFile(const QString& img,
+                                     const QString& payloadPath,
+                                     uint64_t bytes,
+                                     uint64_t payloadBytes) {
+    QFile::remove(img);
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = img,
+                 .target_container_bytes = bytes,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SpillUnwedge"),
+                 .options = certifiedApfsImageOnlyOptions()})
+                .ok);
+    const QByteArray chunk = spillFixtureChunk();
+    QFile pf(payloadPath);
+    QVERIFY(pf.open(QIODevice::WriteOnly));
+    for (uint64_t written = 0; written < payloadBytes; written += chunk.size()) {
+        QCOMPARE(pf.write(chunk), static_cast<qint64>(chunk.size()));
+    }
+    pf.close();
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_fileCommitSucceedsAfterMultiChunkSpill() {
+    // Unwedge proof: after ONE multi-chunk spill (which used to drain chunk 0 to zero
+    // free blocks), a later file commit must still succeed. Today the second commit fails
+    // "not enough free space in chunk 0" because the spill took every free chunk-0 block.
+    // The reserve-headroom fix keeps chunk 0 able to serve the next commit's metadata.
+    // The final image persists (SAK_MC_CERT_DIR) so host apfsck can inspect both states.
+    const QString envDir = qEnvironmentVariable("SAK_MC_CERT_DIR");
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const uint64_t bytes = 384ULL * 1024ULL * 1024ULL;
+    const uint64_t payloadBytes = 260ULL * 1024ULL * 1024ULL;
+    const QString img = dir.filePath(QStringLiteral("spill1.img"));
+    const QString payloadPath = dir.filePath(QStringLiteral("spill_payload.bin"));
+    formatSpillContainerWithBigFile(img, payloadPath, bytes, payloadBytes);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto commit1 =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("big.bin"),
+                                                 .file_data_path = payloadPath,
+                                                 .file_data_stream_size = payloadBytes,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(commit1.ok, qPrintable(commit1.blockers.join(QStringLiteral("; "))));
+    // Snapshot the post-commit-1 image so apfsck can verify the spill state separately.
+    const QString img1 = dir.filePath(QStringLiteral("spill_after1.img"));
+    QFile::remove(img1);
+    QVERIFY(QFile::copy(img, img1));
+    const auto listing1 =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing1.ok, qPrintable(listing1.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing1.entries.size(), 1);
+    QCOMPARE(listing1.entries.first().size_bytes, payloadBytes);
+    // The decisive assertion: a SECOND commit (a small root file) must now succeed - it
+    // needs metaCount free chunk-0 blocks, which the spill used to leave at zero.
+    QByteArray small(4096, Qt::Uninitialized);
+    for (qsizetype i = 0; i < small.size(); ++i) {
+        small[i] = static_cast<char>((i * 29 + 7) & 0xFF);
+    }
+    const auto commit2 =
+        PartitionApfsWriter::commitRawFileWrite({.target_path = img,
+                                                 .target_container_bytes = bytes,
+                                                 .file_name = QStringLiteral("small.bin"),
+                                                 .file_data = small,
+                                                 .target_mutation_confirmed = true,
+                                                 .allow_raw_device_target = true,
+                                                 .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(commit2.ok, qPrintable(commit2.blockers.join(QStringLiteral("; "))));
+    const auto listing2 =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing2.ok, qPrintable(listing2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing2.entries.size(), 2);
+    const auto readBig =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big.bin"), 1 << 20);
+    QVERIFY2(readBig.ok, qPrintable(readBig.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBig.data, spillFixtureChunk().left(readBig.data.size()));
+    const auto readSmall = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/small.bin"), 1 << 20);
+    QVERIFY2(readSmall.ok, qPrintable(readSmall.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readSmall.data, small);
 }
 
 namespace {
