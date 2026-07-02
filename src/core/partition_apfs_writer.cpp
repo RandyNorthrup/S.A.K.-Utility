@@ -356,13 +356,10 @@ constexpr uint64_t kApfsJObjIdMask = (1ULL << kApfsObjTypeShift) - 1;
 constexpr uint32_t kApfsVolumePhysicalSblockType =
     kApfsObjStoragePhysical | kApfsObjectTypeFs;            // 0x4000000d (frozen sblock object)
 constexpr uint32_t kApfsExtentRefTreeType = 0x40'00'00'02;  // physical btree (j_snap_metadata)
-// apfs_fs_alloc_count is a LOGICAL count: a snapshot re-walks the volume's catalog,
-// its frozen extent-ref tree (a copy of the live one), and the file extents, but NOT
-// the live volume superblock, its single-node object-map tree, or its single-node
-// snap-meta tree. So creating the first snapshot adds (alloc_count - these 3) to the
-// count -> new alloc_count = 2*before - 3. Verified against apfsck's walk (empty
-// container: 5 -> 7) and confirmed by fsck_apfs. The 3 assumes the object-map tree is
-// single-node (level 0); snapshot create fails closed on a multi-level object map.
+// A snapshottable volume owns at least its superblock, object-map header, and object-map
+// tree root - three blocks - so a live apfs_fs_alloc_count below this floor is corrupt and
+// snapshot create fails closed. (The floor is a plausibility guard only; the post-snapshot
+// count is the constant-delta formula below, which holds for any omap depth.)
 constexpr uint64_t kApfsSnapshotLiveOnlyBlocks = 3;
 // Creating a snapshot raises the volume's logical apfs_fs_alloc_count by a CONSTANT
 // (the snapshot's fixed metadata the volume now owns: the frozen superblock + one
@@ -8333,18 +8330,12 @@ bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* 
     st.newSnapCount = le64(st.liveVol, kApfsVolumeNumSnapshotsOffset) + 1;
     st.snapInum = le64(st.liveVol, kApfsVolumeNextObjectIdOffset);
     const uint64_t beforeAlloc = le64(st.liveVol, kApfsVolumeAllocatedBlockCountOffset);
-    // The logical alloc-count formula (2*before - 3) holds only for a single-node
-    // volume object-map tree; a multi-level omap would not re-walk to a known count.
-    QByteArray volOmapTreeNode(bs, '\0');
-    if (!readApfsRepairBlock(
-            cow.image, cow.geometry, cow.live.volOmapTree, &volOmapTreeNode, blockers)) {
-        return false;
-    }
-    if (le16(volOmapTreeNode, kApfsBtreeNodeLevelOffset) != 0) {
-        blockers->append(QStringLiteral(
-            "APFS snapshot-create: multi-level volume object map is not yet supported"));
-        return false;
-    }
+    // The volume object-map tree is shared with the snapshot BY REFERENCE: create COWs
+    // only the omap header (writeSnapshotVolumeChain step E), never a tree node, so the
+    // omap's depth is immaterial here. The logical alloc-count delta is the constant
+    // kApfsSnapshotAllocDelta whatever the omap holds - every shared omap/catalog node is
+    // counted identically before and after, so its count cancels in the delta (apfsck
+    // certified +2 on a multi-level-omap volume, not just the empty single-node case).
     if (beforeAlloc < kApfsSnapshotLiveOnlyBlocks) {
         blockers->append(
             QStringLiteral("APFS snapshot-create: implausible volume allocated-block count"));

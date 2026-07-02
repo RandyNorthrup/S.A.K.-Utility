@@ -1842,6 +1842,7 @@ private Q_SLOTS:
     void apfsWriter_buildsMultiLevelObjectMapOnManyMappings();
     void apfsWriter_buildsMultiNodeMainFreeQueueOnOverflow();
     void apfsWriter_manyFileInsertOverflowsOmapAndFsTree();
+    void apfsWriter_snapshotCreateOnMultiLevelOmap();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12023,6 +12024,69 @@ void PartitionManagerCoreTests::apfsWriter_manyFileInsertOverflowsOmapAndFsTree(
         img, QStringLiteral("/%1").arg(nameFor(last)), 4096);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, lastPayload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_snapshotCreateOnMultiLevelOmap() {
+    // A3 lift: snapshot-create tolerates a MULTI-LEVEL volume omap. Create COWs only the omap
+    // header, never a tree node (the tree is shared with the snapshot by reference), so the
+    // apfs_fs_alloc_count delta is the constant +2 whatever the omap depth. Always-run uses few
+    // files (single-node omap) on a NON-empty volume, asserting +2 off the empty-volume
+    // 2*before-3 coincidence. SAK_OMAP_SNAP_FILE_COUNT/_LONG_NAMES push past 112 fs-tree nodes
+    // for the persisted apfsck cert image (SAK_OMAP_SNAP_CERT_DIR); 1000 long-named root files
+    // is both the multi-level point and the writer's root-preserve cap, so the count clamps there.
+    const QString envDir = qEnvironmentVariable("SAK_OMAP_SNAP_CERT_DIR");
+    const int requested = qEnvironmentVariable("SAK_OMAP_SNAP_FILE_COUNT").toInt();
+    const int fileCount = qMin(requested > 0 ? requested : 16, 1000);
+    const bool longNames = qEnvironmentVariable("SAK_OMAP_SNAP_LONG_NAMES").toInt() != 0;
+    const QString pad = longNames ? QString(180, QLatin1Char('p')) : QString();
+    const int mib = qMax(qEnvironmentVariable("SAK_OMAP_SNAP_CONTAINER_MIB").toInt(), 512);
+    const uint64_t bytes = static_cast<uint64_t>(mib) * 1024ULL * 1024ULL;
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("omap-snap.img"));
+    formatOmapStressContainer(img, bytes, QStringLiteral("OmapSnap"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto rawOptions = certifiedApfsRawCommitOptions();
+    for (int index = 0; index < fileCount; ++index) {
+        commitRawOmapFile(img,
+                          bytes,
+                          QStringLiteral("omap-snap-file-%1-%2.dat").arg(index).arg(pad),
+                          QByteArray(),
+                          rawOptions);
+    }
+    // Snapshot the populated volume; read the pre-snapshot logical alloc count live.
+    const quint64 beforeAlloc = apfsLe64(readApfsImageBlock(img, apfsApsbBlockOf(img)), 0x58);
+    QVERIFY2(beforeAlloc > 5, "a populated volume owns more than the empty-case 5 blocks");
+    const auto snap = PartitionApfsWriter::commitRawSnapshotCreate(
+        {.target_path = img,
+         .target_container_bytes = bytes,
+         .snapshot_name = QStringLiteral("sak.omap.snapshot"),
+         .create_time_ns = 1'782'096'003'133'454'505ULL,
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = rawOptions});
+    QVERIFY2(snap.ok, qPrintable(snap.blockers.join(QStringLiteral("; "))));
+
+    const QByteArray vol = readApfsImageBlock(img, apfsApsbBlockOf(img));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(apfsLe64(vol, 0xD8), 1ULL);             // num_snapshots
+    QCOMPARE(apfsLe64(vol, 0x58), beforeAlloc + 2);  // constant +2 delta, any omap depth
+    QVERIFY(apfsLe64(vol, 0x98) != 0);               // snap-meta tree wired
+    // Prove the shared omap is actually multi-level in the cert regime (header -> tree root).
+    const quint64 omapRoot = apfsLe64(readApfsImageBlock(img, apfsLe64(vol, 0x80)), 0x30);
+    if (longNames && fileCount > 112) {
+        QVERIFY2(apfsLe16(readApfsImageBlock(img, omapRoot), 0x22) >= 1,
+                 "the cert regime must drive the volume omap multi-level");
+    }
+    // The live tree stays shared and fully enumerable through the (multi-level) omap.
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(img,
+                                                                               QStringLiteral("/"),
+                                                                               fileCount + 8);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), fileCount);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {
