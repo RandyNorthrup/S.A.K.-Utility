@@ -2105,6 +2105,20 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
     constexpr qsizetype kExtRefValueBytes = 20;
     const qsizetype tocLength = std::max<qsizetype>(
         64, ((records.size() * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+    // The extent-ref tree is a single root/leaf node: keys grow up from the TOC end,
+    // values (and the 40-byte info trailer) grow down from the block end. Past ~110
+    // records the two areas overlap and the node is silently corrupted (the free-space
+    // field wraps; fsck reports the node as not sane) - fail closed instead. Lifting
+    // the bound needs a multi-node extent-ref tree (the P3 deep-tree work).
+    if (kApfsBtreeNodeHeaderBytes + tocLength +
+            records.size() * (kExtRefKeyBytes + kExtRefValueBytes) >
+        static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes) {
+        blockers->append(
+            QStringLiteral("APFS extent-ref tree overflows its single node (%1 extent records); "
+                           "multi-node extent-ref trees are not yet supported")
+                .arg(records.size()));
+        return QByteArray();
+    }
     writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
     writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
@@ -4252,7 +4266,19 @@ bool collectOldFsTreeNodePaddrs(QIODevice* image,
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
         const uint16_t valueOffset = le16(root, toc + kApfsBtreeVariableTocValueOffset);
-        paddrs->append(omap.value(le64(root, valueAreaEnd - valueOffset)));
+        const uint64_t childOid = le64(root, valueAreaEnd - valueOffset);
+        const uint64_t childPaddr = omap.value(childOid);
+        // A child oid missing from the volume omap would silently resolve to paddr 0
+        // (the container superblock) and poison the freed list / extent recovery -
+        // fail closed instead of freeing block 0.
+        if (childPaddr == 0) {
+            blockers->append(
+                QStringLiteral("APFS in-place commit: fs-tree child oid %1 has no object-map "
+                               "mapping")
+                    .arg(childOid));
+            return false;
+        }
+        paddrs->append(childPaddr);
     }
     return true;
 }
@@ -4274,7 +4300,6 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
     }
     QVector<ApfsDataExtent> extents;
     const uint64_t oidMask = (1ULL << kApfsObjTypeShift) - 1;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
     for (uint64_t nodeBlock : nodes) {
         QByteArray node(geometry.blockSize, '\0');
         if (!readApfsRepairBlock(image, geometry, nodeBlock, &node, blockers)) {
@@ -4283,6 +4308,13 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
         if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
             continue;  // internal node carries child pointers, not file records
         }
+        // Only a ROOT node carries the 40-byte btree_info trailer; a non-root leaf's
+        // value area runs to the end of the block. Reading a leaf at the root's end
+        // shifted every value by 40 bytes, so the first chained commit after a leaf
+        // split recovered garbage extents (paddr 0) for the preserved files.
+        const bool nodeIsRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+        const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
+                                       (nodeIsRoot ? kApfsBtreeInfoBytes : 0);
         const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
         const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
@@ -4339,6 +4371,9 @@ bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
         return true;
     }
     QByteArray extentRef = buildExtentRefTreeBlock(cow.geometry.blockSize, cow.files, blockers);
+    if (extentRef.isEmpty()) {
+        return false;  // single-node capacity exceeded (blocker already appended)
+    }
     writeLe64(&extentRef, kApfsObjectOidOffset, cow.extentRefNew);
     writeLe64(&extentRef, kApfsObjectXidOffset, cow.newXid);
     return stampAndWriteApfsBlock(cow.image, cow.geometry, cow.extentRefNew, &extentRef, blockers);

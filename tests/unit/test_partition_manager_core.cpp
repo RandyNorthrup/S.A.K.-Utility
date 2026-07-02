@@ -1797,6 +1797,7 @@ private Q_SLOTS:
     void apfsWriter_repeatedSpillCowsChunkBitmap();
     void apfsWriter_gapSpillMarksExactBitmap();
     void apfsWriter_multiCibSpillsAcrossCib0Chunks();
+    void apfsWriter_chainedCommitsPreserveFilesAcrossLeafSplit();
     void apfsWriter_spillsIntoCib1OwnedChunk();
     void apfsWriter_deletedSpilledFileFreesSpilledChunks();
     void apfsWriter_deletedCibKSpilledFileFreesChunk();
@@ -8568,6 +8569,70 @@ void PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks() {
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/big2.bin"), 1 << 20);
     QVERIFY2(read2.ok, qPrintable(read2.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read2.data, spillFixtureChunk().left(read2.data.size()));
+}
+
+namespace {
+// Distinct 4 KiB payload for chained-commit file index `i` (content mismatch detects a
+// mis-recovered extent even when the block is readable).
+QByteArray chainedCommitPayload(int i) {
+    QByteArray data(4096, Qt::Uninitialized);
+    for (qsizetype b = 0; b < data.size(); ++b) {
+        data[b] = static_cast<char>((b * 31 + i * 97 + 5) & 0xFF);
+    }
+    return data;
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_chainedCommitsPreserveFilesAcrossLeafSplit() {
+    // Regression guard for the non-root-leaf value-area bug: sequential in-place commits
+    // push the fs-tree past one leaf (the split lands around commit 13 with 4 KiB files);
+    // the NEXT commit re-reads every preserved file's extent records from the now-multi-node
+    // tree. recoverFileDataExtents used the ROOT's value-area end (blockSize - 40) on
+    // non-root leaves, which have no btree_info trailer - every value read 40 bytes off, so
+    // preserved files were rewritten with garbage extents (paddr 0 = the container
+    // superblock): silent content loss + an extent-ref record claiming block 0. Eighteen
+    // chained commits cross the split; every file must read back byte-exact afterwards.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const uint64_t bytes = 128ULL * 1024ULL * 1024ULL;
+    const QString img = QDir(temp.path()).filePath(QStringLiteral("chain.img"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("ChainSplit"),
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    constexpr int kFiles = 18;
+    for (int i = 1; i <= kFiles; ++i) {
+        const auto commit = PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = img,
+             .target_container_bytes = bytes,
+             .file_name = QStringLiteral("c%1.bin").arg(i, 4, 10, QLatin1Char('0')),
+             .file_data = chainedCommitPayload(i),
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target = true,
+             .options = certifiedApfsRawCommitOptions()});
+        QVERIFY2(commit.ok,
+                 qPrintable(QStringLiteral("commit %1: %2")
+                                .arg(i)
+                                .arg(commit.blockers.join(QStringLiteral("; ")))));
+    }
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 64);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), kFiles);
+    for (int i = 1; i <= kFiles; ++i) {
+        const QString name = QStringLiteral("/c%1.bin").arg(i, 4, 10, QLatin1Char('0'));
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(img, name, 1 << 16);
+        QVERIFY2(read.ok,
+                 qPrintable(name + QStringLiteral(": ") +
+                            read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, chainedCommitPayload(i));
+    }
 }
 
 namespace {
