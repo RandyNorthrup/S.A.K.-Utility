@@ -463,6 +463,9 @@ constexpr uint32_t kApfsOmapValueEncrypted = 0x00'00'00'04;
 constexpr uint64_t kApfsVolumeFsFlagsOneKey = 0x8;
 constexpr qsizetype kApfsObjectMapKeyBytes = 16;
 constexpr qsizetype kApfsObjectMapValueBytes = 16;
+// An interior physical-omap node's value is an 8-byte child paddr (le64), not the
+// 16-byte apfs_omap_val a leaf carries -- this drives the index node's 576-byte TOC.
+constexpr qsizetype kApfsOmapIndexValueBytes = 8;
 constexpr qsizetype kApfsBtreeFixedTocEntryBytes = 4;
 constexpr qsizetype kApfsBtreeVariableTocEntryBytes = 8;
 constexpr qsizetype kApfsBtreeFixedTocValueOffset = 2;
@@ -734,70 +737,474 @@ struct ApfsObjectMapEntry {
     uint32_t flags{0};
 };
 
-QByteArray buildObjectMapTreeBlock(uint32_t blockSize,
-                                   uint64_t oid,
-                                   const QVector<ApfsObjectMapEntry>& mappings,
-                                   uint64_t xid,
-                                   QStringList* blockers) {
-    // Object-map root/leaf mirrored from newfs_apfs output: fixed 448-byte
-    // TOC, info flags FIXED_KV|SEQUENTIAL_INSERT (0x12), 16-byte keys and
-    // values, longest-key/value fields populated when records exist.
-    QByteArray block = newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreePhysical);
-    writeLe32(&block, kApfsObjectSubtypeOffset, 0x00'00'00'0B);
-    constexpr qsizetype kOmapTocBytes = 448;
-    writeLe16(&block,
-              kApfsBtreeNodeFlagsOffset,
-              kApfsBtreeNodeRoot | kApfsBtreeNodeLeaf | kApfsBtreeNodeFixedKvSize);
-    writeLe16(&block, kApfsBtreeNodeLevelOffset, 0);
-    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(mappings.size()));
-    writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
-    writeLe16(&block, kApfsBtreeNodeTableLengthOffset, kOmapTocBytes);
+// A physical omap FIXED_KV node's index_size (btn_table_space.len) is dictated by
+// apfsck node_is_valid: LEAF omap value is a 16-byte apfs_omap_val so the min table
+// is (blockSize-header)/(16+16+4)*4; an INDEX omap value is an 8-byte child paddr so
+// it is (blockSize-header)/(16+8+4)*4. Both are hard-checked -- a leaf must carry the
+// 448-byte TOC and an index the 576-byte TOC (at blockSize 4096) exactly.
+qsizetype omapLeafTocBytes(uint32_t blockSize) {
+    const qsizetype usable = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes;
+    return usable /
+           (kApfsObjectMapKeyBytes + kApfsObjectMapValueBytes + kApfsBtreeFixedTocEntryBytes) *
+           kApfsBtreeFixedTocEntryBytes;
+}
 
+qsizetype omapIndexTocBytes(uint32_t blockSize) {
+    const qsizetype usable = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes;
+    return usable /
+           (kApfsObjectMapKeyBytes + kApfsOmapIndexValueBytes + kApfsBtreeFixedTocEntryBytes) *
+           kApfsBtreeFixedTocEntryBytes;
+}
+
+// Fanout of a single omap node. The 112-slot leaf / 144-slot index TOC is the
+// structural size apfsck demands, but the number of records that actually FIT is bounded
+// by BOTH the TOC-slot count AND the key+value data area (header + TOC + keys + values +
+// (root ? btree_info trailer : 0) <= blockSize). A ROOT node reserves the 40-byte trailer,
+// so a ROOT leaf holds one fewer record than a non-root leaf: 112 non-root vs 111 root at
+// blockSize 4096. Getting this wrong overruns the value area into the trailer (the exact
+// bug: 112 mappings took the single-node path and corrupted the last record).
+qsizetype omapNodeCapacity(uint32_t blockSize,
+                           qsizetype valueBytes,
+                           qsizetype tocBytes,
+                           bool isRoot) {
+    const qsizetype tocSlots = tocBytes / kApfsBtreeFixedTocEntryBytes;
+    const qsizetype dataArea = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                               tocBytes - (isRoot ? kApfsBtreeInfoBytes : 0);
+    const qsizetype dataSlots = dataArea / (kApfsObjectMapKeyBytes + valueBytes);
+    return tocSlots < dataSlots ? tocSlots : dataSlots;
+}
+
+// Non-root leaf capacity (used for interior-level leaf packing).
+qsizetype omapLeafCapacity(uint32_t blockSize) {
+    return omapNodeCapacity(
+        blockSize, kApfsObjectMapValueBytes, omapLeafTocBytes(blockSize), false);
+}
+
+// Single-node tree = a ROOT|LEAF node, so it reserves the trailer (one fewer than a
+// non-root leaf). This is the threshold past which a multi-level tree is required.
+qsizetype omapRootLeafCapacity(uint32_t blockSize) {
+    return omapNodeCapacity(blockSize, kApfsObjectMapValueBytes, omapLeafTocBytes(blockSize), true);
+}
+
+// Non-root interior fanout.
+qsizetype omapIndexCapacity(uint32_t blockSize) {
+    return omapNodeCapacity(
+        blockSize, kApfsOmapIndexValueBytes, omapIndexTocBytes(blockSize), false);
+}
+
+// A ROOT index node reserves the 40-byte btree_info trailer, so it holds fewer child
+// pointers than an interior index node. Cap the topmost index level here so a full
+// interior fanout never overflows the root.
+qsizetype omapRootIndexCapacity(uint32_t blockSize) {
+    return omapNodeCapacity(
+        blockSize, kApfsOmapIndexValueBytes, omapIndexTocBytes(blockSize), true);
+}
+
+// Total node count a bulk-loaded physical omap over `mappingCount` records occupies
+// (root + every interior + every leaf), mirroring buildObjectMapTreeNodes so the
+// reservation can size the omap-tree block run before the nodes are built.
+qsizetype omapTreeBlockCount(qsizetype mappingCount, uint32_t blockSize) {
+    const qsizetype leafCap = omapLeafCapacity(blockSize);
+    const qsizetype indexCap = omapIndexCapacity(blockSize);
+    const qsizetype rootCap = omapRootIndexCapacity(blockSize);
+    // A tree that fits a single ROOT|LEAF node holds the (smaller) root-leaf capacity;
+    // anything larger splits into at least two non-root leaves of the full leaf capacity
+    // (mirrors buildObjectMapTreeNodes -- a lone leaf can only exist as the root at the
+    // smaller capacity).
+    if (mappingCount <= omapRootLeafCapacity(blockSize)) {
+        return 1;
+    }
+    qsizetype total = 0;
+    qsizetype levelNodes = std::max<qsizetype>(2, (mappingCount + leafCap - 1) / leafCap);
+    total += levelNodes;
+    while (levelNodes > 1) {
+        // The level that collapses to a single node is the root, so it must fit the
+        // (smaller) root capacity; a level that still has > 1 node uses the interior cap.
+        const qsizetype cap = levelNodes <= indexCap && levelNodes > rootCap ? rootCap : indexCap;
+        levelNodes = (levelNodes + cap - 1) / cap;
+        total += levelNodes;
+    }
+    return total;
+}
+
+// Block-layout offsets of the volume/container omap chain inside a commit's newBlocks
+// vector, past the fs-tree nodes. The volume omap tree spans V blocks (it maps every
+// fs-tree node, so it grows past a single node once the tree exceeds a leaf's capacity);
+// the container omap tree spans C blocks (one, in practice -- a handful of volume
+// mappings). tail is the first block past the whole chain (extent-ref / data area).
+struct ApfsOmapChainLayout {
+    qsizetype volOmapTreeBlocks{1};
+    qsizetype ctrOmapTreeBlocks{1};
+    uint64_t volOmapTreeBase{0};
+    uint64_t volOmapHdr{0};
+    uint64_t volSb{0};
+    uint64_t ctrOmapTreeBase{0};
+    uint64_t ctrOmapHdr{0};
+    uint64_t tail{0};
+    qsizetype chainBlocks{0};  // total blocks the chain occupies past the fs nodes
+};
+
+// V = omap-tree blocks for `volMappingCount` volume-omap mappings (one per fs-tree
+// node); C = 1 for the container omap (a few volume mappings always fit one node).
+ApfsOmapChainLayout omapChainLayout(uint64_t nodeCountBase,
+                                    qsizetype volMappingCount,
+                                    uint32_t blockSize) {
+    ApfsOmapChainLayout layout;
+    layout.volOmapTreeBlocks = omapTreeBlockCount(volMappingCount, blockSize);
+    layout.ctrOmapTreeBlocks = 1;
+    layout.volOmapTreeBase = nodeCountBase;
+    layout.volOmapHdr = layout.volOmapTreeBase + static_cast<uint64_t>(layout.volOmapTreeBlocks);
+    layout.volSb = layout.volOmapHdr + 1;
+    layout.ctrOmapTreeBase = layout.volSb + 1;
+    layout.ctrOmapHdr = layout.ctrOmapTreeBase + static_cast<uint64_t>(layout.ctrOmapTreeBlocks);
+    layout.tail = layout.ctrOmapHdr + 1;
+    layout.chainBlocks = static_cast<qsizetype>(layout.tail - nodeCountBase);
+    return layout;
+}
+
+// One node of the bulk-loaded omap tree before paddrs are assigned: its records and
+// (for interior nodes) the level it sits at. A leaf record's value is the 16-byte
+// apfs_omap_val; an index record's value is the child node's index in the flat set.
+struct ApfsOmapNodePlan {
+    uint16_t level{0};
+    QVector<ApfsObjectMapEntry> leafRecords;  // level 0 only
+    QVector<qsizetype> childIndices;          // level > 0 only
+    QVector<uint64_t> childKeyOid;            // level > 0: first oid of each child
+    QVector<uint64_t> childKeyXid;            // level > 0: xid paired with that oid
+    uint64_t firstOid{0};                     // this node's smallest key oid
+    uint64_t firstXid{0};
+};
+
+void writeOmapLeafNode(QByteArray* block,
+                       uint32_t blockSize,
+                       const QVector<ApfsObjectMapEntry>& mappings,
+                       bool isRoot) {
+    const qsizetype tocBytes = omapLeafTocBytes(blockSize);
+    const uint16_t rootFlag = isRoot ? kApfsBtreeNodeRoot : 0;
+    writeLe16(block,
+              kApfsBtreeNodeFlagsOffset,
+              rootFlag | kApfsBtreeNodeLeaf | kApfsBtreeNodeFixedKvSize);
+    writeLe16(block, kApfsBtreeNodeLevelOffset, 0);
+    writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(mappings.size()));
+    writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocBytes));
     const qsizetype tableStart = kApfsBtreeNodeHeaderBytes;
-    const qsizetype keyAreaStart = tableStart + kOmapTocBytes;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    const qsizetype keyAreaStart = tableStart + tocBytes;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
     const qsizetype keyBytesUsed = static_cast<qsizetype>(mappings.size()) * kApfsObjectMapKeyBytes;
     const qsizetype valueBytesUsed = static_cast<qsizetype>(mappings.size()) *
                                      kApfsObjectMapValueBytes;
-    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
-    writeLe16(&block,
+    writeLe16(block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
+    writeLe16(block,
               0x2E,
               static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyBytesUsed - valueBytesUsed));
-    writeLe16(&block, 0x30, 0xFFFF);
-    writeLe16(&block, 0x32, 0);
-    writeLe16(&block, 0x34, 0xFFFF);
-    writeLe16(&block, 0x36, 0);
+    writeLe16(block, 0x30, 0xFFFF);
+    writeLe16(block, 0x32, 0);
+    writeLe16(block, 0x34, 0xFFFF);
+    writeLe16(block, 0x36, 0);
     for (qsizetype index = 0; index < mappings.size(); ++index) {
         const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
         const qsizetype keyOffset = index * kApfsObjectMapKeyBytes;
         const qsizetype valueBackOffset = (index + 1) * kApfsObjectMapValueBytes;
         const qsizetype key = keyAreaStart + keyOffset;
         const qsizetype value = valueAreaEnd - valueBackOffset;
-        writeLe16(&block, toc, static_cast<uint16_t>(keyOffset));
-        writeLe16(&block,
+        writeLe16(block, toc, static_cast<uint16_t>(keyOffset));
+        writeLe16(block,
                   toc + kApfsBtreeFixedTocValueOffset,
                   static_cast<uint16_t>(valueBackOffset));
-        writeLe64(&block, key, mappings.at(index).oid);
-        writeLe64(&block, key + kApfsOmapKeyXidOffset, mappings.at(index).xid);
-        writeLe32(&block, value, mappings.at(index).flags);
-        writeLe32(&block, value + kApfsOmapValueSizeOffset, blockSize);
-        writeLe64(&block, value + kApfsOmapValuePaddrOffset, mappings.at(index).physicalBlock);
+        writeLe64(block, key, mappings.at(index).oid);
+        writeLe64(block, key + kApfsOmapKeyXidOffset, mappings.at(index).xid);
+        writeLe32(block, value, mappings.at(index).flags);
+        writeLe32(block, value + kApfsOmapValueSizeOffset, blockSize);
+        writeLe64(block, value + kApfsOmapValuePaddrOffset, mappings.at(index).physicalBlock);
     }
-    const qsizetype infoOffset = valueAreaEnd;
-    writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'12);
-    writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
-    writeLe32(&block, infoOffset + kApfsBtreeInfoKeySizeOffset, kApfsObjectMapKeyBytes);
-    writeLe32(&block, infoOffset + kApfsBtreeInfoValueSizeOffset, kApfsObjectMapValueBytes);
-    if (!mappings.isEmpty()) {
-        writeLe32(&block, infoOffset + 16, kApfsObjectMapKeyBytes);
-        writeLe32(&block, infoOffset + 20, kApfsObjectMapValueBytes);
+}
+
+// An interior (level > 0) omap node: 16-byte {oid, xid} keys, 8-byte child paddr
+// values written backward from the value-area end (blockSize - info on the root).
+void writeOmapIndexNode(QByteArray* block,
+                        uint32_t blockSize,
+                        const ApfsOmapNodePlan& plan,
+                        const QVector<uint64_t>& childPaddrs,
+                        bool isRoot) {
+    const qsizetype tocBytes = omapIndexTocBytes(blockSize);
+    const qsizetype count = plan.childIndices.size();
+    const uint16_t rootFlag = isRoot ? kApfsBtreeNodeRoot : 0;
+    writeLe16(block, kApfsBtreeNodeFlagsOffset, rootFlag | kApfsBtreeNodeFixedKvSize);
+    writeLe16(block, kApfsBtreeNodeLevelOffset, plan.level);
+    writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(count));
+    writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocBytes));
+    const qsizetype tableStart = kApfsBtreeNodeHeaderBytes;
+    const qsizetype keyAreaStart = tableStart + tocBytes;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    const qsizetype keyBytesUsed = count * kApfsObjectMapKeyBytes;
+    const qsizetype valueBytesUsed = count * kApfsOmapIndexValueBytes;
+    writeLe16(block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
+    writeLe16(block,
+              0x2E,
+              static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyBytesUsed - valueBytesUsed));
+    writeLe16(block, 0x30, 0xFFFF);
+    writeLe16(block, 0x32, 0);
+    writeLe16(block, 0x34, 0xFFFF);
+    writeLe16(block, 0x36, 0);
+    for (qsizetype index = 0; index < count; ++index) {
+        const qsizetype toc = tableStart + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype keyOffset = index * kApfsObjectMapKeyBytes;
+        const qsizetype valueBackOffset = (index + 1) * kApfsOmapIndexValueBytes;
+        const qsizetype key = keyAreaStart + keyOffset;
+        const qsizetype value = valueAreaEnd - valueBackOffset;
+        writeLe16(block, toc, static_cast<uint16_t>(keyOffset));
+        writeLe16(block,
+                  toc + kApfsBtreeFixedTocValueOffset,
+                  static_cast<uint16_t>(valueBackOffset));
+        writeLe64(block, key, plan.childKeyOid.at(index));
+        writeLe64(block, key + kApfsOmapKeyXidOffset, plan.childKeyXid.at(index));
+        writeLe64(block, value, childPaddrs.at(plan.childIndices.at(index)));
     }
-    writeLe64(&block,
-              infoOffset + kApfsBtreeInfoKeyCountOffset,
-              static_cast<uint64_t>(mappings.size()));
-    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+}
+
+// Pack the sorted mappings into level-0 leaf plans, appending them to `plans`. A tree
+// that fits one ROOT|LEAF node (<= root-leaf capacity, which reserves the trailer) stays
+// a single node; otherwise it splits into >= 2 non-root leaves -- a lone non-root leaf
+// cannot exist (it would BE the root at the smaller capacity), so counts in
+// (rootLeafCap, leafCap] still yield two leaves.
+qsizetype planOmapLeaves(const QVector<ApfsObjectMapEntry>& sorted,
+                         uint32_t blockSize,
+                         QVector<ApfsOmapNodePlan>* plans) {
+    const qsizetype leafCap = omapLeafCapacity(blockSize);
+    qsizetype leafNodes = 1;
+    if (sorted.size() > omapRootLeafCapacity(blockSize)) {
+        leafNodes = std::max<qsizetype>(2, (sorted.size() + leafCap - 1) / leafCap);
+    }
+    const qsizetype perLeaf = (sorted.size() + leafNodes - 1) / std::max<qsizetype>(1, leafNodes);
+    for (qsizetype node = 0; node < leafNodes; ++node) {
+        ApfsOmapNodePlan plan;
+        plan.level = 0;
+        const qsizetype start = node * perLeaf;
+        for (qsizetype j = start; j < std::min(start + perLeaf, sorted.size()); ++j) {
+            plan.leafRecords.append(sorted.at(j));
+        }
+        if (!plan.leafRecords.isEmpty()) {
+            plan.firstOid = plan.leafRecords.first().oid;
+            plan.firstXid = plan.leafRecords.first().xid;
+        }
+        plans->append(plan);
+    }
+    return leafNodes;
+}
+
+// One index level: pack `childTotal` children (starting at flat index `childBase`) into
+// index-node plans at `level`, appending them to `plans`. Returns the node count made.
+qsizetype planOmapIndexLevel(uint32_t blockSize,
+                             uint16_t level,
+                             qsizetype childBase,
+                             qsizetype childTotal,
+                             QVector<ApfsOmapNodePlan>* plans) {
+    const qsizetype indexCap = omapIndexCapacity(blockSize);
+    const qsizetype rootCap = omapRootIndexCapacity(blockSize);
+    // The level that collapses to one node is the root and must respect the smaller root
+    // capacity; an intermediate level uses the full interior fanout.
+    const qsizetype cap = childTotal <= indexCap && childTotal > rootCap ? rootCap : indexCap;
+    qsizetype made = 0;
+    for (qsizetype start = 0; start < childTotal; start += cap) {
+        ApfsOmapNodePlan plan;
+        plan.level = level;
+        for (qsizetype j = start; j < std::min(start + cap, childTotal); ++j) {
+            const qsizetype childIndex = childBase + j;
+            plan.childIndices.append(childIndex);
+            plan.childKeyOid.append(plans->at(childIndex).firstOid);
+            plan.childKeyXid.append(plans->at(childIndex).firstXid);
+        }
+        plan.firstOid = plan.childKeyOid.first();
+        plan.firstXid = plan.childKeyXid.first();
+        plans->append(plan);
+        ++made;
+    }
+    return made;
+}
+
+// Emit-order = root first (node[0]), then every other plan in build order. Returns the
+// emit order and fills paddrOfPlan with each plan's assigned block. Slot i takes
+// nodeBlocks[i] -- the ACTUAL reserved block, which is NOT treeBasePaddr+i once free space
+// is fragmented (the reserved omap-tree run can be non-contiguous). Passing a consecutive
+// run keeps a single-node tree and a fresh-image tree byte-identical to treeBasePaddr+slot.
+QVector<qsizetype> omapEmitOrder(qsizetype planCount,
+                                 qsizetype rootIndex,
+                                 const QVector<uint64_t>& nodeBlocks,
+                                 QVector<uint64_t>* paddrOfPlan) {
+    QVector<qsizetype> order;
+    order.append(rootIndex);
+    for (qsizetype i = 0; i < planCount; ++i) {
+        if (i != rootIndex) {
+            order.append(i);
+        }
+    }
+    for (qsizetype slot = 0; slot < order.size(); ++slot) {
+        (*paddrOfPlan)[order.at(slot)] = nodeBlocks.at(slot);
+    }
+    return order;
+}
+
+void writeOmapRootTrailer(QByteArray* block,
+                          uint32_t blockSize,
+                          uint64_t mappingCount,
+                          uint64_t totalNodes) {
+    const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    writeLe32(block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'12);
+    writeLe32(block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
+    writeLe32(block, infoOffset + kApfsBtreeInfoKeySizeOffset, kApfsObjectMapKeyBytes);
+    writeLe32(block, infoOffset + kApfsBtreeInfoValueSizeOffset, kApfsObjectMapValueBytes);
+    if (mappingCount != 0) {
+        writeLe32(block, infoOffset + 16, kApfsObjectMapKeyBytes);
+        writeLe32(block, infoOffset + 20, kApfsObjectMapValueBytes);
+    }
+    writeLe64(block, infoOffset + kApfsBtreeInfoKeyCountOffset, mappingCount);
+    writeLe64(block, infoOffset + kApfsBtreeInfoNodeCountOffset, totalNodes);
+}
+
+struct ApfsOmapEmitContext {
+    uint32_t blockSize{0};
+    uint64_t rootOid{0};
+    uint64_t xid{0};
+    uint64_t mappingCount{0};
+    uint64_t totalNodes{0};
+    qsizetype rootIndex{0};
+    const QVector<uint64_t>* paddrOfPlan{nullptr};
+};
+
+// Serialize one omap node plan (identified by its flat index) to a stamped block. apfsck
+// checks the object TYPE: a physical B-tree root is BTREE (PHYSICAL|0x02), a non-root node
+// BTREE_NODE (PHYSICAL|0x03) -- "wrong object type for nonroot" otherwise. Every physical
+// omap node's stored OID equals its own paddr; only the root keeps the caller's rootOid.
+QByteArray emitOmapNode(const ApfsOmapNodePlan& plan,
+                        qsizetype planIndex,
+                        const ApfsOmapEmitContext& ctx,
+                        QStringList* blockers) {
+    const bool isRoot = planIndex == ctx.rootIndex;
+    const uint64_t nodePaddr = ctx.paddrOfPlan->at(planIndex);
+    const uint32_t objectType = isRoot ? kApfsObjectTypeBtreePhysical
+                                       : (kApfsObjStoragePhysical | kApfsObjectTypeBtreeNode);
+    QByteArray block =
+        newApfsObjectBlock(ctx.blockSize, isRoot ? ctx.rootOid : nodePaddr, ctx.xid, objectType);
+    writeLe32(&block, kApfsObjectSubtypeOffset, 0x00'00'00'0B);
+    if (plan.level == 0) {
+        writeOmapLeafNode(&block, ctx.blockSize, plan.leafRecords, isRoot);
+    } else {
+        writeOmapIndexNode(&block, ctx.blockSize, plan, *ctx.paddrOfPlan, isRoot);
+    }
+    if (isRoot) {
+        writeOmapRootTrailer(&block, ctx.blockSize, ctx.mappingCount, ctx.totalNodes);
+    }
     stampApfsObjectBlock(&block, blockers);
     return block;
+}
+
+// The addressing a bulk-loaded physical omap needs: the root node's stored OID plus the
+// paddr of every emitted node (emit slot i is written to nodeBlocks[i]). rootOid usually
+// equals nodeBlocks[0] (apfsck resolves the root via the header's om_tree_oid = the root
+// paddr). When nodeBlocks is empty the nodes take treeBasePaddr+i (a consecutive run), for
+// the single-node / fresh-image callers whose reserved run IS contiguous. The COW commit
+// must pass the ACTUAL reserved run because fragmented free space makes it non-contiguous;
+// a consecutive assumption there wrote the second omap leaf onto a data block and pointed
+// the root at it, so the next read decoded that data block as a node (checksum failure).
+struct ApfsOmapTreeParams {
+    uint32_t blockSize{0};
+    uint64_t rootOid{0};
+    uint64_t xid{0};
+    uint64_t treeBasePaddr{0};
+    QVector<uint64_t> nodeBlocks;  // empty = consecutive from treeBasePaddr
+};
+
+// The paddr each emit slot is written to: the caller's explicit reserved run, or a
+// consecutive run from treeBasePaddr when none was given. `count` nodes are needed.
+QVector<uint64_t> omapNodeBlocks(const ApfsOmapTreeParams& params, qsizetype count) {
+    if (!params.nodeBlocks.isEmpty()) {
+        return params.nodeBlocks;
+    }
+    QVector<uint64_t> consecutive;
+    consecutive.reserve(count);
+    for (qsizetype i = 0; i < count; ++i) {
+        consecutive.append(params.treeBasePaddr + static_cast<uint64_t>(i));
+    }
+    return consecutive;
+}
+
+// Bulk-load a physical omap B-tree (subtype 0x0B) over `mappings`, returning every node
+// block; node[0] is the root at nodeBlocks[0], node[i] at nodeBlocks[i]. One node (<=
+// root-leaf capacity) is byte-identical to the single ROOT|LEAF layout newfs_apfs emits;
+// more mappings split into leaves under index nodes up to a root.
+QVector<QByteArray> buildObjectMapTreeNodes(const ApfsOmapTreeParams& params,
+                                            const QVector<ApfsObjectMapEntry>& mappings,
+                                            QStringList* blockers) {
+    QVector<ApfsObjectMapEntry> sorted = mappings;
+    std::sort(sorted.begin(),
+              sorted.end(),
+              [](const ApfsObjectMapEntry& a, const ApfsObjectMapEntry& b) {
+                  return a.oid != b.oid ? a.oid < b.oid : a.xid < b.xid;
+              });
+    QVector<ApfsOmapNodePlan> plans;
+    QVector<qsizetype> levelStart{0};
+    QVector<qsizetype> levelCount{planOmapLeaves(sorted, params.blockSize, &plans)};
+    uint16_t level = 1;
+    while (levelCount.last() > 1) {
+        const qsizetype childBase = levelStart.last();
+        levelStart.append(plans.size());
+        levelCount.append(
+            planOmapIndexLevel(params.blockSize, level, childBase, levelCount.last(), &plans));
+        ++level;
+    }
+    const qsizetype rootIndex = plans.size() - 1;
+    const QVector<uint64_t> nodeBlocks = omapNodeBlocks(params, plans.size());
+    if (nodeBlocks.size() < plans.size()) {
+        blockers->append(
+            QStringLiteral("APFS object map tree needs %1 node blocks but only %2 were provided")
+                .arg(plans.size())
+                .arg(nodeBlocks.size()));
+        return {};
+    }
+    QVector<uint64_t> paddrOfPlan(plans.size(), 0);
+    const QVector<qsizetype> emitOrder =
+        omapEmitOrder(plans.size(), rootIndex, nodeBlocks, &paddrOfPlan);
+    const ApfsOmapEmitContext ctx{params.blockSize,
+                                  params.rootOid,
+                                  params.xid,
+                                  static_cast<uint64_t>(sorted.size()),
+                                  static_cast<uint64_t>(plans.size()),
+                                  rootIndex,
+                                  &paddrOfPlan};
+    QVector<QByteArray> blocks;
+    blocks.reserve(plans.size());
+    for (const qsizetype planIndex : emitOrder) {
+        blocks.append(emitOmapNode(plans.at(planIndex), planIndex, ctx, blockers));
+    }
+    return blocks;
+}
+
+QByteArray buildObjectMapTreeBlock(uint32_t blockSize,
+                                   uint64_t oid,
+                                   const QVector<ApfsObjectMapEntry>& mappings,
+                                   uint64_t xid,
+                                   QStringList* blockers) {
+    // Single-node object-map root/leaf mirrored from newfs_apfs output: fixed
+    // 448-byte TOC, info flags FIXED_KV|SEQUENTIAL_INSERT (0x12), 16-byte keys and
+    // values. Callers whose mapping count can exceed one node must instead reserve
+    // omapTreeBlockCount() blocks and emit buildObjectMapTreeNodes(); this single-block
+    // helper stays for the container omap (a handful of volume mappings) and asserts it
+    // never silently overflows the leaf TOC.
+    if (mappings.size() > omapRootLeafCapacity(blockSize)) {
+        blockers->append(
+            QStringLiteral("APFS object map has %1 mappings, exceeding a single ROOT|LEAF node's "
+                           "capacity of %2; a multi-level omap tree is required")
+                .arg(mappings.size())
+                .arg(omapRootLeafCapacity(blockSize)));
+        return newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreePhysical);
+    }
+    const QVector<QByteArray> nodes =
+        buildObjectMapTreeNodes({blockSize, oid, xid, oid}, mappings, blockers);
+    return nodes.isEmpty() ? QByteArray() : nodes.first();
 }
 
 struct ApfsBtreeKeyValue {
@@ -1759,11 +2166,95 @@ QByteArray newFsTreeNode(uint32_t blockSize, uint64_t oid, uint16_t flags, uint1
     return block;
 }
 
-// Build the file-system tree as either a single ROOT|LEAF node or, when the
-// records overflow one node, an internal root (level 1) over N leaf nodes
-// (level 0, no info trailer) - the two-level shape apfs.kext produces. Leaf oids
-// run consecutively from firstLeafOid; the root keeps oid 1028. nodes[0] is the
-// root. Mirrors docs/APFS_A2_MULTI_LEAF_FSTREE_DESIGN.md.
+// Greedily pack index records (each an interior child pointer: variable fs-key +
+// 8-byte child OID) into interior-node-sized groups, mirroring
+// distributeFsTreeRecordsIntoLeaves' budget (header + rounded TOC + keys + values
+// fits one block). Reused per level while building a deep tree.
+QVector<QVector<ApfsBtreeKeyValue>> distributeIndexRecordsIntoNodes(
+    const QVector<ApfsBtreeKeyValue>& records, uint32_t blockSize) {
+    return distributeFsTreeRecordsIntoLeaves(records, blockSize);
+}
+
+// One index record pointing at a child node: its first (smallest) key, verbatim,
+// and the child's 8-byte OID.
+ApfsBtreeKeyValue indexRecordForChild(const QByteArray& childFirstKey, uint64_t childOid) {
+    QByteArray value(8, '\0');
+    writeLe64(&value, 0, childOid);
+    return {childFirstKey, value};
+}
+
+// Mutable state threaded through the multi-level fs-tree build: the next oid to hand out
+// (leaves/interior take consecutive oids; the root keeps 1028), every interior + leaf node
+// in build order, the current level's child pointers, and the resulting root level.
+struct ApfsFsTreeBuildState {
+    uint64_t nextOid{0};
+    QVector<ApfsFsTreeNode> builtNonRoot;
+    QVector<ApfsBtreeKeyValue> childPointers;
+    uint16_t rootLevel{1};
+};
+
+// Build the level-0 leaves for a multi-level fs-tree: each leaf group becomes a non-root
+// LEAF node (no trailer) with the next consecutive oid; returns false on overflow. Fills
+// state.builtNonRoot with the leaf nodes and state.childPointers with one index record
+// per leaf.
+bool buildFsLeafNodes(const ApfsFsTreeBuildInput& in,
+                      const QVector<ApfsBtreeKeyValue>& records,
+                      ApfsFsTreeBuildState* state,
+                      QStringList* blockers) {
+    const auto leaves = distributeFsTreeRecordsIntoLeaves(records, in.blockSize);
+    for (const auto& leafRecords : leaves) {
+        const uint64_t leafOid = state->nextOid++;
+        QByteArray leaf = newFsTreeNode(in.blockSize, leafOid, kApfsBtreeNodeLeaf, 0);
+        if (!writeFsTreeNodeBody(&leaf, leafRecords, in.blockSize, blockers)) {
+            return false;
+        }
+        stampApfsObjectBlock(&leaf, blockers);
+        state->builtNonRoot.append({leafOid, leaf});
+        state->childPointers.append(indexRecordForChild(leafRecords.first().key, leafOid));
+    }
+    return true;
+}
+
+// Add interior index levels until the remaining child pointers fit one ROOT node (the
+// root carries the 40-byte trailer, so it holds fewer than an interior node). Leaves
+// state.childPointers holding exactly the root's pointers and records state.rootLevel.
+// Returns false on a per-node overflow.
+bool buildFsInteriorLevels(const ApfsFsTreeBuildInput& in,
+                           ApfsFsTreeBuildState* state,
+                           QStringList* blockers) {
+    const qsizetype rootValueEnd = static_cast<qsizetype>(in.blockSize) - kApfsBtreeInfoBytes;
+    uint16_t level = 1;
+    while (state->childPointers.size() > 1) {
+        QStringList rootProbe;
+        QByteArray rootTry =
+            newFsTreeNode(in.blockSize, kApfsFormatRootTreeOid, kApfsBtreeNodeRoot, level);
+        if (writeFsTreeNodeBody(&rootTry, state->childPointers, rootValueEnd, &rootProbe)) {
+            break;  // the current pointers fit one root node
+        }
+        const auto groups = distributeIndexRecordsIntoNodes(state->childPointers, in.blockSize);
+        QVector<ApfsBtreeKeyValue> nextPointers;
+        for (const auto& group : groups) {
+            const uint64_t nodeOid = state->nextOid++;
+            QByteArray node = newFsTreeNode(in.blockSize, nodeOid, 0, level);
+            if (!writeFsTreeNodeBody(&node, group, in.blockSize, blockers)) {
+                return false;
+            }
+            stampApfsObjectBlock(&node, blockers);
+            state->builtNonRoot.append({nodeOid, node});
+            nextPointers.append(indexRecordForChild(group.first().key, nodeOid));
+        }
+        state->childPointers = nextPointers;
+        ++level;
+    }
+    state->rootLevel = level;
+    return true;
+}
+
+// Build the file-system tree as a single ROOT|LEAF node, or an arbitrary-depth
+// virtual catalog B-tree: level-0 leaves under interior index nodes up to a single
+// ROOT. Leaves and interior nodes take consecutive OIDs from firstLeafOid; the root
+// keeps oid 1028. nodes[0] is the root, then every interior/leaf node. The <= one-node
+// and two-level shapes stay byte-identical to the prior apfs.kext-matched layout.
 bool buildFsTreeNodes(const ApfsFsTreeBuildInput& in,
                       QVector<ApfsFsTreeNode>* nodes,
                       QStringList* blockers) {
@@ -1778,37 +2269,33 @@ bool buildFsTreeNodes(const ApfsFsTreeBuildInput& in,
         nodes->append({kApfsFormatRootTreeOid, single});
         return true;
     }
-    const auto leaves = distributeFsTreeRecordsIntoLeaves(records, in.blockSize);
-    QVector<ApfsBtreeKeyValue> rootRecords;
-    QVector<ApfsFsTreeNode> leafNodes;
-    for (qsizetype index = 0; index < leaves.size(); ++index) {
-        const uint64_t leafOid = in.firstLeafOid + static_cast<uint64_t>(index);
-        QByteArray leaf = newFsTreeNode(in.blockSize, leafOid, kApfsBtreeNodeLeaf, 0);
-        if (!writeFsTreeNodeBody(&leaf, leaves.at(index), in.blockSize, blockers)) {
-            return false;
-        }
-        stampApfsObjectBlock(&leaf, blockers);
-        leafNodes.append({leafOid, leaf});
-        QByteArray childOid(8, '\0');
-        writeLe64(&childOid, 0, leafOid);
-        rootRecords.append({leaves.at(index).first().key, childOid});
-    }
-    QByteArray root = newFsTreeNode(in.blockSize, kApfsFormatRootTreeOid, kApfsBtreeNodeRoot, 1);
-    if (!writeFsTreeNodeBody(&root, rootRecords, rootValueEnd, blockers)) {
-        blockers->append(QStringLiteral("APFS fs-tree needs more than two levels (%1 leaves); deep "
-                                        "trees are not yet supported")
-                             .arg(leaves.size()));
+    ApfsFsTreeBuildState state;
+    state.nextOid = in.firstLeafOid;
+    if (!buildFsLeafNodes(in, records, &state, blockers) ||
+        !buildFsInteriorLevels(in, &state, blockers)) {
         return false;
     }
-    // The root's btree_info longest-key/value must describe the whole tree (the
-    // leaves' fs-records, not the root's 8-byte child-oid pointers), so fsck_apfs
-    // sees the true maxima - measure from the full record set.
-    writeFsTreeInfoTrailer(
-        &root, records, in.blockSize, records.size(), 1 + static_cast<uint64_t>(leaves.size()));
+    QByteArray root =
+        newFsTreeNode(in.blockSize, kApfsFormatRootTreeOid, kApfsBtreeNodeRoot, state.rootLevel);
+    if (!writeFsTreeNodeBody(&root, state.childPointers, rootValueEnd, blockers)) {
+        blockers->append(
+            QStringLiteral("APFS fs-tree root index overflow (%1 child pointers do not "
+                           "fit one node)")
+                .arg(state.childPointers.size()));
+        return false;
+    }
+    // The root's btree_info longest-key/value must describe the whole tree (the leaves'
+    // fs-records, not the interior 8-byte child-oid pointers), so fsck_apfs sees the true
+    // maxima - measure from the full record set. node_count spans every level.
+    writeFsTreeInfoTrailer(&root,
+                           records,
+                           in.blockSize,
+                           records.size(),
+                           1 + static_cast<uint64_t>(state.builtNonRoot.size()));
     stampApfsObjectBlock(&root, blockers);
     nodes->append({kApfsFormatRootTreeOid, root});
-    for (const auto& leafNode : leafNodes) {
-        nodes->append(leafNode);
+    for (const auto& node : state.builtNonRoot) {
+        nodes->append(node);
     }
     return true;
 }
@@ -1938,19 +2425,79 @@ struct ApfsFreeQueueEntry {
     uint64_t length{0};
 };
 
-QByteArray buildFreeQueueLeaf(uint32_t blockSize,
-                              uint64_t oid,
-                              uint64_t xid,
-                              const QVector<ApfsFreeQueueEntry>& entries,
-                              QStringList* blockers) {
-    // Ephemeral free-queue B-tree root/leaf mirrored from newfs_apfs output:
-    // node flags ROOT|LEAF|FIXED_KV_ALIGN (0x0007), 576-byte TOC, info flags
-    // EPHEMERAL|ALLOWS_GHOSTS|SEQUENTIAL_INSERT (0x0E), 16-byte keys
-    // {xid, paddr}, 8-byte count values, records sorted ascending by (xid, paddr).
-    // A single-block run (length == 1) is stored as a ghost: its TOC value offset
-    // is BTOFF_INVALID (0xFFFF) and no value byte is emitted, matching the kernel.
-    // Genesis carries one record; the rotation/main free-queue grow it to the
-    // rolling window of freed blocks awaiting deferred reclamation.
+// Free-queue node body budget: block minus the 56-byte object/btree header and the
+// fixed 576-byte table-of-contents (144 four-byte slots). A free-queue leaf record is a
+// 16-byte {xid, paddr} key plus at most an 8-byte length value (length-1 runs are ghosts
+// with no value), so 24 bytes worst-case; an index record is a 16-byte key plus an 8-byte
+// child-oid value, always 24 bytes. The historical single leaf silently OVERFLEW this once
+// the queue passed ~142 entries (key area collided with the value area, corrupting the
+// on-disk lengths), which is the bug the multi-node tree fixes.
+constexpr qsizetype kApfsFreeQueueTocBytes = 576;
+
+// Max records a NON-ROOT free-queue leaf holds (no 40-byte btree_info trailer). Bounded by
+// the 144 TOC slots and by the 24-byte worst-case record; a conservative margin keeps the
+// packing safe for any length>1 mix.
+qsizetype mainFreeQueueLeafCapacity(uint32_t blockSize) {
+    const qsizetype body = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                           kApfsFreeQueueTocBytes;
+    return std::min<qsizetype>(120, body / 24);
+}
+
+// Max records the lone ROOT|LEAF free-queue node holds (reserves the 40-byte trailer). At
+// or below this count the tree stays one byte-identical single node; above it, it splits.
+qsizetype mainFreeQueueRootLeafCapacity(uint32_t blockSize) {
+    const qsizetype body = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                           kApfsFreeQueueTocBytes - kApfsBtreeInfoBytes;
+    return std::min<qsizetype>(120, body / 24);
+}
+
+// Max child pointers the ROOT index node holds (16-byte key + 8-byte child-oid value each,
+// reserving the trailer). The main free-queue never needs more than a handful of leaves, so
+// this cap is only a fail-closed guard.
+qsizetype mainFreeQueueRootIndexCapacity(uint32_t blockSize) {
+    const qsizetype body = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                           kApfsFreeQueueTocBytes - kApfsBtreeInfoBytes;
+    return std::min<qsizetype>(144, body / 24);
+}
+
+// The number of level-0 leaves a main free-queue tree of `entryCount` records needs (0 when
+// it fits the single root-leaf node -- the certified byte-identical path). Pure; no build.
+qsizetype mainFreeQueueLeafCount(uint32_t blockSize, qsizetype entryCount) {
+    if (entryCount <= mainFreeQueueRootLeafCapacity(blockSize)) {
+        return 0;
+    }
+    const qsizetype cap = mainFreeQueueLeafCapacity(blockSize);
+    return std::max<qsizetype>(2, (entryCount + cap - 1) / cap);
+}
+
+// Emit one ephemeral free-queue LEAF node (level 0) holding `entries`. `isRoot` picks the
+// object type (ROOT|LEAF|FIXED_KV, with the btree_info trailer) for a lone root-leaf tree
+// vs a non-root leaf (LEAF|FIXED_KV, no trailer) of a multi-node tree; `treeNodeCount` is the
+// value stamped into the ROOT's btree_info bt_node_count (whole-tree node count). A root-leaf
+// with treeNodeCount 1 is byte-identical to the historical single-node free-queue leaf.
+// Identity + whole-tree node count shared by the free-queue node emitters (bundled to
+// keep each builder within the parameter budget). treeNodeCount populates the root's
+// btree_info trailer; it is ignored by a non-root leaf.
+struct ApfsFreeQueueEmit {
+    uint32_t blockSize{0};
+    uint64_t oid{0};
+    uint64_t xid{0};
+    uint64_t treeNodeCount{0};
+};
+
+QByteArray buildFreeQueueLeafNode(const ApfsFreeQueueEmit& ident,
+                                  const QVector<ApfsFreeQueueEntry>& entries,
+                                  bool isRoot,
+                                  QStringList* blockers) {
+    const uint32_t blockSize = ident.blockSize;
+    const uint64_t oid = ident.oid;
+    const uint64_t xid = ident.xid;
+    // Ephemeral free-queue B-tree leaf mirrored from newfs_apfs output: node flags
+    // ROOT|LEAF|FIXED_KV_ALIGN (0x0007) for the lone root-leaf or LEAF|FIXED_KV (0x0006)
+    // for a non-root leaf, 576-byte TOC, info flags EPHEMERAL|ALLOWS_GHOSTS|
+    // SEQUENTIAL_INSERT (0x0E), 16-byte keys {xid, paddr}, 8-byte count values, records
+    // sorted ascending by (xid, paddr). A single-block run (length == 1) is stored as a
+    // ghost: its TOC value offset is BTOFF_INVALID (0xFFFF) and no value byte is emitted.
     const int nkeys = static_cast<int>(entries.size());
     int valueRecords = 0;
     for (const ApfsFreeQueueEntry& fqEntry : entries) {
@@ -1958,13 +2505,20 @@ QByteArray buildFreeQueueLeaf(uint32_t blockSize,
             ++valueRecords;
         }
     }
-    QByteArray block = newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreeEphemeral);
+    const uint32_t objectType = isRoot ? kApfsObjectTypeBtreeEphemeral
+                                       : (kApfsObjStorageEphemeral | kApfsObjectTypeBtreeNode);
+    const uint16_t nodeFlags = static_cast<uint16_t>(
+        (isRoot ? kApfsBtreeNodeRoot : 0) | kApfsBtreeNodeLeaf | kApfsBtreeNodeFixedKvSize);
+    QByteArray block = newApfsObjectBlock(blockSize, oid, xid, objectType);
     writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeFreeQueue);
-    writeLe16(&block, kApfsBtreeNodeFlagsOffset, 0x0007);
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, nodeFlags);
     writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(nkeys));
     writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, 576);
-    const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    // Only the root carries the 40-byte btree_info trailer; a non-root leaf packs its
+    // value area up to blockSize.
+    const qsizetype infoOffset = static_cast<qsizetype>(blockSize) -
+                                 (isRoot ? kApfsBtreeInfoBytes : 0);
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 576;
     writeLe16(&block, 0x2C, static_cast<uint16_t>(nkeys * 16));
     writeLe16(&block,
@@ -1988,16 +2542,167 @@ QByteArray buildFreeQueueLeaf(uint32_t blockSize,
         writeLe64(&block, keyAreaStart + i * 16, entries[i].xid);
         writeLe64(&block, keyAreaStart + i * 16 + 8, entries[i].paddr);
     }
+    if (isRoot) {
+        writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'0E);
+        writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
+        writeLe32(&block, infoOffset + kApfsBtreeInfoKeySizeOffset, 16);
+        writeLe32(&block, infoOffset + kApfsBtreeInfoValueSizeOffset, 8);
+        writeLe32(&block, infoOffset + 16, 16);
+        writeLe32(&block, infoOffset + 20, 8);
+        writeLe64(&block, infoOffset + kApfsBtreeInfoKeyCountOffset, static_cast<uint64_t>(nkeys));
+        writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, ident.treeNodeCount);
+    }
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+QByteArray buildFreeQueueLeaf(uint32_t blockSize,
+                              uint64_t oid,
+                              uint64_t xid,
+                              const QVector<ApfsFreeQueueEntry>& entries,
+                              QStringList* blockers) {
+    // The lone root-leaf free-queue node (whole tree == 1 node). Byte-identical to the
+    // historical single-node builder.
+    return buildFreeQueueLeafNode({blockSize, oid, xid, 1}, entries, true, blockers);
+}
+
+// Emit the ROOT INDEX node (level 1) of a multi-node ephemeral free-queue tree: one 16-byte
+// {xid, paddr} key per child leaf (the leaf's first record) and one 8-byte CHILD OID value
+// (apfsck resolves the child by oid via the checkpoint map, not by paddr). ROOT|FIXED_KV, a
+// 576-byte TOC, and the btree_info trailer describing the LEAF record geometry (key 16 /
+// value 8) plus the whole-tree key/node counts. Mirrors writeOmapIndexNode's fixed-KV
+// packing, with free-queue key/value semantics.
+QByteArray buildFreeQueueIndexRoot(const ApfsFreeQueueEmit& ident,
+                                   const QVector<ApfsFreeQueueEntry>& childFirstKeys,
+                                   const QVector<uint64_t>& childOids,
+                                   uint64_t totalEntryCount,
+                                   QStringList* blockers) {
+    const uint32_t blockSize = ident.blockSize;
+    const uint64_t oid = ident.oid;
+    const uint64_t xid = ident.xid;
+    const uint64_t treeNodeCount = ident.treeNodeCount;
+    const qsizetype count = childOids.size();
+    QByteArray block = newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreeEphemeral);
+    writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeFreeQueue);
+    writeLe16(&block,
+              kApfsBtreeNodeFlagsOffset,
+              static_cast<uint16_t>(kApfsBtreeNodeRoot | kApfsBtreeNodeFixedKvSize));
+    writeLe16(&block, kApfsBtreeNodeLevelOffset, 1);
+    writeLe32(&block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(count));
+    writeLe16(&block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(&block,
+              kApfsBtreeNodeTableLengthOffset,
+              static_cast<uint16_t>(kApfsFreeQueueTocBytes));
+    const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + kApfsFreeQueueTocBytes;
+    const qsizetype keyBytesUsed = count * 16;
+    const qsizetype valueBytesUsed = count * 8;
+    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyBytesUsed));
+    writeLe16(&block,
+              0x2E,
+              static_cast<uint16_t>(infoOffset - keyAreaStart - keyBytesUsed - valueBytesUsed));
+    writeLe16(&block, 0x30, 0xFFFF);
+    writeLe16(&block, 0x32, 0);
+    writeLe16(&block, 0x34, 0xFFFF);
+    writeLe16(&block, 0x36, 0);
+    for (qsizetype index = 0; index < count; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeFixedTocEntryBytes;
+        const qsizetype keyOffset = index * 16;
+        const qsizetype valueBackOffset = (index + 1) * 8;
+        writeLe16(&block, toc, static_cast<uint16_t>(keyOffset));
+        writeLe16(&block,
+                  toc + kApfsBtreeFixedTocValueOffset,
+                  static_cast<uint16_t>(valueBackOffset));
+        writeLe64(&block, keyAreaStart + keyOffset, childFirstKeys.at(index).xid);
+        writeLe64(&block, keyAreaStart + keyOffset + 8, childFirstKeys.at(index).paddr);
+        writeLe64(&block, infoOffset - valueBackOffset, childOids.at(index));
+    }
     writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'0E);
     writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
     writeLe32(&block, infoOffset + kApfsBtreeInfoKeySizeOffset, 16);
     writeLe32(&block, infoOffset + kApfsBtreeInfoValueSizeOffset, 8);
     writeLe32(&block, infoOffset + 16, 16);
     writeLe32(&block, infoOffset + 20, 8);
-    writeLe64(&block, infoOffset + kApfsBtreeInfoKeyCountOffset, static_cast<uint64_t>(nkeys));
-    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+    writeLe64(&block, infoOffset + kApfsBtreeInfoKeyCountOffset, totalEntryCount);
+    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, treeNodeCount);
     stampApfsObjectBlock(&block, blockers);
     return block;
+}
+
+// The serialized node set of the MAIN free-queue for one checkpoint: node blocks in root-
+// first order and (for a multi-node tree) the fresh ephemeral oid assigned to each leaf.
+// leafCount 0 means the whole tree is a single root-leaf node (blocks[0]) -- the certified
+// byte-identical shape.
+struct ApfsMainFqNodeSet {
+    QVector<QByteArray> blocks;  // [root, leaf0, leaf1, ...]; root first
+    QVector<uint64_t> leafOids;  // oid of each non-root leaf (empty when single-node)
+    qsizetype leafCount{0};
+};
+
+// Build the MAIN free-queue as a single root-leaf node (<= root-leaf capacity, the certified
+// path) or a two-level tree (root index + balanced leaves) when the records overflow one
+// node. Leaves take consecutive ephemeral oids from `leafBaseOid`. Records must already be
+// sorted ascending by (xid, paddr); they are sorted defensively. Returns an empty set with a
+// blocker on a root-index overflow (far beyond any reachable queue depth).
+// Identity for a MAIN free-queue node set: the block size, the root's ephemeral oid, the
+// base oid for leaf nodes, and the commit xid (bundled for the parameter budget).
+struct ApfsMainFqBuild {
+    uint32_t blockSize{0};
+    uint64_t rootOid{0};
+    uint64_t leafBaseOid{0};
+    uint64_t xid{0};
+};
+
+ApfsMainFqNodeSet buildMainFreeQueueNodes(const ApfsMainFqBuild& build,
+                                          QVector<ApfsFreeQueueEntry> entries,
+                                          QStringList* blockers) {
+    const uint32_t blockSize = build.blockSize;
+    const uint64_t rootOid = build.rootOid;
+    const uint64_t leafBaseOid = build.leafBaseOid;
+    const uint64_t xid = build.xid;
+    std::sort(entries.begin(),
+              entries.end(),
+              [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                  return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+              });
+    ApfsMainFqNodeSet set;
+    const qsizetype leafCount = mainFreeQueueLeafCount(blockSize, entries.size());
+    if (leafCount == 0) {
+        set.blocks.append(buildFreeQueueLeaf(blockSize, rootOid, xid, entries, blockers));
+        return set;
+    }
+    const uint64_t treeNodeCount = static_cast<uint64_t>(leafCount) + 1;
+    if (leafCount > mainFreeQueueRootIndexCapacity(blockSize)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: main free-queue needs more leaves than the root index holds"));
+        return set;
+    }
+    const qsizetype perLeaf = (entries.size() + leafCount - 1) / leafCount;
+    QVector<QByteArray> leafBlocks;
+    QVector<ApfsFreeQueueEntry> childFirstKeys;
+    for (qsizetype node = 0; node < leafCount; ++node) {
+        QVector<ApfsFreeQueueEntry> chunk;
+        for (qsizetype j = node * perLeaf; j < std::min((node + 1) * perLeaf, entries.size());
+             ++j) {
+            chunk.append(entries.at(j));
+        }
+        if (chunk.isEmpty()) {
+            continue;  // defensive: a balanced split never leaves an empty trailing leaf
+        }
+        const uint64_t leafOid = leafBaseOid + static_cast<uint64_t>(set.leafOids.size());
+        set.leafOids.append(leafOid);
+        childFirstKeys.append(chunk.first());
+        leafBlocks.append(
+            buildFreeQueueLeafNode({blockSize, leafOid, xid, 0}, chunk, false, blockers));
+    }
+    set.leafCount = set.leafOids.size();
+    set.blocks.append(buildFreeQueueIndexRoot({blockSize, rootOid, xid, treeNodeCount},
+                                              childFirstKeys,
+                                              set.leafOids,
+                                              static_cast<uint64_t>(entries.size()),
+                                              blockers));
+    set.blocks += leafBlocks;
+    return set;
 }
 
 QByteArray buildFreeQueueTreeBlock(uint32_t blockSize,
@@ -3465,25 +4170,133 @@ bool mutateEphemeralObject(const ApfsCheckpointCommitContext& ctx,
     if (!ctx.ipFqEntries.isEmpty() && isFreeQueueTreeWithOid(*object, kApfsFormatFqIpTreeOid)) {
         *object = buildFreeQueueLeaf(
             ctx.geometry.blockSize, kApfsFormatFqIpTreeOid, ctx.newXid, ctx.ipFqEntries, blockers);
-    } else if (!ctx.mainFqEntries.isEmpty() &&
-               isFreeQueueTreeWithOid(*object, kApfsFormatFqMainTreeOid)) {
-        *object = buildFreeQueueLeaf(ctx.geometry.blockSize,
-                                     kApfsFormatFqMainTreeOid,
-                                     ctx.newXid,
-                                     ctx.mainFqEntries,
-                                     blockers);
+    }
+    // The MAIN free-queue is rebuilt (root + any leaves) by reemitCheckpointEphemerals, not
+    // here: it may be a multi-node tree whose leaf count differs from the live checkpoint's,
+    // so it cannot be re-emitted 1:1 by this per-object mutator.
+    return true;
+}
+
+// One checkpoint-map entry for an ephemeral object re-emitted this commit.
+struct ApfsReemittedEntry {
+    uint32_t type{0};
+    uint32_t subtype{0};
+    uint64_t oid{0};
+    uint64_t paddr{0};
+    uint32_t size{0};  // object byte size (>= one block; the spaceman may span several)
+};
+
+// Whether a live checkpoint-map entry belongs to the MAIN free-queue tree (its root oid 1029
+// or a former leaf oid). Such entries are dropped from the 1:1 re-emit and replaced by this
+// commit's freshly built node set. The IP free-queue (oid 1027) is NOT a main-fq node.
+bool isMainFreeQueueMapEntry(uint32_t subtype, uint64_t oid) {
+    return subtype == kApfsObjectSubtypeFreeQueue && oid != kApfsFormatFqIpTreeOid;
+}
+
+// Total checkpoint-data block span of the LIVE main free-queue nodes (root + any leaves) in
+// the given checkpoint map. A commit that replaces the main free-queue subtracts this and
+// adds its new node set's block count, keeping the data-ring span exact as the tree's node
+// count changes commit to commit.
+uint64_t liveMainFqBlockSpan(const QByteArray& checkpointMap, uint32_t blockSize) {
+    uint64_t span = 0;
+    const uint32_t liveCount = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    for (uint32_t index = 0; index < liveCount; ++index) {
+        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
+                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        if (isMainFreeQueueMapEntry(le32(checkpointMap, entry + 4),
+                                    le64(checkpointMap,
+                                         entry + kApfsCheckpointMapEntryOidOffset))) {
+            span += checkpointEntryBlockSpan(checkpointMap, entry, blockSize);
+        }
+    }
+    return span;
+}
+
+// Re-emit this commit's ephemeral object set into consecutive checkpoint-data slots and
+// rewrite the checkpoint map to match. Every non-main-free-queue ephemeral (spaceman, reaper,
+// IP free-queue) is carried forward 1:1 (mutated in place); the MAIN free-queue is replaced
+// wholesale by `mainFqNodes` (root first, then leaves) when non-empty, so its node count can
+// change commit to commit. Leaf oids come from `mainFqLeafOids`. When `mainFqNodes` is empty
+// the live main-fq root is carried forward 1:1 like any other ephemeral (the no-mutation
+// commitInPlaceCheckpoint path), keeping that path byte-identical. On the single-root-node
+// main-fq case the emitted layout equals the historical 1:1 re-emit (same order, slots,
+// oids, sizes), so the certified path stays byte-identical.
+// Rewrite the checkpoint map's entry table in data-slot order (the map block header carries
+// forward). `slotCount` is the pre-rewrite table extent (old entries + appended main-fq
+// nodes) so a shrunk table is fully cleared, leaving no stale bytes.
+void writeReemittedCheckpointMapEntries(QByteArray* checkpointMap,
+                                        const QVector<ApfsReemittedEntry>& newEntries,
+                                        qsizetype slotCount) {
+    const qsizetype clearBytes = std::max<qsizetype>(slotCount, newEntries.size()) *
+                                 kApfsCheckpointMapEntryBytes;
+    for (qsizetype i = 0; i < clearBytes; ++i) {
+        (*checkpointMap)[kApfsCheckpointMapEntriesOffset + i] = '\0';
+    }
+    writeLe32(checkpointMap,
+              kApfsCheckpointMapCountOffset,
+              static_cast<uint32_t>(newEntries.size()));
+    qsizetype entry = kApfsCheckpointMapEntriesOffset;
+    for (const ApfsReemittedEntry& e : newEntries) {
+        writeLe32(checkpointMap, entry, e.type);
+        writeLe32(checkpointMap, entry + 4, e.subtype);
+        writeLe32(checkpointMap, entry + kApfsCheckpointMapEntrySizeOffset, e.size);
+        writeLe64(checkpointMap, entry + kApfsCheckpointMapEntryOidOffset, e.oid);
+        writeLe64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset, e.paddr);
+        entry += kApfsCheckpointMapEntryBytes;
+    }
+}
+
+// The freshly built main free-queue node set for the re-emit: node blocks (root first, then
+// leaves) and the ephemeral oid of each non-root leaf.
+struct ApfsReemitFqNodes {
+    const QVector<QByteArray>& nodes;
+    const QVector<uint64_t>& leafOids;
+};
+
+// Append the freshly built main free-queue node set (root first, then leaves), each a single-
+// block ephemeral object at the next consecutive data slot from `dataOffset`. The map's
+// cpm_type must equal each object's o_type (apfsck checks type|flags): the root is an
+// ephemeral B-tree (0x8..02), a non-root leaf an ephemeral B-tree NODE (0x8..03).
+bool appendMainFqCheckpointEntries(const ApfsCheckpointCommitContext& ctx,
+                                   const ApfsReemitFqNodes& fq,
+                                   uint64_t dataOffset,
+                                   QVector<ApfsReemittedEntry>* newEntries,
+                                   QStringList* blockers) {
+    for (qsizetype i = 0; i < fq.nodes.size(); ++i) {
+        const bool isRootNode = (i == 0);
+        const uint64_t nodeOid = isRootNode ? kApfsFormatFqMainTreeOid : fq.leafOids.at(i - 1);
+        const uint32_t nodeType = isRootNode
+                                      ? kApfsObjectTypeBtreeEphemeral
+                                      : (kApfsObjStorageEphemeral | kApfsObjectTypeBtreeNode);
+        const uint64_t newPaddr = ctx.dataBase + dataOffset;
+        QByteArray node = fq.nodes.at(i);
+        if (!stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &node, blockers)) {
+            return false;
+        }
+        newEntries->append(
+            {nodeType, kApfsObjectSubtypeFreeQueue, nodeOid, newPaddr, ctx.geometry.blockSize});
+        dataOffset += 1;
     }
     return true;
 }
 
 bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
+                                const QVector<QByteArray>& mainFqNodes,
+                                const QVector<uint64_t>& mainFqLeafOids,
                                 QByteArray* checkpointMap,
                                 QStringList* blockers) {
     const uint32_t count = le32(*checkpointMap, kApfsCheckpointMapCountOffset);
+    const bool replaceMainFq = !mainFqNodes.isEmpty();
     uint64_t dataOffset = ctx.newDataIndex;
+    QVector<ApfsReemittedEntry> newEntries;
     for (uint32_t index = 0; index < count; ++index) {
         const qsizetype entry = kApfsCheckpointMapEntriesOffset +
                                 static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        const uint32_t subtype = le32(*checkpointMap, entry + 4);
+        const uint64_t oid = le64(*checkpointMap, entry + kApfsCheckpointMapEntryOidOffset);
+        if (replaceMainFq && isMainFreeQueueMapEntry(subtype, oid)) {
+            continue;  // dropped; the fresh main-fq node set is appended below
+        }
         const uint64_t oldPaddr = le64(*checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
         const uint64_t span =
             checkpointEntryBlockSpan(*checkpointMap, entry, ctx.geometry.blockSize);
@@ -3494,9 +4307,20 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             !stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
         }
-        writeLe64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset, newPaddr);
+        newEntries.append({le32(*checkpointMap, entry),
+                           subtype,
+                           oid,
+                           newPaddr,
+                           static_cast<uint32_t>(span * ctx.geometry.blockSize)});
         dataOffset += span;
     }
+    if (!appendMainFqCheckpointEntries(
+            ctx, {mainFqNodes, mainFqLeafOids}, dataOffset, &newEntries, blockers)) {
+        return false;
+    }
+    writeReemittedCheckpointMapEntries(checkpointMap,
+                                       newEntries,
+                                       static_cast<qsizetype>(count) + mainFqNodes.size());
     return true;
 }
 
@@ -3617,6 +4441,52 @@ void applyNxSuperblockCheckpointDeltas(ApfsCheckpointAdvanceRequest& request,
     }
 }
 
+// Build this commit's MAIN free-queue node set and consume its leaf oids from nx_next_oid
+// (via request.nextOidAdvance). Empty mainFqEntries yields an empty set (the queue carries
+// forward unchanged, byte-identical). Leaf oids are drawn past the fs-tree leaf oids this
+// commit already consumed, so they stay unique and < nx_next_oid after the advance. Returns
+// false only on a root-index overflow (a blocker is appended).
+bool buildCommitMainFqNodeSet(ApfsCheckpointAdvanceRequest* request,
+                              const ApfsRepairGeometry& geometry,
+                              uint64_t newXid,
+                              ApfsMainFqNodeSet* out,
+                              QStringList* blockers) {
+    if (request->mainFqEntries.isEmpty()) {
+        return true;
+    }
+    const uint64_t leafBaseOid = le64(request->nxsb, kApfsNxNextOidOffset) +
+                                 request->nextOidAdvance;
+    *out =
+        buildMainFreeQueueNodes({geometry.blockSize, kApfsFormatFqMainTreeOid, leafBaseOid, newXid},
+                                request->mainFqEntries,
+                                blockers);
+    if (out->blocks.isEmpty()) {
+        return false;  // root-index overflow (blocker appended)
+    }
+    request->nextOidAdvance += static_cast<uint64_t>(out->leafCount);
+    return true;
+}
+
+// Resolve the checkpoint-data ring start for this commit's `ephemeralBlocks`. The ring is
+// circular: when the next contiguous run would pass the ring end, wrap to the ring start
+// (the checkpoint map records each object's paddr, so they need not abut). Fail closed only
+// if one checkpoint cannot fit the ring, or wrapping would clobber the live checkpoint.
+bool resolveCheckpointDataStart(const ApfsLiveCheckpoint& live,
+                                uint64_t ephemeralBlocks,
+                                uint32_t* dataStart,
+                                QStringList* blockers) {
+    *dataStart = live.dataNext;
+    if (static_cast<uint64_t>(live.dataNext) + ephemeralBlocks > live.dataBlocks) {
+        if (ephemeralBlocks > live.dataBlocks || live.dataIndex < ephemeralBlocks) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: checkpoint data ring too small for this checkpoint"));
+            return false;
+        }
+        *dataStart = 0;
+    }
+    return true;
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -3627,25 +4497,25 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
             request.image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
         return false;
     }
-    // The data-ring length is the total block span of the ephemerals, which exceeds the
-    // entry count once the spaceman is multi-block (the metadata-overflow dead zone).
-    const uint64_t ephemeralBlocks = checkpointDataBlockSpan(checkpointMap, geometry.blockSize);
-    // The checkpoint data ring is circular. When the next contiguous run would pass the ring
-    // end, wrap this checkpoint's ephemerals back to the ring start - the checkpoint map records
-    // every object's paddr individually, so they need not abut dataNext, exactly as Apple's
-    // apfs.kext does when the descriptor/data area fills. Fail closed only if a single checkpoint
-    // cannot fit the ring, or wrapping would clobber the live checkpoint block 0 still points at.
-    uint32_t dataStart = live.dataNext;
-    if (static_cast<uint64_t>(live.dataNext) + ephemeralBlocks > live.dataBlocks) {
-        if (ephemeralBlocks > live.dataBlocks || live.dataIndex < ephemeralBlocks) {
-            blockers->append(QStringLiteral(
-                "APFS in-place commit: checkpoint data ring too small for this checkpoint"));
-            return false;
-        }
-        dataStart = 0;
+    const uint64_t newXid = live.xid + 1;
+    ApfsMainFqNodeSet mainFqNodeSet;
+    if (!buildCommitMainFqNodeSet(&request, geometry, newXid, &mainFqNodeSet, blockers)) {
+        return false;
+    }
+    // The data-ring length is the total block span of the ephemerals, which exceeds the entry
+    // count once the spaceman is multi-block. When this commit replaces the main free-queue,
+    // drop the LIVE main-fq nodes' span and add the new node set's block count (root + leaves);
+    // otherwise the live span carries forward.
+    uint64_t ephemeralBlocks = checkpointDataBlockSpan(checkpointMap, geometry.blockSize);
+    if (!mainFqNodeSet.blocks.isEmpty()) {
+        ephemeralBlocks -= liveMainFqBlockSpan(checkpointMap, geometry.blockSize);
+        ephemeralBlocks += static_cast<uint64_t>(mainFqNodeSet.blocks.size());
+    }
+    uint32_t dataStart = 0;
+    if (!resolveCheckpointDataStart(live, ephemeralBlocks, &dataStart, blockers)) {
+        return false;
     }
     request.dataIndexStart = dataStart;
-    const uint64_t newXid = live.xid + 1;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
     const QVector<ApfsFreeQueueEntry> ipFqEntries = buildIpFreeQueueWindow(request, newXid);
@@ -3663,7 +4533,8 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                                           request.blockCountDelta,
                                           request.ipUsedSet,
                                           request.cibArrayRepoints};
-    if (!reemitCheckpointEphemerals(ctx, &checkpointMap, blockers)) {
+    if (!reemitCheckpointEphemerals(
+            ctx, mainFqNodeSet.blocks, mainFqNodeSet.leafOids, &checkpointMap, blockers)) {
         return false;
     }
     writeLe64(&checkpointMap, kApfsObjectOidOffset, cpmBlock);
@@ -3719,7 +4590,14 @@ QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
     QVector<ApfsObjectMapEntry> entries;
     const uint32_t nkeys = le32(omapTreeNode, kApfsBtreeNodeCountOffset);
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + 448;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    // Only the ROOT node carries the 40-byte btree_info trailer; a multi-node omap's leaves
+    // are non-root and pack their values up to blockSize. Deriving the value-area end from
+    // the ROOT flag keeps the single-node (root|leaf) container omap byte-identical while
+    // reading a multi-node volume omap's non-root leaves correctly (a fixed blockSize-40
+    // read decoded their paddrs 40 bytes off into out-of-range garbage block numbers).
+    const bool isRoot = (le16(omapTreeNode, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype key = keyAreaStart + static_cast<qsizetype>(index) * kApfsObjectMapKeyBytes;
         const qsizetype value = valueAreaEnd -
@@ -3730,6 +4608,63 @@ QVector<ApfsObjectMapEntry> readOmapLeafEntries(const QByteArray& omapTreeNode,
                         le32(omapTreeNode, value)});
     }
     return entries;
+}
+
+// The child paddrs of a physical omap INDEX node (level > 0), in key order. Mirrors
+// writeOmapIndexNode: 16-byte {oid, xid} keys packed forward from the 576-byte TOC's
+// end, 8-byte child-paddr values packed backward from the value-area end (blockSize on
+// a non-root node, blockSize - btree_info on the root). Read via the TOC value offset so
+// it stays correct regardless of the fixed-KV packing.
+QVector<uint64_t> readOmapIndexChildPaddrs(const QByteArray& indexNode, uint32_t blockSize) {
+    QVector<uint64_t> children;
+    const uint32_t nkeys = le32(indexNode, kApfsBtreeNodeCountOffset);
+    const bool isRoot = (le16(indexNode, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeFixedTocEntryBytes;
+        const uint16_t valueOffset = le16(indexNode, toc + kApfsBtreeFixedTocValueOffset);
+        children.append(le64(indexNode, valueAreaEnd - valueOffset));
+    }
+    return children;
+}
+
+// The two products of a live-omap walk: the paddr of every node (root + interior + leaves)
+// and the {oid -> paddr} mapping of every leaf record.
+struct ApfsLiveOmapWalk {
+    QVector<uint64_t>* nodePaddrs{nullptr};
+    QHash<uint64_t, uint64_t>* oidToPaddr{nullptr};
+};
+
+// Descend the live physical volume object map rooted at `nodePaddr`, appending every node's
+// paddr and every leaf mapping into `out`. A level-0 root is the certified single-leaf shape
+// (one node); a level > 0 root is an index node whose values are child paddrs, recursed to
+// arbitrary depth. This is the read/free inverse of buildObjectMapTreeNodes: it must visit
+// exactly the nodes the builder emitted so the COW commit frees them all and resolves the
+// fs-root mapping.
+bool collectLiveOmapTree(QIODevice* image,
+                         const ApfsRepairGeometry& geometry,
+                         uint64_t nodePaddr,
+                         const ApfsLiveOmapWalk& out,
+                         QStringList* blockers) {
+    QByteArray node(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, nodePaddr, &node, blockers)) {
+        return false;
+    }
+    out.nodePaddrs->append(nodePaddr);
+    if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+        for (const ApfsObjectMapEntry& entry : readOmapLeafEntries(node, geometry.blockSize)) {
+            out.oidToPaddr->insert(entry.oid, entry.physicalBlock);
+        }
+        return true;
+    }
+    for (const uint64_t child : readOmapIndexChildPaddrs(node, geometry.blockSize)) {
+        if (!collectLiveOmapTree(image, geometry, child, out, blockers)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Rebuild the container object-map tree leaf after a COW commit: the mutated
@@ -3757,6 +4692,12 @@ struct ApfsLiveFsChain {
     uint64_t volSb{0};
     uint64_t volOmapHdr{0};
     uint64_t volOmapTree{0};
+    // Every physical block the LIVE volume object-map tree occupies (root + interior +
+    // leaves). Equals {volOmapTree} for a single-node omap (the certified <=112-node
+    // path); grows to V nodes once the tree is multi-level. The COW commit must free ALL
+    // of these -- freeing only the root leaks the other V-1 nodes and over-reports the
+    // cib's ci_free_count by V-1 per commit (fsck_apfs "wrong count of free blocks").
+    QVector<uint64_t> volOmapTreeNodes;
     uint64_t rootTree{0};
     uint64_t extentRef{0};
     // Multi-volume (A4/A8): container-omap records for volumes OTHER than the
@@ -3764,6 +4705,38 @@ struct ApfsLiveFsChain {
     // commit so their superblocks are not orphaned. Empty for single-volume.
     QVector<ApfsObjectMapEntry> containerOmapOthers;
 };
+
+// Resolve the live volume object-map tree from its already-read root node: fill
+// chain->volOmapTreeNodes with every node paddr and chain->rootTree with the fs-tree root.
+// Single-node omap (level 0, the certified <=112-node path): the fs-tree root oid 1028 is
+// the smallest key so it is index 0 -- readOmapSingleEntryPaddr reads it and the whole tree
+// is the one node. Kept byte-identical. Multi-level omap (level > 0, the P3 many-node case):
+// the root is an INDEX node whose values are child paddrs, so readOmapSingleEntryPaddr would
+// decode garbage; descend to collect every node paddr and resolve oid 1028 from the leaves.
+bool resolveLiveVolOmapTree(QIODevice* image,
+                            const ApfsRepairGeometry& geometry,
+                            const QByteArray& rootNode,
+                            ApfsLiveFsChain* chain,
+                            QStringList* blockers) {
+    chain->volOmapTreeNodes.clear();
+    if (le16(rootNode, kApfsBtreeNodeLevelOffset) == 0) {
+        chain->volOmapTreeNodes.append(chain->volOmapTree);
+        chain->rootTree = readOmapSingleEntryPaddr(rootNode, geometry.blockSize);
+        return true;
+    }
+    QHash<uint64_t, uint64_t> omapOidToPaddr;
+    const ApfsLiveOmapWalk walk{&chain->volOmapTreeNodes, &omapOidToPaddr};
+    if (!collectLiveOmapTree(image, geometry, chain->volOmapTree, walk, blockers)) {
+        return false;
+    }
+    if (!omapOidToPaddr.contains(kApfsFormatRootTreeOid)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place commit: live volume object map has no fs-tree root (oid 1028) mapping"));
+        return false;
+    }
+    chain->rootTree = omapOidToPaddr.value(kApfsFormatRootTreeOid);
+    return true;
+}
 
 // Walk the container object map -> volume superblock -> volume object map ->
 // root file-system tree, recording the physical block of every node so the
@@ -3805,8 +4778,7 @@ bool walkLiveFsChain(QIODevice* image,
     if (!readApfsRepairBlock(image, geometry, chain->volOmapTree, &node, blockers)) {
         return false;
     }
-    chain->rootTree = readOmapSingleEntryPaddr(node, geometry.blockSize);
-    return true;
+    return resolveLiveVolOmapTree(image, geometry, node, chain, blockers);
 }
 
 // Map each owning file id to its data extent's start block by reading the
@@ -4219,8 +5191,11 @@ QByteArray readChunkAllocationBitmap(QIODevice* image,
     return bitmap;
 }
 
-// Parse a generated volume object-map B-tree leaf (448-byte TOC, 16-byte
-// fixed keys/values, as buildObjectMapTreeBlock emits) into {oid -> paddr}.
+// Parse a generated volume object-map B-tree into {oid -> paddr}. A single-node omap
+// (level 0, the certified path) is the 448-byte-TOC / 16-byte fixed-KV leaf
+// buildObjectMapTreeBlock emits, read inline below (byte-identical). A multi-level omap
+// (level > 0, the P3 many-node case) is descended so interior fs-tree child oids still
+// resolve -- reading only the root INDEX node as a leaf would decode garbage.
 QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
                                               const ApfsRepairGeometry& geometry,
                                               uint64_t volOmapTree,
@@ -4228,6 +5203,12 @@ QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
     QHash<uint64_t, uint64_t> entries;
     QByteArray node(geometry.blockSize, '\0');
     if (!readApfsRepairBlock(image, geometry, volOmapTree, &node, blockers)) {
+        return entries;
+    }
+    if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
+        QVector<uint64_t> nodePaddrs;
+        const ApfsLiveOmapWalk walk{&nodePaddrs, &entries};
+        collectLiveOmapTree(image, geometry, volOmapTree, walk, blockers);
         return entries;
     }
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
@@ -4243,8 +5224,81 @@ QHash<uint64_t, uint64_t> parseVolOmapEntries(QIODevice* image,
     return entries;
 }
 
-// Every block the live fs-tree occupies (the root, plus its leaves when the root
-// is an internal node), so a commit can free them all when it copies the tree.
+// The paddrs of an fs-tree INTERIOR node's children: each record's value is an 8-byte
+// child OID (the fs-tree stores child pointers as virtual oids), resolved to a paddr via
+// the volume omap. A non-root interior node has no btree_info trailer, so its value area
+// ends at blockSize; the root's ends at blockSize - btree_info.
+QVector<uint64_t> fsTreeChildPaddrs(const QByteArray& node,
+                                    uint32_t blockSize,
+                                    const QHash<uint64_t, uint64_t>& omap) {
+    QVector<uint64_t> children;
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+        const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        children.append(omap.value(le64(node, valueAreaEnd - valueOffset)));
+    }
+    return children;
+}
+
+// The fs-tree walk payload: the volume omap that resolves child oids to paddrs, the
+// out-vector every visited node paddr is appended to, and the remaining recursion
+// budget (a corrupt tree with lying level fields must fail closed, not recurse
+// unboundedly; real APFS trees are a handful of levels deep).
+struct ApfsFsTreeCollect {
+    const QHash<uint64_t, uint64_t>* omap{nullptr};
+    QVector<uint64_t>* paddrs{nullptr};
+    int depthBudget{16};
+};
+
+// Recursively collect every fs-tree node paddr rooted at `nodePaddr` into out.paddrs
+// (arbitrary depth): append the node, and if it is interior (level > 0) resolve each child
+// oid to a paddr through out.omap and recurse. The one-level P3 predecessor missed the
+// level-0 leaves of a 3+-level tree, so the COW commit lost their extents and corrupted.
+// A child oid missing from the volume omap resolves to paddr 0 (the container
+// superblock) via QHash::value's default - walking it would poison the freed list and
+// the extent recovery, so fail closed instead.
+bool collectFsTreeSubtree(QIODevice* image,
+                          const ApfsRepairGeometry& geometry,
+                          uint64_t nodePaddr,
+                          const ApfsFsTreeCollect& out,
+                          QStringList* blockers) {
+    if (out.depthBudget <= 0) {
+        blockers->append(
+            QStringLiteral("APFS in-place commit: fs-tree deeper than the walk budget"));
+        return false;
+    }
+    QByteArray node(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, nodePaddr, &node, blockers)) {
+        return false;
+    }
+    out.paddrs->append(nodePaddr);
+    if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+        return true;
+    }
+    ApfsFsTreeCollect deeper = out;
+    deeper.depthBudget = out.depthBudget - 1;
+    for (const uint64_t child : fsTreeChildPaddrs(node, geometry.blockSize, *out.omap)) {
+        if (child == 0) {
+            blockers->append(QStringLiteral(
+                "APFS in-place commit: fs-tree child oid has no object-map mapping"));
+            return false;
+        }
+        if (!collectFsTreeSubtree(image, geometry, child, deeper, blockers)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Every block the live fs-tree occupies (the root plus every interior node and leaf at any
+// depth), so a commit can free them all when it copies the tree. A single-leaf tree is one
+// node; a multi-level tree is walked top to bottom, resolving child oids through the volume
+// omap. Byte-identical to the prior one-level walk when the tree is <= two levels.
 bool collectOldFsTreeNodePaddrs(QIODevice* image,
                                 const ApfsRepairGeometry& geometry,
                                 const ApfsLiveFsChain& chain,
@@ -4254,33 +5308,14 @@ bool collectOldFsTreeNodePaddrs(QIODevice* image,
     if (!readApfsRepairBlock(image, geometry, chain.rootTree, &root, blockers)) {
         return false;
     }
-    paddrs->append(chain.rootTree);
     if (le16(root, kApfsBtreeNodeLevelOffset) == 0) {
+        paddrs->append(chain.rootTree);
         return true;  // single leaf
     }
     const QHash<uint64_t, uint64_t> omap =
         parseVolOmapEntries(image, geometry, chain.volOmapTree, blockers);
-    const uint32_t nkeys = le32(root, kApfsBtreeNodeCountOffset);
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
-    for (uint32_t index = 0; index < nkeys; ++index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
-                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
-        const uint16_t valueOffset = le16(root, toc + kApfsBtreeVariableTocValueOffset);
-        const uint64_t childOid = le64(root, valueAreaEnd - valueOffset);
-        const uint64_t childPaddr = omap.value(childOid);
-        // A child oid missing from the volume omap would silently resolve to paddr 0
-        // (the container superblock) and poison the freed list / extent recovery -
-        // fail closed instead of freeing block 0.
-        if (childPaddr == 0) {
-            blockers->append(
-                QStringLiteral("APFS in-place commit: fs-tree child oid %1 has no object-map "
-                               "mapping")
-                    .arg(childOid));
-            return false;
-        }
-        paddrs->append(childPaddr);
-    }
-    return true;
+    const ApfsFsTreeCollect collect{&omap, paddrs};
+    return collectFsTreeSubtree(image, geometry, chain.rootTree, collect, blockers);
 }
 
 // Recover a file's data extents in logical order from the live fs-tree's
@@ -4308,13 +5343,13 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
         if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
             continue;  // internal node carries child pointers, not file records
         }
-        // Only a ROOT node carries the 40-byte btree_info trailer; a non-root leaf's
-        // value area runs to the end of the block. Reading a leaf at the root's end
-        // shifted every value by 40 bytes, so the first chained commit after a leaf
-        // split recovered garbage extents (paddr 0) for the preserved files.
-        const bool nodeIsRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+        // Only the ROOT node carries the 40-byte btree_info trailer; a non-root leaf (every
+        // leaf of a multi-level tree) packs its values up to blockSize. Using the root's
+        // value-area end for a non-root leaf read file-extent paddrs 40 bytes off (garbage
+        // out-of-range block numbers), so derive it per node from the ROOT flag.
+        const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
         const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
-                                       (nodeIsRoot ? kApfsBtreeInfoBytes : 0);
+                                       (isRoot ? kApfsBtreeInfoBytes : 0);
         const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
         const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
                                        le16(node, kApfsBtreeNodeTableLengthOffset);
@@ -4397,23 +5432,63 @@ bool writeCowFsTreeNodes(const ApfsCowFileInsert& cow,
     return true;
 }
 
+// Write the volume object map for a file-insert COW commit: the multi-block bulk-loaded
+// physical omap tree (one mapping per fs-tree node, so it grows past a single node with
+// the tree) plus its header. The header's om_tree_oid points at the omap root (node 0 of
+// the set, at volOmapTreeBasePaddr). One mapping stays byte-identical to the single-node
+// layout.
+bool writeCowVolumeOmap(const ApfsCowFileInsert& cow,
+                        const ApfsOmapChainLayout& chain,
+                        const QVector<ApfsObjectMapEntry>& fsMappings,
+                        QStringList* blockers) {
+    const uint32_t bs = cow.geometry.blockSize;
+    const uint64_t volOmapTreeBasePaddr = cow.newBlocks.at(chain.volOmapTreeBase);
+    const uint64_t volOmapHdr = cow.newBlocks.at(chain.volOmapHdr);
+    // The reserved omap-tree run is generally NON-CONTIGUOUS once free space is fragmented,
+    // so hand the builder the ACTUAL blocks (emit slot i -> volTreeNodeBlocks[i]); a
+    // treeBasePaddr+i assumption pointed the multi-node omap's leaves at the wrong (data)
+    // blocks. The header's om_tree_oid stays the root paddr = the run's first block.
+    QVector<uint64_t> volTreeNodeBlocks;
+    volTreeNodeBlocks.reserve(chain.volOmapTreeBlocks);
+    for (qsizetype i = 0; i < chain.volOmapTreeBlocks; ++i) {
+        volTreeNodeBlocks.append(cow.newBlocks.at(chain.volOmapTreeBase + i));
+    }
+    const QVector<QByteArray> volNodes = buildObjectMapTreeNodes(
+        {bs, volOmapTreeBasePaddr, cow.newXid, volOmapTreeBasePaddr, volTreeNodeBlocks},
+        fsMappings,
+        blockers);
+    if (volNodes.size() != volTreeNodeBlocks.size()) {
+        blockers->append(QStringLiteral("APFS in-place commit: volume omap tree needs %1 nodes but "
+                                        "%2 blocks were reserved")
+                             .arg(volNodes.size())
+                             .arg(volTreeNodeBlocks.size()));
+        return false;
+    }
+    for (qsizetype i = 0; i < volNodes.size(); ++i) {
+        if (!writeApfsRepairBlock(
+                cow.image, cow.geometry, volTreeNodeBlocks.at(i), volNodes.at(i), blockers)) {
+            return false;
+        }
+    }
+    QByteArray volHdr = buildObjectMapBlock({bs, volOmapHdr, volOmapTreeBasePaddr, cow.newXid, 0},
+                                            blockers);
+    return writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers);
+}
+
 bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const qsizetype nodeCount = cow.fsNodes.size();
-    const uint64_t volOmapTree = cow.newBlocks.at(nodeCount);
-    const uint64_t volOmapHdr = cow.newBlocks.at(nodeCount + 1);
-    const uint64_t volSb = cow.newBlocks.at(nodeCount + 2);
-    const uint64_t ctrOmapTree = cow.newBlocks.at(nodeCount + 3);
-    const uint64_t ctrOmapHdr = cow.newBlocks.at(nodeCount + 4);
+    const ApfsOmapChainLayout chain = omapChainLayout(nodeCount, nodeCount, bs);
+    const uint64_t volOmapHdr = cow.newBlocks.at(chain.volOmapHdr);
+    const uint64_t volSb = cow.newBlocks.at(chain.volSb);
+    const uint64_t ctrOmapTree = cow.newBlocks.at(chain.ctrOmapTreeBase);
+    const uint64_t ctrOmapHdr = cow.newBlocks.at(chain.ctrOmapHdr);
 
     QVector<ApfsObjectMapEntry> fsMappings;
     if (!writeCowFsTreeNodes(cow, &fsMappings, blockers)) {
         return false;
     }
-    QByteArray volTree = buildObjectMapTreeBlock(bs, volOmapTree, fsMappings, cow.newXid, blockers);
-    QByteArray volHdr = buildObjectMapBlock({bs, volOmapHdr, volOmapTree, cow.newXid, 0}, blockers);
-    if (!writeApfsRepairBlock(cow.image, cow.geometry, volOmapTree, volTree, blockers) ||
-        !writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers)) {
+    if (!writeCowVolumeOmap(cow, chain, fsMappings, blockers)) {
         return false;
     }
     if (!cowExtentRefTree(cow, blockers)) {
@@ -4965,7 +6040,11 @@ QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
                                       const QVector<uint64_t>& oldFsTreeNodes,
                                       bool extentRefCowed) {
     QVector<uint64_t> freed = oldFsTreeNodes;
-    freed.append(chain.volOmapTree);
+    // Free EVERY block the live volume omap tree occupied (root + interior + leaves), not
+    // just the root: a multi-node omap leaks its other V-1 nodes and inflates the cib's
+    // ci_free_count by V-1 per commit otherwise. volOmapTreeNodes == {volOmapTree} on the
+    // single-node path, so this is byte-identical there.
+    freed.append(chain.volOmapTreeNodes);
     freed.append(chain.volOmapHdr);
     freed.append(chain.volSb);
     freed.append(chain.ctrOmapTree);
@@ -5011,14 +6090,55 @@ QVector<ApfsFreeQueueEntry> parseFreeQueueEntries(QIODevice* image,
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
     const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
                                le16(node, kApfsBtreeNodeTableLengthOffset);
-    const qsizetype infoOffset = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    // Free-queue run values pack backward from the value-area end: blockSize on a non-root
+    // leaf (a multi-node tree's leaf) but blockSize - btree_info on the lone root-leaf. Using
+    // the fixed blockSize - 40 for a non-root leaf reads its lengths 40 bytes off. Derive the
+    // end from the ROOT flag, mirroring readOmapLeafEntries.
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
         const uint16_t voff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
         const uint64_t entryXid = le64(node, keyStart + koff);
         const uint64_t entryPaddr = le64(node, keyStart + koff + 8);
-        const uint64_t length = (voff == 0xFFFF) ? 1 : le64(node, infoOffset - voff);
+        const uint64_t length = (voff == 0xFFFF) ? 1 : le64(node, valueAreaEnd - voff);
         entries.append({entryXid, entryPaddr, length});
+    }
+    return entries;
+}
+
+// Read every record of the MAIN free-queue tree rooted (by paddr) at `rootPaddr`. A level-0
+// root is the certified single node -> parseFreeQueueEntries directly (byte-identical read).
+// A level>0 root is the multi-node index: its values are child leaf OIDs (ephemeral), so
+// resolve each to a paddr through the live checkpoint map and concatenate the leaves' records
+// (already globally (xid,paddr)-sorted by build order). This is the read/reclaim inverse of
+// buildMainFreeQueueNodes; reading the index node as a leaf would decode child oids as run
+// lengths (the single-node overflow bug this multi-node tree replaces).
+QVector<ApfsFreeQueueEntry> parseMainFreeQueueTree(QIODevice* image,
+                                                   const ApfsRepairGeometry& geometry,
+                                                   const ApfsLiveCheckpoint& live,
+                                                   uint64_t rootPaddr,
+                                                   QStringList* blockers) {
+    QByteArray root(geometry.blockSize, '\0');
+    if (rootPaddr == 0 || !readApfsRepairBlock(image, geometry, rootPaddr, &root, blockers)) {
+        return {};
+    }
+    if (le16(root, kApfsBtreeNodeLevelOffset) == 0) {
+        return parseFreeQueueEntries(image, geometry, rootPaddr, blockers);
+    }
+    // Index root: 8-byte child-oid values packed backward from the root value-area end
+    // (blockSize - btree_info). Read the child oids via the TOC value offsets so the packing
+    // stays authoritative.
+    const uint32_t nkeys = le32(root, kApfsBtreeNodeCountOffset);
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    QVector<ApfsFreeQueueEntry> entries;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const uint16_t voff = le16(root, kApfsBtreeNodeHeaderBytes + index * 4 + 2);
+        const uint64_t childOid = le64(root, valueAreaEnd - voff);
+        const uint64_t childPaddr =
+            findEphemeralPaddrByOid(image, geometry, live, childOid, blockers);
+        entries += parseFreeQueueEntries(image, geometry, childPaddr, blockers);
     }
     return entries;
 }
@@ -5628,7 +6748,15 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             uint64_t* chunk1BitmapBlock,
                             QStringList* blockers) {
     *chunk1BitmapBlock = 0;
-    const int metaCount = static_cast<int>(sizing.fsNodeCount) + 5 + sizing.extentRefSlots;
+    // The omap chain past the fs nodes is V (volume omap tree) + 1 (vol hdr) + 1 (vol sb)
+    // + C (container omap tree) + 1 (ctr hdr). V grows past 1 once the fs-tree (hence the
+    // volume-omap mapping count == fsNodeCount) exceeds one omap leaf; C stays 1. For a
+    // single-node volume omap V==C==1 so chainBlocks==5, byte-identical to the prior
+    // literal + 5.
+    const ApfsOmapChainLayout omapChain =
+        omapChainLayout(0, sizing.fsNodeCount, ctx.geometry.blockSize);
+    const int metaCount = static_cast<int>(sizing.fsNodeCount) +
+                          static_cast<int>(omapChain.chainBlocks) + sizing.extentRefSlots;
     const int need = metaCount + static_cast<int>(sizing.dataBlocks);
     if (ctx.layout.allocChunk != 0) {
         return allocateOverflowCommitBlocks(ctx, need, newBlocks, chunk1BitmapBlock, blockers);
@@ -5806,19 +6934,23 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
                            qsizetype nodeCount,
                            int64_t netConsumed,
                            QStringList* blockers) {
-    return writeFileInsertCowChain({.image = f.ctx.image,
-                                    .geometry = f.ctx.geometry,
-                                    .newXid = f.newXid,
-                                    .live = f.ctx.chain,
-                                    .fsNodes = f.fsNodes,
-                                    .newBlocks = f.newBlocks.mid(0, nodeCount + 5),
-                                    .files = f.files,
-                                    .allocBlockDelta = netConsumed,
-                                    .extentRefNew = f.extentRefNew,
-                                    .fileCountDelta = f.fileCountDelta,
-                                    .directoryCountDelta = f.directoryCountDelta,
-                                    .nextObjIdDelta = f.nextObjIdDelta},
-                                   blockers);
+    return writeFileInsertCowChain(
+        {.image = f.ctx.image,
+         .geometry = f.ctx.geometry,
+         .newXid = f.newXid,
+         .live = f.ctx.chain,
+         .fsNodes = f.fsNodes,
+         .newBlocks = f.newBlocks.mid(
+             0,
+             omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
+                 .tail),
+         .files = f.files,
+         .allocBlockDelta = netConsumed,
+         .extentRefNew = f.extentRefNew,
+         .fileCountDelta = f.fileCountDelta,
+         .directoryCountDelta = f.directoryCountDelta,
+         .nextObjIdDelta = f.nextObjIdDelta},
+        blockers);
 }
 
 struct ApfsFinalizeFreeQueue {
@@ -5842,9 +6974,10 @@ ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f
     QVector<uint64_t> freed =
         oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
     freed += f.freedDataBlocks;
-    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
         f.ctx.image,
         f.ctx.geometry,
+        f.ctx.live,
         findEphemeralPaddrByOid(
             f.ctx.image, f.ctx.geometry, f.ctx.live, kApfsFormatFqMainTreeOid, blockers),
         blockers);
@@ -6145,6 +7278,24 @@ struct ApfsFinalizeApply {
 // file-insert allocation, rotate cab 0 (CAB tier), and advance the checkpoint. Split
 // from finalizeFsCommit to keep each within the complexity budget; the S3 spill plan
 // (COW'd bitmap slots + freed old slots + exact IP used-set) threads through.
+
+// Net blocks a file-insert commit consumes = the fs-tree node-count delta + the volume
+// omap-tree block-count delta + the data-block delta. The omap-tree grows with the fs-tree
+// (one mapping per node), so a commit that pushes it multi-level allocates more omap-tree
+// blocks than the old tree freed; counting only extraNodes let ci_free_count climb by that
+// difference every commit (fsck_apfs "wrong count of free blocks"). The omap term is zero
+// -- hence byte-identical to the certified path -- whenever the omap node count is unchanged.
+int64_t finalizeNetConsumed(const ApfsFsCommitFinalize& f, qsizetype nodeCount) {
+    const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
+                               static_cast<int64_t>(f.ctx.oldFsNodes.size());
+    const int64_t newVolOmapBlocks = static_cast<int64_t>(
+        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
+            .volOmapTreeBlocks);
+    const int64_t oldVolOmapBlocks = static_cast<int64_t>(f.ctx.chain.volOmapTreeNodes.size());
+    return extraNodes + (newVolOmapBlocks - oldVolOmapBlocks) +
+           (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
+}
+
 bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
                              const ApfsFinalizeApply& in,
                              ApfsInPlaceCheckpointResult* result,
@@ -6153,10 +7304,7 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
     const ApfsSpilledChunkPlan& plan = in.plan;
     const ApfsFinalizeFreeQueue& fq = in.fq;
     const qsizetype nodeCount = f.fsNodes.size();
-    const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
-                               static_cast<int64_t>(f.ctx.oldFsNodes.size());
-    const int64_t netConsumed = extraNodes +
-                                (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
+    const int64_t netConsumed = finalizeNetConsumed(f, nodeCount);
     if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
         return false;
     }
@@ -6190,25 +7338,28 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
     // prefix. freedOldSlots pushes each repeated spill's old bitmap slot onto sm_fq[IP].
     const QVector<uint64_t> ipUsedSet =
         f.ctx.layout.allocChunk == 0 ? plan.ipUsedSet : ipBitmapPrefixSet(ipBitmapUsage);
-    return advanceCheckpoint({.image = f.ctx.image,
-                              .geometry = f.ctx.geometry,
-                              .nxsb = f.ctx.nxsb,
-                              .live = f.ctx.live,
-                              .newContainerOmap = f.newBlocks.at(nodeCount + 4),
-                              .spacemanFreeDelta = freeDelta,
-                              .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
-                              .newCibAddr = newAddr0,
-                              .cibCount = f.ctx.layout.cibCount,
-                              .ipSlotStride = groupSize,
-                              .ipBitmapUsage = ipBitmapUsage,
-                              .freedCibSlot = rotation.liveCib,
-                              .prevFreedCibSlot = rotation.freeCib,
-                              .extraFreedIpBlocks = plan.freedOldSlots,
-                              .mainFqEntries = mainFq.entries,
-                              .ipUsedSet = ipUsedSet,
-                              .cibArrayRepoints = plan.cibRepoints},
-                             result,
-                             blockers);
+    return advanceCheckpoint(
+        {.image = f.ctx.image,
+         .geometry = f.ctx.geometry,
+         .nxsb = f.ctx.nxsb,
+         .live = f.ctx.live,
+         .newContainerOmap = f.newBlocks.at(
+             omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
+                 .ctrOmapHdr),
+         .spacemanFreeDelta = freeDelta,
+         .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
+         .newCibAddr = newAddr0,
+         .cibCount = f.ctx.layout.cibCount,
+         .ipSlotStride = groupSize,
+         .ipBitmapUsage = ipBitmapUsage,
+         .freedCibSlot = rotation.liveCib,
+         .prevFreedCibSlot = rotation.freeCib,
+         .extraFreedIpBlocks = plan.freedOldSlots,
+         .mainFqEntries = mainFq.entries,
+         .ipUsedSet = ipUsedSet,
+         .cibArrayRepoints = plan.cibRepoints},
+        result,
+        blockers);
 }
 
 bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
@@ -6329,13 +7480,17 @@ bool commitInPlaceFileInsert(QIODevice* image,
     }
     // The data blocks may be non-contiguous when free space is fragmented or when the
     // file overflows into chunk 1; they are grouped into one file-extent + extent-ref
-    // record per contiguous run.
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
+    // record per contiguous run. The omap chain past the fs nodes can be several blocks
+    // (the volume omap tree grows multi-level with the fs-tree), so the tail base is
+    // computed rather than the fixed +5.
+    const uint64_t insertTailBase =
+        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
+    const QVector<uint64_t> dataBlockList = newBlocks.mid(insertTailBase + extentRefSlots);
     ApfsInsertFsNodes built;
     if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(insertTailBase) : 0;
     // A hard link adds no inode (the file count is unchanged) but consumes two object
     // ids for its sibling records; a normal insert adds one inode and one id.
     const bool hardlink = request.hardlinkTargetId != 0;
@@ -6435,12 +7590,14 @@ bool commitInPlaceFilePatch(QIODevice* image,
                                 blockers)) {
         return false;
     }
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(nodeCount + 5 + extentRefSlots);
+    const uint64_t patchTailBase =
+        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
+    const QVector<uint64_t> dataBlockList = newBlocks.mid(patchTailBase + extentRefSlots);
     ApfsInsertFsNodes built;
     if (!buildInsertFsNodes(ctx, insert, dataBlockList, &built, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(patchTailBase) : 0;
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
@@ -6802,9 +7959,10 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
     const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
                                 static_cast<int64_t>(t.freed.size());
     const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
-    const QVector<ApfsFreeQueueEntry> liveMainFq = parseFreeQueueEntries(
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
         ctx.image,
         ctx.geometry,
+        ctx.live,
         findEphemeralPaddrByOid(
             ctx.image, ctx.geometry, ctx.live, kApfsFormatFqMainTreeOid, blockers),
         blockers);
@@ -7534,7 +8692,9 @@ bool commitInPlaceFileDelete(QIODevice* image,
             ctx, {nodeCount, extentRefSlots, 0}, &newBlocks, &deleteChunk1Bitmap, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(nodeCount + 5) : 0;
+    const uint64_t deleteTailBase =
+        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
+    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(deleteTailBase) : 0;
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = fsNodes,
@@ -16709,6 +17869,77 @@ QVector<QByteArray> PartitionApfsWriter::buildFsTreeNodeBlocks(uint32_t block_si
     return blocks;
 }
 
+QVector<QByteArray> PartitionApfsWriter::buildObjectMapTreeBlocks(uint32_t block_size,
+                                                                  uint64_t tree_base_paddr,
+                                                                  uint64_t xid,
+                                                                  qsizetype mapping_count,
+                                                                  QStringList* blockers) {
+    QStringList localBlockers;
+    QStringList* sink = blockers != nullptr ? blockers : &localBlockers;
+    QVector<ApfsObjectMapEntry> mappings;
+    mappings.reserve(mapping_count);
+    // Synthetic mappings with distinct, ascending oids so the leaf/index key ordering
+    // and the paddr value writes are exercised end to end.
+    for (qsizetype index = 0; index < mapping_count; ++index) {
+        const uint64_t oid = kApfsFirstUserObjectId + static_cast<uint64_t>(index);
+        mappings.append({oid, xid, tree_base_paddr + static_cast<uint64_t>(index) + 1, 0});
+    }
+    return buildObjectMapTreeNodes({block_size, tree_base_paddr, xid, tree_base_paddr},
+                                   mappings,
+                                   sink);
+}
+
+QVector<QByteArray> PartitionApfsWriter::buildMainFreeQueueTreeBlocks(uint32_t block_size,
+                                                                      uint64_t leaf_base_oid,
+                                                                      uint64_t xid,
+                                                                      qsizetype entry_count,
+                                                                      QStringList* blockers) {
+    QStringList localBlockers;
+    QStringList* sink = blockers != nullptr ? blockers : &localBlockers;
+    // Synthetic single-block runs at distinct, ascending paddrs (all length 1 -> ghosts) so
+    // the {xid, paddr} key ordering and the leaf/index packing are exercised end to end. A
+    // non-consecutive stride keeps them from coalescing into one run.
+    QVector<ApfsFreeQueueEntry> entries;
+    entries.reserve(entry_count);
+    for (qsizetype index = 0; index < entry_count; ++index) {
+        entries.append({xid, 1000 + static_cast<uint64_t>(index) * 2, 1});
+    }
+    return buildMainFreeQueueNodes({block_size, kApfsFormatFqMainTreeOid, leaf_base_oid, xid},
+                                   entries,
+                                   sink)
+        .blocks;
+}
+
+QVector<QPair<quint64, quint64>> PartitionApfsWriter::readMainFreeQueueTreeBlocks(
+    const QVector<QByteArray>& node_blocks, uint32_t block_size) {
+    QVector<QPair<quint64, quint64>> out;
+    if (node_blocks.isEmpty()) {
+        return out;
+    }
+    // Decode one free-queue leaf block into {xid, paddr} pairs, mirroring parseFreeQueueEntries
+    // (root-flag-aware value area) but without needing an on-disk device.
+    const auto decodeLeaf = [block_size, &out](const QByteArray& node) {
+        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const qsizetype keyStart = kApfsBtreeNodeHeaderBytes +
+                                   le16(node, kApfsBtreeNodeTableLengthOffset);
+        for (uint32_t index = 0; index < nkeys; ++index) {
+            const uint16_t koff = le16(node, kApfsBtreeNodeHeaderBytes + index * 4);
+            out.append({le64(node, keyStart + koff), le64(node, keyStart + koff + 8)});
+        }
+    };
+    const QByteArray& root = node_blocks.first();
+    if (le16(root, kApfsBtreeNodeLevelOffset) == 0) {
+        decodeLeaf(root);  // single root-leaf tree
+        return out;
+    }
+    // Multi-node: the leaves follow the root in build order (blocks[1..]); the root's index
+    // records key them but the diagnostic walks the vector directly (no checkpoint map).
+    for (qsizetype i = 1; i < node_blocks.size(); ++i) {
+        decodeLeaf(node_blocks.at(i));
+    }
+    return out;
+}
+
 QPair<quint64, quint64> PartitionApfsWriter::nextCrashSafeIpSlot(quint64 live_cib,
                                                                  quint64 block_count) {
     const ApfsIpSlot slot = nextIpSlot(live_cib, computeGeneratedLayout(block_count));
@@ -16800,6 +18031,33 @@ quint64 PartitionApfsWriter::readGeneratedChunkFreeCount(const QString& image_pa
                             static_cast<qsizetype>(chunk_index % kApfsSpacemanChunksPerCib) *
                                 kApfsChunkInfoEntryStride;
     return le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset);
+}
+
+int PartitionApfsWriter::readGeneratedVolumeOmapTreeLevel(const QString& image_path) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return -1;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return -1;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return -1;
+    }
+    ApfsLiveFsChain chain;
+    if (!walkLiveFsChain(&image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, &blockers)) {
+        return -1;
+    }
+    QByteArray root(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, chain.volOmapTree, &root, &blockers)) {
+        return -1;
+    }
+    return static_cast<int>(le16(root, kApfsBtreeNodeLevelOffset));
 }
 
 quint64 PartitionApfsWriter::readGeneratedSpacemanCibArrayEntry(const QString& image_path,

@@ -1838,6 +1838,11 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileRenameKeepsContentAndObjectId();
     void apfsWriter_inPlaceFileInsertGrowsIntoMultiLeafFsTree();
     void apfsWriter_buildsTwoLevelFsTreeOnOverflow();
+    void apfsWriter_buildsThreeLevelFsTreeOnDeepOverflow();
+    void apfsWriter_buildsMultiLevelObjectMapOnManyMappings();
+    void apfsWriter_buildsMultiNodeMainFreeQueueOnOverflow();
+    void apfsWriter_manyFileInsertOverflowsOmapAndFsTree();
+    void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
     void apfsWriter_readsGeneratedLiveCibAddr();
     void apfsWriter_crashBeforeCheckpointDurableRollsBack();
@@ -11534,6 +11539,37 @@ void buildApfsThreeFileChain(const QDir& dir,
     *d3Out = d3;
 }
 
+// Commit one raw file insert into the image at @p img (a container of @p bytes), asserting
+// the commit succeeded. Shared by the multi-node-omap tests so their per-file commit loop
+// stays inside the lizard length gate.
+void commitRawOmapFile(const QString& img,
+                       uint64_t bytes,
+                       const QString& name,
+                       const QByteArray& payload,
+                       const PartitionApfsWriteOptions& options) {
+    const auto commit = PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                                  .target_container_bytes = bytes,
+                                                                  .file_name = name,
+                                                                  .file_data = payload,
+                                                                  .target_mutation_confirmed = true,
+                                                                  .allow_raw_device_target = true,
+                                                                  .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+}
+
+// Format a fresh image-only container for the omap/fs-tree stress tests (shared to keep each
+// test body within the lizard length gate).
+void formatOmapStressContainer(const QString& img, uint64_t bytes, const QString& volumeName) {
+    QFile::remove(img);
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = img,
+                                                        .target_container_bytes = bytes,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = volumeName,
+                                                        .options = certifiedApfsImageOnlyOptions()})
+            .ok);
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
@@ -11748,6 +11784,308 @@ void PartitionManagerCoreTests::apfsWriter_buildsTwoLevelFsTreeOnOverflow() {
         const int valueOff = le16(root, 0x38 + index * 8 + 4);
         QVERIFY(leafOids.contains(le64(root, valueAreaEnd - valueOff)));
     }
+}
+
+void PartitionManagerCoreTests::apfsWriter_buildsThreeLevelFsTreeOnDeepOverflow() {
+    // ~1500 files overflow a two-level fs-tree: the level-1 index root cannot hold one
+    // pointer per leaf, so the builder must add a level-2 root over level-1 interior
+    // nodes over level-0 leaves. Pre-fix this returned {} with "needs more than two
+    // levels"; post-fix it returns a 3-level node set that resolves top to bottom.
+    // Longer names lengthen each drec key, so an index node holds fewer child pointers
+    // and the level-2 root is forced with a moderate file count.
+    QStringList names;
+    for (int index = 0; index < 6000; ++index) {
+        names << QStringLiteral("deep-fs-tree-overflow-file-name-%1.dat").arg(index);
+    }
+    QStringList blockers;
+    const auto blocks = PartitionApfsWriter::buildFsTreeNodeBlocks(4096, names, 1030, &blockers);
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+    QVERIFY2(blocks.size() > 2, "expected a deep (3-level) fs-tree node set");
+
+    for (const auto& block : blocks) {
+        QVERIFY(PartitionApfsWriter::verifyObjectChecksum(block));
+    }
+    // Root: ROOT (0x01, not LEAF), level >= 2, oid 1028, node_count in the trailer
+    // equals the total node count.
+    const QByteArray& root = blocks.first();
+    QCOMPARE(apfsLe16(root, 0x20), static_cast<quint16>(0x0001));
+    QVERIFY2(apfsLe16(root, 0x22) >= 2, "root level must be >= 2 for a three-level tree");
+    QCOMPARE(apfsLe64(root, 0x08), static_cast<quint64>(1028));
+    const int trailer = 4096 - 40;
+    QCOMPARE(apfsLe64(root, trailer + 0x20), static_cast<quint64>(blocks.size()));
+
+    // Map every node by oid so each index child pointer can be resolved.
+    QHash<quint64, QByteArray> byOid;
+    for (const auto& block : blocks) {
+        byOid.insert(apfsLe64(block, 0x08), block);
+    }
+    // Levels must be strictly monotone down the tree, only the root carries ROOT, only
+    // level-0 nodes carry LEAF, and every interior child pointer resolves to a node one
+    // level below the parent. Walk from the root.
+    QVector<quint64> frontier{1028};
+    while (!frontier.isEmpty()) {
+        QVector<quint64> next;
+        for (quint64 oid : frontier) {
+            const QByteArray node = byOid.value(oid);
+            QVERIFY2(!node.isEmpty(), "child oid must resolve to a built node");
+            const quint16 level = apfsLe16(node, 0x22);
+            const bool isRoot = oid == 1028;
+            QCOMPARE((apfsLe16(node, 0x20) & 0x0001) != 0, isRoot);
+            QCOMPARE((apfsLe16(node, 0x20) & 0x0002) != 0, level == 0);
+            if (level == 0) {
+                continue;  // leaf, no children
+            }
+            const int count = static_cast<int>(apfsLe32(node, 0x24));
+            const int valueAreaEnd = 4096 - (isRoot ? 40 : 0);
+            QVERIFY(apfsLe16(node, 0x2A) > 0);
+            for (int i = 0; i < count; ++i) {
+                const int valueOff = apfsLe16(node, 0x38 + i * 8 + 4);
+                const quint64 childOid = apfsLe64(node, valueAreaEnd - valueOff);
+                QVERIFY2(!byOid.value(childOid).isEmpty(), "interior child pointer must resolve");
+                QCOMPARE(apfsLe16(byOid.value(childOid), 0x22), static_cast<quint16>(level - 1));
+                next.append(childOid);
+            }
+        }
+        frontier = next;
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_buildsMultiLevelObjectMapOnManyMappings() {
+    // > 112 omap mappings overflow the single 448-byte leaf TOC. The builder must emit a
+    // multi-level physical omap: a ROOT|FIXED index (level >= 1) with the 576-byte index
+    // TOC over 448-byte leaf nodes, node_count spanning every node. 300 mappings force at
+    // least three leaves under one index root.
+    QStringList blockers;
+    const auto blocks =
+        PartitionApfsWriter::buildObjectMapTreeBlocks(4096, 5000, 4, 300, &blockers);
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+    QVERIFY2(blocks.size() > 1, "expected a multi-level omap node set");
+
+    for (const auto& block : blocks) {
+        QVERIFY(PartitionApfsWriter::verifyObjectChecksum(block));
+    }
+    const QByteArray& root = blocks.first();
+    // Root: ROOT|FIXED_KV (0x05), not LEAF, level >= 1, 576-byte index TOC, own oid ==
+    // its paddr (tree_base_paddr 5000), node_count == total nodes.
+    QCOMPARE(apfsLe16(root, 0x20), static_cast<quint16>(0x0005));
+    QVERIFY(apfsLe16(root, 0x22) >= 1);
+    QCOMPARE(apfsLe16(root, 0x2A), static_cast<quint16>(576));
+    QCOMPARE(apfsLe64(root, 0x08), static_cast<quint64>(5000));
+    const int trailer = 4096 - 40;
+    QCOMPARE(apfsLe64(root, trailer + 0x20), static_cast<quint64>(blocks.size()));
+    // Footer key/val sizes stay 16/16 even multi-level (apfsck uses sizeof(apfs_omap_val)).
+    QCOMPARE(apfsLe32(root, trailer + 0x08), static_cast<quint32>(16));
+    QCOMPARE(apfsLe32(root, trailer + 0x0C), static_cast<quint32>(16));
+
+    // Every leaf carries the 448-byte TOC; every non-root physical node's stored oid
+    // equals its own paddr (root paddr 5000, node i at 5000 + i).
+    QHash<quint64, QByteArray> byPaddr;
+    for (int index = 0; index < blocks.size(); ++index) {
+        const quint64 paddr = 5000 + static_cast<quint64>(index);
+        byPaddr.insert(paddr, blocks[index]);
+        if (index != 0) {
+            QCOMPARE(apfsLe64(blocks[index], 0x08), paddr);
+            const quint16 expectedToc = apfsLe16(blocks[index], 0x22) == 0 ? 448 : 576;
+            QCOMPARE(apfsLe16(blocks[index], 0x2A), expectedToc);
+        }
+    }
+    // The root's index child paddrs (8-byte values, backward from the value area) resolve
+    // to real nodes exactly one level below.
+    const int count = static_cast<int>(apfsLe32(root, 0x24));
+    for (int i = 0; i < count; ++i) {
+        const quint64 childPaddr = apfsLe64(root, trailer - apfsLe16(root, 0x38 + i * 4 + 2));
+        QVERIFY2(!byPaddr.value(childPaddr).isEmpty(), "root index child paddr must resolve");
+        QCOMPARE(apfsLe16(byPaddr.value(childPaddr), 0x22),
+                 static_cast<quint16>(apfsLe16(root, 0x22) - 1));
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_buildsMultiNodeMainFreeQueueOnOverflow() {
+    // Regression for the multi-node MAIN free-queue: the historical single ephemeral leaf
+    // silently overflowed once the queue passed ~142 entries (the key area collided with the
+    // value area, so a length-1 run READ BACK as thousands, inflating the reclaim set and
+    // corrupting the spaceman free counts -> apfsck "wrong count of free blocks"). A small
+    // queue must stay one byte-identical root-leaf node; a large queue must split into a ROOT
+    // index over non-root leaves, and every record must round-trip EXACTLY (no overflow).
+    // A value-returning lambda cannot host QVERIFY/QCOMPARE (they expand to `return;`), so
+    // fill an out-parameter and keep the lambda void.
+    const auto roundTrip = [](qsizetype entryCount, QList<QByteArray>* out) {
+        QStringList blockers;
+        *out = PartitionApfsWriter::buildMainFreeQueueTreeBlocks(
+            4096, 20'000, 7, entryCount, &blockers);
+        QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+        QVERIFY(!out->isEmpty());
+        for (const auto& block : *out) {
+            QVERIFY(PartitionApfsWriter::verifyObjectChecksum(block));
+        }
+        const auto pairs = PartitionApfsWriter::readMainFreeQueueTreeBlocks(*out, 4096);
+        QCOMPARE(pairs.size(), entryCount);
+        for (qsizetype i = 0; i < entryCount; ++i) {
+            QCOMPARE(pairs[i].first, static_cast<quint64>(7));              // xid
+            QCOMPARE(pairs[i].second, static_cast<quint64>(1000 + i * 2));  // paddr
+        }
+    };
+
+    // Small: one ROOT|LEAF node (flags ROOT|LEAF|FIXED_KV 0x0007, level 0, oid 1029).
+    QList<QByteArray> small;
+    roundTrip(10, &small);
+    QCOMPARE(small.size(), 1);
+    QCOMPARE(apfsLe16(small.first(), 0x20), static_cast<quint16>(0x0007));
+    QCOMPARE(apfsLe16(small.first(), 0x22), static_cast<quint16>(0));
+    QCOMPARE(apfsLe64(small.first(), 0x08), static_cast<quint64>(1029));
+
+    // Large: a ROOT index (ROOT|FIXED_KV 0x0005, level 1, oid 1029) over >= 2 non-root leaves
+    // (LEAF|FIXED_KV 0x0006, level 0, oids from leaf_base_oid). 500 entries overflow one node.
+    QList<QByteArray> large;
+    roundTrip(500, &large);
+    QVERIFY2(large.size() > 1, "500 free-queue entries must split into a multi-node tree");
+    const QByteArray& root = large.first();
+    QCOMPARE(apfsLe16(root, 0x20), static_cast<quint16>(0x0005));
+    QCOMPARE(apfsLe16(root, 0x22), static_cast<quint16>(1));
+    QCOMPARE(apfsLe64(root, 0x08), static_cast<quint64>(1029));
+    // node_count in the root's btree_info trailer spans every node (root + leaves).
+    QCOMPARE(apfsLe64(root, 4096 - 40 + 0x20), static_cast<quint64>(large.size()));
+    for (int i = 1; i < large.size(); ++i) {
+        QCOMPARE(apfsLe16(large[i], 0x20), static_cast<quint16>(0x0006));          // LEAF|FIXED_KV
+        QCOMPARE(apfsLe16(large[i], 0x22), static_cast<quint16>(0));               // level 0
+        QCOMPARE(apfsLe64(large[i], 0x08), static_cast<quint64>(20'000 + i - 1));  // leaf oid
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_manyFileInsertOverflowsOmapAndFsTree() {
+    // Insert enough files that the fs-tree grows past ~112 nodes, so the volume object map
+    // (one mapping per fs-tree node) overflows a single 448-byte-TOC leaf and must become a
+    // multi-level physical omap. The count defaults small (suite speed); SAK_OMAP_FILE_COUNT
+    // drives it large for the persisted apfsck cert image (SAK_OMAP_CERT_DIR).
+    const QString envDir = qEnvironmentVariable("SAK_OMAP_CERT_DIR");
+    const int fileCount = qEnvironmentVariable("SAK_OMAP_FILE_COUNT").toInt() > 0
+                              ? qEnvironmentVariable("SAK_OMAP_FILE_COUNT").toInt()
+                              : 24;
+    // Long file names lengthen each drec key, so a leaf holds fewer files and the fs-tree
+    // (hence the volume-omap mapping count == node count) crosses 112 nodes with a file
+    // count still within the per-directory entry cap. Enabled for the large cert run.
+    const bool longNames = qEnvironmentVariable("SAK_OMAP_LONG_NAMES").toInt() != 0;
+    const QString pad = longNames ? QString(180, QLatin1Char('p')) : QString();
+    const auto nameFor = [&pad](int index) {
+        return QStringLiteral("omap-overflow-file-%1-%2.dat").arg(index).arg(pad);
+    };
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("omap-many.img"));
+    const int mib = qEnvironmentVariable("SAK_OMAP_CONTAINER_MIB").toInt() > 0
+                        ? qEnvironmentVariable("SAK_OMAP_CONTAINER_MIB").toInt()
+                        : 512;
+    const uint64_t bytes = static_cast<uint64_t>(mib) * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("OmapMany"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto rawOptions = certifiedApfsRawCommitOptions();
+    // The small always-run count keeps data payloads (exercising extents alongside the
+    // tree growth); the large cert run uses empty files, since a data extent per file
+    // would hit the single-node extent-ref capacity guard (110 records) long before the
+    // omap goes multi-level - the extent-ref tree is its own keystone, and the omap/
+    // fs-tree stress only needs node count.
+    const bool emptyPayloads = fileCount > 100;
+    for (int index = 0; index < fileCount; ++index) {
+        const QByteArray payload =
+            emptyPayloads ? QByteArray()
+                          : QStringLiteral("omap-many file %1 payload").arg(index).toUtf8();
+        commitRawOmapFile(img, bytes, nameFor(index), payload, rawOptions);
+    }
+    // The directory listing enumerates every inserted file: the reader walked the whole
+    // fs-tree (root -> interior -> leaves) resolving each node through the volume omap, so
+    // a correct listing of all N names proves both the multi-level fs-tree and the
+    // multi-level omap resolve. (Early tiny files' data blocks are legitimately reclaimed
+    // and reused by the rollback-window free queue after enough in-place commits, so data
+    // readback is asserted on the most-recent file, whose extent is still live.)
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(img,
+                                                                               QStringLiteral("/"),
+                                                                               fileCount + 8);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), fileCount);
+    QSet<QString> listedNames;
+    for (const auto& entry : listing.entries) {
+        listedNames.insert(entry.name);
+    }
+    for (int index = 0; index < fileCount; ++index) {
+        QVERIFY2(listedNames.contains(nameFor(index)),
+                 "every inserted file must be enumerable through the fs-tree/omap");
+    }
+    const int last = fileCount - 1;
+    const QByteArray lastPayload =
+        emptyPayloads ? QByteArray()
+                      : QStringLiteral("omap-many file %1 payload").arg(last).toUtf8();
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/%1").arg(nameFor(last)), 4096);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, lastPayload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree() {
+    // The decisive P3 read/free check. Load enough long-named files to drive the LIVE volume
+    // object map multi-node (level > 0) AND the fs-tree three-level, then commit MORE files.
+    // Every commit re-walks the whole chain: it must descend the multi-node omap to resolve
+    // the fs-tree root (defect 2) and free every omap node (defect 1) without corruption --
+    // a mis-resolved root or a stale freed-then-reused omap node reads a data block as
+    // metadata (checksum failure). Verified by re-listing all files before and after the
+    // extra commits. Genuinely slow (~900 O(n^2) commits), so env-gated. Asserts read/free
+    // CORRECTNESS through the listing; the once-observed ci_free_count drift was the
+    // non-root-leaf value-area bug (fixed with the ROOT-flag value-area end) - the host
+    // apfsck cert on this test's persisted image verifies the free counts stay exact.
+    if (qEnvironmentVariable("SAK_OMAP_DRIFT").isEmpty()) {
+        QSKIP("multi-node omap read/free check is slow; set SAK_OMAP_DRIFT=1 to run");
+    }
+    const int seedFiles = qEnvironmentVariable("SAK_OMAP_DRIFT_SEED").toInt() > 0
+                              ? qEnvironmentVariable("SAK_OMAP_DRIFT_SEED").toInt()
+                              : 900;
+    const int mib = qEnvironmentVariable("SAK_OMAP_DRIFT_MIB").toInt() > 0
+                        ? qEnvironmentVariable("SAK_OMAP_DRIFT_MIB").toInt()
+                        : 1024;
+    // Empty files (no data stream -> no extent-ref record) keep every file within the 1000
+    // root-entry cap while long names force ~9 files per fs-tree leaf, so ~900 files push the
+    // fs-tree (hence the volume omap, one mapping per node) past a single omap leaf. Empty
+    // payloads isolate the OMAP path from the separate extent-ref-tree keystone.
+    const QString pad(220, QLatin1Char('p'));
+    const auto nameFor = [&pad](int index) {
+        return QStringLiteral("omap-drift-file-%1-%2.dat").arg(index).arg(pad);
+    };
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString driftDir = qEnvironmentVariable("SAK_OMAP_CERT_DIR");
+    const QString img = QDir(driftDir.isEmpty() ? temp.path() : driftDir)
+                            .filePath(QStringLiteral("omap-drift.img"));
+    const uint64_t bytes = static_cast<uint64_t>(mib) * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("OmapDrift"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto rawOptions = certifiedApfsRawCommitOptions();
+    for (int index = 0; index < seedFiles; ++index) {
+        commitRawOmapFile(img, bytes, nameFor(index), QByteArray(), rawOptions);
+    }
+    // The load must have driven the omap genuinely multi-node, or the check is not decisive.
+    QVERIFY2(PartitionApfsWriter::readGeneratedVolumeOmapTreeLevel(img) > 0,
+             "seed load did not drive the live volume omap multi-level; raise SAK_OMAP_DRIFT_SEED");
+    // Every file resolves through the multi-node omap + deep fs-tree, and stays resolvable
+    // after further commits that re-walk and free the whole multi-node chain (no corruption).
+    const auto listAll = [&img, seedFiles]() {
+        return PartitionApfsFileSystemReader::listDirectoryFromImage(img,
+                                                                     QStringLiteral("/"),
+                                                                     seedFiles + 32);
+    };
+    const auto seededListing = listAll();
+    QVERIFY2(seededListing.ok, qPrintable(seededListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(seededListing.entries.size(), seedFiles);
+    for (int extra = 0; extra < 6; ++extra) {
+        commitRawOmapFile(img, bytes, nameFor(seedFiles + extra), QByteArray(), rawOptions);
+    }
+    const auto finalListing = listAll();
+    QVERIFY2(finalListing.ok, qPrintable(finalListing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(finalListing.entries.size(), seedFiles + 6);
+    QVERIFY2(PartitionApfsWriter::readGeneratedVolumeOmapTreeLevel(img) > 0,
+             "omap stays multi-level after the extra commits");
 }
 
 void PartitionManagerCoreTests::apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots() {

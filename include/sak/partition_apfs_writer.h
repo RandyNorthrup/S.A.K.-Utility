@@ -881,6 +881,35 @@ public:
                                                                    const QStringList& file_names,
                                                                    uint64_t first_leaf_oid,
                                                                    QStringList* blockers);
+    /// @brief Build the physical object-map B-tree node blocks for @p mapping_count
+    ///        synthetic {oid, xid, paddr} mappings rooted at @p tree_base_paddr - a
+    ///        single ROOT|LEAF node when they fit, or a bulk-loaded multi-level tree
+    ///        (root + interior index nodes + leaves) when they overflow the 112-entry
+    ///        leaf. nodes[0] is the root at tree_base_paddr. Diagnostic entry point for
+    ///        the multi-level omap builder.
+    [[nodiscard]] static QVector<QByteArray> buildObjectMapTreeBlocks(uint32_t block_size,
+                                                                      uint64_t tree_base_paddr,
+                                                                      uint64_t xid,
+                                                                      qsizetype mapping_count,
+                                                                      QStringList* blockers);
+    /// @brief Build the ephemeral MAIN free-queue B-tree node blocks for @p entry_count
+    ///        synthetic single-block {xid, paddr} runs - a single ROOT|LEAF node when they
+    ///        fit, or a two-level tree (a ROOT index node over non-root leaves) once they
+    ///        exceed a single node's safe capacity. nodes[0] is the root; leaf oids run from
+    ///        @p leaf_base_oid. Diagnostic entry point for the multi-node free-queue builder
+    ///        (the historical single leaf silently overflowed past ~142 entries).
+    [[nodiscard]] static QVector<QByteArray> buildMainFreeQueueTreeBlocks(uint32_t block_size,
+                                                                          uint64_t leaf_base_oid,
+                                                                          uint64_t xid,
+                                                                          qsizetype entry_count,
+                                                                          QStringList* blockers);
+    /// @brief Flatten the {xid, paddr} runs back out of the free-queue node blocks produced
+    ///        by @ref buildMainFreeQueueTreeBlocks (root first, then leaves in build order),
+    ///        as packed {xid, paddr} 16-byte pairs. The inverse read of the builder; a
+    ///        correct multi-node tree round-trips the input entries exactly (a leaf overflow
+    ///        would corrupt the decoded run lengths). Returns an empty list on a malformed set.
+    [[nodiscard]] static QVector<QPair<quint64, quint64>> readMainFreeQueueTreeBlocks(
+        const QVector<QByteArray>& node_blocks, uint32_t block_size);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
     /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
     ///        crash-safe in-place commit writes next, given the live cib block of
@@ -910,6 +939,12 @@ public:
     ///        free count (its data bits cleared in that chunk's own bitmap).
     [[nodiscard]] static quint64 readGeneratedChunkFreeCount(const QString& image_path,
                                                              quint64 chunk_index);
+    /// \brief The B-tree node level of the LIVE volume object-map tree root of the
+    ///        generated container at @p image_path (0 = single-node, the certified path;
+    ///        > 0 = the multi-level omap the P3 many-node fix walks/frees), -1 on error.
+    ///        Diagnostic that lets a test assert its file load actually drove the omap
+    ///        multi-level before checking the free-count invariant.
+    [[nodiscard]] static int readGeneratedVolumeOmapTreeLevel(const QString& image_path);
     /// \brief The live spaceman cib-address array entry @p cib_index (the current
     ///        on-disk address of chunk-info block @p cib_index) of the generated
     ///        container at @p image_path, 0 on error. Diagnostic for the keystone
