@@ -1843,6 +1843,7 @@ private Q_SLOTS:
     void apfsWriter_buildsMultiNodeMainFreeQueueOnOverflow();
     void apfsWriter_manyFileInsertOverflowsOmapAndFsTree();
     void apfsWriter_snapshotCreateOnMultiLevelOmap();
+    void apfsWriter_nestedFileInsertPlacesFileAtDepth();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12109,6 +12110,58 @@ void PartitionManagerCoreTests::apfsWriter_snapshotCreateOnMultiLevelOmap() {
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.entries.size(), fileCount);
     verifySnapshotDeleteRevertOnVolume(dir, img);
+}
+
+void PartitionManagerCoreTests::apfsWriter_nestedFileInsertPlacesFileAtDepth() {
+    // Nested insert: commitRawFileInsert's parent_directory_path resolves an arbitrary-depth
+    // directory path against the live tree (resolveDirectoryIdByPath) and parents the new file
+    // there; empty path = root (byte-identical to the flat insert). Certifies depth-3 placement,
+    // root coexistence of a same-named file (parent-scoped dup check), and fail-closed on a
+    // missing parent path. SAK_NESTED_CERT_DIR persists the image for external apfsck.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_NESTED_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("nested.img"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("Nested"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto opts = certifiedApfsRawCommitOptions();
+    const auto mkdir = [&](const QString& name, const QString& parent) {
+        return PartitionApfsWriter::commitRawDirectoryCreate({.target_path = img,
+                                                              .target_container_bytes = bytes,
+                                                              .directory_name = name,
+                                                              .parent_directory_path = parent,
+                                                              .target_mutation_confirmed = true,
+                                                              .allow_raw_device_target = true,
+                                                              .options = opts});
+    };
+    QVERIFY2(mkdir(QStringLiteral("docs"), QString()).ok, "create /docs");
+    QVERIFY2(mkdir(QStringLiteral("sub"), QStringLiteral("/docs")).ok, "create /docs/sub");
+    const auto insert = [&](const QString& name, const QByteArray& data, const QString& parent) {
+        return PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                         .target_container_bytes = bytes,
+                                                         .file_name = name,
+                                                         .file_data = data,
+                                                         .parent_directory_path = parent,
+                                                         .target_mutation_confirmed = true,
+                                                         .allow_raw_device_target = true,
+                                                         .options = opts});
+    };
+    const QByteArray payload = QByteArrayLiteral("nested depth-3 payload");
+    const auto deep = insert(QStringLiteral("deep.txt"), payload, QStringLiteral("/docs/sub"));
+    QVERIFY2(deep.ok, qPrintable(deep.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/docs/sub/deep.txt"), 4096);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+    // A same-named file at the ROOT coexists (different parent): the dup check is parent-scoped.
+    QVERIFY2(insert(QStringLiteral("deep.txt"), QByteArrayLiteral("root copy"), QString()).ok,
+             "root deep.txt must coexist with /docs/sub/deep.txt");
+    // A missing parent path fails closed.
+    QVERIFY(!insert(QStringLiteral("x.txt"), payload, QStringLiteral("/docs/nope")).ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {

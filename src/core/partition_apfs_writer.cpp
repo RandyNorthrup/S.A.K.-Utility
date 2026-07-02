@@ -6796,6 +6796,9 @@ struct ApfsFileInsertBuildInputs {
     // A7 (A-h) hard link: when non-zero, add fileName as a new name for this existing
     // inode (no new file/inode/data).
     uint64_t hardlinkTargetId{0};
+    // Nested insert: the resolved directory id the new file is parented under. Defaults
+    // to the container root, so a flat-root insert is byte-identical to before.
+    uint64_t parentDirectoryId{kApfsRootDirectoryId};
 };
 
 // Build the in-place insert request for a (possibly compressed) file. When
@@ -6807,6 +6810,7 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
     *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
+    request->newFileParentId = in.parentDirectoryId;
     request->xattrs = in.xattrs;
     request->cloneSourcePrivateId = in.cloneSourcePrivateId;
     request->cloneLogicalSize = in.cloneLogicalSize;
@@ -9697,6 +9701,44 @@ bool nameExistsInParent(const QVector<ApfsRootFilePayload>& files,
         }
     }
     return false;
+}
+
+// A nested file-insert parent query: the already-collected live tree, the "/a/b" parent path,
+// the new file name, and the commit label used in blocker messages.
+struct ApfsNestedInsertParent {
+    const QVector<ApfsRootFilePayload>& files;
+    const QVector<ApfsRootDirectoryPayload>& directories;
+    QString parentPath;
+    QString fileName;
+    QString op;
+};
+
+// Resolve a file insert's parent directory id from the query's "/a/b" path against the live
+// tree, and reject a name already present in that parent. An empty (or "/") path targets the
+// container root, byte-identical to the flat-root insert; a non-empty path nests to arbitrary
+// depth, failing closed if the parent path is missing. Shared by the raw and image-only
+// file-insert commit entries.
+bool prepareNestedInsertParent(const ApfsNestedInsertParent& in,
+                               uint64_t* parentId,
+                               QStringList* blockers) {
+    *parentId = kApfsRootDirectoryId;
+    const QString cleaned = in.parentPath.trimmed();
+    if (!cleaned.isEmpty() && cleaned != QStringLiteral("/")) {
+        *parentId = resolveDirectoryIdByPath(in.directories, cleaned);
+        if (*parentId == 0) {
+            blockers->append(QStringLiteral("APFS %1: parent directory path '%2' was not found")
+                                 .arg(in.op, cleaned));
+            return false;
+        }
+    }
+    if (nameExistsInParent(in.files, in.directories, *parentId, in.fileName)) {
+        blockers->append(
+            QStringLiteral(
+                "APFS %1: a file or directory named '%2' already exists in the target directory")
+                .arg(in.op, in.fileName));
+        return false;
+    }
+    return true;
 }
 
 // Collect the existing tree for a directory-create commit and resolve the object id of the
@@ -17035,10 +17077,17 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
 
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
-    if (!collectExistingFullFsTree(result.source_image_path,
-                                   cleanFileName,
-                                   &existingFiles,
-                                   &directories,
+    if (!collectFullFsTree(
+            result.source_image_path, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!prepareNestedInsertParent({existingFiles,
+                                    directories,
+                                    request.parent_directory_path,
+                                    cleanFileName,
+                                    QStringLiteral("file-insert-commit")},
+                                   &parentDirectoryId,
                                    &result.blockers)) {
         return result;
     }
@@ -17057,7 +17106,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .directories = directories,
                                 .compress = request.compress_zlib,
                                 .xattrs = request.xattrs,
-                                .sparseLogicalSize = request.sparse_logical_size},
+                                .sparseLogicalSize = request.sparse_logical_size,
+                                .parentDirectoryId = parentDirectoryId},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();
@@ -17408,10 +17458,17 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
     }
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
-    if (!collectExistingFullFsTree(result.written_image_path,
-                                   cleanFileName,
-                                   &existingFiles,
-                                   &directories,
+    if (!collectFullFsTree(
+            result.written_image_path, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!prepareNestedInsertParent({existingFiles,
+                                    directories,
+                                    request.parent_directory_path,
+                                    cleanFileName,
+                                    QStringLiteral("raw file-insert-commit")},
+                                   &parentDirectoryId,
                                    &result.blockers)) {
         return result;
     }
@@ -17425,10 +17482,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
     if (!target) {
         return result;
     }
-    runInPlaceFileInsertCommit(
-        target.get(),
-        {existingFiles, cleanFileName, request.file_data, directories, request.compress_zlib},
-        &result);
+    runInPlaceFileInsertCommit(target.get(),
+                               {.existingFiles = existingFiles,
+                                .fileName = cleanFileName,
+                                .fileData = request.file_data,
+                                .directories = directories,
+                                .compress = request.compress_zlib,
+                                .parentDirectoryId = parentDirectoryId},
+                               &result);
     target->close();
     result.ok = result.blockers.isEmpty();
     return result;

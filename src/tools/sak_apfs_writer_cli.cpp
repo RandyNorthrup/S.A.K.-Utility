@@ -1701,6 +1701,7 @@ std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& i
          .target_container_bytes = invocation.target_size_bytes,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .parent_directory_path = invocation.parent_directory_path,
          .compress_zlib = invocation.compress_zlib,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,

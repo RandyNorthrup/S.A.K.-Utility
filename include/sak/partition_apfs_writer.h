@@ -481,6 +481,10 @@ struct PartitionApfsImageFileInsertCommitRequest {
     QString written_image_path;
     QString file_name;
     QByteArray file_data;
+    // Nested insert: when non-empty, insert under this existing directory path (e.g.
+    // "/docs/sub"), resolved component-by-component against the live tree. Empty = the
+    // container root, byte-identical to the flat-root insert. Arbitrary depth.
+    QString parent_directory_path;
     // A5: insert the file transparently compressed (inline zlib decmpfs). file_data
     // is the uncompressed content; the writer stores it in a com.apple.decmpfs
     // xattr and flags the inode UF_COMPRESSED. Requires the compressed value to fit
@@ -607,6 +611,10 @@ struct PartitionApfsRawFileInsertCommitRequest {
     // is ignored/empty in that case. Empty path keeps the in-memory path unchanged.
     QString file_data_path;
     uint64_t file_data_stream_size{0};
+    // Nested insert: when non-empty, insert the file under this existing directory path
+    // (e.g. "/docs/sub"), resolved component-by-component against the live tree. Empty =
+    // the container root, byte-identical to the flat-root insert. Arbitrary depth.
+    QString parent_directory_path;
     // A5: insert the file transparently compressed (inline zlib decmpfs). See
     // PartitionApfsImageFileInsertCommitRequest::compress_zlib.
     bool compress_zlib{false};
