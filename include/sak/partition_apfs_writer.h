@@ -629,6 +629,9 @@ struct PartitionApfsRawFileDeleteCommitRequest {
     QString target_path;
     uint64_t target_container_bytes{0};
     QString file_name;
+    // Nested delete: the existing directory path the file lives under (e.g. "/docs/sub").
+    // Empty = the container root. Resolved component-by-component against the live tree.
+    QString parent_directory_path;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
@@ -641,6 +644,10 @@ struct PartitionApfsRawFileRenameCommitRequest {
     uint64_t target_container_bytes{0};
     QString file_name;
     QString new_file_name;
+    // Nested rename: the existing directory path the file lives under (e.g. "/docs/sub");
+    // the file is renamed in place within it. Empty = the container root. A cross-directory
+    // move is a separate op (commit-*-file-move).
+    QString parent_directory_path;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

@@ -1684,6 +1684,7 @@ std::optional<QJsonObject> buildCommitRawFileWriteReport(const CliInvocation& in
          .target_container_bytes = invocation.target_size_bytes,
          .file_name = invocation.file_name,
          .file_data = invocation.payload,
+         .parent_directory_path = invocation.parent_directory_path,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -1716,6 +1717,7 @@ std::optional<QJsonObject> buildCommitRawFileDeleteReport(const CliInvocation& i
         {.target_path = invocation.target_path,
          .target_container_bytes = invocation.target_size_bytes,
          .file_name = invocation.file_name,
+         .parent_directory_path = invocation.parent_directory_path,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -1730,6 +1732,7 @@ std::optional<QJsonObject> buildCommitRawFileRenameReport(const CliInvocation& i
          .target_container_bytes = invocation.target_size_bytes,
          .file_name = invocation.file_name,
          .new_file_name = invocation.directory_name,
+         .parent_directory_path = invocation.parent_directory_path,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});

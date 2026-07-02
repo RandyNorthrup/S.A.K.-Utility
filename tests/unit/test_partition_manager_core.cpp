@@ -1844,6 +1844,7 @@ private Q_SLOTS:
     void apfsWriter_manyFileInsertOverflowsOmapAndFsTree();
     void apfsWriter_snapshotCreateOnMultiLevelOmap();
     void apfsWriter_nestedFileInsertPlacesFileAtDepth();
+    void apfsWriter_nestedFileWriteDeleteRenameAtDepth();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -11595,6 +11596,62 @@ void verifySnapshotDeleteRevertOnVolume(const QDir& dir, const QString& img) {
     QCOMPARE(apfsLe64(readApfsImageBlock(revImg, revVol), 0xD8), 1ULL);  // snapshot kept
 }
 
+// Raw nested-op context + thin wrappers so the depth-nested write/rename/delete test stays
+// within the function-length gate; each returns the commit's ok flag.
+struct RawNestedCtx {
+    QString img;
+    uint64_t bytes{0};
+    PartitionApfsWriteOptions opts;
+};
+bool rawMkdir(const RawNestedCtx& c, const QString& name, const QString& parent) {
+    return PartitionApfsWriter::commitRawDirectoryCreate({.target_path = c.img,
+                                                          .target_container_bytes = c.bytes,
+                                                          .directory_name = name,
+                                                          .parent_directory_path = parent,
+                                                          .target_mutation_confirmed = true,
+                                                          .allow_raw_device_target = true,
+                                                          .options = c.opts})
+        .ok;
+}
+bool rawNestedWrite(const RawNestedCtx& c,
+                    const QString& name,
+                    const QByteArray& data,
+                    const QString& parent) {
+    return PartitionApfsWriter::commitRawFileWrite({.target_path = c.img,
+                                                    .target_container_bytes = c.bytes,
+                                                    .file_name = name,
+                                                    .file_data = data,
+                                                    .parent_directory_path = parent,
+                                                    .target_mutation_confirmed = true,
+                                                    .allow_raw_device_target = true,
+                                                    .options = c.opts})
+        .ok;
+}
+bool rawNestedRename(const RawNestedCtx& c,
+                     const QString& from,
+                     const QString& to,
+                     const QString& parent) {
+    return PartitionApfsWriter::commitRawFileRename({.target_path = c.img,
+                                                     .target_container_bytes = c.bytes,
+                                                     .file_name = from,
+                                                     .new_file_name = to,
+                                                     .parent_directory_path = parent,
+                                                     .target_mutation_confirmed = true,
+                                                     .allow_raw_device_target = true,
+                                                     .options = c.opts})
+        .ok;
+}
+bool rawNestedDelete(const RawNestedCtx& c, const QString& name, const QString& parent) {
+    return PartitionApfsWriter::commitRawFileDelete({.target_path = c.img,
+                                                     .target_container_bytes = c.bytes,
+                                                     .file_name = name,
+                                                     .parent_directory_path = parent,
+                                                     .target_mutation_confirmed = true,
+                                                     .allow_raw_device_target = true,
+                                                     .options = c.opts})
+        .ok;
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
@@ -12162,6 +12219,50 @@ void PartitionManagerCoreTests::apfsWriter_nestedFileInsertPlacesFileAtDepth() {
              "root deep.txt must coexist with /docs/sub/deep.txt");
     // A missing parent path fails closed.
     QVERIFY(!insert(QStringLiteral("x.txt"), payload, QStringLiteral("/docs/nope")).ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_nestedFileWriteDeleteRenameAtDepth() {
+    // Nested write/rename/delete: parent_directory_path scopes commitRawFileWrite/Rename/Delete to
+    // an arbitrary-depth directory (resolveParentPath). Certifies create-or-replace, in-place
+    // rename, and delete under /docs/sub, leaving a same-named ROOT file untouched (parent-scoped
+    // find). SAK_NESTED_CERT_DIR persists the image for external apfsck.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_NESTED_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const RawNestedCtx c{dir.filePath(QStringLiteral("nestedwr.img")),
+                         64ULL * 1024ULL * 1024ULL,
+                         certifiedApfsRawCommitOptions()};
+    formatOmapStressContainer(c.img, c.bytes, QStringLiteral("NestWR"));
+    ApfsRawTargetPredicateGuard guard;
+    const QString img = c.img;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const QString sub = QStringLiteral("/docs/sub");
+    QVERIFY2(rawMkdir(c, QStringLiteral("docs"), QString()), "mkdir /docs");
+    QVERIFY2(rawMkdir(c, QStringLiteral("sub"), QStringLiteral("/docs")), "mkdir /docs/sub");
+    // A same-named ROOT file must survive every nested op untouched (parent-scoped find).
+    QVERIFY2(rawNestedWrite(c, QStringLiteral("f.txt"), QByteArrayLiteral("root"), QString()),
+             "root f.txt");
+    // Create-or-replace under /docs/sub.
+    QVERIFY2(rawNestedWrite(c, QStringLiteral("f.txt"), QByteArrayLiteral("v1"), sub), "create");
+    QVERIFY2(rawNestedWrite(c, QStringLiteral("f.txt"), QByteArrayLiteral("v2-longer"), sub),
+             "replace");
+    const auto readSub = [&](const QString& name) {
+        return PartitionApfsFileSystemReader::readFileFromImage(
+            img, QStringLiteral("/docs/sub/%1").arg(name), 4096);
+    };
+    QCOMPARE(readSub(QStringLiteral("f.txt")).data, QByteArrayLiteral("v2-longer"));
+    // Rename in place, then delete, under /docs/sub.
+    QVERIFY2(rawNestedRename(c, QStringLiteral("f.txt"), QStringLiteral("g.txt"), sub), "rename");
+    QVERIFY(readSub(QStringLiteral("g.txt")).ok);
+    QVERIFY(!readSub(QStringLiteral("f.txt")).ok);
+    QVERIFY2(rawNestedDelete(c, QStringLiteral("g.txt"), sub), "delete");
+    QVERIFY(!readSub(QStringLiteral("g.txt")).ok);
+    // The root file with the same name is byte-intact.
+    const auto root =
+        PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/f.txt"), 4096);
+    QVERIFY2(root.ok && root.data == QByteArrayLiteral("root"), "root f.txt untouched");
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {

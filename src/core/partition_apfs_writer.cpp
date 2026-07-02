@@ -9713,6 +9713,29 @@ struct ApfsNestedInsertParent {
     QString op;
 };
 
+// Resolve a "/a/b" directory path to its directory id against the live tree. An empty (or "/")
+// path targets the container root; a non-empty path resolves component-by-component and fails
+// closed (with a blocker) if any component is missing. Shared by every nested file op
+// (insert/write/delete/rename), so a file can be addressed at arbitrary directory depth.
+bool resolveParentPath(const QVector<ApfsRootDirectoryPayload>& directories,
+                       const QString& parentPath,
+                       const QString& op,
+                       uint64_t* parentId,
+                       QStringList* blockers) {
+    *parentId = kApfsRootDirectoryId;
+    const QString cleaned = parentPath.trimmed();
+    if (cleaned.isEmpty() || cleaned == QStringLiteral("/")) {
+        return true;
+    }
+    *parentId = resolveDirectoryIdByPath(directories, cleaned);
+    if (*parentId == 0) {
+        blockers->append(
+            QStringLiteral("APFS %1: parent directory path '%2' was not found").arg(op, cleaned));
+        return false;
+    }
+    return true;
+}
+
 // Resolve a file insert's parent directory id from the query's "/a/b" path against the live
 // tree, and reject a name already present in that parent. An empty (or "/") path targets the
 // container root, byte-identical to the flat-root insert; a non-empty path nests to arbitrary
@@ -9721,15 +9744,8 @@ struct ApfsNestedInsertParent {
 bool prepareNestedInsertParent(const ApfsNestedInsertParent& in,
                                uint64_t* parentId,
                                QStringList* blockers) {
-    *parentId = kApfsRootDirectoryId;
-    const QString cleaned = in.parentPath.trimmed();
-    if (!cleaned.isEmpty() && cleaned != QStringLiteral("/")) {
-        *parentId = resolveDirectoryIdByPath(in.directories, cleaned);
-        if (*parentId == 0) {
-            blockers->append(QStringLiteral("APFS %1: parent directory path '%2' was not found")
-                                 .arg(in.op, cleaned));
-            return false;
-        }
+    if (!resolveParentPath(in.directories, in.parentPath, in.op, parentId, blockers)) {
+        return false;
     }
     if (nameExistsInParent(in.files, in.directories, *parentId, in.fileName)) {
         blockers->append(
@@ -17411,6 +17427,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
     if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!resolveParentPath(directories,
+                           request.parent_directory_path,
+                           QStringLiteral("raw file-write-commit"),
+                           &parentDirectoryId,
+                           &result.blockers)) {
+        return result;
+    }
     auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
                                               .targetBytes = request.target_container_bytes,
                                               .confirmed = request.target_mutation_confirmed,
@@ -17422,6 +17446,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
         return result;
     }
     ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    writeRequest.parentDirectoryId = parentDirectoryId;
     if (streaming) {
         writeRequest.fileData.clear();
         writeRequest.streamPath = request.file_data_path.trimmed();
@@ -17510,6 +17535,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileDelet
     if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
+    uint64_t targetParentId = kApfsRootDirectoryId;
+    if (!resolveParentPath(directories,
+                           request.parent_directory_path,
+                           QStringLiteral("raw file-delete-commit"),
+                           &targetParentId,
+                           &result.blockers)) {
+        return result;
+    }
     auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
                                               .targetBytes = request.target_container_bytes,
                                               .confirmed = request.target_mutation_confirmed,
@@ -17522,8 +17555,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileDelet
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileDelete(
-            target.get(), {allFiles, directories, cleanFileName}, &commit, &commitBlockers)) {
+    if (commitInPlaceFileDelete(target.get(),
+                                {allFiles, directories, cleanFileName, targetParentId},
+                                &commit,
+                                &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -17553,6 +17588,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRenam
     if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
+    uint64_t targetParentId = kApfsRootDirectoryId;
+    if (!resolveParentPath(directories,
+                           request.parent_directory_path,
+                           QStringLiteral("raw file-rename-commit"),
+                           &targetParentId,
+                           &result.blockers)) {
+        return result;
+    }
     auto target = openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
                                               .targetBytes = request.target_container_bytes,
                                               .confirmed = request.target_mutation_confirmed,
@@ -17565,8 +17608,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRenam
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(
-            target.get(), {allFiles, oldName, newName, directories}, &commit, &commitBlockers)) {
+    if (commitInPlaceFileRename(target.get(),
+                                {allFiles, oldName, newName, directories, targetParentId},
+                                &commit,
+                                &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
