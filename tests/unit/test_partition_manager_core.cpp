@@ -11573,6 +11573,27 @@ void formatOmapStressContainer(const QString& img, uint64_t bytes, const QString
             .ok);
 }
 
+// A3 multi-level lift: snapshot DELETE + REVERT ride the same shared-omap-header path as
+// create (no guard, constant alloc delta), so both succeed whatever the omap depth. Image
+// path clones (img untouched): delete returns num_snapshots to 0; revert writes the deferred
+// revert_to_xid tag (0xA0) and KEEPS the snapshot (num_snapshots 1). apfsck-certified out of
+// band on the persisted multi-level-omap image.
+void verifySnapshotDeleteRevertOnVolume(const QDir& dir, const QString& img) {
+    const auto imgOptions = certifiedApfsImageOnlyOptions();
+    const QString delImg = dir.filePath(QStringLiteral("omap-snap-del.img"));
+    const auto del = PartitionApfsWriter::commitImageOnlySnapshotDelete(
+        {.source_image_path = img, .written_image_path = delImg, .options = imgOptions});
+    QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(delImg, apfsApsbBlockOf(delImg)), 0xD8), 0ULL);
+    const QString revImg = dir.filePath(QStringLiteral("omap-snap-rev.img"));
+    const auto rev = PartitionApfsWriter::commitImageOnlySnapshotRevert(
+        {.source_image_path = img, .written_image_path = revImg, .options = imgOptions});
+    QVERIFY2(rev.ok, qPrintable(rev.blockers.join(QStringLiteral("; "))));
+    const quint64 revVol = apfsApsbBlockOf(revImg);
+    QVERIFY(apfsLe64(readApfsImageBlock(revImg, revVol), 0xA0) != 0);    // revert_to_xid tag set
+    QCOMPARE(apfsLe64(readApfsImageBlock(revImg, revVol), 0xD8), 1ULL);  // snapshot kept
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceFileDeleteRemovesFileAndPreservesOthers() {
@@ -12087,6 +12108,7 @@ void PartitionManagerCoreTests::apfsWriter_snapshotCreateOnMultiLevelOmap() {
                                                                                fileCount + 8);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.entries.size(), fileCount);
+    verifySnapshotDeleteRevertOnVolume(dir, img);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {
