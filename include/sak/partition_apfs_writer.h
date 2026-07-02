@@ -910,6 +910,26 @@ public:
     ///        would corrupt the decoded run lengths). Returns an empty list on a malformed set.
     [[nodiscard]] static QVector<QPair<quint64, quint64>> readMainFreeQueueTreeBlocks(
         const QVector<QByteArray>& node_blocks, uint32_t block_size);
+    /// @brief Build the extent-ref B-tree node blocks for @p record_count synthetic
+    ///        j_phys_ext records (each a distinct one-block extent owned by id 1000+i) at a
+    ///        consecutive run from @p tree_base_paddr - a single ROOT|LEAF node when they
+    ///        fit, or a multi-node physical B-tree (index nodes over non-root leaves) once
+    ///        they exceed the root-leaf capacity. nodes[0] is the root. Diagnostic entry
+    ///        point for the multi-node extent-ref builder (the historical single node failed
+    ///        closed past ~110 records).
+    [[nodiscard]] static QVector<QByteArray> buildExtentRefTreeBlocksForTesting(
+        uint32_t block_size,
+        uint64_t tree_base_paddr,
+        uint64_t xid,
+        qsizetype record_count,
+        QStringList* blockers);
+    /// @brief Flatten the {owner id, data paddr} records back out of the extent-ref node
+    ///        blocks produced by @ref buildExtentRefTreeBlocksForTesting (each node stored at
+    ///        its own oid=paddr). The inverse read of the builder walking index nodes to the
+    ///        leaves; a correct multi-node tree round-trips every record. Empty on a malformed
+    ///        set (e.g. a dangling child pointer).
+    [[nodiscard]] static QVector<QPair<quint64, quint64>> readExtentRefTreeBlocksForTesting(
+        const QVector<QByteArray>& node_blocks, uint32_t block_size);
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
     /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
     ///        crash-safe in-place commit writes next, given the live cib block of
@@ -945,6 +965,12 @@ public:
     ///        Diagnostic that lets a test assert its file load actually drove the omap
     ///        multi-level before checking the free-count invariant.
     [[nodiscard]] static int readGeneratedVolumeOmapTreeLevel(const QString& image_path);
+    /// \brief The B-tree node level of the LIVE extent-ref tree root of the generated
+    ///        container at @p image_path (0 = single-node, the certified path; > 0 = the
+    ///        multi-node extent-ref tree once the file data-extent records overflow a node),
+    ///        -1 on error. Lets a test assert its data-file load actually drove the
+    ///        extent-ref tree multi-node before checking the free-count invariant.
+    [[nodiscard]] static int readGeneratedExtentRefTreeLevel(const QString& image_path);
     /// \brief The live spaceman cib-address array entry @p cib_index (the current
     ///        on-disk address of chunk-info block @p cib_index) of the generated
     ///        container at @p image_path, 0 on error. Diagnostic for the keystone

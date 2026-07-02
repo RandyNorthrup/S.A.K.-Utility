@@ -800,31 +800,85 @@ qsizetype omapRootIndexCapacity(uint32_t blockSize) {
         blockSize, kApfsOmapIndexValueBytes, omapIndexTocBytes(blockSize), true);
 }
 
-// Total node count a bulk-loaded physical omap over `mappingCount` records occupies
-// (root + every interior + every leaf), mirroring buildObjectMapTreeNodes so the
-// reservation can size the omap-tree block run before the nodes are built.
-qsizetype omapTreeBlockCount(qsizetype mappingCount, uint32_t blockSize) {
-    const qsizetype leafCap = omapLeafCapacity(blockSize);
-    const qsizetype indexCap = omapIndexCapacity(blockSize);
-    const qsizetype rootCap = omapRootIndexCapacity(blockSize);
-    // A tree that fits a single ROOT|LEAF node holds the (smaller) root-leaf capacity;
-    // anything larger splits into at least two non-root leaves of the full leaf capacity
-    // (mirrors buildObjectMapTreeNodes -- a lone leaf can only exist as the root at the
-    // smaller capacity).
-    if (mappingCount <= omapRootLeafCapacity(blockSize)) {
+// Per-node fanout of a bulk-loaded physical B-tree: the non-root/root leaf capacity and
+// the non-root/root interior capacity. Both the omap (fixed-KV) and the extent-ref tree
+// (variable-KV) are physical trees with the same level structure, differing only in these
+// capacities and the record serialization, so the shape math (physicalBtreeNodeTotal) and
+// the emit order (omapEmitOrder) are shared.
+struct ApfsPhysBtreeCaps {
+    qsizetype leaf{0};
+    qsizetype rootLeaf{0};
+    qsizetype index{0};
+    qsizetype rootIndex{0};
+};
+
+// Total node count a bulk-loaded physical B-tree over `count` records occupies (root +
+// every interior + every leaf). A tree that fits a single ROOT|LEAF node holds the
+// (smaller) root-leaf capacity; anything larger splits into at least two non-root leaves
+// of the full leaf capacity, then index levels up to a root (the level that collapses to
+// one node uses the smaller root capacity). Lets the reservation size the tree's block run
+// before the nodes are built.
+qsizetype physicalBtreeNodeTotal(qsizetype count, const ApfsPhysBtreeCaps& caps) {
+    if (count <= caps.rootLeaf) {
         return 1;
     }
     qsizetype total = 0;
-    qsizetype levelNodes = std::max<qsizetype>(2, (mappingCount + leafCap - 1) / leafCap);
+    qsizetype levelNodes = std::max<qsizetype>(2, (count + caps.leaf - 1) / caps.leaf);
     total += levelNodes;
     while (levelNodes > 1) {
-        // The level that collapses to a single node is the root, so it must fit the
-        // (smaller) root capacity; a level that still has > 1 node uses the interior cap.
-        const qsizetype cap = levelNodes <= indexCap && levelNodes > rootCap ? rootCap : indexCap;
+        const qsizetype cap =
+            levelNodes <= caps.index && levelNodes > caps.rootIndex ? caps.rootIndex : caps.index;
         levelNodes = (levelNodes + cap - 1) / cap;
         total += levelNodes;
     }
     return total;
+}
+
+// Mirrors buildObjectMapTreeNodes so the reservation can size the omap-tree block run.
+qsizetype omapTreeBlockCount(qsizetype mappingCount, uint32_t blockSize) {
+    return physicalBtreeNodeTotal(mappingCount,
+                                  {omapLeafCapacity(blockSize),
+                                   omapRootLeafCapacity(blockSize),
+                                   omapIndexCapacity(blockSize),
+                                   omapRootIndexCapacity(blockSize)});
+}
+
+// Extent-ref tree (a variable-KV physical B-tree) node fanout. A record is an 8-byte
+// j_phys_ext_key, a value (20-byte j_phys_ext leaf value or an 8-byte index child paddr),
+// and an 8-byte kvloc TOC entry; the TOC region rounds up to 64 bytes as the single-node
+// writer lays it out, and a ROOT node reserves the 40-byte btree_info trailer. Returns the
+// most records that fit -- the non-root leaf value 112, the root leaf 110 (the bound the
+// former single-node guard fired at), the interior index 168, the root index 166.
+constexpr qsizetype kApfsExtentRefKeyBytes = 8;
+constexpr qsizetype kApfsExtentRefLeafValueBytes = 20;
+constexpr qsizetype kApfsExtentRefIndexValueBytes = 8;
+
+qsizetype extentRefTocBytes(qsizetype recordCount) {
+    return std::max<qsizetype>(64,
+                               ((recordCount * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
+}
+
+qsizetype extentRefNodeCapacity(uint32_t blockSize, qsizetype valueBytes, bool isRoot) {
+    const qsizetype avail = static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                            (isRoot ? kApfsBtreeInfoBytes : 0);
+    qsizetype fit = 0;
+    for (qsizetype n = 1; extentRefTocBytes(n) + n * (kApfsExtentRefKeyBytes + valueBytes) <= avail;
+         ++n) {
+        fit = n;
+    }
+    return fit;
+}
+
+ApfsPhysBtreeCaps extentRefCaps(uint32_t blockSize) {
+    return {extentRefNodeCapacity(blockSize, kApfsExtentRefLeafValueBytes, false),
+            extentRefNodeCapacity(blockSize, kApfsExtentRefLeafValueBytes, true),
+            extentRefNodeCapacity(blockSize, kApfsExtentRefIndexValueBytes, false),
+            extentRefNodeCapacity(blockSize, kApfsExtentRefIndexValueBytes, true)};
+}
+
+// Node count a bulk-loaded extent-ref tree over `recordCount` j_phys_ext records occupies.
+qsizetype extentRefTreeBlockCount(qsizetype recordCount, uint32_t blockSize) {
+    return physicalBtreeNodeTotal(recordCount, extentRefCaps(blockSize));
 }
 
 // Block-layout offsets of the volume/container omap chain inside a commit's newBlocks
@@ -2762,6 +2816,41 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
     return records;
 }
 
+// The 8-byte j_phys_ext_key for a record: the physical block tagged with the phys-ext
+// object type in the top nibble. Keys sort by paddr (the type bits are constant), so the
+// paddr-sorted record set is already key-sorted for the B-tree.
+uint64_t extentRefRecordKey(const ExtentRefPhysRecord& record) {
+    constexpr uint64_t kApfsObjTypePhysExt = 2;
+    return record.paddr | (kApfsObjTypePhysExt << kApfsObjTypeShift);
+}
+
+// Write a record's 20-byte j_phys_ext leaf value at `value`: {block-count tagged KIND_NEW,
+// owning object id, reference count}.
+void writeExtentRefLeafValue(QByteArray* block, qsizetype value, const ExtentRefPhysRecord& r) {
+    constexpr uint64_t kApfsKindNew = 1;
+    writeLe64(block, value, r.blockCount | (kApfsKindNew << kApfsObjTypeShift));
+    writeLe64(block, value + 8, r.owner);
+    writeLe32(block, value + 16, r.refcnt);
+}
+
+// Write a variable-KV node's free-space and empty key/value free-list header fields
+// (btn_free_space at 0x2C, btn_key_free_list at 0x30, btn_val_free_list at 0x34). Shared
+// by the extent-ref leaf, index, and single-node writers.
+void writeVariableNodeFreeFields(QByteArray* block,
+                                 qsizetype keyAreaStart,
+                                 qsizetype keyCursor,
+                                 qsizetype valueAreaEnd,
+                                 qsizetype valueBackCursor) {
+    writeLe16(block, 0x2C, static_cast<uint16_t>(keyCursor));
+    writeLe16(block,
+              0x2E,
+              static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyCursor - valueBackCursor));
+    writeLe16(block, 0x30, 0xFFFF);
+    writeLe16(block, 0x32, 0);
+    writeLe16(block, 0x34, 0xFFFF);
+    writeLe16(block, 0x36, 0);
+}
+
 // Emits the per-record TOC entries plus key/value pairs for the extent-ref tree
 // and returns the consumed key-area length (keyCursor) so the caller can finish
 // the node-free/info trailer. Mutates valueBackCursor to track the value area.
@@ -2770,30 +2859,42 @@ qsizetype writeExtentRefRecords(QByteArray* block,
                                 qsizetype keyAreaStart,
                                 qsizetype valueAreaEnd,
                                 qsizetype* valueBackCursor) {
-    constexpr uint64_t kApfsObjTypePhysExt = 2;
-    constexpr uint64_t kApfsKindNew = 1;
-    constexpr qsizetype kExtRefKeyBytes = 8;
-    constexpr qsizetype kExtRefValueBytes = 20;
     qsizetype keyCursor = 0;
     for (qsizetype index = 0; index < records.size(); ++index) {
         const auto& record = records.at(index);
         const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
         writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
-        writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kExtRefKeyBytes);
-        *valueBackCursor += kExtRefValueBytes;
+        writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kApfsExtentRefKeyBytes);
+        *valueBackCursor += kApfsExtentRefLeafValueBytes;
         writeLe16(block,
                   toc + kApfsBtreeVariableTocValueOffset,
                   static_cast<uint16_t>(*valueBackCursor));
-        writeLe16(block, toc + kApfsBtreeVariableTocValueLengthOffset, kExtRefValueBytes);
-        const qsizetype key = keyAreaStart + keyCursor;
-        writeLe64(block, key, record.paddr | (kApfsObjTypePhysExt << kApfsObjTypeShift));
-        const qsizetype value = valueAreaEnd - *valueBackCursor;
-        writeLe64(block, value, record.blockCount | (kApfsKindNew << kApfsObjTypeShift));
-        writeLe64(block, value + 8, record.owner);
-        writeLe32(block, value + 16, record.refcnt);
-        keyCursor += kExtRefKeyBytes;
+        writeLe16(block,
+                  toc + kApfsBtreeVariableTocValueLengthOffset,
+                  kApfsExtentRefLeafValueBytes);
+        writeLe64(block, keyAreaStart + keyCursor, extentRefRecordKey(record));
+        writeExtentRefLeafValue(block, valueAreaEnd - *valueBackCursor, record);
+        keyCursor += kApfsExtentRefKeyBytes;
     }
     return keyCursor;
+}
+
+// The extent-ref tree's 40-byte btree_info trailer (ROOT node only): variable-KV|PHYSICAL|
+// SEQUENTIAL_INSERT flags (0x52), node size, longest key/value (8 / 20 across the whole
+// tree -- index values are shorter), the total record count, and the total node count.
+void writeExtentRefRootTrailer(QByteArray* block,
+                               uint32_t blockSize,
+                               uint64_t recordCount,
+                               uint64_t totalNodes) {
+    const qsizetype infoOffset = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    writeLe32(block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'52);
+    writeLe32(block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
+    if (recordCount != 0) {
+        writeLe32(block, infoOffset + 16, static_cast<uint32_t>(kApfsExtentRefKeyBytes));
+        writeLe32(block, infoOffset + 20, static_cast<uint32_t>(kApfsExtentRefLeafValueBytes));
+    }
+    writeLe64(block, infoOffset + kApfsBtreeInfoKeyCountOffset, recordCount);
+    writeLe64(block, infoOffset + kApfsBtreeInfoNodeCountOffset, totalNodes);
 }
 
 QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
@@ -2806,21 +2907,17 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
 
     const QVector<ExtentRefPhysRecord> records = collectExtentRefRecords(blockSize, files);
 
-    constexpr qsizetype kExtRefKeyBytes = 8;
-    constexpr qsizetype kExtRefValueBytes = 20;
-    const qsizetype tocLength = std::max<qsizetype>(
-        64, ((records.size() * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
-    // The extent-ref tree is a single root/leaf node: keys grow up from the TOC end,
-    // values (and the 40-byte info trailer) grow down from the block end. Past ~110
-    // records the two areas overlap and the node is silently corrupted (the free-space
-    // field wraps; fsck reports the node as not sane) - fail closed instead. Lifting
-    // the bound needs a multi-node extent-ref tree (the P3 deep-tree work).
-    if (kApfsBtreeNodeHeaderBytes + tocLength +
-            records.size() * (kExtRefKeyBytes + kExtRefValueBytes) >
-        static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes) {
+    const qsizetype tocLength = extentRefTocBytes(records.size());
+    // This helper builds the single ROOT|LEAF node at a FIXED block (the format layout's
+    // extent-ref block and the empty-tree callers): keys grow up from the TOC end, values
+    // (and the 40-byte info trailer) grow down from the block end, and past the root-leaf
+    // capacity the two areas would overlap. Callers whose record count can exceed it (the
+    // COW commit) reserve extentRefTreeBlockCount() blocks and emit buildExtentRefTreeNodes()
+    // instead; this fixed-block helper fails closed rather than corrupt the node.
+    if (records.size() > extentRefCaps(blockSize).rootLeaf) {
         blockers->append(
             QStringLiteral("APFS extent-ref tree overflows its single node (%1 extent records); "
-                           "multi-node extent-ref trees are not yet supported")
+                           "the fixed-block extent-ref layout needs a multi-node tree")
                 .arg(records.size()));
         return QByteArray();
     }
@@ -2832,27 +2929,222 @@ QByteArray buildExtentRefTreeBlock(uint32_t blockSize,
     qsizetype valueBackCursor = 0;
     const qsizetype keyCursor =
         writeExtentRefRecords(&block, records, keyAreaStart, valueAreaEnd, &valueBackCursor);
-    writeLe16(&block, 0x2C, static_cast<uint16_t>(keyCursor));
-    writeLe16(&block,
-              0x2E,
-              static_cast<uint16_t>(valueAreaEnd - keyAreaStart - keyCursor - valueBackCursor));
-    writeLe16(&block, 0x30, 0xFFFF);
-    writeLe16(&block, 0x32, 0);
-    writeLe16(&block, 0x34, 0xFFFF);
-    writeLe16(&block, 0x36, 0);
-    const qsizetype infoOffset = valueAreaEnd;
-    writeLe32(&block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'52);
-    writeLe32(&block, infoOffset + kApfsBtreeInfoNodeSizeOffset, blockSize);
-    if (!records.isEmpty()) {
-        writeLe32(&block, infoOffset + 16, kExtRefKeyBytes);
-        writeLe32(&block, infoOffset + 20, kExtRefValueBytes);
-    }
-    writeLe64(&block,
-              infoOffset + kApfsBtreeInfoKeyCountOffset,
-              static_cast<uint64_t>(records.size()));
-    writeLe64(&block, infoOffset + kApfsBtreeInfoNodeCountOffset, 1);
+    writeVariableNodeFreeFields(&block, keyAreaStart, keyCursor, valueAreaEnd, valueBackCursor);
+    writeExtentRefRootTrailer(&block, blockSize, static_cast<uint64_t>(records.size()), 1);
     stampApfsObjectBlock(&block, blockers);
     return block;
+}
+
+// One node of the bulk-loaded extent-ref tree before paddrs are assigned. A leaf holds the
+// j_phys_ext records; an index node holds each child's flat index plus the child's first key
+// (the separator). firstKey is this node's smallest key, propagated up to the parent.
+struct ApfsExtentRefNodePlan {
+    uint16_t level{0};
+    QVector<ExtentRefPhysRecord> leafRecords;  // level 0 only
+    QVector<qsizetype> childIndices;           // level > 0 only
+    QVector<uint64_t> childKey;                // level > 0: first key of each child
+    uint64_t firstKey{0};                      // this node's smallest key
+};
+
+// A variable-KV extent-ref leaf: ROOT|LEAF flags, the kvloc TOC, and the record key/value
+// pairs (via writeExtentRefRecords). A non-root leaf packs values to blockSize; the root
+// leaf leaves room for the 40-byte trailer the caller writes.
+void writeExtentRefLeafNode(QByteArray* block,
+                            uint32_t blockSize,
+                            const QVector<ExtentRefPhysRecord>& records,
+                            bool isRoot) {
+    const uint16_t rootFlag = isRoot ? kApfsBtreeNodeRoot : 0;
+    writeLe16(block, kApfsBtreeNodeFlagsOffset, rootFlag | kApfsBtreeNodeLeaf);
+    writeLe16(block, kApfsBtreeNodeLevelOffset, 0);
+    writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(records.size()));
+    const qsizetype tocLength = extentRefTocBytes(records.size());
+    writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    qsizetype valueBackCursor = 0;
+    const qsizetype keyCursor =
+        writeExtentRefRecords(block, records, keyAreaStart, valueAreaEnd, &valueBackCursor);
+    writeVariableNodeFreeFields(block, keyAreaStart, keyCursor, valueAreaEnd, valueBackCursor);
+}
+
+// A variable-KV extent-ref interior node: 8-byte separator keys, 8-byte child paddr values
+// (a physical tree stores child oids as paddrs, resolved directly, not via the omap). A
+// non-root index has no trailer; the root reserves it.
+void writeExtentRefIndexNode(QByteArray* block,
+                             uint32_t blockSize,
+                             const ApfsExtentRefNodePlan& plan,
+                             const QVector<uint64_t>& childPaddrs,
+                             bool isRoot) {
+    const qsizetype count = plan.childIndices.size();
+    const uint16_t rootFlag = isRoot ? kApfsBtreeNodeRoot : 0;
+    writeLe16(block, kApfsBtreeNodeFlagsOffset, rootFlag);
+    writeLe16(block, kApfsBtreeNodeLevelOffset, plan.level);
+    writeLe32(block, kApfsBtreeNodeCountOffset, static_cast<uint32_t>(count));
+    const qsizetype tocLength = extentRefTocBytes(count);
+    writeLe16(block, kApfsBtreeNodeTableOffsetOffset, 0);
+    writeLe16(block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    qsizetype keyCursor = 0;
+    qsizetype valueBackCursor = 0;
+    for (qsizetype index = 0; index < count; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        writeLe16(block, toc, static_cast<uint16_t>(keyCursor));
+        writeLe16(block, toc + kApfsBtreeVariableTocKeyLengthOffset, kApfsExtentRefKeyBytes);
+        valueBackCursor += kApfsExtentRefIndexValueBytes;
+        writeLe16(block,
+                  toc + kApfsBtreeVariableTocValueOffset,
+                  static_cast<uint16_t>(valueBackCursor));
+        writeLe16(block,
+                  toc + kApfsBtreeVariableTocValueLengthOffset,
+                  kApfsExtentRefIndexValueBytes);
+        writeLe64(block, keyAreaStart + keyCursor, plan.childKey.at(index));
+        writeLe64(block,
+                  valueAreaEnd - valueBackCursor,
+                  childPaddrs.at(plan.childIndices.at(index)));
+        keyCursor += kApfsExtentRefKeyBytes;
+    }
+    writeVariableNodeFreeFields(block, keyAreaStart, keyCursor, valueAreaEnd, valueBackCursor);
+}
+
+// Pack the paddr-sorted records into level-0 leaf plans (mirrors planOmapLeaves): a set that
+// fits one ROOT|LEAF node stays a single node, otherwise it splits into >= 2 non-root leaves.
+qsizetype planExtentRefLeaves(const QVector<ExtentRefPhysRecord>& sorted,
+                              const ApfsPhysBtreeCaps& caps,
+                              QVector<ApfsExtentRefNodePlan>* plans) {
+    qsizetype leafNodes = 1;
+    if (sorted.size() > caps.rootLeaf) {
+        leafNodes = std::max<qsizetype>(2, (sorted.size() + caps.leaf - 1) / caps.leaf);
+    }
+    const qsizetype perLeaf = (sorted.size() + leafNodes - 1) / std::max<qsizetype>(1, leafNodes);
+    for (qsizetype node = 0; node < leafNodes; ++node) {
+        ApfsExtentRefNodePlan plan;
+        plan.level = 0;
+        const qsizetype start = node * perLeaf;
+        for (qsizetype j = start; j < std::min(start + perLeaf, sorted.size()); ++j) {
+            plan.leafRecords.append(sorted.at(j));
+        }
+        if (!plan.leafRecords.isEmpty()) {
+            plan.firstKey = extentRefRecordKey(plan.leafRecords.first());
+        }
+        plans->append(plan);
+    }
+    return leafNodes;
+}
+
+// One index level over `childTotal` children starting at flat index `childBase` (mirrors
+// planOmapIndexLevel): the level that collapses to one node uses the smaller root fanout.
+qsizetype planExtentRefIndexLevel(uint16_t level,
+                                  qsizetype childBase,
+                                  qsizetype childTotal,
+                                  const ApfsPhysBtreeCaps& caps,
+                                  QVector<ApfsExtentRefNodePlan>* plans) {
+    const qsizetype cap = childTotal <= caps.index && childTotal > caps.rootIndex ? caps.rootIndex
+                                                                                  : caps.index;
+    qsizetype made = 0;
+    for (qsizetype start = 0; start < childTotal; start += cap) {
+        ApfsExtentRefNodePlan plan;
+        plan.level = level;
+        for (qsizetype j = start; j < std::min(start + cap, childTotal); ++j) {
+            const qsizetype childIndex = childBase + j;
+            plan.childIndices.append(childIndex);
+            plan.childKey.append(plans->at(childIndex).firstKey);
+        }
+        plan.firstKey = plan.childKey.first();
+        plans->append(plan);
+        ++made;
+    }
+    return made;
+}
+
+struct ApfsExtentRefTreeParams {
+    uint32_t blockSize{0};
+    uint64_t xid{0};
+    QVector<uint64_t> nodeBlocks;  // the reserved run; emit slot i -> nodeBlocks[i], root at 0
+};
+
+struct ApfsExtentRefEmit {
+    uint32_t blockSize{0};
+    uint64_t xid{0};
+    uint64_t recordCount{0};
+    uint64_t totalNodes{0};
+    qsizetype rootIndex{0};
+    const QVector<uint64_t>* paddrOfPlan{nullptr};
+};
+
+// Serialize one extent-ref node plan to a stamped block. apfsck checks object TYPE: a
+// physical B-tree root is BTREE (PHYSICAL|0x02), a non-root node BTREE_NODE (PHYSICAL|0x03).
+// Every node's stored OID equals its own paddr (a physical tree; the volume superblock
+// points at the root paddr directly).
+QByteArray emitExtentRefNode(const ApfsExtentRefNodePlan& plan,
+                             qsizetype planIndex,
+                             const ApfsExtentRefEmit& ctx,
+                             QStringList* blockers) {
+    const bool isRoot = planIndex == ctx.rootIndex;
+    const uint64_t nodePaddr = ctx.paddrOfPlan->at(planIndex);
+    const uint32_t objectType = isRoot ? kApfsObjectTypeBtreePhysical
+                                       : (kApfsObjStoragePhysical | kApfsObjectTypeBtreeNode);
+    QByteArray block = newApfsObjectBlock(ctx.blockSize, nodePaddr, ctx.xid, objectType);
+    writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeExtentRef);
+    if (plan.level == 0) {
+        writeExtentRefLeafNode(&block, ctx.blockSize, plan.leafRecords, isRoot);
+    } else {
+        writeExtentRefIndexNode(&block, ctx.blockSize, plan, *ctx.paddrOfPlan, isRoot);
+    }
+    if (isRoot) {
+        writeExtentRefRootTrailer(&block, ctx.blockSize, ctx.recordCount, ctx.totalNodes);
+    }
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+// Bulk-load the extent-ref tree over `files`' merged j_phys_ext records into the reserved
+// block run: node[0] is the root at nodeBlocks[0] (what the volume superblock's
+// extentref_oid points at), node[i] at nodeBlocks[i]. One node (<= root-leaf capacity) is
+// byte-identical to buildExtentRefTreeBlock at that block; more records split into leaves
+// under index nodes up to a root. Returns {} (blocker appended) if the run is too small.
+QVector<QByteArray> buildExtentRefTreeNodes(const ApfsExtentRefTreeParams& params,
+                                            const QVector<ApfsRootFilePayload>& files,
+                                            QStringList* blockers) {
+    const QVector<ExtentRefPhysRecord> records = collectExtentRefRecords(params.blockSize, files);
+    const ApfsPhysBtreeCaps caps = extentRefCaps(params.blockSize);
+    QVector<ApfsExtentRefNodePlan> plans;
+    QVector<qsizetype> levelStart{0};
+    QVector<qsizetype> levelCount{planExtentRefLeaves(records, caps, &plans)};
+    uint16_t level = 1;
+    while (levelCount.last() > 1) {
+        const qsizetype childBase = levelStart.last();
+        levelStart.append(plans.size());
+        levelCount.append(
+            planExtentRefIndexLevel(level, childBase, levelCount.last(), caps, &plans));
+        ++level;
+    }
+    const qsizetype rootIndex = plans.size() - 1;
+    if (params.nodeBlocks.size() < plans.size()) {
+        blockers->append(
+            QStringLiteral("APFS extent-ref tree needs %1 node blocks but only %2 were reserved")
+                .arg(plans.size())
+                .arg(params.nodeBlocks.size()));
+        return {};
+    }
+    QVector<uint64_t> paddrOfPlan(plans.size(), 0);
+    const QVector<qsizetype> emitOrder =
+        omapEmitOrder(plans.size(), rootIndex, params.nodeBlocks, &paddrOfPlan);
+    const ApfsExtentRefEmit ctx{params.blockSize,
+                                params.xid,
+                                static_cast<uint64_t>(records.size()),
+                                static_cast<uint64_t>(plans.size()),
+                                rootIndex,
+                                &paddrOfPlan};
+    QVector<QByteArray> blocks;
+    blocks.reserve(plans.size());
+    for (const qsizetype planIndex : emitOrder) {
+        blocks.append(emitExtentRefNode(plans.at(planIndex), planIndex, ctx, blockers));
+    }
+    return blocks;
 }
 
 QByteArray buildEmptyVariableTreeBlock(uint32_t blockSize,
@@ -4699,7 +4991,11 @@ struct ApfsLiveFsChain {
     // cib's ci_free_count by V-1 per commit (fsck_apfs "wrong count of free blocks").
     QVector<uint64_t> volOmapTreeNodes;
     uint64_t rootTree{0};
-    uint64_t extentRef{0};
+    uint64_t extentRef{0};  // extent-ref tree root paddr (volume superblock's extentref_oid)
+    // Every physical block the LIVE extent-ref tree occupies (root + interior + leaves).
+    // Equals {extentRef} for a single-node tree; grows to E nodes once multi-level. The COW
+    // commit frees ALL of these when it re-COWs the tree (mirrors volOmapTreeNodes).
+    QVector<uint64_t> extentRefTreeNodes;
     // Multi-volume (A4/A8): container-omap records for volumes OTHER than the
     // mutated target (kApfsFormatVolumeOid), preserved verbatim across the COW
     // commit so their superblocks are not orphaned. Empty for single-volume.
@@ -4781,34 +5077,119 @@ bool walkLiveFsChain(QIODevice* image,
     return resolveLiveVolOmapTree(image, geometry, node, chain, blockers);
 }
 
-// Map each owning file id to its data extent's start block by reading the
-// extent-ref tree (the inverse of buildExtentRefTreeBlock), so a chained commit
-// can reproduce the existing files' extents without moving their data.
-QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
-                                               const ApfsRepairGeometry& geometry,
-                                               uint64_t extentRefBlock,
-                                               QStringList* blockers) {
-    QHash<uint64_t, uint64_t> owners;
-    QByteArray node(geometry.blockSize, '\0');
-    if (extentRefBlock == 0 ||
-        !readApfsRepairBlock(image, geometry, extentRefBlock, &node, blockers)) {
-        return owners;
-    }
+// A recursive extent-ref tree walk that optionally collects each leaf's {owner id -> data
+// paddr} records (owners) and/or every visited node's paddr (nodes). One walk serves both
+// the chained-commit owner map and the free-path node list.
+struct ApfsExtentRefWalk {
+    QIODevice* image{nullptr};
+    ApfsRepairGeometry geometry;
+    QHash<uint64_t, uint64_t>* owners{nullptr};
+    QVector<uint64_t>* nodes{nullptr};
+    int depthBudget{16};
+};
+
+// The child paddrs of an extent-ref INDEX node: each record's 8-byte value is the child
+// node's physical block (a physical tree stores child pointers as paddrs, resolved directly,
+// not via an omap). A non-root node has no btree_info trailer, so its value area ends at
+// blockSize.
+QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blockSize) {
+    QVector<uint64_t> children;
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
-    const qsizetype tocLength =
-        std::max<qsizetype>(64, ((nkeys * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64);
-    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+        const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        children.append(le64(node, valueAreaEnd - valueOffset));
+    }
+    return children;
+}
+
+// Read one extent-ref LEAF's {owner id -> data paddr} records into walk.owners. Keys start
+// past the node's OWN TOC region (read from the header, not recomputed, so multi-node leaves
+// with different record counts decode correctly); a non-root leaf's value area ends at
+// blockSize.
+void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk& walk) {
+    if (walk.owners == nullptr) {
+        return;
+    }
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
+                                   le16(node, kApfsBtreeNodeTableLengthOffset);
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(walk.geometry.blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
     const uint64_t paddrMask = (1ULL << kApfsObjTypeShift) - 1;
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
         const uint64_t paddr = le64(node, keyAreaStart + keyOffset) & paddrMask;
-        owners.insert(le64(node, valueAreaEnd - valueOffset + 8), paddr);
+        walk.owners->insert(le64(node, valueAreaEnd - valueOffset + 8), paddr);
     }
+}
+
+// Recursively visit the extent-ref tree rooted at `paddr`. The inverse of
+// buildExtentRefTreeNodes: a level-0 node is a leaf (collect its owners), a level>0 node is
+// an index whose values are child paddrs (recurse). Fail-closed on a zero child pointer or
+// past the depth budget.
+bool walkExtentRefTree(const ApfsExtentRefWalk& walk, uint64_t paddr, QStringList* blockers) {
+    if (paddr == 0) {
+        return true;
+    }
+    if (walk.depthBudget <= 0) {
+        blockers->append(QStringLiteral("APFS extent-ref tree exceeds the maximum walk depth"));
+        return false;
+    }
+    QByteArray node(walk.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(walk.image, walk.geometry, paddr, &node, blockers)) {
+        return false;
+    }
+    if (walk.nodes != nullptr) {
+        walk.nodes->append(paddr);
+    }
+    if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+        collectExtentRefLeafOwners(node, walk);
+        return true;
+    }
+    ApfsExtentRefWalk child = walk;
+    child.depthBudget = walk.depthBudget - 1;
+    for (const uint64_t childPaddr : extentRefIndexChildPaddrs(node, walk.geometry.blockSize)) {
+        if (childPaddr == 0) {
+            blockers->append(QStringLiteral("APFS extent-ref index node has a zero child pointer"));
+            return false;
+        }
+        if (!walkExtentRefTree(child, childPaddr, blockers)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Map each owning file id to its data extent's start block by reading the extent-ref tree,
+// so a chained commit can reproduce the existing files' extents without moving their data.
+// Walks the whole (possibly multi-node) tree from its root paddr.
+QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
+                                               const ApfsRepairGeometry& geometry,
+                                               uint64_t extentRefBlock,
+                                               QStringList* blockers) {
+    QHash<uint64_t, uint64_t> owners;
+    walkExtentRefTree({image, geometry, &owners, nullptr, 16}, extentRefBlock, blockers);
     return owners;
+}
+
+// Every physical block the live extent-ref tree occupies (root + interior + leaves), so the
+// COW commit can free the whole old tree. {extentRefBlock} for a single-node tree.
+QVector<uint64_t> collectExtentRefTreeNodes(QIODevice* image,
+                                            const ApfsRepairGeometry& geometry,
+                                            uint64_t extentRefBlock,
+                                            QStringList* blockers) {
+    QVector<uint64_t> nodes;
+    walkExtentRefTree({image, geometry, nullptr, &nodes, 16}, extentRefBlock, blockers);
+    return nodes;
 }
 
 // Number of chunk-info blocks a device of `chunkCount` chunks needs: one cib per
@@ -5388,8 +5769,12 @@ struct ApfsCowFileInsert {
     // [fs-tree nodes (K), volOmapTree, volOmapHdr, volSb, ctrOmapTree, ctrOmapHdr]
     QVector<uint64_t> newBlocks;
     QVector<ApfsRootFilePayload> files;
-    int64_t allocBlockDelta{0};      // change to the volume allocated-block count (data blocks)
-    uint64_t extentRefNew{0};        // new extent-ref tree block (0 = keep the existing tree)
+    int64_t allocBlockDelta{0};  // change to the volume allocated-block count (data blocks)
+    uint64_t extentRefNew{0};    // new extent-ref tree root block (0 = keep the existing tree)
+    // The full reserved extent-ref tree run (root at [0]); empty means the single-node tree
+    // at extentRefNew. The COW commit reserves extentRefTreeBlockCount() blocks so the tree
+    // can span many nodes; other callers (clone/snapshot with few records) leave it empty.
+    QVector<uint64_t> extentRefBlocks;
     int64_t fileCountDelta{1};       // +1 for a file insert, -1 for a file delete
     int64_t directoryCountDelta{0};  // +1 for a directory create, -1 for a directory delete
     uint64_t nextObjIdDelta{1};      // +1 when the mutation consumes an object id, else 0
@@ -5400,18 +5785,27 @@ struct ApfsCowFileInsert {
 // superblock -> container object map, all stamped at the new transaction id.
 // Copy-on-write the extent-ref tree with a j_phys_ext record per data extent so
 // fsck_apfs credits the file's data blocks; an empty file (extentRefNew == 0)
-// keeps the existing empty tree in place.
+// keeps the existing tree in place. The tree spans the whole reserved run
+// (extentRefBlocks), growing to a multi-node physical B-tree once the record set
+// exceeds a single node; each node is written at its reserved block.
 bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
     if (cow.extentRefNew == 0) {
         return true;
     }
-    QByteArray extentRef = buildExtentRefTreeBlock(cow.geometry.blockSize, cow.files, blockers);
-    if (extentRef.isEmpty()) {
-        return false;  // single-node capacity exceeded (blocker already appended)
+    const QVector<uint64_t> run =
+        cow.extentRefBlocks.isEmpty() ? QVector<uint64_t>{cow.extentRefNew} : cow.extentRefBlocks;
+    const QVector<QByteArray> nodes =
+        buildExtentRefTreeNodes({cow.geometry.blockSize, cow.newXid, run}, cow.files, blockers);
+    if (nodes.isEmpty()) {
+        return false;  // reserved run too small for the record set (blocker already appended)
     }
-    writeLe64(&extentRef, kApfsObjectOidOffset, cow.extentRefNew);
-    writeLe64(&extentRef, kApfsObjectXidOffset, cow.newXid);
-    return stampAndWriteApfsBlock(cow.image, cow.geometry, cow.extentRefNew, &extentRef, blockers);
+    for (qsizetype index = 0; index < nodes.size(); ++index) {
+        if (!writeApfsRepairBlock(
+                cow.image, cow.geometry, run.at(index), nodes.at(index), blockers)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Write each COW'd fs-tree node (root + leaves) at its allocated block, stamped
@@ -6050,7 +6444,10 @@ QVector<uint64_t> oldChainFreedBlocks(const ApfsLiveFsChain& chain,
     freed.append(chain.ctrOmapTree);
     freed.append(chain.ctrOmapHdr);
     if (extentRefCowed) {
-        freed.append(chain.extentRef);
+        // Free EVERY block the live extent-ref tree occupied (mirrors volOmapTreeNodes):
+        // a multi-node tree leaks its other nodes and inflates ci_free_count otherwise.
+        // extentRefTreeNodes == {extentRef} on the single-node path (byte-identical there).
+        freed.append(chain.extentRefTreeNodes);
     }
     return freed;
 }
@@ -6555,6 +6952,10 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
             image, ctx->geometry, le64(ctx->nxsb, kApfsNxOmapOidOffset), &ctx->chain, blockers)) {
         return false;
     }
+    // Record every block the live extent-ref tree occupies so a re-COW frees the whole old
+    // tree, not just its root (mirrors volOmapTreeNodes). Single-node tree -> {extentRef}.
+    ctx->chain.extentRefTreeNodes =
+        collectExtentRefTreeNodes(image, ctx->geometry, ctx->chain.extentRef, blockers);
     if (!appendSealedVolumeBlocker(image, ctx->geometry, ctx->chain.volSb, blockers)) {
         return false;
     }
@@ -6830,7 +7231,8 @@ struct ApfsFsCommitFinalize {
     QVector<ApfsFsTreeNode> fsNodes;     // root first; paddrs are newBlocks[0..K-1]
     QVector<uint64_t> newBlocks;         // [K nodes, 5-chain, extentRef?, data?]
     QVector<ApfsRootFilePayload> files;  // the committed root-file set
-    uint64_t extentRefNew{0};            // new extent-ref tree block (0 = keep)
+    uint64_t extentRefNew{0};            // new extent-ref tree root block (0 = keep)
+    QVector<uint64_t> extentRefBlocks;   // full reserved extent-ref run (root at [0])
     QVector<uint64_t> freedDataBlocks;   // data blocks the commit releases
     int64_t dataBlocksNew{0};            // data blocks the commit allocates
     int64_t fileCountDelta{0};
@@ -6947,6 +7349,7 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
          .files = f.files,
          .allocBlockDelta = netConsumed,
          .extentRefNew = f.extentRefNew,
+         .extentRefBlocks = f.extentRefBlocks,
          .fileCountDelta = f.fileCountDelta,
          .directoryCountDelta = f.directoryCountDelta,
          .nextObjIdDelta = f.nextObjIdDelta},
@@ -7280,11 +7683,13 @@ struct ApfsFinalizeApply {
 // (COW'd bitmap slots + freed old slots + exact IP used-set) threads through.
 
 // Net blocks a file-insert commit consumes = the fs-tree node-count delta + the volume
-// omap-tree block-count delta + the data-block delta. The omap-tree grows with the fs-tree
-// (one mapping per node), so a commit that pushes it multi-level allocates more omap-tree
-// blocks than the old tree freed; counting only extraNodes let ci_free_count climb by that
-// difference every commit (fsck_apfs "wrong count of free blocks"). The omap term is zero
-// -- hence byte-identical to the certified path -- whenever the omap node count is unchanged.
+// omap-tree block-count delta + the extent-ref tree block-count delta + the data-block
+// delta. The omap-tree grows with the fs-tree (one mapping per node), so a commit that
+// pushes it multi-level allocates more omap-tree blocks than the old tree freed; counting
+// only extraNodes let ci_free_count climb by that difference every commit (fsck_apfs "wrong
+// count of free blocks"). The extent-ref tree grows the same way once the file's data-extent
+// records overflow a node. Both delta terms are zero -- hence byte-identical to the certified
+// path -- whenever the respective node count is unchanged (the single-node case).
 int64_t finalizeNetConsumed(const ApfsFsCommitFinalize& f, qsizetype nodeCount) {
     const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
                                static_cast<int64_t>(f.ctx.oldFsNodes.size());
@@ -7292,7 +7697,13 @@ int64_t finalizeNetConsumed(const ApfsFsCommitFinalize& f, qsizetype nodeCount) 
         omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
             .volOmapTreeBlocks);
     const int64_t oldVolOmapBlocks = static_cast<int64_t>(f.ctx.chain.volOmapTreeNodes.size());
-    return extraNodes + (newVolOmapBlocks - oldVolOmapBlocks) +
+    // Only when the extent-ref tree is re-COW'd (extentRefNew != 0) do its blocks move: the
+    // new tree's node count is allocated and the old tree's nodes are freed.
+    const int64_t extentRefDelta =
+        f.extentRefNew != 0 ? static_cast<int64_t>(f.extentRefBlocks.size()) -
+                                  static_cast<int64_t>(f.ctx.chain.extentRefTreeNodes.size())
+                            : 0;
+    return extraNodes + (newVolOmapBlocks - oldVolOmapBlocks) + extentRefDelta +
            (f.dataBlocksNew - static_cast<int64_t>(f.freedDataBlocks.size()));
 }
 
@@ -7396,9 +7807,15 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
 // Pass 1 of an insert: build the merged file list with a placeholder data-start
 // and size the resulting fs-tree (the node count is independent of the extent's
 // paddr, so the placeholder is harmless) to learn how many blocks to allocate.
+// Size the commit's fs-tree AND its extent-ref tree from the pass-1 file list (the new file
+// treated as one extent, dataStart 0, exactly as the fs-tree sizing already assumes). The
+// preserved files contribute their real recovered extents, so the record count is exact for
+// the many-files driver and an estimate only when the new file itself fragments in pass 2 --
+// cowExtentRefTree fails closed if that estimate is exceeded, never corrupting.
 bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
                       const ApfsFileInsertRequest& request,
                       qsizetype* nodeCount,
+                      qsizetype* extentRefRecords,
                       QStringList* blockers) {
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsFsTreeNode> probe;
@@ -7409,6 +7826,7 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
         return false;
     }
     *nodeCount = probe.size();
+    *extentRefRecords = collectExtentRefRecords(ctx.geometry.blockSize, files).size();
     return true;
 }
 
@@ -7461,14 +7879,20 @@ bool commitInPlaceFileInsert(QIODevice* image,
     }
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     qsizetype nodeCount = 0;
-    if (!sizeInsertFsTree(ctx, request, &nodeCount, blockers)) {
+    qsizetype extentRefRecords = 0;
+    if (!sizeInsertFsTree(ctx, request, &nodeCount, &extentRefRecords, blockers)) {
         return false;
     }
-    // A file with data also copy-on-writes the extent-ref tree (one extra block); an
-    // empty new file leaves it in place. A clone allocates no data but still rewrites
-    // the extent-ref tree (the shared blocks' refcount rises to 2), so it COWs it too.
-    const int extentRefSlots = static_cast<int>(dataBlocks > 0 ||
-                                                request.cloneSourcePrivateId != 0);
+    // A file with data copy-on-writes the extent-ref tree; an empty new file leaves it in
+    // place. A clone allocates no data but still rewrites the tree (the shared blocks'
+    // refcount rises to 2), so it COWs it too. The tree spans as many blocks as its
+    // j_phys_ext record set needs -- one node up to the leaf capacity, then a multi-node
+    // physical B-tree -- so the reserve scales with the record count, not a fixed 1.
+    const bool cowExtentRef = dataBlocks > 0 || request.cloneSourcePrivateId != 0;
+    const int extentRefSlots =
+        cowExtentRef
+            ? static_cast<int>(extentRefTreeBlockCount(extentRefRecords, ctx.geometry.blockSize))
+            : 0;
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     if (!allocateFsCommitBlocks(ctx,
@@ -7490,7 +7914,9 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(insertTailBase) : 0;
+    const QVector<uint64_t> extentRefBlocks =
+        extentRefSlots != 0 ? newBlocks.mid(insertTailBase, extentRefSlots) : QVector<uint64_t>{};
+    const uint64_t extentRefNew = extentRefBlocks.value(0);
     // A hard link adds no inode (the file count is unchanged) but consumes two object
     // ids for its sibling records; a normal insert adds one inode and one id.
     const bool hardlink = request.hardlinkTargetId != 0;
@@ -7500,6 +7926,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .newBlocks = newBlocks,
                              .files = built.files,
                              .extentRefNew = extentRefNew,
+                             .extentRefBlocks = extentRefBlocks,
                              .freedDataBlocks = {},
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
                              .fileCountDelta = hardlink ? 0 : 1,
@@ -7577,10 +8004,14 @@ bool commitInPlaceFilePatch(QIODevice* image,
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
     qsizetype nodeCount = 0;
-    if (!sizeInsertFsTree(ctx, insert, &nodeCount, blockers)) {
+    qsizetype extentRefRecords = 0;
+    if (!sizeInsertFsTree(ctx, insert, &nodeCount, &extentRefRecords, blockers)) {
         return false;
     }
-    const int extentRefSlots = static_cast<int>(dataBlocks > 0);
+    const int extentRefSlots =
+        dataBlocks > 0
+            ? static_cast<int>(extentRefTreeBlockCount(extentRefRecords, ctx.geometry.blockSize))
+            : 0;
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     if (!allocateFsCommitBlocks(ctx,
@@ -7597,13 +8028,16 @@ bool commitInPlaceFilePatch(QIODevice* image,
     if (!buildInsertFsNodes(ctx, insert, dataBlockList, &built, blockers)) {
         return false;
     }
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(patchTailBase) : 0;
+    const QVector<uint64_t> extentRefBlocks =
+        extentRefSlots != 0 ? newBlocks.mid(patchTailBase, extentRefSlots) : QVector<uint64_t>{};
+    const uint64_t extentRefNew = extentRefBlocks.value(0);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
                              .newBlocks = newBlocks,
                              .files = built.files,
                              .extentRefNew = extentRefNew,
+                             .extentRefBlocks = extentRefBlocks,
                              .freedDataBlocks =
                                  recoverFileExtentBlocks(ctx, request.targetFileId, blockers),
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
@@ -8675,9 +9109,14 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
                                                     ctx.geometry.blockSize);
-    // Removing a file with data rewrites the extent-ref tree (one extra block);
-    // deleting an empty file leaves the extent-ref tree in place.
-    const int extentRefSlots = static_cast<int>(targetBlocks > 0);
+    // Removing a file with data rewrites the extent-ref tree over the REMAINING files'
+    // records (exact -- their extents come from the live tree, no fresh allocation), so the
+    // reserve scales with that record count; deleting an empty file leaves the tree in place.
+    const int extentRefSlots =
+        targetBlocks > 0 ? static_cast<int>(extentRefTreeBlockCount(
+                               collectExtentRefRecords(ctx.geometry.blockSize, remaining).size(),
+                               ctx.geometry.blockSize))
+                         : 0;
     QVector<ApfsFsTreeNode> fsNodes;
     if (!buildFsTreeNodes(
             {ctx.geometry.blockSize, remaining, request.directories, ctx.firstLeafOid},
@@ -8694,13 +9133,16 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     const uint64_t deleteTailBase =
         omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
-    const uint64_t extentRefNew = extentRefSlots != 0 ? newBlocks.value(deleteTailBase) : 0;
+    const QVector<uint64_t> extentRefBlocks =
+        extentRefSlots != 0 ? newBlocks.mid(deleteTailBase, extentRefSlots) : QVector<uint64_t>{};
+    const uint64_t extentRefNew = extentRefBlocks.value(0);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = fsNodes,
                              .newBlocks = newBlocks,
                              .files = remaining,
                              .extentRefNew = extentRefNew,
+                             .extentRefBlocks = extentRefBlocks,
                              .freedDataBlocks = fileFreedDataBlocks(target, ctx.geometry.blockSize),
                              .dataBlocksNew = 0,
                              .fileCountDelta = -1,
@@ -17940,6 +18382,53 @@ QVector<QPair<quint64, quint64>> PartitionApfsWriter::readMainFreeQueueTreeBlock
     return out;
 }
 
+QVector<QByteArray> PartitionApfsWriter::buildExtentRefTreeBlocksForTesting(
+    uint32_t block_size,
+    uint64_t tree_base_paddr,
+    uint64_t xid,
+    qsizetype record_count,
+    QStringList* blockers) {
+    QStringList localBlockers;
+    QStringList* sink = blockers != nullptr ? blockers : &localBlockers;
+    // Synthetic files: each a distinct one-block extent at an ascending, non-coalescing paddr
+    // well clear of the tree's own node run, owned by id 1000+i.
+    QVector<ApfsRootFilePayload> files;
+    files.reserve(record_count);
+    for (qsizetype index = 0; index < record_count; ++index) {
+        ApfsRootFilePayload file;
+        file.fileId = 1000 + static_cast<uint64_t>(index);
+        file.dataExtents = {{0, tree_base_paddr + 100'000 + static_cast<uint64_t>(index) * 2, 1}};
+        files.append(file);
+    }
+    const qsizetype nodeTotal = extentRefTreeBlockCount(record_count, block_size);
+    QVector<uint64_t> run;
+    run.reserve(nodeTotal);
+    for (qsizetype i = 0; i < nodeTotal; ++i) {
+        run.append(tree_base_paddr + static_cast<uint64_t>(i));
+    }
+    return buildExtentRefTreeNodes({block_size, xid, run}, files, sink);
+}
+
+QVector<QPair<quint64, quint64>> PartitionApfsWriter::readExtentRefTreeBlocksForTesting(
+    const QVector<QByteArray>& node_blocks, uint32_t block_size) {
+    // Flatten every LEAF node's {owner id, data paddr} records (index nodes carry no records).
+    // A correct multi-node build packs all records into its leaves, so this returns the whole
+    // set regardless of tree depth, without needing an on-disk device.
+    QVector<QPair<quint64, quint64>> out;
+    for (const QByteArray& node : node_blocks) {
+        if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
+            continue;
+        }
+        QHash<uint64_t, uint64_t> owners;
+        const ApfsExtentRefWalk leaf{nullptr, {block_size, 0}, &owners, nullptr, 0};
+        collectExtentRefLeafOwners(node, leaf);
+        for (auto it = owners.constBegin(); it != owners.constEnd(); ++it) {
+            out.append({it.key(), it.value()});
+        }
+    }
+    return out;
+}
+
 QPair<quint64, quint64> PartitionApfsWriter::nextCrashSafeIpSlot(quint64 live_cib,
                                                                  quint64 block_count) {
     const ApfsIpSlot slot = nextIpSlot(live_cib, computeGeneratedLayout(block_count));
@@ -18055,6 +18544,34 @@ int PartitionApfsWriter::readGeneratedVolumeOmapTreeLevel(const QString& image_p
     }
     QByteArray root(blockSize, '\0');
     if (!readApfsRepairBlock(&image, geometry, chain.volOmapTree, &root, &blockers)) {
+        return -1;
+    }
+    return static_cast<int>(le16(root, kApfsBtreeNodeLevelOffset));
+}
+
+int PartitionApfsWriter::readGeneratedExtentRefTreeLevel(const QString& image_path) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        return -1;
+    }
+    uint32_t blockSize = 0;
+    uint64_t blockCount = 0;
+    QStringList blockers;
+    if (!readApfsRepairGeometry(&image, &blockSize, &blockCount, &blockers)) {
+        return -1;
+    }
+    const ApfsRepairGeometry geometry{blockSize, blockCount};
+    QByteArray nxsb(blockSize, '\0');
+    if (!readApfsRepairBlock(&image, geometry, kApfsFormatNxsbBlock, &nxsb, &blockers)) {
+        return -1;
+    }
+    ApfsLiveFsChain chain;
+    if (!walkLiveFsChain(&image, geometry, le64(nxsb, kApfsNxOmapOidOffset), &chain, &blockers)) {
+        return -1;
+    }
+    QByteArray root(blockSize, '\0');
+    if (chain.extentRef == 0 ||
+        !readApfsRepairBlock(&image, geometry, chain.extentRef, &root, &blockers)) {
         return -1;
     }
     return static_cast<int>(le16(root, kApfsBtreeNodeLevelOffset));

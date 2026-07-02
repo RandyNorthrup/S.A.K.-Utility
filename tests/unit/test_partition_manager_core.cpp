@@ -1842,6 +1842,8 @@ private Q_SLOTS:
     void apfsWriter_buildsMultiLevelObjectMapOnManyMappings();
     void apfsWriter_buildsMultiNodeMainFreeQueueOnOverflow();
     void apfsWriter_manyFileInsertOverflowsOmapAndFsTree();
+    void apfsWriter_multiNodeExtentRefTreeRoundTrips();
+    void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
     void apfsWriter_readsGeneratedLiveCibAddr();
@@ -12021,6 +12023,92 @@ void PartitionManagerCoreTests::apfsWriter_manyFileInsertOverflowsOmapAndFsTree(
         img, QStringLiteral("/%1").arg(nameFor(last)), 4096);
     QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
     QCOMPARE(readBack.data, lastPayload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {
+    // Build the extent-ref tree over 400 distinct one-block extents: far past the ~110-record
+    // single-node capacity that the former guard failed closed at, so the tree MUST become a
+    // multi-node physical B-tree (a root index over non-root leaves). Every node's checksum
+    // must verify, the set must span more than one node, and reading the records back must
+    // recover all 400 owners AND their paddrs exactly -- proving the leaf/index layout and the
+    // reader's multi-node walk are mutual inverses.
+    const uint32_t bs = 4096;
+    const qsizetype records = 400;
+    const quint64 treeBase = 5000;
+    QStringList blockers;
+    const QVector<QByteArray> nodes = PartitionApfsWriter::buildExtentRefTreeBlocksForTesting(
+        bs, treeBase, 9, records, &blockers);
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+    QVERIFY2(nodes.size() > 1, "400 extent records must overflow a single node into a tree");
+    for (const QByteArray& node : nodes) {
+        QCOMPARE(node.size(), static_cast<int>(bs));
+        QVERIFY2(PartitionApfsWriter::verifyObjectChecksum(node),
+                 "every extent-ref node must carry a valid Fletcher-64 checksum");
+    }
+    const auto read = PartitionApfsWriter::readExtentRefTreeBlocksForTesting(nodes, bs);
+    QCOMPARE(read.size(), static_cast<int>(records));
+    QSet<quint64> owners;
+    for (const auto& pair : read) {
+        owners.insert(pair.first);
+        // Owner 1000+i was synthesized at paddr treeBase + 100000 + i*2.
+        const quint64 i = pair.first - 1000;
+        QCOMPARE(pair.second, treeBase + 100'000 + i * 2);
+    }
+    QCOMPARE(owners.size(), static_cast<int>(records));
+    for (qsizetype i = 0; i < records; ++i) {
+        QVERIFY2(owners.contains(1000 + static_cast<quint64>(i)),
+                 "every synthesized extent record must round-trip through the multi-node tree");
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_manyDataFileInsertOverflowsExtentRefTree() {
+    // Insert enough one-block DATA files that the extent-ref tree's j_phys_ext record set
+    // (one per distinct file extent) overflows a single node and becomes multi-node. Before
+    // the multi-node builder this failed closed at the 111th data file (the single-node guard);
+    // that every insert past ~110 now succeeds AND the live extent-ref tree reports level > 0
+    // is the fail-before proof. The full commit path also exercises the free-count accounting
+    // (the finalizeNetConsumed extent-ref term): the host apfsck cert on the persisted image
+    // (SAK_EXTREF_CERT_DIR) verifies the spaceman/CIB free counts stay exact.
+    const QString envDir = qEnvironmentVariable("SAK_EXTREF_CERT_DIR");
+    const int fileCount = qEnvironmentVariable("SAK_EXTREF_FILE_COUNT").toInt() > 0
+                              ? qEnvironmentVariable("SAK_EXTREF_FILE_COUNT").toInt()
+                              : 120;
+    const int mib = qEnvironmentVariable("SAK_EXTREF_CONTAINER_MIB").toInt() > 0
+                        ? qEnvironmentVariable("SAK_EXTREF_CONTAINER_MIB").toInt()
+                        : 64;
+    const auto nameFor = [](int index) {
+        return QStringLiteral("extref-file-%1.dat").arg(index);
+    };
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("extref-many.img"));
+    const uint64_t bytes = static_cast<uint64_t>(mib) * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("ExtRefMany"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    const auto rawOptions = certifiedApfsRawCommitOptions();
+    for (int index = 0; index < fileCount; ++index) {
+        // A tiny distinct payload -> one data block -> one distinct extent-ref record per file.
+        const QByteArray payload = QStringLiteral("extref %1").arg(index).toUtf8();
+        commitRawOmapFile(img, bytes, nameFor(index), payload, rawOptions);
+    }
+    // The extent-ref tree must have gone multi-node (root level > 0) -- the whole point.
+    QVERIFY2(PartitionApfsWriter::readGeneratedExtentRefTreeLevel(img) > 0,
+             "inserting > 110 data files must drive the extent-ref tree multi-node");
+    // Every file still enumerable through the fs-tree, proving nothing was lost.
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(img,
+                                                                               QStringLiteral("/"),
+                                                                               fileCount + 8);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), fileCount);
+    // The most-recent file's data reads back byte-exact (its extent is still live).
+    const int last = fileCount - 1;
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/%1").arg(nameFor(last)), 4096);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, QStringLiteral("extref %1").arg(last).toUtf8());
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree() {
