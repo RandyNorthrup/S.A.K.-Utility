@@ -1815,6 +1815,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
     void apfsWriter_inPlaceMultiSnapshotDelete();
+    void apfsWriter_inPlaceMultiSnapshotRevert();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
@@ -9860,6 +9861,66 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {
     const auto d3 = del(del2, del3, QStringLiteral("snap-three"));
     QVERIFY2(d3.ok, qPrintable(d3.blockers.join(QStringLiteral("; "))));
     QCOMPARE(apfsLe64(readApfsImageBlock(del3, apfsApsbBlockOf(del3)), 0xD8), 0ULL);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotRevert() {
+    // Revert to a NAMED snapshot when several exist: the deferred-revert tag points at the
+    // chosen snapshot (revert_to_xid = its xid), all snapshots are kept, and nothing else
+    // changes. Reverting to the OLDER of two snapshots (xid 3) proves the target is picked by
+    // name, not just the most-recent. SAK_MULTISNAPREV_CERT_DIR persists for host apfsck.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_MULTISNAPREV_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("msrev-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("MSREV"),
+                 .options = options})
+                .ok);
+    const QString s1 = dir.filePath(QStringLiteral("msrev-1.apfs"));
+    const QString s2 = dir.filePath(QStringLiteral("msrev-2.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                {.source_image_path = base,
+                 .written_image_path = s1,
+                 .snapshot_name = QStringLiteral("snap-one"),
+                 .options = options})
+                .ok);
+    QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                {.source_image_path = s1,
+                 .written_image_path = s2,
+                 .snapshot_name = QStringLiteral("snap-two"),
+                 .options = options})
+                .ok);
+
+    // A missing name on a multi-snapshot volume, and an unknown name, both fail closed.
+    const QString xImg = dir.filePath(QStringLiteral("msrev-x.apfs"));
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                 {.source_image_path = s2, .written_image_path = xImg, .options = options})
+                 .ok);
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                 {.source_image_path = s2,
+                  .written_image_path = xImg,
+                  .snapshot_name = QStringLiteral("nope"),
+                  .options = options})
+                 .ok);
+
+    // Revert to the OLDER snapshot (snap-one, xid 3): tag set, both snapshots kept.
+    const QString rev = dir.filePath(QStringLiteral("multisnaprev.img"));
+    const auto r = PartitionApfsWriter::commitImageOnlySnapshotRevert(
+        {.source_image_path = s2,
+         .written_image_path = rev,
+         .snapshot_name = QStringLiteral("snap-one"),
+         .options = options});
+    QVERIFY2(r.ok, qPrintable(r.blockers.join(QStringLiteral("; "))));
+    const QByteArray vol = readApfsImageBlock(rev, apfsApsbBlockOf(rev));
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(vol));
+    QCOMPARE(apfsLe64(vol, 0xA0), 3ULL);   // revert_to_xid == snap-one's xid
+    QVERIFY(apfsLe64(vol, 0xA8) != 0ULL);  // revert_to_sblock_oid set to its frozen sblock
+    QCOMPARE(apfsLe64(vol, 0xD8), 2ULL);   // both snapshots kept
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState() {

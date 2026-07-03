@@ -9445,7 +9445,30 @@ bool finalizeSnapshotRevert(const ApfsSnapshotRevertFinalize& f,
 // superblock and leaves the rest untouched - so a kernel mount completes the revert
 // (discarding the post-snapshot divergence) and fsck_apfs validates it. Fails closed
 // unless the volume carries exactly one snapshot and no revert is already pending.
+// Find the snapshot to revert to (@snapshotName; the sole snapshot when empty). Returns false
+// with a blocker when the name is missing on a multi-snapshot volume or does not match.
+bool selectSnapshotToRevert(const QVector<ApfsSnapshotMetadata>& all,
+                            const QString& snapshotName,
+                            ApfsSnapshotMetadata* target,
+                            QStringList* blockers) {
+    const QByteArray wantName = snapshotName.trimmed().toUtf8();
+    for (const ApfsSnapshotMetadata& snap : all) {
+        if (wantName.isEmpty() ? (all.size() == 1) : (snap.name == wantName)) {
+            *target = snap;
+            return true;
+        }
+    }
+    blockers->append(
+        wantName.isEmpty()
+            ? QStringLiteral("APFS snapshot-revert: specify a snapshot name (the volume carries "
+                             "multiple snapshots)")
+            : QStringLiteral("APFS snapshot-revert: no snapshot named '%1'")
+                  .arg(snapshotName.trimmed()));
+    return false;
+}
+
 bool commitInPlaceSnapshotRevert(QIODevice* image,
+                                 const QString& snapshotName,
                                  ApfsInPlaceCheckpointResult* result,
                                  QStringList* blockers) {
     ApfsFsCommitContext ctx;
@@ -9456,10 +9479,8 @@ bool commitInPlaceSnapshotRevert(QIODevice* image,
     if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
         return false;
     }
-    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) != 1) {
-        blockers->append(
-            QStringLiteral("APFS snapshot-revert: the volume must carry exactly one snapshot "
-                           "(multi-snapshot revert is a later increment)"));
+    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) == 0) {
+        blockers->append(QStringLiteral("APFS snapshot-revert: the volume carries no snapshot"));
         return false;
     }
     if (le64(liveVol, kApfsVolumeRevertToXidOffset) != 0) {
@@ -9468,14 +9489,13 @@ bool commitInPlaceSnapshotRevert(QIODevice* image,
         return false;
     }
     const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
-    QByteArray liveOmap(ctx.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &liveOmap, blockers)) {
+    const QVector<ApfsSnapshotMetadata> all =
+        readAllSnapshotMetadata(image, ctx.geometry, oldSnapMetaTree, blockers);
+    ApfsSnapshotMetadata target;
+    if (!selectSnapshotToRevert(all, snapshotName, &target, blockers)) {
         return false;
     }
-    const uint64_t snapshotXid = le64(liveOmap, kApfsOmapMostRecentSnapshotOffset);
-    const ApfsSnapshotFrozenRefs frozen =
-        readSnapshotFrozenRefs(image, ctx.geometry, oldSnapMetaTree, blockers);
-    if (!frozen.found || frozen.sblockOid == 0 || snapshotXid == 0) {
+    if (target.sblockOid == 0 || target.snapXid == 0) {
         blockers->append(
             QStringLiteral("APFS snapshot-revert: could not recover the snapshot to revert to"));
         return false;
@@ -9486,8 +9506,8 @@ bool commitInPlaceSnapshotRevert(QIODevice* image,
         return false;
     }
     return finalizeSnapshotRevert({.ctx = ctx,
-                                   .snapshotXid = snapshotXid,
-                                   .frozenSblockOid = frozen.sblockOid,
+                                   .snapshotXid = target.snapXid,
+                                   .frozenSblockOid = target.sblockOid,
                                    .oldSnapMetaTree = oldSnapMetaTree,
                                    .newBlocks = newBlocks,
                                    .chunk1BitmapBlock = chunk1BitmapBlock},
@@ -18760,7 +18780,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySna
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceSnapshotRevert(&image, &commit, &commitBlockers)) {
+    if (commitInPlaceSnapshotRevert(&image, request.snapshot_name, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -18790,7 +18810,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotR
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceSnapshotRevert(target.get(), &commit, &commitBlockers)) {
+    if (commitInPlaceSnapshotRevert(
+            target.get(), request.snapshot_name, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

@@ -1944,6 +1944,7 @@ std::optional<QJsonObject> buildCommitSnapshotRevertReport(const CliInvocation& 
     const auto commit = sak::PartitionApfsWriter::commitImageOnlySnapshotRevert(
         {.source_image_path = invocation.target_path,
          .written_image_path = invocation.output_image_path,
+         .snapshot_name = invocation.snapshot_name,
          .options = imageWriteOptions(invocation.evidence_id)});
     return commitResultReport(
         commit, QStringLiteral("APFS in-place snapshot revert commit"), invocation, error);
@@ -1954,6 +1955,7 @@ std::optional<QJsonObject> buildCommitRawSnapshotRevertReport(const CliInvocatio
     const auto commit = sak::PartitionApfsWriter::commitRawSnapshotRevert(
         {.target_path = invocation.target_path,
          .target_container_bytes = invocation.target_size_bytes,
+         .snapshot_name = invocation.snapshot_name,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});

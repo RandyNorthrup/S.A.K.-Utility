@@ -849,6 +849,9 @@ struct PartitionApfsRawSnapshotDeleteCommitRequest {
 struct PartitionApfsImageSnapshotRevertCommitRequest {
     QString source_image_path;
     QString written_image_path;
+    // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
+    // the volume carries more than one.
+    QString snapshot_name;
     PartitionApfsWriteOptions options;
 };
 
@@ -858,6 +861,9 @@ struct PartitionApfsImageSnapshotRevertCommitRequest {
 struct PartitionApfsRawSnapshotRevertCommitRequest {
     QString target_path;
     uint64_t target_container_bytes{0};
+    // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
+    // the volume carries more than one.
+    QString snapshot_name;
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
