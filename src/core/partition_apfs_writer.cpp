@@ -7562,7 +7562,7 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
         blockers->append(QStringLiteral("APFS in-place commit: not enough free space in chunk 0"));
         return false;
     }
-    *chunk1BitmapBlock = kApfsFormatIpBaseBlock + ctx.layout.cibCount + 5;
+    *chunk1BitmapBlock = ctx.layout.ipBase + ctx.layout.cibCount + 5;
     *newBlocks = chunk0Free.mid(0, static_cast<qsizetype>(chunk0Take));
     spillDataIntoChunks(ctx, need, newBlocks, blockers);
     if (newBlocks->size() < need) {
@@ -8252,7 +8252,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
@@ -8367,7 +8367,7 @@ bool commitInPlaceFilePatch(QIODevice* image,
                             ApfsInPlaceCheckpointResult* result,
                             QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     const ApfsFileInsertRequest insert{.existingFiles = request.otherFiles,
@@ -9931,7 +9931,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QVector<ApfsRootFilePayload> remaining;
@@ -10076,7 +10076,7 @@ bool commitInPlaceFileRename(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QVector<ApfsRootFilePayload> files;
@@ -10139,7 +10139,7 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QByteArray volSb(ctx.geometry.blockSize, '\0');
@@ -10232,7 +10232,7 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QVector<ApfsRootDirectoryPayload> remainingDirectories;

@@ -11071,13 +11071,40 @@ void verifyApfsResizeFailClosed(const QDir& dir,
 
 }  // namespace
 
+// Re-mutating a chunk-adding-grown container: insert a new file, then read back both the new
+// file and the pre-grow file byte-for-byte (the relocation-aware commit engine handles the
+// moved internal pool). Factored out to keep the grow test within the complexity budget.
+static void certifyPostGrowInsertReadsBack(const QDir& dir,
+                                           const QString& grown,
+                                           const PartitionApfsWriteOptions& options,
+                                           const QByteArray& preGrowPayload) {
+    const QString mutated = dir.filePath(QStringLiteral("ca-mut.apfs"));
+    const QByteArray afterPayload = QByteArray("post-grow-insert-").repeated(300);
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert(
+                 {.source_image_path = grown,
+                  .written_image_path = mutated,
+                  .file_name = QStringLiteral("after.bin"),
+                  .file_data = afterPayload,
+                  .options = options})
+                 .ok,
+             "post-grow file insert");
+    const auto reNew = PartitionApfsFileSystemReader::readFileFromImage(
+        mutated, QStringLiteral("/after.bin"), static_cast<uint64_t>(afterPayload.size()));
+    QVERIFY2(reNew.ok, qPrintable(reNew.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(reNew.data, afterPayload);
+    const auto reOld = PartitionApfsFileSystemReader::readFileFromImage(
+        mutated, QStringLiteral("/orig.bin"), static_cast<uint64_t>(preGrowPayload.size()));
+    QVERIFY2(reOld.ok, qPrintable(reOld.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(reOld.data, preGrowPayload);
+}
+
 void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     // A7 (A-g) chunk-adding grow: growing a single-chunk container across the 32768-block
     // chunk boundary relocates the spaceman internal pool into the grow region and adds
     // chunks with a crash-safe checkpoint commit. Host apfsprogs apfsck certified across
     // exact/partial/multi-chunk targets; a file written before the grow still reads back and
-    // the container reports the new size. Re-mutating a grown container is a later increment
-    // and fails closed (no corruption).
+    // the container reports the new size. Re-mutating a grown container is fully supported
+    // (relocation-aware commit engine) and is exercised at the end of this test.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -11130,15 +11157,12 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
 
-    // Re-mutating a chunk-adding-grown container (relocated internal pool) is a later
-    // increment: it fails closed rather than corrupting the ip allocation bitmap.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyFileInsert(
-                 {.source_image_path = grown,
-                  .written_image_path = dir.filePath(QStringLiteral("ca-mut.apfs")),
-                  .file_name = QStringLiteral("after.bin"),
-                  .file_data = payload,
-                  .options = options})
-                 .ok);
+    // Re-mutating a chunk-adding-grown container is now fully supported: the commit engine
+    // re-anchors the relocated internal pool (loadFsCommitContext -> resolveRelocatedIpLayout,
+    // allowRelocatedIp) so a post-grow file insert commits apfsck-clean. Both the new file and
+    // the pre-grow file read back byte-for-byte. (Apple-kernel certified on macOS 15.7.4:
+    // mount + fsck_apfs clean + byte-exact read-back for small and chunk-spilling inserts.)
+    certifyPostGrowInsertReadsBack(dir, grown, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
