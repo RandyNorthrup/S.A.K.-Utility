@@ -17389,7 +17389,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyRes
 
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("resize-commit"),
-                                                &result.blockers);
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
     if (!source.ok) {
         return result;
     }
