@@ -1845,6 +1845,7 @@ private Q_SLOTS:
     void apfsWriter_snapshotCreateOnMultiLevelOmap();
     void apfsWriter_nestedFileInsertPlacesFileAtDepth();
     void apfsWriter_nestedFileWriteDeleteRenameAtDepth();
+    void apfsWriter_nestedFileMoveAcrossDepth();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12263,6 +12264,50 @@ void PartitionManagerCoreTests::apfsWriter_nestedFileWriteDeleteRenameAtDepth() 
     const auto root =
         PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/f.txt"), 4096);
     QVERIFY2(root.ok && root.data == QByteArrayLiteral("root"), "root f.txt untouched");
+}
+
+void PartitionManagerCoreTests::apfsWriter_nestedFileMoveAcrossDepth() {
+    // Nested move: commitRawFileMove resolves the source AND destination parents by FULL PATH
+    // (resolveDirectoryIdByPath), so a file reparents between arbitrary-depth directories.
+    // Certifies a cross-directory move /docs/a/f.txt -> /docs/b/g.txt (depth 3), byte-preserved.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_NESTED_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const RawNestedCtx c{dir.filePath(QStringLiteral("nestedmv.img")),
+                         64ULL * 1024ULL * 1024ULL,
+                         certifiedApfsRawCommitOptions()};
+    formatOmapStressContainer(c.img, c.bytes, QStringLiteral("NestMV"));
+    ApfsRawTargetPredicateGuard guard;
+    const QString img = c.img;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QVERIFY2(rawMkdir(c, QStringLiteral("docs"), QString()), "mkdir /docs");
+    QVERIFY2(rawMkdir(c, QStringLiteral("a"), QStringLiteral("/docs")), "mkdir /docs/a");
+    QVERIFY2(rawMkdir(c, QStringLiteral("b"), QStringLiteral("/docs")), "mkdir /docs/b");
+    QVERIFY2(rawNestedWrite(c,
+                            QStringLiteral("f.txt"),
+                            QByteArrayLiteral("move me"),
+                            QStringLiteral("/docs/a")),
+             "write /docs/a/f.txt");
+    const auto move = PartitionApfsWriter::commitRawFileMove(
+        {.target_path = img,
+         .target_container_bytes = c.bytes,
+         .source_directory_name = QStringLiteral("/docs/a"),
+         .file_name = QStringLiteral("f.txt"),
+         .destination_directory_name = QStringLiteral("/docs/b"),
+         .new_file_name = QStringLiteral("g.txt"),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = c.opts});
+    QVERIFY2(move.ok, qPrintable(move.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/docs/b/g.txt"), 4096);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, QByteArrayLiteral("move me"));
+    QVERIFY(!PartitionApfsFileSystemReader::readFileFromImage(
+                 img, QStringLiteral("/docs/a/f.txt"), 4096)
+                 .ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {

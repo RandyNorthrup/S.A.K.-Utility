@@ -17912,8 +17912,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileMove(
     if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
-    const uint64_t sourceParent = resolveParentId(directories, sourceDir);
-    const uint64_t destParent = resolveParentId(directories, destDir);
+    // Resolve source/dest parents by full path so a move works at arbitrary directory depth
+    // ("docs/sub" walks docs -> sub); a single root-level name resolves identically to before,
+    // and an empty component is the container root.
+    const uint64_t sourceParent = resolveDirectoryIdByPath(directories, sourceDir);
+    const uint64_t destParent = resolveDirectoryIdByPath(directories, destDir);
     if (sourceParent == 0 || destParent == 0) {
         result.blockers.append(QStringLiteral(
             "APFS raw file-move-commit: a source or destination directory was not found"));

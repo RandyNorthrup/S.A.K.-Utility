@@ -30,9 +30,6 @@ constexpr int kDriveRootPrefixLength = 3;
 // Management write gate cannot drift from the rest of the codebase.
 constexpr uint64_t kFileManagementMaxWriteBytes = kMaximumNonNativeFileWriteBytes;
 constexpr uint64_t kMinimumGeneratedApfsBytes = kMinimumApfsGeneratedContainerBytes;
-// APFS File Management mutation is limited to a root file (1 path part) or one
-// level of directory child (2 parts: directory + file).
-constexpr int kApfsMaxPathDepth = 2;
 
 QString normalizedPath(QString path) {
     path = path.trimmed();
@@ -76,16 +73,15 @@ bool isRawDevicePath(const QString& path) {
            path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"));
 }
 
-bool isApfsPathSupported(const QString& path, bool directory) {
+bool isApfsPathSupported(const QString& path, bool /*directory*/) {
     QString clean = path.trimmed();
     clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
     if (!clean.startsWith(QLatin1Char('/'))) {
         clean.prepend(QLatin1Char('/'));
     }
-    const auto parts = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    // Directories may nest to any depth: the certified COW engine resolves the parent path and
-    // fails closed if a parent is missing, so only an empty (root) path is rejected here.
-    return directory ? parts.size() >= 1 : parts.size() == 1 || parts.size() == kApfsMaxPathDepth;
+    // Files and directories both nest to any depth: the certified COW engine resolves the parent
+    // path and fails closed if a parent is missing, so only an empty (root) path is rejected.
+    return !clean.split(QLatin1Char('/'), Qt::SkipEmptyParts).isEmpty();
 }
 
 QStringList apfsParts(const QString& path) {
@@ -95,6 +91,18 @@ QStringList apfsParts(const QString& path) {
         clean.prepend(QLatin1Char('/'));
     }
     return clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+}
+
+// Split an APFS path into (parent directory path, leaf name): "/a/b/c" -> ("/a/b", "c");
+// "/c" -> ("", "c"). The parent path (empty = container root) feeds the COW engine's
+// arbitrary-depth resolver, so File Management file ops are no longer capped at one level.
+std::pair<QString, QString> apfsParentAndName(const QString& path) {
+    const QStringList parts = apfsParts(path);
+    if (parts.size() <= 1) {
+        return {QString(), parts.value(0)};
+    }
+    return {QStringLiteral("/") + parts.mid(0, parts.size() - 1).join(QLatin1Char('/')),
+            parts.last()};
 }
 
 QString displayPath(const QString& path) {
@@ -384,29 +392,15 @@ FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
                                QStringLiteral("APFS File Management file write is limited "
                                               "to root files or one root-directory child"));
     }
-    const auto parts = apfsParts(cleanPath);
-    if (parts.size() == 1) {
-        // Root files use the certified crash-safe in-place COW engine
-        // (create-or-replace).
-        return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawFileWrite(
-                {.target_path = target.root_path,
-                 .target_container_bytes = target.size_bytes,
-                 .file_name = parts.value(0),
-                 .file_data = data,
-                 .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
-            cleanPath,
-            static_cast<uint64_t>(data.size()));
-    }
-    // Directory children use the same COW engine (create-or-replace under a parent).
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawDirectoryChildWrite(
+    // The certified crash-safe in-place COW engine create-or-replaces the file under its parent
+    // path at any depth (empty parent = container root).
+    const auto [parent, name] = apfsParentAndName(cleanPath);
+    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileWrite(
                                     {.target_path = target.root_path,
                                      .target_container_bytes = target.size_bytes,
-                                     .directory_name = parts.value(0),
-                                     .file_name = parts.value(1),
+                                     .file_name = name,
                                      .file_data = data,
+                                     .parent_directory_path = parent,
                                      .target_mutation_confirmed = true,
                                      .allow_raw_device_target = isRawDevicePath(target.root_path),
                                      .options = apfsRawWriteOptions()}),
@@ -428,28 +422,15 @@ FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& t
                                QStringLiteral("APFS File Management file write is limited "
                                               "to root files or one root-directory child"));
     }
-    const auto parts = apfsParts(cleanPath);
-    if (parts.size() == 1) {
-        return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawFileWrite(
-                {.target_path = target.root_path,
-                 .target_container_bytes = target.size_bytes,
-                 .file_name = parts.value(0),
-                 .file_data_path = hostPath,
-                 .file_data_stream_size = size,
-                 .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
-            cleanPath,
-            size);
-    }
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawDirectoryChildWrite(
+    // One streaming create-or-replace under the file's parent path at any depth (empty = root).
+    const auto [parent, name] = apfsParentAndName(cleanPath);
+    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileWrite(
                                     {.target_path = target.root_path,
                                      .target_container_bytes = target.size_bytes,
-                                     .directory_name = parts.value(0),
-                                     .file_name = parts.value(1),
+                                     .file_name = name,
                                      .file_data_path = hostPath,
                                      .file_data_stream_size = size,
+                                     .parent_directory_path = parent,
                                      .target_mutation_confirmed = true,
                                      .allow_raw_device_target = isRawDevicePath(target.root_path),
                                      .options = apfsRawWriteOptions()}),
@@ -963,32 +944,18 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
     }
     if (fs == QStringLiteral("apfs")) {
         if (!isApfsPathSupported(cleanPath, false)) {
-            return mutationBlocked(fs,
-                                   cleanPath,
-                                   QStringLiteral("APFS File Management file delete is limited "
-                                                  "to root files or one root-directory child"));
+            return mutationBlocked(
+                fs, cleanPath, QStringLiteral("APFS File Management file delete requires a name"));
         }
-        const auto parts = apfsParts(cleanPath);
-        if (parts.size() == 1) {
-            // Root files use the certified crash-safe in-place COW engine.
-            return fromApfsCommitResult(
-                PartitionApfsWriter::commitRawFileDelete(
-                    {.target_path = target.root_path,
-                     .target_container_bytes = target.size_bytes,
-                     .file_name = parts.value(0),
-                     .target_mutation_confirmed = true,
-                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                     .options = apfsRawWriteOptions()}),
-                cleanPath,
-                0);
-        }
-        // Directory children use the same COW engine (delete under a parent).
+        // The certified crash-safe in-place COW engine deletes the file under its parent path at
+        // any depth (empty parent = container root).
+        const auto [parent, name] = apfsParentAndName(cleanPath);
         return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawDirectoryChildDelete(
+            PartitionApfsWriter::commitRawFileDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
-                 .file_name = parts.value(1),
+                 .file_name = name,
+                 .parent_directory_path = parent,
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
@@ -1009,30 +976,28 @@ namespace {
 FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
                                              const QString& cleanSource,
                                              const QString& cleanDestination) {
-    const auto sourceParts = apfsParts(cleanSource);
-    const auto destParts = apfsParts(cleanDestination);
-    if (sourceParts.isEmpty() || sourceParts.size() > kApfsMaxPathDepth || destParts.isEmpty() ||
-        destParts.size() > kApfsMaxPathDepth) {
+    const auto [sourceParent, sourceName] = apfsParentAndName(cleanSource);
+    const auto [destParent, destName] = apfsParentAndName(cleanDestination);
+    if (sourceName.isEmpty() || destName.isEmpty()) {
         return mutationBlocked(QStringLiteral("apfs"),
                                cleanSource,
-                               QStringLiteral("APFS File Management rename/move is limited to root "
-                                              "files and one level of directory children"));
+                               QStringLiteral("APFS File Management rename/move requires a source "
+                                              "and destination file name"));
     }
-    return fromApfsCommitResult(
-        PartitionApfsWriter::commitRawFileMove(
-            {.target_path = target.root_path,
-             .target_container_bytes = target.size_bytes,
-             .source_directory_name = sourceParts.size() == kApfsMaxPathDepth ? sourceParts.value(0)
-                                                                              : QString(),
-             .file_name = sourceParts.last(),
-             .destination_directory_name =
-                 destParts.size() == kApfsMaxPathDepth ? destParts.value(0) : QString(),
-             .new_file_name = destParts.last(),
-             .target_mutation_confirmed = true,
-             .allow_raw_device_target = isRawDevicePath(target.root_path),
-             .options = apfsRawWriteOptions()}),
-        cleanDestination,
-        0);
+    // commitRawFileMove resolves both parents by full path, so a same-parent move is a plain
+    // rename and a cross-parent move reparents the file, each at arbitrary directory depth.
+    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileMove(
+                                    {.target_path = target.root_path,
+                                     .target_container_bytes = target.size_bytes,
+                                     .source_directory_name = sourceParent,
+                                     .file_name = sourceName,
+                                     .destination_directory_name = destParent,
+                                     .new_file_name = destName,
+                                     .target_mutation_confirmed = true,
+                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
+                                     .options = apfsRawWriteOptions()}),
+                                cleanDestination,
+                                0);
 }
 
 }  // namespace
