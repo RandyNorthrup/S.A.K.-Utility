@@ -6,6 +6,7 @@
 
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_resource_fork.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
@@ -1848,6 +1849,8 @@ private Q_SLOTS:
     void apfsWriter_nestedFileMoveAcrossDepth();
     void apfsWriter_lzfseCompressedFileRoundTrips();
     void apfsWriter_lzvnCompressedFileRoundTrips();
+    void apfsResourceForkBlobZlibRoundTrips();
+    void apfsResourceForkBlobLayoutMatchesApfsck();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12382,6 +12385,91 @@ void PartitionManagerCoreTests::apfsWriter_lzvnCompressedFileRoundTrips() {
         img, QStringLiteral("/z.txt"), static_cast<int>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsResourceForkBlobZlibRoundTrips() {
+    // Resource-fork (decmpfs ZLIB_RSRC algo 4) blob codec: build the com.apple.ResourceFork
+    // "cmpf" blob for payloads spanning several 64 KiB chunks and parse it back byte-exact.
+    // Covers compressible, incompressible (stored-fallback chunks), and exact chunk-boundary
+    // sizes -- the same block table + chunk framing the macOS kernel and apfsck decode.
+    const int block = sak::kApfsCompressBlockSize;
+    QVector<QByteArray> payloads;
+    // Multi-chunk compressible (spans 4 chunks with a partial final chunk).
+    QByteArray compressible;
+    while (compressible.size() < 3 * block + 12'345) {
+        compressible.append(QByteArrayLiteral("the quick brown fox jumps over the lazy dog. "));
+    }
+    payloads.append(compressible);
+    // Exactly two full chunks (final chunk is a full block, not a remainder).
+    payloads.append(QByteArray(2 * block, 'A'));
+    // Incompressible: pseudo-random bytes force the 0xFF stored-block fallback per chunk.
+    QByteArray incompressible(block + 4096, '\0');
+    quint32 state = 0x1'23'45'67u;
+    for (qsizetype i = 0; i < incompressible.size(); ++i) {
+        state = state * 1'103'515'245u + 12'345u;
+        incompressible[i] = static_cast<char>((state >> 16) & 0xFF);
+    }
+    payloads.append(incompressible);
+
+    for (const QByteArray& payload : payloads) {
+        const QByteArray blob = sak::apfsBuildResourceForkBlob(payload, sak::kApfsCompressZlibRsrc);
+        QVERIFY2(!blob.isEmpty(), "resource-fork blob build must succeed for a non-empty payload");
+        const auto parsed = sak::apfsParseResourceForkBlob(blob,
+                                                           sak::kApfsCompressZlibRsrc,
+                                                           static_cast<uint64_t>(payload.size()));
+        QVERIFY2(parsed.has_value(), "resource-fork blob must parse back");
+        QCOMPARE(*parsed, payload);
+    }
+}
+
+void PartitionManagerCoreTests::apfsResourceForkBlobLayoutMatchesApfsck() {
+    // Assert the exact on-disk arithmetic the macOS kernel / apfsck compress.c rely on, so a
+    // structural regression is caught locally (apfsck deep-validates ZLIB_RSRC). Payload spans
+    // three 64 KiB chunks plus a remainder.
+    const int block = sak::kApfsCompressBlockSize;
+    QByteArray payload;
+    while (payload.size() < 3 * block + 777) {
+        payload.append(QByteArrayLiteral("compress me please, and again, and again. "));
+    }
+    const QByteArray blob = sak::apfsBuildResourceForkBlob(payload, sak::kApfsCompressZlibRsrc);
+    QVERIFY(!blob.isEmpty());
+
+    // apfs_compress_rsrc_hdr is big-endian; rsrc_data starts at data_offs (== header size).
+    const quint32 dataOffs = qFromBigEndian<quint32>(blob.constData());
+    const quint32 mgmtOffs = qFromBigEndian<quint32>(blob.constData() + 4);
+    const quint32 dataSize = qFromBigEndian<quint32>(blob.constData() + 8);
+    const quint32 mgmtSize = qFromBigEndian<quint32>(blob.constData() + 12);
+    QCOMPARE(dataOffs, static_cast<quint32>(sak::kApfsResourceForkDataOffset));
+    QCOMPARE(mgmtSize, 0u);
+    // data_offs + data_size delimits the whole blob (kernel bounds-checks data_end <= size).
+    QCOMPARE(static_cast<qint64>(dataOffs) + dataSize, static_cast<qint64>(blob.size()));
+    QCOMPARE(mgmtOffs, dataOffs + dataSize);
+
+    // apfs_compress_rsrc_data is little-endian: unknown, then the block count.
+    const char* dataArea = blob.constData() + dataOffs;
+    const quint32 num = qFromLittleEndian<quint32>(dataArea + 4);
+    const quint32 expectedChunks = static_cast<quint32>((payload.size() + block - 1) / block);
+    QCOMPARE(num, expectedChunks);
+
+    // Block i's compressed bytes sit at data_offs + block[i].offs + 4, contiguously, with the
+    // first chunk immediately after the block table. Each begins 0x78 (zlib) or has low nibble
+    // 0x0F (stored) -- exactly what apfs_compress_read_block dispatches on.
+    qint64 walk = static_cast<qint64>(dataOffs) + sak::kApfsResourceForkDataPrefixBytes +
+                  static_cast<qint64>(num) * sak::kApfsResourceForkBlockEntryBytes;
+    for (quint32 i = 0; i < num; ++i) {
+        const char* entry = dataArea + sak::kApfsResourceForkDataPrefixBytes +
+                            i * sak::kApfsResourceForkBlockEntryBytes;
+        const quint32 offs = qFromLittleEndian<quint32>(entry);
+        const quint32 size = qFromLittleEndian<quint32>(entry + 4);
+        const qint64 chunkStart = static_cast<qint64>(dataOffs) + offs + 4;
+        QCOMPARE(chunkStart, walk);
+        QVERIFY(chunkStart + size <= blob.size());
+        const auto firstByte = static_cast<uint8_t>(blob.at(static_cast<qsizetype>(chunkStart)));
+        QVERIFY2(firstByte == 0x78 || (firstByte & 0x0F) == 0x0F,
+                 "each resource chunk must be a zlib stream or a stored block");
+        walk += size;
+    }
+    QCOMPARE(walk, static_cast<qint64>(blob.size()));
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {
