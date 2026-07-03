@@ -6,6 +6,7 @@
 
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
@@ -1855,6 +1856,9 @@ private Q_SLOTS:
     void apfsResourceForkBlobZlibRoundTrips();
     void apfsResourceForkBlobLayoutMatchesApfsck();
     void apfsWriter_resourceForkZlibCompressedFileRoundTrips();
+    void apfsLzbitmapCodecRoundTrips();
+    void apfsLzbitmapResourceForkLayoutMatchesApfsck();
+    void apfsWriter_lzbitmapCompressedFileRoundTrips();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12716,6 +12720,129 @@ void PartitionManagerCoreTests::apfsResourceForkBlobLayoutMatchesApfsck() {
         walk += size;
     }
     QCOMPARE(walk, static_cast<qint64>(blob.size()));
+}
+
+void PartitionManagerCoreTests::apfsLzbitmapCodecRoundTrips() {
+    // LZBITMAP (decmpfs algo 14) resource-fork container: build the block_offs[] table + per-block
+    // LZBITMAP streams for payloads spanning several 64 KiB blocks and parse them back byte-exact.
+    // The clean-room zbm chunk codec is separately cross-validated against the reference (eafer
+    // MIT) decoder/encoder; this covers the container plus the stored-block fallback. Covers
+    // compressible, incompressible (0xFF stored blocks), single-block, and exact-boundary sizes.
+    const int block = sak::kApfsLzbitmapBlockSize;
+    QVector<QByteArray> payloads;
+    // Multi-block compressible (spans 3 blocks + a partial remainder).
+    QByteArray compressible;
+    while (compressible.size() < 2 * block + 9876) {
+        compressible.append(QByteArrayLiteral("the quick brown fox jumps over the lazy dog. "));
+    }
+    payloads.append(compressible);
+    payloads.append(QByteArray(2 * block, 'Z'));  // two full blocks, no remainder
+    payloads.append(QByteArray(777, '\0'));       // single small block, highly compressible
+    payloads.append(QByteArray(block, 'Q'));      // exactly one full block
+    // Incompressible: pseudo-random bytes force the 0xFF stored-block fallback per block.
+    QByteArray incompressible(block + 4096, '\0');
+    quint32 state = 0x0B'AD'F0'0Du;
+    for (qsizetype i = 0; i < incompressible.size(); ++i) {
+        state = state * 1'103'515'245u + 12'345u;
+        incompressible[i] = static_cast<char>((state >> 16) & 0xFF);
+    }
+    payloads.append(incompressible);
+
+    for (const QByteArray& payload : payloads) {
+        const QByteArray blob = sak::apfsBuildLzbitmapResourceFork(payload);
+        QVERIFY2(!blob.isEmpty(),
+                 "lzbitmap resource fork build must succeed for a non-empty payload");
+        const auto parsed =
+            sak::apfsParseLzbitmapResourceFork(blob, static_cast<uint64_t>(payload.size()));
+        QVERIFY2(parsed.has_value(), "lzbitmap resource fork must parse back");
+        QCOMPARE(*parsed, payload);
+    }
+}
+
+void PartitionManagerCoreTests::apfsLzbitmapResourceForkLayoutMatchesApfsck() {
+    // Assert the exact block_offs[] table layout apfsck's apfs_compress_open parses for
+    // APFS_COMPRESS_LZBITMAP_RSRC: (block_num + 1) little-endian u32 offsets, the last equal to
+    // the dstream size; the first block immediately after the table; each block begins 0x5A (the
+    // "ZBM" magic byte) or has low nibble 0x0F (stored); offsets strictly increase and each block
+    // stays within the APFS_COMPRESS_BLOCK + 1 bound apfs_compress_read_block enforces.
+    const int block = sak::kApfsLzbitmapBlockSize;
+    QByteArray payload;
+    while (payload.size() < 3 * block + 555) {
+        payload.append(QByteArrayLiteral("compress me with lzbitmap, and again, and again. "));
+    }
+    const QByteArray blob = sak::apfsBuildLzbitmapResourceFork(payload);
+    QVERIFY(!blob.isEmpty());
+
+    const int blockCount = static_cast<int>((payload.size() + block - 1) / block);
+    const int tableBytes = (blockCount + 1) * static_cast<int>(sizeof(quint32));
+    QVERIFY(blob.size() >= tableBytes);
+
+    qint64 prev = -1;
+    for (int i = 0; i <= blockCount; ++i) {
+        const quint32 offs = qFromLittleEndian<quint32>(blob.constData() + i * sizeof(quint32));
+        if (i == 0) {
+            QCOMPARE(static_cast<int>(offs), tableBytes);  // first block right after the table
+        }
+        if (i == blockCount) {
+            QCOMPARE(static_cast<qint64>(offs), static_cast<qint64>(blob.size()));  // end sentinel
+        } else {
+            QVERIFY(static_cast<qint64>(offs) > prev);  // strictly increasing block starts
+        }
+        prev = offs;
+    }
+    for (int i = 0; i < blockCount; ++i) {
+        const quint32 coffs = qFromLittleEndian<quint32>(blob.constData() + i * sizeof(quint32));
+        const quint32 next =
+            qFromLittleEndian<quint32>(blob.constData() + (i + 1) * sizeof(quint32));
+        const qint64 csize = static_cast<qint64>(next) - coffs;
+        QVERIFY(csize > 0 && csize <= sak::kApfsLzbitmapMaxBlockBytes);
+        const auto firstByte = static_cast<uint8_t>(blob.at(static_cast<qsizetype>(coffs)));
+        QVERIFY2(
+            firstByte == 0x5A || (firstByte & 0x0F) == 0x0F,
+            "each lzbitmap block must be a ZBM stream (0x5A) or a stored block (low nibble 0xF)");
+    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_lzbitmapCompressedFileRoundTrips() {
+    // LZBITMAP write+read (clean-room algo 14): --compress-lzbitmap stores the payload as a
+    // com.apple.ResourceFork data stream holding the block_offs[] table + per-block LZBITMAP
+    // streams. LZBITMAP is resource-only, so this path is used regardless of size. The inode is
+    // UF_COMPRESSED + HAS_RSRC_FORK, the blob extents owned by a fresh xattr object id. The S.A.K.
+    // reader assembles the blob and decodes it byte-exact; apfsck compress.c links libzbitmap and
+    // deep-validates every block (SAK_LZBITMAP_CERT_DIR persists the image); kernel md5 batched.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_LZBITMAP_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("lzbitmap.img"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("Lzbm"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    // ~300 KiB of varied-but-compressible lines: spans multiple 64 KiB blocks so the block_offs
+    // table has several entries and at least one full non-final block.
+    QByteArray payload;
+    for (int i = 0; payload.size() < 300'000; ++i) {
+        payload.append(
+            QByteArrayLiteral("the quick brown fox jumps over the lazy dog line number "));
+        payload.append(QByteArray::number(i));
+        payload.append('\n');
+    }
+    const auto insert =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("big.txt"),
+                                                  .file_data = payload,
+                                                  .compress_lzbitmap = true,
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/big.txt"), static_cast<int>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_multiNodeExtentRefTreeRoundTrips() {

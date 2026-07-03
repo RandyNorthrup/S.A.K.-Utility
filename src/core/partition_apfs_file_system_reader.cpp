@@ -9,6 +9,7 @@
 #include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_raw_device_io.h"
@@ -915,8 +916,12 @@ private:
         if (!blob.has_value()) {
             return false;
         }
+        // LZBITMAP (algo 14) stores its resource fork as a bare le32 block_offs[] table, not the
+        // "cmpf" rsrc_hdr/rsrc_data blob the other resource algorithms share.
         const auto decoded =
-            apfsParseResourceForkBlob(*blob, header.algo, header.uncompressed_size);
+            header.algo == kApfsCompressLzbitmapRsrc
+                ? apfsParseLzbitmapResourceFork(*blob, header.uncompressed_size)
+                : apfsParseResourceForkBlob(*blob, header.algo, header.uncompressed_size);
         if (!decoded.has_value()) {
             result->blockers.append(
                 QStringLiteral("APFS resource-fork (algorithm %1) decode failed").arg(header.algo));

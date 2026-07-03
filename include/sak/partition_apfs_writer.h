@@ -496,6 +496,10 @@ struct PartitionApfsImageFileInsertCommitRequest {
     // A5 follow-on: store the payload inline LZVN-compressed (decmpfs algo 7). Highest
     // precedence of the compressors. Same embedded-xattr size limit.
     bool compress_lzvn{false};
+    // A5 follow-on: store the payload LZBITMAP-compressed (decmpfs algo 14) in a
+    // com.apple.ResourceFork data stream. LZBITMAP is resource-only, so unlike the inline
+    // compressors it has no embedded-xattr size limit and works for arbitrary file sizes.
+    bool compress_lzbitmap{false};
     // A7 (A-h): arbitrary named extended attributes attached to the inserted file
     // (ACL in com.apple.system.Security, com.apple.FinderInfo, user xattrs). Each is
     // stored embedded; the matching inode flag (HAS_SECURITY_EA / HAS_FINDER_INFO)
@@ -628,6 +632,8 @@ struct PartitionApfsRawFileInsertCommitRequest {
     bool compress_lzfse{false};
     // A5 follow-on: inline LZVN (decmpfs algo 7); highest precedence of the compressors.
     bool compress_lzvn{false};
+    // A5 follow-on: LZBITMAP (decmpfs algo 14) resource fork; resource-only, no size limit.
+    bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

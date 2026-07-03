@@ -9,6 +9,7 @@
 #include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
@@ -6893,6 +6894,10 @@ struct ApfsFileInsertBuildInputs {
     // A5 follow-on: store the payload inline LZVN-compressed (decmpfs algo 7). Highest
     // precedence of the three compressors when more than one flag is set.
     bool compressLzvn{false};
+    // A5 follow-on: store the payload LZBITMAP-compressed (decmpfs algo 14) in a
+    // com.apple.ResourceFork data stream. LZBITMAP is resource-only (no inline form), so this
+    // always uses a resource fork; highest precedence, being an explicit algorithm request.
+    bool compressLzbitmap{false};
 };
 
 // Build the embedded com.apple.decmpfs value for an inline LZFSE-compressed file: the 16-byte
@@ -6974,27 +6979,40 @@ bool applyInlineDecmpfsToRequest(ApfsFileInsertRequest* request,
     return true;
 }
 
-// Stamp a resource-fork-compressed file onto the request: the "cmpf" blob becomes the payload
-// (allocated + written as data, its extents owned by a fresh xattr object id), decmpfsXattr is
-// the bare 16-byte header (algo *_RSRC), and the inode is UF_COMPRESSED at the original size.
-// Used when the compressed content would exceed the 3804-byte embedded-xattr limit.
-bool applyResourceForkToRequest(ApfsFileInsertRequest* request,
-                                const QByteArray& data,
-                                uint32_t algo,
-                                QStringList* blockers) {
-    const QByteArray blob = apfsBuildResourceForkBlob(data, algo);
+// Stamp a pre-built resource-fork blob onto the request: the blob becomes the payload (allocated +
+// written as data, its extents owned by a fresh xattr object id), decmpfsXattr is the bare 16-byte
+// header (algo *_RSRC), and the inode is UF_COMPRESSED at the original size. Shared by the cmpf
+// (zlib/lzvn/lzfse) and LZBITMAP resource paths; fails closed on an empty blob.
+bool stampResourceForkRequest(ApfsFileInsertRequest* request,
+                              const QByteArray& blob,
+                              uint32_t algo,
+                              uint64_t uncompressedSize,
+                              QStringList* blockers) {
     if (blob.isEmpty()) {
-        blockers->append(QStringLiteral("APFS resource-fork compression: could not build the cmpf "
-                                        "blob (unsupported algorithm %1 or empty payload)")
+        blockers->append(QStringLiteral("APFS resource-fork compression: could not build the "
+                                        "resource blob (unsupported algorithm %1 or empty payload)")
                              .arg(algo));
         return false;
     }
     request->compressed = true;
     request->resourceFork = true;
     request->fileData = blob;
-    request->decmpfsXattr = apfsBuildDecmpfsHeader(algo, static_cast<uint64_t>(data.size()));
-    request->uncompressedSize = static_cast<uint64_t>(data.size());
+    request->decmpfsXattr = apfsBuildDecmpfsHeader(algo, uncompressedSize);
+    request->uncompressedSize = uncompressedSize;
     return true;
+}
+
+// Resource-fork compression via the Apple "cmpf" blob (ZLIB_RSRC and the lzvn/lzfse resource
+// variants). Used when the compressed content would exceed the 3804-byte embedded-xattr limit.
+bool applyResourceForkToRequest(ApfsFileInsertRequest* request,
+                                const QByteArray& data,
+                                uint32_t algo,
+                                QStringList* blockers) {
+    return stampResourceForkRequest(request,
+                                    apfsBuildResourceForkBlob(data, algo),
+                                    algo,
+                                    static_cast<uint64_t>(data.size()),
+                                    blockers);
 }
 
 // Build the in-place insert request for a (possibly compressed) file. When a compressor is
@@ -7017,6 +7035,15 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
         request->sparseLogicalSize = in.sparseLogicalSize;
     }
     const uint64_t size = static_cast<uint64_t>(in.fileData.size());
+    if (in.compressLzbitmap) {
+        // LZBITMAP (decmpfs algo 14) is resource-only: the block_offs container is always a
+        // com.apple.ResourceFork data stream, regardless of size.
+        return stampResourceForkRequest(request,
+                                        apfsBuildLzbitmapResourceFork(in.fileData),
+                                        kApfsCompressLzbitmapRsrc,
+                                        size,
+                                        blockers);
+    }
     if (in.compressLzvn) {
         bool fits = false;
         const QByteArray value = apfsBuildInlineLzvnDecmpfs(in.fileData, &fits);
@@ -17555,7 +17582,6 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                    &result.blockers)) {
         return result;
     }
-
     QFile image;
     if (!openScratchImage(result.written_image_path,
                           QLatin1StringView("file-insert-commit"),
@@ -17573,7 +17599,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .sparseLogicalSize = request.sparse_logical_size,
                                 .parentDirectoryId = parentDirectoryId,
                                 .compressLzfse = request.compress_lzfse,
-                                .compressLzvn = request.compress_lzvn},
+                                .compressLzvn = request.compress_lzvn,
+                                .compressLzbitmap = request.compress_lzbitmap},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();
@@ -17965,7 +17992,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
                                 .compress = request.compress_zlib,
                                 .parentDirectoryId = parentDirectoryId,
                                 .compressLzfse = request.compress_lzfse,
-                                .compressLzvn = request.compress_lzvn},
+                                .compressLzvn = request.compress_lzvn,
+                                .compressLzbitmap = request.compress_lzbitmap},
                                &result);
     target->close();
     result.ok = result.blockers.isEmpty();

@@ -413,6 +413,7 @@ struct CliInvocation {
     bool compress_zlib{false};
     bool compress_lzfse{false};
     bool compress_lzvn{false};
+    bool compress_lzbitmap{false};
     uint64_t sparse_logical_size{0};
     QVector<QPair<QByteArray, QByteArray>> xattrs;
 };
@@ -456,6 +457,7 @@ struct CliParserOptions {
     const QCommandLineOption* compress_zlib{nullptr};
     const QCommandLineOption* compress_lzfse{nullptr};
     const QCommandLineOption* compress_lzvn{nullptr};
+    const QCommandLineOption* compress_lzbitmap{nullptr};
     const QCommandLineOption* volume_password{nullptr};
     const QCommandLineOption* recovery_key{nullptr};
     const QCommandLineOption* volume_password_file{nullptr};
@@ -621,6 +623,7 @@ std::optional<CliInvocation> invocationFromParser(const QCommandLineParser& pars
         .compress_zlib = parser.isSet(*options.compress_zlib),
         .compress_lzfse = parser.isSet(*options.compress_lzfse),
         .compress_lzvn = parser.isSet(*options.compress_lzvn),
+        .compress_lzbitmap = parser.isSet(*options.compress_lzbitmap),
         .sparse_logical_size = parser.value(*options.sparse_size).toULongLong(),
         .xattrs = parseXattrOptions(parser.values(*options.xattr))};
 }
@@ -1510,6 +1513,7 @@ std::optional<QJsonObject> buildCommitFileInsertReport(const CliInvocation& invo
          .compress_zlib = invocation.compress_zlib,
          .compress_lzfse = invocation.compress_lzfse,
          .compress_lzvn = invocation.compress_lzvn,
+         .compress_lzbitmap = invocation.compress_lzbitmap,
          .xattrs = invocation.xattrs,
          .sparse_logical_size = invocation.sparse_logical_size,
          .options = imageWriteOptions(invocation.evidence_id)});
@@ -1714,6 +1718,7 @@ std::optional<QJsonObject> buildCommitRawFileInsertReport(const CliInvocation& i
          .compress_zlib = invocation.compress_zlib,
          .compress_lzfse = invocation.compress_lzfse,
          .compress_lzvn = invocation.compress_lzvn,
+         .compress_lzbitmap = invocation.compress_lzbitmap,
          .target_mutation_confirmed = invocation.confirm_target,
          .allow_raw_device_target = invocation.allow_raw_target,
          .options = rawWriteOptions(invocation.evidence_id)});
@@ -2336,6 +2341,10 @@ struct CliOptions {
         {QStringLiteral("compress-lzvn")},
         QStringLiteral("Store the inserted file transparently compressed (inline LZVN, "
                        "com.apple.decmpfs algo 7); takes precedence over --compress-lzfse.")};
+    QCommandLineOption compressLzbitmap{
+        {QStringLiteral("compress-lzbitmap")},
+        QStringLiteral("Store the inserted file transparently compressed (LZBITMAP, "
+                       "com.apple.decmpfs algo 14, resource fork); works for any file size.")};
     QCommandLineOption volumePassword{
         {QStringLiteral("volume-password")},
         QStringLiteral("Format a software-encrypted (FileVault) volume unlockable by this "
@@ -2396,6 +2405,7 @@ void registerCliOptions(QCommandLineParser& parser, CliOptions& options) {
                        options.compressZlib,
                        options.compressLzfse,
                        options.compressLzvn,
+                       options.compressLzbitmap,
                        options.volumePassword,
                        options.recoveryKey,
                        options.volumePasswordFile,
@@ -2441,6 +2451,7 @@ std::optional<CliInvocation> parseCliInvocation(const QCommandLineParser& parser
                                  .compress_zlib = &options.compressZlib,
                                  .compress_lzfse = &options.compressLzfse,
                                  .compress_lzvn = &options.compressLzvn,
+                                 .compress_lzbitmap = &options.compressLzbitmap,
                                  .volume_password = &options.volumePassword,
                                  .recovery_key = &options.recoveryKey,
                                  .volume_password_file = &options.volumePasswordFile,
