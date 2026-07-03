@@ -1814,6 +1814,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
+    void apfsWriter_inPlaceMultiSnapshotDelete();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
@@ -9796,6 +9797,69 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotCreate() {
         PartitionApfsFileSystemReader::listDirectoryFromImage(snap3, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("MULTISNAP"));
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {
+    // Delete one snapshot of several by name: the target's records + omap-snapshot entry are
+    // stripped and its frozen blocks freed, while the kept snapshots' trees are rebuilt (not
+    // cleared) and num_snapshots drops by one. Deleting the MIDDLE of three then the rest
+    // exercises the rebuild path down to the snapshot-free state. SAK_MULTISNAPDEL_CERT_DIR
+    // persists the 2-snapshot result for host apfsck.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_MULTISNAPDEL_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("msdel-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("MSDEL"),
+                 .options = options})
+                .ok);
+    auto snap = [&](const QString& src, const QString& out, const QString& name) {
+        return PartitionApfsWriter::commitImageOnlySnapshotCreate(
+            {.source_image_path = src,
+             .written_image_path = out,
+             .snapshot_name = name,
+             .create_time_ns = 1'782'096'003'133'454'505ULL,
+             .options = options});
+    };
+    const QString s1 = dir.filePath(QStringLiteral("msdel-1.apfs"));
+    const QString s2 = dir.filePath(QStringLiteral("msdel-2.apfs"));
+    const QString s3 = dir.filePath(QStringLiteral("msdel-3.apfs"));
+    QVERIFY(snap(base, s1, QStringLiteral("snap-one")).ok);
+    QVERIFY(snap(s1, s2, QStringLiteral("snap-two")).ok);
+    QVERIFY(snap(s2, s3, QStringLiteral("snap-three")).ok);
+
+    auto del = [&](const QString& src, const QString& out, const QString& name) {
+        return PartitionApfsWriter::commitImageOnlySnapshotDelete({.source_image_path = src,
+                                                                   .written_image_path = out,
+                                                                   .snapshot_name = name,
+                                                                   .options = options});
+    };
+    const QString xImg = dir.filePath(QStringLiteral("msdel-x.apfs"));
+    // A missing name on a multi-snapshot volume, and an unknown name, both fail closed.
+    QVERIFY(!del(s3, xImg, QString()).ok);
+    QVERIFY(!del(s3, xImg, QStringLiteral("nope")).ok);
+
+    // Delete the MIDDLE snapshot: two remain, trees rebuilt.
+    const QString del1 = dir.filePath(QStringLiteral("multisnapdel.img"));
+    const auto d1 = del(s3, del1, QStringLiteral("snap-two"));
+    QVERIFY2(d1.ok, qPrintable(d1.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(del1, apfsApsbBlockOf(del1)), 0xD8), 2ULL);
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(del1, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+
+    // Delete the remaining two, ending snapshot-free.
+    const QString del2 = dir.filePath(QStringLiteral("msdel-d2.apfs"));
+    const QString del3 = dir.filePath(QStringLiteral("msdel-d3.apfs"));
+    QVERIFY(del(del1, del2, QStringLiteral("snap-one")).ok);
+    const auto d3 = del(del2, del3, QStringLiteral("snap-three"));
+    QVERIFY2(d3.ok, qPrintable(d3.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(del3, apfsApsbBlockOf(del3)), 0xD8), 0ULL);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState() {
