@@ -1816,6 +1816,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
     void apfsWriter_inPlaceMultiSnapshotDelete();
+    void apfsWriter_multiSnapshotDeleteOwnerWithFile();
     void apfsWriter_inPlaceMultiSnapshotRevert();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
@@ -9866,6 +9867,60 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {
     const auto d3 = del(del2, del3, QStringLiteral("snap-three"));
     QVERIFY2(d3.ok, qPrintable(d3.blockers.join(QStringLiteral("; "))));
     QCOMPARE(apfsLe64(readApfsImageBlock(del3, apfsApsbBlockOf(del3)), 0xD8), 0ULL);
+}
+
+void PartitionManagerCoreTests::apfsWriter_multiSnapshotDeleteOwnerWithFile() {
+    // Regression: on a volume WITH a file, snapshot-create leaves each new live extent-ref tree
+    // empty, so the OLDEST snapshot owns the file's physical-extent (KIND_NEW) records. Deleting
+    // that owner while others remain must RE-HOME its extent-ref tree onto the next-oldest kept
+    // snapshot; freeing it (the prior behaviour, only ever exercised on fileless volumes) left
+    // the live volume with no extent coverage (host apfsck: "Logical extent record: doesn't seem
+    // covered by any physical extent"). Host apfsck-clean + Apple-kernel clean (macOS 15.7.4).
+    // SAK_SNAPDELOWNER_CERT_DIR persists the result for host apfsck.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_SNAPDELOWNER_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("sdo-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SDO"),
+                 .options = options})
+                .ok);
+    const QByteArray payload = QByteArray("snap-owner-delete-").repeated(400);
+    const QString withFile = dir.filePath(QStringLiteral("sdo-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    auto snap = [&](const QString& src, const QString& out, const QString& name) {
+        return PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = src,
+                                                                   .written_image_path = out,
+                                                                   .snapshot_name = name,
+                                                                   .options = options});
+    };
+    const QString s1 = dir.filePath(QStringLiteral("sdo-1.apfs"));
+    const QString s2 = dir.filePath(QStringLiteral("sdo-2.apfs"));
+    QVERIFY(snap(withFile, s1, QStringLiteral("own-a")).ok);
+    QVERIFY(snap(s1, s2, QStringLiteral("own-b")).ok);
+    // Delete the OWNER (oldest, own-a): one snapshot remains and the file must still read back.
+    const QString del = dir.filePath(QStringLiteral("snapdelowner.img"));
+    const auto d = PartitionApfsWriter::commitImageOnlySnapshotDelete(
+        {.source_image_path = s2,
+         .written_image_path = del,
+         .snapshot_name = QStringLiteral("own-a"),
+         .options = options});
+    QVERIFY2(d.ok, qPrintable(d.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(del, apfsApsbBlockOf(del)), 0xD8), 1ULL);
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        del, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotRevert() {

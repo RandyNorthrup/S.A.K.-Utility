@@ -9335,7 +9335,7 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
         return false;
     }
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
@@ -9575,6 +9575,10 @@ struct ApfsSnapshotDeleteFinalize {
     // non-empty the trees are rebuilt (newBlocks[5] is the new omap-snapshot tree) and the
     // deleted snapshot's extent-ref tree is freed instead of the live one.
     QVector<ApfsSnapshotMetadata> remaining;
+    // When deleting the records-owning (oldest) snapshot while others remain, its extent-ref
+    // tree is re-homed onto the next-oldest kept snapshot and THIS now-orphaned empty tree is
+    // freed instead of the deleted snapshot's (records-bearing) tree. 0 = no re-home.
+    uint64_t reHomedFreedExtentRef{0};
 };
 
 // Snapshot-delete commit tail: write the COW chain, then advance the checkpoint. Deleting the
@@ -9608,9 +9612,12 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
                                f.omapSnapTree,
                                f.frozen.sblockOid};
     // Deleting the last snapshot re-adopts its extent-ref tree into the live volume, so the
-    // orphaned empty live tree is freed instead. While snapshots remain, the live tree stays
-    // and the deleted snapshot's own extent-ref tree is freed.
-    freed.append(keepsSnapshots ? f.frozen.extentRefOid : ctx.chain.extentRef);
+    // orphaned empty live tree is freed instead. While snapshots remain, the deleted snapshot's
+    // own (empty) tree is freed; but when the deleted snapshot was the records OWNER, its tree
+    // was re-homed onto the next-oldest kept snapshot and the orphaned empty tree is freed here.
+    const uint64_t keptFreed = f.reHomedFreedExtentRef != 0 ? f.reHomedFreedExtentRef
+                                                            : f.frozen.extentRefOid;
+    freed.append(keepsSnapshots ? keptFreed : ctx.chain.extentRef);
     return commitSnapshotCheckpointTail({.ctx = ctx,
                                          .newXid = newXid,
                                          .freed = freed,
@@ -9658,12 +9665,41 @@ bool selectSnapshotToDelete(const QVector<ApfsSnapshotMetadata>& all,
 // volume to its snapshot-free state (the last snapshot) or rebuilds the snapshot trees with
 // the kept snapshots. @snapshotName selects the snapshot (empty = the sole one); required on
 // a multi-snapshot volume.
+// The oldest (minimum-xid) snapshot owns the shared physical-extent (KIND_NEW) records:
+// snapshot-create leaves every newer live extent-ref tree empty, so all coverage sits in the
+// oldest snapshot's tree. Deleting that owner while others remain must RE-HOME its extent-ref
+// tree onto the next-oldest kept snapshot (which holds an empty tree) instead of freeing it,
+// otherwise the live volume and every kept snapshot lose their physical-extent coverage
+// (apfsck: "Logical extent record: doesn't seem covered by any physical extent"). Mutates
+// `remaining` to point the new owner at the records and returns the now-orphaned empty tree to
+// free; returns 0 when the target is not the owner (its own tree is empty and is freed as-is).
+uint64_t reHomeSnapshotExtentRef(const ApfsSnapshotMetadata& target,
+                                 QVector<ApfsSnapshotMetadata>* remaining) {
+    if (remaining->isEmpty()) {
+        return 0;
+    }
+    for (const ApfsSnapshotMetadata& snap : *remaining) {
+        if (snap.snapXid < target.snapXid) {
+            return 0;
+        }
+    }
+    qsizetype newOwner = 0;
+    for (qsizetype i = 1; i < remaining->size(); ++i) {
+        if (remaining->at(i).snapXid < remaining->at(newOwner).snapXid) {
+            newOwner = i;
+        }
+    }
+    const uint64_t orphanedEmptyTree = (*remaining)[newOwner].extentRefTreeOid;
+    (*remaining)[newOwner].extentRefTreeOid = target.extentRefTreeOid;
+    return orphanedEmptyTree;
+}
+
 bool commitInPlaceSnapshotDelete(QIODevice* image,
                                  const QString& snapshotName,
                                  ApfsInPlaceCheckpointResult* result,
                                  QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
@@ -9695,6 +9731,9 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
     const ApfsSnapshotFrozenRefs frozen{.sblockOid = target.sblockOid,
                                         .extentRefOid = target.extentRefTreeOid,
                                         .found = true};
+    // Re-home the shared extent-ref tree if the deleted snapshot is the records owner (mutates
+    // `remaining` so the rebuilt snap-meta points the new owner at the records).
+    const uint64_t reHomedFreed = reHomeSnapshotExtentRef(target, &remaining);
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     // Keeping snapshots needs one extra block for the rebuilt omap-snapshot tree.
@@ -9708,7 +9747,8 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
                                    .frozen = frozen,
                                    .newBlocks = newBlocks,
                                    .chunk1BitmapBlock = chunk1BitmapBlock,
-                                   .remaining = remaining},
+                                   .remaining = remaining,
+                                   .reHomedFreedExtentRef = reHomedFreed},
                                   result,
                                   blockers);
 }
@@ -9869,7 +9909,7 @@ bool commitInPlaceSnapshotRevert(QIODevice* image,
                                  ApfsInPlaceCheckpointResult* result,
                                  QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers)) {
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
