@@ -9497,6 +9497,168 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                              blockers);
 }
 
+// The lowest block of a run of `count` free blocks in chunk 0's bitmap at or above `minStart`,
+// below `limit`; 0 if none. A shrink relocates the internal pool into surviving chunk-0 free
+// space (the removed high chunks are then truncated away).
+uint64_t findFreeRunInChunk0(const QByteArray& bitmap,
+                             uint64_t count,
+                             uint64_t minStart,
+                             uint64_t limit) {
+    uint64_t run = 0;
+    uint64_t start = 0;
+    for (uint64_t b = minStart; b < limit; ++b) {
+        const bool used =
+            ((static_cast<uint8_t>(bitmap.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
+        if (used) {
+            run = 0;
+            continue;
+        }
+        if (run == 0) {
+            start = b;
+        }
+        if (++run == count) {
+            return start;
+        }
+    }
+    return 0;
+}
+
+// Validate a chunk-removing shrink is in scope and (via the source cib) that all data lives in
+// chunk 0, so the surviving chunks 1..newChunks-1 and every removed chunk are all-free. Returns
+// the source chunk states (chunk 0's free count feeds the rebuilt cib).
+bool validateShrinkScope(ApfsFsCommitContext* ctx,
+                         uint64_t newBlockCount,
+                         uint64_t oldChunks,
+                         QVector<ApfsSourceChunkState>* src,
+                         QStringList* blockers) {
+    const uint64_t newChunks = newBlockCount / kApfsSpacemanBlocksPerChunk;
+    if (newBlockCount % kApfsSpacemanBlocksPerChunk != 0 || newChunks < 2) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: the target must be a multiple of the chunk size and at least two "
+            "chunks (in-chunk shrink is a later increment)"));
+        return false;
+    }
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 ||
+        cibCountForChunks(newChunks) != 1) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: only a single-CIB container is supported (later increment)"));
+        return false;
+    }
+    if (!readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
+        return false;
+    }
+    for (uint64_t k = 1; k < oldChunks; ++k) {
+        if (src->at(static_cast<qsizetype>(k)).bitmapAddr != 0) {
+            blockers->append(QStringLiteral(
+                "APFS resize-shrink: shrinking a container with data past chunk 0 is a later "
+                "increment"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Validate a chunk-removing shrink and lay out its plan: the relocated pool base is a free run
+// in surviving chunk-0 free space, the block counts drop to newChunkCount.
+bool buildShrinkPlan(ApfsFsCommitContext* ctx,
+                     uint64_t newBlockCount,
+                     ApfsChunkAddingGrowPlan* plan,
+                     QStringList* blockers) {
+    const uint64_t oldChunks = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    QVector<ApfsSourceChunkState> src;
+    if (!validateShrinkScope(ctx, newBlockCount, oldChunks, &src, blockers)) {
+        return false;
+    }
+    plan->newBlockCount = newBlockCount;
+    plan->newChunkCount = newBlockCount / kApfsSpacemanBlocksPerChunk;
+    plan->newXid = ctx->live.xid + 1;
+    plan->newIpBlockCount = 3 * (plan->newChunkCount + 1);
+    plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan->oldIpBlockCount = 3 * (oldChunks + 1);
+    QByteArray chunk0(ctx->geometry.blockSize, '\0');
+    if (plan->oldIpBase == 0 ||
+        !readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
+        blockers->append(QStringLiteral("APFS resize-shrink: unable to read the source allocator"));
+        return false;
+    }
+    plan->newIpBase = findFreeRunInChunk0(
+        chunk0, plan->newIpBlockCount, ctx->layout.seedData, kApfsSpacemanBlocksPerChunk);
+    if (plan->newIpBase == 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: no free run in chunk 0 for the relocated internal pool"));
+        return false;
+    }
+    return true;
+}
+
+// A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
+// surviving chunk-0 free space, mirroring the chunk-adding grow (same crash-safe COW: write the
+// new allocator to free blocks, atomically re-anchor the nx_superblock, then truncate the dead
+// tail). The pool ends up in chunk 0 exactly like a fresh newChunks-chunk container.
+bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
+                               uint64_t newBlockCount,
+                               ApfsInPlaceCheckpointResult* result,
+                               QStringList* blockers) {
+    const uint64_t oldBlockCount = ctx->geometry.blockCount;
+    ApfsChunkAddingGrowPlan plan;
+    if (!buildShrinkPlan(ctx, newBlockCount, &plan, blockers)) {
+        return false;
+    }
+    const ApfsMainFqAdvance mainFq =
+        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    ApfsGrownAllocator alloc;
+    if (!buildGrownAllocatorSubtree(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
+        return false;
+    }
+    const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
+                              static_cast<int64_t>(plan.newIpBlockCount) +
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
+    if (!advanceCheckpoint({.image = ctx->image,
+                            .geometry = ctx->geometry,
+                            .nxsb = ctx->nxsb,
+                            .live = ctx->live,
+                            .newContainerOmap = 0,
+                            .spacemanFreeDelta = freeDelta,
+                            .nextOidAdvance = 0,
+                            .newCibAddr = alloc.liveCib,
+                            .cibCount = 1,
+                            .ipSlotStride = 2,
+                            .ipBitmapUsage = 2 * 2,
+                            .mainFqEntries = mainFq.entries,
+                            .blockCountDelta = static_cast<int64_t>(newBlockCount - oldBlockCount),
+                            .ipUsedSet = ipBitmapPrefixSet(2 * 2),
+                            .newChunkCount = plan.newChunkCount,
+                            .newIpBlockCount = plan.newIpBlockCount,
+                            .newIpBase = plan.newIpBase,
+                            .explicitIpFqEntries = ipFq},
+                           result,
+                           blockers)) {
+        return false;
+    }
+    auto* fileDevice = qobject_cast<QFileDevice*>(ctx->image);
+    if (fileDevice != nullptr &&
+        !fileDevice->resize(static_cast<qint64>(newBlockCount * ctx->geometry.blockSize))) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: unable to truncate the backing image"));
+        return false;
+    }
+    return true;
+}
+
+// Load the commit context and run a chunk-removing shrink (image-only; a raw block device
+// cannot be truncated, so raw shrink is not offered).
+bool commitInPlaceResizeShrinkImage(QIODevice* image,
+                                    uint64_t newBlockCount,
+                                    ApfsInPlaceCheckpointResult* result,
+                                    QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+        return false;
+    }
+    return commitInPlaceResizeShrink(&ctx, newBlockCount, result, blockers);
+}
+
 // A7 (A-g) container grow dispatcher. A grow that stays within the single chunk 0 takes the
 // in-chunk path; a single-chunk container crossing a 32768-block boundary takes the
 // chunk-adding path (relocate the internal pool into the grow region, add chunks). Growing a
@@ -17617,6 +17779,28 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
     return result;
 }
 
+// Dispatch an opened scratch image to the grow or shrink commit by comparing the requested size
+// to the current one. Returns whether a resize committed; commitBlockers explains any failure.
+bool runResizeCommit(QIODevice* image,
+                     uint64_t newSizeBytes,
+                     ApfsInPlaceCheckpointResult* commit,
+                     QStringList* commitBlockers) {
+    uint32_t blockSize = 0;
+    uint64_t oldBlockCount = 0;
+    if (!readApfsRepairGeometry(image, &blockSize, &oldBlockCount, commitBlockers)) {
+        return false;
+    }
+    if (blockSize != 0 && newSizeBytes % blockSize == 0 &&
+        newSizeBytes / blockSize < oldBlockCount) {
+        return commitInPlaceResizeShrinkImage(
+            image, newSizeBytes / blockSize, commit, commitBlockers);
+    }
+    const uint64_t growDelta = resolveResizeGrowDelta(image, newSizeBytes, commitBlockers);
+    return growDelta != 0 &&
+           commitInPlaceResizeGrow(
+               image, growDelta, /*deviceAlreadySized=*/false, commit, commitBlockers);
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyResize(
     const PartitionApfsImageResizeCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -17661,16 +17845,9 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyRes
                           &result.blockers)) {
         return result;
     }
-    const uint64_t growDelta =
-        resolveResizeGrowDelta(&image, request.new_size_bytes, &result.blockers);
-    if (growDelta == 0) {
-        image.close();
-        return result;
-    }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceResizeGrow(
-            &image, growDelta, /*deviceAlreadySized=*/false, &commit, &commitBlockers)) {
+    if (runResizeCommit(&image, request.new_size_bytes, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

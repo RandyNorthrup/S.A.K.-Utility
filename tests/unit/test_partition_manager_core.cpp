@@ -1832,6 +1832,7 @@ private Q_SLOTS:
     void apfsWriter_growsContainerInChunk();
     void apfsWriter_growsContainerAddingChunks();
     void apfsWriter_growsMultiChunkSourceContainer();
+    void apfsWriter_shrinksContainerDroppingChunks();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -11287,6 +11288,66 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
         spillGrown, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
     QVERIFY2(spilledRead.ok, qPrintable(spilledRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(spilledRead.data, big);
+}
+
+void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
+    // Chunk-removing shrink: a single-CIB container with data only in chunk 0 shrinks by dropping
+    // free high chunks and relocating the internal pool into surviving chunk-0 free space (same
+    // crash-safe COW as the grow, then the dead tail is truncated). apfsck-clean across
+    // 512->256 / 1024->256 / 1024->512 and Apple-kernel clean (macOS 15.7.4); the file reads back
+    // and the shrunk container is re-mutable. Shrinking a container with data past chunk 0 (a
+    // grown container's relocated pool included) fails closed - a later increment.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t k512 = 512ULL * 1024ULL * 1024ULL;  // 4 chunks
+    constexpr uint64_t k256 = 256ULL * 1024ULL * 1024ULL;  // 2 chunks
+    const QString base = dir.filePath(QStringLiteral("shr-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                            .target_container_bytes = k512,
+                                                            .block_size_bytes = kBlockSize,
+                                                            .volume_name = QStringLiteral("SHR"),
+                                                            .options = options})
+                .ok);
+    const QByteArray payload = QByteArray("shrink-live-").repeated(400);
+    const QString withFile = dir.filePath(QStringLiteral("shr-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    const QString shrunk = dir.filePath(QStringLiteral("shr-shrunk.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                                    .written_image_path = shrunk,
+                                                                    .new_size_bytes = k256,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QFile img(shrunk);
+    QVERIFY(img.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(img.size()), k256);
+    img.close();
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        shrunk, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+    // The shrunk container is re-mutable (relocated pool in chunk 0).
+    certifyPostGrowInsertReadsBack(dir, shrunk, options, payload);
+    // Shrinking a grown container (its relocated pool sits in a high chunk) fails closed.
+    const QString grown = dir.filePath(QStringLiteral("shr-grown.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                        .written_image_path = grown,
+                                                        .new_size_bytes = 1024ULL * 1024 * 1024,
+                                                        .options = options})
+                .ok);
+    const QString grownShrunk = dir.filePath(QStringLiteral("shr-grown-shrunk.apfs"));
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                         .written_image_path = grownShrunk,
+                                                         .new_size_bytes = k256,
+                                                         .options = options})
+                 .ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
