@@ -24,6 +24,8 @@
 #include <limits>
 #include <optional>
 
+#include <lzfse.h>
+
 namespace sak {
 
 namespace {
@@ -797,13 +799,30 @@ private:
                     .arg(header->algo));
             return false;
         }
-        const auto decoded = apfsDecodeInlineDecmpfs(target.decmpfs_xattr);
-        if (!decoded.has_value()) {
+        QByteArray out;
+        if (const auto decoded = apfsDecodeInlineDecmpfs(target.decmpfs_xattr)) {
+            out = *decoded;
+        } else if (header->algo == kApfsCompressLzfseAttr) {
+            // Inline LZFSE (algo 11): the payload after the 16-byte header is a raw lzfse block
+            // the macOS kernel decodes with the identical lzfse_decode_buffer.
+            const QByteArray payload = target.decmpfs_xattr.mid(kApfsDecmpfsHeaderBytes);
+            out.resize(static_cast<qsizetype>(header->uncompressed_size));
+            const size_t decodedBytes =
+                lzfse_decode_buffer(reinterpret_cast<uint8_t*>(out.data()),
+                                    static_cast<size_t>(out.size()),
+                                    reinterpret_cast<const uint8_t*>(payload.constData()),
+                                    static_cast<size_t>(payload.size()),
+                                    nullptr);
+            if (decodedBytes != header->uncompressed_size) {
+                result->blockers.append(QStringLiteral("APFS inline LZFSE decode failed"));
+                return false;
+            }
+        } else {
             result->blockers.append(
                 QStringLiteral("APFS decmpfs decode failed for algorithm %1").arg(header->algo));
             return false;
         }
-        result->data = decoded->left(static_cast<qsizetype>(target.bytes_to_read));
+        result->data = out.left(static_cast<qsizetype>(target.bytes_to_read));
         return true;
     }
 

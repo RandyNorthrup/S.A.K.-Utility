@@ -961,6 +961,7 @@ target_include_directories(sak_apfs_writer_cli PRIVATE
 
 target_link_libraries(sak_apfs_writer_cli PRIVATE
     Qt6::Core
+    sak_lzfse
     ${PLATFORM_LIBS}
 )
 

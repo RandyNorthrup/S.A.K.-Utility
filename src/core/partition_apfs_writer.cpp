@@ -29,6 +29,8 @@
 #include <optional>
 #include <utility>
 
+#include <lzfse.h>
+
 namespace sak {
 
 namespace {
@@ -6799,7 +6801,38 @@ struct ApfsFileInsertBuildInputs {
     // Nested insert: the resolved directory id the new file is parented under. Defaults
     // to the container root, so a flat-root insert is byte-identical to before.
     uint64_t parentDirectoryId{kApfsRootDirectoryId};
+    // A5 follow-on: store the payload inline LZFSE-compressed (decmpfs algo 11) instead of
+    // zlib. Mutually exclusive with `compress`; takes precedence when both are set.
+    bool compressLzfse{false};
 };
+
+// Build the embedded com.apple.decmpfs value for an inline LZFSE-compressed file: the 16-byte
+// header (algo LZFSE_ATTR) followed by the lzfse block. lzfse_encode_buffer always yields a
+// stream lzfse_decode_buffer reconstructs exactly (it falls back to lzvn/raw internally for
+// incompressible data), so no stored marker is needed. *fits is false when the value would
+// exceed the embedded-xattr limit (the caller then fails closed; resource-fork LZFSE is a
+// documented follow-on). The macOS kernel decodes algo 11 with the identical lzfse_decode.
+QByteArray apfsBuildInlineLzfseDecmpfs(const QByteArray& data, bool* fits) {
+    QByteArray value = apfsBuildDecmpfsHeader(kApfsCompressLzfseAttr,
+                                              static_cast<uint64_t>(data.size()));
+    QByteArray block(data.size() + 4096, '\0');  // lzfse worst case stays under src + a header
+    const size_t encoded = lzfse_encode_buffer(reinterpret_cast<uint8_t*>(block.data()),
+                                               static_cast<size_t>(block.size()),
+                                               reinterpret_cast<const uint8_t*>(data.constData()),
+                                               static_cast<size_t>(data.size()),
+                                               nullptr);
+    if (encoded == 0) {
+        if (fits != nullptr) {
+            *fits = false;
+        }
+        return value;
+    }
+    value.append(block.constData(), static_cast<qsizetype>(encoded));
+    if (fits != nullptr) {
+        *fits = value.size() <= kApfsXattrMaxEmbeddedSize;
+    }
+    return value;
+}
 
 // Build the in-place insert request for a (possibly compressed) file. When
 // compress is set the payload is stored as an inline zlib com.apple.decmpfs
@@ -6820,6 +6853,24 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
     if (in.sparseLogicalSize > static_cast<uint64_t>(in.fileData.size())) {
         request->sparse = true;
         request->sparseLogicalSize = in.sparseLogicalSize;
+    }
+    if (in.compressLzfse) {
+        bool lzfseFits = false;
+        const QByteArray lzfseDecmpfs = apfsBuildInlineLzfseDecmpfs(in.fileData, &lzfseFits);
+        if (!lzfseFits) {
+            blockers->append(
+                QStringLiteral("APFS inline LZFSE compression: the compressed com.apple.decmpfs "
+                               "attribute (%1 bytes) exceeds the embedded-xattr limit (%2 bytes); "
+                               "resource-fork compression for larger files is not yet supported")
+                    .arg(lzfseDecmpfs.size())
+                    .arg(kApfsXattrMaxEmbeddedSize));
+            return false;
+        }
+        request->fileData.clear();
+        request->compressed = true;
+        request->decmpfsXattr = lzfseDecmpfs;
+        request->uncompressedSize = static_cast<uint64_t>(in.fileData.size());
+        return true;
     }
     if (!in.compress) {
         return true;
@@ -17123,7 +17174,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .compress = request.compress_zlib,
                                 .xattrs = request.xattrs,
                                 .sparseLogicalSize = request.sparse_logical_size,
-                                .parentDirectoryId = parentDirectoryId},
+                                .parentDirectoryId = parentDirectoryId,
+                                .compressLzfse = request.compress_lzfse},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();
@@ -17513,7 +17565,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
                                 .fileData = request.file_data,
                                 .directories = directories,
                                 .compress = request.compress_zlib,
-                                .parentDirectoryId = parentDirectoryId},
+                                .parentDirectoryId = parentDirectoryId,
+                                .compressLzfse = request.compress_lzfse},
                                &result);
     target->close();
     result.ok = result.blockers.isEmpty();
