@@ -11155,6 +11155,42 @@ static void certifyPostGrowInsertReadsBack(const QDir& dir,
     QCOMPARE(reOld.data, preGrowPayload);
 }
 
+// Grow a multi-chunk source to 1024 (8 chunks; the relocated pool lands in a high chunk), then
+// shrink back to k256 (removes the pool's chunk, truncated away) - the file must still read back.
+// A shrink that would leave the pool in a SURVIVING high chunk (grown 1024 -> 640) fails closed.
+// apfsck- and Apple-kernel-clean (16/16, macOS 15.7.4).
+static void certifyGrowThenShrinkBack(const QDir& dir,
+                                      const QString& withFile,
+                                      uint64_t k256,
+                                      const PartitionApfsWriteOptions& options,
+                                      const QByteArray& payload) {
+    const QString grown = dir.filePath(QStringLiteral("shr-grown.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                    .written_image_path = grown,
+                                                    .new_size_bytes = 1024ULL * 1024ULL * 1024ULL,
+                                                    .options = options})
+            .ok);
+    const QString grownShrunk = dir.filePath(QStringLiteral("shr-grown-shrunk.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                    .written_image_path = grownShrunk,
+                                                    .new_size_bytes = k256,
+                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        grownShrunk, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+    const QString grownSurv = dir.filePath(QStringLiteral("shr-grown-surv.apfs"));
+    QVERIFY(
+        !PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                     .written_image_path = grownSurv,
+                                                     .new_size_bytes = 640ULL * 1024ULL * 1024ULL,
+                                                     .options = options})
+             .ok);
+}
+
 void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     // A7 (A-g) chunk-adding grow: growing a single-chunk container across the 32768-block
     // chunk boundary relocates the spaceman internal pool into the grow region and adds
@@ -11295,8 +11331,10 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // free high chunks and relocating the internal pool into surviving chunk-0 free space (same
     // crash-safe COW as the grow, then the dead tail is truncated). apfsck-clean across
     // 512->256 / 1024->256 / 1024->512 and Apple-kernel clean (macOS 15.7.4); the file reads back
-    // and the shrunk container is re-mutable. Shrinking a container with data past chunk 0 (a
-    // grown container's relocated pool included) fails closed - a later increment.
+    // and the shrunk container is re-mutable. A previously-grown container shrinks too when its
+    // relocated pool sits in a REMOVED high chunk (grow-then-shrink-back); the pool truncates away
+    // and the free delta gains its blocks. Shrinking with real user data past chunk 0, or a pool
+    // that would remain in a surviving high chunk, still fails closed - a later increment.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -11335,19 +11373,9 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     QCOMPARE(read.data, payload);
     // The shrunk container is re-mutable (relocated pool in chunk 0).
     certifyPostGrowInsertReadsBack(dir, shrunk, options, payload);
-    // Shrinking a grown container (its relocated pool sits in a high chunk) fails closed.
-    const QString grown = dir.filePath(QStringLiteral("shr-grown.apfs"));
-    QVERIFY(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
-                                                        .written_image_path = grown,
-                                                        .new_size_bytes = 1024ULL * 1024 * 1024,
-                                                        .options = options})
-                .ok);
-    const QString grownShrunk = dir.filePath(QStringLiteral("shr-grown-shrunk.apfs"));
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
-                                                         .written_image_path = grownShrunk,
-                                                         .new_size_bytes = k256,
-                                                         .options = options})
-                 .ok);
+    // Grow-then-shrink-back: a grown container whose relocated pool sits in a removed high chunk
+    // shrinks; a pool that would remain in a surviving chunk fails closed.
+    certifyGrowThenShrinkBack(dir, withFile, k256, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

@@ -9523,14 +9523,42 @@ uint64_t findFreeRunInChunk0(const QByteArray& bitmap,
     return 0;
 }
 
-// Validate a chunk-removing shrink is in scope and (via the source cib) that all data lives in
-// chunk 0, so the surviving chunks 1..newChunks-1 and every removed chunk are all-free. Returns
-// the source chunk states (chunk 0's free count feeds the rebuilt cib).
-bool validateShrinkScope(ApfsFsCommitContext* ctx,
-                         uint64_t newBlockCount,
-                         uint64_t oldChunks,
-                         QVector<ApfsSourceChunkState>* src,
-                         QStringList* blockers) {
+// True if every used block in the pool's chunk (oldIpBase / blocks_per_chunk) lies within the
+// pool region [oldIpBase, oldIpBase+oldIpBlockCount) - i.e. the chunk holds only the relocated
+// internal pool (allocator metadata a grow left in a high chunk), no user data. This is what lets
+// a previously-grown container shrink: the pool's chunk is truncated away, so as long as it holds
+// nothing but the pool the removed region is otherwise free.
+bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
+                        uint64_t bitmapAddr,
+                        uint64_t oldIpBase,
+                        uint64_t oldIpBlockCount,
+                        QStringList* blockers) {
+    QByteArray bm(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, bitmapAddr, &bm, blockers)) {
+        return false;
+    }
+    const uint64_t chunkStart = (oldIpBase / kApfsSpacemanBlocksPerChunk) *
+                                kApfsSpacemanBlocksPerChunk;
+    for (uint64_t b = 0; b < kApfsSpacemanBlocksPerChunk; ++b) {
+        const bool used =
+            ((static_cast<uint8_t>(bm.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
+        if (!used) {
+            continue;
+        }
+        const uint64_t abs = chunkStart + b;
+        if (abs < oldIpBase || abs >= oldIpBase + oldIpBlockCount) {
+            return false;  // a used block outside the pool region = real user data
+        }
+    }
+    return true;
+}
+
+// The target-shape preconditions common to every chunk-removing shrink: a chunk-multiple target
+// of at least two chunks, single-CIB source and target. Split out to keep validateShrinkScope's
+// per-chunk scan simple.
+bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
+                               uint64_t newBlockCount,
+                               QStringList* blockers) {
     const uint64_t newChunks = newBlockCount / kApfsSpacemanBlocksPerChunk;
     if (newBlockCount % kApfsSpacemanBlocksPerChunk != 0 || newChunks < 2) {
         blockers->append(QStringLiteral(
@@ -9544,16 +9572,40 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
             "APFS resize-shrink: only a single-CIB container is supported (later increment)"));
         return false;
     }
-    if (!readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
+    return true;
+}
+
+// Validate a chunk-removing shrink is in scope and (via the source cib) that all data lives in
+// chunk 0, so the surviving chunks 1..newChunks-1 and every removed chunk are all-free - EXCEPT
+// that a previously-grown container's relocated pool may occupy a removed high chunk (it is
+// truncated away). Returns the source chunk states (chunk 0's free count feeds the rebuilt cib).
+bool validateShrinkScope(ApfsFsCommitContext* ctx,
+                         uint64_t newBlockCount,
+                         uint64_t oldChunks,
+                         QVector<ApfsSourceChunkState>* src,
+                         QStringList* blockers) {
+    if (!validateShrinkTargetShape(ctx, newBlockCount, blockers) ||
+        !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
     }
+    const uint64_t oldIpBase =
+        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    const uint64_t oldIpBlockCount = 3 * (oldChunks + 1);
+    const uint64_t poolChunk = oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk;
+    const bool poolInRemovedTail = oldIpBase >= newBlockCount;
     for (uint64_t k = 1; k < oldChunks; ++k) {
-        if (src->at(static_cast<qsizetype>(k)).bitmapAddr != 0) {
-            blockers->append(QStringLiteral(
-                "APFS resize-shrink: shrinking a container with data past chunk 0 is a later "
-                "increment"));
-            return false;
+        const uint64_t bitmapAddr = src->at(static_cast<qsizetype>(k)).bitmapAddr;
+        if (bitmapAddr == 0) {
+            continue;
         }
+        if (poolInRemovedTail && k == poolChunk &&
+            chunkHoldsOnlyPool(ctx, bitmapAddr, oldIpBase, oldIpBlockCount, blockers)) {
+            continue;  // the relocated pool's chunk, removed by the truncation
+        }
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: shrinking a container with data past chunk 0 (other than a grown "
+            "container's relocated pool in the removed tail) is a later increment"));
+        return false;
     }
     return true;
 }
@@ -9591,10 +9643,32 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     return true;
 }
 
+// Advance the main free-queue for a shrink. When the current pool sits in the truncated tail
+// (a previously-grown container) it must NOT be freed onto the queue - those blocks cease to
+// exist - so the live queue is just carried forward with normal aging; otherwise the pool is in
+// chunk 0 and is freed like the chunk-adding grow.
+ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
+                                      const ApfsChunkAddingGrowPlan& plan,
+                                      bool poolInRemovedTail) {
+    if (!poolInRemovedTail) {
+        return growMainFreeQueueAfterRelocate(
+            ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    }
+    QStringList ignore;
+    const uint64_t mainPaddr = findEphemeralPaddrByOid(
+        ctx->image, ctx->geometry, ctx->live, kApfsFormatFqMainTreeOid, &ignore);
+    const QVector<ApfsFreeQueueEntry> live =
+        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &ignore);
+    return advanceMainFreeQueue(live, {}, plan.newXid, kMainFqRollbackWindow);
+}
+
 // A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
 // surviving chunk-0 free space, mirroring the chunk-adding grow (same crash-safe COW: write the
 // new allocator to free blocks, atomically re-anchor the nx_superblock, then truncate the dead
-// tail). The pool ends up in chunk 0 exactly like a fresh newChunks-chunk container.
+// tail). The pool ends up in chunk 0 exactly like a fresh newChunks-chunk container. A
+// previously-grown container is handled too: its relocated pool lives in a removed high chunk, so
+// it is truncated away (not freed) and the removed region's used blocks (that pool) add back to
+// the free delta.
 bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
                                uint64_t newBlockCount,
                                ApfsInPlaceCheckpointResult* result,
@@ -9604,15 +9678,16 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     if (!buildShrinkPlan(ctx, newBlockCount, &plan, blockers)) {
         return false;
     }
-    const ApfsMainFqAdvance mainFq =
-        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    const bool poolInRemovedTail = plan.oldIpBase >= newBlockCount;
+    const ApfsMainFqAdvance mainFq = shrinkMainFreeQueue(ctx, plan, poolInRemovedTail);
     ApfsGrownAllocator alloc;
     if (!buildGrownAllocatorSubtree(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
     }
     const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
                               static_cast<int64_t>(plan.newIpBlockCount) +
-                              static_cast<int64_t>(mainFq.reclaimed.size());
+                              static_cast<int64_t>(mainFq.reclaimed.size()) +
+                              (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0);
     const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
     if (!advanceCheckpoint({.image = ctx->image,
                             .geometry = ctx->geometry,
