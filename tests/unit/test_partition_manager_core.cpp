@@ -1829,6 +1829,7 @@ private Q_SLOTS:
     void apfsWriter_clonesFileSharingPhysicalExtents();
     void apfsWriter_addsHardLinkToFile();
     void apfsWriter_growsContainerInChunk();
+    void apfsWriter_growsContainerAddingChunks();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -11052,7 +11053,8 @@ void verifyApfsResizeFailClosed(const QDir& dir,
                                 uint64_t kOldBytes,
                                 uint64_t kNewBytes,
                                 const PartitionApfsWriteOptions& options) {
-    // Shrinking, a non-block-aligned size, and a grow that would add a chunk all fail closed.
+    // Shrinking and a non-block-aligned size fail closed. (A grow that adds a chunk is now
+    // supported -- see apfsWriter_growsContainerAddingChunks -- so it is no longer rejected.)
     QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
                  {.source_image_path = withFile,
                   .written_image_path = dir.filePath(QStringLiteral("rz-shrink.apfs")),
@@ -11065,15 +11067,79 @@ void verifyApfsResizeFailClosed(const QDir& dir,
                   .new_size_bytes = kNewBytes + 1,
                   .options = options})
                  .ok);
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
-                 {.source_image_path = withFile,
-                  .written_image_path = dir.filePath(QStringLiteral("rz-chunkadd.apfs")),
-                  .new_size_bytes = 256ULL * 1024ULL * 1024ULL,  // > one chunk (128 MiB)
-                  .options = options})
-                 .ok);
 }
 
 }  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
+    // A7 (A-g) chunk-adding grow: growing a single-chunk container across the 32768-block
+    // chunk boundary relocates the spaceman internal pool into the grow region and adds
+    // chunks with a crash-safe checkpoint commit. Host apfsprogs apfsck certified across
+    // exact/partial/multi-chunk targets; a file written before the grow still reads back and
+    // the container reports the new size. Re-mutating a grown container is a later increment
+    // and fails closed (no corruption).
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("ca-base.apfs"));
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t kOldBytes = 64ULL * 1024ULL * 1024ULL;   // 16384 blocks, 1 chunk
+    constexpr uint64_t kNewBytes = 256ULL * 1024ULL * 1024ULL;  // 65536 blocks, 2 chunks
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                             .target_container_bytes = kOldBytes,
+                                                             .block_size_bytes = kBlockSize,
+                                                             .volume_name = QStringLiteral("SAKCA"),
+                                                             .options = options})
+                 .ok,
+             "format chunk-add base");
+    const QByteArray payload = QByteArray("chunk-add-live-").repeated(400);
+    const QString withFile = dir.filePath(QStringLiteral("ca-file.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert(
+                 {.source_image_path = base,
+                  .written_image_path = withFile,
+                  .file_name = QStringLiteral("orig.bin"),
+                  .file_data = payload,
+                  .options = options})
+                 .ok,
+             "insert pre-grow file");
+    const QString grown = dir.filePath(QStringLiteral("ca-grown.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                                    .written_image_path = grown,
+                                                                    .new_size_bytes = kNewBytes,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+
+    // The backing image and the container both report the new (two-chunk) size.
+    QFile grownImage(grown);
+    QVERIFY(grownImage.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(grownImage.size()), kNewBytes);
+    const QByteArray nxsb = grownImage.read(static_cast<qint64>(kBlockSize));
+    grownImage.close();
+    uint64_t blockCount = 0;
+    for (int i = 0; i < 8; ++i) {
+        blockCount |= static_cast<uint64_t>(static_cast<uint8_t>(nxsb.at(0x28 + i))) << (8 * i);
+    }
+    QCOMPARE(blockCount, kNewBytes / kBlockSize);
+    QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
+
+    // The pre-grow file still reads back byte-for-byte (the fs metadata is pinned; only the
+    // relocated allocator moved).
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        grown, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+
+    // Re-mutating a chunk-adding-grown container (relocated internal pool) is a later
+    // increment: it fails closed rather than corrupting the ip allocation bitmap.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyFileInsert(
+                 {.source_image_path = grown,
+                  .written_image_path = dir.filePath(QStringLiteral("ca-mut.apfs")),
+                  .file_name = QStringLiteral("after.bin"),
+                  .file_data = payload,
+                  .options = options})
+                 .ok);
+}
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
     // A7 (A-h) sealed-volume policy: an in-place commit must fail closed on a

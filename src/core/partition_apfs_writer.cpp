@@ -4287,6 +4287,36 @@ uint64_t readLiveSpacemanCibAddr(QIODevice* image,
     return 0;
 }
 
+// Read the live spaceman's on-disk sm_ip_base. A freshly formatted container's ip_base
+// equals the canonical generatedIpBaseBlock; a chunk-adding grow leaves it relocated into
+// the grow region (the canonical base collides with pinned metadata once ip_block_count
+// grows), so allocation/rotation must re-anchor on this actual value. 0 = no spaceman found.
+uint64_t readLiveSpacemanIpBase(QIODevice* image,
+                                const ApfsRepairGeometry& geometry,
+                                const QByteArray& nxsb,
+                                QStringList* blockers) {
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    QByteArray checkpointMap(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+        return 0;
+    }
+    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    for (uint32_t index = 0; index < count; ++index) {
+        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
+                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
+        QByteArray object(geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
+            return 0;
+        }
+        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
+            return le64(object, kApfsSpacemanIpBaseOffset);
+        }
+    }
+    return 0;
+}
+
 // Read the live spaceman's cib-address array (entries 0..cibCount-1) - the CURRENT
 // on-disk address of each chunk-info block, exactly as apfsck enumerates them
 // (parse_spaceman_device reads sm_addr_off + i*8). Entry 0 rotates every commit; a
@@ -4351,6 +4381,15 @@ struct ApfsCheckpointCommitContext {
     // commit copied-on-wrote. Written alongside the entry-0 re-point in
     // applySpacemanCommitMutations.
     QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints;
+    // A7 (A-g) chunk-adding grow: the re-emitted spaceman's new main-device chunk count,
+    // internal-pool block count, and internal-pool base (all 0 = leave unchanged, the
+    // in-chunk grow and every non-grow commit). A chunk-adding grow raises chunk_count as
+    // the device crosses a 32768-block boundary and RELOCATES the internal pool out of its
+    // canonical base (185) into the grow region, since the fresh-format base now collides
+    // with pinned file-system metadata. ip_block_count = 3*(chunk+cib+cab) grows with it.
+    uint64_t newChunkCount{0};
+    uint64_t newIpBlockCount{0};
+    uint64_t newIpBase{0};
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -4418,6 +4457,28 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     return true;
 }
 
+// A7 (A-g) chunk-adding grow: patch the re-emitted spaceman's main-device chunk count and
+// relocated internal-pool geometry (0 = leave unchanged, every non-grow commit). Factored out
+// so applySpacemanCommitMutations stays within the complexity budget.
+void applyChunkAddingSpacemanPatches(const ApfsCheckpointCommitContext& ctx, QByteArray* object) {
+    if (ctx.newChunkCount != 0) {
+        // The device crossed a 32768-block boundary, so the main-device chunk count rises and
+        // the internal pool (ip_block_count = 3*(chunk+cib+cab)) is rebuilt at a relocated base
+        // in the grow region. The new live cib (re-pointed via newCibAddr) describes all
+        // newChunkCount chunks; the ip-fq limit tracks the new chunk count (fsck checks it).
+        writeLe64(object,
+                  kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceChunkCountOffset,
+                  ctx.newChunkCount);
+        writeLe16(object, kApfsSpacemanFqIpLimitOffset, ipFreeQueueNodeLimit(ctx.newChunkCount));
+    }
+    if (ctx.newIpBlockCount != 0) {
+        writeLe64(object, kApfsSpacemanIpBlockCountOffset, ctx.newIpBlockCount);
+    }
+    if (ctx.newIpBase != 0) {
+        writeLe64(object, kApfsSpacemanIpBaseOffset, ctx.newIpBase);
+    }
+}
+
 // Apply this commit's mutations to the re-emitted spaceman: the net free-count
 // delta, the rotated cib_addr, the IP free-queue counts (sfq_count + oldest_xid
 // from the rolling window), and the sm_ip_bitmap ring advance.
@@ -4443,6 +4504,7 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
         // to be recomputed for the new size (fsck checks it).
         writeLe16(object, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(grownBlockCount));
     }
+    applyChunkAddingSpacemanPatches(ctx, object);
     if (ctx.newCibAddr != 0) {
         // Only group slot 0 rotates, so just re-point spaceman address-array entry 0
         // (the live cib 0, or the live cab 0 on the CAB tier); the rest of the array
@@ -4748,6 +4810,16 @@ struct ApfsCheckpointAdvanceRequest {
     // a free-pool slot. The whole spaceman is re-emitted each checkpoint, so writing entry k
     // is crash-safe. Empty on every non-S4b commit (single-CIB byte-identical).
     QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints;
+    // A7 (A-g) chunk-adding grow: the re-emitted spaceman's new main-device chunk count,
+    // internal-pool block count, and relocated internal-pool base (0 = leave unchanged).
+    uint64_t newChunkCount{0};
+    uint64_t newIpBlockCount{0};
+    uint64_t newIpBase{0};
+    // A7 (A-g) chunk-adding grow: the IP free-queue's single relocated ghost record
+    // {oldXid, newIpBase, ipSlotStride}. When non-empty it REPLACES buildIpFreeQueueWindow
+    // (the grow does not rotate a slot; it re-homes the whole pool, so the two-deep rolling
+    // window does not apply). Empty on every rotation commit (byte-identical).
+    QVector<ApfsFreeQueueEntry> explicitIpFqEntries;
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -4799,6 +4871,12 @@ void applyNxSuperblockCheckpointDeltas(ApfsCheckpointAdvanceRequest& request,
         writeLe64(&request.nxsb,
                   kApfsNxEphemeralInfoOffset,
                   apfsNxEphemeralInfoValue(grownBlockCount, geometry.blockSize));
+        // nx_max_file_systems = ceil(container_bytes / 512 MiB); a chunk-adding grow across a
+        // 512-MiB boundary raises it (fsck_apfs checks it exactly). The in-chunk grow never
+        // crosses a boundary, so this is a no-op there.
+        writeLe32(&request.nxsb,
+                  kApfsNxMaxFileSystemsOffset,
+                  apfsMaxFileSystems(grownBlockCount, geometry.blockSize));
     }
     if (request.newContainerOmap != 0) {
         writeLe64(&request.nxsb, kApfsNxOmapOidOffset, request.newContainerOmap);
@@ -4856,6 +4934,33 @@ bool resolveCheckpointDataStart(const ApfsLiveCheckpoint& live,
     return true;
 }
 
+// Assemble the per-object commit context advanceCheckpoint threads into the ephemeral
+// re-emit (free/cib/free-queue deltas + the chunk-adding grow's structural spaceman patches).
+// Factored out to keep advanceCheckpoint within the length budget.
+ApfsCheckpointCommitContext makeCheckpointCommitContext(const ApfsCheckpointAdvanceRequest& request,
+                                                        const ApfsLiveCheckpoint& live,
+                                                        uint64_t newXid,
+                                                        uint32_t dataStart,
+                                                        const QVector<ApfsFreeQueueEntry>& ipFq) {
+    return {.image = request.image,
+            .geometry = request.geometry,
+            .dataBase = live.dataBase,
+            .newXid = newXid,
+            .newDataIndex = dataStart,
+            .spacemanFreeDelta = request.spacemanFreeDelta,
+            .newCibAddr = request.newCibAddr,
+            .cibCount = request.cibCount,
+            .ipBitmapUsage = request.ipBitmapUsage,
+            .ipFqEntries = ipFq,
+            .mainFqEntries = request.mainFqEntries,
+            .spacemanBlockCountDelta = request.blockCountDelta,
+            .ipUsedSet = request.ipUsedSet,
+            .cibArrayRepoints = request.cibArrayRepoints,
+            .newChunkCount = request.newChunkCount,
+            .newIpBlockCount = request.newIpBlockCount,
+            .newIpBase = request.newIpBase};
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -4887,21 +4992,13 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     request.dataIndexStart = dataStart;
     const uint64_t cpmBlock = live.descBase + live.descNext;
     const uint64_t nxsbBlock = cpmBlock + 1;
-    const QVector<ApfsFreeQueueEntry> ipFqEntries = buildIpFreeQueueWindow(request, newXid);
-    const ApfsCheckpointCommitContext ctx{request.image,
-                                          geometry,
-                                          live.dataBase,
-                                          newXid,
-                                          dataStart,
-                                          request.spacemanFreeDelta,
-                                          request.newCibAddr,
-                                          request.cibCount,
-                                          request.ipBitmapUsage,
-                                          ipFqEntries,
-                                          request.mainFqEntries,
-                                          request.blockCountDelta,
-                                          request.ipUsedSet,
-                                          request.cibArrayRepoints};
+    // A chunk-adding grow re-homes the whole internal pool, so it supplies the IP free-queue's
+    // one relocated ghost record directly; every rotation commit builds the rolling window.
+    const QVector<ApfsFreeQueueEntry> ipFqEntries = request.explicitIpFqEntries.isEmpty()
+                                                        ? buildIpFreeQueueWindow(request, newXid)
+                                                        : request.explicitIpFqEntries;
+    const ApfsCheckpointCommitContext ctx =
+        makeCheckpointCommitContext(request, live, newXid, dataStart, ipFqEntries);
     if (!reemitCheckpointEphemerals(
             ctx, mainFqNodeSet.blocks, mainFqNodeSet.leafOids, &checkpointMap, blockers)) {
         return false;
@@ -5480,6 +5577,11 @@ struct ApfsGeneratedLayout {
     // bitmap rotates in cib 0's group (allocateFsCommitBlocks), keeping the internal-
     // pool usage contiguous. 0 when M == 1.
     uint64_t allocChunk{0};
+    // The internal pool's first block (sm_ip_base). Canonical generatedIpBaseBlock for a
+    // freshly formatted container; a chunk-adding grow leaves it RELOCATED into the grow
+    // region, so loadFsCommitContext re-anchors it (and cib0Base) on the actual on-disk value.
+    // The free-pool geometry derives IP-relative used-set indices from it.
+    uint64_t ipBase{kApfsFormatIpBaseBlock};
     // First block of cib 0's three rotation slots = ip_base + (cib_count - 1) immutable
     // cibs + (cab_count - 1) immutable cabs + the immutable chunk bitmaps. nextIpSlot
     // rotates within this region; single/multi-CIB reduce it to ip_base + (cib_count-1).
@@ -5507,6 +5609,7 @@ ApfsGeneratedLayout computeGeneratedLayout(uint64_t blockCount) {
             .cibCount = mcib.cibCount,
             .metadataChunks = mcib.metadataChunks,
             .allocChunk = mcib.metadataChunks > 1 ? mcib.metadataChunks - 1 : 0,
+            .ipBase = mcib.ipBase,
             .cib0Base = mcib.cib0Base,
             .ipGroupStride = mcib.ipGroupStride,
             .boundaryChunk = mcib.boundaryChunk,
@@ -7161,7 +7264,42 @@ bool appendSealedVolumeBlocker(QIODevice* image,
     return true;
 }
 
-bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
+// A7 (A-g) chunk-adding grow re-homes the internal pool out of its canonical base into the
+// grow region (the fresh-format base collides with pinned file-system metadata once
+// ip_block_count grows). Re-anchor layout.cib0Base/ipBase on the spaceman's actual on-disk
+// ip_base so rotation + allocation follow the relocated pool; a non-grown container's ip_base
+// equals the canonical base, so this is a no-op for every certified tier (byte-identical). The
+// file/dir mutation engine is not yet relocation-aware, so a relocated pool fails closed off
+// the resize path (which handles the relocation directly) - a later increment.
+bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
+                              uint64_t blockCount,
+                              bool allowRelocatedIp,
+                              QStringList* blockers) {
+    const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                                kApfsSpacemanBlocksPerChunk;
+    const uint64_t canonicalIpBase =
+        generatedIpBaseBlock(chunkCount, ctx->layout.cibCount, ctx->layout.cabCount);
+    const uint64_t actualIpBase =
+        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    if (actualIpBase == 0 || actualIpBase == canonicalIpBase) {
+        return true;
+    }
+    if (!allowRelocatedIp) {
+        blockers->append(QStringLiteral(
+            "APFS in-place mutation of a chunk-adding-grown container (relocated internal pool) "
+            "is not yet supported; the container grew apfsck-clean, but re-mutating it is a later "
+            "increment"));
+        return false;
+    }
+    ctx->layout.cib0Base += actualIpBase - canonicalIpBase;
+    ctx->layout.ipBase = actualIpBase;
+    return true;
+}
+
+bool loadFsCommitContext(QIODevice* image,
+                         ApfsFsCommitContext* ctx,
+                         QStringList* blockers,
+                         bool allowRelocatedIp = false) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
     if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
@@ -7186,6 +7324,9 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
+    if (!resolveRelocatedIpLayout(ctx, blockCount, allowRelocatedIp, blockers)) {
+        return false;
+    }
     // Metadata-overflow tier (>~1.3 TiB): chunk 0 is fully reserved, so the commit
     // allocates from the boundary chunk (metadataChunks - 1). That chunk must live
     // in cib 0 (index < chunks_per_cib) so the existing cib-0 rotation can carry its
@@ -7655,7 +7796,10 @@ ApfsIpFreePoolGeometry computeIpFreePoolGeometry(const ApfsFsCommitContext& ctx)
     const uint64_t chunkCount = (ctx.geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
     ApfsIpFreePoolGeometry geo;
-    geo.ipBase = generatedIpBaseBlock(chunkCount, ctx.layout.cibCount, ctx.layout.cabCount);
+    // The actual (possibly grow-relocated) internal-pool base; loadFsCommitContext set it from
+    // the on-disk sm_ip_base. IP-relative used-set indices are computed against it, so it must
+    // match the relocated cib0Base/freePoolBase below rather than the canonical formula.
+    geo.ipBase = ctx.layout.ipBase;
     geo.ipBlockCount = 3 * (chunkCount + ctx.layout.cibCount + ctx.layout.cabCount);
     geo.cib0Base = ctx.layout.cib0Base;
     geo.freePoolBase = ctx.layout.cib0Base + 3 * ctx.layout.ipGroupStride;
@@ -8829,6 +8973,10 @@ bool sizeOrVerifyResizeTarget(QIODevice* image,
     return true;
 }
 
+// A7 (A-g) resize preflight shared by the in-chunk and chunk-adding paths: reject a zero
+// grow, load the live commit context (the OLD geometry, read from the on-disk nx_block_count
+// so it is unaffected by the device grow below), and grow the backing image/device to the
+// new size. Each commit path enforces its own structural constraints.
 bool preflightResizeGrow(QIODevice* image,
                          uint64_t growDeltaBlocks,
                          bool deviceAlreadySized,
@@ -8838,49 +8986,38 @@ bool preflightResizeGrow(QIODevice* image,
         blockers->append(QStringLiteral("APFS resize-grow: the grow amount must be non-zero"));
         return false;
     }
-    if (!loadFsCommitContext(image, ctx, blockers)) {
+    if (!loadFsCommitContext(image, ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
-    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 || ctx->layout.allocChunk != 0) {
-        blockers->append(QStringLiteral(
-            "APFS resize-grow: only an in-chunk grow of a single-chunk container is supported in "
-            "this increment (a chunk-adding grow reshapes the spaceman internal pool)"));
-        return false;
-    }
-    const uint64_t oldBlockCount = ctx->geometry.blockCount;
-    if (oldBlockCount + growDeltaBlocks > kApfsSpacemanBlocksPerChunk) {
-        blockers->append(
-            QStringLiteral("APFS resize-grow: the new size would add a chunk (exceeds the single "
-                           "chunk's %1-block "
-                           "capacity); only an in-chunk grow is supported in this increment")
-                .arg(kApfsSpacemanBlocksPerChunk));
-        return false;
-    }
-    const uint64_t newSizeBytes = (oldBlockCount + growDeltaBlocks) * ctx->geometry.blockSize;
+    const uint64_t newSizeBytes = (ctx->geometry.blockCount + growDeltaBlocks) *
+                                  ctx->geometry.blockSize;
     return sizeOrVerifyResizeTarget(image, newSizeBytes, deviceAlreadySized, blockers);
 }
 
-bool commitInPlaceResizeGrow(QIODevice* image,
+// A7 (A-g) in-chunk grow: the container gains growDeltaBlocks inside its single existing
+// chunk 0 (no chunk added). Chunk 0's block+free counts and the device block+free counts
+// rise by the delta with a crash-safe cib rotation; no file-system metadata moves.
+bool commitInChunkResizeGrow(ApfsFsCommitContext* ctx,
                              uint64_t growDeltaBlocks,
-                             bool deviceAlreadySized,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
-    ApfsFsCommitContext ctx;
-    if (!preflightResizeGrow(image, growDeltaBlocks, deviceAlreadySized, &ctx, blockers)) {
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 || ctx->layout.allocChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: an in-chunk grow requires a single-chunk single-CIB container"));
         return false;
     }
-    const uint64_t newXid = ctx.live.xid + 1;
+    const uint64_t newXid = ctx->live.xid + 1;
     const int64_t growDelta = static_cast<int64_t>(growDeltaBlocks);
-    const ApfsIpRotation rotation = computeIpRotation(ctx.liveCib, ctx.liveBitmap, ctx.layout);
-    const uint64_t groupSize = ctx.layout.ipGroupStride;
+    const ApfsIpRotation rotation = computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout);
+    const uint64_t groupSize = ctx->layout.ipGroupStride;
     // Single-chunk, single-CIB: the IP bitmap marks the three rotation-group slots only.
-    const uint64_t ipBitmapUsage = (ctx.layout.cibCount - 1) + 3 * groupSize;
+    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
     // No blocks are allocated or freed; the cib's chunk 0 simply gains growDelta blocks,
     // all free. cibFreeDelta/spacemanFreeDelta raise the free counts, the *BlockCountDelta
     // fields raise the block counts.
-    if (!applyFileInsertAllocation({.image = ctx.image,
-                                    .geometry = ctx.geometry,
-                                    .layout = ctx.layout,
+    if (!applyFileInsertAllocation({.image = ctx->image,
+                                    .geometry = ctx->geometry,
+                                    .layout = ctx->layout,
                                     .rotation = rotation,
                                     .freed = {},
                                     .allocated = {},
@@ -8891,15 +9028,15 @@ bool commitInPlaceResizeGrow(QIODevice* image,
                                    blockers)) {
         return false;
     }
-    return advanceCheckpoint({.image = ctx.image,
-                              .geometry = ctx.geometry,
-                              .nxsb = ctx.nxsb,
-                              .live = ctx.live,
+    return advanceCheckpoint({.image = ctx->image,
+                              .geometry = ctx->geometry,
+                              .nxsb = ctx->nxsb,
+                              .live = ctx->live,
                               .newContainerOmap = 0,
                               .spacemanFreeDelta = growDelta,
                               .nextOidAdvance = 0,
                               .newCibAddr = rotation.newCib,
-                              .cibCount = ctx.layout.cibCount,
+                              .cibCount = ctx->layout.cibCount,
                               .ipSlotStride = groupSize,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = rotation.liveCib,
@@ -8908,6 +9045,239 @@ bool commitInPlaceResizeGrow(QIODevice* image,
                               .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
                              result,
                              blockers);
+}
+
+// A validated chunk-adding grow layout: the target geometry plus the relocated and the
+// superseded internal-pool regions.
+struct ApfsChunkAddingGrowPlan {
+    uint64_t newBlockCount{0};
+    uint64_t newChunkCount{0};
+    uint64_t newIpBase{0};        // relocated pool base (start of the grow region)
+    uint64_t newIpBlockCount{0};  // 3 * (newChunkCount + cib + cab)
+    uint64_t oldIpBase{0};        // superseded pool base (freed to the main free-queue)
+    uint64_t oldIpBlockCount{0};
+    uint64_t newXid{0};
+};
+
+// Validate + lay out a single-chunk-source chunk-adding grow. Increment 1 supports a
+// single-CIB source growing to a single-CIB target (up to 126 chunks) whose relocated
+// internal pool fits chunk 0's grown tail; the wider tiers (pool in the last chunk,
+// multi-CIB/CAB targets, multi-chunk sources) fail closed with a specific blocker.
+bool planChunkAddingGrow(ApfsFsCommitContext* ctx,
+                         uint64_t newBlockCount,
+                         ApfsChunkAddingGrowPlan* plan,
+                         QStringList* blockers) {
+    const uint64_t oldBlockCount = ctx->geometry.blockCount;
+    const uint64_t oldChunks = (oldBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 || ctx->layout.allocChunk != 0 ||
+        cibCountForChunks(newChunks) != 1) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: the chunk-adding grow currently supports a single-CIB source and a "
+            "single-CIB target (up to 126 chunks); larger tiers are a later increment"));
+        return false;
+    }
+    plan->newBlockCount = newBlockCount;
+    plan->newChunkCount = newChunks;
+    plan->newXid = ctx->live.xid + 1;
+    plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan->oldIpBlockCount = 3 * (oldChunks + ctx->layout.cibCount + ctx->layout.cabCount);
+    plan->newIpBlockCount = 3 * (newChunks + 1);
+    // Place the relocated pool at the start of the grow region (guaranteed free, beyond the
+    // old device); increment 1 requires it to fit chunk 0's grown tail so every added chunk
+    // stays all-free (no bitmap), matching a fresh multi-chunk container's cib.
+    plan->newIpBase = oldBlockCount;
+    if (plan->oldIpBase == 0) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
+        return false;
+    }
+    if (plan->newIpBase + plan->newIpBlockCount > kApfsSpacemanBlocksPerChunk) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: the relocated internal pool would cross a chunk boundary (placing "
+            "it in the last chunk is a later increment)"));
+        return false;
+    }
+    return true;
+}
+
+// The relocated internal-pool allocator a chunk-adding grow builds in the grow region.
+struct ApfsGrownAllocator {
+    uint64_t liveCib{0};          // the live cib the spaceman cib-array re-points to
+    uint64_t chunk0UsedCount{0};  // used blocks in the now-full 32768-block chunk 0
+};
+
+// Set bits are the used blocks: fold the source chunk-0 bitmap (its allocations carry
+// through), clear any main-fq run reclaimed this commit, and mark the whole relocated pool
+// used. Returns the resulting used-block count (popcount) for the cib free-count.
+uint64_t buildGrownChunk0Bitmap(const QByteArray& source,
+                                uint64_t poolBase,
+                                uint64_t poolBlocks,
+                                const QVector<uint64_t>& reclaimed,
+                                QByteArray* out) {
+    *out = source;
+    for (uint64_t block : reclaimed) {
+        (*out)[static_cast<qsizetype>(block / 8)] &= static_cast<char>(~(1 << (block % 8)));
+    }
+    for (uint64_t block = poolBase; block < poolBase + poolBlocks; ++block) {
+        (*out)[static_cast<qsizetype>(block / 8)] |= static_cast<char>(1 << (block % 8));
+    }
+    uint64_t used = 0;
+    for (qsizetype i = 0; i < out->size(); ++i) {
+        for (int bit = 0; bit < 8; ++bit) {
+            used += (static_cast<uint8_t>(out->at(i)) >> bit) & 1U;
+        }
+    }
+    return used;
+}
+
+// Build + write the relocated allocator subtree (ghost + live cib describing newChunkCount
+// chunks, ghost + live chunk-0 bitmap) at poolBase in the guaranteed-free grow region. The
+// old subtree stays intact until the atomic nx_superblock re-anchor, so a crash before the
+// flip leaves the pre-grow container. Chunk 0 is the only chunk with a bitmap; every added
+// chunk is all-free (ci_bitmap_addr 0), matching a fresh multi-chunk container.
+bool buildGrownAllocatorSubtree(ApfsFsCommitContext* ctx,
+                                const ApfsChunkAddingGrowPlan& plan,
+                                const QVector<uint64_t>& reclaimed,
+                                ApfsGrownAllocator* out,
+                                QStringList* blockers) {
+    QByteArray source(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &source, blockers)) {
+        return false;
+    }
+    QByteArray bitmap;
+    const uint64_t used =
+        buildGrownChunk0Bitmap(source, plan.newIpBase, plan.newIpBlockCount, reclaimed, &bitmap);
+    out->chunk0UsedCount = used;
+    const uint64_t ghostCib = plan.newIpBase;
+    const uint64_t ghostBmp = plan.newIpBase + 1;
+    const uint64_t liveCib = plan.newIpBase + 2;
+    const uint64_t liveBmp = plan.newIpBase + 3;
+    const uint64_t chunks = plan.newChunkCount;
+    const auto cib = [&](uint64_t self, uint64_t bmp) {
+        return buildChunkInfoBlock({.blockSize = ctx->geometry.blockSize,
+                                    .blockCount = plan.newBlockCount,
+                                    .reservedBlocks = used,
+                                    .xid = plan.newXid,
+                                    .selfBlock = self,
+                                    .bitmapBlock = bmp,
+                                    .chunkStart = 0,
+                                    .chunkSpan = chunks,
+                                    .cibIndex = 0},
+                                   blockers);
+    };
+    if (!writeApfsRepairBlock(ctx->image, ctx->geometry, ghostBmp, bitmap, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, liveBmp, bitmap, blockers) ||
+        !writeApfsRepairBlock(
+            ctx->image, ctx->geometry, ghostCib, cib(ghostCib, ghostBmp), blockers) ||
+        !writeApfsRepairBlock(
+            ctx->image, ctx->geometry, liveCib, cib(liveCib, liveBmp), blockers)) {
+        return false;
+    }
+    out->liveCib = liveCib;
+    return true;
+}
+
+// Read the live main free-queue and advance it one commit: reclaim runs aged past the
+// rollback window and append the freed old internal-pool region (relocated out this commit)
+// as a fresh run. The old pool blocks stay marked used until they age, so a still-in-ring
+// pre-grow checkpoint keeps them (crash-safe), exactly as an old fs-tree free does.
+ApfsMainFqAdvance growMainFreeQueueAfterRelocate(ApfsFsCommitContext* ctx,
+                                                 uint64_t oldIpBase,
+                                                 uint64_t oldIpBlockCount,
+                                                 uint64_t newXid) {
+    QStringList ignore;
+    const uint64_t mainPaddr = findEphemeralPaddrByOid(
+        ctx->image, ctx->geometry, ctx->live, kApfsFormatFqMainTreeOid, &ignore);
+    const QVector<ApfsFreeQueueEntry> live =
+        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &ignore);
+    QVector<uint64_t> freed;
+    for (uint64_t block = oldIpBase; block < oldIpBase + oldIpBlockCount; ++block) {
+        freed.append(block);
+    }
+    return advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow);
+}
+
+bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
+                                 uint64_t newBlockCount,
+                                 ApfsInPlaceCheckpointResult* result,
+                                 QStringList* blockers) {
+    ApfsChunkAddingGrowPlan plan;
+    if (!planChunkAddingGrow(ctx, newBlockCount, &plan, blockers)) {
+        return false;
+    }
+    const ApfsMainFqAdvance mainFq =
+        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    ApfsGrownAllocator alloc;
+    if (!buildGrownAllocatorSubtree(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
+        return false;
+    }
+    // Free rises by the grown blocks minus the newly-consumed pool, plus any reclaimed run
+    // (the old pool stays used on the main free-queue until it ages). This equals
+    // sum(new ci_free_count), which apfsck cross-checks against the device free count.
+    const int64_t freeDelta = static_cast<int64_t>(newBlockCount - ctx->geometry.blockCount) -
+                              static_cast<int64_t>(plan.newIpBlockCount) +
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    // The relocated pool's ghost slot (group slot 0) rides the IP free-queue pending
+    // reclamation, exactly like a fresh container's live spaceman: it re-establishes the
+    // two-slots-used rotation invariant the next commit rotates from.
+    const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
+    // Write a fresh internal-pool allocation bitmap marking the relocated ghost + live slots
+    // (IP-relative blocks 0..3 for the single-CIB group stride of 2). The pool moved, so the
+    // source's rotated ip_bm no longer describes it; a carried-forward ring would mark stale
+    // slots and apfsck reports "bad ip allocation bitmap". This mirrors a fresh container's
+    // live spaceman (ghost slot + live slot used, spare free).
+    const uint64_t ipBitmapUsage = 2 * 2;
+    return advanceCheckpoint({.image = ctx->image,
+                              .geometry = ctx->geometry,
+                              .nxsb = ctx->nxsb,
+                              .live = ctx->live,
+                              .newContainerOmap = 0,
+                              .spacemanFreeDelta = freeDelta,
+                              .nextOidAdvance = 0,
+                              .newCibAddr = alloc.liveCib,
+                              .cibCount = 1,
+                              .ipSlotStride = 2,
+                              .ipBitmapUsage = ipBitmapUsage,
+                              .mainFqEntries = mainFq.entries,
+                              .blockCountDelta =
+                                  static_cast<int64_t>(newBlockCount - ctx->geometry.blockCount),
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage),
+                              .newChunkCount = plan.newChunkCount,
+                              .newIpBlockCount = plan.newIpBlockCount,
+                              .newIpBase = plan.newIpBase,
+                              .explicitIpFqEntries = ipFq},
+                             result,
+                             blockers);
+}
+
+// A7 (A-g) container grow dispatcher. A grow that stays within the single chunk 0 takes the
+// in-chunk path; a single-chunk container crossing a 32768-block boundary takes the
+// chunk-adding path (relocate the internal pool into the grow region, add chunks). Growing a
+// multi-chunk container is a later increment.
+bool commitInPlaceResizeGrow(QIODevice* image,
+                             uint64_t growDeltaBlocks,
+                             bool deviceAlreadySized,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!preflightResizeGrow(image, growDeltaBlocks, deviceAlreadySized, &ctx, blockers)) {
+        return false;
+    }
+    const uint64_t newBlockCount = ctx.geometry.blockCount + growDeltaBlocks;
+    if (newBlockCount <= kApfsSpacemanBlocksPerChunk) {
+        return commitInChunkResizeGrow(&ctx, growDeltaBlocks, result, blockers);
+    }
+    if (ctx.geometry.blockCount > kApfsSpacemanBlocksPerChunk) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: growing a multi-chunk container is not yet supported (the "
+            "chunk-adding grow currently relocates the internal pool within a single-chunk "
+            "source's chunk 0)"));
+        return false;
+    }
+    return commitChunkAddingResizeGrow(&ctx, newBlockCount, result, blockers);
 }
 
 // Snapshot-create commit tail: write the COW chain (eight new blocks), then advance the
