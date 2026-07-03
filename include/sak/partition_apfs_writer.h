@@ -493,6 +493,9 @@ struct PartitionApfsImageFileInsertCommitRequest {
     // A5 follow-on: store the payload inline LZFSE-compressed (decmpfs algo 11) instead of
     // zlib. Takes precedence over compress_zlib. Same embedded-xattr size limit.
     bool compress_lzfse{false};
+    // A5 follow-on: store the payload inline LZVN-compressed (decmpfs algo 7). Highest
+    // precedence of the compressors. Same embedded-xattr size limit.
+    bool compress_lzvn{false};
     // A7 (A-h): arbitrary named extended attributes attached to the inserted file
     // (ACL in com.apple.system.Security, com.apple.FinderInfo, user xattrs). Each is
     // stored embedded; the matching inode flag (HAS_SECURITY_EA / HAS_FINDER_INFO)
@@ -623,6 +626,8 @@ struct PartitionApfsRawFileInsertCommitRequest {
     bool compress_zlib{false};
     // A5 follow-on: inline LZFSE (decmpfs algo 11) instead of zlib; takes precedence.
     bool compress_lzfse{false};
+    // A5 follow-on: inline LZVN (decmpfs algo 7); highest precedence of the compressors.
+    bool compress_lzvn{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;

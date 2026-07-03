@@ -26,6 +26,10 @@
 
 #include <lzfse.h>
 
+// Vendored Apple lzvn reference decoder (third_party/lzfse) via the C shim; lzfse.h
+// exposes only the lzfse container, so the type-7 (LZVN) decoder is reached directly.
+extern "C" size_t sak_lzvn_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
+
 namespace sak {
 
 namespace {
@@ -410,6 +414,34 @@ struct FsTreeScanState {
     int nodes_visited{0};
     int records_visited{0};
 };
+
+// Decode an inline LZVN (decmpfs algo 7) payload -- the bytes after the 16-byte header -- into
+// *out. The payload is either a raw lzvn stream or, behind a single 0x06 marker, the literal
+// bytes (chosen by the writer when lzvn could not shrink the input). The macOS kernel's type-7
+// path decodes both forms identically. Returns false (with a blocker) on any size mismatch.
+[[nodiscard]] bool decodeInlineLzvnPayload(const QByteArray& payload,
+                                           uint64_t uncompressedSize,
+                                           QByteArray* out,
+                                           QStringList* blockers) {
+    if (!payload.isEmpty() && static_cast<uint8_t>(payload.at(0)) == kApfsDecmpfsLzvnRawMarker) {
+        *out = payload.mid(1);
+        if (static_cast<uint64_t>(out->size()) != uncompressedSize) {
+            blockers->append(QStringLiteral("APFS inline LZVN raw payload size mismatch"));
+            return false;
+        }
+        return true;
+    }
+    out->resize(static_cast<qsizetype>(uncompressedSize));
+    const size_t decoded = sak_lzvn_decode(reinterpret_cast<uint8_t*>(out->data()),
+                                           static_cast<size_t>(out->size()),
+                                           reinterpret_cast<const uint8_t*>(payload.constData()),
+                                           static_cast<size_t>(payload.size()));
+    if (decoded != uncompressedSize) {
+        blockers->append(QStringLiteral("APFS inline LZVN decode failed"));
+        return false;
+    }
+    return true;
+}
 
 class ApfsReader {
 public:
@@ -815,6 +847,12 @@ private:
                                     nullptr);
             if (decodedBytes != header->uncompressed_size) {
                 result->blockers.append(QStringLiteral("APFS inline LZFSE decode failed"));
+                return false;
+            }
+        } else if (header->algo == kApfsCompressLzvnAttr) {
+            const QByteArray payload = target.decmpfs_xattr.mid(kApfsDecmpfsHeaderBytes);
+            if (!decodeInlineLzvnPayload(
+                    payload, header->uncompressed_size, &out, &result->blockers)) {
                 return false;
             }
         } else {

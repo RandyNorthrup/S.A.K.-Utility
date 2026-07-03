@@ -57,6 +57,12 @@ inline constexpr uint32_t kApfsCompressLzbitmapRsrc = 14;
 // block starts with a byte whose low nibble is 0x0F. The writer uses 0xFF.
 inline constexpr uint8_t kApfsDecmpfsStoredMarker = 0xFF;
 
+// Inline LZVN (algo 7) uncompressed marker: when lzvn_encode yields nothing
+// (incompressible or too-small input) the payload is stored raw behind a single
+// 0x06 byte. A valid lzvn stream never begins 0x06, so the macOS kernel's type-7
+// inline path (shared with HFS+) uses it verbatim to distinguish the two forms.
+inline constexpr uint8_t kApfsDecmpfsLzvnRawMarker = 0x06;
+
 // Extended-attribute value flags (apfs_xattr_val.flags).
 inline constexpr uint16_t kApfsXattrDataStream = 0x0001;
 inline constexpr uint16_t kApfsXattrDataEmbedded = 0x0002;

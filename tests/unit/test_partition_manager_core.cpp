@@ -1847,6 +1847,7 @@ private Q_SLOTS:
     void apfsWriter_nestedFileWriteDeleteRenameAtDepth();
     void apfsWriter_nestedFileMoveAcrossDepth();
     void apfsWriter_lzfseCompressedFileRoundTrips();
+    void apfsWriter_lzvnCompressedFileRoundTrips();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -12337,6 +12338,42 @@ void PartitionManagerCoreTests::apfsWriter_lzfseCompressedFileRoundTrips() {
                                                   .file_name = QStringLiteral("z.txt"),
                                                   .file_data = payload,
                                                   .compress_lzfse = true,
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/z.txt"), static_cast<int>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_lzvnCompressedFileRoundTrips() {
+    // A5 follow-on: insert a file inline LZVN-compressed (decmpfs algo 7, highest precedence).
+    // The S.A.K. reader decodes it byte-exact via sak_lzvn_decode -- and because the zlib/plain
+    // inline decoder returns nullopt for algo 7, a correct readback proves the LZVN path ran.
+    // The macOS kernel decodes algo 7 identically (kernel md5 is batched). apfsck validates the
+    // decmpfs xattr structure + UF_COMPRESSED inode (SAK_LZVN_CERT_DIR persists the image).
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_LZVN_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("lzvn.img"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("Lzvn"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QByteArray payload;
+    for (int i = 0; i < 200; ++i) {
+        payload.append(QByteArrayLiteral("the quick brown fox jumps over the lazy dog. "));
+    }
+    const auto insert =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("z.txt"),
+                                                  .file_data = payload,
+                                                  .compress_lzvn = true,
                                                   .target_mutation_confirmed = true,
                                                   .allow_raw_device_target = true,
                                                   .options = certifiedApfsRawCommitOptions()});

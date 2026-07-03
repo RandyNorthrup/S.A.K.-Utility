@@ -31,6 +31,10 @@
 
 #include <lzfse.h>
 
+// Vendored Apple lzvn reference encoder (third_party/lzfse) via the C shim; lzfse.h
+// exposes only the lzfse container, so the type-7 (LZVN) encoder is reached directly.
+extern "C" size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
+
 namespace sak {
 
 namespace {
@@ -6804,6 +6808,9 @@ struct ApfsFileInsertBuildInputs {
     // A5 follow-on: store the payload inline LZFSE-compressed (decmpfs algo 11) instead of
     // zlib. Mutually exclusive with `compress`; takes precedence when both are set.
     bool compressLzfse{false};
+    // A5 follow-on: store the payload inline LZVN-compressed (decmpfs algo 7). Highest
+    // precedence of the three compressors when more than one flag is set.
+    bool compressLzvn{false};
 };
 
 // Build the embedded com.apple.decmpfs value for an inline LZFSE-compressed file: the 16-byte
@@ -6834,11 +6841,61 @@ QByteArray apfsBuildInlineLzfseDecmpfs(const QByteArray& data, bool* fits) {
     return value;
 }
 
-// Build the in-place insert request for a (possibly compressed) file. When
-// compress is set the payload is stored as an inline zlib com.apple.decmpfs
-// xattr and no data blocks are allocated; the inode is UF_COMPRESSED. Fails
-// closed if the compressed attribute would exceed the embedded-xattr limit
-// (resource-fork compression for larger files is a documented follow-on).
+// Build the embedded com.apple.decmpfs value for an inline LZVN-compressed file: the 16-byte
+// header (algo LZVN_ATTR) followed by the type-7 payload. Unlike lzfse, the lzvn encoder has
+// no self-describing uncompressed form and returns 0 for incompressible or too-small input, so
+// in that case the payload is stored raw behind a single 0x06 marker byte. The macOS kernel's
+// inline type-7 path (shared with the certified HFS+ decoder) reconstructs both forms. *fits is
+// false only when the value would exceed the embedded-xattr limit.
+QByteArray apfsBuildInlineLzvnDecmpfs(const QByteArray& data, bool* fits) {
+    QByteArray value = apfsBuildDecmpfsHeader(kApfsCompressLzvnAttr,
+                                              static_cast<uint64_t>(data.size()));
+    QByteArray block(data.size(), '\0');  // lzvn never expands past src; 0 return => store raw
+    const size_t encoded = sak_lzvn_encode(reinterpret_cast<uint8_t*>(block.data()),
+                                           static_cast<size_t>(block.size()),
+                                           reinterpret_cast<const uint8_t*>(data.constData()),
+                                           static_cast<size_t>(data.size()));
+    if (encoded == 0) {
+        value.append(static_cast<char>(kApfsDecmpfsLzvnRawMarker));
+        value.append(data);
+    } else {
+        value.append(block.constData(), static_cast<qsizetype>(encoded));
+    }
+    if (fits != nullptr) {
+        *fits = value.size() <= kApfsXattrMaxEmbeddedSize;
+    }
+    return value;
+}
+
+// Stamp a pre-built inline-compressed decmpfs value onto the insert request: drop the data
+// stream, flag the inode UF_COMPRESSED, and record the uncompressed size. Fails closed when the
+// value would not fit an embedded xattr (resource-fork compression for larger files is a
+// documented follow-on). Shared by the zlib/LZFSE/LZVN inline paths.
+bool applyInlineDecmpfsToRequest(ApfsFileInsertRequest* request,
+                                 const QByteArray& decmpfs,
+                                 bool fits,
+                                 uint64_t uncompressedSize,
+                                 QStringList* blockers) {
+    if (!fits) {
+        blockers->append(
+            QStringLiteral("APFS inline compression: the compressed com.apple.decmpfs attribute "
+                           "(%1 bytes) exceeds the embedded-xattr limit (%2 bytes); resource-fork "
+                           "compression for larger files is not yet supported")
+                .arg(decmpfs.size())
+                .arg(kApfsXattrMaxEmbeddedSize));
+        return false;
+    }
+    request->fileData.clear();
+    request->compressed = true;
+    request->decmpfsXattr = decmpfs;
+    request->uncompressedSize = uncompressedSize;
+    return true;
+}
+
+// Build the in-place insert request for a (possibly compressed) file. When a compressor is
+// selected the payload is stored as an inline com.apple.decmpfs xattr and no data blocks are
+// allocated; the inode is UF_COMPRESSED. Precedence when multiple flags are set: LZVN, then
+// LZFSE, then zlib. Fails closed if the compressed attribute exceeds the embedded-xattr limit.
 bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
@@ -6854,43 +6911,23 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
         request->sparse = true;
         request->sparseLogicalSize = in.sparseLogicalSize;
     }
+    const uint64_t size = static_cast<uint64_t>(in.fileData.size());
+    if (in.compressLzvn) {
+        bool fits = false;
+        const QByteArray value = apfsBuildInlineLzvnDecmpfs(in.fileData, &fits);
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    }
     if (in.compressLzfse) {
-        bool lzfseFits = false;
-        const QByteArray lzfseDecmpfs = apfsBuildInlineLzfseDecmpfs(in.fileData, &lzfseFits);
-        if (!lzfseFits) {
-            blockers->append(
-                QStringLiteral("APFS inline LZFSE compression: the compressed com.apple.decmpfs "
-                               "attribute (%1 bytes) exceeds the embedded-xattr limit (%2 bytes); "
-                               "resource-fork compression for larger files is not yet supported")
-                    .arg(lzfseDecmpfs.size())
-                    .arg(kApfsXattrMaxEmbeddedSize));
-            return false;
-        }
-        request->fileData.clear();
-        request->compressed = true;
-        request->decmpfsXattr = lzfseDecmpfs;
-        request->uncompressedSize = static_cast<uint64_t>(in.fileData.size());
-        return true;
+        bool fits = false;
+        const QByteArray value = apfsBuildInlineLzfseDecmpfs(in.fileData, &fits);
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
     }
     if (!in.compress) {
         return true;
     }
     bool fits = false;
-    const QByteArray decmpfs = apfsBuildInlineZlibDecmpfs(in.fileData, &fits);
-    if (!fits) {
-        blockers->append(
-            QStringLiteral("APFS inline zlib compression: the compressed com.apple.decmpfs "
-                           "attribute (%1 bytes) exceeds the embedded-xattr limit (%2 bytes); "
-                           "resource-fork compression for larger files is not yet supported")
-                .arg(decmpfs.size())
-                .arg(kApfsXattrMaxEmbeddedSize));
-        return false;
-    }
-    request->fileData.clear();
-    request->compressed = true;
-    request->decmpfsXattr = decmpfs;
-    request->uncompressedSize = static_cast<uint64_t>(in.fileData.size());
-    return true;
+    const QByteArray value = apfsBuildInlineZlibDecmpfs(in.fileData, &fits);
+    return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
 }
 
 // The live container state every in-place fs-tree commit reads up front: the
@@ -17175,7 +17212,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .xattrs = request.xattrs,
                                 .sparseLogicalSize = request.sparse_logical_size,
                                 .parentDirectoryId = parentDirectoryId,
-                                .compressLzfse = request.compress_lzfse},
+                                .compressLzfse = request.compress_lzfse,
+                                .compressLzvn = request.compress_lzvn},
                                &result);
     image.close();
     result.ok = result.blockers.isEmpty();
@@ -17566,7 +17604,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileInser
                                 .directories = directories,
                                 .compress = request.compress_zlib,
                                 .parentDirectoryId = parentDirectoryId,
-                                .compressLzfse = request.compress_lzfse},
+                                .compressLzfse = request.compress_lzfse,
+                                .compressLzvn = request.compress_lzvn},
                                &result);
     target->close();
     result.ok = result.blockers.isEmpty();
