@@ -356,6 +356,8 @@ constexpr qsizetype kApfsSnapMetaFlagsOffset = 0x2C;
 constexpr qsizetype kApfsSnapMetaNameLenOffset = 0x30;
 constexpr qsizetype kApfsSnapMetaNameOffset = 0x32;
 constexpr qsizetype kApfsSnapMetaValueHeaderBytes = 0x32;  // 50-byte fixed header before the name
+// j_snap_name key: 8-byte (type|OBJ_ID_MASK) header + le16 name_len, then the NUL-terminated name.
+constexpr qsizetype kApfsSnapNameKeyNameOffset = 10;
 // omap-snapshot tree node: fixed-kv, subtype 0x13, 8-byte xid key + 16-byte omap_snapshot value.
 constexpr uint32_t kApfsObjectSubtypeOmapSnapshot = 0x00'00'00'13;
 constexpr qsizetype kApfsOmapSnapshotTreeTocBytes = 576;
@@ -380,6 +382,9 @@ constexpr uint64_t kApfsSnapshotLiveOnlyBlocks = 3;
 // 5 -> 7, on a 6-block one-file volume 6 -> 8 (the earlier 2*before-3 formula only
 // coincided with +2 at before=5; a one-file volume disproved it via apfsck).
 constexpr uint64_t kApfsSnapshotAllocDelta = 2;
+// Each snapshot after the first on a quiescent volume adds only its own frozen superblock to
+// apfsck's summed v_block_count (+1): the shared omap/catalog nodes were counted by the first.
+constexpr uint64_t kApfsSnapshotSubsequentAllocDelta = 1;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
 constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
@@ -8383,9 +8388,80 @@ struct ApfsSnapshotCreateRequest {
     uint64_t createTimeNs{0};  // APFS time (ns since 1970-01-01 UTC); 0 = caller fills it in
 };
 
+// Read every j_snap_metadata record from a snapshot-metadata tree back into
+// ApfsSnapshotMetadata (the inverse of buildSnapMetaRecords), so a multi-snapshot create
+// can preserve the existing snapshots while appending the new one. The name comes from the
+// record value; each snapshot's j_snap_name record is re-derived on emit.
+QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
+                                                      const ApfsRepairGeometry& geometry,
+                                                      uint64_t snapMetaTree,
+                                                      QStringList* blockers) {
+    QVector<ApfsSnapshotMetadata> snapshots;
+    QByteArray node(geometry.blockSize, '\0');
+    if (snapMetaTree == 0 || !readApfsRepairBlock(image, geometry, snapMetaTree, &node, blockers)) {
+        return snapshots;
+    }
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype keyArea = kApfsBtreeNodeHeaderBytes +
+                              le16(node, kApfsBtreeNodeTableLengthOffset);
+    const qsizetype valArea = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const uint64_t keyHdr = le64(node, keyArea + le16(node, toc));
+        if ((keyHdr >> kApfsObjTypeShift) != kApfsJObjTypeSnapMetadata) {
+            continue;
+        }
+        const qsizetype val = valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        const uint16_t nameLen = le16(node, val + kApfsSnapMetaNameLenOffset);
+        ApfsSnapshotMetadata snap;
+        snap.snapXid = keyHdr & kApfsJObjIdMask;
+        snap.extentRefTreeOid = le64(node, val + kApfsSnapMetaExtentRefOidOffset);
+        snap.sblockOid = le64(node, val + kApfsSnapMetaSblockOidOffset);
+        snap.createTimeNs = le64(node, val + kApfsSnapMetaCreateTimeOffset);
+        snap.changeTimeNs = le64(node, val + kApfsSnapMetaChangeTimeOffset);
+        snap.inum = le64(node, val + kApfsSnapMetaInumOffset);
+        snap.name = node.mid(val + kApfsSnapMetaNameOffset,
+                             nameLen > 0 ? nameLen - 1 : 0);  // drop the trailing NUL
+        snapshots.append(snap);
+    }
+    return snapshots;
+}
+
+// Build the snap-meta tree records for every snapshot (existing preserved + the new one),
+// sorted into APFS key order: by object id (the xid for j_snap_metadata, the OBJ_ID_MASK for
+// j_snap_name) then type, so the metadata records (ascending xid) precede the name records.
+QVector<ApfsVariableKvRecord> buildAllSnapMetaRecords(
+    const QVector<ApfsSnapshotMetadata>& snapshots) {
+    QVector<ApfsVariableKvRecord> records;
+    for (const ApfsSnapshotMetadata& snap : snapshots) {
+        records.append(buildSnapMetaRecords(snap));
+    }
+    std::sort(records.begin(),
+              records.end(),
+              [](const ApfsVariableKvRecord& a, const ApfsVariableKvRecord& b) {
+                  // APFS keycmp order: object id, then type, then the name string. For a
+                  // j_snap_name key the name follows the 8-byte header + 2-byte length, so
+                  // key.mid(10) is exactly the NUL-terminated name and its byte compare equals
+                  // strcmp (j_snap_metadata keys have no name and never tie on id).
+                  const uint64_t ha = le64(a.key, 0);
+                  const uint64_t hb = le64(b.key, 0);
+                  if ((ha & kApfsJObjIdMask) != (hb & kApfsJObjIdMask)) {
+                      return (ha & kApfsJObjIdMask) < (hb & kApfsJObjIdMask);
+                  }
+                  if ((ha >> kApfsObjTypeShift) != (hb >> kApfsObjTypeShift)) {
+                      return (ha >> kApfsObjTypeShift) < (hb >> kApfsObjTypeShift);
+                  }
+                  return a.key.mid(kApfsSnapNameKeyNameOffset) <
+                         b.key.mid(kApfsSnapNameKeyNameOffset);
+              });
+    return records;
+}
+
 // COW inputs for a snapshot create. newBlocks layout (8 freshly allocated blocks):
 //   [0]=frozenExtentRef [1]=frozenSblock  [2]=omapSnapTree [3]=snapMetaTree
 //   [4]=volOmapHdr      [5]=volSb          [6]=ctrOmapTree  [7]=ctrOmapHdr
+// existingSnapshots: the snapshots already on the volume (empty for the first), preserved
+// in the rebuilt omap-snapshot + snap-meta trees alongside the new one.
 struct ApfsSnapshotCreateCow {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
@@ -8393,6 +8469,7 @@ struct ApfsSnapshotCreateCow {
     ApfsLiveFsChain live;
     QVector<uint64_t> newBlocks;
     ApfsSnapshotCreateRequest request;
+    QVector<ApfsSnapshotMetadata> existingSnapshots;
 };
 
 // Per-commit snapshot-create scalars derived from the live volume superblock.
@@ -8434,27 +8511,33 @@ bool writeSnapshotFrozenBlocks(const ApfsSnapshotCreateCow& cow,
     if (!writeApfsRepairBlock(cow.image, cow.geometry, frozenSblock, frozen, blockers)) {
         return false;
     }
-    // (C) omap-snapshot tree (one entry: this snapshot's xid; oms value all-zero).
+    // (C) omap-snapshot tree: one xid entry per snapshot (existing preserved + the new one),
+    // ascending by xid; each oms value is all-zero.
+    QVector<ApfsOmapSnapshotEntry> omapEntries;
+    for (const ApfsSnapshotMetadata& prior : cow.existingSnapshots) {
+        omapEntries.append({prior.snapXid, 0, 0});
+    }
+    omapEntries.append({snapXid, 0, 0});
     QByteArray omapSnap =
-        buildOmapSnapshotTreeBlock(bs, omapSnapTree, snapXid, {{snapXid, 0, 0}}, blockers);
+        buildOmapSnapshotTreeBlock(bs, omapSnapTree, snapXid, omapEntries, blockers);
     if (!writeApfsRepairBlock(cow.image, cow.geometry, omapSnapTree, omapSnap, blockers)) {
         return false;
     }
-    // (D) snap-meta tree (j_snap_metadata + j_snap_name). The snapshot owns the
-    // ORIGINAL (older) extent-ref tree with its KIND_NEW records (cow.live.extentRef,
-    // left in place, not freed); the LIVE volume's extent-ref is re-pointed at the
-    // newBlocks[0] copy whose records were converted to KIND_UPDATE (the +1 reference
-    // the snapshot adds). apfsck looks an UPDATE record up in the snapshot extref
-    // trees, so the NEW record must live in the snapshot's tree, the UPDATE in the live.
-    const ApfsSnapshotMetadata meta{.snapXid = snapXid,
-                                    .extentRefTreeOid = cow.live.extentRef,
-                                    .sblockOid = frozenSblock,
-                                    .createTimeNs = cow.request.createTimeNs,
-                                    .changeTimeNs = cow.request.createTimeNs,
-                                    .inum = st.snapInum,
-                                    .name = cow.request.snapshotName.toUtf8()};
+    // (D) snap-meta tree (j_snap_metadata + j_snap_name per snapshot). The NEW snapshot owns
+    // the current live extent-ref tree with its KIND_NEW records (cow.live.extentRef, left in
+    // place, not freed); the LIVE volume's extent-ref is re-pointed at the newBlocks[0] copy.
+    // Each existing snapshot keeps its own frozen extent-ref + superblock (preserved).
+    const ApfsSnapshotMetadata newMeta{.snapXid = snapXid,
+                                       .extentRefTreeOid = cow.live.extentRef,
+                                       .sblockOid = frozenSblock,
+                                       .createTimeNs = cow.request.createTimeNs,
+                                       .changeTimeNs = cow.request.createTimeNs,
+                                       .inum = st.snapInum,
+                                       .name = cow.request.snapshotName.toUtf8()};
+    QVector<ApfsSnapshotMetadata> allSnaps = cow.existingSnapshots;
+    allSnaps.append(newMeta);
     QByteArray snapMeta = buildVariableKvLeafBlock(
-        {bs, snapMetaTree, snapXid, kApfsObjectSubtypeSnapMeta, buildSnapMetaRecords(meta)},
+        {bs, snapMetaTree, snapXid, kApfsObjectSubtypeSnapMeta, buildAllSnapMetaRecords(allSnaps)},
         blockers);
     return writeApfsRepairBlock(cow.image, cow.geometry, snapMetaTree, snapMeta, blockers);
 }
@@ -8534,16 +8617,21 @@ bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* 
     const uint64_t beforeAlloc = le64(st.liveVol, kApfsVolumeAllocatedBlockCountOffset);
     // The volume object-map tree is shared with the snapshot BY REFERENCE: create COWs
     // only the omap header (writeSnapshotVolumeChain step E), never a tree node, so the
-    // omap's depth is immaterial here. The logical alloc-count delta is the constant
-    // kApfsSnapshotAllocDelta whatever the omap holds - every shared omap/catalog node is
-    // counted identically before and after, so its count cancels in the delta (apfsck
-    // certified +2 on a multi-level-omap volume, not just the empty single-node case).
+    // omap's depth is immaterial here. apfsck's v_block_count sums EVERY snapshot's logical
+    // block count (snapshot.c: latest_vsb->v_block_count += vsb->v_block_count), so the FIRST
+    // snapshot of a quiescent volume adds kApfsSnapshotAllocDelta (+2: its frozen superblock
+    // plus the snapshot infrastructure) and each SUBSEQUENT one adds
+    // kApfsSnapshotSubsequentAllocDelta (+1: just its own frozen superblock; the shared
+    // omap/catalog nodes were already counted by the earlier snapshot). A non-empty volume's
+    // later snapshots re-count their shared file blocks and so add more -- a documented
+    // follow-on (diverge-between-snapshots); the quiescent case is certified here.
     if (beforeAlloc < kApfsSnapshotLiveOnlyBlocks) {
         blockers->append(
             QStringLiteral("APFS snapshot-create: implausible volume allocated-block count"));
         return false;
     }
-    st.newAllocCount = beforeAlloc + kApfsSnapshotAllocDelta;
+    st.newAllocCount = beforeAlloc + (st.newSnapCount == 1 ? kApfsSnapshotAllocDelta
+                                                           : kApfsSnapshotSubsequentAllocDelta);
     return writeSnapshotFrozenBlocks(cow, st, blockers) &&
            writeSnapshotVolumeChain(cow, st, blockers);
 }
@@ -8555,6 +8643,11 @@ struct ApfsSnapshotCreateFinalize {
     uint64_t oldSnapMetaTree{0};
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock{0};
+    // Snapshots already on the volume (empty for the first), preserved in the rebuilt trees.
+    QVector<ApfsSnapshotMetadata> existingSnapshots;
+    // The volume's current omap-snapshot tree (0 for the first snapshot); freed and rebuilt
+    // when a second-or-later snapshot is added.
+    uint64_t oldOmapSnapTree{0};
 };
 
 // Inputs to the shared snapshot-commit checkpoint tail.
@@ -8804,15 +8897,21 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                                       .newXid = newXid,
                                       .live = ctx.chain,
                                       .newBlocks = f.newBlocks,
-                                      .request = f.request},
+                                      .request = f.request,
+                                      .existingSnapshots = f.existingSnapshots},
                                      blockers)) {
         return false;
     }
-    const QVector<uint64_t> freed = {ctx.chain.volSb,
-                                     ctx.chain.volOmapHdr,
-                                     f.oldSnapMetaTree,
-                                     ctx.chain.ctrOmapTree,
-                                     ctx.chain.ctrOmapHdr};
+    QVector<uint64_t> freed = {ctx.chain.volSb,
+                               ctx.chain.volOmapHdr,
+                               f.oldSnapMetaTree,
+                               ctx.chain.ctrOmapTree,
+                               ctx.chain.ctrOmapHdr};
+    // A second-or-later snapshot rebuilds the omap-snapshot tree, so the old one is freed
+    // too (the first snapshot has none: oldOmapSnapTree is 0).
+    if (f.oldOmapSnapTree != 0) {
+        freed.append(f.oldOmapSnapTree);
+    }
     return commitSnapshotCheckpointTail({.ctx = ctx,
                                          .newXid = newXid,
                                          .freed = freed,
@@ -8846,13 +8945,29 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
     if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
         return false;
     }
-    if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) != 0) {
-        blockers->append(
-            QStringLiteral("APFS snapshot-create: the volume already carries a snapshot "
-                           "(multi-snapshot create is a later increment)"));
-        return false;
-    }
+    // Read the volume's existing snapshots (empty for the first); they are preserved in the
+    // rebuilt omap-snapshot + snap-meta trees alongside the new one.
     const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
+    const QVector<ApfsSnapshotMetadata> existing =
+        readAllSnapshotMetadata(image, ctx.geometry, oldSnapMetaTree, blockers);
+    const QByteArray wantName = request.snapshotName.trimmed().toUtf8();
+    for (const ApfsSnapshotMetadata& snap : existing) {
+        if (snap.name == wantName) {
+            blockers->append(
+                QStringLiteral("APFS snapshot-create: a snapshot named '%1' already exists")
+                    .arg(request.snapshotName.trimmed()));
+            return false;
+        }
+    }
+    // The current omap-snapshot tree (0 when there is no snapshot yet); rebuilt on 2nd+.
+    uint64_t oldOmapSnapTree = 0;
+    if (!existing.isEmpty()) {
+        QByteArray volOmap(ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &volOmap, blockers)) {
+            return false;
+        }
+        oldOmapSnapTree = le64(volOmap, kApfsOmapSnapshotTreeOidOffset);
+    }
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     if (!allocateFsCommitBlocks(ctx, {3, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
@@ -8864,7 +8979,9 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
                                    .request = clean,
                                    .oldSnapMetaTree = oldSnapMetaTree,
                                    .newBlocks = newBlocks,
-                                   .chunk1BitmapBlock = chunk1BitmapBlock},
+                                   .chunk1BitmapBlock = chunk1BitmapBlock,
+                                   .existingSnapshots = existing,
+                                   .oldOmapSnapTree = oldOmapSnapTree},
                                   result,
                                   blockers);
 }

@@ -1813,6 +1813,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileMoveAcrossDirectories();
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
+    void apfsWriter_inPlaceMultiSnapshotCreate();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
     void apfsWriter_rawCommitWrappersMutateConfirmedTarget();
@@ -9713,11 +9714,20 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
 
     verifyApfsSnapshotCreateStructures(snap, baseVol, beforeAlloc);
 
-    // A volume that already carries a snapshot fails closed (multi-snapshot is later).
-    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotCreate(
+    // A second snapshot on the same volume now succeeds (multi-snapshot create), preserving
+    // the first.
+    QVERIFY2(PartitionApfsWriter::commitImageOnlySnapshotCreate(
                  {.source_image_path = snap,
                   .written_image_path = dir.filePath(QStringLiteral("a3-x.apfs")),
                   .snapshot_name = QStringLiteral("second"),
+                  .options = options})
+                 .ok,
+             "a second snapshot should be created alongside the first");
+    // A duplicate snapshot name fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                 {.source_image_path = snap,
+                  .written_image_path = dir.filePath(QStringLiteral("a3-dup.apfs")),
+                  .snapshot_name = QStringLiteral("sak.a3.snapshot"),
                   .options = options})
                  .ok);
     // An empty snapshot name fails closed.
@@ -9727,6 +9737,65 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotCreateAddsSnapshot() {
                   .snapshot_name = QString(),
                   .options = options})
                  .ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotCreate() {
+    // Multiple snapshots: create two snapshots back-to-back on a quiescent volume. The
+    // second preserves the first in the rebuilt omap-snapshot (2 xids) + snap-meta (2
+    // j_snap_metadata + 2 j_snap_name) trees; num_snapshots becomes 2 and each snapshot
+    // keeps its own frozen superblock. On an empty volume all extent-ref trees are empty,
+    // so there is no cross-snapshot refcnt to reconcile. SAK_MULTISNAP_CERT_DIR persists
+    // the final image for host apfsck.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_MULTISNAP_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("multisnap-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("MULTISNAP"),
+                 .options = options})
+                .ok);
+    const QString snap1 = dir.filePath(QStringLiteral("multisnap-1.apfs"));
+    const auto c1 = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = base,
+         .written_image_path = snap1,
+         .snapshot_name = QStringLiteral("snap-one"),
+         .create_time_ns = 1'782'096'003'133'454'505ULL,
+         .options = options});
+    QVERIFY2(c1.ok, qPrintable(c1.blockers.join(QStringLiteral("; "))));
+    const QString snap2 = dir.filePath(QStringLiteral("multisnap-2.apfs"));
+    const auto c2 = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = snap1,
+         .written_image_path = snap2,
+         .snapshot_name = QStringLiteral("snap-two"),
+         .create_time_ns = 1'782'096'004'133'454'505ULL,
+         .options = options});
+    QVERIFY2(c2.ok, qPrintable(c2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(snap2, apfsApsbBlockOf(snap2)), 0xD8), 2ULL);
+
+    // A third snapshot exercises the subsequent-snapshot alloc delta again (+1 per snapshot).
+    const QString snap3 = dir.filePath(QStringLiteral("multisnap.img"));
+    const auto c3 = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = snap2,
+         .written_image_path = snap3,
+         .snapshot_name = QStringLiteral("snap-three"),
+         .create_time_ns = 1'782'096'005'133'454'505ULL,
+         .options = options});
+    QVERIFY2(c3.ok, qPrintable(c3.blockers.join(QStringLiteral("; "))));
+
+    // The volume superblock now records three snapshots (apfs_num_snapshots @ 0xD8).
+    const QByteArray vol = readApfsImageBlock(snap3, apfsApsbBlockOf(snap3));
+    QCOMPARE(apfsLe64(vol, 0xD8), 3ULL);
+
+    // The live tree is still shared and readable after three snapshots.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(snap3, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.volume_name, QStringLiteral("MULTISNAP"));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState() {
