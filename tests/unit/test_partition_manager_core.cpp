@@ -1831,6 +1831,7 @@ private Q_SLOTS:
     void apfsWriter_addsHardLinkToFile();
     void apfsWriter_growsContainerInChunk();
     void apfsWriter_growsContainerAddingChunks();
+    void apfsWriter_growsMultiChunkSourceContainer();
     void apfsWriter_blocksSealedVolumeMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -11218,6 +11219,68 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     // the pre-grow file read back byte-for-byte. (Apple-kernel certified on macOS 15.7.4:
     // mount + fsck_apfs clean + byte-exact read-back for small and chunk-spilling inserts.)
     certifyPostGrowInsertReadsBack(dir, grown, options, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
+    // Multi-chunk source grow: a container already spanning >= 2 chunks grows by adding chunks;
+    // the relocated internal pool lands in a HIGH chunk (not chunk 0), so chunk 0 and the pool's
+    // chunk both carry bitmaps (non-contiguous, via the explicit chunk-info builder). apfsck-clean
+    // across 2->3/2->4/2->8 targets and Apple-kernel clean (macOS 15.7.4); the pre-grow file reads
+    // back and the grown container is re-mutable. A source with data spilled past chunk 0 fails
+    // closed (relocating its spilled-chunk bitmap is a later increment).
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t k256 = 256ULL * 1024ULL * 1024ULL;  // 2 chunks
+    constexpr uint64_t k512 = 512ULL * 1024ULL * 1024ULL;  // 4 chunks
+    const QString base = dir.filePath(QStringLiteral("mcs-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                            .target_container_bytes = k256,
+                                                            .block_size_bytes = kBlockSize,
+                                                            .volume_name = QStringLiteral("MCS"),
+                                                            .options = options})
+                .ok);
+    const QByteArray payload = QByteArray("multi-chunk-src-").repeated(400);
+    const QString withFile = dir.filePath(QStringLiteral("mcs-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    const QString grown = dir.filePath(QStringLiteral("mcs-grown.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                                    .written_image_path = grown,
+                                                                    .new_size_bytes = k512,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QFile img(grown);
+    QVERIFY(img.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(img.size()), k512);
+    img.close();
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        grown, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+    // The multi-chunk-grown container is re-mutable (relocated pool in a high chunk).
+    certifyPostGrowInsertReadsBack(dir, grown, options, payload);
+    // A source with file data spilled past chunk 0 fails closed.
+    const QByteArray big(200 * 1024 * 1024, 'S');
+    const QString spill = dir.filePath(QStringLiteral("mcs-spill.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = spill,
+                                                            .file_name = QStringLiteral("big.bin"),
+                                                            .file_data = big,
+                                                            .options = options})
+                .ok);
+    const QString spillGrown = dir.filePath(QStringLiteral("mcs-spill-grown.apfs"));
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize({.source_image_path = spill,
+                                                         .written_image_path = spillGrown,
+                                                         .new_size_bytes = k512,
+                                                         .options = options})
+                 .ok);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

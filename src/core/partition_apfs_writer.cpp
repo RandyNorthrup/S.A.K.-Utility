@@ -9057,6 +9057,7 @@ struct ApfsChunkAddingGrowPlan {
     uint64_t oldIpBase{0};        // superseded pool base (freed to the main free-queue)
     uint64_t oldIpBlockCount{0};
     uint64_t newXid{0};
+    uint32_t sourceChunk0Free{0};  // carried chunk-0 free count (multi-chunk-source grow only)
 };
 
 // Validate + lay out a single-chunk-source chunk-adding grow. Increment 1 supports a
@@ -9253,6 +9254,233 @@ bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
                              blockers);
 }
 
+// A single chunk's post-grow allocation state for the explicit chunk-info builder.
+struct ApfsExplicitChunkEntry {
+    uint64_t chunkAddr{0};   // first block of the chunk (chunk index * blocks_per_chunk)
+    uint32_t blockCount{0};  // blocks in the chunk (< blocks_per_chunk only for a partial tail)
+    uint32_t freeCount{0};   // free blocks in the chunk
+    uint64_t bitmapAddr{0};  // ci_bitmap_addr (0 = implicit all-free)
+    uint64_t xid{0};         // ci xid (genesis for an untouched chunk, newXid for a changed one)
+};
+
+// Build a chunk-info block from EXPLICIT per-chunk entries. Unlike buildChunkInfoBlock (which
+// derives entries from a contiguous chunk-0 metadata prefix), this places bitmaps at arbitrary
+// chunks - needed by the multi-chunk-source grow, where the relocated internal pool lands in a
+// HIGH chunk so the bitmapped chunks (chunk 0 + the pool's chunk) are non-contiguous.
+QByteArray buildExplicitChunkInfoBlock(uint32_t blockSize,
+                                       uint64_t selfBlock,
+                                       uint64_t cibObjXid,
+                                       const QVector<ApfsExplicitChunkEntry>& chunks,
+                                       QStringList* blockers) {
+    QByteArray block =
+        newApfsObjectBlock(blockSize, selfBlock, cibObjXid, kApfsObjectTypeChunkInfoBlock);
+    writeLe32(&block, kApfsChunkInfoIndexOffset, 0);
+    writeLe32(&block, kApfsChunkInfoCountOffset, static_cast<uint32_t>(chunks.size()));
+    for (qsizetype i = 0; i < chunks.size(); ++i) {
+        const ApfsExplicitChunkEntry& c = chunks.at(i);
+        const qsizetype entry = kApfsChunkInfoEntriesOffset + i * kApfsChunkInfoEntryStride;
+        writeLe64(&block, entry, c.xid);
+        writeLe64(&block, entry + kApfsChunkInfoEntryAddrOffset, c.chunkAddr);
+        writeLe32(&block, entry + kApfsChunkInfoEntryBlockCountOffset, c.blockCount);
+        writeLe32(&block, entry + kApfsChunkInfoEntryFreeCountOffset, c.freeCount);
+        writeLe64(&block, entry + kApfsChunkInfoEntryBitmapAddrOffset, c.bitmapAddr);
+    }
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+// Read the source's single live cib and confirm the multi-chunk-source grow is in scope: the
+// source must end on a chunk boundary and only chunk 0 may carry a bitmap (a chunk k>0 with a
+// live bitmap holds spilled file data whose bitmap also sits in the relocating pool - moving it
+// is a further increment). Returns chunk 0's free count via *chunk0Free.
+bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
+                              uint64_t oldChunks,
+                              uint32_t* chunk0Free,
+                              QStringList* blockers) {
+    if (ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: a multi-chunk source that ends mid-chunk is a later increment"));
+        return false;
+    }
+    QByteArray cib(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
+        return false;
+    }
+    *chunk0Free = le32(cib, kApfsChunkInfoEntriesOffset + kApfsChunkInfoEntryFreeCountOffset);
+    for (uint64_t k = 1; k < oldChunks; ++k) {
+        const qsizetype e = kApfsChunkInfoEntriesOffset +
+                            static_cast<qsizetype>(k) * kApfsChunkInfoEntryStride;
+        if (le64(cib, e + kApfsChunkInfoEntryBitmapAddrOffset) != 0) {
+            blockers->append(QStringLiteral(
+                "APFS resize-grow: a multi-chunk source with data spilled past chunk 0 is a later "
+                "increment (its spilled-chunk bitmaps sit in the relocating internal pool)"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// The relocated allocator a multi-chunk-source grow builds in the grow region: the new live cib
+// plus the exact IP-relative used-set for the sm_ip_bitmap (one slot wider than the single-chunk
+// grow because the pool's own high chunk also carries a bitmap).
+struct ApfsMultiChunkGrownAllocator {
+    uint64_t liveCib{0};
+    QVector<uint64_t> ipUsedSet;
+    uint64_t ipBitmapUsage{0};
+};
+
+// The per-chunk cib entries after a multi-chunk-source grow: chunk 0 keeps its carried
+// allocation (bitmap relocated to `chunk0Bmp`), the pool's chunk marks the relocated pool used,
+// every other chunk is all-free. `poolChunk` is the first grown chunk (= oldChunks).
+QVector<ApfsExplicitChunkEntry> multiChunkGrowEntries(const ApfsChunkAddingGrowPlan& plan,
+                                                      uint64_t poolChunk,
+                                                      uint32_t chunk0Free,
+                                                      uint64_t chunk0Bmp,
+                                                      uint64_t poolBmp) {
+    QVector<ApfsExplicitChunkEntry> entries;
+    for (uint64_t k = 0; k < plan.newChunkCount; ++k) {
+        const uint64_t addr = k * kApfsSpacemanBlocksPerChunk;
+        const uint32_t blocks = static_cast<uint32_t>(
+            qMin<uint64_t>(kApfsSpacemanBlocksPerChunk, plan.newBlockCount - addr));
+        ApfsExplicitChunkEntry e{addr, blocks, blocks, 0, kApfsFormatGenesisXid};
+        if (k == 0) {
+            e.bitmapAddr = chunk0Bmp;
+            e.freeCount = chunk0Free;
+            e.xid = plan.newXid;
+        } else if (k == poolChunk) {
+            e.bitmapAddr = poolBmp;
+            e.freeCount = blocks - static_cast<uint32_t>(plan.newIpBlockCount);
+            e.xid = plan.newXid;
+        }
+        entries.append(e);
+    }
+    return entries;
+}
+
+// Build + write the relocated allocator for a multi-chunk-source grow at plan.newIpBase (the
+// start of the first grown chunk). IP slots: ghostCib, ghostBmp (chunk-0 bitmap ghost), liveCib,
+// liveBmp (chunk-0 bitmap), poolBmp (the pool chunk's own bitmap). Chunk 0's bitmap is carried
+// from the source (old pool blocks stay used, riding the main free-queue); the pool chunk's
+// bitmap marks the relocated pool used. The old subtree stays intact until the atomic re-anchor.
+bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
+                                   const ApfsChunkAddingGrowPlan& plan,
+                                   const QVector<uint64_t>& reclaimed,
+                                   ApfsMultiChunkGrownAllocator* out,
+                                   QStringList* blockers) {
+    const uint32_t chunk0Free = plan.sourceChunk0Free;
+    const uint32_t bs = ctx->geometry.blockSize;
+    const uint64_t poolChunk = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    const uint64_t base = plan.newIpBase;
+    const uint64_t ghostCib = base, ghostBmp = base + 1, liveCib = base + 2, liveBmp = base + 3;
+    // The pool chunk's own bitmap is NOT part of the rotation ring (ghost + the three cib-0
+    // rotation slots occupy base+0..base+7 = [ipBase, freePoolBase)). It sits at freePoolBase
+    // (the first free-pool block, cib0Base + 3*stride = base+8), exactly where the mutation
+    // engine's spilled-chunk machinery expects a persistent chunk bitmap, so a later re-mutation
+    // carries it forward instead of colliding with a rotating cib.
+    const uint64_t poolBmp = base + 8;
+    QByteArray chunk0(bs, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
+        return false;
+    }
+    for (uint64_t b : reclaimed) {
+        chunk0[static_cast<qsizetype>(b / 8)] &= static_cast<char>(~(1 << (b % 8)));
+    }
+    const QByteArray poolBm = buildChunkBitmapBlock(bs, plan.newIpBlockCount);
+    const QByteArray ghostCibBlk = buildExplicitChunkInfoBlock(
+        bs,
+        ghostCib,
+        plan.newXid,
+        multiChunkGrowEntries(plan, poolChunk, chunk0Free, ghostBmp, poolBmp),
+        blockers);
+    const QByteArray liveCibBlk = buildExplicitChunkInfoBlock(
+        bs,
+        liveCib,
+        plan.newXid,
+        multiChunkGrowEntries(plan, poolChunk, chunk0Free, liveBmp, poolBmp),
+        blockers);
+    if (!writeApfsRepairBlock(ctx->image, ctx->geometry, ghostBmp, chunk0, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, liveBmp, chunk0, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, poolBmp, poolBm, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, ghostCib, ghostCibBlk, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, liveCib, liveCibBlk, blockers)) {
+        return false;
+    }
+    out->liveCib = liveCib;
+    // ghost cib+bmp (0,1), live cib+bmp (2,3), and the pool chunk's bitmap at freePoolBase (8).
+    out->ipUsedSet = {0, 1, 2, 3, 8};
+    out->ipBitmapUsage = 5;
+    return true;
+}
+
+// A7 (A-g) multi-chunk-source grow: the source already spans >= 2 chunks, so the relocated pool
+// lands at the start of the first grown chunk (a HIGH chunk, not chunk 0). Same crash-safe COW
+// shape as the single-chunk grow, but chunk 0 and the pool's chunk both carry bitmaps.
+bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
+                                      uint64_t newBlockCount,
+                                      ApfsInPlaceCheckpointResult* result,
+                                      QStringList* blockers) {
+    const uint64_t oldBlockCount = ctx->geometry.blockCount;
+    const uint64_t oldChunks = oldBlockCount / kApfsSpacemanBlocksPerChunk;
+    const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 ||
+        cibCountForChunks(newChunks) != 1) {
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: multi-chunk-source grow supports a single-CIB source and target "
+            "(up to 126 chunks); multi-CIB/CAB tiers are a later increment"));
+        return false;
+    }
+    uint32_t chunk0Free = 0;
+    if (!readMultiChunkGrowSource(ctx, oldChunks, &chunk0Free, blockers)) {
+        return false;
+    }
+    ApfsChunkAddingGrowPlan plan;
+    plan.newBlockCount = newBlockCount;
+    plan.newChunkCount = newChunks;
+    plan.newXid = ctx->live.xid + 1;
+    plan.newIpBase = oldBlockCount;
+    plan.newIpBlockCount = 3 * (newChunks + 1);
+    plan.oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan.oldIpBlockCount = 3 * (oldChunks + 1);
+    plan.sourceChunk0Free = chunk0Free;
+    if (plan.oldIpBase == 0) {
+        blockers->append(
+            QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
+        return false;
+    }
+    const ApfsMainFqAdvance mainFq =
+        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    ApfsMultiChunkGrownAllocator alloc;
+    if (!buildMultiChunkGrownAllocator(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
+        return false;
+    }
+    const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
+                              static_cast<int64_t>(plan.newIpBlockCount) +
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
+    return advanceCheckpoint({.image = ctx->image,
+                              .geometry = ctx->geometry,
+                              .nxsb = ctx->nxsb,
+                              .live = ctx->live,
+                              .newContainerOmap = 0,
+                              .spacemanFreeDelta = freeDelta,
+                              .nextOidAdvance = 0,
+                              .newCibAddr = alloc.liveCib,
+                              .cibCount = 1,
+                              .ipSlotStride = 2,
+                              .ipBitmapUsage = alloc.ipBitmapUsage,
+                              .mainFqEntries = mainFq.entries,
+                              .blockCountDelta =
+                                  static_cast<int64_t>(newBlockCount - oldBlockCount),
+                              .ipUsedSet = alloc.ipUsedSet,
+                              .newChunkCount = plan.newChunkCount,
+                              .newIpBlockCount = plan.newIpBlockCount,
+                              .newIpBase = plan.newIpBase,
+                              .explicitIpFqEntries = ipFq},
+                             result,
+                             blockers);
+}
+
 // A7 (A-g) container grow dispatcher. A grow that stays within the single chunk 0 takes the
 // in-chunk path; a single-chunk container crossing a 32768-block boundary takes the
 // chunk-adding path (relocate the internal pool into the grow region, add chunks). Growing a
@@ -9271,11 +9499,7 @@ bool commitInPlaceResizeGrow(QIODevice* image,
         return commitInChunkResizeGrow(&ctx, growDeltaBlocks, result, blockers);
     }
     if (ctx.geometry.blockCount > kApfsSpacemanBlocksPerChunk) {
-        blockers->append(QStringLiteral(
-            "APFS resize-grow: growing a multi-chunk container is not yet supported (the "
-            "chunk-adding grow currently relocates the internal pool within a single-chunk "
-            "source's chunk 0)"));
-        return false;
+        return commitMultiChunkSourceResizeGrow(&ctx, newBlockCount, result, blockers);
     }
     return commitChunkAddingResizeGrow(&ctx, newBlockCount, result, blockers);
 }
