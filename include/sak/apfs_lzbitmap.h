@@ -4,10 +4,13 @@
 /// @file apfs_lzbitmap.h
 /// @brief APFS LZBITMAP (com.apple.decmpfs algorithm 14) resource-fork container.
 ///
-/// Unlike the ZLIB/LZVN/LZFSE resource algorithms (which share the Apple "cmpf"
-/// rsrc_hdr/rsrc_data block table, see apfs_resource_fork.h), LZBITMAP stores its
-/// resource fork as a bare little-endian `__le32 block_offs[]` table followed by
-/// the per-block compressed data. This is the exact layout apfsck's
+/// LZBITMAP, LZVN and LZFSE resource forks all use this bare little-endian
+/// `__le32 block_offs[]` table followed by the per-block compressed data (the
+/// layout the macOS kernel reads for them); only ZLIB uses the Apple "cmpf"
+/// rsrc_hdr/rsrc_data blob (see apfs_resource_fork.h). The block_offs builder/
+/// parser here are generic (apfsBuild/ParseBlockOffsResourceFork) and take the
+/// per-block codec; LZBITMAP is the algorithm-specific wrapper. This is the exact
+/// layout apfsck's
 /// `apfs_compress_open`/`apfs_compress_read_block` parse for
 /// APFS_COMPRESS_LZBITMAP_RSRC:
 ///
@@ -101,11 +104,15 @@ inline constexpr int kApfsLzbitmapMaxBlockBytes = kApfsLzbitmapBlockSize + 1;
     return std::nullopt;
 }
 
-// Build the LZBITMAP resource-fork dstream for @data: a le32 block_offs[] table of
-// (blockCount + 1) entries (the last equal to the total size) followed by the
-// per-block compressed bytes. Returns an empty array (fail closed) if the blob
-// would exceed the 32-bit offset range the on-disk table can express.
-[[nodiscard]] inline QByteArray apfsBuildLzbitmapResourceFork(const QByteArray& data) {
+// Build a block_offs resource-fork dstream for @data, encoding each 64 KiB block with @encodeBlock
+// (returns the on-disk per-block bytes, <= 64 KiB + 1): a le32 block_offs[] table of
+// (blockCount + 1) entries (the last equal to the total size) followed by the per-block bytes.
+// The macOS kernel reads LZBITMAP, LZVN and LZFSE resource forks with this exact layout (unlike
+// ZLIB, which uses the Apple "cmpf" blob). Returns an empty array (fail closed) if the blob would
+// exceed the 32-bit offset range or a block would overflow the per-block size bound.
+template <class EncodeBlockFn>
+[[nodiscard]] inline QByteArray apfsBuildBlockOffsResourceFork(const QByteArray& data,
+                                                               EncodeBlockFn encodeBlock) {
     const int blockCount = apfsLzbitmapBlockCount(static_cast<uint64_t>(data.size()));
     const int tableBytes = (blockCount + 1) * static_cast<int>(sizeof(uint32_t));
 
@@ -117,7 +124,10 @@ inline constexpr int kApfsLzbitmapMaxBlockBytes = kApfsLzbitmapBlockSize + 1;
         offsets.append(static_cast<uint32_t>(offset));
         const QByteArray slice = data.mid(static_cast<qsizetype>(i) * kApfsLzbitmapBlockSize,
                                           kApfsLzbitmapBlockSize);
-        const QByteArray encoded = apfsLzbitmapEncodeBlock(slice);
+        const QByteArray encoded = encodeBlock(slice);
+        if (encoded.isEmpty() || encoded.size() > kApfsLzbitmapMaxBlockBytes) {
+            return {};
+        }
         blocks.append(encoded);
         offset += encoded.size();
         if (offset > 0xFF'FF'FF'FFLL) {
@@ -133,27 +143,38 @@ inline constexpr int kApfsLzbitmapMaxBlockBytes = kApfsLzbitmapBlockSize + 1;
     return table + blocks;
 }
 
-// Extract and decode block @i from an LZBITMAP resource fork given its parsed offset table.
-[[nodiscard]] inline std::optional<QByteArray> apfsLzbitmapBlockAt(const QByteArray& blob,
-                                                                   const QVector<uint32_t>& offsets,
-                                                                   int i,
-                                                                   uint64_t uncompressedSize) {
+// Build the LZBITMAP resource-fork dstream for @data (block_offs table + LZBITMAP-encoded blocks).
+[[nodiscard]] inline QByteArray apfsBuildLzbitmapResourceFork(const QByteArray& data) {
+    return apfsBuildBlockOffsResourceFork(data, apfsLzbitmapEncodeBlock);
+}
+
+// Extract and decode block @i of a block_offs resource fork with @decodeBlock. nullopt on a bad
+// block position or a decode mismatch. Block i spans [offsets[i], offsets[i+1]).
+template <class DecodeBlockFn>
+[[nodiscard]] inline std::optional<QByteArray> apfsBlockOffsBlockAt(
+    const QByteArray& blob,
+    const QVector<uint32_t>& offsets,
+    int i,
+    uint64_t uncompressedSize,
+    DecodeBlockFn decodeBlock) {
     const uint32_t coffs = offsets.at(i);
     const uint32_t next = offsets.at(i + 1);
     if (next <= coffs || static_cast<uint64_t>(next) > static_cast<uint64_t>(blob.size())) {
         return std::nullopt;
     }
-    const int expected = static_cast<int>(
+    const uint64_t expected =
         std::min<uint64_t>(kApfsLzbitmapBlockSize,
-                           uncompressedSize - static_cast<uint64_t>(i) * kApfsLzbitmapBlockSize));
-    return apfsLzbitmapDecodeBlock(
+                           uncompressedSize - static_cast<uint64_t>(i) * kApfsLzbitmapBlockSize);
+    return decodeBlock(
         blob.mid(static_cast<qsizetype>(coffs), static_cast<qsizetype>(next - coffs)), expected);
 }
 
-// Parse an LZBITMAP resource-fork dstream back to @uncompressedSize bytes. Returns
-// nullopt on any structural mismatch (so the reader fails closed on bad input).
-[[nodiscard]] inline std::optional<QByteArray> apfsParseLzbitmapResourceFork(
-    const QByteArray& blob, uint64_t uncompressedSize) {
+// Parse a block_offs resource-fork dstream back to @uncompressedSize bytes, decoding each block
+// with @decodeBlock (bytes, expectedBytes) -> optional. Returns nullopt on any structural
+// mismatch (so the reader fails closed on bad input). Shared by LZBITMAP, LZVN and LZFSE.
+template <class DecodeBlockFn>
+[[nodiscard]] inline std::optional<QByteArray> apfsParseBlockOffsResourceFork(
+    const QByteArray& blob, uint64_t uncompressedSize, DecodeBlockFn decodeBlock) {
     const int blockCount = apfsLzbitmapBlockCount(uncompressedSize);
     if (blockCount == 0) {
         return uncompressedSize == 0 ? std::optional<QByteArray>(QByteArray()) : std::nullopt;
@@ -176,16 +197,23 @@ inline constexpr int kApfsLzbitmapMaxBlockBytes = kApfsLzbitmapBlockSize + 1;
     QByteArray out;
     out.reserve(static_cast<qsizetype>(uncompressedSize));
     for (int i = 0; i < blockCount; ++i) {
-        const auto decoded = apfsLzbitmapBlockAt(blob, offsets, i, uncompressedSize);
+        const auto decoded = apfsBlockOffsBlockAt(blob, offsets, i, uncompressedSize, decodeBlock);
         if (!decoded.has_value()) {
             return std::nullopt;
         }
         out.append(decoded.value());
     }
-    if (static_cast<uint64_t>(out.size()) != uncompressedSize) {
-        return std::nullopt;
-    }
-    return out;
+    return static_cast<uint64_t>(out.size()) == uncompressedSize ? std::optional<QByteArray>(out)
+                                                                 : std::nullopt;
+}
+
+// Parse an LZBITMAP resource-fork dstream back to @uncompressedSize bytes.
+[[nodiscard]] inline std::optional<QByteArray> apfsParseLzbitmapResourceFork(
+    const QByteArray& blob, uint64_t uncompressedSize) {
+    return apfsParseBlockOffsResourceFork(
+        blob, uncompressedSize, [](const QByteArray& block, uint64_t expected) {
+            return apfsLzbitmapDecodeBlock(block, static_cast<int>(expected));
+        });
 }
 
 }  // namespace sak

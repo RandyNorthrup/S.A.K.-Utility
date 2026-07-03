@@ -7112,6 +7112,47 @@ QByteArray apfsBuildInlineLzvnDecmpfs(const QByteArray& data, bool* fits) {
     return value;
 }
 
+// Encode one <= 64 KiB chunk for an LZVN resource fork (decmpfs algo 8). A compressible chunk is
+// a bare lzvn stream; an incompressible one (sak_lzvn_encode returns 0) is stored behind a single
+// 0x06 marker byte. The macOS kernel's LZVN_RSRC path (cdata[0]==0x06 -> raw, else lzvn_decode)
+// reconstructs both forms.
+QByteArray apfsEncodeLzvnResourceChunk(const QByteArray& chunk) {
+    QByteArray block(chunk.size(), '\0');
+    const size_t encoded = sak_lzvn_encode(reinterpret_cast<uint8_t*>(block.data()),
+                                           static_cast<size_t>(block.size()),
+                                           reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                           static_cast<size_t>(chunk.size()));
+    if (encoded == 0) {
+        QByteArray raw;
+        raw.reserve(chunk.size() + 1);
+        raw.append(static_cast<char>(kApfsDecmpfsLzvnRawMarker));
+        raw.append(chunk);
+        return raw;
+    }
+    return block.left(static_cast<qsizetype>(encoded));
+}
+
+// Encode one <= 64 KiB chunk for an LZFSE resource fork (decmpfs algo 12). An lzfse stream begins
+// 0x62 ('b'); when it fails or does not shrink the chunk, store the chunk behind a single 0xFF
+// marker (kept within the 64 KiB + 1 per-chunk bound). The kernel's LZFSE_RSRC path (cdata[0]==0x62
+// -> lzfse_decode, else raw) reconstructs both.
+QByteArray apfsEncodeLzfseResourceChunk(const QByteArray& chunk) {
+    QByteArray block(chunk.size() + 4096, '\0');
+    const size_t encoded = lzfse_encode_buffer(reinterpret_cast<uint8_t*>(block.data()),
+                                               static_cast<size_t>(block.size()),
+                                               reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                               static_cast<size_t>(chunk.size()),
+                                               nullptr);
+    if (encoded == 0 || static_cast<qsizetype>(encoded) > chunk.size()) {
+        QByteArray raw;
+        raw.reserve(chunk.size() + 1);
+        raw.append(static_cast<char>(kApfsDecmpfsStoredMarker));
+        raw.append(chunk);
+        return raw;
+    }
+    return block.left(static_cast<qsizetype>(encoded));
+}
+
 // Stamp a pre-built inline-compressed decmpfs value onto the insert request: drop the data
 // stream, flag the inode UF_COMPRESSED, and record the uncompressed size. Fails closed when the
 // value would not fit an embedded xattr (resource-fork compression for larger files is a
@@ -7177,6 +7218,90 @@ bool applyResourceForkToRequest(ApfsFileInsertRequest* request,
 // selected the payload is stored as an inline com.apple.decmpfs xattr and no data blocks are
 // allocated; the inode is UF_COMPRESSED. Precedence when multiple flags are set: LZVN, then
 // LZFSE, then zlib. zlib content too large for an embedded xattr falls back to a resource fork.
+// Store @data LZVN-compressed: inline when it fits one <= 64 KiB block (and the embedded limit),
+// otherwise a block_offs com.apple.ResourceFork (decmpfs LZVN_RSRC algo 8).
+bool applyLzvnCompression(const QByteArray& data,
+                          uint64_t size,
+                          bool inlineViable,
+                          ApfsFileInsertRequest* request,
+                          QStringList* blockers) {
+    bool fits = false;
+    const QByteArray value = apfsBuildInlineLzvnDecmpfs(data, &fits);
+    if (fits && inlineViable) {
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    }
+    return stampResourceForkRequest(request,
+                                    apfsBuildBlockOffsResourceFork(data,
+                                                                   apfsEncodeLzvnResourceChunk),
+                                    kApfsCompressLzvnRsrc,
+                                    size,
+                                    blockers);
+}
+
+// Store @data LZFSE-compressed: inline when it fits one block, otherwise a block_offs
+// com.apple.ResourceFork (decmpfs LZFSE_RSRC algo 12).
+bool applyLzfseCompression(const QByteArray& data,
+                           uint64_t size,
+                           bool inlineViable,
+                           ApfsFileInsertRequest* request,
+                           QStringList* blockers) {
+    bool fits = false;
+    const QByteArray value = apfsBuildInlineLzfseDecmpfs(data, &fits);
+    if (fits && inlineViable) {
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    }
+    return stampResourceForkRequest(request,
+                                    apfsBuildBlockOffsResourceFork(data,
+                                                                   apfsEncodeLzfseResourceChunk),
+                                    kApfsCompressLzfseRsrc,
+                                    size,
+                                    blockers);
+}
+
+// Store @data zlib-compressed: inline when it fits one block, otherwise a "cmpf"
+// com.apple.ResourceFork (decmpfs ZLIB_RSRC algo 4).
+bool applyZlibCompression(const QByteArray& data,
+                          uint64_t size,
+                          bool inlineViable,
+                          ApfsFileInsertRequest* request,
+                          QStringList* blockers) {
+    bool fits = false;
+    const QByteArray value = apfsBuildInlineZlibDecmpfs(data, &fits);
+    if (fits && inlineViable) {
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    }
+    return applyResourceForkToRequest(request, data, kApfsCompressZlibRsrc, blockers);
+}
+
+// Route a compression request to the right decmpfs storage. Inline decmpfs is a SINGLE compression
+// block: the macOS kernel decompresses the whole embedded payload as one <= 64 KiB
+// (APFS_COMPRESS_BLOCK) unit and reads a larger file back as zero bytes, so inline is viable only
+// when the file fits one block; anything larger uses a multi-block com.apple.ResourceFork.
+// LZBITMAP is always a resource fork (no inline form).
+bool applyRequestedCompression(const ApfsFileInsertBuildInputs& in,
+                               ApfsFileInsertRequest* request,
+                               QStringList* blockers) {
+    const uint64_t size = static_cast<uint64_t>(in.fileData.size());
+    if (in.compressLzbitmap) {
+        return stampResourceForkRequest(request,
+                                        apfsBuildLzbitmapResourceFork(in.fileData),
+                                        kApfsCompressLzbitmapRsrc,
+                                        size,
+                                        blockers);
+    }
+    const bool inlineViable = size <= static_cast<uint64_t>(kApfsCompressBlockSize);
+    if (in.compressLzvn) {
+        return applyLzvnCompression(in.fileData, size, inlineViable, request, blockers);
+    }
+    if (in.compressLzfse) {
+        return applyLzfseCompression(in.fileData, size, inlineViable, request, blockers);
+    }
+    if (!in.compress) {
+        return true;
+    }
+    return applyZlibCompression(in.fileData, size, inlineViable, request, blockers);
+}
+
 bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
@@ -7192,37 +7317,7 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
         request->sparse = true;
         request->sparseLogicalSize = in.sparseLogicalSize;
     }
-    const uint64_t size = static_cast<uint64_t>(in.fileData.size());
-    if (in.compressLzbitmap) {
-        // LZBITMAP (decmpfs algo 14) is resource-only: the block_offs container is always a
-        // com.apple.ResourceFork data stream, regardless of size.
-        return stampResourceForkRequest(request,
-                                        apfsBuildLzbitmapResourceFork(in.fileData),
-                                        kApfsCompressLzbitmapRsrc,
-                                        size,
-                                        blockers);
-    }
-    if (in.compressLzvn) {
-        bool fits = false;
-        const QByteArray value = apfsBuildInlineLzvnDecmpfs(in.fileData, &fits);
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
-    }
-    if (in.compressLzfse) {
-        bool fits = false;
-        const QByteArray value = apfsBuildInlineLzfseDecmpfs(in.fileData, &fits);
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
-    }
-    if (!in.compress) {
-        return true;
-    }
-    bool fits = false;
-    const QByteArray value = apfsBuildInlineZlibDecmpfs(in.fileData, &fits);
-    if (fits) {
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
-    }
-    // The inline zlib value exceeds the embedded-xattr limit: store the content in a
-    // com.apple.ResourceFork data stream (decmpfs ZLIB_RSRC) instead of failing closed.
-    return applyResourceForkToRequest(request, in.fileData, kApfsCompressZlibRsrc, blockers);
+    return applyRequestedCompression(in, request, blockers);
 }
 
 // The live container state every in-place fs-tree commit reads up front: the

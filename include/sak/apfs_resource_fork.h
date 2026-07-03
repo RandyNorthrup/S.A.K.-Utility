@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
-// APFS transparent-compression resource-fork blob codec (com.apple.decmpfs
-// algorithms 4/8/12: ZLIB_RSRC/LZVN_RSRC/LZFSE_RSRC). When a file's compressed
-// content will not fit the 3804-byte embedded-xattr limit, the payload is stored
-// in a com.apple.ResourceFork data stream holding the Apple "cmpf" resource blob:
+// APFS transparent-compression resource-fork "cmpf" blob codec (com.apple.decmpfs
+// algorithm 4: ZLIB_RSRC). LZVN (8) / LZFSE (12) / LZBITMAP (14) resource forks use
+// the bare block_offs le32 table instead (see apfs_lzbitmap.h) - that is what the
+// macOS kernel reads for them; only ZLIB uses this cmpf layout. When a compressed
+// file exceeds one inline block, the payload is stored in a com.apple.ResourceFork
+// data stream holding the Apple "cmpf" resource blob:
 //
 //   [0x00] apfs_compress_rsrc_hdr   (BIG-endian)   { data_offs, mgmt_offs,
 //                                                    data_size, mgmt_size }
@@ -84,12 +86,16 @@ inline constexpr int kApfsResourceForkBlockEntryBytes = 8;
     return algo == kApfsCompressZlibRsrc;
 }
 
-// Build the complete com.apple.ResourceFork blob for @data under resource
-// algorithm @algo. Returns an empty array (never a partial blob) when @algo is
-// unsupported or @data is empty. The returned bytes are the exact data-stream
-// content the kernel reads back.
-[[nodiscard]] inline QByteArray apfsBuildResourceForkBlob(const QByteArray& data, uint32_t algo) {
-    if (!apfsResourceForkAlgoSupported(algo) || data.isEmpty()) {
+// Build the complete com.apple.ResourceFork "cmpf" blob for @data, encoding each 64 KiB chunk
+// with @encodeChunk (returns the on-disk per-chunk bytes, or an empty array to fail closed). Used
+// by ZLIB_RSRC. NOTE: the macOS kernel reads this cmpf layout for ZLIB but does NOT accept a
+// bare cmpf blob without an Apple resource map (verified on macOS 15.7.4: reads back as an I/O
+// error) - the on-disk cmpf resource fork is host-apfsck/reader-verified but not yet macOS-kernel
+// certified. LZVN/LZFSE/LZBITMAP avoid this by using the block_offs container.
+template <class EncodeChunkFn>
+[[nodiscard]] inline QByteArray apfsBuildResourceForkBlobWith(const QByteArray& data,
+                                                              EncodeChunkFn encodeChunk) {
+    if (data.isEmpty()) {
         return {};
     }
     const int chunkCount =
@@ -101,8 +107,8 @@ inline constexpr int kApfsResourceForkBlockEntryBytes = 8;
     for (int i = 0; i < chunkCount; ++i) {
         const QByteArray chunk = data.mid(static_cast<qsizetype>(i) * kApfsCompressBlockSize,
                                           kApfsCompressBlockSize);
-        const QByteArray value = apfsEncodeResourceChunk(chunk, algo);
-        if (value.isEmpty()) {
+        const QByteArray value = encodeChunk(chunk);
+        if (value.isEmpty() || value.size() > kApfsCompressBlockSize + 1) {
             return {};
         }
         encoded.append(value);
@@ -150,6 +156,18 @@ inline constexpr int kApfsResourceForkBlockEntryBytes = 8;
     return blob;
 }
 
+// Build the com.apple.ResourceFork blob for @data under a header-supported resource algorithm
+// (ZLIB_RSRC). LZVN/LZFSE resource callers use apfsBuildResourceForkBlobWith directly with their
+// linked codec. Returns an empty array when @algo is unsupported or @data is empty.
+[[nodiscard]] inline QByteArray apfsBuildResourceForkBlob(const QByteArray& data, uint32_t algo) {
+    if (!apfsResourceForkAlgoSupported(algo)) {
+        return {};
+    }
+    return apfsBuildResourceForkBlobWith(data, [algo](const QByteArray& chunk) {
+        return apfsEncodeResourceChunk(chunk, algo);
+    });
+}
+
 // Validated view of a resource blob's header: the rsrc_data offset and block
 // count. Returns nullopt when the fixed header/block-table geometry is malformed.
 struct ApfsResourceForkLayout {
@@ -178,14 +196,15 @@ struct ApfsResourceForkLayout {
     return ApfsResourceForkLayout{dataOffs, num};
 }
 
-// Decode all @layout.num chunks of @blob into *out, appending each. Returns false
-// on any block-position or per-chunk decode mismatch. Block i's bytes sit at
-// data_offs + block[i].offs + 4 (kernel/apfsck arithmetic).
-[[nodiscard]] inline bool apfsDecodeResourceForkBlocks(const QByteArray& blob,
-                                                       const ApfsResourceForkLayout& layout,
-                                                       uint64_t uncompressedSize,
-                                                       uint32_t algo,
-                                                       QByteArray* out) {
+// Decode all @layout.num chunks of @blob into *out with @decodeChunk (bytes, expectedBytes) ->
+// optional. Returns false on any block-position or per-chunk decode mismatch. Block i's bytes sit
+// at data_offs + block[i].offs + 4 (kernel/apfsck arithmetic). Codec-independent.
+template <class DecodeChunkFn>
+[[nodiscard]] inline bool apfsDecodeResourceForkBlocksWith(const QByteArray& blob,
+                                                           const ApfsResourceForkLayout& layout,
+                                                           uint64_t uncompressedSize,
+                                                           DecodeChunkFn decodeChunk,
+                                                           QByteArray* out) {
     const char* dataArea = blob.constData() + layout.data_offs;
     for (quint32 i = 0; i < layout.num; ++i) {
         const char* entry = dataArea + kApfsResourceForkDataPrefixBytes +
@@ -200,10 +219,8 @@ struct ApfsResourceForkLayout {
         const uint64_t expected = remaining < static_cast<uint64_t>(kApfsCompressBlockSize)
                                       ? remaining
                                       : static_cast<uint64_t>(kApfsCompressBlockSize);
-        const auto chunk = apfsDecodeResourceChunk(blob.mid(static_cast<qsizetype>(chunkStart),
-                                                            static_cast<qsizetype>(size)),
-                                                   expected,
-                                                   algo);
+        const auto chunk = decodeChunk(
+            blob.mid(static_cast<qsizetype>(chunkStart), static_cast<qsizetype>(size)), expected);
         if (!chunk.has_value()) {
             return false;
         }
@@ -212,27 +229,37 @@ struct ApfsResourceForkLayout {
     return true;
 }
 
-// Parse a com.apple.ResourceFork @blob under resource algorithm @algo back to the
-// original @uncompressedSize bytes. Returns nullopt on any structural or decode
-// mismatch. Mirrors apfsck's apfs_compress_read_block block addressing exactly.
-[[nodiscard]] inline std::optional<QByteArray> apfsParseResourceForkBlob(
-    const QByteArray& blob, uint32_t algo, uint64_t uncompressedSize) {
-    if (!apfsResourceForkAlgoSupported(algo)) {
-        return std::nullopt;
-    }
+// Parse a com.apple.ResourceFork "cmpf" @blob back to @uncompressedSize bytes, decoding each chunk
+// with @decodeChunk. Mirrors apfsck's apfs_compress_read_block block addressing exactly. Shared by
+// ZLIB (header codec) and LZVN/LZFSE (the reader's linked codecs).
+template <class DecodeChunkFn>
+[[nodiscard]] inline std::optional<QByteArray> apfsParseResourceForkBlobWith(
+    const QByteArray& blob, uint64_t uncompressedSize, DecodeChunkFn decodeChunk) {
     const auto layout = apfsParseResourceForkLayout(blob);
     if (!layout.has_value()) {
         return std::nullopt;
     }
     QByteArray out;
     out.reserve(static_cast<qsizetype>(uncompressedSize));
-    if (!apfsDecodeResourceForkBlocks(blob, *layout, uncompressedSize, algo, &out)) {
-        return std::nullopt;
-    }
-    if (static_cast<uint64_t>(out.size()) != uncompressedSize) {
+    if (!apfsDecodeResourceForkBlocksWith(blob, *layout, uncompressedSize, decodeChunk, &out) ||
+        static_cast<uint64_t>(out.size()) != uncompressedSize) {
         return std::nullopt;
     }
     return out;
+}
+
+// Parse a com.apple.ResourceFork @blob under a header-supported resource algorithm (ZLIB_RSRC).
+// LZVN/LZFSE resource callers use apfsParseResourceForkBlobWith with their linked codec.
+[[nodiscard]] inline std::optional<QByteArray> apfsParseResourceForkBlob(
+    const QByteArray& blob, uint32_t algo, uint64_t uncompressedSize) {
+    if (!apfsResourceForkAlgoSupported(algo)) {
+        return std::nullopt;
+    }
+    return apfsParseResourceForkBlobWith(blob,
+                                         uncompressedSize,
+                                         [algo](const QByteArray& chunk, uint64_t expected) {
+                                             return apfsDecodeResourceChunk(chunk, expected, algo);
+                                         });
 }
 
 }  // namespace sak

@@ -1860,6 +1860,8 @@ private Q_SLOTS:
     void apfsResourceForkBlobZlibRoundTrips();
     void apfsResourceForkBlobLayoutMatchesApfsck();
     void apfsWriter_resourceForkZlibCompressedFileRoundTrips();
+    void apfsWriter_resourceForkLzvnCompressedFileRoundTrips();
+    void apfsWriter_resourceForkLzfseCompressedFileRoundTrips();
     void apfsLzbitmapCodecRoundTrips();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
@@ -12950,6 +12952,64 @@ void PartitionManagerCoreTests::apfsWriter_resourceForkZlibCompressedFileRoundTr
         img, QStringLiteral("/big.txt"), static_cast<int>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+}
+
+// Insert a ~300 KiB payload compressed with @lzvn ? LZVN : LZFSE. The inline value exceeds the
+// 3804-byte embedded-xattr limit, so the writer stores it in a com.apple.ResourceFork "cmpf" blob
+// (decmpfs LZVN_RSRC algo 8 / LZFSE_RSRC algo 12), and the reader decodes it back byte-exact via
+// the matching linked codec. apfsck cannot decode these algorithms (it has no lzvn/lzfse
+// decompressor), so the on-disk cert is the macOS kernel (fsck_apfs + md5) - this proves the
+// writer/reader pair. SAK_RSRC2_CERT_DIR persists the image for that kernel pass.
+static void certifyResourceForkAlgoRoundTrips(const QDir& dir,
+                                              const QString& imgName,
+                                              const QString& volumeName,
+                                              bool lzvn) {
+    const QString img = dir.filePath(imgName);
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, volumeName);
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    QByteArray payload;
+    for (int i = 0; payload.size() < 300'000; ++i) {
+        payload.append(
+            QByteArrayLiteral("the quick brown fox jumps over the lazy dog line number "));
+        payload.append(QByteArray::number(i));
+        payload.append('\n');
+    }
+    const auto insert =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("big.txt"),
+                                                  .file_data = payload,
+                                                  .compress_lzfse = !lzvn,
+                                                  .compress_lzvn = lzvn,
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/big.txt"), static_cast<int>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_resourceForkLzvnCompressedFileRoundTrips() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_RSRC2_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    certifyResourceForkAlgoRoundTrips(
+        dir, QStringLiteral("rsrc-lzvn.img"), QStringLiteral("RsrcLzvn"), /*lzvn=*/true);
+}
+
+void PartitionManagerCoreTests::apfsWriter_resourceForkLzfseCompressedFileRoundTrips() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_RSRC2_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    certifyResourceForkAlgoRoundTrips(
+        dir, QStringLiteral("rsrc-lzfse.img"), QStringLiteral("RsrcLzfse"), /*lzvn=*/false);
 }
 
 void PartitionManagerCoreTests::apfsResourceForkBlobZlibRoundTrips() {

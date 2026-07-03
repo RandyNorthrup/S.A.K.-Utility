@@ -36,6 +36,49 @@ namespace sak {
 
 namespace {
 
+// Decode one LZVN resource-fork chunk (decmpfs algo 8) to exactly @expected bytes: a 0x06-prefixed
+// raw block, otherwise a bare lzvn stream. Mirrors the macOS kernel's LZVN_RSRC read path.
+[[nodiscard]] std::optional<QByteArray> decodeLzvnResourceChunk(const QByteArray& chunk,
+                                                                uint64_t expected) {
+    if (chunk.isEmpty()) {
+        return std::nullopt;
+    }
+    if (static_cast<uint8_t>(chunk.at(0)) == kApfsDecmpfsLzvnRawMarker) {
+        const QByteArray raw = chunk.mid(1);
+        return static_cast<uint64_t>(raw.size()) == expected ? std::optional<QByteArray>(raw)
+                                                             : std::nullopt;
+    }
+    QByteArray out(static_cast<qsizetype>(expected), '\0');
+    const size_t decoded = sak_lzvn_decode(reinterpret_cast<uint8_t*>(out.data()),
+                                           static_cast<size_t>(out.size()),
+                                           reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                           static_cast<size_t>(chunk.size()));
+    return decoded == expected ? std::optional<QByteArray>(out) : std::nullopt;
+}
+
+// Decode one LZFSE resource-fork chunk (decmpfs algo 12) to exactly @expected bytes: an lzfse
+// stream begins 0x62 ('b'), otherwise a 0xFF-prefixed raw block. Mirrors the kernel's LZFSE_RSRC
+// read path.
+[[nodiscard]] std::optional<QByteArray> decodeLzfseResourceChunk(const QByteArray& chunk,
+                                                                 uint64_t expected) {
+    if (chunk.isEmpty()) {
+        return std::nullopt;
+    }
+    if (static_cast<uint8_t>(chunk.at(0)) == 0x62 && chunk.size() >= 2) {
+        QByteArray out(static_cast<qsizetype>(expected), '\0');
+        const size_t decoded =
+            lzfse_decode_buffer(reinterpret_cast<uint8_t*>(out.data()),
+                                static_cast<size_t>(out.size()),
+                                reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                static_cast<size_t>(chunk.size()),
+                                nullptr);
+        return decoded == expected ? std::optional<QByteArray>(out) : std::nullopt;
+    }
+    const QByteArray raw = chunk.mid(1);
+    return static_cast<uint64_t>(raw.size()) == expected ? std::optional<QByteArray>(raw)
+                                                         : std::nullopt;
+}
+
 constexpr qsizetype kApfsObjectHeaderBytes = 0x20;
 constexpr qsizetype kApfsObjectOidOffset = 0x08;
 constexpr qsizetype kApfsObjectXidOffset = 0x10;
@@ -916,11 +959,20 @@ private:
         if (!blob.has_value()) {
             return false;
         }
-        // LZBITMAP (algo 14) stores its resource fork as a bare le32 block_offs[] table, not the
-        // "cmpf" rsrc_hdr/rsrc_data blob the other resource algorithms share.
+        // LZBITMAP (14), LZVN (8) and LZFSE (12) store the resource fork as a bare le32
+        // block_offs[] table; only ZLIB (4) uses the "cmpf" rsrc_hdr/rsrc_data blob. LZVN/LZFSE
+        // need their linked codecs (the block_offs header handles only lzbitmap inline).
         const auto decoded =
             header.algo == kApfsCompressLzbitmapRsrc
                 ? apfsParseLzbitmapResourceFork(*blob, header.uncompressed_size)
+            : header.algo == kApfsCompressLzvnRsrc
+                ? apfsParseBlockOffsResourceFork(*blob,
+                                                 header.uncompressed_size,
+                                                 decodeLzvnResourceChunk)
+            : header.algo == kApfsCompressLzfseRsrc
+                ? apfsParseBlockOffsResourceFork(*blob,
+                                                 header.uncompressed_size,
+                                                 decodeLzfseResourceChunk)
                 : apfsParseResourceForkBlob(*blob, header.algo, header.uncompressed_size);
         if (!decoded.has_value()) {
             result->blockers.append(
