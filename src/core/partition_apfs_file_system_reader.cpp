@@ -9,6 +9,7 @@
 #include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_resource_fork.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -406,6 +407,10 @@ struct FileReadTarget {
     // attribute (decmpfs_xattr), not data-stream extents.
     bool compressed{false};
     QByteArray decmpfs_xattr;
+    // A5 follow-on: for a resource-fork-compressed file (decmpfs algo *_RSRC), the object
+    // id owning the com.apple.ResourceFork data stream whose extents hold the cmpf blob.
+    // 0 for an inline-compressed or uncompressed file.
+    uint64_t resource_fork_obj_id{0};
 };
 
 struct FsTreeScanState {
@@ -804,7 +809,13 @@ private:
                 result->warnings.append(
                     QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
             }
-            return FileReadTarget{*inode, bytesToRead, true, *decmpfs};
+            // A resource-fork-compressed file carries a com.apple.ResourceFork data stream
+            // (0 when absent, i.e. the inline case).
+            return FileReadTarget{*inode,
+                                  bytesToRead,
+                                  true,
+                                  *decmpfs,
+                                  resourceForkObjIdByInode_.value(record->file_id, 0)};
         }
         const uint64_t bytesToRead = std::min<uint64_t>(inode->size, effectiveMax);
         if (inode->size > bytesToRead) {
@@ -825,11 +836,9 @@ private:
             return false;
         }
         if (!apfsDecmpfsAlgoIsInline(header->algo)) {
-            result->blockers.append(
-                QStringLiteral("APFS resource-fork compression (algorithm %1) read is not yet "
-                               "supported; the inline decmpfs path is certified")
-                    .arg(header->algo));
-            return false;
+            // Resource-fork compression: the compressed content lives in the file's
+            // com.apple.ResourceFork data stream, not inline. Assemble and decode it.
+            return appendResourceForkFileData(target, *header, result);
         }
         QByteArray out;
         if (const auto decoded = apfsDecodeInlineDecmpfs(target.decmpfs_xattr)) {
@@ -861,6 +870,59 @@ private:
             return false;
         }
         result->data = out.left(static_cast<qsizetype>(target.bytes_to_read));
+        return true;
+    }
+
+    // Assemble the raw com.apple.ResourceFork "cmpf" blob: read every block-aligned byte of
+    // the extents owned by @objId (the resource-fork data stream). Reuses the ordinary extent
+    // read path, so encryption and the flag/crypto bounds checks all apply.
+    [[nodiscard]] std::optional<QByteArray> assembleResourceForkBlob(
+        uint64_t objId, PartitionApfsFileReadResult* result) {
+        const auto extents = sortedExtents(objId);
+        if (extents.isEmpty()) {
+            result->blockers.append(
+                QStringLiteral("APFS ResourceFork stream %1 has no extents").arg(objId));
+            return std::nullopt;
+        }
+        uint64_t totalBytes = 0;
+        for (const auto& extent : extents) {
+            totalBytes += extent.length;
+        }
+        PartitionApfsFileReadResult blobRead;
+        uint64_t cursor = 0;
+        for (const auto& extent : extents) {
+            if (!appendReadableExtent(extent, totalBytes, &cursor, &blobRead)) {
+                result->blockers.append(blobRead.blockers);
+                return std::nullopt;
+            }
+        }
+        return blobRead.data;
+    }
+
+    // Decode a resource-fork-compressed file: assemble its cmpf blob from the ResourceFork
+    // data stream and inflate it to the original bytes. apfsParseResourceForkBlob mirrors the
+    // macOS kernel / apfsck block addressing exactly, so the result is byte-for-byte the file.
+    [[nodiscard]] bool appendResourceForkFileData(const FileReadTarget& target,
+                                                  const ApfsDecmpfsHeader& header,
+                                                  PartitionApfsFileReadResult* result) {
+        if (target.resource_fork_obj_id == 0) {
+            result->blockers.append(QStringLiteral(
+                "APFS resource-fork compressed file is missing its com.apple.ResourceFork "
+                "attribute"));
+            return false;
+        }
+        const auto blob = assembleResourceForkBlob(target.resource_fork_obj_id, result);
+        if (!blob.has_value()) {
+            return false;
+        }
+        const auto decoded =
+            apfsParseResourceForkBlob(*blob, header.algo, header.uncompressed_size);
+        if (!decoded.has_value()) {
+            result->blockers.append(
+                QStringLiteral("APFS resource-fork (algorithm %1) decode failed").arg(header.algo));
+            return false;
+        }
+        result->data = decoded->left(static_cast<qsizetype>(target.bytes_to_read));
         return true;
     }
 
@@ -1328,6 +1390,25 @@ private:
     // logical content can be reconstructed from the attribute instead of the
     // (absent) data stream. Resource-fork compression (dstream-backed) is a
     // documented read follow-on; this handles the inline-xattr case.
+    // Capture a data-stream (resource-fork) xattr: record the com.apple.ResourceFork's owning
+    // object id (the le64 at the start of its j_xattr_dstream) so the compressed-file reader can
+    // assemble the cmpf blob from that id's extents. Other data-stream xattrs are ignored.
+    void captureResourceForkXattr(const QByteArray& node,
+                                  const BtreeEntryView& entry,
+                                  uint64_t objectId,
+                                  const QString& name,
+                                  uint16_t flags) {
+        constexpr qsizetype kXattrObjIdBytes = 8;  // le64 xattr_obj_id at j_xattr_dstream[0]
+        if ((flags & kApfsXattrDataStream) == 0 ||
+            name != QLatin1StringView(kApfsXattrNameResourceFork) ||
+            entry.value_offset + kApfsXattrValueXdataOffset + kXattrObjIdBytes >
+                entry.value_offset + entry.value_length) {
+            return;
+        }
+        resourceForkObjIdByInode_.insert(
+            objectId, le64(node, entry.value_offset + kApfsXattrValueXdataOffset));
+    }
+
     void parseXattrRecord(const QByteArray& node, const BtreeEntryView& entry, uint64_t objectId) {
         if (entry.key_length < kApfsXattrKeyNameOffset ||
             entry.value_length < kApfsXattrValueXdataOffset) {
@@ -1346,8 +1427,7 @@ private:
         const uint16_t flags = le16(node, entry.value_offset + kApfsXattrValueFlagsOffset);
         const uint16_t xdataLen = le16(node, entry.value_offset + kApfsXattrValueXdataLenOffset);
         if ((flags & kApfsXattrDataEmbedded) == 0) {
-            // Dstream-backed (resource-fork) attributes are a documented follow-on;
-            // the inline-embedded case is the certified read path (A5 + A7).
+            captureResourceForkXattr(node, entry, objectId, name, flags);
             return;
         }
         if (entry.value_offset + kApfsXattrValueXdataOffset + xdataLen >
@@ -1801,6 +1881,9 @@ private:
     // Embedded com.apple.decmpfs attribute value (16-byte header + inline payload)
     // keyed by inode object id, for transparently-compressed files (A5).
     QHash<uint64_t, QByteArray> decmpfsByInode_;
+    // A5 follow-on: for a resource-fork-compressed file, the object id owning its
+    // com.apple.ResourceFork data stream (the cmpf blob's extents), keyed by inode id.
+    QHash<uint64_t, uint64_t> resourceForkObjIdByInode_;
     // A7 (A-h): every embedded named attribute (ACL, Finder info, user xattrs)
     // keyed by inode object id, surfaced on a file read result.
     QMultiHash<uint64_t, QPair<QString, QByteArray>> xattrsByInode_;

@@ -1851,7 +1851,7 @@ private Q_SLOTS:
     void apfsWriter_lzvnCompressedFileRoundTrips();
     void apfsResourceForkBlobZlibRoundTrips();
     void apfsResourceForkBlobLayoutMatchesApfsck();
-    void apfsWriter_resourceForkZlibCompressedFileInserts();
+    void apfsWriter_resourceForkZlibCompressedFileRoundTrips();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -10555,14 +10555,21 @@ void verifyApfsIncompressiblePayloadUsesResourceFork(const QDir& dir,
         state = state * 1'103'515'245U + 12'345U;  // high-entropy LCG: zlib cannot shrink it
         incompressible[i] = static_cast<char>(state >> 16);
     }
-    const auto resourced = PartitionApfsWriter::commitImageOnlyFileInsert(
-        {.source_image_path = base,
-         .written_image_path = dir.filePath(QStringLiteral("a5-resourced.apfs")),
-         .file_name = QStringLiteral("big.bin"),
-         .file_data = incompressible,
-         .compress_zlib = true,
-         .options = options});
+    const QString resourcedImg = dir.filePath(QStringLiteral("a5-resourced.apfs"));
+    const auto resourced =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = resourcedImg,
+                                                        .file_name = QStringLiteral("big.bin"),
+                                                        .file_data = incompressible,
+                                                        .compress_zlib = true,
+                                                        .options = options});
     QVERIFY2(resourced.ok, qPrintable(resourced.blockers.join(QStringLiteral("; "))));
+    // The reader assembles the resource fork's single 0xFF stored chunk back to the exact
+    // incompressible bytes (the stored-block path of the ZLIB_RSRC decoder).
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        resourcedImg, QStringLiteral("/big.bin"), static_cast<int>(incompressible.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, incompressible);
 }
 
 }  // namespace
@@ -12389,14 +12396,14 @@ void PartitionManagerCoreTests::apfsWriter_lzvnCompressedFileRoundTrips() {
     QCOMPARE(read.data, payload);
 }
 
-void PartitionManagerCoreTests::apfsWriter_resourceForkZlibCompressedFileInserts() {
-    // Resource-fork write path (S2): a compressible payload whose inline zlib value would
-    // exceed the 3804-byte embedded-xattr limit auto-falls back to a com.apple.ResourceFork
-    // data stream (decmpfs ZLIB_RSRC algo 4). The file's inode is UF_COMPRESSED, its blob
-    // extents are owned by a fresh xattr object id, and a 48-byte j_xattr_dstream references
-    // them. apfsck compress.c fully inflates every 64 KiB chunk and checks the total, so a
-    // clean apfsck (SAK_RSRC_CERT_DIR persists the image) proves the write is byte-correct.
-    // The S.A.K. reader-side decode lands in S3 (kernel md5 is batched).
+void PartitionManagerCoreTests::apfsWriter_resourceForkZlibCompressedFileRoundTrips() {
+    // Resource-fork write+read (S2 writer + S3 reader): a compressible payload whose inline
+    // zlib value would exceed the 3804-byte embedded-xattr limit auto-falls back to a
+    // com.apple.ResourceFork data stream (decmpfs ZLIB_RSRC algo 4). The file's inode is
+    // UF_COMPRESSED + HAS_RSRC_FORK, its blob extents are owned by a fresh xattr object id,
+    // and a 48-byte j_xattr_dstream references them. The S.A.K. reader assembles the blob from
+    // that id's extents and inflates it byte-exact. apfsck compress.c independently inflates
+    // every 64 KiB chunk (SAK_RSRC_CERT_DIR persists the image); kernel md5 batched.
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     const QString envDir = qEnvironmentVariable("SAK_RSRC_CERT_DIR");
@@ -12426,6 +12433,10 @@ void PartitionManagerCoreTests::apfsWriter_resourceForkZlibCompressedFileInserts
                                                   .allow_raw_device_target = true,
                                                   .options = certifiedApfsRawCommitOptions()});
     QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/big.txt"), static_cast<int>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
 }
 
 void PartitionManagerCoreTests::apfsResourceForkBlobZlibRoundTrips() {
