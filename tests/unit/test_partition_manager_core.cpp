@@ -1851,6 +1851,7 @@ private Q_SLOTS:
     void apfsWriter_lzvnCompressedFileRoundTrips();
     void apfsResourceForkBlobZlibRoundTrips();
     void apfsResourceForkBlobLayoutMatchesApfsck();
+    void apfsWriter_resourceForkZlibCompressedFileInserts();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
@@ -10463,9 +10464,9 @@ void PartitionManagerCoreTests::apfsWriter_formatsMultiVolumeContainer() {
 }
 
 namespace {
-void verifyApfsIncompressiblePayloadRejected(const QDir& dir,
-                                             const QString& base,
-                                             const PartitionApfsWriteOptions& options);
+void verifyApfsIncompressiblePayloadUsesResourceFork(const QDir& dir,
+                                                     const QString& base,
+                                                     const PartitionApfsWriteOptions& options);
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
@@ -10536,31 +10537,32 @@ void PartitionManagerCoreTests::apfsWriter_insertsInlineCompressedFile() {
     QVERIFY(PartitionApfsWriter::verifyObjectChecksum(nxsb));
     QCOMPARE(apfsLe64(nxsb, 0x10), 3ULL);
 
-    verifyApfsIncompressiblePayloadRejected(dir, base, options);
+    verifyApfsIncompressiblePayloadUsesResourceFork(dir, base, options);
 }
 
 namespace {
 
-void verifyApfsIncompressiblePayloadRejected(const QDir& dir,
-                                             const QString& base,
-                                             const PartitionApfsWriteOptions& options) {
-    // Fail-closed: an incompressible payload whose decmpfs value would exceed the
-    // embedded-xattr limit is rejected (resource-fork compression is a follow-on).
+void verifyApfsIncompressiblePayloadUsesResourceFork(const QDir& dir,
+                                                     const QString& base,
+                                                     const PartitionApfsWriteOptions& options) {
+    // An incompressible payload whose inline decmpfs value would exceed the embedded-xattr
+    // limit no longer fails closed: it auto-falls back to a com.apple.ResourceFork data
+    // stream (decmpfs ZLIB_RSRC), storing the single 8 KiB chunk as a 0xFF stored block.
+    // The commit succeeds; apfsck deep-validates the resource fork elsewhere.
     QByteArray incompressible(8192, '\0');
     uint32_t state = 0x12'34'56'78U;
     for (int i = 0; i < incompressible.size(); ++i) {
         state = state * 1'103'515'245U + 12'345U;  // high-entropy LCG: zlib cannot shrink it
         incompressible[i] = static_cast<char>(state >> 16);
     }
-    const auto tooBig = PartitionApfsWriter::commitImageOnlyFileInsert(
+    const auto resourced = PartitionApfsWriter::commitImageOnlyFileInsert(
         {.source_image_path = base,
-         .written_image_path = dir.filePath(QStringLiteral("a5-toobig.apfs")),
+         .written_image_path = dir.filePath(QStringLiteral("a5-resourced.apfs")),
          .file_name = QStringLiteral("big.bin"),
          .file_data = incompressible,
          .compress_zlib = true,
          .options = options});
-    QVERIFY(!tooBig.ok);
-    QVERIFY(tooBig.blockers.join(' ').contains(QStringLiteral("embedded-xattr limit")));
+    QVERIFY2(resourced.ok, qPrintable(resourced.blockers.join(QStringLiteral("; "))));
 }
 
 }  // namespace
@@ -12385,6 +12387,45 @@ void PartitionManagerCoreTests::apfsWriter_lzvnCompressedFileRoundTrips() {
         img, QStringLiteral("/z.txt"), static_cast<int>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_resourceForkZlibCompressedFileInserts() {
+    // Resource-fork write path (S2): a compressible payload whose inline zlib value would
+    // exceed the 3804-byte embedded-xattr limit auto-falls back to a com.apple.ResourceFork
+    // data stream (decmpfs ZLIB_RSRC algo 4). The file's inode is UF_COMPRESSED, its blob
+    // extents are owned by a fresh xattr object id, and a 48-byte j_xattr_dstream references
+    // them. apfsck compress.c fully inflates every 64 KiB chunk and checks the total, so a
+    // clean apfsck (SAK_RSRC_CERT_DIR persists the image) proves the write is byte-correct.
+    // The S.A.K. reader-side decode lands in S3 (kernel md5 is batched).
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_RSRC_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("rsrc.img"));
+    const uint64_t bytes = 64ULL * 1024ULL * 1024ULL;
+    formatOmapStressContainer(img, bytes, QStringLiteral("Rsrc"));
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [img](const QString& path) { return path == img; });
+    // ~300 KiB of varied-but-compressible lines: spans multiple 64 KiB chunks and the
+    // incrementing counter keeps the inline zlib value well past the 3804-byte limit.
+    QByteArray payload;
+    for (int i = 0; payload.size() < 300'000; ++i) {
+        payload.append(
+            QByteArrayLiteral("the quick brown fox jumps over the lazy dog line number "));
+        payload.append(QByteArray::number(i));
+        payload.append('\n');
+    }
+    const auto insert =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = img,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("big.txt"),
+                                                  .file_data = payload,
+                                                  .compress_zlib = true,
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = certifiedApfsRawCommitOptions()});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsResourceForkBlobZlibRoundTrips() {

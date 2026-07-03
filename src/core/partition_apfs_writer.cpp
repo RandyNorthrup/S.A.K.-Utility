@@ -9,6 +9,7 @@
 #include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
 #include "sak/apfs_keybag.h"
+#include "sak/apfs_resource_fork.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -203,6 +204,11 @@ constexpr uint64_t kApfsInodeFlagHasSecurityEa = 0x00'00'00'40;
 constexpr uint64_t kApfsInodeFlagHasFinderInfo = 0x00'00'01'00;
 constexpr uint64_t kApfsInodeFlagIsSparse = 0x00'00'02'00;
 constexpr uint64_t kApfsInodeFlagWasEverCloned = 0x00'00'04'00;
+// APFS_INODE_HAS_RSRC_FORK: set on a compressed inode whose content lives in a
+// com.apple.ResourceFork data stream (apfsck XORs this against the xattr's presence).
+// APFS_INODE_NO_RSRC_FORK is the mutually-exclusive default every other inode carries.
+constexpr uint64_t kApfsInodeFlagHasRsrcFork = 0x00'00'40'00;
+constexpr uint64_t kApfsInodeFlagNoRsrcFork = 0x00'00'80'00;
 // Well-known extended-attribute names whose presence drives the inode flags above.
 constexpr char kApfsXattrNameSecurity[] = "com.apple.system.Security";
 constexpr char kApfsXattrNameFinderInfo[] = "com.apple.FinderInfo";
@@ -1305,6 +1311,15 @@ struct ApfsRootFilePayload {
     bool compressed{false};
     QByteArray decmpfsXattr;
     uint64_t uncompressedSize{0};
+    // A5 follow-on resource-fork compression: when set, this compressed file keeps its
+    // (still compressed) content in a com.apple.ResourceFork data stream rather than the
+    // inline decmpfs xattr, because the compressed bytes exceed the 3804-byte embedded
+    // limit. `data` holds the resource-fork "cmpf" blob (allocated + written like normal
+    // file data, but its extents are owned by resourceForkXattrObjId, a fresh object id),
+    // decmpfsXattr is the bare 16-byte header (algo *_RSRC), and uncompressedSize is the
+    // original logical size. The inode is UF_COMPRESSED with no data-stream xfield.
+    bool resourceFork{false};
+    uint64_t resourceForkXattrObjId{0};
     // A7 (A-h): arbitrary named extended attributes (user xattrs, ACL blobs in
     // com.apple.system.Security, Finder info, ...). Each becomes a j_xattr record
     // with an embedded value. Empty keeps the certified layout byte-identical.
@@ -1501,11 +1516,14 @@ struct ApfsInodeParams {
     uint64_t allocedSizeBytes = 0;
 };
 
-// internal_flags base (0x8000) plus APFS_INODE_HAS_UNCOMPRESSED_SIZE when the
-// inode reports an uncompressed_size (compressed files only), plus any A7 attribute
-// flags (sparse / cloned / security-EA / finder-info).
+// internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
+// fork; a resource-fork-compressed file instead carries APFS_INODE_HAS_RSRC_FORK (already
+// in `extra`), and the two are mutually exclusive (apfsck rejects both). Add
+// APFS_INODE_HAS_UNCOMPRESSED_SIZE for a compressed inode, plus any A7 attribute flags.
 uint64_t inodeInternalFlags(bool compressed, uint64_t extra) {
-    return 0x8000ULL | (compressed ? kApfsInodeHasUncompressedSize : 0ULL) | extra;
+    const uint64_t rsrcBase = (extra & kApfsInodeFlagHasRsrcFork) != 0 ? 0ULL
+                                                                       : kApfsInodeFlagNoRsrcFork;
+    return rsrcBase | (compressed ? kApfsInodeHasUncompressedSize : 0ULL) | extra;
 }
 
 // Stamp the compressed-file accounting onto a j_inode_val: UF_COMPRESSED routes
@@ -1724,6 +1742,23 @@ QByteArray xattrEmbeddedValue(uint16_t flags, const QByteArray& xdata) {
     return value;
 }
 
+// Bytes of a j_xattr_dstream (le64 xattr_obj_id + a 40-byte apfs_dstream).
+constexpr qsizetype kApfsXattrDstreamBytes = 48;
+
+// j_xattr_val for a data-stream attribute (a resource fork): flags XATTR_DATA_STREAM,
+// xdata = j_xattr_dstream { le64 xattr_obj_id; apfs_dstream{ size, alloced_size,
+// default_crypto_id, total_bytes_written, total_bytes_read } }. The data-stream extents
+// are owned by xattr_obj_id. default_crypto_id stays 0 (the certified unencrypted-volume
+// value, matching the inode dstream xfield and file-extent crypto id).
+QByteArray resourceForkXattrValue(uint64_t xattrObjId, uint64_t sizeBytes, uint64_t allocedBytes) {
+    QByteArray xdata(kApfsXattrDstreamBytes, '\0');
+    writeLe64(&xdata, 0, xattrObjId);
+    writeLe64(&xdata, 8, sizeBytes);      // apfs_dstream.size (blob byte length)
+    writeLe64(&xdata, 16, allocedBytes);  // apfs_dstream.alloced_size (block-aligned)
+    writeLe64(&xdata, 32, sizeBytes);     // apfs_dstream.total_bytes_written
+    return xattrEmbeddedValue(kApfsXattrDataStream, xdata);
+}
+
 QByteArray fileExtentKey(uint64_t privateId, uint64_t logicalByteOffset) {
     QByteArray key = fsKey(privateId, kApfsRecordFileExtent, kApfsFileExtentKeyBytes);
     writeLe64(&key, kApfsFileExtentKeyLogicalOffset, logicalByteOffset);
@@ -1786,6 +1821,9 @@ bool isSafeSeedFileName(const QString& fileName) {
 uint64_t inodeAttributeFlags(const ApfsRootFilePayload& file) {
     uint64_t flags = file.sparse ? kApfsInodeFlagIsSparse : 0ULL;
     flags |= file.extraInodeFlags;
+    if (file.resourceFork) {
+        flags |= kApfsInodeFlagHasRsrcFork;
+    }
     for (const auto& [name, value] : file.xattrs) {
         if (name == QByteArray(kApfsXattrNameSecurity)) {
             flags |= kApfsInodeFlagHasSecurityEa;
@@ -1812,6 +1850,26 @@ void appendInodeXattrs(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePa
     for (const auto& [name, value] : file.xattrs) {
         records->append(
             {xattrKey(file.fileId, name), xattrEmbeddedValue(kApfsXattrDataEmbedded, value)});
+    }
+}
+
+// A5 follow-on: emit the com.apple.ResourceFork data-stream xattr and the file-extent
+// records for a resource-fork-compressed file's "cmpf" blob. The blob's extents are keyed
+// by resourceForkXattrObjId (a fresh object id), so apfsck and the macOS kernel read the
+// compressed bytes through that dstream exactly as for an Apple-written large compressed
+// file. The blob was allocated + written like ordinary file data (owner map keyed by the
+// inode), so file.dataStartBlock / file.dataExtents already describe its physical runs.
+void appendResourceForkRecords(QVector<ApfsBtreeKeyValue>* records,
+                               const ApfsRootFilePayload& file) {
+    const uint64_t blobBytes = fileLogicalSize(file);
+    const uint64_t allocedBytes = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes);
+    records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameResourceFork)),
+                     resourceForkXattrValue(file.resourceForkXattrObjId, blobBytes, allocedBytes)});
+    for (const ApfsDataExtent& extent : fileDataExtents(file, kSupportedApfsBlockSizeBytes)) {
+        records->append(
+            {fileExtentKey(file.resourceForkXattrObjId,
+                           extent.logicalBlock * kSupportedApfsBlockSizeBytes),
+             fileExtentValue(extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr)});
     }
 }
 
@@ -1859,10 +1917,16 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                                file.fileId, kApfsDirTypeRegularFile, file.primarySiblingId)});
     appendHardLinkRecords(records, file);
     if (file.compressed) {
-        // A transparently-compressed file has no data stream: its content lives
-        // in an embedded com.apple.decmpfs xattr, and the inode is UF_COMPRESSED.
+        // A transparently-compressed file's inode is UF_COMPRESSED with no data-stream
+        // xfield; the 16-byte decmpfs header rides in an embedded com.apple.decmpfs xattr.
         records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameCompressed)),
                          xattrEmbeddedValue(kApfsXattrDataEmbedded, file.decmpfsXattr)});
+        if (file.resourceFork) {
+            // Large compressed content: the "cmpf" blob lives in a com.apple.ResourceFork
+            // data stream whose extents are owned by resourceForkXattrObjId (a fresh object
+            // id, not the inode's). Emit the dstream xattr + one file-extent record per run.
+            appendResourceForkRecords(records, file);
+        }
         appendInodeXattrs(records, file);
         return;
     }
@@ -2795,6 +2859,10 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
                                                      const QVector<ApfsRootFilePayload>& files) {
     QVector<ExtentRefPhysRecord> records;
     for (const auto& file : files) {
+        // A resource-fork-compressed file's data extents belong to its ResourceFork data
+        // stream, owned by the fresh xattr object id (not the inode id), so the extent-ref
+        // owner must match what the com.apple.ResourceFork dstream declares.
+        const uint64_t owner = file.resourceFork ? file.resourceForkXattrObjId : file.fileId;
         for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
             ExtentRefPhysRecord* shared = nullptr;
             for (ExtentRefPhysRecord& candidate : records) {
@@ -2805,9 +2873,9 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
             }
             if (shared != nullptr) {
                 shared->refcnt += 1;
-                shared->owner = std::min(shared->owner, file.fileId);
+                shared->owner = std::min(shared->owner, owner);
             } else {
-                records.append({extent.paddr, extent.blockCount, file.fileId, 1});
+                records.append({extent.paddr, extent.blockCount, owner, 1});
             }
         }
     }
@@ -6617,6 +6685,11 @@ struct ApfsFileInsertRequest {
     bool compressed{false};
     QByteArray decmpfsXattr;
     uint64_t uncompressedSize{0};
+    // A5 follow-on resource-fork compression: when set, fileData holds the compressed
+    // "cmpf" blob (allocated + written as data, its extents owned by a fresh xattr object
+    // id) and a com.apple.ResourceFork data-stream xattr is emitted; used when the
+    // compressed content exceeds the 3804-byte inline-xattr limit. Still compressed.
+    bool resourceFork{false};
     // A7 (A-h): arbitrary named xattrs attached to the inserted file (ACL, Finder
     // info, user attributes). Each becomes a j_xattr record; no data is allocated.
     QVector<QPair<QByteArray, QByteArray>> xattrs;
@@ -6721,6 +6794,10 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                    .compressed = in.request.compressed,
                    .decmpfsXattr = in.request.decmpfsXattr,
                    .uncompressedSize = in.request.uncompressedSize,
+                   // A resource-fork-compressed file's blob extents are owned by a fresh
+                   // object id (newFileId + 1); nextObjIdDelta reserves it (see the commit).
+                   .resourceFork = in.request.resourceFork,
+                   .resourceForkXattrObjId = in.request.resourceFork ? newFileId + 1 : 0,
                    .xattrs = in.request.xattrs,
                    .sparse = in.request.sparse,
                    .sparseLogicalSize = in.request.sparseLogicalSize,
@@ -6892,10 +6969,33 @@ bool applyInlineDecmpfsToRequest(ApfsFileInsertRequest* request,
     return true;
 }
 
+// Stamp a resource-fork-compressed file onto the request: the "cmpf" blob becomes the payload
+// (allocated + written as data, its extents owned by a fresh xattr object id), decmpfsXattr is
+// the bare 16-byte header (algo *_RSRC), and the inode is UF_COMPRESSED at the original size.
+// Used when the compressed content would exceed the 3804-byte embedded-xattr limit.
+bool applyResourceForkToRequest(ApfsFileInsertRequest* request,
+                                const QByteArray& data,
+                                uint32_t algo,
+                                QStringList* blockers) {
+    const QByteArray blob = apfsBuildResourceForkBlob(data, algo);
+    if (blob.isEmpty()) {
+        blockers->append(QStringLiteral("APFS resource-fork compression: could not build the cmpf "
+                                        "blob (unsupported algorithm %1 or empty payload)")
+                             .arg(algo));
+        return false;
+    }
+    request->compressed = true;
+    request->resourceFork = true;
+    request->fileData = blob;
+    request->decmpfsXattr = apfsBuildDecmpfsHeader(algo, static_cast<uint64_t>(data.size()));
+    request->uncompressedSize = static_cast<uint64_t>(data.size());
+    return true;
+}
+
 // Build the in-place insert request for a (possibly compressed) file. When a compressor is
 // selected the payload is stored as an inline com.apple.decmpfs xattr and no data blocks are
 // allocated; the inode is UF_COMPRESSED. Precedence when multiple flags are set: LZVN, then
-// LZFSE, then zlib. Fails closed if the compressed attribute exceeds the embedded-xattr limit.
+// LZFSE, then zlib. zlib content too large for an embedded xattr falls back to a resource fork.
 bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
@@ -6927,7 +7027,12 @@ bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
     }
     bool fits = false;
     const QByteArray value = apfsBuildInlineZlibDecmpfs(in.fileData, &fits);
-    return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    if (fits) {
+        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+    }
+    // The inline zlib value exceeds the embedded-xattr limit: store the content in a
+    // com.apple.ResourceFork data stream (decmpfs ZLIB_RSRC) instead of failing closed.
+    return applyResourceForkToRequest(request, in.fileData, kApfsCompressZlibRsrc, blockers);
 }
 
 // The live container state every in-place fs-tree commit reads up front: the
@@ -7948,6 +8053,14 @@ bool buildInsertFsNodes(const ApfsFsCommitContext& ctx,
                blockers);
 }
 
+// Object ids an insert consumes: a hard link takes two (its two sibling records), a
+// resource-fork-compressed file takes two (the inode + the fresh xattr object id owning its
+// ResourceFork data stream), and a plain insert takes one. next_obj_id advances by this so
+// no live id (including the resource fork's xattr_obj_id) is left at or past it.
+uint64_t insertNextObjIdDelta(const ApfsFileInsertRequest& request) {
+    return (request.hardlinkTargetId != 0 || request.resourceFork) ? 2ULL : 1ULL;
+}
+
 // A2: insert one file into a generated container with a true in-place
 // copy-on-write checkpoint commit, preserving any files already present. COW
 // the fs-metadata chain (fs-tree nodes -> volume object map -> volume superblock
@@ -8006,9 +8119,6 @@ bool commitInPlaceFileInsert(QIODevice* image,
     const QVector<uint64_t> extentRefBlocks =
         extentRefSlots != 0 ? newBlocks.mid(insertTailBase, extentRefSlots) : QVector<uint64_t>{};
     const uint64_t extentRefNew = extentRefBlocks.value(0);
-    // A hard link adds no inode (the file count is unchanged) but consumes two object
-    // ids for its sibling records; a normal insert adds one inode and one id.
-    const bool hardlink = request.hardlinkTargetId != 0;
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
@@ -8018,8 +8128,8 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .extentRefBlocks = extentRefBlocks,
                              .freedDataBlocks = {},
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
-                             .fileCountDelta = hardlink ? 0 : 1,
-                             .nextObjIdDelta = hardlink ? 2ULL : 1ULL,
+                             .fileCountDelta = request.hardlinkTargetId != 0 ? 0 : 1,
+                             .nextObjIdDelta = insertNextObjIdDelta(request),
                              .chunk1BitmapBlock = chunk1BitmapBlock},
                             result,
                             blockers);
