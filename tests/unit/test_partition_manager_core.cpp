@@ -11155,10 +11155,31 @@ static void certifyPostGrowInsertReadsBack(const QDir& dir,
     QCOMPARE(reOld.data, preGrowPayload);
 }
 
+// Shrink `grown` to `newBytes` and verify the file still reads back. Helper so the grow-then-
+// shrink-back cert covers several targets without tripping the length gate.
+static void certifyShrinkReadsBack(const QDir& dir,
+                                   const QString& grown,
+                                   uint64_t newBytes,
+                                   const PartitionApfsWriteOptions& options,
+                                   const QByteArray& payload) {
+    const QString out = dir.filePath(QStringLiteral("shr-gs-%1.apfs").arg(newBytes));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                                    .written_image_path = out,
+                                                                    .new_size_bytes = newBytes,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
 // Grow a multi-chunk source to 1024 (8 chunks; the relocated pool lands in a high chunk), then
-// shrink back to k256 (removes the pool's chunk, truncated away) - the file must still read back.
-// A shrink that would leave the pool in a SURVIVING high chunk (grown 1024 -> 640) fails closed.
-// apfsck- and Apple-kernel-clean (16/16, macOS 15.7.4).
+// shrink back. To k256 (2 chunks) the pool's chunk is truncated away; to 128MiB (a SINGLE chunk)
+// the shrunk pool drops below a stale ip-bitmap ring bit, so the ring relocates (the crash-
+// rollback ghost keeps the old ring, the live spaceman gets a fresh clean one). A shrink that
+// would leave the pool in a SURVIVING high chunk (grown 1024 -> 640) fails closed. apfsck- and
+// Apple-kernel-clean (16/16, macOS 15.7.4).
 static void certifyGrowThenShrinkBack(const QDir& dir,
                                       const QString& withFile,
                                       uint64_t k256,
@@ -11171,17 +11192,8 @@ static void certifyGrowThenShrinkBack(const QDir& dir,
                                                     .new_size_bytes = 1024ULL * 1024ULL * 1024ULL,
                                                     .options = options})
             .ok);
-    const QString grownShrunk = dir.filePath(QStringLiteral("shr-grown-shrunk.apfs"));
-    const auto commit =
-        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
-                                                    .written_image_path = grownShrunk,
-                                                    .new_size_bytes = k256,
-                                                    .options = options});
-    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
-    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
-        grownShrunk, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
-    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read.data, payload);
+    certifyShrinkReadsBack(dir, grown, k256, options, payload);
+    certifyShrinkReadsBack(dir, grown, 128ULL * 1024ULL * 1024ULL, options, payload);
     const QString grownSurv = dir.filePath(QStringLiteral("shr-grown-surv.apfs"));
     QVERIFY(
         !PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
