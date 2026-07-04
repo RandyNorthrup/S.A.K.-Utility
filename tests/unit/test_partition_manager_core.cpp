@@ -11639,6 +11639,9 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // Real user data past chunk 0 is preserved across a shrink (surviving chunks' bitmaps carry
     // forward into the relocated chunk-0 pool); see the helper.
     certifyDataPastChunk0Shrink(dir, options);
+    // A multi-chunk source shrinks to a SUB-full-chunk target (removes the high chunks and lands in
+    // a partial chunk 0, tail verified free); orig.bin reads back after 512 MiB -> 64 MiB.
+    certifyShrinkReadsBack(dir, withFile, 64ULL * 1024ULL * 1024ULL, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

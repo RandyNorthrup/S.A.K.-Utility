@@ -10061,9 +10061,32 @@ bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
     return true;
 }
 
-// The target-shape preconditions common to every chunk-removing shrink: a chunk-multiple target
-// of at least two chunks, single-CIB source and target. Split out to keep validateShrinkScope's
-// per-chunk scan simple.
+// True if every block of chunk 0's bitmap in the range [firstBlock, lastBlock) is free (bit 0).
+// A shrink that truncates into chunk 0 (single-chunk in-chunk shrink, or a multi-chunk source
+// landing in a partial chunk 0) removes this range, so any used block there would be lost data.
+bool chunk0RangeIsFree(ApfsFsCommitContext* ctx,
+                       uint64_t firstBlock,
+                       uint64_t lastBlock,
+                       QStringList* blockers) {
+    QByteArray chunk0(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
+        return false;
+    }
+    for (uint64_t b = firstBlock; b < lastBlock; ++b) {
+        if ((static_cast<uint8_t>(chunk0.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) {
+            blockers->append(
+                QStringLiteral("APFS resize-shrink: the truncated tail holds used blocks (data "
+                               "past the new size)"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// The target-shape preconditions common to every chunk-removing shrink: single-CIB/spaceman scope.
+// A sub-full-chunk target is allowed here (a multi-chunk source landing in a partial chunk 0);
+// validateShrinkScope then verifies chunk 0's truncated tail is free. A single-chunk source never
+// reaches here - commitInPlaceResizeShrink routes it to the in-chunk shrink path.
 bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
                                uint64_t newBlockCount,
                                QStringList* blockers) {
@@ -10072,16 +10095,6 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
     // bitmap needed). chunk_count is the ceiling, matching ip_block_count = 3*(chunk_count+cib).
     const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                kApfsSpacemanBlocksPerChunk;
-    if (newBlockCount < kApfsSpacemanBlocksPerChunk) {
-        // A target smaller than one full chunk truncates INTO chunk 0's own data/pool region, which
-        // the chunk-removing shrink does not validate for freeness (it only checks whole high
-        // chunks + a free partial tail of a surviving high chunk). This in-chunk-0 shrink is a
-        // later increment; fail closed so a sub-chunk target can never silently drop chunk-0 data.
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: a target smaller than one full chunk (in-chunk-0 shrink) is a "
-            "later increment"));
-        return false;
-    }
     if (newChunks < 1) {
         blockers->append(
             QStringLiteral("APFS resize-shrink: the target must be at least one chunk"));
@@ -10161,6 +10174,13 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
         if (bitmapAddr != 0 && !shrinkChunkInScope(ctx, k, bitmapAddr, scope, blockers)) {
             return false;
         }
+    }
+    // A sub-full-chunk target lands in a PARTIAL chunk 0: its truncated tail [newBlockCount, 32768)
+    // must be free too (the per-chunk scan above only covers chunks 1..oldChunks-1). The relocated
+    // pool sits at or below newBlockCount (findFreeRunInChunk0 starts at seedData), so it survives.
+    if (newBlockCount < kApfsSpacemanBlocksPerChunk &&
+        !chunk0RangeIsFree(ctx, newBlockCount, kApfsSpacemanBlocksPerChunk, blockers)) {
+        return false;
     }
     return true;
 }
@@ -10251,8 +10271,10 @@ bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
         ctx->image, ctx->geometry, plan->oldIpBmBase, plan->ipBmBlocks, plan->newIpBlockCount);
     const uint64_t reserve = relocateRing ? plan->ipBmBlocks + plan->newIpBlockCount
                                           : plan->newIpBlockCount;
-    const uint64_t base =
-        findFreeRunInChunk0(chunk0, reserve, ctx->layout.seedData, kApfsSpacemanBlocksPerChunk);
+    // The relocated pool must sit within the SURVIVING part of chunk 0: for a sub-full-chunk target
+    // the tail [newBlockCount, 32768) is truncated away, so cap the free-run search there.
+    const uint64_t chunk0Limit = qMin<uint64_t>(kApfsSpacemanBlocksPerChunk, plan->newBlockCount);
+    const uint64_t base = findFreeRunInChunk0(chunk0, reserve, ctx->layout.seedData, chunk0Limit);
     if (base == 0) {
         blockers->append(QStringLiteral(
             "APFS resize-shrink: no free run in chunk 0 for the relocated internal pool"));
@@ -10459,27 +10481,6 @@ bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
     out->ipBitmapUsage = alloc.ipBitmapUsage;
     out->cibCount = alloc.cibCount;
     out->cibArrayRepoints = alloc.cibArrayRepoints;
-    return true;
-}
-
-// True if every block of chunk 0's bitmap in the range [firstBlock, lastBlock) is free (bit 0).
-// An in-chunk shrink truncates this range away, so any used block there would be lost data.
-bool chunk0RangeIsFree(ApfsFsCommitContext* ctx,
-                       uint64_t firstBlock,
-                       uint64_t lastBlock,
-                       QStringList* blockers) {
-    QByteArray chunk0(ctx->geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
-        return false;
-    }
-    for (uint64_t b = firstBlock; b < lastBlock; ++b) {
-        if ((static_cast<uint8_t>(chunk0.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) {
-            blockers->append(
-                QStringLiteral("APFS resize-shrink: the truncated tail holds used blocks (data "
-                               "past the new size)"));
-            return false;
-        }
-    }
     return true;
 }
 
