@@ -10189,22 +10189,36 @@ uint64_t findFreeRunInChunk0(const QByteArray& bitmap,
     return 0;
 }
 
-// True if every used block in the pool's chunk (oldIpBase / blocks_per_chunk) lies within the
-// pool region [oldIpBase, oldIpBase+oldIpBlockCount) - i.e. the chunk holds only the relocated
-// internal pool (allocator metadata a grow left in a high chunk), no user data. This is what lets
-// a previously-grown container shrink: the pool's chunk is truncated away, so as long as it holds
-// nothing but the pool the removed region is otherwise free.
+// The container-level facts a per-chunk shrink-scope check needs (bundled to stay within the arg
+// gate): the superseded pool's first chunk + span + region, whether it lies in the removed tail,
+// and the target chunk count. A multi-chunk pool (ip_bm_size > 1) spans poolSpan chunks from
+// poolChunk.
+struct ApfsShrinkScope {
+    uint64_t poolChunk{0};
+    uint64_t poolSpan{1};
+    uint64_t oldIpBase{0};
+    uint64_t oldIpBlockCount{0};
+    bool poolInRemovedTail{false};
+    uint64_t newChunks{0};
+};
+
+// True if every used block in chunk `k` lies within the pool region [oldIpBase, oldIpBase+
+// oldIpBlockCount) - i.e. the chunk holds only (its portion of) the relocated internal pool
+// (allocator metadata a grow left in a high chunk), no user data. This is what lets a previously-
+// grown container shrink: the pool's chunk(s) are truncated away, so as long as they hold nothing
+// but the pool the removed region is otherwise free. A multi-chunk pool is checked chunk by chunk.
 bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
                         uint64_t bitmapAddr,
-                        uint64_t oldIpBase,
-                        uint64_t oldIpBlockCount,
+                        uint64_t chunkIndex,
+                        const ApfsShrinkScope& s,
                         QStringList* blockers) {
     QByteArray bm(ctx->geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx->image, ctx->geometry, bitmapAddr, &bm, blockers)) {
         return false;
     }
-    const uint64_t chunkStart = (oldIpBase / kApfsSpacemanBlocksPerChunk) *
-                                kApfsSpacemanBlocksPerChunk;
+    const uint64_t chunkStart = chunkIndex * kApfsSpacemanBlocksPerChunk;
+    const uint64_t oldIpBase = s.oldIpBase;
+    const uint64_t oldIpBlockCount = s.oldIpBlockCount;
     for (uint64_t b = 0; b < kApfsSpacemanBlocksPerChunk; ++b) {
         const bool used =
             ((static_cast<uint8_t>(bm.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
@@ -10273,27 +10287,17 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
     return true;
 }
 
-// The container-level facts a per-chunk shrink-scope check needs (bundled to stay within the arg
-// gate): the superseded pool's chunk + region, whether it lies in the removed tail, and the target
-// chunk count.
-struct ApfsShrinkScope {
-    uint64_t poolChunk{0};
-    uint64_t oldIpBase{0};
-    uint64_t oldIpBlockCount{0};
-    bool poolInRemovedTail{false};
-    uint64_t newChunks{0};
-};
-
-// True if a non-free source chunk k is in shrink scope: the superseded pool's chunk (removed by the
-// truncation, or a surviving high chunk holding only the pool) or a SURVIVING chunk with user data
-// (its bitmap is carried forward). User data in a REMOVED high chunk fails closed.
+// True if a non-free source chunk k is in shrink scope: one of the superseded pool's chunks (any of
+// its poolSpan chunks - removed by the truncation, or surviving and holding only the pool) or a
+// SURVIVING chunk with user data (its bitmap is carried forward). User data in a REMOVED high chunk
+// fails closed. A multi-chunk pool (ip_bm_size > 1) that a grow left high spans poolSpan chunks.
 bool shrinkChunkInScope(ApfsFsCommitContext* ctx,
                         uint64_t k,
                         uint64_t bitmapAddr,
                         const ApfsShrinkScope& s,
                         QStringList* blockers) {
-    if (k == s.poolChunk &&
-        chunkHoldsOnlyPool(ctx, bitmapAddr, s.oldIpBase, s.oldIpBlockCount, blockers) &&
+    if (k >= s.poolChunk && k < s.poolChunk + s.poolSpan &&
+        chunkHoldsOnlyPool(ctx, bitmapAddr, k, s, blockers) &&
         (s.poolInRemovedTail || k < s.newChunks)) {
         return true;
     }
@@ -10321,9 +10325,15 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
     }
     const uint64_t oldIpBase =
         readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
+    // A multi-chunk pool (ip_bm_size > 1) a grow left high spans several chunks; scope every one.
+    const uint64_t poolSpan = (oldIpBase % kApfsSpacemanBlocksPerChunk + oldIpBlockCount +
+                               kApfsSpacemanBlocksPerChunk - 1) /
+                              kApfsSpacemanBlocksPerChunk;
     const ApfsShrinkScope scope{oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk,
+                                poolSpan,
                                 oldIpBase,
-                                3 * (oldChunks + cibCountForChunks(oldChunks)),
+                                oldIpBlockCount,
                                 oldIpBase >= newBlockCount,
                                 (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                     kApfsSpacemanBlocksPerChunk};

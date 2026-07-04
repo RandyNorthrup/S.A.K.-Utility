@@ -11453,6 +11453,51 @@ static void certifyIpBmTransitions(const QDir& dir, const PartitionApfsWriteOpti
     QCOMPARE(shRead.data, trPayload);
 }
 
+// Shrink a GROWN >1.35 TiB container whose relocated multi-chunk pool sits in the REMOVED tail: an
+// 11000-chunk container (ip_bm_size 2) with a file grows to 11500 (pool relocates to chunk 11000,
+// spanning two high chunks), then shrinks to 10900 - the removed tail holds only the superseded
+// pool (scoped chunk by chunk across its span, truncated away, not user data). apfsck-clean; the
+// file reads back byte-exact after the round trip.
+static void certifyGrownMultiChunkPoolShrink(const QDir& dir,
+                                             const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const QByteArray payload = QByteArray("grown-shrink-").repeated(4000);
+    const QString base = dir.filePath(QStringLiteral("gmcp-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = 11'000 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("GMCP"),
+                                                        .options = options})
+            .ok);
+    const QString withFile = dir.filePath(QStringLiteral("gmcp-file.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                             .written_image_path = withFile,
+                                                             .file_name = QStringLiteral("g.bin"),
+                                                             .file_data = payload,
+                                                             .options = options})
+                 .ok,
+             "grown-shrink source file insert");
+    const QString grown = dir.filePath(QStringLiteral("gmcp-grown.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                         .written_image_path = grown,
+                                                         .new_size_bytes = 11'500 * kChunk,
+                                                         .options = options})
+                 .ok,
+             "grow to 11500");
+    const QString shrunk = dir.filePath(QStringLiteral("gmcp-shrunk.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                    .written_image_path = shrunk,
+                                                    .new_size_bytes = 10'900 * kChunk,
+                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        shrunk, QStringLiteral("/g.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11655,12 +11700,12 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
         spillGrown, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
     QVERIFY2(spilledRead.ok, qPrintable(spilledRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(spilledRead.data, big);
-    // Partial-last-chunk source grow, multi-CIB grow (127/130/260), and a surviving-pool multi-CIB
-    // shrink (pool in a surviving high chunk, N-cib target); see the helpers.
+    // Partial-source grow, multi-CIB grow/shrink, ip_bm_size tiers + transitions; see the helpers.
     certifyPartialSourceGrowReadsBack(dir, options, payload);
     certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
     certifySurvivingPoolMultiCibShrink(dir, withFile, options, payload);
     certifyMultiChunkPoolGrow(dir, options);
+    certifyGrownMultiChunkPoolShrink(dir, options);
 }
 
 // Shrink a container that holds real user DATA past chunk 0: a 200 MiB file (spanning chunks 0 and
