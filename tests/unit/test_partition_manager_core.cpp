@@ -11542,6 +11542,43 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
     certifySurvivingPoolMultiCibShrink(dir, withFile, options, payload);
 }
 
+// Shrink a container that holds real user DATA past chunk 0: a 200 MiB file (spanning chunks 0 and
+// 1) in a 512 MiB (4-chunk) container, shrunk to 384 (3 chunks) and 256 (2 chunks). The surviving
+// data chunks' bitmaps are copied forward into the relocated chunk-0 pool (not rebuilt all-free);
+// only the free high chunks are removed. apfsck-clean (WSL apfsprogs); the spilled file reads back
+// byte-exact, proving the surviving-chunk extents are preserved.
+static void certifyDataPastChunk0Shrink(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+    const QByteArray big(static_cast<qsizetype>(200 * kMiB), 'S');
+    const QString base = dir.filePath(QStringLiteral("dp-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                            .target_container_bytes = 512 * kMiB,
+                                                            .block_size_bytes = 4096,
+                                                            .volume_name = QStringLiteral("DPC0"),
+                                                            .options = options})
+                .ok);
+    const QString withFile = dir.filePath(QStringLiteral("dp-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("big.bin"),
+                                                            .file_data = big,
+                                                            .options = options})
+                .ok);
+    for (uint64_t mib : {uint64_t{384}, uint64_t{256}}) {
+        const QString out = dir.filePath(QStringLiteral("dp-%1.apfs").arg(mib));
+        const auto commit =
+            PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                        .written_image_path = out,
+                                                        .new_size_bytes = mib * kMiB,
+                                                        .options = options});
+        QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+            out, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
+        QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, big);
+    }
+}
+
 void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // Chunk-removing shrink: a single-CIB container with data only in chunk 0 shrinks by dropping
     // free high chunks and relocating the internal pool into surviving chunk-0 free space (same
@@ -11599,6 +11636,9 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     certifyShrinkReadsBack(dir, withFile, 192ULL * 1024ULL * 1024ULL, options, payload);
     // A partial-last-chunk SOURCE shrinks too (ceiling oldChunks); see the helper.
     certifyPartialSourceShrinkReadsBack(dir, options, payload);
+    // Real user data past chunk 0 is preserved across a shrink (surviving chunks' bitmaps carry
+    // forward into the relocated chunk-0 pool); see the helper.
+    certifyDataPastChunk0Shrink(dir, options);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {
