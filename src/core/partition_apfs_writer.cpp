@@ -9301,22 +9301,41 @@ struct ApfsSourceChunkState {
     uint32_t freeCount{0};
 };
 
-// Read the source's oldChunks chunk entries from its live cib. Fails closed only if the source
-// ends mid-chunk (a partial last source chunk is a later increment).
+// Read the source's oldChunks chunk entries, spanning every source cib (chunk k lives in cib
+// k/126, entry k%126). Single-CIB reads the resolved live cib 0 directly (byte-identical to the
+// certified grow); multi-CIB reads the spaceman cib-address array. Fails closed only if the cib
+// array cannot be read. A partial last source chunk is fine: its entry reads like any other.
 bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
                               uint64_t oldChunks,
                               QVector<ApfsSourceChunkState>* chunks,
                               QStringList* blockers) {
-    // A partial last source chunk is fine: its cib entry (partial ci_block_count, all-free) is read
-    // like any other; the grow rebuilds that chunk full with the relocated pool at its in-chunk
-    // offset (layoutMultiChunkGrow's poolOffset), so no special-casing is needed here.
-    QByteArray cib(ctx->geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
+    const uint64_t cibCount = cibCountForChunks(oldChunks);
+    QVector<uint64_t> cibAddrs =
+        cibCount == 1
+            ? QVector<uint64_t>{ctx->liveCib}
+            : readLiveSpacemanCibArray(ctx->image, ctx->geometry, ctx->nxsb, cibCount, blockers);
+    if (static_cast<uint64_t>(cibAddrs.size()) != cibCount) {
+        blockers->append(
+            QStringLiteral("APFS resize: unable to read the source cib-address array"));
         return false;
     }
+    QByteArray cib(ctx->geometry.blockSize, '\0');
+    uint64_t loadedCib = std::numeric_limits<uint64_t>::max();
     for (uint64_t k = 0; k < oldChunks; ++k) {
+        const uint64_t ci = k / kApfsSpacemanChunksPerCib;
+        if (ci != loadedCib) {
+            if (!readApfsRepairBlock(ctx->image,
+                                     ctx->geometry,
+                                     cibAddrs.at(static_cast<qsizetype>(ci)),
+                                     &cib,
+                                     blockers)) {
+                return false;
+            }
+            loadedCib = ci;
+        }
         const qsizetype e = kApfsChunkInfoEntriesOffset +
-                            static_cast<qsizetype>(k) * kApfsChunkInfoEntryStride;
+                            static_cast<qsizetype>(k % kApfsSpacemanChunksPerCib) *
+                                kApfsChunkInfoEntryStride;
         chunks->append({le64(cib, e + kApfsChunkInfoEntryBitmapAddrOffset),
                         le32(cib, e + kApfsChunkInfoEntryFreeCountOffset)});
     }
@@ -10060,10 +10079,16 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
             QStringLiteral("APFS resize-shrink: the target must be at least one chunk"));
         return false;
     }
-    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 ||
-        cibCountForChunks(newChunks) != 1) {
+    // Multi-CIB source and target are supported (cib 0 relocates to chunk 0, cibs 1..N-1 rebuilt
+    // immutable); the CAB tier (>507 cibs) and a spaceman that spills a second block (>~180 cibs)
+    // are later increments. The pool relocates into a single chunk-0 free run, so the target's
+    // ip-bitmap stays single-block; guard the spaceman span on both source and target.
+    if (ctx->layout.cabCount != 0 || cibCountForChunks(newChunks) > kApfsSpacemanCibsPerCab ||
+        spacemanBlockSpan(ctx->geometry.blockSize, 1, ctx->layout.cibCount) != 1 ||
+        spacemanBlockSpan(ctx->geometry.blockSize, 1, cibCountForChunks(newChunks)) != 1) {
         blockers->append(QStringLiteral(
-            "APFS resize-shrink: only a single-CIB container is supported (later increment)"));
+            "APFS resize-shrink: the CAB tier and a spaceman spilling past one block (>~180 cibs) "
+            "are later increments"));
         return false;
     }
     return true;
@@ -10086,7 +10111,7 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
     }
     const uint64_t oldIpBase =
         readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    const uint64_t oldIpBlockCount = 3 * (oldChunks + 1);
+    const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
     const uint64_t poolChunk = oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk;
     const bool poolInRemovedTail = oldIpBase >= newBlockCount;
     const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
@@ -10176,33 +10201,13 @@ uint64_t survivingPoolChunkIndex(uint64_t oldIpBase, uint64_t newBlockCount, uin
     return surviving ? oldPoolChunk : 0;
 }
 
-// Validate a chunk-removing shrink and lay out its plan: the relocated pool base is a free run
-// in surviving chunk-0 free space, the block counts drop to newChunkCount. When the shrunk pool
-// would drop below a stale ip-bitmap ring bit, the ring is relocated too (newIpBmBase set) so the
-// live ring is clean while the crash-rollback ghost keeps the old one.
-bool buildShrinkPlan(ApfsFsCommitContext* ctx,
-                     uint64_t newBlockCount,
-                     ApfsChunkAddingGrowPlan* plan,
-                     QStringList* blockers) {
-    // Ceiling: a partial last SOURCE chunk still counts (old pool = 3*(chunk_count+cib), and the
-    // per-chunk scan must cover the partial tail chunk).
-    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                               kApfsSpacemanBlocksPerChunk;
-    QVector<ApfsSourceChunkState> src;
-    if (!validateShrinkScope(ctx, newBlockCount, oldChunks, &src, blockers)) {
-        return false;
-    }
-    plan->newBlockCount = newBlockCount;
-    // Ceiling: a partial last chunk still counts as a chunk (its cib entry has a partial
-    // ci_block_count), so ip_block_count = 3*(chunk_count+cib) stays correct.
-    plan->newChunkCount = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                          kApfsSpacemanBlocksPerChunk;
-    plan->newXid = ctx->live.xid + 1;
-    plan->newIpBlockCount = 3 * (plan->newChunkCount + 1);
-    plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    plan->oldIpBlockCount = 3 * (oldChunks + 1);
-    plan->survivingPoolChunk =
-        survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
+// Read the source ip-bitmap ring geometry and choose the relocated pool's chunk-0 placement: a
+// free run large enough for the pool (plus the whole ring when a stale high ring bit forces the
+// ring to relocate). Sets plan->oldIpBmBase/ipBmBlocks/newIpBmBase/newIpBase. Fails closed if the
+// source allocator is unreadable or chunk 0 has no free run of the needed size.
+bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
+                                ApfsChunkAddingGrowPlan* plan,
+                                QStringList* blockers) {
     const QByteArray spaceman =
         readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     QByteArray chunk0(ctx->geometry.blockSize, '\0');
@@ -10227,6 +10232,44 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     plan->newIpBmBase = relocateRing ? base : 0;
     plan->newIpBase = relocateRing ? base + plan->ipBmBlocks : base;
     return true;
+}
+
+// Validate a chunk-removing shrink and lay out its plan: the relocated pool base is a free run
+// in surviving chunk-0 free space, the block counts drop to newChunkCount. When the shrunk pool
+// would drop below a stale ip-bitmap ring bit, the ring is relocated too (newIpBmBase set) so the
+// live ring is clean while the crash-rollback ghost keeps the old one.
+bool buildShrinkPlan(ApfsFsCommitContext* ctx,
+                     uint64_t newBlockCount,
+                     ApfsChunkAddingGrowPlan* plan,
+                     QStringList* blockers) {
+    // Ceiling: a partial last SOURCE chunk still counts (old pool = 3*(chunk_count+cib), and the
+    // per-chunk scan must cover the partial tail chunk).
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    QVector<ApfsSourceChunkState> src;
+    if (!validateShrinkScope(ctx, newBlockCount, oldChunks, &src, blockers)) {
+        return false;
+    }
+    plan->newBlockCount = newBlockCount;
+    // Ceiling: a partial last chunk still counts as a chunk (its cib entry has a partial
+    // ci_block_count), so ip_block_count = 3*(chunk_count+cib) stays correct.
+    plan->newChunkCount = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                          kApfsSpacemanBlocksPerChunk;
+    plan->newXid = ctx->live.xid + 1;
+    plan->newIpBlockCount = 3 * (plan->newChunkCount + cibCountForChunks(plan->newChunkCount));
+    plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
+    plan->survivingPoolChunk =
+        survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
+    if (plan->survivingPoolChunk != 0 && cibCountForChunks(plan->newChunkCount) > 1) {
+        // The surviving-pool allocator (buildShrinkSurvivingPoolAllocator) builds a single explicit
+        // cib; a multi-CIB target through that path is a later increment.
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: a surviving high-chunk pool with a multi-CIB target is a later "
+            "increment"));
+        return false;
+    }
+    return resolveShrinkPoolPlacement(ctx, plan, blockers);
 }
 
 // Advance the main free-queue for a shrink. The old pool is freed onto the queue UNLESS it sits
@@ -10269,9 +10312,14 @@ bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
     if (!buildGrownAllocatorSubtree(ctx, plan, reclaimed, &alloc, blockers)) {
         return false;
     }
+    // buildGrownAllocatorSubtree sets the used-set/cib fields for both a single-CIB target (the
+    // certified {0,1,2,3} prefix, cib_count 1) and a multi-CIB target (immutable cib slots added,
+    // cib_count N + the entry re-points), so the shrink just carries them through.
     out->liveCib = alloc.liveCib;
-    out->ipUsedSet = ipBitmapPrefixSet(2 * 2);
-    out->ipBitmapUsage = 2 * 2;
+    out->ipUsedSet = alloc.ipUsedSet;
+    out->ipBitmapUsage = alloc.ipBitmapUsage;
+    out->cibCount = alloc.cibCount;
+    out->cibArrayRepoints = alloc.cibArrayRepoints;
     return true;
 }
 
@@ -10316,15 +10364,19 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
                             .spacemanFreeDelta = freeDelta,
                             .nextOidAdvance = 0,
                             .newCibAddr = liveCib,
-                            .cibCount = 1,
+                            .cibCount = alloc.cibCount,
                             .ipSlotStride = 2,
                             .ipBitmapUsage = ipUsage,
                             .mainFqEntries = mainFq.entries,
                             .blockCountDelta = static_cast<int64_t>(newBlockCount - oldBlockCount),
                             .ipUsedSet = ipUsedSet,
+                            .cibArrayRepoints = alloc.cibArrayRepoints,
                             .newChunkCount = plan.newChunkCount,
                             .newIpBlockCount = plan.newIpBlockCount,
                             .newIpBase = plan.newIpBase,
+                            // Always write sm_cib_count: a multi-CIB source shrinking to a single-
+                            // CIB target must drop it to 1 (a no-op when it is already 1).
+                            .newCibCount = alloc.cibCount,
                             .newIpBmBase = plan.newIpBmBase,
                             .ipBmBlocks = plan.ipBmBlocks,
                             .explicitIpFqEntries = ipFq},

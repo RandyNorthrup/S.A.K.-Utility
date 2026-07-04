@@ -11244,6 +11244,44 @@ static void certifyMultiCibGrowReadsBack(const QDir& dir,
     }
 }
 
+// Shrink a multi-CIB container (>126 chunks) holding a file back down: cib 0 relocates to a chunk-0
+// free run, cibs 1..N-1 are rebuilt (fewer, or dropped to one) and sm_cib_count falls to the
+// target's N. Each source is first grown from `withFile` (a certified path) so the pre-existing
+// orig.bin rides the grow then the shrink. apfsck-clean (WSL apfsprogs) for 130->100 (2-cib to
+// single), 130->127 (2-cib minimal), and 260->130 (3-cib to 2-cib); orig.bin reads back byte-exact.
+static void certifyMultiCibShrinkReadsBack(const QDir& dir,
+                                           const QString& withFile,
+                                           const PartitionApfsWriteOptions& options,
+                                           const QByteArray& payload) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const uint64_t cases[3][2] = {{130, 100}, {130, 127}, {260, 130}};
+    for (const auto& c : cases) {
+        const QString grown =
+            dir.filePath(QStringLiteral("mcshr-g-%1-%2.apfs").arg(c[0]).arg(c[1]));
+        const auto growCommit =
+            PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                        .written_image_path = grown,
+                                                        .new_size_bytes = c[0] * kChunk,
+                                                        .options = options});
+        QVERIFY2(growCommit.ok, qPrintable(growCommit.blockers.join(QStringLiteral("; "))));
+        const QString out = dir.filePath(QStringLiteral("mcshr-o-%1-%2.apfs").arg(c[0]).arg(c[1]));
+        const auto commit =
+            PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                        .written_image_path = out,
+                                                        .new_size_bytes = c[1] * kChunk,
+                                                        .options = options});
+        QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+        QFile img(out);
+        QVERIFY(img.open(QIODevice::ReadOnly));
+        QCOMPARE(static_cast<uint64_t>(img.size()), c[1] * kChunk);
+        img.close();
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+            out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+        QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, payload);
+    }
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11377,10 +11415,10 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     // the pre-grow file read back byte-for-byte. (Apple-kernel certified on macOS 15.7.4:
     // mount + fsck_apfs clean + byte-exact read-back for small and chunk-spilling inserts.)
     certifyPostGrowInsertReadsBack(dir, grown, options, payload);
-    // The chunk-adding grow ALSO crosses the 126-chunk single-CIB boundary: a sub-chunk (64 MiB)
-    // source grows straight to an N-cib target (relocated pool pinned to chunk 0, cib 0 bitmapped,
-    // cibs 1..N-1 immutable all-free). apfsck-clean across 127/130/260 chunks; orig.bin reads back.
+    // Crossing the 126-chunk boundary both ways (sub-chunk source -> N-cib target, then multi-CIB
+    // container -> fewer/one cib); sm_cib_count tracks N and orig.bin survives. See the helpers.
     certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
+    certifyMultiCibShrinkReadsBack(dir, withFile, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
