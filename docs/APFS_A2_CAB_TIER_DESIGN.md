@@ -1,24 +1,31 @@
-# APFS A2 — CAB-tier spaceman emission (implementation spec)
+# APFS A2 -- CAB-tier spaceman emission (implementation spec)
 
-Status: **designed, not implemented.** The CAB tier is the last + hardest generated-APFS
-geometry tier (containers above ~3 TiB, where the inline cib-address array no longer fits the
-spaceman block). The tier just below it (metadata-overflow) needed three dated cascade commits
-(`307df6d`, `27e8948`, …) to pass `fsck_apfs`; CAB is comparable and modifies the same certified
-spaceman/IP allocator, so it must be implemented as a focused effort with per-step `fsck_apfs`
-verification on the cloud box (`docs/A2_CLOUD_CERT_PLAYBOOK.md`), not in one shot.
+Status update 2026-07-04: **FORMAT + in-place MUTATION are IMPLEMENTED and apfsck-clean**
+(host apfsprogs `apfsck -cw` EXIT 0 for format at 63882 chunks / 507 cibs / 1 cab AND 64000
+chunks / 508 cibs / 2 cabs, and for a file-insert into a 2-cab container). `buildCibAddrBlock`,
+the cab-aware `buildSpacemanBlock`, and the cab-0 in-place rotation all exist. The remaining gap
+is **CAB-tier RESIZE** (grow/shrink), which the grow/shrink guards still fail-close at
+`newCibs > 507`. The original spec below (for the format emission) is retained for reference.
+
+Original status (format emission): **designed, not implemented.** The CAB tier is the last +
+hardest generated-APFS geometry tier (containers above ~3 TiB, where the inline cib-address array
+no longer fits the spaceman block). The tier just below it (metadata-overflow) needed three dated
+cascade commits (`307df6d`, `27e8948`, ...) to pass `fsck_apfs`; CAB is comparable and modifies the
+same certified spaceman/IP allocator, so it must be implemented as a focused effort with per-step
+`fsck_apfs` verification on the cloud box (`docs/A2_CLOUD_CERT_PLAYBOOK.md`), not in one shot.
 
 ## What changes structurally
 
 Today S.A.K. always emits `cab_count == 0`: the spaceman device's address array (at
 `sm_addr_offset`) holds **CIB** block numbers inline. The format fail-closes when
-`cib_count > cibs_per_cab` (507) — see `generatedApfsContainerFormatBlocker`
+`cib_count > cibs_per_cab` (507) -- see `generatedApfsContainerFormatBlocker`
 (`partition_apfs_writer.cpp:~4310`) and `computeContainerGeometry` (`:~5488`, already computes
 `cab_count = ceil(cib_count / 507)`).
 
 CAB tier (`cab_count > 1`): the spaceman address array holds **CAB** block numbers; each CAB is
 an `apfs_cib_addr_block` holding up to 507 CIB block numbers.
 
-## Reference (apfsprogs mkapfs/spaceman.c — verified)
+## Reference (apfsprogs mkapfs/spaceman.c -- verified)
 
 `apfs_cib_addr_block` on-disk layout (block-sized, type `APFS_OBJECT_TYPE_SPACEMAN_CAB`):
 ```
@@ -51,7 +58,7 @@ mkapfs also: `ip_block_count = 3 * (chunk_count + cib_count + cab_count)` alread
    sits right after `sm_cib_count`@0x10, so **0x14**; confirm against an Apple/mkapfs dump). Write
    it in `buildSpacemanBlock` from a new `params.cabCount`. Also write `sm_dev.sm_first_cab` if the
    on-disk struct carries it (mkapfs `first_cab` is internal; the on-disk addr array is what fsck
-   reads — verify whether a first_cab field exists in `apfs_spaceman_device`).
+   reads -- verify whether a first_cab field exists in `apfs_spaceman_device`).
 
 2. **`buildSpacemanBlock`** (`:1703`): thread `cabCount` + a `cabAddrs` vector. When `cabCount>0`,
    write `cabAddrs` (not `cibAddrs`) at `cibArrayOffset`, set the cab_count field, and
@@ -61,10 +68,10 @@ mkapfs also: `ip_block_count = 3 * (chunk_count + cib_count + cab_count)` alread
 3. **`computeMultiCibLayout`** (used by `emptyFormatBlocks:5799`): extend to compute `cabCount`,
    place `firstCab` (cabCount blocks) and `firstCib` (cib_count blocks) in the metadata region,
    and produce both the ghost + live **cab**-address vectors (the CABs rotate like cib0 does
-   today — confirm which CABs are immutable vs rotated, mirroring the cib0-only rotation in
+   today -- confirm which CABs are immutable vs rotated, mirroring the cib0-only rotation in
    `27e8948`). The `ipDelta` must grow by the CAB blocks too.
 
-4. **`emptyFormatBlocks`** (`:5787`): emit each CAB block (`buildCibAddrBlock`, new — mirror
+4. **`emptyFormatBlocks`** (`:5787`): emit each CAB block (`buildCibAddrBlock`, new -- mirror
    `buildChunkInfoBlock` but with the CAB layout above) at `firstCab+i`, and the CIBs at the
    `firstCib + (507*i + j)` positions referenced by each CAB.
 
@@ -84,14 +91,14 @@ mkapfs also: `ip_block_count = 3 * (chunk_count + cib_count + cab_count)` alread
 
 On the cloud box (`93.115.26.82`, build `/root/sak/clibuild`): `format-raw` a >3 TiB sparse
 container on XFS, attach to the qemu-macOS VM, `fsck_apfs -n /dev/diskN` (drive Terminal via
-**vncdotool**, lowercase + tab-complete `fsck_apfs` — it can't send Shift). Iterate on each fsck
+**vncdotool**, lowercase + tab-complete `fsck_apfs` -- it can't send Shift). Iterate on each fsck
 complaint (cab object type/checksum, addr-array overlap, ip_block_count, allocation counts) the
-same way cascades 3–5 went. The format-hash skip (`53a4868`) keeps each format ~0s.
+same way cascades 3-5 went. The format-hash skip (`53a4868`) keeps each format ~0s.
 
 ## Guardrails
 
 - Everything gated on `cab_count > 0`; the certified single-CIB / multi-CIB / metadata-overflow
-  paths (`cab_count == 0`) stay byte-identical — run the 124 partition-core unit tests after each
+  paths (`cab_count == 0`) stay byte-identical -- run the 124 partition-core unit tests after each
   change to prove no regression.
 - Production format cap is 2 TiB (`partition_script_builder.cpp`), below the CAB boundary, so a
   WIP CAB path is not reachable from the production Apply route until it certifies.
