@@ -1784,6 +1784,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_createsAndDeletesEmptyFilesWithCatalogReadback();
     void hfsFileSystemWriter_deletesAllocatedFilesAndReleasesBitmap();
     void hfsFileSystemWriter_createsHardlinksAndSymlinks();
+    void hfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsFileSystemReader_rejectsCorruptMetadataChecksum();
     void apfsWriter_computesAndVerifiesObjectChecksums();
     void apfsWriter_computesMultiChunkContainerGeometry();
@@ -6383,6 +6384,114 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_createsHardlinksAndSymlinks(
     verifyHfsLinkCreateAndResolve(imagePath, options, payload);
     verifyHfsLinkListing(imagePath, payload);
     verifyHfsLinkDeleteChain(imagePath, options, payload);
+}
+
+namespace {
+
+// A large writable HFS+ volume: reuse the certified reader-fixture layout but grow it to
+// 2048 blocks (8 MiB) and mark blocks 0..63 used, leaving one contiguous free region
+// (blocks 64..2047) so a multi-MiB file lands in a single extent (no overflow tree).
+QByteArray hfsLargeStreamFixture() {
+    constexpr uint32_t kTotalBlocks = 2048;
+    constexpr uint32_t kReservedBlocks = 64;
+    QByteArray base = hfsReaderFixture();
+    base.resize(static_cast<qsizetype>(kTotalBlocks) * kTestHfsBlockSize);
+    writeBe32(&base, kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset, kTotalBlocks);
+    writeBe32(&base,
+              kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset,
+              kTotalBlocks - kReservedBlocks);
+    for (uint32_t block = 0; block < kReservedBlocks; ++block) {
+        setHfsAllocationBit(&base, block);
+    }
+    return base;
+}
+
+// A deterministic, non-repeating ~5 MiB payload with a non-block-aligned tail.
+QByteArray hfsStreamPayload() {
+    QByteArray payload(5 * 1024 * 1024 + 123, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 131 + 17) & 0xFF);
+    }
+    return payload;
+}
+
+PartitionHfsFileWriteOptions hfsStreamWriteOptions() {
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-stream-byte-identity");
+    options.max_write_bytes = 16ULL * 1024ULL * 1024ULL;
+    return options;
+}
+
+void reportFirstImageDifference(const QByteArray& a, const QByteArray& b) {
+    qsizetype firstDiff = 0;
+    const qsizetype limit = std::min(a.size(), b.size());
+    while (firstDiff < limit && a.at(firstDiff) == b.at(firstDiff)) {
+        ++firstDiff;
+    }
+    qWarning("streamed vs in-memory HFS+ image first differs at offset %lld",
+             static_cast<long long>(firstDiff));
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::hfsWriter_streamedFileWriteMatchesInMemoryByteForByte() {
+    // Streaming pulls the payload from a host file one allocation block at a time (peak RAM
+    // one block). Proof = byte IDENTITY to the buffered in-memory create, which Apple
+    // fsck_hfs certifies; the streamed writer inherits that certification. ~5 MiB crosses
+    // >1200 allocation blocks - the whole-file-in-RAM writer this replaces could never
+    // bound such a write, which is exactly the cap being removed.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QByteArray base = hfsLargeStreamFixture();
+    const QByteArray payload = hfsStreamPayload();
+    const PartitionHfsFileWriteOptions options = hfsStreamWriteOptions();
+
+    const QString payloadPath = dir.filePath(QStringLiteral("payload.bin"));
+    const QString memImg = dir.filePath(QStringLiteral("hfs-stream-mem.img"));
+    const QString streamImg = dir.filePath(QStringLiteral("hfs-stream-file.img"));
+    QVERIFY(writeBytes(payloadPath, payload));
+    QVERIFY(writeBytes(memImg, base));
+    QVERIFY(writeBytes(streamImg, base));
+
+    const auto memCreate = PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+        memImg, QStringLiteral("/big.bin"), payload, options);
+    QVERIFY2(memCreate.ok, qPrintable(memCreate.blockers.join(QStringLiteral("; "))));
+    const auto streamCreate = PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+        streamImg,
+        QStringLiteral("/big.bin"),
+        payloadPath,
+        static_cast<uint64_t>(payload.size()),
+        options);
+    QVERIFY2(streamCreate.ok, qPrintable(streamCreate.blockers.join(QStringLiteral("; "))));
+
+    // The cert: the streamed image is byte-for-byte identical to the in-memory image.
+    const QByteArray memBytes = readBytes(memImg);
+    const QByteArray streamBytes = readBytes(streamImg);
+    if (memBytes != streamBytes) {
+        reportFirstImageDifference(memBytes, streamBytes);
+    }
+    QVERIFY2(memBytes == streamBytes,
+             "streamed HFS+ file write is not byte-identical to the in-memory write");
+    QCOMPARE(memCreate.bytes_written, static_cast<uint64_t>(payload.size()));
+    QCOMPARE(streamCreate.bytes_written, static_cast<uint64_t>(payload.size()));
+
+    // The file reads back byte-exact through the normal catalog/extent path.
+    const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(
+        streamImg, QStringLiteral("/big.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, payload);
+
+    // Optional persist for the coordinator's Apple fsck_hfs run.
+    const QString certDir = qEnvironmentVariable("SAK_HFS_STREAM_CERT_DIR");
+    if (!certDir.isEmpty()) {
+        const QString persistPath = QDir(certDir).filePath(QStringLiteral("hfs-streamed.img"));
+        QFile::remove(persistPath);
+        QVERIFY(QFile::copy(streamImg, persistPath));
+    }
 }
 
 void PartitionManagerCoreTests::apfsFileSystemReader_rejectsCorruptMetadataChecksum() {

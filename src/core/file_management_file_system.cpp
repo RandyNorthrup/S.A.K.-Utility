@@ -438,6 +438,22 @@ FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& t
                                 size);
 }
 
+// Streaming HFS+ write: the payload is pulled from @p hostPath one allocation block at a
+// time by the certified fork writer (never held whole in RAM), so an arbitrarily large
+// file is bounded only by the volume's free space. Byte-identical on disk to the buffered
+// in-memory write of the same payload.
+FileManagementMutationResult writeHfsFileStreamed(const FileManagementTarget& target,
+                                                  const QString& cleanPath,
+                                                  const QString& hostPath,
+                                                  uint64_t size) {
+    sak::PartitionHfsFileWriteOptions options = hfsWriteOptions(target);
+    // Lift the buffered-write cap for streaming: bound the write by the file's own size
+    // (still fails closed on a full volume via the allocator).
+    options.max_write_bytes = std::max<uint64_t>(size, options.max_write_bytes);
+    return fromHfsWriteResult(PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+        target.root_path, cleanPath, hostPath, size, options));
+}
+
 // Streaming local-filesystem copy: host file -> destination through a fixed 1 MiB
 // window, so a multi-GB copy never holds the whole payload in RAM.
 FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
@@ -905,9 +921,12 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPa
     if (fs == QStringLiteral("apfs")) {
         return writeApfsFileStreamed(target, cleanPath, host_file_path, size);
     }
-    // HFS (and any other backend) has no streaming fork writer yet, so it reads the whole
-    // file; guard RAM by size before the read. The limit is that backend's honest current
-    // bound and is lifted once it gains a streaming writer.
+    if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
+        return writeHfsFileStreamed(target, cleanPath, host_file_path, size);
+    }
+    // Any remaining backend has no streaming fork writer yet, so it reads the whole file;
+    // guard RAM by size before the read. The limit is that backend's honest current bound
+    // and is lifted once it gains a streaming writer.
     if (size > kFileManagementMaxWriteBytes) {
         return mutationBlocked(fs,
                                cleanPath,

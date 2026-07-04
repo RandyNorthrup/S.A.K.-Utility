@@ -282,6 +282,21 @@ public:
         const QString& path,
         const QByteArray& data,
         const PartitionHfsFileWriteOptions& options);
+    // Streamed create: the payload is pulled from host_file_path one allocation block at a
+    // time (peak RAM one block), removing the buffered-write size cap. Byte-identical to
+    // createFileWithData for the same payload.
+    [[nodiscard]] static PartitionHfsFileWriteResult createFileFromHostPathStreamed(
+        QIODevice* device,
+        const QString& path,
+        const QString& host_file_path,
+        uint64_t size,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createFileFromHostPathStreamedFromImage(
+        const QString& image_path,
+        const QString& path,
+        const QString& host_file_path,
+        uint64_t size,
+        const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createSymlink(
         QIODevice* device,
         const QString& path,

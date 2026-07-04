@@ -488,6 +488,51 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithDataFrom
     return createFileWithData(image.get(), path, data, options);
 }
 
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPathStreamed(
+    QIODevice* device,
+    const QString& path,
+    const QString& host_file_path,
+    uint64_t size,
+    const PartitionHfsFileWriteOptions& options) {
+    HfsReader reader(device);
+    if (!reader.load()) {
+        PartitionHfsFileWriteResult result;
+        result.path = path.trimmed();
+        result.evidence_id = options.evidence_id;
+        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for file create"));
+        return result;
+    }
+    return reader.createFileFromHostPathStreamed(path, host_file_path, size, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+    const QString& image_path,
+    const QString& path,
+    const QString& host_file_path,
+    uint64_t size,
+    const PartitionHfsFileWriteOptions& options) {
+    PartitionHfsFileWriteResult result;
+    result.path = path.trimmed();
+    result.evidence_id = options.evidence_id;
+    if (image_path.trimmed().isEmpty()) {
+        result.blockers.append(QStringLiteral("Image path is required"));
+        return result;
+    }
+    if (options.image_only && isWindowsRawDevicePath(image_path)) {
+        result.blockers.append(QStringLiteral(
+            "HFS+ file create is image-only; raw targets require a separate hardware gate"));
+        return result;
+    }
+    QString openError;
+    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    if (!image) {
+        result.blockers.append(
+            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
+        return result;
+    }
+    return createFileFromHostPathStreamed(image.get(), path, host_file_path, size, options);
+}
+
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlink(
     QIODevice* device,
     const QString& path,

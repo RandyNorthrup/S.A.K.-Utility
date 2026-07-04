@@ -12,8 +12,90 @@
 
 #include "sak/partition_hfs_core.h"
 
+#include <memory>
+
 namespace sak {
 namespace {
+
+// A pull source for an HFS+ fork payload: either an in-memory buffer (the
+// certified path, byte-identical to passing a QByteArray) or a host file streamed
+// block-by-block so an arbitrarily large file never resides whole in RAM (peak RAM
+// is one allocation block). Bytes are yielded strictly sequentially via nextChunk;
+// a file source opens its QFile once, lazily, on the first pull. Move-only because
+// it owns the open file handle.
+class HfsForkDataSource {
+public:
+    HfsForkDataSource() = default;
+    HfsForkDataSource(const HfsForkDataSource&) = delete;
+    HfsForkDataSource& operator=(const HfsForkDataSource&) = delete;
+    HfsForkDataSource(HfsForkDataSource&&) = default;
+    HfsForkDataSource& operator=(HfsForkDataSource&&) = default;
+    ~HfsForkDataSource() = default;
+
+    [[nodiscard]] static HfsForkDataSource fromBytes(QByteArray bytes) {
+        HfsForkDataSource source;
+        source.m_size = static_cast<uint64_t>(bytes.size());
+        source.m_bytes = std::move(bytes);
+        return source;
+    }
+
+    [[nodiscard]] static HfsForkDataSource fromFile(QString path, uint64_t size) {
+        HfsForkDataSource source;
+        source.m_is_file = true;
+        source.m_path = std::move(path);
+        source.m_size = size;
+        return source;
+    }
+
+    [[nodiscard]] uint64_t size() const { return m_size; }
+    [[nodiscard]] bool isEmpty() const { return m_size == 0; }
+    [[nodiscard]] bool isFile() const { return m_is_file; }
+    [[nodiscard]] const QByteArray& bytes() const { return m_bytes; }
+    [[nodiscard]] const QString& path() const { return m_path; }
+
+    // Yield the next @p length bytes in sequence, or nullopt on a short read or an
+    // open failure (fail closed). @p length never exceeds the bytes still unread.
+    [[nodiscard]] std::optional<QByteArray> nextChunk(uint64_t length) {
+        if (length == 0) {
+            return QByteArray();
+        }
+        if (length > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
+            return std::nullopt;
+        }
+        if (m_is_file) {
+            return nextFileChunk(static_cast<qsizetype>(length));
+        }
+        if (m_cursor + length > static_cast<uint64_t>(m_bytes.size())) {
+            return std::nullopt;
+        }
+        QByteArray chunk = m_bytes.mid(static_cast<qsizetype>(m_cursor),
+                                       static_cast<qsizetype>(length));
+        m_cursor += length;
+        return chunk;
+    }
+
+private:
+    [[nodiscard]] std::optional<QByteArray> nextFileChunk(qsizetype length) {
+        if (!m_file) {
+            m_file = std::make_unique<QFile>(m_path);
+            if (!m_file->open(QIODevice::ReadOnly)) {
+                return std::nullopt;
+            }
+        }
+        QByteArray chunk = m_file->read(length);
+        if (chunk.size() != length) {
+            return std::nullopt;
+        }
+        return chunk;
+    }
+
+    QByteArray m_bytes;             // memory source (empty for a file source)
+    QString m_path;                 // host file source (empty for a memory source)
+    std::unique_ptr<QFile> m_file;  // opened lazily on the first file pull
+    uint64_t m_size{0};             // logical payload size in bytes
+    uint64_t m_cursor{0};           // memory-source read cursor
+    bool m_is_file{false};
+};
 
 class HfsReader {
 public:
@@ -205,37 +287,58 @@ public:
         return result;
     }
 
+    // In-memory create (Apple-certified path): wraps the payload in a memory source and
+    // runs the shared source-based create so it stays byte-identical to a streamed write.
     [[nodiscard]] PartitionHfsFileWriteResult createFileWithData(
         const QString& path, const QByteArray& data, const PartitionHfsFileWriteOptions& options) {
+        return createFileWithSource(path, HfsForkDataSource::fromBytes(data), options);
+    }
+
+    // Streamed create: the payload is pulled from @p hostPath one allocation block at a
+    // time (peak RAM one block), so an arbitrarily large file is bounded only by free
+    // space. Produces a byte-identical image to createFileWithData for the same payload.
+    [[nodiscard]] PartitionHfsFileWriteResult createFileFromHostPathStreamed(
+        const QString& path,
+        const QString& hostPath,
+        uint64_t size,
+        const PartitionHfsFileWriteOptions& options) {
+        return createFileWithSource(path, HfsForkDataSource::fromFile(hostPath, size), options);
+    }
+
+    [[nodiscard]] PartitionHfsFileWriteResult createFileWithSource(
+        const QString& path,
+        HfsForkDataSource source,
+        const PartitionHfsFileWriteOptions& options) {
         PartitionHfsFileWriteResult result;
         result.file_system = m_volume.file_system;
         result.path = normalizedDisplayPath(path);
         result.evidence_id = options.evidence_id;
-        appendWriterOptionBlockers(data, options, &result.blockers);
+        appendWriterOptionBlockersForSource(source, options, &result.blockers);
         if (!result.blockers.isEmpty()) {
             return result;
         }
 
-        const auto plan = prepareFileCreate(path, data, &result.blockers, &result.warnings);
+        const auto plan =
+            prepareFileCreate(path, source.size(), &result.blockers, &result.warnings);
         if (!plan.has_value()) {
             return result;
         }
         result.catalog_id = plan->file_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = writeCreatedFileDataAndMetadata(*plan, data, &result.blockers);
+        const auto chunks = writeCreatedFileDataAndMetadata(*plan, source, &result.blockers);
         if (!chunks.has_value()) {
             return result;
         }
-        const auto readBack =
-            readBackCreatedFileData(*plan, data, options.max_write_bytes, &result.blockers);
-        if (!readBack.has_value()) {
+        const auto afterHash =
+            readBackCreatedFileData(*plan, source, options.max_write_bytes, &result.blockers);
+        if (!afterHash.has_value()) {
             return result;
         }
         if (!appendForkGrowthCounterReadBack(plan->allocated_blocks, &result)) {
             return result;
         }
-        result.after_sha256 = sha256Hex(*readBack);
-        result.bytes_written = static_cast<uint64_t>(data.size());
+        result.after_sha256 = *afterHash;
+        result.bytes_written = source.size();
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
         result.warnings.append(
@@ -276,19 +379,20 @@ public:
         }
         result.catalog_id = plan->file_id;
         result.before_sha256 = sha256Hex(plan->mutation.before_leaf_bytes);
-        const auto chunks = writeCreatedFileDataAndMetadata(*plan, targetBytes, &result.blockers);
+        auto targetSource = HfsForkDataSource::fromBytes(targetBytes);
+        const auto chunks = writeCreatedFileDataAndMetadata(*plan, targetSource, &result.blockers);
         if (!chunks.has_value()) {
             return result;
         }
-        const auto readBack =
-            readBackCreatedFileData(*plan, targetBytes, options.max_write_bytes, &result.blockers);
-        if (!readBack.has_value()) {
+        const auto afterHash =
+            readBackCreatedFileData(*plan, targetSource, options.max_write_bytes, &result.blockers);
+        if (!afterHash.has_value()) {
             return result;
         }
         if (!appendForkGrowthCounterReadBack(plan->allocated_blocks, &result)) {
             return result;
         }
-        result.after_sha256 = sha256Hex(*readBack);
+        result.after_sha256 = *afterHash;
         result.bytes_written = static_cast<uint64_t>(targetBytes.size());
         result.chunks_written = *chunks;
         result.warnings.append(m_warnings);
@@ -1610,20 +1714,22 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsFileCreatePlan> prepareFileCreate(const QString& path,
-                                                                     const QByteArray& data,
+                                                                     uint64_t dataSize,
                                                                      QStringList* blockers,
                                                                      QStringList* warnings) {
         return withCatalogNodePoolGrowth(
-            [&](QStringList* b, QStringList* w) { return prepareFileCreateOnce(path, data, b, w); },
+            [&](QStringList* b, QStringList* w) {
+                return prepareFileCreateOnce(path, dataSize, b, w);
+            },
             blockers,
             warnings);
     }
 
     [[nodiscard]] std::optional<HfsFileCreatePlan> prepareFileCreateOnce(const QString& path,
-                                                                         const QByteArray& data,
+                                                                         uint64_t dataSize,
                                                                          QStringList* blockers,
                                                                          QStringList* warnings) {
-        const auto allocation = prepareFileCreateAllocation(data, blockers);
+        const auto allocation = prepareFileCreateAllocation(dataSize, blockers);
         if (!allocation.has_value()) {
             return std::nullopt;
         }
@@ -1682,7 +1788,8 @@ private:
         const QByteArray& target,
         QStringList* blockers,
         QStringList* warnings) {
-        const auto allocation = prepareFileCreateAllocation(target, blockers);
+        const auto allocation = prepareFileCreateAllocation(static_cast<uint64_t>(target.size()),
+                                                            blockers);
         if (!allocation.has_value()) {
             return std::nullopt;
         }
@@ -2245,9 +2352,9 @@ private:
     }
 
     [[nodiscard]] std::optional<HfsFileCreateAllocationPlan> prepareFileCreateAllocation(
-        const QByteArray& data, QStringList* blockers) {
+        uint64_t dataSize, QStringList* blockers) {
         appendAllocationForkGrowthBlockers(blockers);
-        const auto requiredBlocks = requiredAllocationBlocksForBytes(data, blockers);
+        const auto requiredBlocks = requiredAllocationBlocksForBytes(dataSize, blockers);
         if (!requiredBlocks.has_value()) {
             return std::nullopt;
         }
@@ -2265,7 +2372,7 @@ private:
             return std::nullopt;
         }
         HfsFileCreateAllocationPlan plan;
-        plan.data_fork.logical_size = static_cast<uint64_t>(data.size());
+        plan.data_fork.logical_size = dataSize;
         plan.data_fork.total_blocks = *requiredBlocks;
         plan.data_fork.extents = *extents;
         plan.allocation_bytes = *allocationBytes;
@@ -2274,16 +2381,16 @@ private:
     }
 
     [[nodiscard]] std::optional<int> writeCreatedFileDataAndMetadata(const HfsFileCreatePlan& plan,
-                                                                     const QByteArray& data,
+                                                                     HfsForkDataSource& source,
                                                                      QStringList* blockers) {
         const auto dataChunks =
-            writeForkBytesWithinAllocated(plan.data_fork, plan.file_id, kHfsDataForkType, 0, data);
+            writeForkBytesFromSource(plan.data_fork, plan.file_id, kHfsDataForkType, 0, source);
         if (!dataChunks.has_value()) {
             blockers->append(m_blockers);
             return std::nullopt;
         }
         const auto slackChunks =
-            zeroForkAllocationSlack(plan.data_fork, plan.file_id, kHfsDataForkType, data.size());
+            zeroForkAllocationSlack(plan.data_fork, plan.file_id, kHfsDataForkType, source.size());
         if (!slackChunks.has_value()) {
             blockers->append(m_blockers);
             return std::nullopt;
@@ -2324,18 +2431,57 @@ private:
                *freeBlockChunks;
     }
 
-    [[nodiscard]] std::optional<QByteArray> readBackCreatedFileData(const HfsFileCreatePlan& plan,
-                                                                    const QByteArray& data,
-                                                                    uint64_t maxBytes,
-                                                                    QStringList* blockers) {
+    // Self-check the freshly created fork and return its after-image SHA-256 hex. A memory
+    // source keeps the certified whole-file readFile()==bytes compare (byte-identical). A
+    // file source streams the fork back block-by-block against the host file (peak RAM one
+    // block), never buffering the whole payload. The on-disk image is untouched either way.
+    [[nodiscard]] std::optional<QString> readBackCreatedFileData(const HfsFileCreatePlan& plan,
+                                                                 const HfsForkDataSource& source,
+                                                                 uint64_t maxBytes,
+                                                                 QStringList* blockers) {
+        if (source.isFile()) {
+            return streamedReadBackHash(plan, source, blockers);
+        }
         const auto readBack = readFile(plan.target.path, maxBytes);
-        if (readBack.ok && readBack.data == data) {
-            return readBack.data;
+        if (readBack.ok && readBack.data == source.bytes()) {
+            return sha256Hex(readBack.data);
         }
         blockers->append(QStringLiteral("HFS+ file create read-back failed"));
         blockers->append(readBack.blockers);
         blockers->append(m_blockers);
         return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<QString> streamedReadBackHash(const HfsFileCreatePlan& plan,
+                                                              const HfsForkDataSource& source,
+                                                              QStringList* blockers) {
+        QFile host(source.path());
+        if (!host.open(QIODevice::ReadOnly)) {
+            blockers->append(QStringLiteral("HFS+ file create read-back failed"));
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        uint64_t cursor = 0;
+        uint64_t remaining = source.size();
+        while (remaining > 0) {
+            const auto chunk =
+                readForkChunk(plan.data_fork, plan.file_id, kHfsDataForkType, cursor, remaining);
+            if (!chunk.has_value()) {
+                blockers->append(QStringLiteral("HFS+ file create read-back failed"));
+                blockers->append(m_blockers);
+                return std::nullopt;
+            }
+            const QByteArray expected = host.read(static_cast<qsizetype>(chunk->size));
+            if (static_cast<uint64_t>(expected.size()) != chunk->size || expected != chunk->bytes) {
+                blockers->append(QStringLiteral("HFS+ file create read-back failed"));
+                return std::nullopt;
+            }
+            hash.addData(chunk->bytes);
+            cursor += chunk->size;
+            remaining -= chunk->size;
+        }
+        return QString::fromLatin1(hash.result().toHex());
     }
 
     [[nodiscard]] std::optional<uint32_t> resolveEmptyFileCreateParent(
@@ -8632,6 +8778,15 @@ private:
         appendWriterVolumeBlockers(options, blockers);
     }
 
+    void appendWriterOptionBlockersForSource(const HfsForkDataSource& source,
+                                             const PartitionHfsFileWriteOptions& options,
+                                             QStringList* blockers) const {
+        appendWriterActivationBlockers(options, blockers);
+        appendWriterDeviceBlockers(blockers);
+        appendWriterPayloadBlockersForSize(source.size(), options, blockers);
+        appendWriterVolumeBlockers(options, blockers);
+    }
+
     void appendTruncateOptionBlockers(const PartitionHfsFileWriteOptions& options,
                                       QStringList* blockers) const {
         appendWriterActivationBlockers(options, blockers);
@@ -8664,11 +8819,16 @@ private:
     static void appendWriterPayloadBlockers(const QByteArray& data,
                                             const PartitionHfsFileWriteOptions& options,
                                             QStringList* blockers) {
-        if (data.isEmpty()) {
+        appendWriterPayloadBlockersForSize(static_cast<uint64_t>(data.size()), options, blockers);
+    }
+
+    static void appendWriterPayloadBlockersForSize(uint64_t size,
+                                                   const PartitionHfsFileWriteOptions& options,
+                                                   QStringList* blockers) {
+        if (size == 0) {
             blockers->append(QStringLiteral("HFS+ write payload is empty"));
         }
-        if (static_cast<uint64_t>(data.size()) > options.max_write_bytes ||
-            options.max_write_bytes == 0) {
+        if (size > options.max_write_bytes || options.max_write_bytes == 0) {
             blockers->append(QStringLiteral("HFS+ write payload exceeds configured write cap"));
         }
     }
@@ -8958,9 +9118,15 @@ private:
 
     [[nodiscard]] std::optional<uint32_t> requiredAllocationBlocksForBytes(
         const QByteArray& data, QStringList* blockers) const {
+        return requiredAllocationBlocksForBytes(static_cast<uint64_t>(data.size()), blockers);
+    }
+
+    // Allocation block count is a pure function of the byte count, so the streamed create
+    // path sizes its allocation from the payload size alone (no resident payload).
+    [[nodiscard]] std::optional<uint32_t> requiredAllocationBlocksForBytes(
+        uint64_t byteCount, QStringList* blockers) const {
         uint64_t rounded = 0;
-        if (m_volume.block_size == 0 ||
-            !checkedAdd(static_cast<uint64_t>(data.size()), m_volume.block_size - 1, &rounded)) {
+        if (m_volume.block_size == 0 || !checkedAdd(byteCount, m_volume.block_size - 1, &rounded)) {
             blockers->append(QStringLiteral("HFS+ allocation-growth size overflow"));
             return std::nullopt;
         }
@@ -9236,33 +9402,48 @@ private:
         return chunks;
     }
 
+    // In-memory fork write: byte-identical to the streaming writer, just fed from a
+    // memory source, so every existing caller (slack zeroing, bitmap, symlink) is
+    // unchanged on disk.
     [[nodiscard]] std::optional<int> writeForkBytesWithinAllocated(const HfsForkData& fork,
                                                                    uint32_t fileId,
                                                                    uint8_t forkType,
                                                                    uint64_t offset,
                                                                    const QByteArray& data) {
-        if (!forkWriteRequestFitsAllocation(fork, offset, static_cast<uint64_t>(data.size()))) {
+        auto source = HfsForkDataSource::fromBytes(data);
+        return writeForkBytesFromSource(fork, fileId, forkType, offset, source);
+    }
+
+    // Streaming fork write: each allocation-block-sized chunk is pulled from @p source in
+    // sequence (peak RAM one block) and written to its device offset. The destination
+    // blocks may be non-contiguous, but the source is read strictly sequentially, so an
+    // arbitrarily large file streams in a single pass.
+    [[nodiscard]] std::optional<int> writeForkBytesFromSource(const HfsForkData& fork,
+                                                              uint32_t fileId,
+                                                              uint8_t forkType,
+                                                              uint64_t offset,
+                                                              HfsForkDataSource& source) {
+        if (!forkWriteRequestFitsAllocation(fork, offset, source.size())) {
             m_blockers.append(QStringLiteral("Requested HFS+ fork write exceeds allocation"));
             return std::nullopt;
         }
 
         int chunks = 0;
-        uint64_t remaining = static_cast<uint64_t>(data.size());
+        uint64_t remaining = source.size();
         uint64_t cursor = offset;
-        qsizetype dataOffset = 0;
         while (remaining > 0) {
             const uint64_t withinBlock = cursor % m_volume.block_size;
             const uint64_t chunkSize = std::min<uint64_t>(remaining,
                                                           m_volume.block_size - withinBlock);
+            const auto chunk = source.nextChunk(chunkSize);
             const auto deviceOffset =
                 deviceOffsetForForkCursor(fork, fileId, forkType, cursor, withinBlock);
-            if (!deviceOffset.has_value() ||
-                !writeAt(*deviceOffset, data.constData() + dataOffset, chunkSize)) {
+            if (!chunk.has_value() || !deviceOffset.has_value() ||
+                !writeAt(*deviceOffset, chunk->constData(), chunkSize)) {
                 return std::nullopt;
             }
             cursor += chunkSize;
             remaining -= chunkSize;
-            dataOffset += static_cast<qsizetype>(chunkSize);
             ++chunks;
         }
         return chunks;
