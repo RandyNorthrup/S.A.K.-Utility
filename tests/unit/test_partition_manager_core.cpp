@@ -11282,6 +11282,39 @@ static void certifyMultiCibShrinkReadsBack(const QDir& dir,
     }
 }
 
+// Shrink a multi-CIB container whose relocated pool sits in a SURVIVING high chunk: grow a 2-chunk
+// source (256 MiB, holding orig.bin) to 260 chunks so the pool lands in chunk 2, then shrink to 130
+// - chunk 2 survives and the target is multi-CIB, so the surviving-pool allocator splits into N
+// cibs (the old pool stays marked used in chunk 2, riding the main fq). apfsck-clean (WSL
+// apfsprogs); orig.bin reads back byte-exact.
+static void certifySurvivingPoolMultiCibShrink(const QDir& dir,
+                                               const QString& withFile,
+                                               const PartitionApfsWriteOptions& options,
+                                               const QByteArray& payload) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const QString grown = dir.filePath(QStringLiteral("mcsp-g260.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                         .written_image_path = grown,
+                                                         .new_size_bytes = 260 * kChunk,
+                                                         .options = options})
+                 .ok,
+             "grow a 2-chunk source to a 3-cib container (pool in chunk 2)");
+    const QString out = dir.filePath(QStringLiteral("mcsp-s130.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                                    .written_image_path = out,
+                                                                    .new_size_bytes = 130 * kChunk,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QFile img(out);
+    QVERIFY(img.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(img.size()), 130 * kChunk);
+    img.close();
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11485,11 +11518,11 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
         spillGrown, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
     QVERIFY2(spilledRead.ok, qPrintable(spilledRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(spilledRead.data, big);
-    // A partial-last-chunk SOURCE grows too (relocated pool lands mid-chunk); see the helper.
+    // Partial-last-chunk source grow, multi-CIB grow (127/130/260), and a surviving-pool multi-CIB
+    // shrink (pool in a surviving high chunk, N-cib target); see the helpers.
     certifyPartialSourceGrowReadsBack(dir, options, payload);
-    // Crossing the 126-chunk single-CIB boundary builds an N-cib target (cib 0 rotates, cibs
-    // 1..N-1 immutable); see the helper. apfsck-clean across 127/130/260 chunks.
     certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
+    certifySurvivingPoolMultiCibShrink(dir, withFile, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {

@@ -9878,30 +9878,34 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
     const uint64_t poolOffset = plan.oldIpBase -
                                 plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
     const QByteArray poolBitmap = buildChunkRangeBitmapBlock(bs, poolOffset, plan.oldIpBlockCount);
-    QVector<ApfsExplicitChunkEntry> live =
+    const QVector<ApfsExplicitChunkEntry> entries =
         shrinkSurvivingPoolEntries(plan, chunk0Used, liveBmp, poolBmp);
-    QVector<ApfsExplicitChunkEntry> ghost = live;
-    ghost[0].bitmapAddr = ghostBmp;
-    if (!writeApfsRepairBlock(ctx->image, ctx->geometry, ghostBmp, chunk0Bitmap, blockers) ||
-        !writeApfsRepairBlock(ctx->image, ctx->geometry, liveBmp, chunk0Bitmap, blockers) ||
-        !writeApfsRepairBlock(ctx->image, ctx->geometry, poolBmp, poolBitmap, blockers) ||
-        !writeApfsRepairBlock(
-            ctx->image,
-            ctx->geometry,
-            ghostCib,
-            buildExplicitChunkInfoBlock({bs, ghostCib, plan.newXid, 0}, ghost, blockers),
-            blockers) ||
-        !writeApfsRepairBlock(
-            ctx->image,
-            ctx->geometry,
-            liveCib,
-            buildExplicitChunkInfoBlock({bs, liveCib, plan.newXid, 0}, live, blockers),
-            blockers)) {
-        return false;
+    // cib 0 (chunks 0..125) rotates ghost/live; cibs 1..N-1 are immutable at base+9 onward (past
+    // the chunk-0 rotation group and the pool bitmap at base+8). The surviving-pool chunk's entry
+    // carries poolBmp wherever it lands (cib 0 or an immutable cib). Single-CIB reduces to the
+    // certified {0,1,2,3,8} used-set with cib_count 1 (byte-identical: the slice is every chunk).
+    const uint64_t cibCount = cibCountForChunks(plan.newChunkCount);
+    QVector<ApfsExplicitChunkEntry> live0 = cibEntrySlice(entries, 0);
+    QVector<ApfsExplicitChunkEntry> ghost0 = live0;
+    ghost0[0].bitmapAddr = ghostBmp;
+    QVector<QPair<uint64_t, QByteArray>> writes = {
+        {ghostBmp, chunk0Bitmap},
+        {liveBmp, chunk0Bitmap},
+        {poolBmp, poolBitmap},
+        {ghostCib, buildExplicitChunkInfoBlock({bs, ghostCib, plan.newXid, 0}, ghost0, blockers)},
+        {liveCib, buildExplicitChunkInfoBlock({bs, liveCib, plan.newXid, 0}, live0, blockers)}};
+    out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
+    out->cibArrayRepoints.clear();
+    appendImmutableGrowCibs({bs, base, base + 9, cibCount}, entries, &writes, out, blockers);
+    for (const QPair<uint64_t, QByteArray>& w : writes) {
+        if (!writeApfsRepairBlock(ctx->image, ctx->geometry, w.first, w.second, blockers)) {
+            return false;
+        }
     }
     out->liveCib = liveCib;
-    out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
+    std::sort(out->ipUsedSet.begin(), out->ipUsedSet.end());
     out->ipBitmapUsage = static_cast<uint64_t>(out->ipUsedSet.size());
+    out->cibCount = cibCount;
     return true;
 }
 
@@ -10261,14 +10265,6 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
     plan->survivingPoolChunk =
         survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
-    if (plan->survivingPoolChunk != 0 && cibCountForChunks(plan->newChunkCount) > 1) {
-        // The surviving-pool allocator (buildShrinkSurvivingPoolAllocator) builds a single explicit
-        // cib; a multi-CIB target through that path is a later increment.
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: a surviving high-chunk pool with a multi-CIB target is a later "
-            "increment"));
-        return false;
-    }
     return resolveShrinkPoolPlacement(ctx, plan, blockers);
 }
 
