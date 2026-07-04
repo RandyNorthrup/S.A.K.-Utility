@@ -11377,6 +11377,10 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     // the pre-grow file read back byte-for-byte. (Apple-kernel certified on macOS 15.7.4:
     // mount + fsck_apfs clean + byte-exact read-back for small and chunk-spilling inserts.)
     certifyPostGrowInsertReadsBack(dir, grown, options, payload);
+    // The chunk-adding grow ALSO crosses the 126-chunk single-CIB boundary: a sub-chunk (64 MiB)
+    // source grows straight to an N-cib target (relocated pool pinned to chunk 0, cib 0 bitmapped,
+    // cibs 1..N-1 immutable all-free). apfsck-clean across 127/130/260 chunks; orig.bin reads back.
+    certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
