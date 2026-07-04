@@ -11577,13 +11577,16 @@ static void certifyHigherIpBmTransition(const QDir& dir, const PartitionApfsWrit
                                                          .options = options})
                  .ok,
              "shrink 3 -> 2 transition");
-    // A grow that spills the spaceman past one block (>~181 cibs) still fails closed.
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
+    // A grow crossing ~2.85 TiB spills the spaceman past one block (183+ cibs): the object
+    // transitions to a 2-block span (cpm_size 8192). Host apfsck -cw certifies the on-disk cib
+    // array across the 4096 boundary; the reader is span-blind, so this asserts only the commit.
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize(
                  {.source_image_path = grown,
                   .written_image_path = dir.filePath(QStringLiteral("hipbm-spill.apfs")),
                   .new_size_bytes = 23'200 * kChunk,
                   .options = options})
-                 .ok);
+                 .ok,
+             "grow crossing the spaceman-spill boundary (span 1 -> 2)");
 }
 
 static void certifyPostGrowInsertReadsBack(const QDir& dir,

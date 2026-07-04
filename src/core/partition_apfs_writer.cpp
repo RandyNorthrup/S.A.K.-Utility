@@ -4402,6 +4402,12 @@ struct ApfsCheckpointCommitContext {
     // and the relocated ring write. 0 = no transition (every resize staying on one side of the
     // boundary).
     uint64_t newIpBmSize{0};
+    // Block span the re-emitted spaceman must occupy (0 = carry the live on-disk span). A resize
+    // crossing ~2.85 TiB (the inline cib array crossing 4096) transitions the spaceman span 1 <->
+    // 2: reemitCheckpointEphemerals resizes the object to this span, sets the new checkpoint-map
+    // cpm_size, and advances the data-ring slot by it. The extra/removed block is pure ephemeral
+    // data-ring space (160-block ring, ~6 used), so no spaceman-managed accounting changes.
+    uint64_t spacemanEmitSpan{0};
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -4807,6 +4813,26 @@ bool appendMainFqCheckpointEntries(const ApfsCheckpointCommitContext& ctx,
     return true;
 }
 
+// A ~2.85 TiB span transition resizes the spaceman 1 <-> 2 blocks: grow the buffer (zero-filled) or
+// truncate BEFORE mutating so the cib re-points past 4096 land in-bounds. Returns the emitted span
+// (the live read span for every non-spaceman object and outside a transition), which sizes the
+// checkpoint-map entry and advances the data slot.
+uint64_t resizeToEmitSpan(const ApfsCheckpointCommitContext& ctx,
+                          uint64_t liveSpan,
+                          QByteArray* object) {
+    const uint64_t emitSpan = (ctx.spacemanEmitSpan != 0 &&
+                               le32(*object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman)
+                                  ? ctx.spacemanEmitSpan
+                                  : liveSpan;
+    const qsizetype emitBytes = static_cast<qsizetype>(emitSpan * ctx.geometry.blockSize);
+    if (emitBytes > object->size()) {
+        object->append(QByteArray(emitBytes - object->size(), '\0'));  // zero-fill the new block
+    } else {
+        object->truncate(emitBytes);
+    }
+    return emitSpan;
+}
+
 bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
                                 const QVector<QByteArray>& mainFqNodes,
                                 const QVector<uint64_t>& mainFqLeafOids,
@@ -4829,8 +4855,11 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
             checkpointEntryBlockSpan(*checkpointMap, entry, ctx.geometry.blockSize);
         const uint64_t newPaddr = ctx.dataBase + dataOffset;
         QByteArray object;
-        if (!readEphemeralObject(ctx, oldPaddr, span, &object, blockers) ||
-            !mutateEphemeralObject(ctx, &object, blockers) ||
+        if (!readEphemeralObject(ctx, oldPaddr, span, &object, blockers)) {
+            return false;
+        }
+        const uint64_t emitSpan = resizeToEmitSpan(ctx, span, &object);
+        if (!mutateEphemeralObject(ctx, &object, blockers) ||
             !stampAndWriteApfsBlock(ctx.image, ctx.geometry, newPaddr, &object, blockers)) {
             return false;
         }
@@ -4838,8 +4867,8 @@ bool reemitCheckpointEphemerals(const ApfsCheckpointCommitContext& ctx,
                            subtype,
                            oid,
                            newPaddr,
-                           static_cast<uint32_t>(span * ctx.geometry.blockSize)});
-        dataOffset += span;
+                           static_cast<uint32_t>(emitSpan * ctx.geometry.blockSize)});
+        dataOffset += emitSpan;
     }
     if (!appendMainFqCheckpointEntries(
             ctx, {mainFqNodes, mainFqLeafOids}, dataOffset, &newEntries, blockers)) {
@@ -5070,6 +5099,49 @@ ApfsCheckpointCommitContext makeCheckpointCommitContext(const ApfsCheckpointAdva
             .newIpBmSize = request.newIpBmSize};
 }
 
+// The block span the re-emitted spaceman occupies this commit, derived from the effective
+// ip_bm_size and cib_count after the commit's mutations. A resize crossing ~2.85 TiB shifts the
+// inline cib array across the 4096 boundary, so the object grows/shrinks one block. Returns the new
+// span only when it differs from the live on-disk span (0 = carry the live span unchanged).
+uint64_t commitSpacemanEmitSpan(const ApfsCheckpointAdvanceRequest& request,
+                                const QByteArray& liveSpaceman,
+                                uint32_t blockSize) {
+    if (liveSpaceman.isEmpty()) {
+        return 0;
+    }
+    const uint64_t ipBmSize = request.newIpBmSize != 0
+                                  ? request.newIpBmSize
+                                  : le32(liveSpaceman, kApfsSpacemanIpBmSizeOffset);
+    const uint64_t cibCount =
+        request.newCibCount != 0
+            ? request.newCibCount
+            : le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset);
+    const uint64_t newSpan = spacemanBlockSpan(blockSize, ipBmSize, cibCount);
+    const uint64_t liveSpan = static_cast<uint64_t>(liveSpaceman.size()) / blockSize;
+    return newSpan == liveSpan ? 0 : newSpan;
+}
+
+// The checkpoint data-ring length this commit occupies: the ephemerals' total block span (which
+// exceeds the entry count once the spaceman is multi-block). A main-free-queue replacement swaps
+// the live nodes' span for the fresh set's; a ~2.85 TiB spaceman-span transition folds in the +/-1
+// block delta (spacemanEmitSpan == 0 outside a transition, so both adjustments are no-ops on the
+// certified single-block paths).
+uint64_t commitEphemeralBlockSpan(const QByteArray& checkpointMap,
+                                  const ApfsMainFqNodeSet& mainFqNodeSet,
+                                  const QByteArray& liveSpaceman,
+                                  uint64_t spacemanEmitSpan,
+                                  uint32_t blockSize) {
+    uint64_t total = checkpointDataBlockSpan(checkpointMap, blockSize);
+    if (!mainFqNodeSet.blocks.isEmpty()) {
+        total -= liveMainFqBlockSpan(checkpointMap, blockSize);
+        total += static_cast<uint64_t>(mainFqNodeSet.blocks.size());
+    }
+    if (spacemanEmitSpan != 0) {
+        total += spacemanEmitSpan - static_cast<uint64_t>(liveSpaceman.size()) / blockSize;
+    }
+    return total;
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -5085,15 +5157,14 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     if (!buildCommitMainFqNodeSet(&request, geometry, newXid, &mainFqNodeSet, blockers)) {
         return false;
     }
-    // The data-ring length is the total block span of the ephemerals, which exceeds the entry
-    // count once the spaceman is multi-block. When this commit replaces the main free-queue,
-    // drop the LIVE main-fq nodes' span and add the new node set's block count (root + leaves);
-    // otherwise the live span carries forward.
-    uint64_t ephemeralBlocks = checkpointDataBlockSpan(checkpointMap, geometry.blockSize);
-    if (!mainFqNodeSet.blocks.isEmpty()) {
-        ephemeralBlocks -= liveMainFqBlockSpan(checkpointMap, geometry.blockSize);
-        ephemeralBlocks += static_cast<uint64_t>(mainFqNodeSet.blocks.size());
-    }
+    // A ~2.85 TiB span transition grows/shrinks the spaceman one data-ring block; the emit span
+    // (0 = no transition) drives both the ring reservation and the re-emit's object resize.
+    const QByteArray liveSpaceman =
+        readLiveSpacemanObject(request.image, geometry, request.nxsb, blockers);
+    const uint64_t spacemanEmitSpan =
+        commitSpacemanEmitSpan(request, liveSpaceman, geometry.blockSize);
+    const uint64_t ephemeralBlocks = commitEphemeralBlockSpan(
+        checkpointMap, mainFqNodeSet, liveSpaceman, spacemanEmitSpan, geometry.blockSize);
     uint32_t dataStart = 0;
     if (!resolveCheckpointDataStart(live, ephemeralBlocks, &dataStart, blockers)) {
         return false;
@@ -5106,8 +5177,9 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const QVector<ApfsFreeQueueEntry> ipFqEntries = request.explicitIpFqEntries.isEmpty()
                                                         ? buildIpFreeQueueWindow(request, newXid)
                                                         : request.explicitIpFqEntries;
-    const ApfsCheckpointCommitContext ctx =
+    ApfsCheckpointCommitContext ctx =
         makeCheckpointCommitContext(request, live, newXid, dataStart, ipFqEntries);
+    ctx.spacemanEmitSpan = spacemanEmitSpan;
     if (!reemitCheckpointEphemerals(
             ctx, mainFqNodeSet.blocks, mainFqNodeSet.leafOids, &checkpointMap, blockers)) {
         return false;
@@ -10006,18 +10078,14 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
                                kApfsSpacemanBlocksPerChunk;
     const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
     const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, 0);
-    const uint32_t bs = ctx->geometry.blockSize;
-    const uint64_t oldSpan = spacemanBlockSpan(bs, oldIpBmSize, ctx->layout.cibCount);
-    const uint64_t newSpan = spacemanBlockSpan(bs, newIpBmSize, newCibs);
-    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab || newSpan != oldSpan) {
-        // The CAB tier (> 507 cibs) and a spaceman-span TRANSITION (the inline cib array crossing a
-        // block boundary, ~2.85 TiB / > ~181 cibs) re-lay the spaceman's block span mid-commit and
-        // are later increments. A grow WITHIN one span (both 1-block, or both 2-block once the
-        // source already spills) is handled: the re-emit carries the source's cpm_size forward and
-        // every spaceman reader is span-aware.
-        blockers->append(QStringLiteral(
-            "APFS resize-grow: the CAB tier and a spaceman-span transition (crossing ~2.85 TiB) "
-            "are later increments"));
+    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab) {
+        // The CAB tier (> 507 cibs) addresses cibs through a cab-address array (its resize is a
+        // later increment). Below it the spaceman spans 1 or 2 blocks; a within-span grow and a
+        // 1 <-> 2 span TRANSITION (the inline cib array crossing 4096, ~2.85 TiB) are both handled
+        // - the re-emit sizes the object to the target span and every spaceman reader is
+        // span-aware.
+        blockers->append(
+            QStringLiteral("APFS resize-grow: the CAB tier (> 507 cibs) is a later increment"));
         return 0;
     }
     if (newIpBmSize != oldIpBmSize && newIpBmSize != oldIpBmSize + 1) {
@@ -10271,22 +10339,14 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
         return false;
     }
     // Multi-CIB source and target are supported (cib 0 relocates to chunk 0, cibs 1..N-1 rebuilt
-    // immutable). The CAB tier (>507 cibs) and a spaceman-span TRANSITION (the inline cib array
-    // crossing a block boundary, ~2.85 TiB) are later increments: a within-span shrink (both
-    // 1-block, or both 2-block once the source spills) is handled - the re-emit carries the
-    // source's cpm_size forward and every spaceman reader is span-aware. Guard both ends.
-    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                               kApfsSpacemanBlocksPerChunk;
-    const uint32_t bs = ctx->geometry.blockSize;
+    // immutable). The CAB tier (>507 cibs) addresses cibs through a cab-address array - its resize
+    // is a later increment. Below it the spaceman spans 1 or 2 blocks; a within-span shrink and a
+    // 2 <-> 1 span TRANSITION (the inline cib array crossing 4096, ~2.85 TiB) are both handled -
+    // the re-emit sizes the object to the target span and every spaceman reader is span-aware.
     const uint64_t newCibs = cibCountForChunks(newChunks);
-    const uint64_t oldSpan = spacemanBlockSpan(
-        bs, ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0), ctx->layout.cibCount);
-    const uint64_t newSpan =
-        spacemanBlockSpan(bs, ipBitmapSizeBlocks(newChunks, newCibs, 0), newCibs);
-    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab || newSpan != oldSpan) {
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: the CAB tier and a spaceman-span transition (crossing ~2.85 TiB) "
-            "are later increments"));
+    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: the CAB tier (> 507 cibs) is a later increment"));
         return false;
     }
     return true;
