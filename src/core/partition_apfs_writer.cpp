@@ -10023,12 +10023,14 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
             "are later increments"));
         return 0;
     }
-    if (newIpBmSize != oldIpBmSize && !(oldIpBmSize == 1 && newIpBmSize == 2)) {
-        // The only supported ip_bm_size transition is 1 -> 2 (a grow crossing ~1.35 TiB); higher
-        // transitions (>2.9 TiB) coincide with a spaceman spilling past one block, already rejected
-        // above. A 1 -> 2 transition relocates the 16-slot ring to a fresh 32-block region.
+    if (newIpBmSize != oldIpBmSize && newIpBmSize != oldIpBmSize + 1) {
+        // A single grow steps ip_bm_size by at most one (N -> N+1: the ring grows by 16 slots and
+        // the spaceman inline arrays re-lay one tier). A multi-step jump (a tiny source growing
+        // many TiB at once) would cross several ip_bm_size boundaries and is a later increment; the
+        // spaceman-spill and CAB tiers are rejected by the span/cab guards above.
         blockers->append(QStringLiteral(
-            "APFS resize-grow: an ip-bitmap ring resize past ip_bm_size 2 is a later increment"));
+            "APFS resize-grow: a multi-step ip-bitmap ring resize (ip_bm_size + >1) is a later "
+            "increment"));
         return 0;
     }
     const uint64_t newIpBlockCount = 3 * (newChunks + newCibs);

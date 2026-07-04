@@ -11459,6 +11459,7 @@ static void certifyIpBmTransitions(const QDir& dir, const PartitionApfsWriteOpti
 // pool (scoped chunk by chunk across its span, truncated away, not user data). apfsck-clean; the
 // file reads back byte-exact after the round trip.
 static void certifyTransitionGrownShrink(const QDir& dir, const PartitionApfsWriteOptions& options);
+static void certifyHigherIpBmTransition(const QDir& dir, const PartitionApfsWriteOptions& options);
 
 static void certifyGrownMultiChunkPoolShrink(const QDir& dir,
                                              const PartitionApfsWriteOptions& options) {
@@ -11544,6 +11545,45 @@ static void certifyTransitionGrownShrink(const QDir& dir,
         shrunk, QStringLiteral("/t.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+    certifyHigherIpBmTransition(dir, options);
+}
+
+// A single-step ip_bm_size transition above 1 <-> 2: a 21000-chunk container (167 cibs, ip_block_
+// count 63501, ip_bm_size 2) grows to 22000 (175 cibs, 66525, ip_bm_size 3 - the ring grows to 48
+// slots), then shrinks back (3 -> 2). The transition machinery is ip_bm_size-agnostic, so only the
+// N -> N+1 validator gates it. Grow past ~181 cibs (the spaceman spills a second block) still fails
+// closed. apfsck-clean; the 2.75 TiB images are sparse.
+static void certifyHigherIpBmTransition(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const QString base = dir.filePath(QStringLiteral("hipbm-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = 21'000 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("HIPB"),
+                                                        .options = options})
+            .ok);
+    const QString grown = dir.filePath(QStringLiteral("hipbm-grown.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = base,
+                                                         .written_image_path = grown,
+                                                         .new_size_bytes = 22'000 * kChunk,
+                                                         .options = options})
+                 .ok,
+             "grow 2 -> 3 transition");
+    const QString shrunk = dir.filePath(QStringLiteral("hipbm-shrunk.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                         .written_image_path = shrunk,
+                                                         .new_size_bytes = 21'000 * kChunk,
+                                                         .options = options})
+                 .ok,
+             "shrink 3 -> 2 transition");
+    // A grow that spills the spaceman past one block (>~181 cibs) still fails closed.
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
+                 {.source_image_path = grown,
+                  .written_image_path = dir.filePath(QStringLiteral("hipbm-spill.apfs")),
+                  .new_size_bytes = 23'200 * kChunk,
+                  .options = options})
+                 .ok);
 }
 
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
