@@ -9379,14 +9379,29 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
                           QStringList* blockers) {
     const uint32_t bs = ctx->geometry.blockSize;
     const uint64_t base = plan.newIpBase;
+    const uint64_t poolEnd = base + plan.newIpBlockCount;
     const uint64_t poolChunk = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
-    // The pool starts at newIpBase; its offset within poolChunk is 0 for a chunk-aligned source but
-    // non-zero when the source ends in a partial chunk (the pool fills that chunk's grown tail).
-    const uint64_t poolOffset = base - poolChunk * kApfsSpacemanBlocksPerChunk;
+    // The relocated pool starts at newIpBase and may span several chunks (ip_bm_size > 1). For each
+    // chunk it touches, build a bitmap marking that chunk's pool portion used; poolChunkBmp maps
+    // the chunk index to its slot. The first pool chunk's offset is 0 for a chunk-aligned source,
+    // or the partial-source tail offset (single-chunk pool only - the shape validator forbids a
+    // multi-chunk pool from a partial source).
+    const uint64_t poolSpan = (base + plan.newIpBlockCount -
+                               poolChunk * kApfsSpacemanBlocksPerChunk +
+                               kApfsSpacemanBlocksPerChunk - 1) /
+                              kApfsSpacemanBlocksPerChunk;
     uint64_t nextSlot = base + 8;  // freePoolBase (first block past the cib rotation ring)
-    const uint64_t poolBmp = nextSlot++;
-    out->writes.append({poolBmp, buildChunkRangeBitmapBlock(bs, poolOffset, plan.newIpBlockCount)});
-    out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
+    QHash<uint64_t, uint64_t> poolChunkBmp;
+    out->ipUsedSet = {0, 1, 2, 3};
+    for (uint64_t i = 0; i < poolSpan; ++i) {
+        const uint64_t chunkStart = (poolChunk + i) * kApfsSpacemanBlocksPerChunk;
+        const uint64_t lo = qMax(base, chunkStart);
+        const uint64_t hi = qMin(poolEnd, chunkStart + kApfsSpacemanBlocksPerChunk);
+        const uint64_t slot = nextSlot++;
+        out->writes.append({slot, buildChunkRangeBitmapBlock(bs, lo - chunkStart, hi - lo)});
+        poolChunkBmp.insert(poolChunk + i, slot);
+        out->ipUsedSet.append(slot - base);
+    }
     for (uint64_t k = 0; k < plan.newChunkCount; ++k) {
         const uint64_t addr = k * kApfsSpacemanBlocksPerChunk;
         const uint32_t blocks = static_cast<uint32_t>(
@@ -9396,9 +9411,11 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
             e.bitmapAddr = base + 3;  // liveBmp
             e.freeCount = src.at(0).freeCount;
             e.xid = plan.newXid;
-        } else if (k == poolChunk) {
-            e.bitmapAddr = poolBmp;
-            e.freeCount = blocks - static_cast<uint32_t>(plan.newIpBlockCount);
+        } else if (poolChunkBmp.contains(k)) {
+            const uint64_t poolInChunk = qMin(poolEnd, addr + kApfsSpacemanBlocksPerChunk) -
+                                         qMax(base, addr);
+            e.bitmapAddr = poolChunkBmp.value(k);
+            e.freeCount = blocks - static_cast<uint32_t>(poolInChunk);
             e.xid = plan.newXid;
         } else if (k < static_cast<uint64_t>(src.size()) && src.at(k).bitmapAddr != 0) {
             QByteArray bm(bs, '\0');
@@ -9918,25 +9935,44 @@ bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
 // shape as the single-chunk grow, but chunk 0 and the pool's chunk both carry bitmaps.
 //
 // Validate a multi-chunk-source grow's target shape and return the target cib_count (0 = out of
-// scope, a blocker appended): a single-CIB source, and a target whose spaceman + ip-bitmap stay
-// single-block. Past ~180 cibs (~2.9 TiB) the inline cib-address array overflows the spaceman into
-// a second block, and past ~10900 ip blocks the ip-bitmap needs a second block; either shifts the
-// checkpoint-data ring - that tier (and the CAB tier past 507 cibs) is a later increment. A
-// single-CIB target reduces to the certified byte-identical path.
+// scope, a blocker appended). The relocated internal pool may span several chunks (ip_bm_size > 1,
+// > 1.35 TiB), so a multi-CIB source is accepted. Out of scope (later increments): the CAB tier, a
+// spaceman spilling past one block (> ~180 cibs / ~2.9 TiB), an ip-bitmap RING resize (newIpBmSize
+// != the source's - a size TRANSITION grows the 16-slot ring), and a multi-chunk pool from a
+// non-chunk-aligned source (the pool would straddle a partial source chunk).
 uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
                                      uint64_t newChunks,
                                      QStringList* blockers) {
     const uint64_t newCibs = cibCountForChunks(newChunks);
-    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0) {
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
+    const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, 0);
+    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab ||
+        spacemanBlockSpan(ctx->geometry.blockSize, newIpBmSize, newCibs) != 1) {
         blockers->append(QStringLiteral(
-            "APFS resize-grow: multi-chunk-source grow requires a single-CIB source"));
+            "APFS resize-grow: the CAB tier and a spaceman spilling past one block (>~180 cibs) "
+            "are later increments"));
         return 0;
     }
-    const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, 0);
-    if (newIpBmSize != 1 || spacemanBlockSpan(ctx->geometry.blockSize, newIpBmSize, newCibs) != 1) {
+    if (newIpBmSize != oldIpBmSize) {
         blockers->append(QStringLiteral(
-            "APFS resize-grow: a target whose spaceman or ip-bitmap spills past one block "
-            "(>~180 cibs) is a later increment"));
+            "APFS resize-grow: an ip-bitmap ring resize (ip_bm_size transition) is a later "
+            "increment"));
+        return 0;
+    }
+    const uint64_t newIpBlockCount = 3 * (newChunks + newCibs);
+    const uint64_t poolOffset = ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk;
+    const uint64_t poolSpan = (poolOffset + newIpBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                              kApfsSpacemanBlocksPerChunk;
+    if (poolSpan > 1 && poolOffset != 0) {
+        // A relocated pool that straddles a chunk boundary must start at a chunk boundary, so it
+        // never overlaps a partial source chunk's carried-forward data (the pool-chunk bitmap marks
+        // only the pool portion). A non-chunk-aligned source with a multi-chunk pool is a later
+        // increment.
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: a multi-chunk internal pool from a non-chunk-aligned source is a "
+            "later increment"));
         return 0;
     }
     return newCibs;
@@ -9964,7 +10000,7 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
     plan.newIpBase = oldBlockCount;
     plan.newIpBlockCount = 3 * (newChunks + newCibs);
     plan.oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    plan.oldIpBlockCount = 3 * (oldChunks + 1);
+    plan.oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
     if (plan.oldIpBase == 0) {
         blockers->append(
             QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));

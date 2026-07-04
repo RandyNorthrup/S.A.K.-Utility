@@ -11332,6 +11332,48 @@ static void certifySurvivingPoolMultiCibShrink(const QDir& dir,
     QCOMPARE(read.data, payload);
 }
 
+// Grow a container whose internal pool spans MULTIPLE chunks (ip_bm_size = 2, > 1.35 TiB): an
+// 11000-chunk source (88 cibs) grows to 11100 chunks (89 cibs); the relocated ~33k-block pool
+// straddles two high chunks, each getting its own bitmap. No ip-bitmap-ring resize (both
+// ip_bm_size 2). apfsck-clean (WSL apfsprogs); the 1.35 TiB images are sparse. A size TRANSITION
+// (ip_bm_size 1 -> 2) still fails closed.
+static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const QString base = dir.filePath(QStringLiteral("ipbm-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = 11'000 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("IPBM"),
+                                                        .options = options})
+            .ok);
+    const QString grown = dir.filePath(QStringLiteral("ipbm-grown.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = base,
+                                                    .written_image_path = grown,
+                                                    .new_size_bytes = 11'100 * kChunk,
+                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QFile img(grown);
+    QVERIFY(img.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(img.size()), 11'100 * kChunk);
+    img.close();
+    // A size TRANSITION (ip_bm_size 1 -> 2, growing the 16-slot ring) is a later increment.
+    const QString smallBase = dir.filePath(QStringLiteral("ipbm-small.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = smallBase,
+                                                            .target_container_bytes = 200 * kChunk,
+                                                            .block_size_bytes = 4096,
+                                                            .volume_name = QStringLiteral("IPBS"),
+                                                            .options = options})
+                .ok);
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
+                 {.source_image_path = smallBase,
+                  .written_image_path = dir.filePath(QStringLiteral("ipbm-trans.apfs")),
+                  .new_size_bytes = 11'100 * kChunk,
+                  .options = options})
+                 .ok);
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11473,9 +11515,8 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
 
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
     // Multi-chunk source grow: a >= 2-chunk container grows by adding chunks; the relocated pool
-    // lands in a HIGH chunk (chunk 0 and the pool chunk both carry bitmaps, via the explicit
-    // chunk-info builder). apfsck- and Apple-kernel clean (macOS 15.7.4) across 2->3/2->4/2->8, the
-    // pre-grow file reads back, the grown container is re-mutable, and a data-spilled source grows.
+    // lands in a HIGH chunk (chunk 0 and the pool chunk both carry bitmaps). apfsck/kernel clean
+    // (macOS 15.7.4) across 2->3/2->4/2->8; pre-grow file reads back; a data-spilled source grows.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -11540,6 +11581,7 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
     certifyPartialSourceGrowReadsBack(dir, options, payload);
     certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
     certifySurvivingPoolMultiCibShrink(dir, withFile, options, payload);
+    certifyMultiChunkPoolGrow(dir, options);
 }
 
 // Shrink a container that holds real user DATA past chunk 0: a 200 MiB file (spanning chunks 0 and
