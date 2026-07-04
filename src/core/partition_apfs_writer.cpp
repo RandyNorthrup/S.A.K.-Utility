@@ -4260,6 +4260,45 @@ ApfsLiveCheckpoint readLiveCheckpoint(const QByteArray& nxsb) {
             le32(nxsb, kApfsNxXpDataNextOffset)};
 }
 
+// Defined below with the checkpoint re-emit helpers; the spaceman readers here need it to size a
+// multi-block (dead-zone) spaceman from its checkpoint-map cpm_size.
+uint64_t checkpointEntryBlockSpan(const QByteArray& map, qsizetype entry, uint32_t blockSize);
+
+// Read the live checkpoint's ephemeral spaceman as a FULL object. It spills past one block in the
+// metadata-overflow dead zone (> ~181 cibs), so read cpm_size / block_size blocks - a single-block
+// read truncates the inline cib-address array where it crosses 4096, so every reader that walks the
+// array (or any field past 4096) must span the whole object. Returns empty if no spaceman is found.
+QByteArray readLiveSpacemanObject(QIODevice* image,
+                                  const ApfsRepairGeometry& geometry,
+                                  const QByteArray& nxsb,
+                                  QStringList* blockers) {
+    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
+    QByteArray checkpointMap(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+        return {};
+    }
+    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
+    for (uint32_t index = 0; index < count; ++index) {
+        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
+                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
+        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
+        const uint64_t span = checkpointEntryBlockSpan(checkpointMap, entry, geometry.blockSize);
+        QByteArray object;
+        for (uint64_t b = 0; b < span; ++b) {
+            QByteArray slice(geometry.blockSize, '\0');
+            if (!readApfsRepairBlock(image, geometry, paddr + b, &slice, blockers)) {
+                return {};
+            }
+            object.append(slice);
+        }
+        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
+            return object;
+        }
+    }
+    return {};
+}
+
 // Walk the live checkpoint-map to the ephemeral spaceman and read its first
 // cib_addr (offset 2568) - the chunk-info block the live checkpoint uses, i.e.
 // the slot a crash-safe commit rotates away from (pairs with nextIpSlot).
@@ -4268,29 +4307,14 @@ uint64_t readLiveSpacemanCibAddr(QIODevice* image,
                                  const ApfsRepairGeometry& geometry,
                                  const QByteArray& nxsb,
                                  QStringList* blockers) {
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    QByteArray checkpointMap(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(
-            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+    const QByteArray object = readLiveSpacemanObject(image, geometry, nxsb, blockers);
+    if (object.isEmpty()) {
         return 0;
     }
-    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    for (uint32_t index = 0; index < count; ++index) {
-        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
-        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
-        QByteArray object(geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
-            return 0;
-        }
-        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            // The cib-address array offset scales with ip_bm_size (overflow tier);
-            // single-block bitmaps keep the certified 2568.
-            const uint64_t ipBmSize = le32(object, kApfsSpacemanIpBmSizeOffset);
-            return le64(object, static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)));
-        }
-    }
-    return 0;
+    // The cib-address array offset scales with ip_bm_size (overflow tier);
+    // single-block bitmaps keep the certified 2568.
+    const uint64_t ipBmSize = le32(object, kApfsSpacemanIpBmSizeOffset);
+    return le64(object, static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize)));
 }
 
 // Read the live spaceman's on-disk sm_ip_base. A freshly formatted container's ip_base
@@ -4301,26 +4325,8 @@ uint64_t readLiveSpacemanIpBase(QIODevice* image,
                                 const ApfsRepairGeometry& geometry,
                                 const QByteArray& nxsb,
                                 QStringList* blockers) {
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    QByteArray checkpointMap(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(
-            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
-        return 0;
-    }
-    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    for (uint32_t index = 0; index < count; ++index) {
-        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
-        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
-        QByteArray object(geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
-            return 0;
-        }
-        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            return le64(object, kApfsSpacemanIpBaseOffset);
-        }
-    }
-    return 0;
+    const QByteArray object = readLiveSpacemanObject(image, geometry, nxsb, blockers);
+    return object.isEmpty() ? 0 : le64(object, kApfsSpacemanIpBaseOffset);
 }
 
 // Read the live spaceman's cib-address array (entries 0..cibCount-1) - the CURRENT
@@ -4335,30 +4341,14 @@ QVector<uint64_t> readLiveSpacemanCibArray(QIODevice* image,
                                            uint64_t cibCount,
                                            QStringList* blockers) {
     QVector<uint64_t> addrs;
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    QByteArray checkpointMap(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(
-            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
+    const QByteArray object = readLiveSpacemanObject(image, geometry, nxsb, blockers);
+    if (object.isEmpty()) {
         return addrs;
     }
-    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    for (uint32_t index = 0; index < count; ++index) {
-        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
-        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
-        QByteArray object(geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
-            return {};
-        }
-        if (le32(object, kApfsObjectTypeOffset) != kApfsObjectTypeSpaceman) {
-            continue;
-        }
-        const uint64_t ipBmSize = le32(object, kApfsSpacemanIpBmSizeOffset);
-        const qsizetype base = static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize));
-        for (uint64_t k = 0; k < cibCount; ++k) {
-            addrs.append(le64(object, base + static_cast<qsizetype>(k) * 8));
-        }
-        return addrs;
+    const uint64_t ipBmSize = le32(object, kApfsSpacemanIpBmSizeOffset);
+    const qsizetype base = static_cast<qsizetype>(spacemanCibArrayOffset(ipBmSize));
+    for (uint64_t k = 0; k < cibCount; ++k) {
+        addrs.append(le64(object, base + static_cast<qsizetype>(k) * 8));
     }
     return addrs;
 }
@@ -10016,10 +10006,17 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
                                kApfsSpacemanBlocksPerChunk;
     const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
     const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, 0);
-    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab ||
-        spacemanBlockSpan(ctx->geometry.blockSize, newIpBmSize, newCibs) != 1) {
+    const uint32_t bs = ctx->geometry.blockSize;
+    const uint64_t oldSpan = spacemanBlockSpan(bs, oldIpBmSize, ctx->layout.cibCount);
+    const uint64_t newSpan = spacemanBlockSpan(bs, newIpBmSize, newCibs);
+    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab || newSpan != oldSpan) {
+        // The CAB tier (> 507 cibs) and a spaceman-span TRANSITION (the inline cib array crossing a
+        // block boundary, ~2.85 TiB / > ~181 cibs) re-lay the spaceman's block span mid-commit and
+        // are later increments. A grow WITHIN one span (both 1-block, or both 2-block once the
+        // source already spills) is handled: the re-emit carries the source's cpm_size forward and
+        // every spaceman reader is span-aware.
         blockers->append(QStringLiteral(
-            "APFS resize-grow: the CAB tier and a spaceman spilling past one block (>~180 cibs) "
+            "APFS resize-grow: the CAB tier and a spaceman-span transition (crossing ~2.85 TiB) "
             "are later increments"));
         return 0;
     }
@@ -10050,13 +10047,6 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
     return newCibs;
 }
 
-// Forward declaration: the live spaceman reader is defined further down with the shrink helpers,
-// but the transition-grow config (above the shrink block) needs the source ip_bm_base it exposes.
-QByteArray readLiveSpacemanBlock(QIODevice* image,
-                                 const ApfsRepairGeometry& geometry,
-                                 const QByteArray& nxsb,
-                                 QStringList* blockers);
-
 // Configure a multi-chunk-source grow plan for the ip_bm_size 1 -> 2 transition (a grow crossing
 // ~1.35 TiB). The pool relocates to the high grow region with a fresh 32-block ring contiguous just
 // below it (mirroring format's ip_bm_base < ip_base): newIpBmBase = the grow-region start,
@@ -10073,7 +10063,7 @@ void configureGrowTransition(ApfsFsCommitContext* ctx,
         return;
     }
     const QByteArray spaceman =
-        readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+        readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     plan->newIpBmSize = newIpBmSize;
     plan->oldIpBmBase = spaceman.isEmpty() ? 0 : le64(spaceman, kApfsSpacemanIpBmBaseOffset);
     plan->ipBmBlocks = oldIpBmSize *
@@ -10281,14 +10271,21 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
         return false;
     }
     // Multi-CIB source and target are supported (cib 0 relocates to chunk 0, cibs 1..N-1 rebuilt
-    // immutable); the CAB tier (>507 cibs) and a spaceman that spills a second block (>~180 cibs)
-    // are later increments. The pool relocates into a single chunk-0 free run, so the target's
-    // ip-bitmap stays single-block; guard the spaceman span on both source and target.
-    if (ctx->layout.cabCount != 0 || cibCountForChunks(newChunks) > kApfsSpacemanCibsPerCab ||
-        spacemanBlockSpan(ctx->geometry.blockSize, 1, ctx->layout.cibCount) != 1 ||
-        spacemanBlockSpan(ctx->geometry.blockSize, 1, cibCountForChunks(newChunks)) != 1) {
+    // immutable). The CAB tier (>507 cibs) and a spaceman-span TRANSITION (the inline cib array
+    // crossing a block boundary, ~2.85 TiB) are later increments: a within-span shrink (both
+    // 1-block, or both 2-block once the source spills) is handled - the re-emit carries the
+    // source's cpm_size forward and every spaceman reader is span-aware. Guard both ends.
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    const uint32_t bs = ctx->geometry.blockSize;
+    const uint64_t newCibs = cibCountForChunks(newChunks);
+    const uint64_t oldSpan = spacemanBlockSpan(
+        bs, ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0), ctx->layout.cibCount);
+    const uint64_t newSpan =
+        spacemanBlockSpan(bs, ipBitmapSizeBlocks(newChunks, newCibs, 0), newCibs);
+    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab || newSpan != oldSpan) {
         blockers->append(QStringLiteral(
-            "APFS resize-shrink: the CAB tier and a spaceman spilling past one block (>~180 cibs) "
+            "APFS resize-shrink: the CAB tier and a spaceman-span transition (crossing ~2.85 TiB) "
             "are later increments"));
         return false;
     }
@@ -10332,7 +10329,7 @@ ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
         readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
     const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
     const QByteArray spaceman =
-        readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
+        readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
     const uint64_t oldIpBmBase = spaceman.isEmpty() ? 0
                                                     : le64(spaceman, kApfsSpacemanIpBmBaseOffset);
     const uint64_t ringBlocks =
@@ -10379,34 +10376,6 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
     return true;
 }
 
-// Read the live spaceman ephemeral object (the checkpoint-map entry of type spaceman). Empty on
-// failure. Lets a shrink read the ip-bitmap ring geometry (ip_bm_base/size) the same way
-// readLiveSpacemanIpBase reads sm_ip_base.
-QByteArray readLiveSpacemanBlock(QIODevice* image,
-                                 const ApfsRepairGeometry& geometry,
-                                 const QByteArray& nxsb,
-                                 QStringList* blockers) {
-    const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    QByteArray checkpointMap(geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(
-            image, geometry, live.descBase + live.descIndex, &checkpointMap, blockers)) {
-        return {};
-    }
-    const uint32_t count = le32(checkpointMap, kApfsCheckpointMapCountOffset);
-    for (uint32_t index = 0; index < count; ++index) {
-        const qsizetype entry = kApfsCheckpointMapEntriesOffset +
-                                static_cast<qsizetype>(index) * kApfsCheckpointMapEntryBytes;
-        const uint64_t paddr = le64(checkpointMap, entry + kApfsCheckpointMapEntryPaddrOffset);
-        QByteArray object(geometry.blockSize, '\0');
-        if (!readApfsRepairBlock(image, geometry, paddr, &object, blockers)) {
-            return {};
-        }
-        if (le32(object, kApfsObjectTypeOffset) == kApfsObjectTypeSpaceman) {
-            return object;
-        }
-    }
-    return {};
-}
 
 // True if any of the `ringBlocks` ip-bitmap ring blocks at `ringBase` has a set bit at index
 // >= `threshold`. apfsck (check_ip_bitmap_blocks) requires every ring block zeroed beyond
@@ -10519,7 +10488,7 @@ bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
                                 ApfsChunkAddingGrowPlan* plan,
                                 QStringList* blockers) {
     const QByteArray spaceman =
-        readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+        readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     QByteArray chunk0(ctx->geometry.blockSize, '\0');
     if (plan->oldIpBase == 0 || spaceman.isEmpty() ||
         !readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
