@@ -11173,6 +11173,46 @@ static void certifyPartialSourceGrowReadsBack(const QDir& dir,
     QCOMPARE(pread.data, payload);
 }
 
+// Shrink a partial-last-chunk (2.5-chunk) source holding a file down to 1.5 chunks and verify the
+// file reads back. Exercises a partial SOURCE and a partial TARGET together. Apple-kernel clean on
+// macOS 15.7.4 (fsck_apfs OK for 2.5->1.5 and 2.5->1 + byte-exact read-back).
+static void certifyPartialSourceShrinkReadsBack(const QDir& dir,
+                                                const PartitionApfsWriteOptions& options,
+                                                const QByteArray& payload) {
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t k320 = 320ULL * 1024ULL * 1024ULL;  // 2.5 chunks (partial last chunk)
+    constexpr uint64_t k192 = 192ULL * 1024ULL * 1024ULL;  // 1.5 chunks (partial target)
+    const QString sbase = dir.filePath(QStringLiteral("pss-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = sbase,
+                                                            .target_container_bytes = k320,
+                                                            .block_size_bytes = kBlockSize,
+                                                            .volume_name = QStringLiteral("PSS"),
+                                                            .options = options})
+                .ok);
+    const QString sfile = dir.filePath(QStringLiteral("pss-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = sbase,
+                                                            .written_image_path = sfile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    const QString sshrunk = dir.filePath(QStringLiteral("pss-shrunk.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = sfile,
+                                                         .written_image_path = sshrunk,
+                                                         .new_size_bytes = k192,
+                                                         .options = options})
+                 .ok,
+             "shrink a partial-last-chunk source");
+    QFile simg(sshrunk);
+    QVERIFY(simg.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(simg.size()), k192);
+    simg.close();
+    const auto sread = PartitionApfsFileSystemReader::readFileFromImage(
+        sshrunk, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(sread.ok, qPrintable(sread.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(sread.data, payload);
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11435,6 +11475,8 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // no OOB bitmap). Apple-kernel clean: fsck_apfs OK + kernel-mounted at 201326592 bytes on
     // macOS 15.7.4 (both 3->1.5 drop-and-partial and 2->1.5 last-chunk-only truncation).
     certifyShrinkReadsBack(dir, withFile, 192ULL * 1024ULL * 1024ULL, options, payload);
+    // A partial-last-chunk SOURCE shrinks too (ceiling oldChunks); see the helper.
+    certifyPartialSourceShrinkReadsBack(dir, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

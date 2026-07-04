@@ -9760,14 +9760,8 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
                          uint64_t oldChunks,
                          QVector<ApfsSourceChunkState>* src,
                          QStringList* blockers) {
-    // A partial last SOURCE chunk in a shrink is a later increment (oldChunks here is a floor, so
-    // the per-chunk scan would miss the partial tail chunk). Grow handles a partial source; shrink
-    // does not yet.
-    if (ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk != 0) {
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: a source that ends mid-chunk is a later increment"));
-        return false;
-    }
+    // A partial last SOURCE chunk is handled: buildShrinkPlan passes the ceiling oldChunks so the
+    // per-chunk scan covers the partial tail and the old pool (3*(chunk_count+cib)) frees fully.
     if (!validateShrinkTargetShape(ctx, newBlockCount, blockers) ||
         !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
@@ -9857,7 +9851,10 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
                      uint64_t newBlockCount,
                      ApfsChunkAddingGrowPlan* plan,
                      QStringList* blockers) {
-    const uint64_t oldChunks = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    // Ceiling: a partial last SOURCE chunk still counts (old pool = 3*(chunk_count+cib), and the
+    // per-chunk scan must cover the partial tail chunk).
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
     QVector<ApfsSourceChunkState> src;
     if (!validateShrinkScope(ctx, newBlockCount, oldChunks, &src, blockers)) {
         return false;
