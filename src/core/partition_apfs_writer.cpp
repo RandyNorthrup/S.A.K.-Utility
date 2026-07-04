@@ -10319,17 +10319,106 @@ bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
     return true;
 }
 
+// True if every block of chunk 0's bitmap in the range [firstBlock, lastBlock) is free (bit 0).
+// An in-chunk shrink truncates this range away, so any used block there would be lost data.
+bool chunk0RangeIsFree(ApfsFsCommitContext* ctx,
+                       uint64_t firstBlock,
+                       uint64_t lastBlock,
+                       QStringList* blockers) {
+    QByteArray chunk0(ctx->geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &chunk0, blockers)) {
+        return false;
+    }
+    for (uint64_t b = firstBlock; b < lastBlock; ++b) {
+        if ((static_cast<uint8_t>(chunk0.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) {
+            blockers->append(
+                QStringLiteral("APFS resize-shrink: the truncated tail holds used blocks (data "
+                               "past the new size)"));
+            return false;
+        }
+    }
+    return true;
+}
+
+// A7 (A-g) in-chunk shrink: a single-chunk container shrinks to a smaller (sub-chunk) size within
+// chunk 0, removing no chunk. The truncated tail [newBlockCount, oldBlockCount) must be entirely
+// free; chunk 0's and the device's block+free counts drop by the delta with a crash-safe cib
+// rotation (no metadata moves), then the backing image is truncated. The inverse of
+// commitInChunkResizeGrow.
+bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
+                               uint64_t newBlockCount,
+                               ApfsInPlaceCheckpointResult* result,
+                               QStringList* blockers) {
+    const uint64_t oldBlockCount = ctx->geometry.blockCount;
+    if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 || ctx->layout.allocChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: an in-chunk shrink requires a single-chunk single-CIB container"));
+        return false;
+    }
+    if (!chunk0RangeIsFree(ctx, newBlockCount, oldBlockCount, blockers)) {
+        return false;
+    }
+    const uint64_t newXid = ctx->live.xid + 1;
+    const int64_t delta = -static_cast<int64_t>(oldBlockCount - newBlockCount);
+    const ApfsIpRotation rotation = computeIpRotation(ctx->liveCib, ctx->liveBitmap, ctx->layout);
+    const uint64_t groupSize = ctx->layout.ipGroupStride;
+    const uint64_t ipBitmapUsage = (ctx->layout.cibCount - 1) + 3 * groupSize;
+    if (!applyFileInsertAllocation({.image = ctx->image,
+                                    .geometry = ctx->geometry,
+                                    .layout = ctx->layout,
+                                    .rotation = rotation,
+                                    .freed = {},
+                                    .allocated = {},
+                                    .cibFreeDelta = delta,
+                                    .newXid = newXid,
+                                    .chunk1BitmapBlock = 0,
+                                    .chunk0BlockCountDelta = delta},
+                                   blockers)) {
+        return false;
+    }
+    if (!advanceCheckpoint({.image = ctx->image,
+                            .geometry = ctx->geometry,
+                            .nxsb = ctx->nxsb,
+                            .live = ctx->live,
+                            .newContainerOmap = 0,
+                            .spacemanFreeDelta = delta,
+                            .nextOidAdvance = 0,
+                            .newCibAddr = rotation.newCib,
+                            .cibCount = ctx->layout.cibCount,
+                            .ipSlotStride = groupSize,
+                            .ipBitmapUsage = ipBitmapUsage,
+                            .freedCibSlot = rotation.liveCib,
+                            .prevFreedCibSlot = rotation.freeCib,
+                            .blockCountDelta = delta,
+                            .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
+                           result,
+                           blockers)) {
+        return false;
+    }
+    auto* fileDevice = qobject_cast<QFileDevice*>(ctx->image);
+    if (fileDevice != nullptr &&
+        !fileDevice->resize(static_cast<qint64>(newBlockCount * ctx->geometry.blockSize))) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: unable to truncate the backing image"));
+        return false;
+    }
+    return true;
+}
+
 // A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
 // surviving chunk-0 free space, mirroring the chunk-adding grow (same crash-safe COW: write the
 // new allocator to free blocks, atomically re-anchor the nx_superblock, then truncate the dead
 // tail). The pool ends up in chunk 0 exactly like a fresh newChunks-chunk container. A
 // previously-grown container is handled too: its relocated pool lives in a removed high chunk, so
 // it is truncated away (not freed) and the removed region's used blocks (that pool) add back to
-// the free delta.
+// the free delta. A single-chunk source shrinking within chunk 0 takes the in-chunk shrink path.
 bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
                                uint64_t newBlockCount,
                                ApfsInPlaceCheckpointResult* result,
                                QStringList* blockers) {
+    if (ctx->geometry.blockCount <= kApfsSpacemanBlocksPerChunk) {
+        return commitInChunkResizeShrink(ctx, newBlockCount, result, blockers);
+    }
     const uint64_t oldBlockCount = ctx->geometry.blockCount;
     ApfsChunkAddingGrowPlan plan;
     if (!buildShrinkPlan(ctx, newBlockCount, &plan, blockers)) {

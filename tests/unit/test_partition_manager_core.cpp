@@ -11034,11 +11034,11 @@ void PartitionManagerCoreTests::apfsWriter_addsHardLinkToFile() {
 }
 
 namespace {
-void verifyApfsResizeFailClosed(const QDir& dir,
-                                const QString& withFile,
-                                uint64_t kOldBytes,
-                                uint64_t kNewBytes,
-                                const PartitionApfsWriteOptions& options);
+void verifyApfsInChunkShrinkAndFailClosed(const QDir& dir,
+                                          const QString& withFile,
+                                          uint64_t kOldBytes,
+                                          uint64_t kNewBytes,
+                                          const PartitionApfsWriteOptions& options);
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_growsContainerInChunk() {
@@ -11102,28 +11102,45 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerInChunk() {
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
 
-    verifyApfsResizeFailClosed(dir, withFile, kOldBytes, kNewBytes, options);
+    verifyApfsInChunkShrinkAndFailClosed(dir, withFile, kOldBytes, kNewBytes, options);
 }
 
 namespace {
 
-void verifyApfsResizeFailClosed(const QDir& dir,
-                                const QString& withFile,
-                                uint64_t kOldBytes,
-                                uint64_t kNewBytes,
-                                const PartitionApfsWriteOptions& options) {
-    // Shrinking and a non-block-aligned size fail closed. (A grow that adds a chunk is now
-    // supported -- see apfsWriter_growsContainerAddingChunks -- so it is no longer rejected.)
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
-                 {.source_image_path = withFile,
-                  .written_image_path = dir.filePath(QStringLiteral("rz-shrink.apfs")),
-                  .new_size_bytes = kOldBytes / 2,
-                  .options = options})
-                 .ok);
+void verifyApfsInChunkShrinkAndFailClosed(const QDir& dir,
+                                          const QString& withFile,
+                                          uint64_t kOldBytes,
+                                          uint64_t kNewBytes,
+                                          const PartitionApfsWriteOptions& options) {
+    // An in-chunk shrink (single-chunk source, sub-chunk target with a free tail) now SUCCEEDS:
+    // shrink to half size, the container reports it, and the pre-shrink file reads back byte-exact.
+    const QString shrunk = dir.filePath(QStringLiteral("rz-shrink.apfs"));
+    const auto shrink = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                                    .written_image_path = shrunk,
+                                                                    .new_size_bytes = kOldBytes / 2,
+                                                                    .options = options});
+    QVERIFY2(shrink.ok, qPrintable(shrink.blockers.join(QStringLiteral("; "))));
+    QFile simg(shrunk);
+    QVERIFY(simg.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(simg.size()), kOldBytes / 2);
+    simg.close();
+    const QByteArray payload = QByteArray("resize-live-data-").repeated(300);
+    const auto sread = PartitionApfsFileSystemReader::readFileFromImage(
+        shrunk, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(sread.ok, qPrintable(sread.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(sread.data, payload);
+    // A non-block-aligned size, and a shrink below the metadata high-water (256 KiB, whose tail
+    // holds used metadata blocks), both fail closed.
     QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
                  {.source_image_path = withFile,
                   .written_image_path = dir.filePath(QStringLiteral("rz-unaligned.apfs")),
                   .new_size_bytes = kNewBytes + 1,
+                  .options = options})
+                 .ok);
+    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
+                 {.source_image_path = withFile,
+                  .written_image_path = dir.filePath(QStringLiteral("rz-tiny.apfs")),
+                  .new_size_bytes = 256ULL * 1024ULL,
                   .options = options})
                  .ok);
 }
