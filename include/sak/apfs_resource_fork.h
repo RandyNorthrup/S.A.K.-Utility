@@ -5,23 +5,26 @@
 // the bare block_offs le32 table instead (see apfs_lzbitmap.h) - that is what the
 // macOS kernel reads for them; only ZLIB uses this cmpf layout. When a compressed
 // file exceeds one inline block, the payload is stored in a com.apple.ResourceFork
-// data stream holding the Apple "cmpf" resource blob:
+// data stream holding a full Apple resource fork (the kernel decompresses ZLIB_RSRC
+// through the classic HFS resource-fork reader, so the whole wrapper is required):
 //
-//   [0x00] apfs_compress_rsrc_hdr   (BIG-endian)   { data_offs, mgmt_offs,
-//                                                    data_size, mgmt_size }
-//   [data_offs] apfs_compress_rsrc_data (LITTLE-endian)
-//                 { u32 unknown, u32 num, { u32 offs, u32 size } block[num] }
-//   [...] the num compressed chunks, each covering APFS_COMPRESS_BLOCK (64 KiB)
-//         of the original file (the final chunk covers the remainder).
+//   [0x00]  apfs_compress_rsrc_hdr (BIG-endian) { data_offs=0x100, mgmt_offs,
+//                                                 data_size, mgmt_size=0x32 }
+//   [0x10]  0xF0 bytes of zero padding up to data_offs
+//   [0x100] u32 BIG-endian resource-data-length prefix (data_size - 4)
+//   [0x104] u32 LITTLE-endian num, then { u32 offs, u32 size } block[num] (LE)
+//   [...]   the num compressed chunks, each covering APFS_COMPRESS_BLOCK (64 KiB)
+//           of the original file (the final chunk covers the remainder)
+//   [mgmt_offs] 50-byte resource map naming the single 'cmpf' resource
 //
 // Block i's compressed bytes live at data_offs + block[i].offs + 4, length
 // block[i].size -- i.e. block[i].offs is measured from the rsrc_data `num` field
 // (data_offs + 4). This is exactly the arithmetic the macOS kernel and apfsck's
-// compress.c perform (apfs_compress_read_block: coffs = block.offs + 4), so a
-// blob built here is byte-compatible with both. Each chunk is encoded with the
-// same per-chunk primitive the certified inline path uses: a raw zlib stream
-// beginning 0x78, or a 0xFF-prefixed stored block when compression does not
-// shrink the chunk.
+// compress.c perform (apfs_compress_read_block: coffs = block.offs + 4). Each chunk
+// is encoded with the same per-chunk primitive the certified inline path uses: a
+// raw zlib stream beginning 0x78, or a 0xFF-prefixed stored block when compression
+// does not shrink the chunk. The 0x100 data offset, BE length prefix and resource
+// map are macOS-kernel certified on 15.7.4 (byte-exact read-back).
 
 #ifndef SAK_APFS_RESOURCE_FORK_H
 #define SAK_APFS_RESOURCE_FORK_H
@@ -45,9 +48,17 @@ inline constexpr int kApfsCompressBlockSize = 0x10000;
 // Size of apfs_compress_rsrc_hdr: four big-endian u32 (data/mgmt offs+size).
 inline constexpr int kApfsResourceForkHeaderBytes = 16;
 
-// Byte offset of the rsrc_data structure within the resource blob; the header is
-// laid out immediately before it, so data_offs always equals the header size.
-inline constexpr int kApfsResourceForkDataOffset = kApfsResourceForkHeaderBytes;
+// Byte offset of the rsrc_data structure within the resource blob. The macOS
+// kernel decompresses ZLIB_RSRC through the classic HFS resource-fork reader,
+// which requires the resource data to begin at 0x100 (a 0xF0-byte zero gap
+// follows the 16-byte header) and a resource map to trail it. data_offs is thus
+// 0x100, NOT the header size (verified kernel-certified on macOS 15.7.4).
+inline constexpr int kApfsResourceForkDataOffset = 0x100;
+
+// Bytes of the fixed resource-map trailer that follows the compressed blocks. The
+// macOS resource-fork reader needs this Apple map (one 'cmpf' resource) to accept
+// the fork; its exact 50 bytes are reproduced by apfsAppendZlibResourceMap below.
+inline constexpr int kApfsResourceForkMapTrailerBytes = 50;
 
 // Bytes of apfs_compress_rsrc_data before block[0] (u32 unknown + u32 num).
 inline constexpr int kApfsResourceForkDataPrefixBytes = 8;
@@ -86,12 +97,29 @@ inline constexpr int kApfsResourceForkBlockEntryBytes = 8;
     return algo == kApfsCompressZlibRsrc;
 }
 
+// Write the fixed 50-byte Apple resource-map trailer for a ZLIB_RSRC fork at @trailer (which must
+// address at least kApfsResourceForkMapTrailerBytes zeroed bytes). These exact bytes - a minimal
+// resource map naming the single 'cmpf' resource - are what the macOS resource-fork reader parses
+// to accept the compressed fork; the layout is reproduced from a kernel-certified reference file
+// (afsctool's decmpfs_resource_zlib_trailer) and proven byte-exact on macOS 15.7.4.
+inline void apfsWriteZlibResourceMap(char* trailer) {
+    std::memset(trailer, 0, kApfsResourceForkMapTrailerBytes);
+    qToBigEndian<quint16>(0x001Cu, trailer + 24);  // magic1: offset to type list
+    qToBigEndian<quint16>(0x0032u, trailer + 26);  // magic2: resource map length
+    // trailer + 28: spacer1 (u16) stays zero
+    qToBigEndian<quint32>(0x63'6D'70'66u, trailer + 30);       // compression_magic 'cmpf'
+    qToBigEndian<quint32>(0x00'00'00'0Au, trailer + 34);       // magic3
+    qToLittleEndian<quint64>(0xFF'FF'01'00ull, trailer + 38);  // magic4 (little-endian)
+    // trailer + 46: spacer2 (u32) stays zero -> total 50 bytes
+}
+
 // Build the complete com.apple.ResourceFork "cmpf" blob for @data, encoding each 64 KiB chunk
 // with @encodeChunk (returns the on-disk per-chunk bytes, or an empty array to fail closed). Used
-// by ZLIB_RSRC. NOTE: the macOS kernel reads this cmpf layout for ZLIB but does NOT accept a
-// bare cmpf blob without an Apple resource map (verified on macOS 15.7.4: reads back as an I/O
-// error) - the on-disk cmpf resource fork is host-apfsck/reader-verified but not yet macOS-kernel
-// certified. LZVN/LZFSE/LZBITMAP avoid this by using the block_offs container.
+// by ZLIB_RSRC. The blob is the full Apple resource fork the macOS kernel reads: a 16-byte header,
+// a 0xF0 zero gap, the resource data at 0x100 (a big-endian data-length prefix, then the
+// little-endian block table and compressed chunks), and the 50-byte resource-map trailer. This
+// exact layout is macOS-kernel certified on 15.7.4 (byte-exact read-back of both compressible and
+// incompressible files). LZVN/LZFSE/LZBITMAP instead use the block_offs container.
 template <class EncodeChunkFn>
 [[nodiscard]] inline QByteArray apfsBuildResourceForkBlobWith(const QByteArray& data,
                                                               EncodeChunkFn encodeChunk) {
@@ -125,18 +153,22 @@ template <class EncodeChunkFn>
     }
     const int dataSize = tableBytes + totalChunkBytes;
 
-    QByteArray blob(kApfsResourceForkDataOffset + dataSize, '\0');
-    // apfs_compress_rsrc_hdr (big-endian): rsrc_data begins at data_offs and spans
-    // data_size bytes; there is no management/resource-map region (mgmt_size 0).
+    QByteArray blob(kApfsResourceForkDataOffset + dataSize + kApfsResourceForkMapTrailerBytes,
+                    '\0');
+    // apfs_compress_rsrc_hdr (big-endian resource-fork header): the resource data
+    // begins at data_offs (0x100) and spans data_size bytes; the resource map
+    // (mgmt_offs/mgmt_size) is the 50-byte 'cmpf' trailer immediately after it.
     qToBigEndian<quint32>(static_cast<quint32>(kApfsResourceForkDataOffset), blob.data());
     qToBigEndian<quint32>(static_cast<quint32>(kApfsResourceForkDataOffset + dataSize),
                           blob.data() + 4);
     qToBigEndian<quint32>(static_cast<quint32>(dataSize), blob.data() + 8);
-    qToBigEndian<quint32>(0, blob.data() + 12);
+    qToBigEndian<quint32>(static_cast<quint32>(kApfsResourceForkMapTrailerBytes), blob.data() + 12);
 
-    // apfs_compress_rsrc_data (little-endian): unknown, then the block count.
+    // apfs_compress_rsrc_data: a big-endian resource-data-length prefix (data_size
+    // minus its own 4 bytes) as the resource-fork reader expects, then the
+    // little-endian block count.
     char* dataArea = blob.data() + kApfsResourceForkDataOffset;
-    qToLittleEndian<quint32>(0, dataArea);
+    qToBigEndian<quint32>(static_cast<quint32>(dataSize - 4), dataArea);
     qToLittleEndian<quint32>(static_cast<quint32>(chunkCount), dataArea + 4);
 
     int chunkOffset = firstChunkOffset;
@@ -153,6 +185,7 @@ template <class EncodeChunkFn>
                     static_cast<size_t>(encoded[i].size()));
         chunkOffset += static_cast<int>(encoded[i].size());
     }
+    apfsWriteZlibResourceMap(blob.data() + kApfsResourceForkDataOffset + dataSize);
     return blob;
 }
 

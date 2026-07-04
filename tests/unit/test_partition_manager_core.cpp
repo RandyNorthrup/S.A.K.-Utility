@@ -13059,19 +13059,25 @@ void PartitionManagerCoreTests::apfsResourceForkBlobLayoutMatchesApfsck() {
     const QByteArray blob = sak::apfsBuildResourceForkBlob(payload, sak::kApfsCompressZlibRsrc);
     QVERIFY(!blob.isEmpty());
 
-    // apfs_compress_rsrc_hdr is big-endian; rsrc_data starts at data_offs (== header size).
+    // apfs_compress_rsrc_hdr is big-endian; rsrc_data starts at data_offs (0x100, the Apple
+    // resource-fork data offset the macOS kernel requires - a 0xF0 zero gap follows the header).
     const quint32 dataOffs = qFromBigEndian<quint32>(blob.constData());
     const quint32 mgmtOffs = qFromBigEndian<quint32>(blob.constData() + 4);
     const quint32 dataSize = qFromBigEndian<quint32>(blob.constData() + 8);
     const quint32 mgmtSize = qFromBigEndian<quint32>(blob.constData() + 12);
     QCOMPARE(dataOffs, static_cast<quint32>(sak::kApfsResourceForkDataOffset));
-    QCOMPARE(mgmtSize, 0u);
-    // data_offs + data_size delimits the whole blob (kernel bounds-checks data_end <= size).
-    QCOMPARE(static_cast<qint64>(dataOffs) + dataSize, static_cast<qint64>(blob.size()));
+    QCOMPARE(dataOffs, 0x100u);
+    // The resource map (50-byte 'cmpf' trailer) follows the data; the kernel needs it to accept
+    // the fork. data_offs + data_size points at that map, and the map ends the blob.
+    QCOMPARE(mgmtSize, static_cast<quint32>(sak::kApfsResourceForkMapTrailerBytes));
     QCOMPARE(mgmtOffs, dataOffs + dataSize);
+    QCOMPARE(static_cast<qint64>(dataOffs) + dataSize + sak::kApfsResourceForkMapTrailerBytes,
+             static_cast<qint64>(blob.size()));
 
-    // apfs_compress_rsrc_data is little-endian: unknown, then the block count.
+    // apfs_compress_rsrc_data: a big-endian resource-data-length prefix (data_size - 4), then the
+    // little-endian block count.
     const char* dataArea = blob.constData() + dataOffs;
+    QCOMPARE(qFromBigEndian<quint32>(dataArea), dataSize - 4);
     const quint32 num = qFromLittleEndian<quint32>(dataArea + 4);
     const quint32 expectedChunks = static_cast<quint32>((payload.size() + block - 1) / block);
     QCOMPARE(num, expectedChunks);
@@ -13094,7 +13100,16 @@ void PartitionManagerCoreTests::apfsResourceForkBlobLayoutMatchesApfsck() {
                  "each resource chunk must be a zlib stream or a stored block");
         walk += size;
     }
-    QCOMPARE(walk, static_cast<qint64>(blob.size()));
+    // The chunks end exactly where the resource-map trailer begins.
+    QCOMPARE(walk, static_cast<qint64>(blob.size()) - sak::kApfsResourceForkMapTrailerBytes);
+
+    // The 50-byte 'cmpf' resource-map trailer is present with the kernel-certified magic bytes.
+    const char* trailer = blob.constData() + mgmtOffs;
+    QCOMPARE(qFromBigEndian<quint16>(trailer + 24), static_cast<quint16>(0x001C));
+    QCOMPARE(qFromBigEndian<quint16>(trailer + 26), static_cast<quint16>(0x0032));
+    QCOMPARE(qFromBigEndian<quint32>(trailer + 30), 0x63'6D'70'66u);  // 'cmpf'
+    QCOMPARE(qFromBigEndian<quint32>(trailer + 34), 0x00'00'00'0Au);
+    QCOMPARE(qFromLittleEndian<quint64>(trailer + 38), 0xFF'FF'01'00ull);
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapCodecRoundTrips() {
