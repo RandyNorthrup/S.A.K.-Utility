@@ -10200,13 +10200,25 @@ struct ApfsShrinkScope {
     uint64_t oldIpBlockCount{0};
     bool poolInRemovedTail{false};
     uint64_t newChunks{0};
+    // The ip-bitmap ring's region, so a chunk holding the ring (a transition-grown source keeps the
+    // ring just below its high pool) reads as pool metadata, not user data. 0/0 when the ring is
+    // low.
+    uint64_t oldIpBmBase{0};
+    uint64_t ringBlocks{0};
 };
 
-// True if every used block in chunk `k` lies within the pool region [oldIpBase, oldIpBase+
-// oldIpBlockCount) - i.e. the chunk holds only (its portion of) the relocated internal pool
-// (allocator metadata a grow left in a high chunk), no user data. This is what lets a previously-
-// grown container shrink: the pool's chunk(s) are truncated away, so as long as they hold nothing
-// but the pool the removed region is otherwise free. A multi-chunk pool is checked chunk by chunk.
+// True if `abs` lies inside the pool region or the ip-bitmap ring region - i.e. it is allocator
+// metadata a grow left in a high chunk, not user data.
+bool blockIsPoolOrRing(uint64_t abs, const ApfsShrinkScope& s) {
+    return (abs >= s.oldIpBase && abs < s.oldIpBase + s.oldIpBlockCount) ||
+           (s.ringBlocks != 0 && abs >= s.oldIpBmBase && abs < s.oldIpBmBase + s.ringBlocks);
+}
+
+// True if every used block in chunk `k` is pool or ring metadata - i.e. the chunk holds only (its
+// portion of) the relocated internal pool and its ring, no user data. This is what lets a
+// previously- grown container shrink: the pool's chunk(s) are truncated away, so as long as they
+// hold nothing but the pool/ring the removed region is otherwise free. A multi-chunk pool is
+// checked chunk by chunk; a transition-grown source keeps the ring in the pool's first high chunk.
 bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
                         uint64_t bitmapAddr,
                         uint64_t chunkIndex,
@@ -10217,17 +10229,11 @@ bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
         return false;
     }
     const uint64_t chunkStart = chunkIndex * kApfsSpacemanBlocksPerChunk;
-    const uint64_t oldIpBase = s.oldIpBase;
-    const uint64_t oldIpBlockCount = s.oldIpBlockCount;
     for (uint64_t b = 0; b < kApfsSpacemanBlocksPerChunk; ++b) {
         const bool used =
             ((static_cast<uint8_t>(bm.at(static_cast<qsizetype>(b / 8))) >> (b % 8)) & 1U) != 0;
-        if (!used) {
-            continue;
-        }
-        const uint64_t abs = chunkStart + b;
-        if (abs < oldIpBase || abs >= oldIpBase + oldIpBlockCount) {
-            return false;  // a used block outside the pool region = real user data
+        if (used && !blockIsPoolOrRing(chunkStart + b, s)) {
+            return false;  // a used block outside the pool/ring region = real user data
         }
     }
     return true;
@@ -10312,6 +10318,37 @@ bool shrinkChunkInScope(ApfsFsCommitContext* ctx,
 // Validate a chunk-removing shrink: the removed high chunks must be all-free (except the superseded
 // pool, which is truncated), and surviving chunks may hold data (carried forward). Returns the
 // source chunk states (each chunk's free count feeds the rebuilt cibs).
+// Build the per-chunk shrink-scope facts from the live spaceman: the superseded pool's first chunk
+// + span + region, whether it lies in the removed tail, the target chunk count, and the ip-bitmap
+// ring region (a transition-grown source keeps the ring just below its high pool, so a removed pool
+// chunk also holds the ring - scope it as metadata, not user data).
+ApfsShrinkScope buildShrinkScope(ApfsFsCommitContext* ctx,
+                                 uint64_t oldChunks,
+                                 uint64_t newBlockCount) {
+    QStringList ignore;
+    const uint64_t oldIpBase =
+        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
+    const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
+    const QByteArray spaceman =
+        readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, &ignore);
+    const uint64_t oldIpBmBase = spaceman.isEmpty() ? 0
+                                                    : le64(spaceman, kApfsSpacemanIpBmBaseOffset);
+    const uint64_t ringBlocks =
+        spaceman.isEmpty() ? 0 : le32(spaceman, kApfsSpacemanIpBmBlockCountOffset);
+    // A multi-chunk pool (ip_bm_size > 1) a grow left high spans several chunks; scope every one.
+    const uint64_t poolSpan = (oldIpBase % kApfsSpacemanBlocksPerChunk + oldIpBlockCount +
+                               kApfsSpacemanBlocksPerChunk - 1) /
+                              kApfsSpacemanBlocksPerChunk;
+    return {oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk,
+            poolSpan,
+            oldIpBase,
+            oldIpBlockCount,
+            oldIpBase >= newBlockCount,
+            (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) / kApfsSpacemanBlocksPerChunk,
+            oldIpBmBase,
+            ringBlocks};
+}
+
 bool validateShrinkScope(ApfsFsCommitContext* ctx,
                          uint64_t newBlockCount,
                          uint64_t oldChunks,
@@ -10323,20 +10360,7 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
         !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
     }
-    const uint64_t oldIpBase =
-        readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    const uint64_t oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
-    // A multi-chunk pool (ip_bm_size > 1) a grow left high spans several chunks; scope every one.
-    const uint64_t poolSpan = (oldIpBase % kApfsSpacemanBlocksPerChunk + oldIpBlockCount +
-                               kApfsSpacemanBlocksPerChunk - 1) /
-                              kApfsSpacemanBlocksPerChunk;
-    const ApfsShrinkScope scope{oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk,
-                                poolSpan,
-                                oldIpBase,
-                                oldIpBlockCount,
-                                oldIpBase >= newBlockCount,
-                                (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
-                                    kApfsSpacemanBlocksPerChunk};
+    const ApfsShrinkScope scope = buildShrinkScope(ctx, oldChunks, newBlockCount);
     for (uint64_t k = 1; k < oldChunks; ++k) {
         const uint64_t bitmapAddr = src->at(static_cast<qsizetype>(k)).bitmapAddr;
         if (bitmapAddr != 0 && !shrinkChunkInScope(ctx, k, bitmapAddr, scope, blockers)) {
@@ -10596,7 +10620,10 @@ ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
             freed.append(b);
         }
     }
-    if (plan.newIpBmBase != 0) {
+    // Free the old ring onto the queue only when it survives (a low ring, or the same-size
+    // relocation whose old ring stays in chunk 0). A transition-grown source keeps the ring high in
+    // the removed tail, where it is truncated away, not queued.
+    if (plan.newIpBmBase != 0 && plan.oldIpBmBase < plan.newBlockCount) {
         for (uint64_t b = plan.oldIpBmBase; b < plan.oldIpBmBase + plan.ipBmBlocks; ++b) {
             freed.append(b);
         }
@@ -10807,6 +10834,27 @@ bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
     return true;
 }
 
+// The main-device free-count delta for a chunk-removing shrink: grown-away space, minus the new
+// pool and the freshly relocated ring (16 * new ip_bm_size on a 2 -> 1 transition, else the
+// same-size ipBmBlocks), plus the aged reclaimed blocks, plus any pool/ring that sat USED in the
+// removed tail (the grown-away term over-subtracted them - they cease to exist on truncation, not
+// freed).
+int64_t shrinkFreeDelta(const ApfsChunkAddingGrowPlan& plan,
+                        uint64_t newBlockCount,
+                        uint64_t oldBlockCount,
+                        uint64_t reclaimedCount,
+                        bool poolInRemovedTail) {
+    const int64_t newRingUsed =
+        plan.newIpBmSize != 0
+            ? static_cast<int64_t>(plan.newIpBmSize * kApfsSpacemanIpBmTxMultiplier)
+            : (plan.newIpBmBase != 0 ? static_cast<int64_t>(plan.ipBmBlocks) : 0);
+    const bool ringInRemovedTail = plan.oldIpBmBase >= newBlockCount;
+    return static_cast<int64_t>(newBlockCount - oldBlockCount) -
+           static_cast<int64_t>(plan.newIpBlockCount) + static_cast<int64_t>(reclaimedCount) +
+           (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0) +
+           (ringInRemovedTail ? static_cast<int64_t>(plan.ipBmBlocks) : 0) - newRingUsed;
+}
+
 // A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
 // surviving chunk-0 free space, mirroring the chunk-adding grow (same crash-safe COW: write the
 // new allocator to free blocks, atomically re-anchor the nx_superblock, then truncate the dead
@@ -10835,16 +10883,8 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     const uint64_t liveCib = alloc.liveCib;
     const QVector<uint64_t>& ipUsedSet = alloc.ipUsedSet;
     const uint64_t ipUsage = alloc.ipBitmapUsage;
-    // The freshly relocated ring consumes blocks (16 * new ip_bm_size on a 2 -> 1 transition, else
-    // the same-size ipBmBlocks); the OLD ring rides the main free-queue, aging like the old pool.
-    const int64_t newRingUsed =
-        plan.newIpBmSize != 0
-            ? static_cast<int64_t>(plan.newIpBmSize * kApfsSpacemanIpBmTxMultiplier)
-            : (plan.newIpBmBase != 0 ? static_cast<int64_t>(plan.ipBmBlocks) : 0);
-    const int64_t freeDelta =
-        static_cast<int64_t>(newBlockCount - oldBlockCount) -
-        static_cast<int64_t>(plan.newIpBlockCount) + static_cast<int64_t>(mainFq.reclaimed.size()) +
-        (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0) - newRingUsed;
+    const int64_t freeDelta = shrinkFreeDelta(
+        plan, newBlockCount, oldBlockCount, mainFq.reclaimed.size(), poolInRemovedTail);
     const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
     if (!advanceCheckpoint({.image = ctx->image,
                             .geometry = ctx->geometry,

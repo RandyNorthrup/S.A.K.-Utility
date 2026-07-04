@@ -11458,6 +11458,8 @@ static void certifyIpBmTransitions(const QDir& dir, const PartitionApfsWriteOpti
 // spanning two high chunks), then shrinks to 10900 - the removed tail holds only the superseded
 // pool (scoped chunk by chunk across its span, truncated away, not user data). apfsck-clean; the
 // file reads back byte-exact after the round trip.
+static void certifyTransitionGrownShrink(const QDir& dir, const PartitionApfsWriteOptions& options);
+
 static void certifyGrownMultiChunkPoolShrink(const QDir& dir,
                                              const PartitionApfsWriteOptions& options) {
     constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
@@ -11494,6 +11496,52 @@ static void certifyGrownMultiChunkPoolShrink(const QDir& dir,
     QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
     const auto read = PartitionApfsFileSystemReader::readFileFromImage(
         shrunk, QStringLiteral("/g.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+    certifyTransitionGrownShrink(dir, options);
+}
+
+// The hardest resize corner: shrink a source that was ITSELF grown across ~1.35 TiB via a 1 -> 2
+// transition, so its ip-bitmap RING (not just its pool) sits high in the removed tail. A
+// 10800-chunk container grows to 11000 (transition; ring relocates high), then shrinks to 10000 (2
+// -> 1 transition) - the removed pool chunk holds both the pool and the ring, scoped as metadata
+// (not user data), and neither is queued (truncated). apfsck-clean; the file reads back byte-exact.
+static void certifyTransitionGrownShrink(const QDir& dir,
+                                         const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
+    const QByteArray payload = QByteArray("tr-grown-shrink-").repeated(4000);
+    const QString base = dir.filePath(QStringLiteral("tgs-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                        .target_container_bytes = 10'800 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("TGS"),
+                                                        .options = options})
+            .ok);
+    const QString withFile = dir.filePath(QStringLiteral("tgs-file.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                             .written_image_path = withFile,
+                                                             .file_name = QStringLiteral("t.bin"),
+                                                             .file_data = payload,
+                                                             .options = options})
+                 .ok,
+             "transition-grown source file insert");
+    const QString grown = dir.filePath(QStringLiteral("tgs-grown.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                         .written_image_path = grown,
+                                                         .new_size_bytes = 11'000 * kChunk,
+                                                         .options = options})
+                 .ok,
+             "grow transition to 11000");
+    const QString shrunk = dir.filePath(QStringLiteral("tgs-shrunk.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
+                                                    .written_image_path = shrunk,
+                                                    .new_size_bytes = 10'000 * kChunk,
+                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        shrunk, QStringLiteral("/t.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
 }
