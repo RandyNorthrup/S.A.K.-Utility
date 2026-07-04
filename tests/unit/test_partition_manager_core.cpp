@@ -11259,6 +11259,30 @@ static void certifyMultiCibGrowReadsBack(const QDir& dir,
         QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
         QCOMPARE(read.data, payload);
     }
+    // Re-mutate a MULTI-CIB grown container. A chunk-adding grow lays the relocated pool out
+    // rotation-groups-first, so cib0Base must anchor on the actual ip_base (not the format's
+    // immutable-cibs-first ip_base + cib_count-1 offset) or nextIpSlot underflows and the file
+    // insert double-marks the chunk-0 allocation bitmap (host apfsck "block used twice"). Insert
+    // into the 260-chunk (3-cib) grown container; the new file and orig.bin both read back.
+    const QString grown260 = dir.filePath(QStringLiteral("mcs-cib-260.apfs"));
+    const QString mutated = dir.filePath(QStringLiteral("mcs-cib-260-mut.apfs"));
+    const QByteArray extra = QByteArray("multi-cib-grown-insert-").repeated(50);
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert(
+                 {.source_image_path = grown260,
+                  .written_image_path = mutated,
+                  .file_name = QStringLiteral("after.bin"),
+                  .file_data = extra,
+                  .options = options})
+                 .ok,
+             "multi-CIB grown file insert");
+    const auto reNew = PartitionApfsFileSystemReader::readFileFromImage(
+        mutated, QStringLiteral("/after.bin"), static_cast<uint64_t>(extra.size()));
+    QVERIFY2(reNew.ok, qPrintable(reNew.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(reNew.data, extra);
+    const auto reOld = PartitionApfsFileSystemReader::readFileFromImage(
+        mutated, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(reOld.ok, qPrintable(reOld.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(reOld.data, payload);
 }
 
 // Shrink a multi-CIB container (>126 chunks) holding a file back down: cib 0 relocates to a chunk-0
@@ -11716,11 +11740,11 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
 
-    // Re-mutating a chunk-adding-grown container is now fully supported: the commit engine
-    // re-anchors the relocated internal pool (loadFsCommitContext -> resolveRelocatedIpLayout,
-    // allowRelocatedIp) so a post-grow file insert commits apfsck-clean. Both the new file and
-    // the pre-grow file read back byte-for-byte. (Apple-kernel certified on macOS 15.7.4:
-    // mount + fsck_apfs clean + byte-exact read-back for small and chunk-spilling inserts.)
+    // Re-mutating a chunk-adding-grown container is supported: the commit engine re-anchors the
+    // relocated internal pool (loadFsCommitContext -> resolveRelocatedIpLayout, allowRelocatedIp)
+    // so a post-grow file insert commits apfsck-clean (single-CIB here; the multi-CIB rotation-
+    // first layout is covered in certifyMultiCibGrowReadsBack). Both the new file and the pre-grow
+    // file read back byte-for-byte.
     certifyPostGrowInsertReadsBack(dir, grown, options, payload);
     // Crossing the 126-chunk boundary both ways (sub-chunk source -> N-cib target, then multi-CIB
     // container -> fewer/one cib); sm_cib_count tracks N and orig.bin survives. See the helpers.

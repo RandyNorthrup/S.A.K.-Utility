@@ -7567,7 +7567,16 @@ bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
             "increment"));
         return false;
     }
-    ctx->layout.cib0Base += actualIpBase - canonicalIpBase;
+    // A chunk-adding grow lays the relocated pool out ROTATION-GROUPS-FIRST: the ghost/live/spare
+    // ring occupies ip-rel [0, 3*ipGroupStride) with cib 0 rotating through it, and the immutable
+    // cibs 1..N-1 are placed AFTER, in free-pool slots (their live addresses come from
+    // ctx.liveCibAddrs). The canonical FORMAT arrangement is the mirror - immutable cibs first, so
+    // cib0Base = ip_base + (cib_count - 1). Delta-shifting the canonical cib0Base therefore lands
+    // (cib_count - 1) blocks PAST the live rotation ring on a multi-CIB grown pool, so nextIpSlot's
+    // (liveCib - cib0Base) underflows and the file/dir mutation double-marks the chunk-0 bitmap.
+    // Anchor cib0Base on the actual ip_base (rotation-first); single-CIB is unchanged (cib_count-1
+    // == 0), and the immutable cibs stay covered by their read-from-disk liveCibAddrs.
+    ctx->layout.cib0Base = actualIpBase;
     ctx->layout.ipBase = actualIpBase;
     return true;
 }
