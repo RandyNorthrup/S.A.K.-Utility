@@ -11259,9 +11259,10 @@ static void certifyShrinkReadsBack(const QDir& dir,
 // Grow a multi-chunk source to 1024 (8 chunks; the relocated pool lands in a high chunk), then
 // shrink back. To k256 (2 chunks) the pool's chunk is truncated away; to 128MiB (a SINGLE chunk)
 // the shrunk pool drops below a stale ip-bitmap ring bit, so the ring relocates (the crash-
-// rollback ghost keeps the old ring, the live spaceman gets a fresh clean one). A shrink that
-// would leave the pool in a SURVIVING high chunk (grown 1024 -> 640) fails closed. apfsck- and
-// Apple-kernel-clean (16/16, macOS 15.7.4).
+// rollback ghost keeps the old ring, the live spaceman gets a fresh clean one). To 640MiB (5
+// chunks) the pool's high chunk SURVIVES: the explicit-cib allocator keeps that chunk's pool
+// marked used (riding the main fq) while the new pool relocates to chunk 0. apfsck- and
+// Apple-kernel-clean (macOS 15.7.4); every target reads the file back and stays re-mutable.
 static void certifyGrowThenShrinkBack(const QDir& dir,
                                       const QString& withFile,
                                       uint64_t k256,
@@ -11276,13 +11277,8 @@ static void certifyGrowThenShrinkBack(const QDir& dir,
             .ok);
     certifyShrinkReadsBack(dir, grown, k256, options, payload);
     certifyShrinkReadsBack(dir, grown, 128ULL * 1024ULL * 1024ULL, options, payload);
-    const QString grownSurv = dir.filePath(QStringLiteral("shr-grown-surv.apfs"));
-    QVERIFY(
-        !PartitionApfsWriter::commitImageOnlyResize({.source_image_path = grown,
-                                                     .written_image_path = grownSurv,
-                                                     .new_size_bytes = 640ULL * 1024ULL * 1024ULL,
-                                                     .options = options})
-             .ok);
+    // Pool-in-surviving-chunk: the relocated pool's high chunk survives the shrink.
+    certifyShrinkReadsBack(dir, grown, 640ULL * 1024ULL * 1024ULL, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {

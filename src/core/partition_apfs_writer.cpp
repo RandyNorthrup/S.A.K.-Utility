@@ -9220,6 +9220,11 @@ struct ApfsChunkAddingGrowPlan {
     uint64_t newIpBmBase{0};
     uint64_t oldIpBmBase{0};
     uint64_t ipBmBlocks{0};  // 16 * ip_bm_size (the whole ring)
+    // A shrink whose superseded pool sits in a SURVIVING high chunk (a grown container shrunk to a
+    // size that keeps the pool's chunk): 0 = none, else that chunk index. The new pool still
+    // relocates to chunk 0, but the surviving chunk keeps a bitmap marking the old pool used (it
+    // rides the main free-queue), so the allocator is built with explicit per-chunk cib entries.
+    uint64_t survivingPoolChunk{0};
 };
 
 // Validate + lay out a single-chunk-source chunk-adding grow. Increment 1 supports a
@@ -9603,6 +9608,87 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
     return true;
 }
 
+// Build the explicit per-chunk cib entries for a surviving-pool shrink: chunk 0 gets the relocated
+// new pool, the surviving pool chunk keeps a fresh bitmap marking the OLD pool used (it rides the
+// main fq like the grow's chunk-0 pool), and every other chunk is all-free.
+QVector<ApfsExplicitChunkEntry> shrinkSurvivingPoolEntries(const ApfsChunkAddingGrowPlan& plan,
+                                                           uint64_t chunk0Used,
+                                                           uint64_t liveBmp,
+                                                           uint64_t poolBmp) {
+    QVector<ApfsExplicitChunkEntry> entries;
+    for (uint64_t k = 0; k < plan.newChunkCount; ++k) {
+        const uint64_t addr = k * kApfsSpacemanBlocksPerChunk;
+        const uint32_t blocks = static_cast<uint32_t>(
+            qMin<uint64_t>(kApfsSpacemanBlocksPerChunk, plan.newBlockCount - addr));
+        ApfsExplicitChunkEntry e{addr, blocks, blocks, 0, kApfsFormatGenesisXid};
+        if (k == 0) {
+            e.bitmapAddr = liveBmp;
+            e.freeCount = blocks - static_cast<uint32_t>(chunk0Used);
+            e.xid = plan.newXid;
+        } else if (k == plan.survivingPoolChunk) {
+            e.bitmapAddr = poolBmp;
+            e.freeCount = blocks - static_cast<uint32_t>(plan.oldIpBlockCount);
+            e.xid = plan.newXid;
+        }
+        entries.append(e);
+    }
+    return entries;
+}
+
+// Build + write the shrink allocator when the superseded pool sits in a SURVIVING high chunk. The
+// new pool relocates to chunk 0 (exactly like buildGrownAllocatorSubtree), but the surviving pool
+// chunk needs its own bitmap (the old pool stays marked used, riding the main fq), so the cib is
+// built with explicit per-chunk entries. Pool-chunk bitmap slot is freePoolBase (newIpBase + 8),
+// past the cib rotation ring, so a later re-mutation carries it forward.
+bool buildShrinkSurvivingPoolAllocator(ApfsFsCommitContext* ctx,
+                                       const ApfsChunkAddingGrowPlan& plan,
+                                       const QVector<uint64_t>& reclaimed,
+                                       ApfsMultiChunkGrownAllocator* out,
+                                       QStringList* blockers) {
+    const uint32_t bs = ctx->geometry.blockSize;
+    QByteArray source(bs, '\0');
+    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveBitmap, &source, blockers)) {
+        return false;
+    }
+    const uint64_t reservedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : plan.newIpBase;
+    const uint64_t reservedBlocks = plan.newIpBmBase != 0 ? plan.ipBmBlocks + plan.newIpBlockCount
+                                                          : plan.newIpBlockCount;
+    QByteArray chunk0Bitmap;
+    const uint64_t chunk0Used =
+        buildGrownChunk0Bitmap(source, reservedBase, reservedBlocks, reclaimed, &chunk0Bitmap);
+    const uint64_t base = plan.newIpBase;
+    const uint64_t ghostCib = base, ghostBmp = base + 1, liveCib = base + 2, liveBmp = base + 3;
+    const uint64_t poolBmp = base + 8;
+    // The surviving pool chunk keeps the old pool used at its in-chunk offset.
+    const uint64_t poolOffset = plan.oldIpBase -
+                                plan.survivingPoolChunk * kApfsSpacemanBlocksPerChunk;
+    const QByteArray poolBitmap = buildChunkRangeBitmapBlock(bs, poolOffset, plan.oldIpBlockCount);
+    QVector<ApfsExplicitChunkEntry> live =
+        shrinkSurvivingPoolEntries(plan, chunk0Used, liveBmp, poolBmp);
+    QVector<ApfsExplicitChunkEntry> ghost = live;
+    ghost[0].bitmapAddr = ghostBmp;
+    if (!writeApfsRepairBlock(ctx->image, ctx->geometry, ghostBmp, chunk0Bitmap, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, liveBmp, chunk0Bitmap, blockers) ||
+        !writeApfsRepairBlock(ctx->image, ctx->geometry, poolBmp, poolBitmap, blockers) ||
+        !writeApfsRepairBlock(
+            ctx->image,
+            ctx->geometry,
+            ghostCib,
+            buildExplicitChunkInfoBlock(bs, ghostCib, plan.newXid, ghost, blockers),
+            blockers) ||
+        !writeApfsRepairBlock(ctx->image,
+                              ctx->geometry,
+                              liveCib,
+                              buildExplicitChunkInfoBlock(bs, liveCib, plan.newXid, live, blockers),
+                              blockers)) {
+        return false;
+    }
+    out->liveCib = liveCib;
+    out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
+    out->ipBitmapUsage = static_cast<uint64_t>(out->ipUsedSet.size());
+    return true;
+}
+
 // A7 (A-g) multi-chunk-source grow: the source already spans >= 2 chunks, so the relocated pool
 // lands at the start of the first grown chunk (a HIGH chunk, not chunk 0). Same crash-safe COW
 // shape as the single-chunk grow, but chunk 0 and the pool's chunk both carry bitmaps.
@@ -9771,18 +9857,23 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
     const uint64_t oldIpBlockCount = 3 * (oldChunks + 1);
     const uint64_t poolChunk = oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk;
     const bool poolInRemovedTail = oldIpBase >= newBlockCount;
+    const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
     for (uint64_t k = 1; k < oldChunks; ++k) {
         const uint64_t bitmapAddr = src->at(static_cast<qsizetype>(k)).bitmapAddr;
         if (bitmapAddr == 0) {
             continue;
         }
-        if (poolInRemovedTail && k == poolChunk &&
-            chunkHoldsOnlyPool(ctx, bitmapAddr, oldIpBase, oldIpBlockCount, blockers)) {
-            continue;  // the relocated pool's chunk, removed by the truncation
+        if (k == poolChunk &&
+            chunkHoldsOnlyPool(ctx, bitmapAddr, oldIpBase, oldIpBlockCount, blockers) &&
+            (poolInRemovedTail || k < newChunks)) {
+            // The superseded pool's chunk: either removed by the truncation, or a SURVIVING high
+            // chunk whose pool the explicit-cib allocator keeps marked used (rides the main fq).
+            continue;
         }
         blockers->append(QStringLiteral(
-            "APFS resize-shrink: shrinking a container with data past chunk 0 (other than a grown "
-            "container's relocated pool in the removed tail) is a later increment"));
+            "APFS resize-shrink: shrinking a container with real user data past chunk 0 is a later "
+            "increment"));
         return false;
     }
     return true;
@@ -9843,6 +9934,16 @@ bool ipBitmapRingHasBitAtOrAbove(QIODevice* image,
     return false;
 }
 
+// The superseded pool sits in a surviving high chunk when its chunk is neither chunk 0 nor in the
+// removed tail (validateShrinkScope already proved that chunk holds only the pool). Returns that
+// chunk index, or 0 when the pool relocates from chunk 0 / a removed chunk (the common path).
+uint64_t survivingPoolChunkIndex(uint64_t oldIpBase, uint64_t newBlockCount, uint64_t newChunks) {
+    const uint64_t oldPoolChunk = oldIpBase == 0 ? 0 : oldIpBase / kApfsSpacemanBlocksPerChunk;
+    const bool surviving = oldPoolChunk > 0 && oldIpBase < newBlockCount &&
+                           oldPoolChunk < newChunks;
+    return surviving ? oldPoolChunk : 0;
+}
+
 // Validate a chunk-removing shrink and lay out its plan: the relocated pool base is a free run
 // in surviving chunk-0 free space, the block counts drop to newChunkCount. When the shrunk pool
 // would drop below a stale ip-bitmap ring bit, the ring is relocated too (newIpBmBase set) so the
@@ -9868,6 +9969,8 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     plan->newIpBlockCount = 3 * (plan->newChunkCount + 1);
     plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     plan->oldIpBlockCount = 3 * (oldChunks + 1);
+    plan->survivingPoolChunk =
+        survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
     const QByteArray spaceman =
         readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     QByteArray chunk0(ctx->geometry.blockSize, '\0');
@@ -9919,6 +10022,27 @@ ApfsMainFqAdvance shrinkMainFreeQueue(ApfsFsCommitContext* ctx,
     return advanceMainFreeQueue(live, freed, plan.newXid, kMainFqRollbackWindow);
 }
 
+// Build the shrink allocator and report the new live cib + ip-bitmap used-set. When the superseded
+// pool sits in a surviving high chunk the explicit-cib builder applies (the pool's chunk keeps a
+// bitmap); otherwise the certified chunk-0-prefix builder does, with the fixed {0,1,2,3} used-set.
+bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
+                          const ApfsChunkAddingGrowPlan& plan,
+                          const QVector<uint64_t>& reclaimed,
+                          ApfsMultiChunkGrownAllocator* out,
+                          QStringList* blockers) {
+    if (plan.survivingPoolChunk != 0) {
+        return buildShrinkSurvivingPoolAllocator(ctx, plan, reclaimed, out, blockers);
+    }
+    ApfsGrownAllocator alloc;
+    if (!buildGrownAllocatorSubtree(ctx, plan, reclaimed, &alloc, blockers)) {
+        return false;
+    }
+    out->liveCib = alloc.liveCib;
+    out->ipUsedSet = ipBitmapPrefixSet(2 * 2);
+    out->ipBitmapUsage = 2 * 2;
+    return true;
+}
+
 // A7 (A-g) chunk-removing shrink: drop free high chunks and relocate the internal pool into
 // surviving chunk-0 free space, mirroring the chunk-adding grow (same crash-safe COW: write the
 // new allocator to free blocks, atomically re-anchor the nx_superblock, then truncate the dead
@@ -9937,10 +10061,13 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     }
     const bool poolInRemovedTail = plan.oldIpBase >= newBlockCount;
     const ApfsMainFqAdvance mainFq = shrinkMainFreeQueue(ctx, plan, poolInRemovedTail);
-    ApfsGrownAllocator alloc;
-    if (!buildGrownAllocatorSubtree(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
+    ApfsMultiChunkGrownAllocator alloc;
+    if (!buildShrinkAllocator(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
     }
+    const uint64_t liveCib = alloc.liveCib;
+    const QVector<uint64_t>& ipUsedSet = alloc.ipUsedSet;
+    const uint64_t ipUsage = alloc.ipBitmapUsage;
     // The new ring (when relocated) consumes ipBmBlocks previously-free chunk-0 blocks; the old
     // ring stays used on the main free-queue (it survives in chunk 0), aging like the old pool.
     const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
@@ -9956,13 +10083,13 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
                             .newContainerOmap = 0,
                             .spacemanFreeDelta = freeDelta,
                             .nextOidAdvance = 0,
-                            .newCibAddr = alloc.liveCib,
+                            .newCibAddr = liveCib,
                             .cibCount = 1,
                             .ipSlotStride = 2,
-                            .ipBitmapUsage = 2 * 2,
+                            .ipBitmapUsage = ipUsage,
                             .mainFqEntries = mainFq.entries,
                             .blockCountDelta = static_cast<int64_t>(newBlockCount - oldBlockCount),
-                            .ipUsedSet = ipBitmapPrefixSet(2 * 2),
+                            .ipUsedSet = ipUsedSet,
                             .newChunkCount = plan.newChunkCount,
                             .newIpBlockCount = plan.newIpBlockCount,
                             .newIpBase = plan.newIpBase,
