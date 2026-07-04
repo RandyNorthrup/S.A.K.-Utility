@@ -9823,6 +9823,16 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
     // bitmap needed). chunk_count is the ceiling, matching ip_block_count = 3*(chunk_count+cib).
     const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                kApfsSpacemanBlocksPerChunk;
+    if (newBlockCount < kApfsSpacemanBlocksPerChunk) {
+        // A target smaller than one full chunk truncates INTO chunk 0's own data/pool region, which
+        // the chunk-removing shrink does not validate for freeness (it only checks whole high
+        // chunks + a free partial tail of a surviving high chunk). This in-chunk-0 shrink is a
+        // later increment; fail closed so a sub-chunk target can never silently drop chunk-0 data.
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: a target smaller than one full chunk (in-chunk-0 shrink) is a "
+            "later increment"));
+        return false;
+    }
     if (newChunks < 1) {
         blockers->append(
             QStringLiteral("APFS resize-shrink: the target must be at least one chunk"));
