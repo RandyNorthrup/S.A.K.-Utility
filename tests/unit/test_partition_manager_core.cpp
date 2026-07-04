@@ -11133,6 +11133,46 @@ void verifyApfsResizeFailClosed(const QDir& dir,
 // Re-mutating a chunk-adding-grown container: insert a new file, then read back both the new
 // file and the pre-grow file byte-for-byte (the relocation-aware commit engine handles the
 // moved internal pool). Factored out to keep the grow test within the complexity budget.
+// Grow a partial-last-chunk (1.5-chunk) source holding a file to 3 chunks and verify the file
+// reads back. The relocated pool lands mid-chunk (newIpBase's in-chunk offset). Apple-kernel clean
+// on macOS 15.7.4 (fsck_apfs OK for 1.5->2 / 1.5->3 / 1.5->2.5 + byte-exact read-back).
+static void certifyPartialSourceGrowReadsBack(const QDir& dir,
+                                              const PartitionApfsWriteOptions& options,
+                                              const QByteArray& payload) {
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t k192 = 192ULL * 1024ULL * 1024ULL;  // 1.5 chunks (partial last chunk)
+    constexpr uint64_t k384 = 384ULL * 1024ULL * 1024ULL;  // 3 chunks
+    const QString pbase = dir.filePath(QStringLiteral("mcs-partial.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = pbase,
+                                                            .target_container_bytes = k192,
+                                                            .block_size_bytes = kBlockSize,
+                                                            .volume_name = QStringLiteral("MCSP"),
+                                                            .options = options})
+                .ok);
+    const QString pfile = dir.filePath(QStringLiteral("mcs-partial-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = pbase,
+                                                            .written_image_path = pfile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    const QString pgrown = dir.filePath(QStringLiteral("mcs-partial-grown.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyResize({.source_image_path = pfile,
+                                                         .written_image_path = pgrown,
+                                                         .new_size_bytes = k384,
+                                                         .options = options})
+                 .ok,
+             "grow a partial-last-chunk source");
+    QFile pimg(pgrown);
+    QVERIFY(pimg.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(pimg.size()), k384);
+    pimg.close();
+    const auto pread = PartitionApfsFileSystemReader::readFileFromImage(
+        pgrown, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(pread.ok, qPrintable(pread.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(pread.data, payload);
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11273,12 +11313,10 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
 }
 
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
-    // Multi-chunk source grow: a container already spanning >= 2 chunks grows by adding chunks;
-    // the relocated internal pool lands in a HIGH chunk (not chunk 0), so chunk 0 and the pool's
-    // chunk both carry bitmaps (non-contiguous, via the explicit chunk-info builder). apfsck-clean
-    // across 2->3/2->4/2->8 targets and Apple-kernel clean (macOS 15.7.4); the pre-grow file reads
-    // back and the grown container is re-mutable. A source with data spilled past chunk 0 grows
-    // too (each spilled-chunk bitmap is relocated into the new pool).
+    // Multi-chunk source grow: a >= 2-chunk container grows by adding chunks; the relocated pool
+    // lands in a HIGH chunk (chunk 0 and the pool chunk both carry bitmaps, via the explicit
+    // chunk-info builder). apfsck- and Apple-kernel clean (macOS 15.7.4) across 2->3/2->4/2->8, the
+    // pre-grow file reads back, the grown container is re-mutable, and a data-spilled source grows.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -11338,6 +11376,8 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
         spillGrown, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
     QVERIFY2(spilledRead.ok, qPrintable(spilledRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(spilledRead.data, big);
+    // A partial-last-chunk SOURCE grows too (relocated pool lands mid-chunk); see the helper.
+    certifyPartialSourceGrowReadsBack(dir, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {

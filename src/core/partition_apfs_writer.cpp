@@ -3945,14 +3945,20 @@ QByteArray buildChunkInfoBlock(const ApfsChunkInfoParams& params, QStringList* b
     return block;
 }
 
-QByteArray buildChunkBitmapBlock(uint32_t blockSize, uint64_t reservedBlocks) {
-    // Raw allocation bitmap (no object header/checksum): one bit per block,
-    // marking the contiguous reserved/metadata prefix as used.
+// Raw allocation bitmap (no object header/checksum): one bit per block, marking the contiguous
+// run [startBlock, startBlock + runBlocks) as used. A relocated internal pool lands at the start
+// of its chunk when the source is chunk-aligned (startBlock 0), but mid-chunk when the source has
+// a partial last chunk (the pool sits at newIpBase's in-chunk offset).
+QByteArray buildChunkRangeBitmapBlock(uint32_t blockSize, uint64_t startBlock, uint64_t runBlocks) {
     QByteArray block(static_cast<qsizetype>(blockSize), '\0');
-    for (uint64_t index = 0; index < reservedBlocks; ++index) {
+    for (uint64_t index = startBlock; index < startBlock + runBlocks; ++index) {
         block[static_cast<qsizetype>(index / 8)] |= static_cast<char>(1 << (index % 8));
     }
     return block;
+}
+
+QByteArray buildChunkBitmapBlock(uint32_t blockSize, uint64_t reservedBlocks) {
+    return buildChunkRangeBitmapBlock(blockSize, 0, reservedBlocks);
 }
 
 struct ApfsCibAddrParams {
@@ -9464,11 +9470,9 @@ bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
                               uint64_t oldChunks,
                               QVector<ApfsSourceChunkState>* chunks,
                               QStringList* blockers) {
-    if (ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk != 0) {
-        blockers->append(QStringLiteral(
-            "APFS resize-grow: a multi-chunk source that ends mid-chunk is a later increment"));
-        return false;
-    }
+    // A partial last source chunk is fine: its cib entry (partial ci_block_count, all-free) is read
+    // like any other; the grow rebuilds that chunk full with the relocated pool at its in-chunk
+    // offset (layoutMultiChunkGrow's poolOffset), so no special-casing is needed here.
     QByteArray cib(ctx->geometry.blockSize, '\0');
     if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
         return false;
@@ -9510,9 +9514,12 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
     const uint32_t bs = ctx->geometry.blockSize;
     const uint64_t base = plan.newIpBase;
     const uint64_t poolChunk = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    // The pool starts at newIpBase; its offset within poolChunk is 0 for a chunk-aligned source but
+    // non-zero when the source ends in a partial chunk (the pool fills that chunk's grown tail).
+    const uint64_t poolOffset = base - poolChunk * kApfsSpacemanBlocksPerChunk;
     uint64_t nextSlot = base + 8;  // freePoolBase (first block past the cib rotation ring)
     const uint64_t poolBmp = nextSlot++;
-    out->writes.append({poolBmp, buildChunkBitmapBlock(bs, plan.newIpBlockCount)});
+    out->writes.append({poolBmp, buildChunkRangeBitmapBlock(bs, poolOffset, plan.newIpBlockCount)});
     out->ipUsedSet = {0, 1, 2, 3, poolBmp - base};
     for (uint64_t k = 0; k < plan.newChunkCount; ++k) {
         const uint64_t addr = k * kApfsSpacemanBlocksPerChunk;
@@ -9557,7 +9564,8 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
                                    ApfsMultiChunkGrownAllocator* out,
                                    QStringList* blockers) {
     const uint32_t bs = ctx->geometry.blockSize;
-    const uint64_t oldChunks = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
     QVector<ApfsSourceChunkState> src;
     if (!readMultiChunkGrowSource(ctx, oldChunks, &src, blockers)) {
         return false;
@@ -9603,7 +9611,10 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                                       ApfsInPlaceCheckpointResult* result,
                                       QStringList* blockers) {
     const uint64_t oldBlockCount = ctx->geometry.blockCount;
-    const uint64_t oldChunks = oldBlockCount / kApfsSpacemanBlocksPerChunk;
+    // Ceiling: a partial last chunk still counts, so the old pool is 3*(chunk_count+cib) and the
+    // source read covers the partial chunk.
+    const uint64_t oldChunks = (oldBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
     const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                kApfsSpacemanBlocksPerChunk;
     if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 ||
@@ -9749,6 +9760,14 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
                          uint64_t oldChunks,
                          QVector<ApfsSourceChunkState>* src,
                          QStringList* blockers) {
+    // A partial last SOURCE chunk in a shrink is a later increment (oldChunks here is a floor, so
+    // the per-chunk scan would miss the partial tail chunk). Grow handles a partial source; shrink
+    // does not yet.
+    if (ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk != 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: a source that ends mid-chunk is a later increment"));
+        return false;
+    }
     if (!validateShrinkTargetShape(ctx, newBlockCount, blockers) ||
         !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
