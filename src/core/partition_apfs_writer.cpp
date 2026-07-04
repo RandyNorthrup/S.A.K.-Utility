@@ -4565,11 +4565,12 @@ void applyChunkAddingSpacemanPatches(const ApfsCheckpointCommitContext& ctx, QBy
         writeLe32(object,
                   kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset,
                   static_cast<uint32_t>(ctx.newCibCount));
-        if (ctx.newCabCount != 0) {
-            writeLe32(object,
-                      kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset,
-                      static_cast<uint32_t>(ctx.newCabCount));
-        }
+        // Always write cab_count when cib_count changes: a CAB-tier resize sets it (2, 3, ...); a
+        // resize that drops below the CAB tier (e.g. a CAB->cib shrink) clears the stale value to 0
+        // so the device no longer claims cab-address blocks it no longer has.
+        writeLe32(object,
+                  kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset,
+                  static_cast<uint32_t>(ctx.newCabCount));
         const uint64_t ipBmSize = le32(*object, kApfsSpacemanIpBmSizeOffset);
         const uint64_t addrEntries = ctx.newCabCount != 0 ? ctx.newCabCount : ctx.newCibCount;
         writeLe32(object,
@@ -5128,12 +5129,17 @@ uint64_t commitSpacemanEmitSpan(const ApfsCheckpointAdvanceRequest& request,
                                   ? request.newIpBmSize
                                   : le32(liveSpaceman, kApfsSpacemanIpBmSizeOffset);
     // The inline device array length: cab_count entries on the CAB tier (> 507 cibs), else
-    // cib_count. Prefer this commit's new values; fall back to the live on-disk device fields.
-    const uint64_t liveCab =
-        le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset);
-    const uint64_t cabCount = request.newCabCount != 0 ? request.newCabCount : liveCab;
+    // cib_count. A resize sets newCibCount (>= 1 for the shrink, > 1 for the grow), and then the
+    // cab count is AUTHORITATIVE - newCabCount 0 genuinely means the target is cib-addressed (a
+    // CAB->cib shrink), not "unchanged". Only when this commit is not a resize (newCibCount 0) do
+    // the live on-disk device fields apply.
+    const bool resizing = request.newCibCount != 0;
+    const uint64_t cabCount =
+        resizing
+            ? request.newCabCount
+            : le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset);
     const uint64_t cibCount =
-        request.newCibCount != 0
+        resizing
             ? request.newCibCount
             : le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset);
     const uint64_t addrEntries = cabCount != 0 ? cabCount : cibCount;
@@ -10453,9 +10459,7 @@ bool chunk0RangeIsFree(ApfsFsCommitContext* ctx,
 // A sub-full-chunk target is allowed here (a multi-chunk source landing in a partial chunk 0);
 // validateShrinkScope then verifies chunk 0's truncated tail is free. A single-chunk source never
 // reaches here - commitInPlaceResizeShrink routes it to the in-chunk shrink path.
-bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
-                               uint64_t newBlockCount,
-                               QStringList* blockers) {
+bool validateShrinkTargetShape(uint64_t newBlockCount, QStringList* blockers) {
     // A partial last chunk is fine: buildChunkInfoBlock emits its ci_block_count as
     // (block_count - chunk_start), so the trailing chunk simply has fewer real blocks (no OOB
     // bitmap needed). chunk_count is the ceiling, matching ip_block_count = 3*(chunk_count+cib).
@@ -10467,16 +10471,13 @@ bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
         return false;
     }
     // Multi-CIB source and target are supported (cib 0 relocates to chunk 0, cibs 1..N-1 rebuilt
-    // immutable). The CAB tier (>507 cibs) addresses cibs through a cab-address array - its resize
-    // is a later increment. Below it the spaceman spans 1 or 2 blocks; a within-span shrink and a
-    // 2 <-> 1 span TRANSITION (the inline cib array crossing 4096, ~2.85 TiB) are both handled -
-    // the re-emit sizes the object to the target span and every spaceman reader is span-aware.
-    const uint64_t newCibs = cibCountForChunks(newChunks);
-    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab) {
-        blockers->append(
-            QStringLiteral("APFS resize-shrink: the CAB tier (> 507 cibs) is a later increment"));
-        return false;
-    }
+    // immutable). The CAB tier (>507 cibs) addresses cibs through a cab-address array: its
+    // multi-chunk relocated pool (> 1 chunk) routes through the cab-aware multi-chunk-pool builder,
+    // exactly like the multi-chunk-source grow. Crossing OUT of the CAB tier (target <= 507 cibs)
+    // switches the array back to cib entries. Below the CAB tier the spaceman spans 1 or 2 blocks;
+    // a within-span shrink and a 2 <-> 1 span TRANSITION are both handled - the re-emit sizes the
+    // object to the target span and every spaceman reader is span-aware. Only crossing INTO the CAB
+    // tier by shrinking is impossible (a shrink never grows cib_count), so no such guard is needed.
     return true;
 }
 
@@ -10543,7 +10544,7 @@ bool validateShrinkScope(ApfsFsCommitContext* ctx,
                          QStringList* blockers) {
     // A partial last SOURCE chunk is handled: buildShrinkPlan passes the ceiling oldChunks so the
     // per-chunk scan covers the partial tail and the old pool (3*(chunk_count+cib)) frees fully.
-    if (!validateShrinkTargetShape(ctx, newBlockCount, blockers) ||
+    if (!validateShrinkTargetShape(newBlockCount, blockers) ||
         !readMultiChunkGrowSource(ctx, oldChunks, src, blockers)) {
         return false;
     }
@@ -10731,9 +10732,11 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     plan->newChunkCount = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                           kApfsSpacemanBlocksPerChunk;
     plan->newXid = ctx->live.xid + 1;
-    plan->newIpBlockCount = 3 * (plan->newChunkCount + cibCountForChunks(plan->newChunkCount));
+    const uint64_t newCibs = cibCountForChunks(plan->newChunkCount);
+    const uint64_t newCabs = cabCountForCibs(newCibs);
+    plan->newIpBlockCount = 3 * (plan->newChunkCount + newCibs + newCabs);
     plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
+    plan->oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks) + ctx->layout.cabCount);
     plan->survivingPoolChunk =
         survivingPoolChunkIndex(plan->oldIpBase, newBlockCount, plan->newChunkCount);
     const uint64_t poolChunk = plan->oldIpBase == 0 ? 0
@@ -10753,9 +10756,9 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
     // ip_bm_size 2 -> 1 transition (a shrink crossing ~1.35 TiB down): the target's smaller pool
     // fits one chunk and the 32-slot ring shrinks to 16. The old pool fills chunk 0 (it spans low
     // chunks), so the new pool + fresh 16-block ring relocate to a free surviving chunk run.
-    const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
-    const uint64_t newIpBmSize =
-        ipBitmapSizeBlocks(plan->newChunkCount, cibCountForChunks(plan->newChunkCount), 0);
+    const uint64_t oldIpBmSize =
+        ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, ctx->layout.cabCount);
+    const uint64_t newIpBmSize = ipBitmapSizeBlocks(plan->newChunkCount, newCibs, newCabs);
     if (newIpBmSize != oldIpBmSize) {
         plan->newIpBmSize = newIpBmSize;
     }
@@ -11047,33 +11050,37 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     const int64_t freeDelta = shrinkFreeDelta(
         plan, newBlockCount, oldBlockCount, mainFq.reclaimed.size(), poolInRemovedTail);
     const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
-    if (!advanceCheckpoint({.image = ctx->image,
-                            .geometry = ctx->geometry,
-                            .nxsb = ctx->nxsb,
-                            .live = ctx->live,
-                            .newContainerOmap = 0,
-                            .spacemanFreeDelta = freeDelta,
-                            .nextOidAdvance = 0,
-                            .newCibAddr = liveCib,
-                            .cibCount = alloc.cibCount,
-                            .ipSlotStride = 2,
-                            .ipBitmapUsage = ipUsage,
-                            .mainFqEntries = mainFq.entries,
-                            .blockCountDelta = static_cast<int64_t>(newBlockCount - oldBlockCount),
-                            .ipUsedSet = ipUsedSet,
-                            .cibArrayRepoints = alloc.cibArrayRepoints,
-                            .newChunkCount = plan.newChunkCount,
-                            .newIpBlockCount = plan.newIpBlockCount,
-                            .newIpBase = plan.newIpBase,
-                            // Always write sm_cib_count: a multi-CIB source shrinking to a single-
-                            // CIB target must drop it to 1 (a no-op when it is already 1).
-                            .newCibCount = alloc.cibCount,
-                            .newIpBmBase = plan.newIpBmBase,
-                            .ipBmBlocks = plan.ipBmBlocks,
-                            .newIpBmSize = plan.newIpBmSize,
-                            .explicitIpFqEntries = ipFq},
-                           result,
-                           blockers)) {
+    if (!advanceCheckpoint(
+            {.image = ctx->image,
+             .geometry = ctx->geometry,
+             .nxsb = ctx->nxsb,
+             .live = ctx->live,
+             .newContainerOmap = 0,
+             .spacemanFreeDelta = freeDelta,
+             .nextOidAdvance = 0,
+             .newCibAddr = alloc.cabCount > 0 ? alloc.liveCab0 : liveCib,
+             .cibCount = alloc.cibCount,
+             .ipSlotStride = 2,
+             .ipBitmapUsage = ipUsage,
+             .mainFqEntries = mainFq.entries,
+             .blockCountDelta = static_cast<int64_t>(newBlockCount - oldBlockCount),
+             .ipUsedSet = ipUsedSet,
+             .cibArrayRepoints = alloc.cibArrayRepoints,
+             .newChunkCount = plan.newChunkCount,
+             .newIpBlockCount = plan.newIpBlockCount,
+             .newIpBase = plan.newIpBase,
+             // Always write sm_cib_count: a multi-CIB source shrinking to a single-
+             // CIB target must drop it to 1 (a no-op when it is already 1).
+             .newCibCount = alloc.cibCount,
+             // CAB tier: set cab_count and address the array with cab entries (0 when
+             // the target dropped below the CAB tier - the array reverts to cibs).
+             .newCabCount = alloc.cabCount,
+             .newIpBmBase = plan.newIpBmBase,
+             .ipBmBlocks = plan.ipBmBlocks,
+             .newIpBmSize = plan.newIpBmSize,
+             .explicitIpFqEntries = ipFq},
+            result,
+            blockers)) {
         return false;
     }
     auto* fileDevice = qobject_cast<QFileDevice*>(ctx->image);
