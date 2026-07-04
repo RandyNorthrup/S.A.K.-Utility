@@ -11390,6 +11390,11 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // Grow-then-shrink-back: a grown container whose relocated pool sits in a removed high chunk
     // shrinks; a pool that would remain in a surviving chunk fails closed.
     certifyGrowThenShrinkBack(dir, withFile, k256, options, payload);
+    // Partial last chunk: shrinking to a non-chunk-multiple size (192 MiB = 1.5 chunks) drops the
+    // high chunks and leaves a partial trailing chunk (ci_block_count = block_count - chunk_start,
+    // no OOB bitmap). Apple-kernel clean: fsck_apfs OK + kernel-mounted at 201326592 bytes on
+    // macOS 15.7.4 (both 3->1.5 drop-and-partial and 2->1.5 last-chunk-only truncation).
+    certifyShrinkReadsBack(dir, withFile, 192ULL * 1024ULL * 1024ULL, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

@@ -9721,11 +9721,14 @@ bool chunkHoldsOnlyPool(ApfsFsCommitContext* ctx,
 bool validateShrinkTargetShape(const ApfsFsCommitContext* ctx,
                                uint64_t newBlockCount,
                                QStringList* blockers) {
-    const uint64_t newChunks = newBlockCount / kApfsSpacemanBlocksPerChunk;
-    if (newBlockCount % kApfsSpacemanBlocksPerChunk != 0 || newChunks < 1) {
-        blockers->append(QStringLiteral(
-            "APFS resize-shrink: the target must be a multiple of the chunk size and at least one "
-            "chunk (a partial last chunk is a later increment)"));
+    // A partial last chunk is fine: buildChunkInfoBlock emits its ci_block_count as
+    // (block_count - chunk_start), so the trailing chunk simply has fewer real blocks (no OOB
+    // bitmap needed). chunk_count is the ceiling, matching ip_block_count = 3*(chunk_count+cib).
+    const uint64_t newChunks = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    if (newChunks < 1) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: the target must be at least one chunk"));
         return false;
     }
     if (ctx->layout.cibCount != 1 || ctx->layout.cabCount != 0 ||
@@ -9841,7 +9844,10 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
         return false;
     }
     plan->newBlockCount = newBlockCount;
-    plan->newChunkCount = newBlockCount / kApfsSpacemanBlocksPerChunk;
+    // Ceiling: a partial last chunk still counts as a chunk (its cib entry has a partial
+    // ci_block_count), so ip_block_count = 3*(chunk_count+cib) stays correct.
+    plan->newChunkCount = (newBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                          kApfsSpacemanBlocksPerChunk;
     plan->newXid = ctx->live.xid + 1;
     plan->newIpBlockCount = 3 * (plan->newChunkCount + 1);
     plan->oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
