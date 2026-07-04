@@ -4406,6 +4406,12 @@ struct ApfsCheckpointCommitContext {
     // old one. ipBmBlocks = 16 * ip_bm_size (the whole ring).
     uint64_t newIpBmBase{0};
     uint64_t ipBmBlocks{0};
+    // Non-zero when a resize crosses the ~1.35 TiB boundary and ip_bm_size changes (1 <-> 2): the
+    // spaceman's inline arrays (bitmap-xid / bitmap-addr / free-next ring / cib-address) all shift
+    // to the new ip_bm_size layout. applyIpBmSizeTransition re-lays them before the cib re-point
+    // and the relocated ring write. 0 = no transition (every resize staying on one side of the
+    // boundary).
+    uint64_t newIpBmSize{0};
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
@@ -4506,6 +4512,26 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
     return true;
 }
 
+// A7 (A-g) ip_bm_size transition (resize crossing ~1.35 TiB, ip_bm_size 1 <-> 2): re-lay the
+// spaceman's inline arrays to the new ip_bm_size. Each of the bitmap-xid, bitmap-addr, free-next
+// ring and cib-address arrays is scaled by ip_bm_size, so the cib array shifts to a new offset.
+// This sets ip_bm_size / ip_bm_block_count and the internal-offset table (0x148 bitmap-addr, 0x14C
+// free-next); the [2520, cib_array) prefix is then rewritten wholesale by relocateIpBitmapRing and
+// the cib array by applyChunkAddingSpacemanPatches' re-point (every immutable cib is rebuilt in the
+// relocated pool this commit, so entry 0..N-1 are all written fresh at the new offset). Ordered
+// FIRST so the later steps read the new ip_bm_size and target the new layout.
+void applyIpBmSizeTransition(const ApfsCheckpointCommitContext& ctx, QByteArray* object) {
+    if (ctx.newIpBmSize == 0) {
+        return;
+    }
+    writeLe32(object, kApfsSpacemanIpBmSizeOffset, static_cast<uint32_t>(ctx.newIpBmSize));
+    writeLe32(object,
+              kApfsSpacemanIpBmBlockCountOffset,
+              static_cast<uint32_t>(ctx.newIpBmSize * kApfsSpacemanIpBmTxMultiplier));
+    writeLe32(object, 0x148, static_cast<uint32_t>(spacemanBmAddrOffset(ctx.newIpBmSize)));
+    writeLe32(object, 0x14C, static_cast<uint32_t>(spacemanFreeNextOffset(ctx.newIpBmSize)));
+}
+
 // A7 (A-g) chunk-adding grow: patch the re-emitted spaceman's main-device chunk count and
 // relocated internal-pool geometry (0 = leave unchanged, every non-grow commit). Factored out
 // so applySpacemanCommitMutations stays within the complexity budget.
@@ -4578,6 +4604,7 @@ bool applySpacemanCommitMutations(const ApfsCheckpointCommitContext& ctx,
         // to be recomputed for the new size (fsck checks it).
         writeLe16(object, kApfsSpacemanFqMainLimitOffset, mainFreeQueueNodeLimit(grownBlockCount));
     }
+    applyIpBmSizeTransition(ctx, object);
     applyChunkAddingSpacemanPatches(ctx, object);
     if (ctx.newCibAddr != 0) {
         // Only group slot 0 rotates, so just re-point spaceman address-array entry 0
@@ -4895,6 +4922,9 @@ struct ApfsCheckpointAdvanceRequest {
     // A7 (A-g) shrink: relocate the ip-bitmap ring to a fresh clean region (0 = keep in place).
     uint64_t newIpBmBase{0};
     uint64_t ipBmBlocks{0};
+    // A7 (A-g) ip_bm_size transition (resize crossing ~1.35 TiB): the new ip_bm_size (0 = no
+    // transition). Re-lays the spaceman's inline arrays to the new layout before the ring write.
+    uint64_t newIpBmSize{0};
     // A7 (A-g) chunk-adding grow: the IP free-queue's single relocated ghost record
     // {oldXid, newIpBase, ipSlotStride}. When non-empty it REPLACES buildIpFreeQueueWindow
     // (the grow does not rotate a slot; it re-homes the whole pool, so the two-deep rolling
@@ -5041,7 +5071,8 @@ ApfsCheckpointCommitContext makeCheckpointCommitContext(const ApfsCheckpointAdva
             .newIpBase = request.newIpBase,
             .newCibCount = request.newCibCount,
             .newIpBmBase = request.newIpBmBase,
-            .ipBmBlocks = request.ipBmBlocks};
+            .ipBmBlocks = request.ipBmBlocks,
+            .newIpBmSize = request.newIpBmSize};
 }
 
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
@@ -9242,6 +9273,11 @@ struct ApfsChunkAddingGrowPlan {
     uint64_t newIpBmBase{0};
     uint64_t oldIpBmBase{0};
     uint64_t ipBmBlocks{0};  // 16 * ip_bm_size (the whole ring)
+    // Non-zero when a grow crosses ~1.35 TiB and ip_bm_size goes 1 -> 2: the target ip_bm_size. The
+    // ring relocates to a fresh 32-block region ([newIpBmBase, newIpBase)) and the spaceman's
+    // inline arrays re-lay to the new layout. 0 = no transition (the pool/ring stay at one
+    // ip_bm_size).
+    uint64_t newIpBmSize{0};
     // A shrink whose superseded pool sits in a SURVIVING high chunk (a grown container shrunk to a
     // size that keeps the pool's chunk): 0 = none, else that chunk index. The new pool still
     // relocates to chunk 0, but the surviving chunk keeps a bitmap marking the old pool used (it
@@ -9380,25 +9416,26 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
     const uint32_t bs = ctx->geometry.blockSize;
     const uint64_t base = plan.newIpBase;
     const uint64_t poolEnd = base + plan.newIpBlockCount;
-    // The pool's first chunk is derived from where it is placed (newIpBase), not the device end: a
-    // grow pins it at the old device end (base == poolChunk*32768, byte-identical to deriving from
-    // blockCount) while a multi-chunk-pool shrink relocates it into a free surviving chunk run.
-    const uint64_t poolChunk = base / kApfsSpacemanBlocksPerChunk;
-    // The relocated pool starts at newIpBase and may span several chunks (ip_bm_size > 1). For each
-    // chunk it touches, build a bitmap marking that chunk's pool portion used; poolChunkBmp maps
-    // the chunk index to its slot. The first pool chunk's offset is 0 for a chunk-aligned source,
-    // or the partial-source tail offset (single-chunk pool only - the shape validator forbids a
-    // multi-chunk pool from a partial source).
-    const uint64_t poolSpan = (base + plan.newIpBlockCount -
-                               poolChunk * kApfsSpacemanBlocksPerChunk +
-                               kApfsSpacemanBlocksPerChunk - 1) /
-                              kApfsSpacemanBlocksPerChunk;
+    // Mark the whole IP footprint [usedBase, poolEnd) used. A transition relocates the ring too
+    // (newIpBmBase set), so the footprint starts one ring below the pool; else at the pool base.
+    // The pool-relative slot layout stays relative to newIpBase (the ring is outside the
+    // ip-bitmap).
+    const uint64_t usedBase = plan.newIpBmBase != 0 ? plan.newIpBmBase : base;
+    // First footprint chunk = where it is placed (a grow pins it at the chunk-aligned old device
+    // end; a multi-chunk-pool shrink puts it in a free surviving chunk run). It may span several
+    // chunks (ip_bm_size > 1), each bitmapped for its portion; the first chunk's offset is 0
+    // (chunk- aligned source) or a partial-source tail (single-chunk pool only, per the shape
+    // validator).
+    const uint64_t poolChunk = usedBase / kApfsSpacemanBlocksPerChunk;
+    const uint64_t poolSpan =
+        (poolEnd - poolChunk * kApfsSpacemanBlocksPerChunk + kApfsSpacemanBlocksPerChunk - 1) /
+        kApfsSpacemanBlocksPerChunk;
     uint64_t nextSlot = base + 8;  // freePoolBase (first block past the cib rotation ring)
     QHash<uint64_t, uint64_t> poolChunkBmp;
     out->ipUsedSet = {0, 1, 2, 3};
     for (uint64_t i = 0; i < poolSpan; ++i) {
         const uint64_t chunkStart = (poolChunk + i) * kApfsSpacemanBlocksPerChunk;
-        const uint64_t lo = qMax(base, chunkStart);
+        const uint64_t lo = qMax(usedBase, chunkStart);
         const uint64_t hi = qMin(poolEnd, chunkStart + kApfsSpacemanBlocksPerChunk);
         const uint64_t slot = nextSlot++;
         out->writes.append({slot, buildChunkRangeBitmapBlock(bs, lo - chunkStart, hi - lo)});
@@ -9416,7 +9453,7 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
             e.xid = plan.newXid;
         } else if (poolChunkBmp.contains(k)) {
             const uint64_t poolInChunk = qMin(poolEnd, addr + kApfsSpacemanBlocksPerChunk) -
-                                         qMax(base, addr);
+                                         qMax(usedBase, addr);
             e.bitmapAddr = poolChunkBmp.value(k);
             e.freeCount = blocks - static_cast<uint32_t>(poolInChunk);
             e.xid = plan.newXid;
@@ -9717,20 +9754,43 @@ bool buildGrownAllocatorSubtree(ApfsFsCommitContext* ctx,
 // rollback window and append the freed old internal-pool region (relocated out this commit)
 // as a fresh run. The old pool blocks stay marked used until they age, so a still-in-ring
 // pre-grow checkpoint keeps them (crash-safe), exactly as an old fs-tree free does.
-ApfsMainFqAdvance growMainFreeQueueAfterRelocate(ApfsFsCommitContext* ctx,
-                                                 uint64_t oldIpBase,
-                                                 uint64_t oldIpBlockCount,
-                                                 uint64_t newXid) {
+// Advance the main free-queue, marking `freed` pending-free onto the rolling window. The blocks
+// stay marked used in their (low) chunk bitmaps and age out - the standard relocate-then-free COW
+// pattern.
+ApfsMainFqAdvance advanceMainFqWithFreed(ApfsFsCommitContext* ctx,
+                                         const QVector<uint64_t>& freed,
+                                         uint64_t newXid) {
     QStringList ignore;
     const uint64_t mainPaddr = findEphemeralPaddrByOid(
         ctx->image, ctx->geometry, ctx->live, kApfsFormatFqMainTreeOid, &ignore);
     const QVector<ApfsFreeQueueEntry> live =
         parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, mainPaddr, &ignore);
-    QVector<uint64_t> freed;
-    for (uint64_t block = oldIpBase; block < oldIpBase + oldIpBlockCount; ++block) {
-        freed.append(block);
-    }
     return advanceMainFreeQueue(live, freed, newXid, kMainFqRollbackWindow);
+}
+
+// The freed-block list a pool relocation puts on the main free-queue: the old pool, plus
+// (transition only, oldRingBlocks > 0) the old ip-bitmap ring when the transition relocates it too.
+QVector<uint64_t> relocateFreedBlocks(uint64_t oldIpBase,
+                                      uint64_t oldIpBlockCount,
+                                      uint64_t oldRingBase,
+                                      uint64_t oldRingBlocks) {
+    QVector<uint64_t> freed;
+    for (uint64_t b = oldIpBase; b < oldIpBase + oldIpBlockCount; ++b) {
+        freed.append(b);
+    }
+    for (uint64_t b = oldRingBase; b < oldRingBase + oldRingBlocks; ++b) {
+        freed.append(b);
+    }
+    return freed;
+}
+
+ApfsMainFqAdvance growMainFreeQueueAfterRelocate(ApfsFsCommitContext* ctx,
+                                                 uint64_t oldIpBase,
+                                                 uint64_t oldIpBlockCount,
+                                                 uint64_t newXid) {
+    return advanceMainFqWithFreed(ctx,
+                                  relocateFreedBlocks(oldIpBase, oldIpBlockCount, 0, 0),
+                                  newXid);
 }
 
 bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
@@ -9958,10 +10018,12 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
             "are later increments"));
         return 0;
     }
-    if (newIpBmSize != oldIpBmSize) {
+    if (newIpBmSize != oldIpBmSize && !(oldIpBmSize == 1 && newIpBmSize == 2)) {
+        // The only supported ip_bm_size transition is 1 -> 2 (a grow crossing ~1.35 TiB); higher
+        // transitions (>2.9 TiB) coincide with a spaceman spilling past one block, already rejected
+        // above. A 1 -> 2 transition relocates the 16-slot ring to a fresh 32-block region.
         blockers->append(QStringLiteral(
-            "APFS resize-grow: an ip-bitmap ring resize (ip_bm_size transition) is a later "
-            "increment"));
+            "APFS resize-grow: an ip-bitmap ring resize past ip_bm_size 2 is a later increment"));
         return 0;
     }
     const uint64_t newIpBlockCount = 3 * (newChunks + newCibs);
@@ -9979,6 +10041,53 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
         return 0;
     }
     return newCibs;
+}
+
+// Forward declaration: the live spaceman reader is defined further down with the shrink helpers,
+// but the transition-grow config (above the shrink block) needs the source ip_bm_base it exposes.
+QByteArray readLiveSpacemanBlock(QIODevice* image,
+                                 const ApfsRepairGeometry& geometry,
+                                 const QByteArray& nxsb,
+                                 QStringList* blockers);
+
+// Configure a multi-chunk-source grow plan for the ip_bm_size 1 -> 2 transition (a grow crossing
+// ~1.35 TiB). The pool relocates to the high grow region with a fresh 32-block ring contiguous just
+// below it (mirroring format's ip_bm_base < ip_base): newIpBmBase = the grow-region start,
+// newIpBase = one ring past it. ipBmBlocks holds the OLD 16-block ring (freed onto the main fq).
+// No-op unless the target ip_bm_size differs from the source's.
+void configureGrowTransition(ApfsFsCommitContext* ctx,
+                             uint64_t newIpBmSize,
+                             ApfsChunkAddingGrowPlan* plan,
+                             QStringList* blockers) {
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
+    if (newIpBmSize == oldIpBmSize) {
+        return;
+    }
+    const QByteArray spaceman =
+        readLiveSpacemanBlock(ctx->image, ctx->geometry, ctx->nxsb, blockers);
+    plan->newIpBmSize = newIpBmSize;
+    plan->oldIpBmBase = spaceman.isEmpty() ? 0 : le64(spaceman, kApfsSpacemanIpBmBaseOffset);
+    plan->ipBmBlocks = oldIpBmSize *
+                       kApfsSpacemanIpBmTxMultiplier;  // old ring freed to the main fq
+    plan->newIpBmBase = plan->newIpBase;               // ring at the grow-region start
+    plan->newIpBase = plan->newIpBmBase + newIpBmSize * kApfsSpacemanIpBmTxMultiplier;
+}
+
+// The main-device free-count delta for a multi-chunk-source grow: grown space minus the new pool
+// (and, on a transition, the new 32-block ring - the old ring/pool ride the main fq) plus the aged
+// reclaimed blocks. The transition ring term is 0 on a non-transition grow (byte-identical).
+int64_t multiChunkGrowFreeDelta(const ApfsChunkAddingGrowPlan& plan,
+                                uint64_t oldBlockCount,
+                                uint64_t reclaimedCount) {
+    const int64_t newRingBlocks =
+        plan.newIpBmBase != 0
+            ? static_cast<int64_t>(plan.newIpBmSize * kApfsSpacemanIpBmTxMultiplier)
+            : 0;
+    return static_cast<int64_t>(plan.newBlockCount - oldBlockCount) -
+           static_cast<int64_t>(plan.newIpBlockCount) + static_cast<int64_t>(reclaimedCount) -
+           newRingBlocks;
 }
 
 bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
@@ -10009,15 +10118,17 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
             QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
         return false;
     }
-    const ApfsMainFqAdvance mainFq =
-        growMainFreeQueueAfterRelocate(ctx, plan.oldIpBase, plan.oldIpBlockCount, plan.newXid);
+    configureGrowTransition(ctx, ipBitmapSizeBlocks(newChunks, newCibs, 0), &plan, blockers);
+    const ApfsMainFqAdvance mainFq = advanceMainFqWithFreed(
+        ctx,
+        relocateFreedBlocks(
+            plan.oldIpBase, plan.oldIpBlockCount, plan.oldIpBmBase, plan.ipBmBlocks),
+        plan.newXid);
     ApfsMultiChunkGrownAllocator alloc;
     if (!buildMultiChunkGrownAllocator(ctx, plan, mainFq.reclaimed, &alloc, blockers)) {
         return false;
     }
-    const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
-                              static_cast<int64_t>(plan.newIpBlockCount) +
-                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t freeDelta = multiChunkGrowFreeDelta(plan, oldBlockCount, mainFq.reclaimed.size());
     const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
     return advanceCheckpoint({.image = ctx->image,
                               .geometry = ctx->geometry,
@@ -10039,6 +10150,9 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                               .newIpBlockCount = plan.newIpBlockCount,
                               .newIpBase = plan.newIpBase,
                               .newCibCount = newCibs > 1 ? newCibs : 0,
+                              .newIpBmBase = plan.newIpBmBase,
+                              .ipBmBlocks = plan.ipBmBlocks,
+                              .newIpBmSize = plan.newIpBmSize,
                               .explicitIpFqEntries = ipFq},
                              result,
                              blockers);

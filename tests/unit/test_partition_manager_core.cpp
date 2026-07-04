@@ -11336,8 +11336,10 @@ static void certifySurvivingPoolMultiCibShrink(const QDir& dir,
 // 11000-chunk source (88 cibs) grows to 11100 chunks (89 cibs); the relocated ~33k-block pool
 // straddles two high chunks, each getting its own bitmap. Then it SHRINKS 11000 -> 10900 (both
 // ip_bm_size 2): the pool relocates to a free surviving chunk run while the old pool rides the main
-// fq. No ip-bitmap-ring resize (both ip_bm_size 2). apfsck-clean (WSL apfsprogs); the 1.35 TiB
-// images are sparse. A size TRANSITION (ip_bm_size 1 -> 2) still fails closed.
+// fq. No ip-bitmap-ring resize (both ip_bm_size 2). Then a size TRANSITION (ip_bm_size 1 -> 2, a
+// grow crossing ~1.35 TiB) relocates the 16-slot ring to a fresh 32-block region and re-lays the
+// spaceman inline arrays, with a file surviving byte-exact. apfsck-clean; the 1.35 TiB images are
+// sparse.
 static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteOptions& options) {
     constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
     const QString base = dir.filePath(QStringLiteral("ipbm-base.apfs"));
@@ -11373,20 +11375,40 @@ static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteO
     QVERIFY(shrImg.open(QIODevice::ReadOnly));
     QCOMPARE(static_cast<uint64_t>(shrImg.size()), 10'900 * kChunk);
     shrImg.close();
-    // A size TRANSITION (ip_bm_size 1 -> 2, growing the 16-slot ring) is a later increment.
-    const QString smallBase = dir.filePath(QStringLiteral("ipbm-small.apfs"));
-    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = smallBase,
-                                                            .target_container_bytes = 200 * kChunk,
-                                                            .block_size_bytes = 4096,
-                                                            .volume_name = QStringLiteral("IPBS"),
-                                                            .options = options})
-                .ok);
-    QVERIFY(!PartitionApfsWriter::commitImageOnlyResize(
-                 {.source_image_path = smallBase,
-                  .written_image_path = dir.filePath(QStringLiteral("ipbm-trans.apfs")),
-                  .new_size_bytes = 11'100 * kChunk,
-                  .options = options})
-                 .ok);
+    // ip_bm_size 1 -> 2 TRANSITION (a grow crossing ~1.35 TiB): a 10800-chunk source
+    // (ip_block_count 32658, ip_bm_size 1) carrying a file grows to 11000 chunks (33264, ip_bm_size
+    // 2). The 16-slot ring relocates to a fresh 32-block region contiguous below the high relocated
+    // pool, and the spaceman's inline arrays (bitmap-xid / bitmap-addr / free-next ring /
+    // cib-address) re-lay to the ip_bm_size-2 layout. apfsck-clean (WSL apfsprogs); the file reads
+    // back byte-exact.
+    const QByteArray trPayload = QByteArray("ipbm-transition-").repeated(4000);
+    const QString trBase = dir.filePath(QStringLiteral("ipbm-tr-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = trBase,
+                                                        .target_container_bytes = 10'800 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("IPBT"),
+                                                        .options = options})
+            .ok);
+    const QString trFile = dir.filePath(QStringLiteral("ipbm-tr-file.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = trBase,
+                                                             .written_image_path = trFile,
+                                                             .file_name = QStringLiteral("tr.bin"),
+                                                             .file_data = trPayload,
+                                                             .options = options})
+                 .ok,
+             "transition source file insert");
+    const QString trGrown = dir.filePath(QStringLiteral("ipbm-tr-grown.apfs"));
+    const auto trCommit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = trFile,
+                                                    .written_image_path = trGrown,
+                                                    .new_size_bytes = 11'000 * kChunk,
+                                                    .options = options});
+    QVERIFY2(trCommit.ok, qPrintable(trCommit.blockers.join(QStringLiteral("; "))));
+    const auto trRead = PartitionApfsFileSystemReader::readFileFromImage(
+        trGrown, QStringLiteral("/tr.bin"), static_cast<uint64_t>(trPayload.size()));
+    QVERIFY2(trRead.ok, qPrintable(trRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(trRead.data, trPayload);
 }
 
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
