@@ -4515,11 +4515,13 @@ bool advanceIpBitmapRing(QByteArray* spaceman,
 // A7 (A-g) ip_bm_size transition (resize crossing ~1.35 TiB, ip_bm_size 1 <-> 2): re-lay the
 // spaceman's inline arrays to the new ip_bm_size. Each of the bitmap-xid, bitmap-addr, free-next
 // ring and cib-address arrays is scaled by ip_bm_size, so the cib array shifts to a new offset.
-// This sets ip_bm_size / ip_bm_block_count and the internal-offset table (0x148 bitmap-addr, 0x14C
-// free-next); the [2520, cib_array) prefix is then rewritten wholesale by relocateIpBitmapRing and
-// the cib array by applyChunkAddingSpacemanPatches' re-point (every immutable cib is rebuilt in the
-// relocated pool this commit, so entry 0..N-1 are all written fresh at the new offset). Ordered
-// FIRST so the later steps read the new ip_bm_size and target the new layout.
+// This sets ip_bm_size / ip_bm_block_count, the main device's sm_addr_offset (apfsck reads the cib
+// array from THIS field, so it must move with the array), and the internal-offset table (0x148
+// bitmap-addr, 0x14C free-next); the [2520, cib_array) prefix is then rewritten wholesale by
+// relocateIpBitmapRing and the cib array by applyChunkAddingSpacemanPatches' re-point (every
+// immutable cib is rebuilt in the relocated pool this commit, so entry 0..N-1 are all written fresh
+// at the new offset). Ordered FIRST so the later steps read the new ip_bm_size and target the new
+// layout. applyChunkAddingSpacemanPatches then sets the tier2 device's addr offset past this array.
 void applyIpBmSizeTransition(const ApfsCheckpointCommitContext& ctx, QByteArray* object) {
     if (ctx.newIpBmSize == 0) {
         return;
@@ -4528,6 +4530,9 @@ void applyIpBmSizeTransition(const ApfsCheckpointCommitContext& ctx, QByteArray*
     writeLe32(object,
               kApfsSpacemanIpBmBlockCountOffset,
               static_cast<uint32_t>(ctx.newIpBmSize * kApfsSpacemanIpBmTxMultiplier));
+    writeLe32(object,
+              kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset,
+              static_cast<uint32_t>(spacemanCibArrayOffset(ctx.newIpBmSize)));
     writeLe32(object, 0x148, static_cast<uint32_t>(spacemanBmAddrOffset(ctx.newIpBmSize)));
     writeLe32(object, 0x14C, static_cast<uint32_t>(spacemanFreeNextOffset(ctx.newIpBmSize)));
 }
@@ -10426,20 +10431,23 @@ uint64_t findSurvivingFreeChunkRun(const QVector<ApfsSourceChunkState>& src,
     return 0;
 }
 
-// Place a relocated internal pool that exceeds one chunk (ip_bm_size > 1 shrink). The old pool sits
-// in surviving low chunks (it rides the main free-queue, exactly like a grow's chunk-0 pool), so
-// the new pool cannot share chunk 0; relocate it to a chunk-aligned run of all-free surviving
-// chunks. A ring relocation (stale high ring bit) combined with a multi-chunk pool is a further
-// increment.
+// Place a relocated internal pool the old pool blocks from chunk 0: either the pool exceeds one
+// chunk (ip_bm_size > 1 shrink) or a 2 -> 1 transition whose old multi-chunk pool fills chunk 0.
+// The old pool sits in surviving low chunks (it rides the main free-queue, like a grow's chunk-0
+// pool), so the new footprint relocates to a chunk-aligned run of all-free surviving chunks. On a
+// transition the footprint is the fresh 16-block ring (newIpBmBase) then the pool (newIpBase);
+// otherwise just the pool. A stale-high-ring-bit relocation combined with a same-size multi-chunk
+// pool is a further increment (never arises for a formatted source - its used-set is all low
+// indices).
 bool placeMultiChunkShrinkPool(ApfsFsCommitContext* ctx,
                                ApfsChunkAddingGrowPlan* plan,
                                bool relocateRing,
                                QStringList* blockers) {
-    if (relocateRing) {
+    const bool transition = plan->newIpBmSize != 0;
+    if (relocateRing && !transition) {
         blockers->append(
             QStringLiteral("APFS resize-shrink: an ip-bitmap ring relocation with a multi-chunk "
-                           "internal pool is a "
-                           "later increment"));
+                           "internal pool is a later increment"));
         return false;
     }
     const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
@@ -10448,17 +10456,21 @@ bool placeMultiChunkShrinkPool(ApfsFsCommitContext* ctx,
     if (!readMultiChunkGrowSource(ctx, oldChunks, &src, blockers)) {
         return false;
     }
-    const uint64_t poolSpan = (plan->newIpBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+    const uint64_t newRing = transition ? plan->newIpBmSize * kApfsSpacemanIpBmTxMultiplier : 0;
+    const uint64_t footprint = newRing + plan->newIpBlockCount;
+    const uint64_t poolSpan = (footprint + kApfsSpacemanBlocksPerChunk - 1) /
                               kApfsSpacemanBlocksPerChunk;
     const uint64_t poolChunk = findSurvivingFreeChunkRun(src, poolSpan, plan->newChunkCount);
     if (poolChunk == 0) {
         blockers->append(QStringLiteral(
-            "APFS resize-shrink: no free surviving chunk run for the relocated multi-chunk pool"));
+            "APFS resize-shrink: no free surviving chunk run for the relocated internal pool"));
         return false;
     }
-    plan->newIpBmBase =
-        0;  // the ring stays in place (advanceIpBitmapRing rewrites its active slot)
-    plan->newIpBase = poolChunk * kApfsSpacemanBlocksPerChunk;
+    // Transition: fresh ring at the run start, pool one ring past it (advanceCheckpoint relocates
+    // the ring). Non-transition: ring stays in place (advanceIpBitmapRing rewrites its active
+    // slot).
+    plan->newIpBmBase = transition ? poolChunk * kApfsSpacemanBlocksPerChunk : 0;
+    plan->newIpBase = poolChunk * kApfsSpacemanBlocksPerChunk + newRing;
     return true;
 }
 
@@ -10482,9 +10494,10 @@ bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
     plan->ipBmBlocks = le32(spaceman, kApfsSpacemanIpBmBlockCountOffset);
     const bool relocateRing = ipBitmapRingHasBitAtOrAbove(
         ctx->image, ctx->geometry, plan->oldIpBmBase, plan->ipBmBlocks, plan->newIpBlockCount);
-    if (plan->newIpBlockCount > kApfsSpacemanBlocksPerChunk) {
-        // The pool no longer fits one chunk: relocate it to a free surviving chunk run instead of a
-        // chunk-0 run. buildShrinkAllocator then builds it with the multi-chunk-pool allocator.
+    if (plan->newIpBlockCount > kApfsSpacemanBlocksPerChunk || plan->newIpBmSize != 0) {
+        // The old pool cannot share chunk 0 - either the target pool exceeds one chunk (ip_bm_size
+        // > 1) or a 2 -> 1 transition whose old multi-chunk pool fills chunk 0. Relocate to a free
+        // surviving chunk run; buildShrinkAllocator then uses the multi-chunk-pool allocator.
         return placeMultiChunkShrinkPool(ctx, plan, relocateRing, blockers);
     }
     const uint64_t reserve = relocateRing ? plan->ipBmBlocks + plan->newIpBlockCount
@@ -10543,6 +10556,15 @@ bool buildShrinkPlan(ApfsFsCommitContext* ctx,
             "APFS resize-shrink: surviving user data plus a surviving high-chunk pool is a later "
             "increment"));
         return false;
+    }
+    // ip_bm_size 2 -> 1 transition (a shrink crossing ~1.35 TiB down): the target's smaller pool
+    // fits one chunk and the 32-slot ring shrinks to 16. The old pool fills chunk 0 (it spans low
+    // chunks), so the new pool + fresh 16-block ring relocate to a free surviving chunk run.
+    const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
+    const uint64_t newIpBmSize =
+        ipBitmapSizeBlocks(plan->newChunkCount, cibCountForChunks(plan->newChunkCount), 0);
+    if (newIpBmSize != oldIpBmSize) {
+        plan->newIpBmSize = newIpBmSize;
     }
     return resolveShrinkPoolPlacement(ctx, plan, blockers);
 }
@@ -10681,12 +10703,12 @@ bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
                           const QVector<uint64_t>& reclaimed,
                           ApfsMultiChunkGrownAllocator* out,
                           QStringList* blockers) {
-    if (plan.newIpBlockCount > kApfsSpacemanBlocksPerChunk) {
-        // ip_bm_size > 1: the relocated pool spans several chunks and sits in a free surviving
-        // chunk run (placeMultiChunkShrinkPool). The multi-chunk-pool builder marks the pool used
-        // across its chunks, keeps chunk 0's metadata bitmap, and carries every surviving chunk
-        // (including the old pool, which rides the main fq) forward - identical to a
-        // multi-chunk-source grow.
+    if (plan.newIpBlockCount > kApfsSpacemanBlocksPerChunk || plan.newIpBmSize != 0) {
+        // ip_bm_size > 1, or a 2 -> 1 transition: the relocated footprint sits in a free surviving
+        // chunk run (placeMultiChunkShrinkPool). The multi-chunk-pool builder marks it used across
+        // its chunks (ring + pool, via usedBase), keeps chunk 0's metadata bitmap, and carries
+        // every surviving chunk (including the old pool, which rides the main fq) forward -
+        // identical to a multi-chunk-source grow.
         return buildMultiChunkGrownAllocator(ctx, plan, reclaimed, out, blockers);
     }
     if (plan.survivingUserData) {
@@ -10803,13 +10825,16 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
     const uint64_t liveCib = alloc.liveCib;
     const QVector<uint64_t>& ipUsedSet = alloc.ipUsedSet;
     const uint64_t ipUsage = alloc.ipBitmapUsage;
-    // The new ring (when relocated) consumes ipBmBlocks previously-free chunk-0 blocks; the old
-    // ring stays used on the main free-queue (it survives in chunk 0), aging like the old pool.
-    const int64_t freeDelta = static_cast<int64_t>(newBlockCount - oldBlockCount) -
-                              static_cast<int64_t>(plan.newIpBlockCount) +
-                              static_cast<int64_t>(mainFq.reclaimed.size()) +
-                              (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0) -
-                              (plan.newIpBmBase != 0 ? static_cast<int64_t>(plan.ipBmBlocks) : 0);
+    // The freshly relocated ring consumes blocks (16 * new ip_bm_size on a 2 -> 1 transition, else
+    // the same-size ipBmBlocks); the OLD ring rides the main free-queue, aging like the old pool.
+    const int64_t newRingUsed =
+        plan.newIpBmSize != 0
+            ? static_cast<int64_t>(plan.newIpBmSize * kApfsSpacemanIpBmTxMultiplier)
+            : (plan.newIpBmBase != 0 ? static_cast<int64_t>(plan.ipBmBlocks) : 0);
+    const int64_t freeDelta =
+        static_cast<int64_t>(newBlockCount - oldBlockCount) -
+        static_cast<int64_t>(plan.newIpBlockCount) + static_cast<int64_t>(mainFq.reclaimed.size()) +
+        (poolInRemovedTail ? static_cast<int64_t>(plan.oldIpBlockCount) : 0) - newRingUsed;
     const QVector<ApfsFreeQueueEntry> ipFq{{plan.newXid - 1, plan.newIpBase, 2}};
     if (!advanceCheckpoint({.image = ctx->image,
                             .geometry = ctx->geometry,
@@ -10834,6 +10859,7 @@ bool commitInPlaceResizeShrink(ApfsFsCommitContext* ctx,
                             .newCibCount = alloc.cibCount,
                             .newIpBmBase = plan.newIpBmBase,
                             .ipBmBlocks = plan.ipBmBlocks,
+                            .newIpBmSize = plan.newIpBmSize,
                             .explicitIpFqEntries = ipFq},
                            result,
                            blockers)) {

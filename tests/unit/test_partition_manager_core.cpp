@@ -11333,13 +11333,16 @@ static void certifySurvivingPoolMultiCibShrink(const QDir& dir,
 }
 
 // Grow a container whose internal pool spans MULTIPLE chunks (ip_bm_size = 2, > 1.35 TiB): an
+static void certifyIpBmTransitions(const QDir& dir, const PartitionApfsWriteOptions& options);
+
 // 11000-chunk source (88 cibs) grows to 11100 chunks (89 cibs); the relocated ~33k-block pool
 // straddles two high chunks, each getting its own bitmap. Then it SHRINKS 11000 -> 10900 (both
 // ip_bm_size 2): the pool relocates to a free surviving chunk run while the old pool rides the main
-// fq. No ip-bitmap-ring resize (both ip_bm_size 2). Then a size TRANSITION (ip_bm_size 1 -> 2, a
-// grow crossing ~1.35 TiB) relocates the 16-slot ring to a fresh 32-block region and re-lays the
-// spaceman inline arrays, with a file surviving byte-exact. apfsck-clean; the 1.35 TiB images are
-// sparse.
+// fq. No ip-bitmap-ring resize (both ip_bm_size 2). Then both size TRANSITIONS (ip_bm_size 1 <-> 2,
+// crossing ~1.35 TiB): the grow relocates the 16-slot ring to a fresh 32-block region and the
+// shrink the 32-slot ring to a fresh 16-block region, each re-laying the spaceman inline arrays
+// (incl. the main device's cib-array offset) with a file surviving byte-exact. apfsck-clean; images
+// are sparse.
 static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteOptions& options) {
     constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
     const QString base = dir.filePath(QStringLiteral("ipbm-base.apfs"));
@@ -11375,12 +11378,19 @@ static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteO
     QVERIFY(shrImg.open(QIODevice::ReadOnly));
     QCOMPARE(static_cast<uint64_t>(shrImg.size()), 10'900 * kChunk);
     shrImg.close();
-    // ip_bm_size 1 -> 2 TRANSITION (a grow crossing ~1.35 TiB): a 10800-chunk source
-    // (ip_block_count 32658, ip_bm_size 1) carrying a file grows to 11000 chunks (33264, ip_bm_size
-    // 2). The 16-slot ring relocates to a fresh 32-block region contiguous below the high relocated
-    // pool, and the spaceman's inline arrays (bitmap-xid / bitmap-addr / free-next ring /
-    // cib-address) re-lay to the ip_bm_size-2 layout. apfsck-clean (WSL apfsprogs); the file reads
-    // back byte-exact.
+    certifyIpBmTransitions(dir, options);
+}
+
+// Both ip_bm_size TRANSITIONS (crossing ~1.35 TiB), each carrying a file that reads back
+// byte-exact. GROW 1 -> 2: a 10800-chunk source (ip_block_count 32658, ip_bm_size 1) grows to 11000
+// (33264, size 2) - the 16-slot ring relocates to a fresh 32-block region below the high relocated
+// pool. SHRINK 2
+// -> 1: an 11000-chunk source shrinks to 10000 (30240, size 1) - the old multi-chunk pool fills
+// chunk 0, so the smaller pool + a fresh 16-block ring relocate to a free surviving chunk run. Each
+// re-lays the spaceman inline arrays (incl. the main device's sm_addr_offset - apfsck reads the cib
+// array from there). apfsck-clean (WSL apfsprogs); the 1.35 TiB images are sparse.
+static void certifyIpBmTransitions(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
     const QByteArray trPayload = QByteArray("ipbm-transition-").repeated(4000);
     const QString trBase = dir.filePath(QStringLiteral("ipbm-tr-base.apfs"));
     QVERIFY(
@@ -11409,6 +11419,38 @@ static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteO
         trGrown, QStringLiteral("/tr.bin"), static_cast<uint64_t>(trPayload.size()));
     QVERIFY2(trRead.ok, qPrintable(trRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(trRead.data, trPayload);
+    // ip_bm_size 2 -> 1 TRANSITION (a shrink crossing ~1.35 TiB down): an 11000-chunk source
+    // (ip_bm_size 2) carrying a file shrinks to 10000 chunks (ip_block_count 30240, ip_bm_size 1).
+    // The old multi-chunk pool fills chunk 0, so the smaller pool + fresh 16-block ring relocate to
+    // a free surviving chunk run and the spaceman arrays re-lay to the ip_bm_size-1 layout. apfsck-
+    // clean; the file reads back byte-exact.
+    const QString shBase = dir.filePath(QStringLiteral("ipbm-sh-base.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = shBase,
+                                                        .target_container_bytes = 11'000 * kChunk,
+                                                        .block_size_bytes = 4096,
+                                                        .volume_name = QStringLiteral("IPBH"),
+                                                        .options = options})
+            .ok);
+    const QString shFile = dir.filePath(QStringLiteral("ipbm-sh-file.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = shBase,
+                                                             .written_image_path = shFile,
+                                                             .file_name = QStringLiteral("sh.bin"),
+                                                             .file_data = trPayload,
+                                                             .options = options})
+                 .ok,
+             "shrink-transition source file insert");
+    const QString shShrunk = dir.filePath(QStringLiteral("ipbm-sh-shrunk.apfs"));
+    const auto shCommit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = shFile,
+                                                    .written_image_path = shShrunk,
+                                                    .new_size_bytes = 10'000 * kChunk,
+                                                    .options = options});
+    QVERIFY2(shCommit.ok, qPrintable(shCommit.blockers.join(QStringLiteral("; "))));
+    const auto shRead = PartitionApfsFileSystemReader::readFileFromImage(
+        shShrunk, QStringLiteral("/sh.bin"), static_cast<uint64_t>(trPayload.size()));
+    QVERIFY2(shRead.ok, qPrintable(shRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(shRead.data, trPayload);
 }
 
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
