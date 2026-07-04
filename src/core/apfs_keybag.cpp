@@ -113,7 +113,7 @@ QByteArray derIntegerBytes(uint64_t value) {
 
 }  // namespace
 
-QList<KeybagEntry> parseKeybagBlock(const QByteArray& block) {
+QList<KeybagEntry> parseKeybagBlock(const QByteArray& block, bool align16) {
     QList<KeybagEntry> out;
     if (block.size() < 0x30) {
         return out;
@@ -136,7 +136,7 @@ QList<KeybagEntry> parseKeybagBlock(const QByteArray& block) {
             break;
         }
         out.append({block.mid(p, 16), getLe16(block, p + 0x10), block.mid(p + 0x18, klen)});
-        p += (0x18 + klen + 15) & ~15;
+        p += align16 ? ((0x18 + klen + 15) & ~15) : (0x18 + klen);
     }
     return out;
 }
@@ -257,6 +257,44 @@ QByteArray buildKeybagBlock(
     putLe16(b, 0x22, static_cast<uint16_t>(entries.size()));
     // kl_nbytes covers the 16-byte kb_locker header + the packed entry region.
     putLe32(b, 0x24, static_cast<uint32_t>(0x10 + (p - 0x30)));
+    return b;
+}
+
+QByteArray buildApfsckContainerKeybagBlock(
+    uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize) {
+    constexpr int kLockerEntries = 0x30;  // obj_phys(32) + kb_locker header(16)
+    constexpr int kEntryHeader = 0x18;    // ke_uuid(16) + ke_tag(2) + ke_keylen(2) + padding(4)
+    int packed = 0;
+    for (const auto& e : entries) {
+        if (e.uuid.size() != 16) {
+            return {};
+        }
+        packed += kEntryHeader + static_cast<int>(e.keydata.size());  // no 16-byte alignment
+    }
+    // apfsck requires a trailing null entry (one kEntryHeader of zeros) after the
+    // packed entries, and reports the leftover byte count against sizeof(entry).
+    if (kLockerEntries + packed + kEntryHeader > blockSize) {
+        return {};
+    }
+    QByteArray b(blockSize, '\0');
+    putLe64(b, 0x08, oid);
+    putLe64(b, 0x10, xid);
+    putLe32(b, 0x18, magic);
+    int p = kLockerEntries;
+    for (const auto& e : entries) {
+        const int klen = static_cast<int>(e.keydata.size());
+        std::memcpy(b.data() + p, e.uuid.constData(), 16);
+        putLe16(b, p + 0x10, e.tag);
+        putLe16(b, p + 0x12, static_cast<uint16_t>(klen));
+        std::memcpy(b.data() + p + kEntryHeader, e.keydata.constData(), static_cast<size_t>(klen));
+        p += kEntryHeader + klen;
+    }
+    putLe16(b, 0x20, kApfsKeybagVersion);
+    putLe16(b, 0x22, static_cast<uint16_t>(entries.size()));
+    // kl_nbytes = the packed entries + the trailing null entry (no locker header),
+    // matching apfsck's entry walk (which subtracts keylen + sizeof(entry) each step
+    // and expects a final leftover of exactly one null entry).
+    putLe32(b, 0x24, static_cast<uint32_t>(packed + kEntryHeader));
     return b;
 }
 

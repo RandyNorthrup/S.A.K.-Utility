@@ -191,6 +191,22 @@ constexpr uint8_t kApfsDrecExtTypeSiblingId = 1;
 // CRYPTO_SW_ID: the well-known object id of an encrypted volume's default
 // whole-volume crypto-state record (A6).
 constexpr uint64_t kApfsCryptoSwId = 4;
+// A6 per-file-key encryption: apfs_wrapped_crypto_state version + fields. major/minor
+// are the only accepted versions (apfsck: APFS_WMCS_MAJOR_VERSION 5 / MINOR 0);
+// key_revision + key_os_version must both be non-zero (apfsck rejects a zero of either).
+// The 40-byte RFC3394-wrapped per-file key gives key_len 0x28. persistent_class C (3) =
+// "protected unless open", a normal user-file data-protection class.
+constexpr uint16_t kApfsWmcsMajorVersion = 5;
+constexpr uint16_t kApfsWmcsMinorVersion = 0;
+constexpr uint16_t kApfsCryptoKeyRevision = 1;
+// A non-zero key OS version tag (apfsck only checks non-zero). Mirrors the build-tag
+// shape of a real volume's meta_crypto/key_os_version without pinning a macOS build.
+constexpr uint32_t kApfsGeneratedKeyOsVersion = 0x1A'10'00'00;
+constexpr uint32_t kApfsProtectionClassC = 3;
+// APFS_OBJ_ENCRYPTED: the object-header flag apfsck (object.c) requires on the fs-tree
+// object of a v_encrypted volume. The node stays plaintext ("so-called encrypted
+// objects don't actually appear to be encrypted at all") -- only the flag is set.
+constexpr uint32_t kApfsObjEncryptedFlag = 0x10'00'00'00;
 // apfs_inode_val.bsd_flags @0x44 and apfs_inode_val.uncompressed_size @0x54; a
 // compressed file sets UF_COMPRESSED in the former and pairs a non-zero size in
 // the latter with APFS_INODE_HAS_UNCOMPRESSED_SIZE in internal_flags @0x30.
@@ -488,6 +504,10 @@ constexpr qsizetype kApfsBtreeVariableTocKeyLengthOffset = 2;
 constexpr qsizetype kApfsBtreeVariableTocValueOffset = 4;
 constexpr qsizetype kApfsBtreeVariableTocValueLengthOffset = 6;
 constexpr qsizetype kApfsInodePrivateIdOffset = 0x08;
+// j_inode_val.default_protection_class (cp_key_class_t): 0 = inherit; 1..4/6 = a real
+// protection class. A6 per-file encryption stamps the file's class here (apfsck rejects
+// > F or == 5). The nchildren/nlink u32 sits at 0x38, this u32 right after it.
+constexpr qsizetype kApfsInodeDefaultProtectionClassOffset = 0x3C;
 constexpr qsizetype kApfsInodeModeOffset = 0x50;
 constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
 constexpr qsizetype kApfsFormattedRootInodeValueBytes = 0x60;
@@ -1352,6 +1372,19 @@ struct ApfsRootFilePayload {
     // still come from dataExtents; this only feeds the inode logical size + the
     // synthesized single-extent block count.
     uint64_t logicalSizeOverride{0};
+    // A6 per-file-key encryption (APFS data-protection model): when cryptoId != 0
+    // this file's data extents are AES-XTS encrypted with perFileKey (32 raw bytes;
+    // the on-disk 40-byte RFC3394(VEK, perFileKey) ciphertext is wrappedFileKey), the
+    // XTS tweak base of file-logical block b being (cryptoId + b) (apfs-fuse:
+    // extent_crypto_id + blk_idx). The fs-tree carries a j_crypto_state record at
+    // cryptoId (refcnt = the inode dstream ref + the file's extent count), the inode
+    // reports default_protection_class = protectionClass, and the dstream + every
+    // file-extent record carry default_crypto_id = crypto_id = cryptoId. 0 keeps every
+    // plaintext file byte-identical.
+    uint64_t cryptoId{0};
+    QByteArray perFileKey;      // 32 raw bytes; encrypts the data blocks (never on disk)
+    QByteArray wrappedFileKey;  // 40 bytes = RFC3394(VEK, perFileKey); the on-disk key
+    uint32_t protectionClass{0};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1520,6 +1553,11 @@ struct ApfsInodeParams {
     // A7 (A-h): a sparse inode's dstream allocated size is fewer bytes than its
     // logical size (the difference is the hole). 0 = dense (alloced == rounded size).
     uint64_t allocedSizeBytes = 0;
+    // A6 per-file encryption: a non-zero cryptoId routes the dstream's
+    // default_crypto_id (offset 0x10 in the apfs_dstream) and the inode's
+    // default_protection_class (offset 0x3C). 0 = unencrypted (byte-identical).
+    uint64_t cryptoId = 0;
+    uint32_t protectionClass = 0;
 };
 
 // internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
@@ -1554,6 +1592,8 @@ struct InodeXfieldParams {
     qsizetype tocBytes{0};
     uint64_t sizeBytes{0};
     uint64_t allocedSizeBytes{0};
+    // A6 per-file encryption: the dstream's default_crypto_id (0 = unencrypted).
+    uint64_t cryptoId{0};
 };
 
 // Write the inode's extended-field blob: the xf header, the TOC entries (NAME +
@@ -1594,6 +1634,7 @@ void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
         const qsizetype dstream = dataStart + x.namePadded;
         writeLe64(value, dstream, x.sizeBytes);       // size (logical)
         writeLe64(value, dstream + 8, roundedSize);   // alloced_size (covers holes)
+        writeLe64(value, dstream + 16, x.cryptoId);   // default_crypto_id (0 = plain)
         writeLe64(value, dstream + 24, roundedSize);  // total_bytes_written
     }
     if (x.sparse) {
@@ -1613,7 +1654,9 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                  compressed,
                  uncompressedSize,
                  extraInternalFlags,
-                 allocedSizeBytes] = params;
+                 allocedSizeBytes,
+                 cryptoId,
+                 protectionClass] = params;
     // A compressed regular file carries the NAME xfield only (its bytes live in the
     // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM.
     const bool regularFile = (mode & kApfsModeRegularFile) == kApfsModeRegularFile;
@@ -1641,6 +1684,7 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
               kApfsInodeInternalFlagsOffset,
               inodeInternalFlags(compressed, extraInternalFlags));
     writeLe32(&value, 0x38, static_cast<uint32_t>(childOrLinkCount));
+    writeLe32(&value, kApfsInodeDefaultProtectionClassOffset, protectionClass);
     const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
     writeLe16(&value, kApfsInodeModeOffset, mode | permissions);
     stampCompressedInodeFields(&value, compressed, uncompressedSize);
@@ -1651,7 +1695,8 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                        .namePadded = namePadded,
                        .tocBytes = tocBytes,
                        .sizeBytes = sizeBytes,
-                       .allocedSizeBytes = allocedSizeBytes});
+                       .allocedSizeBytes = allocedSizeBytes,
+                       .cryptoId = cryptoId});
     return value;
 }
 
@@ -1771,7 +1816,7 @@ QByteArray fileExtentKey(uint64_t privateId, uint64_t logicalByteOffset) {
     return key;
 }
 
-QByteArray fileExtentValue(uint64_t lengthBytes, uint64_t dataStartBlock) {
+QByteArray fileExtentValue(uint64_t lengthBytes, uint64_t dataStartBlock, uint64_t cryptoId = 0) {
     QByteArray value(kApfsFileExtentValueBytes, '\0');
     // Extent lengths cover whole blocks; the logical size lives in the
     // inode's dstream xfield.
@@ -1780,8 +1825,38 @@ QByteArray fileExtentValue(uint64_t lengthBytes, uint64_t dataStartBlock) {
               ((lengthBytes + kSupportedApfsBlockSizeBytes - 1) / kSupportedApfsBlockSizeBytes) *
                   kSupportedApfsBlockSizeBytes);
     writeLe64(&value, kApfsFileExtentValuePhysicalBlockOffset, dataStartBlock);
-    writeLe64(&value, kApfsFileExtentValueCryptoIdOffset, 0);
+    // A6 per-file encryption: the extent's crypto_id names the file's crypto-state
+    // record and is the XTS tweak base of its blocks; 0 for a plaintext file.
+    writeLe64(&value, kApfsFileExtentValueCryptoIdOffset, cryptoId);
     return value;
+}
+
+// A6 per-file crypto-state record (j_crypto_state): key = cryptoId | (CRYPTO_STATE<<60);
+// value = apfs_crypto_state_val { refcnt; apfs_wrapped_crypto_state{ major 5, minor 0,
+// cpflags 0, persistent_class, key_os_version, key_revision 1, key_len, wrapped key } }.
+// refcnt must equal the reference count apfsck reconstructs = 1 (the inode dstream's
+// default_crypto_id) + the file's extent count (every file-extent record referencing
+// this crypto_id). The wrapped key is RFC3394(VEK, per-file key) so the reader (or the
+// kernel) recovers the per-file XTS key from the volume key.
+ApfsBtreeKeyValue perFileCryptoStateRecord(uint64_t cryptoId,
+                                           uint32_t refcnt,
+                                           uint32_t protectionClass,
+                                           const QByteArray& wrappedKey) {
+    QByteArray key(8, '\0');
+    writeLe64(&key,
+              0,
+              cryptoId | (static_cast<uint64_t>(kApfsRecordCryptoState) << kApfsObjTypeShift));
+    QByteArray value(24 + wrappedKey.size(), '\0');
+    writeLe32(&value, 0, refcnt);                                           // refcnt
+    writeLe16(&value, 4, kApfsWmcsMajorVersion);                            // major_version
+    writeLe16(&value, 6, kApfsWmcsMinorVersion);                            // minor_version
+    writeLe32(&value, 8, 0);                                                // cpflags
+    writeLe32(&value, 12, protectionClass);                                 // persistent_class
+    writeLe32(&value, 16, kApfsGeneratedKeyOsVersion);                      // key_os_version
+    writeLe16(&value, 20, kApfsCryptoKeyRevision);                          // key_revision
+    writeLe16(&value, 22, static_cast<uint16_t>(wrappedKey.size()));        // key_len
+    std::copy(wrappedKey.cbegin(), wrappedKey.cend(), value.begin() + 24);  // persistent_key
+    return {key, value};
 }
 
 // The data extents a file's records describe: an explicit multi-run list when
@@ -1900,6 +1975,47 @@ void appendHardLinkRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
     }
 }
 
+// The uncompressed regular-file data-stream records: the dstream-id record, one
+// file-extent per contiguous run (each carrying the file's crypto_id), the per-file
+// crypto-state record when encrypted, and a trailing hole extent when sparse.
+// Byte-identical to the inline tail of appendRootFileRecords it was extracted from.
+void appendFileDataStreamRecords(QVector<ApfsBtreeKeyValue>* records,
+                                 const ApfsRootFilePayload& file) {
+    records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
+    // A zero-length file has a size-0 data stream and no allocated blocks, so it
+    // carries no file-extent record; emitting one produces a zero-length extent
+    // at logical address 0, which fsck_apfs rejects ("invalid zero-length
+    // extent"). A fragmented file carries one record per contiguous run, keyed by
+    // its file-logical byte offset.
+    const QVector<ApfsDataExtent> dataExtents = fileDataExtents(file, kSupportedApfsBlockSizeBytes);
+    for (const ApfsDataExtent& extent : dataExtents) {
+        records->append(
+            {fileExtentKey(file.privateId, extent.logicalBlock * kSupportedApfsBlockSizeBytes),
+             fileExtentValue(
+                 extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr, file.cryptoId)});
+    }
+    if (file.cryptoId != 0) {
+        // A6 per-file encryption: the file's crypto-state record. apfsck reconstructs
+        // its reference count as 1 (the inode dstream's default_crypto_id) + one per
+        // data extent that names this crypto_id, and requires the stored refcnt to match.
+        records->append(perFileCryptoStateRecord(file.cryptoId,
+                                                 1 + static_cast<uint32_t>(dataExtents.size()),
+                                                 file.protectionClass,
+                                                 file.wrappedFileKey));
+    }
+    if (file.sparse) {
+        // The trailing hole is an explicit file-extent with phys_block_num 0 so the
+        // dstream's extents stay consecutive up to its logical size (apfsck requires
+        // it, and the hole's length feeds the sparse-bytes accounting). No block is
+        // allocated for a phys 0 extent.
+        const uint64_t alloced = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes);
+        if (file.sparseLogicalSize > alloced) {
+            records->append({fileExtentKey(file.privateId, alloced),
+                             fileExtentValue(file.sparseLogicalSize - alloced, 0)});
+        }
+    }
+}
+
 void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
     const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize : fileLogicalSize(file);
     const int32_t linkCount = 1 + static_cast<int32_t>(file.additionalLinks.size());
@@ -1915,7 +2031,9 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                      .uncompressedSize = file.uncompressedSize,
                      .extraInternalFlags = inodeAttributeFlags(file),
                      .allocedSizeBytes =
-                         file.sparse ? fileAllocedBytes(file, kSupportedApfsBlockSizeBytes) : 0})});
+                         file.sparse ? fileAllocedBytes(file, kSupportedApfsBlockSizeBytes) : 0,
+                     .cryptoId = file.cryptoId,
+                     .protectionClass = file.protectionClass})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      file.additionalLinks.isEmpty()
                          ? directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)
@@ -1936,28 +2054,7 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
         appendInodeXattrs(records, file);
         return;
     }
-    records->append({fsKey(file.privateId, kApfsRecordDstreamId), dstreamIdValue()});
-    // A zero-length file has a size-0 data stream and no allocated blocks, so it
-    // carries no file-extent record; emitting one produces a zero-length extent
-    // at logical address 0, which fsck_apfs rejects ("invalid zero-length
-    // extent"). A fragmented file carries one record per contiguous run, keyed by
-    // its file-logical byte offset.
-    for (const ApfsDataExtent& extent : fileDataExtents(file, kSupportedApfsBlockSizeBytes)) {
-        records->append(
-            {fileExtentKey(file.privateId, extent.logicalBlock * kSupportedApfsBlockSizeBytes),
-             fileExtentValue(extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr)});
-    }
-    if (file.sparse) {
-        // The trailing hole is an explicit file-extent with phys_block_num 0 so the
-        // dstream's extents stay consecutive up to its logical size (apfsck requires
-        // it, and the hole's length feeds the sparse-bytes accounting). No block is
-        // allocated for a phys 0 extent.
-        const uint64_t alloced = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes);
-        if (file.sparseLogicalSize > alloced) {
-            records->append({fileExtentKey(file.privateId, alloced),
-                             fileExtentValue(file.sparseLogicalSize - alloced, 0)});
-        }
-    }
+    appendFileDataStreamRecords(records, file);
     appendInodeXattrs(records, file);
 }
 
@@ -14647,6 +14744,10 @@ struct ApfsEncryptionInputs {
     uint64_t containerKbBlock{0};
     uint64_t volumeKbBlock{0};
     int blockSize{0};
+    // Per-file-key volume: build the container keybag in the apfsck-parseable layout
+    // (unaligned entries, raw 40-byte wrapped VEK in the VOLUME_KEY entry) instead of
+    // Apple's 16-byte-aligned DER-blob layout. The volume keybag stays Apple-format.
+    bool perFileContainerKeybag{false};
 };
 
 /// @brief Fletcher-stamp a plaintext keybag block then AES-XTS-encrypt the whole
@@ -14731,12 +14832,18 @@ ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& i
     QByteArray prange(16, '\0');
     writeLe64(&prange, 0, in.volumeKbBlock);
     writeLe64(&prange, 8, 1);
-    const QByteArray containerKb = buildKeybagBlock(
-        kApfsObjectTypeContainerKeybag,
-        0,
-        kApfsFormatXid,
-        {{volumeUuid, kKbTagVolumeUnlockRecords, prange}, {volumeUuid, kKbTagVolumeKey, vekBlob}},
-        blockSize);
+    // Per-file: host apfsck fully parses the container keybag, so it uses the
+    // apfsck-conformant layout with the raw 40-byte wrapped VEK as the VOLUME_KEY;
+    // ONEKEY keeps Apple's aligned DER vekBlob (never apfsck'd, kernel-certified).
+    const QList<KeybagEntry> containerEntries{
+        {volumeUuid, kKbTagVolumeUnlockRecords, prange},
+        {volumeUuid, kKbTagVolumeKey, in.perFileContainerKeybag ? wrappedVek : vekBlob}};
+    const QByteArray containerKb =
+        in.perFileContainerKeybag
+            ? buildApfsckContainerKeybagBlock(
+                  kApfsObjectTypeContainerKeybag, 0, kApfsFormatXid, containerEntries, blockSize)
+            : buildKeybagBlock(
+                  kApfsObjectTypeContainerKeybag, 0, kApfsFormatXid, containerEntries, blockSize);
     mat.vek = vek;
     mat.containerKeybagBlock =
         sealKeybagBlock(containerKb, in.containerUuid, in.containerKbBlock, blockers);
@@ -14751,6 +14858,7 @@ ApfsEncryptionMaterial buildApfsEncryptionMaterial(const ApfsEncryptionInputs& i
 struct ApfsFormatEncryption {
     bool enabled{false};
     bool ok{false};
+    bool perFile{false};  // per-file-key volume: plaintext metadata, ENCRYPTED-flagged fs-tree
     uint64_t containerKbBlock{0};
     uint64_t volumeKbBlock{0};
     uint64_t reservedDelta{0};  // extra reserved blocks for the two keybags
@@ -14773,15 +14881,16 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
     if (request.volume_password.isEmpty()) {
         return enc;
     }
-    const ApfsEncryptionMaterial mat =
-        buildApfsEncryptionMaterial({.password = request.volume_password,
-                                     .recoveryKey = request.recovery_key,
-                                     .containerUuid = containerUuid,
-                                     .volumeUuid = volumeUuid,
-                                     .containerKbBlock = baseReserved,
-                                     .volumeKbBlock = baseReserved + 1,
-                                     .blockSize = static_cast<int>(request.block_size_bytes)},
-                                    blockers);
+    const ApfsEncryptionMaterial mat = buildApfsEncryptionMaterial(
+        {.password = request.volume_password,
+         .recoveryKey = request.recovery_key,
+         .containerUuid = containerUuid,
+         .volumeUuid = volumeUuid,
+         .containerKbBlock = baseReserved,
+         .volumeKbBlock = baseReserved + 1,
+         .blockSize = static_cast<int>(request.block_size_bytes),
+         .perFileContainerKeybag = request.per_file_encryption && !request.per_file_kernel_variant},
+        blockers);
     if (!mat.ok) {
         // Key material failed (blocker already recorded). Leave the plan disabled so
         // the format never emits an inconsistent ONEKEY-flagged-but-plaintext volume;
@@ -14790,11 +14899,18 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
     }
     enc.enabled = true;
     enc.ok = true;
+    // The plaintext-metadata, apfsck-certifiable per-file layout (flag-only fs-tree +
+    // apfsck-conformant container keybag). The kernel-mount candidate variant instead
+    // mirrors the ONEKEY recipe (XTS metadata + Apple-format keybag), so enc.perFile is
+    // cleared for it and its container keybag stays Apple-format below.
+    enc.perFile = request.per_file_encryption && !request.per_file_kernel_variant;
     enc.containerKbBlock = baseReserved;
     enc.volumeKbBlock = baseReserved + 1;
     enc.reservedDelta = 2;
     enc.omapFlag = kApfsOmapValueEncrypted;
-    enc.fsFlags = kApfsVolumeFsFlagsOneKey;
+    // Per-file: v_encrypted (UNENCRYPTED clear) with ONEKEY clear. ONEKEY: whole-volume
+    // key. apfsck sets v_encrypted from a clear UNENCRYPTED bit either way.
+    enc.fsFlags = request.per_file_encryption ? 0 : kApfsVolumeFsFlagsOneKey;
     enc.keylockerBlocks = 1;
     enc.vek = mat.vek;
     enc.containerKeybagBlock = mat.containerKeybagBlock;
@@ -14802,7 +14918,19 @@ ApfsFormatEncryption prepareFormatEncryption(const PartitionApfsImageFormatReque
     return enc;
 }
 
-/// @brief AES-XTS-encrypt the volume fs-tree with the VEK and append the two
+/// @brief Set the APFS_OBJ_ENCRYPTED flag on an already-built object block header
+/// and recompute its Fletcher-64 checksum. Per-file volumes flag the (plaintext)
+/// fs-tree object rather than XTS-encrypting it, which apfsck requires for a
+/// v_encrypted volume's fs-tree object.
+void setApfsObjectEncryptedFlag(QByteArray* block, QStringList* blockers) {
+    writeLe32(block,
+              kApfsObjectTypeOffset,
+              le32(*block, kApfsObjectTypeOffset) | kApfsObjEncryptedFlag);
+    stampApfsObjectBlock(block, blockers);
+}
+
+/// @brief ONEKEY: AES-XTS-encrypt the volume fs-tree with the VEK. Per-file: leave
+/// the fs-tree plaintext but set its object ENCRYPTED flag. Then append the two
 /// keybag blocks. No-op for an unencrypted (or failed) format.
 void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
                            const ApfsFormatEncryption& enc,
@@ -14811,7 +14939,13 @@ void applyFormatEncryption(QVector<ApfsImageBlock>* blocks,
         return;
     }
     for (auto& blk : *blocks) {
-        if (blk.first == rootTree) {
+        if (blk.first != rootTree) {
+            continue;
+        }
+        if (enc.perFile) {
+            QStringList flagBlockers;
+            setApfsObjectEncryptedFlag(&blk.second, &flagBlockers);
+        } else {
             blk.second = sak::apfs_crypto::xtsEncryptBlock(enc.vek, rootTree, blk.second);
         }
     }
@@ -15423,11 +15557,11 @@ QVector<ApfsImageBlock> buildEmptyFormatBaseBlocks(const ApfsEmptyFormatPlan& p,
     return blocks;
 }
 
-QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
-                                          uint64_t blockCount,
-                                          const QString& volumeName,
-                                          QStringList* blockers) {
-    const ApfsEmptyFormatPlan p = computeEmptyFormatPlan(request, blockCount, blockers);
+QVector<ApfsImageBlock> emptyFormatBlocksFromPlan(const ApfsEmptyFormatPlan& p,
+                                                  const PartitionApfsImageFormatRequest& request,
+                                                  uint64_t blockCount,
+                                                  const QString& volumeName,
+                                                  QStringList* blockers) {
     QVector<ApfsImageBlock> blocks = buildEmptyFormatBaseBlocks(p, request, volumeName, blockers);
     appendExtraVolumeBlocks(&blocks, request, p.extras, blockers);
     appendSpacemanContinuationBlocks(&blocks,
@@ -15452,6 +15586,14 @@ QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest&
     // snap-meta trees - stays plaintext, exactly as a real macOS FileVault volume.
     applyFormatEncryption(&blocks, p.enc, p.rootTree);
     return blocks;
+}
+
+QVector<ApfsImageBlock> emptyFormatBlocks(const PartitionApfsImageFormatRequest& request,
+                                          uint64_t blockCount,
+                                          const QString& volumeName,
+                                          QStringList* blockers) {
+    const ApfsEmptyFormatPlan p = computeEmptyFormatPlan(request, blockCount, blockers);
+    return emptyFormatBlocksFromPlan(p, request, blockCount, volumeName, blockers);
 }
 
 bool writeImageBlocks(QIODevice* device,
@@ -15637,6 +15779,14 @@ void appendFilePayloadDataBlocks(QVector<ApfsImageBlock>* blocks,
         std::copy(file.data.cbegin() + static_cast<qsizetype>(bytesCopied),
                   file.data.cbegin() + static_cast<qsizetype>(bytesCopied + chunk),
                   dataBlock.begin());
+        if (file.cryptoId != 0 && !file.perFileKey.isEmpty()) {
+            // A6 per-file encryption: AES-XTS the plaintext block with the file's own
+            // key, tweak base = cryptoId + file-logical block (apfs-fuse convention:
+            // extent_crypto_id + blk_idx, x8 for the 512-byte data units inside).
+            dataBlock = sak::apfs_crypto::xtsEncryptBlock(file.perFileKey,
+                                                          file.cryptoId + blockIndex,
+                                                          dataBlock);
+        }
         blocks->append({file.dataStartBlock + blockIndex, dataBlock});
         bytesCopied += chunk;
     }
@@ -15728,6 +15878,145 @@ QVector<ApfsImageBlock> rewriteGeneratedBlocks(QIODevice* image,
     rewrite.volumeUuid = readGeneratedVolumeUuid(
         image, {.blockSize = rewrite.blockSize, .blockCount = rewrite.blockCount}, blockers);
     return seedRewriteBlocks(rewrite, blockers);
+}
+
+// A6 follow-on per-file-key encryption: the seed-rewrite for a per-file encrypted
+// volume. The two container keybags occupy [seedData, seedData+1]; the per-file XTS
+// encrypted seed data starts at file.dataStartBlock (= seedData+2). The chunk bitmap /
+// spaceman reserve the base metadata prefix + the 2 keybags + the D data blocks (all
+// covered by [0, dataStartBlock + D)), while the volume alloc-count covers only the
+// volume-owned base metadata + D (the keybags are container-owned via nx_keylocker).
+// The fs-tree object carries APFS_OBJ_ENCRYPTED and fs_flags = 0 => v_encrypted; the
+// omap value's OMAP_VAL_ENCRYPTED bit is set by the empty format that precedes this.
+struct ApfsPerFileSeedRewrite {
+    uint32_t blockSize{0};
+    uint64_t blockCount{0};
+    QString volumeName;
+    ApfsRootFilePayload file;
+    QByteArray volumeUuid;
+    // Kernel-mount candidate variant: XTS-encrypt the fs-tree with the VEK (like ONEKEY)
+    // and carry the default whole-volume crypto-state record, instead of the plaintext
+    // flag-only fs-tree the apfsck-certifiable variant uses. Empty vek = apfsck variant.
+    bool kernelVariant{false};
+    QByteArray vek;
+};
+
+// Builds the per-file seed fs-tree: plaintext with the file's records (inode, extents,
+// per-file crypto-state), then either flagged ENCRYPTED (apfsck variant, metadata stays
+// plaintext) or AES-XTS-encrypted with the VEK (kernel variant, metadata truly encrypted
+// like ONEKEY, plus the default whole-volume crypto-state record at CRYPTO_SW_ID).
+QByteArray buildPerFileSeedRootTree(const ApfsPerFileSeedRewrite& rewrite, QStringList* blockers) {
+    QByteArray rootTree = buildRootTreeBlock(rewrite.blockSize,
+                                             {rewrite.file},
+                                             {},
+                                             blockers,
+                                             /*includeCryptoState=*/rewrite.kernelVariant);
+    if (rewrite.kernelVariant) {
+        return sak::apfs_crypto::xtsEncryptBlock(rewrite.vek, kApfsFormatRootTreeBlock, rootTree);
+    }
+    setApfsObjectEncryptedFlag(&rootTree, blockers);
+    return rootTree;
+}
+
+QVector<ApfsImageBlock> perFileSeedRewriteBlocks(const ApfsPerFileSeedRewrite& rewrite,
+                                                 QStringList* blockers) {
+    const ApfsRootFilePayload& file = rewrite.file;
+    const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(file.data.size()),
+                                                  rewrite.blockSize);
+    const uint64_t allocatedBlocks = file.dataStartBlock + dataBlocks;
+    const uint64_t volumeAllocatedBlocks = kApfsFormatVolumeBaseAllocatedBlocks + dataBlocks;
+    const QByteArray rootTree = buildPerFileSeedRootTree(rewrite, blockers);
+    const uint64_t chunkSpan = (rewrite.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    QVector<ApfsImageBlock> blocks{
+        {kApfsFormatVolumeSuperblockBlock,
+         buildVolumeSuperblock({.blockSize = rewrite.blockSize,
+                                .volumeName = rewrite.volumeName,
+                                .volumeUuid = rewrite.volumeUuid,
+                                .allocatedBlocks = volumeAllocatedBlocks,
+                                .nextObjectId = kApfsFirstUserObjectId + 1,
+                                .fileCount = 1,
+                                .fsFlags = 0},
+                               blockers)},
+        {kApfsFormatRootTreeBlock, rootTree},
+        {kApfsFormatExtentRefTreeBlock,
+         buildExtentRefTreeBlock(rewrite.blockSize, {file}, blockers)},
+        {kApfsFormatSpacemanBlock,
+         buildSpacemanBlock({.blockSize = rewrite.blockSize,
+                             .blockCount = rewrite.blockCount,
+                             .reservedBlocks = allocatedBlocks,
+                             .xid = kApfsFormatXid,
+                             .genesis = false,
+                             .cibAddrs = {kApfsFormatChunkInfoBlock}},
+                            blockers)},
+        {kApfsFormatChunkInfoBlock,
+         buildChunkInfoBlock({.blockSize = rewrite.blockSize,
+                              .blockCount = rewrite.blockCount,
+                              .reservedBlocks = allocatedBlocks,
+                              .xid = kApfsFormatXid,
+                              .selfBlock = kApfsFormatChunkInfoBlock,
+                              .bitmapBlock = kApfsFormatChunkBitmapBlock,
+                              .chunkStart = 0,
+                              .chunkSpan = chunkSpan,
+                              .cibIndex = 0},
+                             blockers)},
+        {kApfsFormatChunkBitmapBlock, buildChunkBitmapBlock(rewrite.blockSize, allocatedBlocks)}};
+    appendFilePayloadDataBlocks(&blocks, file, rewrite.blockSize);
+    return blocks;
+}
+
+// Builds the full per-file-encrypted single-chunk block list: the empty per-file
+// container (keybags placed, fs-tree omap value ENCRYPTED-flagged) plus the per-file
+// seed rewrite (fs-tree with the file's crypto-state record + APFS_OBJ_ENCRYPTED, and
+// the XTS-encrypted seed data). The resolved plan yields the one VEK the empty format
+// bakes into the keybags and the seed rewrite wraps the per-file key with. Empty (with
+// a blocker) on a key-material or capacity failure.
+QVector<ApfsImageBlock> perFileEncryptedSeedBlocks(const PartitionApfsImageFormatRequest& request,
+                                                   const QString& volumeName,
+                                                   const QString& fileName,
+                                                   QStringList* blockers) {
+    auto perFileRequest = request;
+    perFileRequest.per_file_encryption = true;
+    const bool kernelVariant = request.per_file_kernel_variant;
+    const uint64_t blockCount = request.target_container_bytes / request.block_size_bytes;
+    const ApfsEmptyFormatPlan p = computeEmptyFormatPlan(perFileRequest, blockCount, blockers);
+    if (!p.enc.ok) {
+        blockers->append(QStringLiteral("APFS per-file encryption key setup failed"));
+        return {};
+    }
+    const QByteArray perFileKey = sak::apfs_crypto::randomBytes(32);
+    const QByteArray wrappedFileKey = sak::apfs_crypto::aesKeyWrap(p.enc.vek, perFileKey);
+    if (wrappedFileKey.size() != sak::apfs_crypto::kApfsWrappedKeyBytes) {
+        blockers->append(QStringLiteral("APFS per-file key wrap failed"));
+        return {};
+    }
+    const uint64_t dataStartBlock = p.seedData + 2;
+    const uint64_t dataBlocks = roundedBlockCount(
+        static_cast<uint64_t>(request.seed_file_data.size()), request.block_size_bytes);
+    if (dataStartBlock + dataBlocks > blockCount) {
+        blockers->append(QStringLiteral("APFS per-file seed data exceeds target container size"));
+        return {};
+    }
+    const ApfsRootFilePayload file{.fileName = fileName,
+                                   .data = request.seed_file_data,
+                                   .fileId = kApfsSeedFileId,
+                                   .privateId = kApfsSeedFileId,
+                                   .dataStartBlock = dataStartBlock,
+                                   .cryptoId = kApfsSeedFileId,
+                                   .perFileKey = perFileKey,
+                                   .wrappedFileKey = wrappedFileKey,
+                                   .protectionClass = kApfsProtectionClassC};
+    QVector<ApfsImageBlock> blocks =
+        emptyFormatBlocksFromPlan(p, perFileRequest, blockCount, volumeName, blockers);
+    blocks += perFileSeedRewriteBlocks({.blockSize = request.block_size_bytes,
+                                        .blockCount = blockCount,
+                                        .volumeName = volumeName,
+                                        .file = file,
+                                        .volumeUuid = p.volumeUuid,
+                                        .kernelVariant = kernelVariant,
+                                        .vek = p.enc.vek},
+                                       blockers);
+    return blocks;
 }
 
 struct ApfsImageSource {
@@ -17832,6 +18121,48 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImageWith
     writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
     image.close();
 
+    result.blockers.append(writeBlockers);
+    finalizeBuildResult(&result);
+    return result;
+}
+
+PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyPerFileEncryptedImageWithSeedFile(
+    const PartitionApfsImageFormatRequest& request) {
+    PartitionApfsImageBuildResult result = formatBuildResult(request);
+    if (!result.plan.buildable) {
+        return result;
+    }
+    if (!appendFormatCreateBlockers(request, &result)) {
+        return result;
+    }
+    const QString cleanFileName = request.seed_file_name.trimmed();
+    if (request.volume_password.isEmpty()) {
+        result.blockers.append(
+            QStringLiteral("APFS per-file encryption requires a volume password"));
+        result.ok = false;
+        return result;
+    }
+    if (!appendSeedFileBlockers(request, cleanFileName, &result)) {
+        return result;
+    }
+
+    QStringList buildBlockers;
+    const QVector<ApfsImageBlock> blocks =
+        perFileEncryptedSeedBlocks(request, result.plan.volume_name, cleanFileName, &buildBlockers);
+    if (!buildBlockers.isEmpty()) {
+        result.blockers.append(buildBlockers);
+        result.ok = false;
+        return result;
+    }
+
+    QFile image;
+    if (!createSizedApfsImage(
+            result.image_path, request.target_container_bytes, &image, &result.blockers)) {
+        return result;
+    }
+    QStringList writeBlockers;
+    writeImageBlocks(&image, request.block_size_bytes, blocks, &writeBlockers);
+    image.close();
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
     return result;

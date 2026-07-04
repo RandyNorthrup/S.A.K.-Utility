@@ -51,6 +51,16 @@ struct KeybagEntry {
 [[nodiscard]] QByteArray buildKeybagBlock(
     uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize);
 
+/// @brief Build a keybag block whose entries are packed WITHOUT Apple's 16-byte
+/// entry alignment, with a trailing null entry and kl_nbytes = the packed entry
+/// bytes plus that null entry. This is the layout host apfsck (apfsprogs) walks
+/// (it iterates entries as keylen + sizeof(entry) and requires a null terminator);
+/// its keydata is read raw (no DER key-blob). Used for a per-file-key volume's
+/// container keybag so apfsck can validate it; every other keybag keeps Apple's
+/// 16-byte-aligned layout. Checksum + AES-XTS encryption are applied by the caller.
+[[nodiscard]] QByteArray buildApfsckContainerKeybagBlock(
+    uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize);
+
 /// @brief Magic prefix for the keyblob HMAC key: hmac_key = SHA256(magic ||
 /// outer_salt); the outer HMAC then authenticates the DER keyblob ([0xA3] TLV).
 /// (Apple / jtsylve "APFS Wrapped Keys".)
@@ -84,7 +94,10 @@ struct KeyBlobParams {
 
 /// @brief Parse a plaintext (already XTS-decrypted) keybag block into its entries.
 /// Returns empty if the block is not a valid keybag (wrong magic / version).
-[[nodiscard]] QList<KeybagEntry> parseKeybagBlock(const QByteArray& block);
+/// @p align16 true (default) advances entries on Apple's 16-byte boundary; false
+/// advances by exactly the entry header + keylen (the apfsck / per-file container
+/// keybag layout built by buildApfsckContainerKeybagBlock).
+[[nodiscard]] QList<KeybagEntry> parseKeybagBlock(const QByteArray& block, bool align16 = true);
 
 /// @brief Parse a VEK / KEK key-blob (inverse of buildVekBlob/buildKekBlob).
 /// Fills @p out (uuid, wrappedKey, flags8, iterations, salt as present).

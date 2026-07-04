@@ -131,8 +131,14 @@ constexpr uint64_t kApfsObjTypeMask = 0xF0'00'00'00'00'00'00'00ULL;
 constexpr int kApfsObjTypeShift = 60;
 constexpr uint8_t kApfsRecordInode = 3;
 constexpr uint8_t kApfsRecordXattr = 4;
+constexpr uint8_t kApfsRecordCryptoState = 7;  // APFS_TYPE_CRYPTO_STATE
 constexpr uint8_t kApfsRecordFileExtent = 8;
 constexpr uint8_t kApfsRecordDirectoryEntry = 9;
+// j_crypto_val: le32 refcnt + apfs_wrapped_crypto_state (le16 major, le16 minor,
+// le32 cpflags, le32 persistent_class, le32 key_os_version, le16 key_revision,
+// le16 key_len, then key_len bytes of the wrapped per-file key).
+constexpr qsizetype kApfsCryptoStateKeyLenOffset = 22;
+constexpr qsizetype kApfsCryptoStateWrappedKeyOffset = 24;
 // j_xattr_key: 8-byte header then le16 name_len; j_xattr_val: le16 flags + le16
 // xdata_len + xdata.
 constexpr qsizetype kApfsXattrKeyNameLenOffset = 8;
@@ -729,7 +735,10 @@ private:
         }
         QByteArray vekBlob;
         uint64_t volumeKbPaddr = 0;
-        for (const auto& entry : parseKeybagBlock(*containerKb)) {
+        // A per-file (non-ONEKEY) volume's container keybag uses the apfsck-conformant
+        // unaligned layout with a raw wrapped VEK; ONEKEY keeps Apple's 16-byte-aligned
+        // DER-blob layout. The volume keybag stays Apple-format for both.
+        for (const auto& entry : parseKeybagBlock(*containerKb, volumeOneKey_)) {
             if (entry.uuid != volumeUuid) {
                 continue;
             }
@@ -758,16 +767,22 @@ private:
         if (!volumeKb.has_value()) {
             return std::nullopt;
         }
-        KeyBlobParams vekParams;
-        if (!parseKeyBlob(vekBlob, &vekParams)) {
-            result->blockers.append(QStringLiteral("APFS volume key blob is malformed"));
-            return std::nullopt;
+        // ONEKEY stores the wrapped VEK as a DER key-blob; a per-file volume's
+        // container keybag stores it raw (the 40-byte RFC3394(KEK, VEK)).
+        QByteArray wrappedVek = vekBlob;
+        if (volumeOneKey_) {
+            KeyBlobParams vekParams;
+            if (!parseKeyBlob(vekBlob, &vekParams)) {
+                result->blockers.append(QStringLiteral("APFS volume key blob is malformed"));
+                return std::nullopt;
+            }
+            wrappedVek = vekParams.wrappedKey;
         }
         for (const auto& entry : parseKeybagBlock(*volumeKb)) {
             if (entry.tag != kKbTagVolumeUnlockRecords) {
                 continue;
             }
-            const auto vek = tryUnlockRecord(entry.keydata, vekParams.wrappedKey);
+            const auto vek = tryUnlockRecord(entry.keydata, wrappedVek);
             if (vek.has_value()) {
                 return vek;
             }
@@ -1034,12 +1049,13 @@ private:
             result->blockers.append(QStringLiteral("APFS file extent flags are not supported"));
             return false;
         }
-        // Encrypted extents are readable for a ONEKEY whole-volume FileVault volume
-        // once the VEK is unlocked (data tweak = physical block addr, like metadata);
-        // per-file-key (non-ONEKEY) crypto stays fail-closed.
-        if (extent.crypto_id != 0 && !(volumeOneKey_ && !vek_.isEmpty())) {
+        // Encrypted extents are readable once the volume is unlocked: a ONEKEY
+        // volume decrypts every data block with the VEK (tweak = physical block
+        // addr), a per-file volume with the file's own key (tweak = crypto_id +
+        // file-logical block). Without the VEK (no/failed credential) fail closed.
+        if (extent.crypto_id != 0 && vek_.isEmpty()) {
             result->blockers.append(
-                QStringLiteral("APFS encrypted/tweaked file extents are not supported"));
+                QStringLiteral("APFS encrypted file extents require a volume credential"));
             return false;
         }
         appendSparsePrefix(extent, bytesToRead, cursor, result);
@@ -1440,7 +1456,46 @@ private:
             parseFileExtentRecord(node, entry, objectId);
         } else if (recordType == kApfsRecordXattr) {
             parseXattrRecord(node, entry, objectId);
+        } else if (recordType == kApfsRecordCryptoState) {
+            parseCryptoStateRecord(node, entry, objectId);
         }
+    }
+
+    // A6 per-file encryption: capture a j_crypto_state record's wrapped per-file key,
+    // keyed by its crypto_id (the object id in the record key). The key is RFC3394
+    // (VEK, per-file-key); it is unwrapped lazily when a file's data is decrypted.
+    void parseCryptoStateRecord(const QByteArray& node,
+                                const BtreeEntryView& entry,
+                                uint64_t cryptoId) {
+        if (entry.value_length < kApfsCryptoStateWrappedKeyOffset) {
+            return;
+        }
+        const uint16_t keyLen = le16(node, entry.value_offset + kApfsCryptoStateKeyLenOffset);
+        if (keyLen == 0 || kApfsCryptoStateWrappedKeyOffset + keyLen > entry.value_length) {
+            return;
+        }
+        wrappedKeyByCryptoId_.insert(
+            cryptoId, node.mid(entry.value_offset + kApfsCryptoStateWrappedKeyOffset, keyLen));
+    }
+
+    // Resolve (and cache) a crypto_id's per-file AES-XTS key by RFC3394-unwrapping its
+    // stored wrapped key with the volume VEK. Fails closed if the record is missing or
+    // the unwrap integrity check (ICV) fails (wrong VEK / corrupt key).
+    [[nodiscard]] std::optional<QByteArray> perFileKeyFor(uint64_t cryptoId) {
+        const auto cached = perFileKeyByCryptoId_.constFind(cryptoId);
+        if (cached != perFileKeyByCryptoId_.cend()) {
+            return *cached;
+        }
+        const auto wrapped = wrappedKeyByCryptoId_.constFind(cryptoId);
+        if (wrapped == wrappedKeyByCryptoId_.cend() || vek_.isEmpty()) {
+            return std::nullopt;
+        }
+        const auto key = sak::apfs_crypto::aesKeyUnwrap(vek_, *wrapped);
+        if (!key.has_value() || key->size() != sak::apfs_crypto::kApfsUnwrappedKeyBytes) {
+            return std::nullopt;
+        }
+        perFileKeyByCryptoId_.insert(cryptoId, *key);
+        return *key;
     }
 
     // Capture an embedded com.apple.decmpfs attribute so a compressed file's
@@ -1703,32 +1758,81 @@ private:
         return entry;
     }
 
+    // Resolve the per-file AES-XTS key for an extent: an empty QByteArray when the
+    // extent is not per-file encrypted (unencrypted, or ONEKEY handled via the VEK),
+    // the file's key when it is, and nullopt (with a blocker) when the key cannot be
+    // recovered (missing crypto-state record or a failed VEK unwrap -- fail closed).
+    [[nodiscard]] std::optional<QByteArray> extentPerFileKey(const FileExtentRecord& extent,
+                                                             PartitionApfsFileReadResult* result) {
+        if (extent.crypto_id == 0 || volumeOneKey_) {
+            return QByteArray{};
+        }
+        const auto key = perFileKeyFor(extent.crypto_id);
+        if (!key.has_value()) {
+            result->blockers.append(
+                QStringLiteral("APFS per-file key for crypto id %1 was not found")
+                    .arg(extent.crypto_id));
+            return std::nullopt;
+        }
+        return *key;
+    }
+
+    // AES-XTS-decrypt one just-read data block in place; a length mismatch fails closed
+    // (never silently returns the ciphertext).
+    [[nodiscard]] bool decryptDataBlock(const QByteArray& key,
+                                        uint64_t tweak,
+                                        uint64_t blockIndex,
+                                        QByteArray* block,
+                                        PartitionApfsFileReadResult* result) const {
+        const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(key, tweak, *block);
+        if (plain.size() != static_cast<qsizetype>(blockSize_)) {
+            result->blockers.append(
+                QStringLiteral("APFS encrypted data block %1 failed to decrypt").arg(blockIndex));
+            return false;
+        }
+        *block = plain;
+        return true;
+    }
+
+    // Decrypt one data block per the volume's crypto model: ONEKEY uses the VEK with
+    // tweak = physical block addr; per-file uses the file's key with tweak = crypto_id
+    // + file-logical block (apfs-fuse: extent_crypto_id + blk_idx). Plaintext = no-op.
+    [[nodiscard]] bool decryptExtentBlock(const FileExtentRecord& extent,
+                                          uint64_t absolute,
+                                          const QByteArray& perFileKey,
+                                          QByteArray* block,
+                                          PartitionApfsFileReadResult* result) const {
+        const uint64_t blockIndex = absolute / blockSize_;
+        if (extent.crypto_id != 0 && volumeOneKey_ && !vek_.isEmpty()) {
+            return decryptDataBlock(vek_, blockIndex, blockIndex, block, result);
+        }
+        if (perFileKey.isEmpty()) {
+            return true;
+        }
+        const uint64_t fileLogicalBlock =
+            (extent.logical_offset + (absolute - extent.physical_block * blockSize_)) / blockSize_;
+        return decryptDataBlock(
+            perFileKey, extent.crypto_id + fileLogicalBlock, blockIndex, block, result);
+    }
+
     [[nodiscard]] bool appendExtentBytes(const FileExtentRecord& extent,
                                          uint64_t extentOffset,
                                          uint64_t length,
                                          PartitionApfsFileReadResult* result) {
+        const auto perFileKey = extentPerFileKey(extent, result);
+        if (!perFileKey.has_value()) {
+            return false;
+        }
         uint64_t remaining = length;
         uint64_t absolute = extent.physical_block * blockSize_ + extentOffset;
-        const bool encrypted = extent.crypto_id != 0 && volumeOneKey_ && !vek_.isEmpty();
         while (remaining > 0) {
-            const uint64_t blockIndex = absolute / blockSize_;
             const uint64_t blockOffset = absolute % blockSize_;
             QByteArray block;
-            if (!readBlock(blockIndex, &block, result, true, false)) {
+            if (!readBlock(absolute / blockSize_, &block, result, true, false)) {
                 return false;
             }
-            if (encrypted) {
-                // ONEKEY data block: AES-XTS-decrypt with the VEK (no object header,
-                // so no checksum); tweak base = physical block addr * 8. A failed
-                // decrypt must fail closed, not silently return the ciphertext.
-                const QByteArray plain = sak::apfs_crypto::xtsDecryptBlock(vek_, blockIndex, block);
-                if (plain.size() != static_cast<qsizetype>(blockSize_)) {
-                    result->blockers.append(
-                        QStringLiteral("APFS encrypted data block %1 failed to decrypt")
-                            .arg(blockIndex));
-                    return false;
-                }
-                block = plain;
+            if (!decryptExtentBlock(extent, absolute, *perFileKey, &block, result)) {
+                return false;
             }
             const uint64_t chunk =
                 std::min<uint64_t>(remaining, static_cast<uint64_t>(block.size()) - blockOffset);
@@ -1848,7 +1952,10 @@ private:
                                          bool encrypted,
                                          QByteArray* bytes,
                                          PartitionApfsFileReadResult* result) {
-        if (!encrypted || vek_.isEmpty()) {
+        // Only a ONEKEY volume genuinely AES-XTS-encrypts its metadata nodes. A
+        // per-file (data-protection) volume flags the fs-tree object + omap value
+        // ENCRYPTED but stores the node as plaintext, so it is read without decrypt.
+        if (!encrypted || !volumeOneKey_ || vek_.isEmpty()) {
             return readBlock(block, bytes, result);
         }
         if (!readBlock(block, bytes, result, true, false)) {
@@ -1929,6 +2036,10 @@ private:
     QByteArray containerUuid_;
     uint64_t keylockerPaddr_{0};
     QByteArray vek_;  // 32-byte AES-XTS volume key (empty = locked / unencrypted)
+    // A6 per-file encryption: crypto_id -> stored RFC3394(VEK, per-file key), and the
+    // lazily-unwrapped per-file AES-XTS key cache.
+    QHash<uint64_t, QByteArray> wrappedKeyByCryptoId_;
+    QHash<uint64_t, QByteArray> perFileKeyByCryptoId_;
     QString volumeName_;
     ObjectMapState volumeOmap_;
     bool fileSystemScanned_{false};

@@ -1840,6 +1840,8 @@ private Q_SLOTS:
     void apfsWriter_formatsUnlockableEncryptedVolume();
     void apfsWriter_rawFormatHonorsVolumePassword();
     void apfsReader_decryptsEncryptedVolumeWithCredential();
+    void apfsWriter_perFileKeyEncryptsFileData();
+    void apfsWriter_perFileKernelVariantEncryptsMetadata();
     void apfsWriter_recoveryKeyUnlocksEncryptedVolume();
     void apfsKeybag_failsClosedOnMalformedEntry();
     void apfsWriter_inPlaceFileInsertWritesMultiBlockExtent();
@@ -12554,6 +12556,98 @@ void PartitionManagerCoreTests::apfsReader_decryptsEncryptedVolumeWithCredential
         PartitionApfsFileSystemReader::listDirectoryFromImage(plain, QStringLiteral("/"), 1000);
     QVERIFY2(plainListing.ok, qPrintable(plainListing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(plainListing.volume_name, QStringLiteral("SAKPLAIN"));
+}
+
+namespace {
+
+// Assert the on-disk seed data block holds AES-XTS ciphertext, not the plaintext
+// payload -- proof the per-file data was actually encrypted on disk.
+void verifyPerFileDataBlockEncrypted(const QString& img,
+                                     quint64 dataBlock,
+                                     const QByteArray& plaintext) {
+    const QByteArray onDisk = readApfsImageBlock(img, dataBlock);
+    QVERIFY(!onDisk.isEmpty());
+    QVERIFY2(onDisk.left(plaintext.size()) != plaintext.left(onDisk.size()),
+             "seed data block must be AES-XTS ciphertext, not plaintext");
+}
+
+QByteArray makePerFilePayload(qsizetype bytes) {
+    QByteArray payload(bytes, Qt::Uninitialized);
+    for (qsizetype i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<char>((i * 37 + 11) & 0xFF);
+    }
+    return payload;
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_perFileKeyEncryptsFileData() {
+    // A6 follow-on per-file-key encryption: the writer builds a v_encrypted (non-ONEKEY)
+    // volume whose one seed file is AES-XTS encrypted with its own key (wrapped by the
+    // VEK in a crypto-state record); the metadata stays plaintext (only ENCRYPTED-
+    // flagged). The reader unlocks the volume, unwraps the per-file key, and decrypts
+    // the data back byte-for-byte. Persists perfile.img under SAK_PERFILE_CERT_DIR.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_PERFILE_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("perfile.img"));
+    QFile::remove(img);
+    const QString password = QStringLiteral("sakpass1234");
+    const QByteArray payload = makePerFilePayload(9000);
+    const auto build = PartitionApfsWriter::buildImageOnlyPerFileEncryptedImageWithSeedFile(
+        {.image_path = img,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKPFK"),
+         .seed_file_name = QStringLiteral("secret.txt"),
+         .seed_file_data = payload,
+         .volume_password = password,
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+
+    // Seed data starts at the seed-data block (201) + the 2 container keybags = 203.
+    verifyPerFileDataBlockEncrypted(img, 203, payload);
+
+    // The reader unlocks + per-file-decrypts the payload back to the original bytes.
+    const auto readBack = PartitionApfsFileSystemReader::readFileFromImage(
+        img, QStringLiteral("/secret.txt"), 1 << 20, password);
+    QVERIFY2(readBack.ok, qPrintable(readBack.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(readBack.data, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_perFileKernelVariantEncryptsMetadata() {
+    // Kernel-mount candidate per-file variant: mirrors the A6 ONEKEY mount recipe for
+    // METADATA (Apple-format keybag + AES-XTS-encrypted fs-tree + class-F meta_crypto +
+    // default whole-volume crypto-state) while keeping per-file keys for DATA. Host
+    // apfsck cannot read VEK-encrypted metadata, so this variant's oracle is the macOS
+    // kernel; the image persists under SAK_PERFILE_KERNEL_DIR for that attach test.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_PERFILE_KERNEL_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString img = dir.filePath(QStringLiteral("perfile_kernel.img"));
+    QFile::remove(img);
+    const QByteArray payload = makePerFilePayload(9000);
+    const auto build = PartitionApfsWriter::buildImageOnlyPerFileEncryptedImageWithSeedFile(
+        {.image_path = img,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("SAKPFKK"),
+         .seed_file_name = QStringLiteral("secret.txt"),
+         .seed_file_data = payload,
+         .volume_password = QStringLiteral("sakpass1234"),
+         .per_file_encryption = true,
+         .per_file_kernel_variant = true,
+         .options = options});
+    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
+    // Metadata is genuinely VEK-encrypted: the on-disk fs-tree (block 197) is ciphertext,
+    // so its plaintext object checksum does NOT verify (unlike the apfsck variant).
+    QVERIFY(!PartitionApfsWriter::verifyObjectChecksum(readApfsImageBlock(img, 197)));
+    // File data stays per-file encrypted (block 203 is ciphertext, not the payload).
+    verifyPerFileDataBlockEncrypted(img, 203, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_recoveryKeyUnlocksEncryptedVolume() {

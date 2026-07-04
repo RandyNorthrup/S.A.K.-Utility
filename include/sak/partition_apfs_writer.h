@@ -281,6 +281,20 @@ struct PartitionApfsImageFormatRequest {
     // wrapped by this recovery key, keyed by Apple's fixed PRK UUID), so the volume
     // is unlockable by EITHER the password or the recovery key. Never stored.
     QString recovery_key;
+    // A6 follow-on per-file-key encryption (APFS data-protection model): when true
+    // (and volume_password is set) the volume is per-file encrypted rather than
+    // whole-volume ONEKEY. The metadata stays plaintext but the fs-tree object and
+    // its omap value carry the ENCRYPTED flags (v_encrypted, ONEKEY clear); each
+    // file's data is AES-XTS encrypted with its own key, wrapped by the VEK in a
+    // per-file crypto-state record. False keeps ONEKEY / unencrypted byte-identical.
+    bool per_file_encryption{false};
+    // Per-file follow-on kernel-mount candidate variant: when true (with
+    // per_file_encryption), the volume mirrors the A6 ONEKEY mount recipe for METADATA
+    // (Apple-format keybag + AES-XTS-encrypted fs-tree + class-F meta_crypto + a default
+    // whole-volume crypto-state record) while keeping per-file keys for DATA. This is a
+    // macOS-kernel-oriented layout (host apfsck cannot read VEK-encrypted metadata); the
+    // default (false) keeps the plaintext-metadata, apfsck-certifiable per-file layout.
+    bool per_file_kernel_variant{false};
     bool target_wipe_confirmed{false};
     bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
@@ -1045,6 +1059,11 @@ public:
         const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult buildImageOnlyFormatImageWithSeedFile(
         const PartitionApfsImageFormatRequest& request);
+    // A6 follow-on: build a single-chunk image-only container with one per-file-key
+    // encrypted seed file. request.volume_password is mandatory; the seed file's data
+    // is AES-XTS encrypted with a fresh per-file key wrapped by the volume VEK.
+    [[nodiscard]] static PartitionApfsImageBuildResult
+    buildImageOnlyPerFileEncryptedImageWithSeedFile(const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult formatExistingImageOnlyContainer(
         const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult formatExistingContainerTarget(
