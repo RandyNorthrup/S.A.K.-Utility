@@ -1,11 +1,16 @@
 # APFS A2 -- CAB-tier spaceman emission (implementation spec)
 
-Status update 2026-07-04: **FORMAT + in-place MUTATION are IMPLEMENTED and apfsck-clean**
-(host apfsprogs `apfsck -cw` EXIT 0 for format at 63882 chunks / 507 cibs / 1 cab AND 64000
-chunks / 508 cibs / 2 cabs, and for a file-insert into a 2-cab container). `buildCibAddrBlock`,
-the cab-aware `buildSpacemanBlock`, and the cab-0 in-place rotation all exist. The remaining gap
-is **CAB-tier RESIZE** (grow/shrink), which the grow/shrink guards still fail-close at
-`newCibs > 507`. The original spec below (for the format emission) is retained for reference.
+Status update 2026-07-04: **FORMAT + in-place MUTATION + RESIZE are all IMPLEMENTED and
+apfsck-clean.** The CAB tier is fully closed. Host apfsprogs `apfsck -cw` EXIT 0 for: format
+(63882c/507cib/cab0 AND 64000c/508cib/2cab), file-insert into a 2-cab container, and the full
+resize matrix (6/6) -- grow and shrink, each of within-cab-count, adding/removing a cab, and
+crossing the cib-addressed (span-2) <-> CAB (span-1) boundary. See commits `239d52b`, `30cd2f8`,
+`8db5819`, the memory `apfs-a7-status.md` (CAB RESIZE DONE), and the unit test
+`certifyCabTierResizeReadsBack`. Contrary to the caution below, the resize did NOT need a
+multi-day cascade: the multi-chunk-pool grow/shrink infrastructure already existed, so the CAB
+tier only needed cab plumbing (`appendGrowCabs`, `readSourceCibAddrs`, a `newCabCount`
+checkpoint field, and per-cab xid = max of the cibs it references). The original spec below (for
+the format emission) is retained for reference.
 
 Original status (format emission): **designed, not implemented.** The CAB tier is the last +
 hardest generated-APFS geometry tier (containers above ~3 TiB, where the inline cib-address array
