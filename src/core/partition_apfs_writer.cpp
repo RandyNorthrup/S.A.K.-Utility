@@ -9671,7 +9671,6 @@ struct ApfsGrowCabBuild {
     uint64_t immutableBase{0};  // first pool block the immutable cibs started at
     uint64_t cibCount{1};       // true cib count (the cab-address blocks span these)
     uint64_t liveCib{0};        // live cib 0 (cib-list entry 0)
-    uint64_t xid{0};
 };
 
 // Build + write the cab-address blocks of a CAB-tier grow (> 507 cibs), a no-op below the CAB tier
@@ -9682,9 +9681,12 @@ struct ApfsGrowCabBuild {
 // immutable cibs) from those re-points, then lays the cabs just past the immutable cibs, each
 // listing up to 507 cib block numbers. cab 0 is the live cab (spaceman address entry 0, re-pointed
 // via newCibAddr); cabs 1..M-1 REPLACE the cib re-points as the device array's entries (k -> cab
-// k). Each cab sits inside the pool the pool-chunk bitmap reserves and is written once; records IP
-// usage.
+// k). Each cab sits inside the pool the pool-chunk bitmap reserves and is written once. A cab's
+// object xid is the newest xid among the cibs it references (apfsck: "Cab only changes if a cib
+// changes"), so a cab spanning only all-free (genesis) cibs keeps the genesis xid even though it is
+// physically placed this checkpoint. Records IP usage for every cab.
 void appendGrowCabs(const ApfsGrowCabBuild& p,
+                    const QVector<ApfsExplicitChunkEntry>& entries,
                     QVector<QPair<uint64_t, QByteArray>>* writes,
                     ApfsMultiChunkGrownAllocator* out,
                     QStringList* blockers) {
@@ -9701,16 +9703,21 @@ void appendGrowCabs(const ApfsGrowCabBuild& p,
     uint64_t slot = p.immutableBase + (p.cibCount - 1);  // first block past the immutable cibs
     for (uint64_t c = 0; c < cabCount; ++c) {
         const uint64_t cabBlock = slot++;
-        const qsizetype lo = static_cast<qsizetype>(c * kApfsSpacemanCibsPerCab);
-        const qsizetype hi = qMin<qsizetype>(cibBlocks.size(),
-                                             lo + static_cast<qsizetype>(kApfsSpacemanCibsPerCab));
-        writes->append({cabBlock,
-                        buildCibAddrBlock({.blockSize = p.bs,
-                                           .selfBlock = cabBlock,
-                                           .xid = p.xid,
-                                           .cabIndex = static_cast<uint32_t>(c),
-                                           .cibAddrs = cibBlocks.mid(lo, hi - lo)},
-                                          blockers)});
+        const uint64_t lo = c * kApfsSpacemanCibsPerCab;
+        const uint64_t hi = qMin<uint64_t>(p.cibCount, lo + kApfsSpacemanCibsPerCab);
+        uint64_t cabXid = kApfsFormatGenesisXid;
+        for (uint64_t k = lo; k < hi; ++k) {
+            cabXid = qMax(cabXid, cibSliceXid(cibEntrySlice(entries, k)));
+        }
+        writes->append(
+            {cabBlock,
+             buildCibAddrBlock({.blockSize = p.bs,
+                                .selfBlock = cabBlock,
+                                .xid = cabXid,
+                                .cabIndex = static_cast<uint32_t>(c),
+                                .cibAddrs = cibBlocks.mid(static_cast<qsizetype>(lo),
+                                                          static_cast<qsizetype>(hi - lo))},
+                               blockers)});
         if (c == 0) {
             out->liveCab0 = cabBlock;
         } else {
@@ -10088,7 +10095,7 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
     appendImmutableGrowCibs(
         {bs, base, lay.nextFreeSlot, cibCount}, lay.entries, &writes, out, blockers);
     appendGrowCabs(
-        {bs, base, lay.nextFreeSlot, cibCount, liveCib, plan.newXid}, &writes, out, blockers);
+        {bs, base, lay.nextFreeSlot, cibCount, liveCib}, lay.entries, &writes, out, blockers);
     for (const QPair<uint64_t, QByteArray>& w : writes) {
         if (!writeApfsRepairBlock(ctx->image, ctx->geometry, w.first, w.second, blockers)) {
             return false;
@@ -10207,25 +10214,6 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
     const uint64_t oldIpBmSize =
         ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, ctx->layout.cabCount);
     const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, newCabs);
-    if (ctx->layout.cabCount == 0 && newCabs != 0) {
-        // Crossing INTO the CAB tier (a cib-addressed source growing past 507 cibs) switches the
-        // spaceman device array from cib entries to cab entries - a meaning change, not just a
-        // resize. Growing WITHIN the CAB tier (a cab-addressed source) is handled; the crossing is
-        // a later increment (format straight into the CAB tier if a > 7.98 TiB container is
-        // needed).
-        blockers->append(
-            QStringLiteral("APFS resize-grow: crossing from cib-addressed into the CAB tier is a "
-                           "later increment"));
-        return 0;
-    }
-    if (newCabs != ctx->layout.cabCount) {
-        // A grow that adds a whole cab (crossing a 507-cib multiple) appends a cab block to the
-        // device array. The within-cab-count grow (the common CAB-tier resize) is handled; adding a
-        // cab is a later increment.
-        blockers->append(QStringLiteral(
-            "APFS resize-grow: adding a CAB (crossing a 507-cib multiple) is a later increment"));
-        return 0;
-    }
     if (newIpBmSize != oldIpBmSize && newIpBmSize != oldIpBmSize + 1) {
         // A single grow steps ip_bm_size by at most one (N -> N+1: the ring grows by 16 slots and
         // the spaceman inline arrays re-lay one tier). A multi-step jump (a tiny source growing
@@ -10892,7 +10880,7 @@ bool buildDataShrinkAllocator(ApfsFsCommitContext* ctx,
     appendImmutableGrowCibs(
         {bs, base, lay.nextFreeSlot, cibCount}, lay.entries, &writes, out, blockers);
     appendGrowCabs(
-        {bs, base, lay.nextFreeSlot, cibCount, liveCib, plan.newXid}, &writes, out, blockers);
+        {bs, base, lay.nextFreeSlot, cibCount, liveCib}, lay.entries, &writes, out, blockers);
     for (const QPair<uint64_t, QByteArray>& w : writes) {
         if (!writeApfsRepairBlock(ctx->image, ctx->geometry, w.first, w.second, blockers)) {
             return false;

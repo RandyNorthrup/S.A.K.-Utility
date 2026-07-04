@@ -11752,45 +11752,55 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     certifyMultiCibShrinkReadsBack(dir, withFile, options, payload);
 }
 
-// CAB tier (> 507 cibs, > 7.98 TiB): format a 2-cab container, insert a file, grow WITHIN the cab
-// count (508 -> 512 cibs, cab_count stays 2), and read the file back. Host apfsprogs apfsck -cw
-// EXIT 0 (2-cab base + grown). The spaceman device address array holds cab block numbers; the grow
-// dereferences the source cab array, rebuilds every cib + cab in the relocated pool, and re-points
-// the array at the fresh cabs. Sparse images (NTFS/XFS), so the giant containers cost ~no disk.
-static void certifyCabTierGrowReadsBack(const QDir& dir, const PartitionApfsWriteOptions& options) {
+// One CAB-tier grow case: format a baseChunks container, insert a file, grow to grownChunks, and
+// read the file back byte-exact. Sparse images (NTFS/XFS), so the multi-TiB containers cost ~no
+// disk. Host apfsprogs apfsck -cw EXIT 0 for every case (see certifyCabTierGrowReadsBack).
+static void certifyCabGrowCase(const QDir& dir,
+                               const PartitionApfsWriteOptions& options,
+                               uint64_t baseChunks,
+                               uint64_t grownChunks,
+                               const QString& tag) {
     constexpr uint64_t kBlockSize = 4096;
     constexpr uint64_t kChunk = 32'768ULL * kBlockSize;  // 128 MiB
-    const uint64_t baseBytes = 64'000ULL * kChunk;       // 508 cibs / 2 cabs
-    const uint64_t grownBytes = 64'500ULL * kChunk;      // 512 cibs / 2 cabs (within cab count)
-    const QString base = dir.filePath(QStringLiteral("cab-base.apfs"));
-    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
-                                                            .target_container_bytes = baseBytes,
-                                                            .block_size_bytes = kBlockSize,
-                                                            .volume_name = QStringLiteral("CAB"),
-                                                            .options = options})
+    const QString base = dir.filePath(tag + QStringLiteral("-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = baseChunks * kChunk,
+                 .block_size_bytes = kBlockSize,
+                 .volume_name = QStringLiteral("CAB"),
+                 .options = options})
                 .ok);
     const QByteArray payload = QByteArray("cab-tier-grow-").repeated(300);
-    const QString withFile = dir.filePath(QStringLiteral("cab-file.apfs"));
+    const QString withFile = dir.filePath(tag + QStringLiteral("-file.apfs"));
     QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
                                                             .written_image_path = withFile,
                                                             .file_name = QStringLiteral("orig.bin"),
                                                             .file_data = payload,
                                                             .options = options})
                 .ok);
-    const QString grown = dir.filePath(QStringLiteral("cab-grown.apfs"));
-    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
-                                                                    .written_image_path = grown,
-                                                                    .new_size_bytes = grownBytes,
-                                                                    .options = options});
+    const QString grown = dir.filePath(tag + QStringLiteral("-grown.apfs"));
+    const auto commit =
+        PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                    .written_image_path = grown,
+                                                    .new_size_bytes = grownChunks * kChunk,
+                                                    .options = options});
     QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
-    QFile img(grown);
-    QVERIFY(img.open(QIODevice::ReadOnly));
-    QCOMPARE(static_cast<uint64_t>(img.size()), grownBytes);
-    img.close();
     const auto read = PartitionApfsFileSystemReader::readFileFromImage(
         grown, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+}
+
+// CAB tier (> 507 cibs, > 7.98 TiB): the spaceman device address array holds cab block numbers (a
+// two-level cab -> cib table). The grow dereferences the source cab array to the flat cib list,
+// rebuilds every cib + cab in the relocated pool, and re-points the array at the fresh cabs; a
+// cab's xid is the newest of its cibs (a cab over only genesis cibs keeps genesis). Host apfsprogs
+// apfsck -cw EXIT 0 for all three grow shapes: within-cab-count, adding a cab, and crossing from
+// the cib-addressed (span-2) tier into the CAB tier (span 2 -> 1).
+static void certifyCabTierGrowReadsBack(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    certifyCabGrowCase(dir, options, 64'000, 64'500, QStringLiteral("cab-within"));  // 2 cabs
+    certifyCabGrowCase(dir, options, 127'000, 128'000, QStringLiteral("cab-add"));   // 2 -> 3 cabs
+    certifyCabGrowCase(dir, options, 63'882, 64'000, QStringLiteral("cab-cross"));   // cib -> cab
 }
 
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
