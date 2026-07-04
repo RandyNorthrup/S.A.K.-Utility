@@ -9380,7 +9380,10 @@ bool layoutMultiChunkGrow(ApfsFsCommitContext* ctx,
     const uint32_t bs = ctx->geometry.blockSize;
     const uint64_t base = plan.newIpBase;
     const uint64_t poolEnd = base + plan.newIpBlockCount;
-    const uint64_t poolChunk = ctx->geometry.blockCount / kApfsSpacemanBlocksPerChunk;
+    // The pool's first chunk is derived from where it is placed (newIpBase), not the device end: a
+    // grow pins it at the old device end (base == poolChunk*32768, byte-identical to deriving from
+    // blockCount) while a multi-chunk-pool shrink relocates it into a free surviving chunk run.
+    const uint64_t poolChunk = base / kApfsSpacemanBlocksPerChunk;
     // The relocated pool starts at newIpBase and may span several chunks (ip_bm_size > 1). For each
     // chunk it touches, build a bitmap marking that chunk's pool portion used; poolChunkBmp maps
     // the chunk index to its slot. The first pool chunk's offset is 0 for a chunk-aligned source,
@@ -10286,10 +10289,70 @@ uint64_t survivingPoolChunkIndex(uint64_t oldIpBase, uint64_t newBlockCount, uin
     return surviving ? oldPoolChunk : 0;
 }
 
-// Read the source ip-bitmap ring geometry and choose the relocated pool's chunk-0 placement: a
-// free run large enough for the pool (plus the whole ring when a stale high ring bit forces the
-// ring to relocate). Sets plan->oldIpBmBase/ipBmBlocks/newIpBmBase/newIpBase. Fails closed if the
-// source allocator is unreadable or chunk 0 has no free run of the needed size.
+// The lowest chunk index of a run of `span` consecutive all-free source chunks in the surviving
+// region [1, newChunkCount); 0 if none fits (fail closed). Chunk 0 holds container metadata (never
+// all-free); the old pool's chunks carry bitmaps and are skipped. A source chunk is all-free iff
+// its cib entry has ci_bitmap_addr 0. Used to place a relocated multi-chunk internal pool
+// (ip_bm_size > 1 shrink) at a chunk boundary in guaranteed-free space, disjoint from the surviving
+// old pool.
+uint64_t findSurvivingFreeChunkRun(const QVector<ApfsSourceChunkState>& src,
+                                   uint64_t span,
+                                   uint64_t newChunkCount) {
+    uint64_t run = 0;
+    const uint64_t last = qMin<uint64_t>(newChunkCount, static_cast<uint64_t>(src.size()));
+    for (uint64_t k = 1; k < last; ++k) {
+        if (src.at(static_cast<qsizetype>(k)).bitmapAddr != 0) {
+            run = 0;
+            continue;
+        }
+        if (++run == span) {
+            return k + 1 - span;
+        }
+    }
+    return 0;
+}
+
+// Place a relocated internal pool that exceeds one chunk (ip_bm_size > 1 shrink). The old pool sits
+// in surviving low chunks (it rides the main free-queue, exactly like a grow's chunk-0 pool), so
+// the new pool cannot share chunk 0; relocate it to a chunk-aligned run of all-free surviving
+// chunks. A ring relocation (stale high ring bit) combined with a multi-chunk pool is a further
+// increment.
+bool placeMultiChunkShrinkPool(ApfsFsCommitContext* ctx,
+                               ApfsChunkAddingGrowPlan* plan,
+                               bool relocateRing,
+                               QStringList* blockers) {
+    if (relocateRing) {
+        blockers->append(
+            QStringLiteral("APFS resize-shrink: an ip-bitmap ring relocation with a multi-chunk "
+                           "internal pool is a "
+                           "later increment"));
+        return false;
+    }
+    const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                               kApfsSpacemanBlocksPerChunk;
+    QVector<ApfsSourceChunkState> src;
+    if (!readMultiChunkGrowSource(ctx, oldChunks, &src, blockers)) {
+        return false;
+    }
+    const uint64_t poolSpan = (plan->newIpBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
+                              kApfsSpacemanBlocksPerChunk;
+    const uint64_t poolChunk = findSurvivingFreeChunkRun(src, poolSpan, plan->newChunkCount);
+    if (poolChunk == 0) {
+        blockers->append(QStringLiteral(
+            "APFS resize-shrink: no free surviving chunk run for the relocated multi-chunk pool"));
+        return false;
+    }
+    plan->newIpBmBase =
+        0;  // the ring stays in place (advanceIpBitmapRing rewrites its active slot)
+    plan->newIpBase = poolChunk * kApfsSpacemanBlocksPerChunk;
+    return true;
+}
+
+// Read the source ip-bitmap ring geometry and choose the relocated pool's placement: a chunk-0 free
+// run large enough for the pool (plus the whole ring when a stale high ring bit forces the ring to
+// relocate), or - when the pool exceeds one chunk (ip_bm_size > 1) - a free surviving chunk run.
+// Sets plan->oldIpBmBase/ipBmBlocks/newIpBmBase/newIpBase. Fails closed if the source allocator is
+// unreadable or no free run of the needed size exists.
 bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
                                 ApfsChunkAddingGrowPlan* plan,
                                 QStringList* blockers) {
@@ -10305,6 +10368,11 @@ bool resolveShrinkPoolPlacement(ApfsFsCommitContext* ctx,
     plan->ipBmBlocks = le32(spaceman, kApfsSpacemanIpBmBlockCountOffset);
     const bool relocateRing = ipBitmapRingHasBitAtOrAbove(
         ctx->image, ctx->geometry, plan->oldIpBmBase, plan->ipBmBlocks, plan->newIpBlockCount);
+    if (plan->newIpBlockCount > kApfsSpacemanBlocksPerChunk) {
+        // The pool no longer fits one chunk: relocate it to a free surviving chunk run instead of a
+        // chunk-0 run. buildShrinkAllocator then builds it with the multi-chunk-pool allocator.
+        return placeMultiChunkShrinkPool(ctx, plan, relocateRing, blockers);
+    }
     const uint64_t reserve = relocateRing ? plan->ipBmBlocks + plan->newIpBlockCount
                                           : plan->newIpBlockCount;
     // The relocated pool must sit within the SURVIVING part of chunk 0: for a sub-full-chunk target
@@ -10499,6 +10567,14 @@ bool buildShrinkAllocator(ApfsFsCommitContext* ctx,
                           const QVector<uint64_t>& reclaimed,
                           ApfsMultiChunkGrownAllocator* out,
                           QStringList* blockers) {
+    if (plan.newIpBlockCount > kApfsSpacemanBlocksPerChunk) {
+        // ip_bm_size > 1: the relocated pool spans several chunks and sits in a free surviving
+        // chunk run (placeMultiChunkShrinkPool). The multi-chunk-pool builder marks the pool used
+        // across its chunks, keeps chunk 0's metadata bitmap, and carries every surviving chunk
+        // (including the old pool, which rides the main fq) forward - identical to a
+        // multi-chunk-source grow.
+        return buildMultiChunkGrownAllocator(ctx, plan, reclaimed, out, blockers);
+    }
     if (plan.survivingUserData) {
         return buildDataShrinkAllocator(ctx, plan, reclaimed, out, blockers);
     }

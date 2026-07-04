@@ -11334,9 +11334,10 @@ static void certifySurvivingPoolMultiCibShrink(const QDir& dir,
 
 // Grow a container whose internal pool spans MULTIPLE chunks (ip_bm_size = 2, > 1.35 TiB): an
 // 11000-chunk source (88 cibs) grows to 11100 chunks (89 cibs); the relocated ~33k-block pool
-// straddles two high chunks, each getting its own bitmap. No ip-bitmap-ring resize (both
-// ip_bm_size 2). apfsck-clean (WSL apfsprogs); the 1.35 TiB images are sparse. A size TRANSITION
-// (ip_bm_size 1 -> 2) still fails closed.
+// straddles two high chunks, each getting its own bitmap. Then it SHRINKS 11000 -> 10900 (both
+// ip_bm_size 2): the pool relocates to a free surviving chunk run while the old pool rides the main
+// fq. No ip-bitmap-ring resize (both ip_bm_size 2). apfsck-clean (WSL apfsprogs); the 1.35 TiB
+// images are sparse. A size TRANSITION (ip_bm_size 1 -> 2) still fails closed.
 static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteOptions& options) {
     constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;
     const QString base = dir.filePath(QStringLiteral("ipbm-base.apfs"));
@@ -11358,6 +11359,20 @@ static void certifyMultiChunkPoolGrow(const QDir& dir, const PartitionApfsWriteO
     QVERIFY(img.open(QIODevice::ReadOnly));
     QCOMPARE(static_cast<uint64_t>(img.size()), 11'100 * kChunk);
     img.close();
+    // ip_bm_size > 1 SHRINK: 11000 -> 10900 chunks (both ip_bm_size 2). The old pool sits in
+    // surviving low chunks 0-1 (it rides the main fq); the new ~32961-block pool relocates to a
+    // free surviving chunk run (chunks 2-3), spanning two chunks each with its own bitmap.
+    // apfsck-clean (WSL apfsprogs; the 1.35 TiB images are sparse).
+    const QString shrunk = dir.filePath(QStringLiteral("ipbm-shrunk.apfs"));
+    const auto shr = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = base,
+                                                                 .written_image_path = shrunk,
+                                                                 .new_size_bytes = 10'900 * kChunk,
+                                                                 .options = options});
+    QVERIFY2(shr.ok, qPrintable(shr.blockers.join(QStringLiteral("; "))));
+    QFile shrImg(shrunk);
+    QVERIFY(shrImg.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(shrImg.size()), 10'900 * kChunk);
+    shrImg.close();
     // A size TRANSITION (ip_bm_size 1 -> 2, growing the 16-slot ring) is a later increment.
     const QString smallBase = dir.filePath(QStringLiteral("ipbm-small.apfs"));
     QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = smallBase,
