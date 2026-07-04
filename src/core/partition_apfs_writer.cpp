@@ -4391,6 +4391,9 @@ struct ApfsCheckpointCommitContext {
     // cib_count from 1 to N and needs the tier2 device's cib-address offset moved past the
     // N-entry inline array (fsck rejects overlapping spaceman address arrays).
     uint64_t newCibCount{0};
+    // CAB tier (> 507 cibs): the re-emitted spaceman's new main-device cab_count (0 = below the CAB
+    // tier). When set the device address array holds cab entries and its offset lands past them.
+    uint64_t newCabCount{0};
     // Non-zero relocates the ip-bitmap ring to a fresh region (a shrink dropping the pool below a
     // stale ring bit): the live spaceman points here with a clean ring while the ghost keeps its
     // old one. ipBmBlocks = 16 * ip_bm_size (the whole ring).
@@ -4555,16 +4558,23 @@ void applyChunkAddingSpacemanPatches(const ApfsCheckpointCommitContext& ctx, QBy
     }
     if (ctx.newCibCount != 0) {
         // A multi-CIB grow crossed the 126-chunk boundary: raise cib_count and push the tier2
-        // device's cib-address offset past the N-entry inline array so it no longer overlaps the
-        // main array's entries 1..N-1 (fsck rejects overlapping spaceman address structs). Below
-        // the CAB tier cab_count stays 0, so the address array holds cib_count inline entries.
+        // device's address offset past the inline array so it no longer overlaps the main array's
+        // entries (fsck rejects overlapping spaceman address structs). Below the CAB tier the array
+        // holds cib_count cib entries; on the CAB tier (> 507 cibs) it holds cab_count cab entries,
+        // so cab_count is set and the tier2 offset lands past the (smaller) cab array.
         writeLe32(object,
                   kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset,
                   static_cast<uint32_t>(ctx.newCibCount));
+        if (ctx.newCabCount != 0) {
+            writeLe32(object,
+                      kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset,
+                      static_cast<uint32_t>(ctx.newCabCount));
+        }
         const uint64_t ipBmSize = le32(*object, kApfsSpacemanIpBmSizeOffset);
+        const uint64_t addrEntries = ctx.newCabCount != 0 ? ctx.newCabCount : ctx.newCibCount;
         writeLe32(object,
                   kApfsSpacemanMainDeviceOffset + 0x30 + kApfsSpacemanDeviceAddrOffsetOffset,
-                  static_cast<uint32_t>(spacemanCibArrayOffset(ipBmSize) + ctx.newCibCount * 8));
+                  static_cast<uint32_t>(spacemanCibArrayOffset(ipBmSize) + addrEntries * 8));
     }
 }
 
@@ -4943,6 +4953,10 @@ struct ApfsCheckpointAdvanceRequest {
     // A7 (A-g) multi-CIB grow: the re-emitted spaceman's new main-device cib_count (0 = leave
     // unchanged). Written alongside newChunkCount when a grow crosses the 126-chunk boundary.
     uint64_t newCibCount{0};
+    // CAB tier (> 507 cibs): the re-emitted spaceman's new main-device cab_count (0 = below the CAB
+    // tier, leave unchanged). When non-zero the device address array holds cab_count cab block
+    // numbers, so its offset lands past the cab entries (not the cib entries) and cab_count is set.
+    uint64_t newCabCount{0};
     // A7 (A-g) shrink: relocate the ip-bitmap ring to a fresh clean region (0 = keep in place).
     uint64_t newIpBmBase{0};
     uint64_t ipBmBlocks{0};
@@ -5094,6 +5108,7 @@ ApfsCheckpointCommitContext makeCheckpointCommitContext(const ApfsCheckpointAdva
             .newIpBlockCount = request.newIpBlockCount,
             .newIpBase = request.newIpBase,
             .newCibCount = request.newCibCount,
+            .newCabCount = request.newCabCount,
             .newIpBmBase = request.newIpBmBase,
             .ipBmBlocks = request.ipBmBlocks,
             .newIpBmSize = request.newIpBmSize};
@@ -5112,11 +5127,17 @@ uint64_t commitSpacemanEmitSpan(const ApfsCheckpointAdvanceRequest& request,
     const uint64_t ipBmSize = request.newIpBmSize != 0
                                   ? request.newIpBmSize
                                   : le32(liveSpaceman, kApfsSpacemanIpBmSizeOffset);
+    // The inline device array length: cab_count entries on the CAB tier (> 507 cibs), else
+    // cib_count. Prefer this commit's new values; fall back to the live on-disk device fields.
+    const uint64_t liveCab =
+        le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCabCountOffset);
+    const uint64_t cabCount = request.newCabCount != 0 ? request.newCabCount : liveCab;
     const uint64_t cibCount =
         request.newCibCount != 0
             ? request.newCibCount
             : le32(liveSpaceman, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceCibCountOffset);
-    const uint64_t newSpan = spacemanBlockSpan(blockSize, ipBmSize, cibCount);
+    const uint64_t addrEntries = cabCount != 0 ? cabCount : cibCount;
+    const uint64_t newSpan = spacemanBlockSpan(blockSize, ipBmSize, addrEntries);
     const uint64_t liveSpan = static_cast<uint64_t>(liveSpaceman.size()) / blockSize;
     return newSpan == liveSpan ? 0 : newSpan;
 }
@@ -9417,19 +9438,51 @@ struct ApfsSourceChunkState {
     uint32_t freeCount{0};
 };
 
+// Resolve the source's full ordered cib-address list. Below the CAB tier the spaceman device array
+// lists cibs directly (single-CIB uses the already-resolved live cib 0). On the CAB tier (> 507
+// cibs) the device array lists cab blocks, so each cab is dereferenced to its cab_cib_addr[] run
+// and the results concatenated to the flat cib list the per-chunk reader indexes by k/126.
+QVector<uint64_t> readSourceCibAddrs(ApfsFsCommitContext* ctx,
+                                     uint64_t cibCount,
+                                     uint64_t cabCount,
+                                     QStringList* blockers) {
+    if (cibCount == 1) {
+        return {ctx->liveCib};
+    }
+    if (cabCount == 0) {
+        return readLiveSpacemanCibArray(ctx->image, ctx->geometry, ctx->nxsb, cibCount, blockers);
+    }
+    const QVector<uint64_t> cabAddrs =
+        readLiveSpacemanCibArray(ctx->image, ctx->geometry, ctx->nxsb, cabCount, blockers);
+    QVector<uint64_t> cibAddrs;
+    QByteArray cab(ctx->geometry.blockSize, '\0');
+    for (uint64_t c = 0; c < static_cast<uint64_t>(cabAddrs.size()); ++c) {
+        if (!readApfsRepairBlock(ctx->image,
+                                 ctx->geometry,
+                                 cabAddrs.at(static_cast<qsizetype>(c)),
+                                 &cab,
+                                 blockers)) {
+            return {};
+        }
+        const uint64_t inCab = le32(cab, kApfsCibAddrCibCountOffset);
+        for (uint64_t i = 0; i < inCab; ++i) {
+            cibAddrs.append(le64(cab, kApfsCibAddrEntriesOffset + static_cast<qsizetype>(i) * 8));
+        }
+    }
+    return cibAddrs;
+}
+
 // Read the source's oldChunks chunk entries, spanning every source cib (chunk k lives in cib
 // k/126, entry k%126). Single-CIB reads the resolved live cib 0 directly (byte-identical to the
-// certified grow); multi-CIB reads the spaceman cib-address array. Fails closed only if the cib
-// array cannot be read. A partial last source chunk is fine: its entry reads like any other.
+// certified grow); multi-CIB reads the spaceman cib-address array; the CAB tier dereferences the
+// cab array to the flat cib list. Fails closed only if the cib array cannot be read. A partial last
+// source chunk is fine: its entry reads like any other.
 bool readMultiChunkGrowSource(ApfsFsCommitContext* ctx,
                               uint64_t oldChunks,
                               QVector<ApfsSourceChunkState>* chunks,
                               QStringList* blockers) {
     const uint64_t cibCount = cibCountForChunks(oldChunks);
-    QVector<uint64_t> cibAddrs =
-        cibCount == 1
-            ? QVector<uint64_t>{ctx->liveCib}
-            : readLiveSpacemanCibArray(ctx->image, ctx->geometry, ctx->nxsb, cibCount, blockers);
+    QVector<uint64_t> cibAddrs = readSourceCibAddrs(ctx, cibCount, ctx->layout.cabCount, blockers);
     if (static_cast<uint64_t>(cibAddrs.size()) != cibCount) {
         blockers->append(
             QStringLiteral("APFS resize: unable to read the source cib-address array"));
@@ -9466,10 +9519,16 @@ struct ApfsMultiChunkGrownAllocator {
     QVector<uint64_t> ipUsedSet;
     uint64_t ipBitmapUsage{0};
     // Multi-CIB grow: cib_count for the grown device and the entry-1..N-1 re-points (k -> the
-    // immutable cib's block) the checkpoint writes into the spaceman cib-address array. Both are
-    // empty/1 on the single-CIB grow (byte-identical to the certified path).
+    // immutable cib's block) the checkpoint writes into the spaceman device address array. Both are
+    // empty/1 on the single-CIB grow (byte-identical to the certified path). On the CAB tier the
+    // address array holds cab block numbers instead, so cibArrayRepoints carry cab re-points (k ->
+    // cab k's block) and newCibAddr/liveCab0 is the live cab 0; cibCount stays the true cib count.
     uint64_t cibCount{1};
     QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints;
+    // CAB tier (> 507 cibs): cab_count for the grown device and the live cab 0 (spaceman address
+    // entry 0). 0 below the CAB tier (byte-identical to the certified cib-addressed path).
+    uint64_t cabCount{0};
+    uint64_t liveCab0{0};
 };
 
 // The per-chunk cib entries + bitmap blocks to write for a multi-chunk-source grow. chunk 0's
@@ -9603,6 +9662,63 @@ void appendImmutableGrowCibs(const ApfsGrowCibBuild& p,
         out->cibArrayRepoints.append({k, cibBlock});
         out->ipUsedSet.append(cibBlock - p.base);
     }
+}
+
+// Parameters for building a CAB-tier grow's cab-address blocks (bundled for the arg gate).
+struct ApfsGrowCabBuild {
+    uint32_t bs{0};
+    uint64_t base{0};           // ip_base (cab IP-relative slots are cabBlock - base)
+    uint64_t immutableBase{0};  // first pool block the immutable cibs started at
+    uint64_t cibCount{1};       // true cib count (the cab-address blocks span these)
+    uint64_t liveCib{0};        // live cib 0 (cib-list entry 0)
+    uint64_t xid{0};
+};
+
+// Build + write the cab-address blocks of a CAB-tier grow (> 507 cibs), a no-op below the CAB tier
+// (keeping the certified cib-addressed grow byte-identical). appendImmutableGrowCibs has just
+// placed the immutable cibs 1..N-1 at [immutableBase, immutableBase + cibCount - 1) and recorded
+// their address re-points; on the CAB tier those cibs are addressed THROUGH the cabs, not the
+// device array. This gathers the full ordered cib list (entry 0 = live cib 0, entries 1..N-1 the
+// immutable cibs) from those re-points, then lays the cabs just past the immutable cibs, each
+// listing up to 507 cib block numbers. cab 0 is the live cab (spaceman address entry 0, re-pointed
+// via newCibAddr); cabs 1..M-1 REPLACE the cib re-points as the device array's entries (k -> cab
+// k). Each cab sits inside the pool the pool-chunk bitmap reserves and is written once; records IP
+// usage.
+void appendGrowCabs(const ApfsGrowCabBuild& p,
+                    QVector<QPair<uint64_t, QByteArray>>* writes,
+                    ApfsMultiChunkGrownAllocator* out,
+                    QStringList* blockers) {
+    const uint64_t cabCount = cabCountForCibs(p.cibCount);
+    if (cabCount == 0) {
+        return;
+    }
+    QVector<uint64_t> cibBlocks(static_cast<qsizetype>(p.cibCount));
+    cibBlocks[0] = p.liveCib;
+    for (const QPair<uint64_t, uint64_t>& rp : out->cibArrayRepoints) {
+        cibBlocks[static_cast<qsizetype>(rp.first)] = rp.second;
+    }
+    out->cibArrayRepoints.clear();  // the device array now holds cabs, not cibs
+    uint64_t slot = p.immutableBase + (p.cibCount - 1);  // first block past the immutable cibs
+    for (uint64_t c = 0; c < cabCount; ++c) {
+        const uint64_t cabBlock = slot++;
+        const qsizetype lo = static_cast<qsizetype>(c * kApfsSpacemanCibsPerCab);
+        const qsizetype hi = qMin<qsizetype>(cibBlocks.size(),
+                                             lo + static_cast<qsizetype>(kApfsSpacemanCibsPerCab));
+        writes->append({cabBlock,
+                        buildCibAddrBlock({.blockSize = p.bs,
+                                           .selfBlock = cabBlock,
+                                           .xid = p.xid,
+                                           .cabIndex = static_cast<uint32_t>(c),
+                                           .cibAddrs = cibBlocks.mid(lo, hi - lo)},
+                                          blockers)});
+        if (c == 0) {
+            out->liveCab0 = cabBlock;
+        } else {
+            out->cibArrayRepoints.append({c, cabBlock});
+        }
+        out->ipUsedSet.append(cabBlock - p.base);
+    }
+    out->cabCount = cabCount;
 }
 
 // Validate + lay out a single-chunk-source chunk-adding grow. Increment 1 supports a
@@ -9971,6 +10087,8 @@ bool buildMultiChunkGrownAllocator(ApfsFsCommitContext* ctx,
     out->cibArrayRepoints.clear();
     appendImmutableGrowCibs(
         {bs, base, lay.nextFreeSlot, cibCount}, lay.entries, &writes, out, blockers);
+    appendGrowCabs(
+        {bs, base, lay.nextFreeSlot, cibCount, liveCib, plan.newXid}, &writes, out, blockers);
     for (const QPair<uint64_t, QByteArray>& w : writes) {
         if (!writeApfsRepairBlock(ctx->image, ctx->geometry, w.first, w.second, blockers)) {
             return false;
@@ -10083,18 +10201,29 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
                                      uint64_t newChunks,
                                      QStringList* blockers) {
     const uint64_t newCibs = cibCountForChunks(newChunks);
+    const uint64_t newCabs = cabCountForCibs(newCibs);
     const uint64_t oldChunks = (ctx->geometry.blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                kApfsSpacemanBlocksPerChunk;
-    const uint64_t oldIpBmSize = ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, 0);
-    const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, 0);
-    if (ctx->layout.cabCount != 0 || newCibs > kApfsSpacemanCibsPerCab) {
-        // The CAB tier (> 507 cibs) addresses cibs through a cab-address array (its resize is a
-        // later increment). Below it the spaceman spans 1 or 2 blocks; a within-span grow and a
-        // 1 <-> 2 span TRANSITION (the inline cib array crossing 4096, ~2.85 TiB) are both handled
-        // - the re-emit sizes the object to the target span and every spaceman reader is
-        // span-aware.
+    const uint64_t oldIpBmSize =
+        ipBitmapSizeBlocks(oldChunks, ctx->layout.cibCount, ctx->layout.cabCount);
+    const uint64_t newIpBmSize = ipBitmapSizeBlocks(newChunks, newCibs, newCabs);
+    if (ctx->layout.cabCount == 0 && newCabs != 0) {
+        // Crossing INTO the CAB tier (a cib-addressed source growing past 507 cibs) switches the
+        // spaceman device array from cib entries to cab entries - a meaning change, not just a
+        // resize. Growing WITHIN the CAB tier (a cab-addressed source) is handled; the crossing is
+        // a later increment (format straight into the CAB tier if a > 7.98 TiB container is
+        // needed).
         blockers->append(
-            QStringLiteral("APFS resize-grow: the CAB tier (> 507 cibs) is a later increment"));
+            QStringLiteral("APFS resize-grow: crossing from cib-addressed into the CAB tier is a "
+                           "later increment"));
+        return 0;
+    }
+    if (newCabs != ctx->layout.cabCount) {
+        // A grow that adds a whole cab (crossing a 507-cib multiple) appends a cab block to the
+        // device array. The within-cab-count grow (the common CAB-tier resize) is handled; adding a
+        // cab is a later increment.
+        blockers->append(QStringLiteral(
+            "APFS resize-grow: adding a CAB (crossing a 507-cib multiple) is a later increment"));
         return 0;
     }
     if (newIpBmSize != oldIpBmSize && newIpBmSize != oldIpBmSize + 1) {
@@ -10107,7 +10236,7 @@ uint64_t validateMultiChunkGrowShape(const ApfsFsCommitContext* ctx,
             "increment"));
         return 0;
     }
-    const uint64_t newIpBlockCount = 3 * (newChunks + newCibs);
+    const uint64_t newIpBlockCount = 3 * (newChunks + newCibs + newCabs);
     const uint64_t poolOffset = ctx->geometry.blockCount % kApfsSpacemanBlocksPerChunk;
     const uint64_t poolSpan = (poolOffset + newIpBlockCount + kApfsSpacemanBlocksPerChunk - 1) /
                               kApfsSpacemanBlocksPerChunk;
@@ -10179,20 +10308,21 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
     if (newCibs == 0) {
         return false;
     }
+    const uint64_t newCabs = cabCountForCibs(newCibs);
     ApfsChunkAddingGrowPlan plan;
     plan.newBlockCount = newBlockCount;
     plan.newChunkCount = newChunks;
     plan.newXid = ctx->live.xid + 1;
     plan.newIpBase = oldBlockCount;
-    plan.newIpBlockCount = 3 * (newChunks + newCibs);
+    plan.newIpBlockCount = 3 * (newChunks + newCibs + newCabs);
     plan.oldIpBase = readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
-    plan.oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks));
+    plan.oldIpBlockCount = 3 * (oldChunks + cibCountForChunks(oldChunks) + ctx->layout.cabCount);
     if (plan.oldIpBase == 0) {
         blockers->append(
             QStringLiteral("APFS resize-grow: unable to read the source internal-pool base"));
         return false;
     }
-    configureGrowTransition(ctx, ipBitmapSizeBlocks(newChunks, newCibs, 0), &plan, blockers);
+    configureGrowTransition(ctx, ipBitmapSizeBlocks(newChunks, newCibs, newCabs), &plan, blockers);
     const ApfsMainFqAdvance mainFq = advanceMainFqWithFreed(
         ctx,
         relocateFreedBlocks(
@@ -10211,7 +10341,7 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                               .newContainerOmap = 0,
                               .spacemanFreeDelta = freeDelta,
                               .nextOidAdvance = 0,
-                              .newCibAddr = alloc.liveCib,
+                              .newCibAddr = alloc.cabCount > 0 ? alloc.liveCab0 : alloc.liveCib,
                               .cibCount = alloc.cibCount,
                               .ipSlotStride = 2,
                               .ipBitmapUsage = alloc.ipBitmapUsage,
@@ -10224,6 +10354,7 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                               .newIpBlockCount = plan.newIpBlockCount,
                               .newIpBase = plan.newIpBase,
                               .newCibCount = newCibs > 1 ? newCibs : 0,
+                              .newCabCount = alloc.cabCount,
                               .newIpBmBase = plan.newIpBmBase,
                               .ipBmBlocks = plan.ipBmBlocks,
                               .newIpBmSize = plan.newIpBmSize,
@@ -10760,6 +10891,8 @@ bool buildDataShrinkAllocator(ApfsFsCommitContext* ctx,
     out->cibArrayRepoints.clear();
     appendImmutableGrowCibs(
         {bs, base, lay.nextFreeSlot, cibCount}, lay.entries, &writes, out, blockers);
+    appendGrowCabs(
+        {bs, base, lay.nextFreeSlot, cibCount, liveCib, plan.newXid}, &writes, out, blockers);
     for (const QPair<uint64_t, QByteArray>& w : writes) {
         if (!writeApfsRepairBlock(ctx->image, ctx->geometry, w.first, w.second, blockers)) {
             return false;

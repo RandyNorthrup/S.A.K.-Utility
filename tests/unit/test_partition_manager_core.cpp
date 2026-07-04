@@ -11752,6 +11752,47 @@ void PartitionManagerCoreTests::apfsWriter_growsContainerAddingChunks() {
     certifyMultiCibShrinkReadsBack(dir, withFile, options, payload);
 }
 
+// CAB tier (> 507 cibs, > 7.98 TiB): format a 2-cab container, insert a file, grow WITHIN the cab
+// count (508 -> 512 cibs, cab_count stays 2), and read the file back. Host apfsprogs apfsck -cw
+// EXIT 0 (2-cab base + grown). The spaceman device address array holds cab block numbers; the grow
+// dereferences the source cab array, rebuilds every cib + cab in the relocated pool, and re-points
+// the array at the fresh cabs. Sparse images (NTFS/XFS), so the giant containers cost ~no disk.
+static void certifyCabTierGrowReadsBack(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    constexpr uint64_t kBlockSize = 4096;
+    constexpr uint64_t kChunk = 32'768ULL * kBlockSize;  // 128 MiB
+    const uint64_t baseBytes = 64'000ULL * kChunk;       // 508 cibs / 2 cabs
+    const uint64_t grownBytes = 64'500ULL * kChunk;      // 512 cibs / 2 cabs (within cab count)
+    const QString base = dir.filePath(QStringLiteral("cab-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage({.image_path = base,
+                                                            .target_container_bytes = baseBytes,
+                                                            .block_size_bytes = kBlockSize,
+                                                            .volume_name = QStringLiteral("CAB"),
+                                                            .options = options})
+                .ok);
+    const QByteArray payload = QByteArray("cab-tier-grow-").repeated(300);
+    const QString withFile = dir.filePath(QStringLiteral("cab-file.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                            .written_image_path = withFile,
+                                                            .file_name = QStringLiteral("orig.bin"),
+                                                            .file_data = payload,
+                                                            .options = options})
+                .ok);
+    const QString grown = dir.filePath(QStringLiteral("cab-grown.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                                    .written_image_path = grown,
+                                                                    .new_size_bytes = grownBytes,
+                                                                    .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    QFile img(grown);
+    QVERIFY(img.open(QIODevice::ReadOnly));
+    QCOMPARE(static_cast<uint64_t>(img.size()), grownBytes);
+    img.close();
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        grown, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, payload);
+}
+
 void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
     // Multi-chunk source grow: a >= 2-chunk container grows by adding chunks; the relocated pool
     // lands in a HIGH chunk (chunk 0 and the pool chunk both carry bitmaps). apfsck/kernel clean
@@ -11815,12 +11856,12 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
         spillGrown, QStringLiteral("/big.bin"), static_cast<uint64_t>(big.size()));
     QVERIFY2(spilledRead.ok, qPrintable(spilledRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(spilledRead.data, big);
-    // Partial-source grow, multi-CIB grow/shrink, ip_bm_size tiers + transitions; see the helpers.
     certifyPartialSourceGrowReadsBack(dir, options, payload);
     certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
     certifySurvivingPoolMultiCibShrink(dir, withFile, options, payload);
     certifyMultiChunkPoolGrow(dir, options);
     certifyGrownMultiChunkPoolShrink(dir, options);
+    certifyCabTierGrowReadsBack(dir, options);
 }
 
 // Shrink a container that holds real user DATA past chunk 0: a 200 MiB file (spanning chunks 0 and
