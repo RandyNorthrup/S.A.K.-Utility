@@ -1817,6 +1817,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceMultiSnapshotCreate();
     void apfsWriter_inPlaceMultiSnapshotDelete();
     void apfsWriter_multiSnapshotDeleteOwnerWithFile();
+    void apfsWriter_inPlaceDivergeBetweenSnapshots();
     void apfsWriter_inPlaceMultiSnapshotRevert();
     void apfsWriter_inPlaceSnapshotDeleteRestoresSnapshotFreeState();
     void apfsWriter_inPlaceSnapshotRevertTagsDeferredRevert();
@@ -9925,6 +9926,108 @@ void PartitionManagerCoreTests::apfsWriter_multiSnapshotDeleteOwnerWithFile() {
         del, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
     QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
     QCOMPARE(read.data, payload);
+}
+
+namespace {
+
+// Insert one file into an APFS image (create-or-diverge) and assert the commit succeeds.
+void apfsDivergeInsert(const QString& src,
+                       const QString& out,
+                       const QString& name,
+                       const QByteArray& data,
+                       const PartitionApfsWriteOptions& options) {
+    const auto c = PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = src,
+                                                                   .written_image_path = out,
+                                                                   .file_name = name,
+                                                                   .file_data = data,
+                                                                   .options = options});
+    QVERIFY2(c.ok, qPrintable(c.blockers.join(QStringLiteral("; "))));
+}
+
+// Assert an image lists exactly `count` root entries and `path` reads back `expect`.
+void apfsAssertReads(const QString& img, int count, const QString& path, const QByteArray& expect) {
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), count);
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        img, path, static_cast<uint64_t>(expect.size()));
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, expect);
+}
+
+// The deeper diverge chain on the two-snapshot image `s2`: diverge with two snapshots present
+// (freeLiveFsNodes == false, both snapshot omap versions retained), then a second diverge with
+// no snapshot in between (freeLiveFsNodes == true, the live-only version is replaced/freed).
+void apfsDivergeDeepChain(const QDir& dir,
+                          const PartitionApfsWriteOptions& options,
+                          const QString& s2) {
+    const QByteArray payloadC = QByteArray("diverge-file-c-").repeated(48);
+    const QString withC = dir.filePath(QStringLiteral("diverge-c.img"));
+    apfsDivergeInsert(s2, withC, QStringLiteral("c.bin"), payloadC, options);
+    QCOMPARE(apfsLe64(readApfsImageBlock(withC, apfsApsbBlockOf(withC)), 0xD8), 2ULL);
+
+    const QByteArray payloadD = QByteArray("diverge-file-d-").repeated(32);
+    const QString withD = dir.filePath(QStringLiteral("diverge-d.img"));
+    apfsDivergeInsert(withC, withD, QStringLiteral("d.bin"), payloadD, options);
+    apfsAssertReads(withD, 4, QStringLiteral("/d.bin"), payloadD);  // a,b,c,d
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDivergeBetweenSnapshots() {
+    // Diverge-between-snapshots: mutate a volume that ALREADY carries a snapshot. The volume
+    // object map becomes VERSIONED -- snapshot A keeps resolving the fs-tree root it froze
+    // (its (oid, xid) omap entry is retained) while the live volume resolves the new root with
+    // the added file -- and the snapshot-frozen fs-tree nodes are NOT freed. The live
+    // extent-ref tree carries only the post-snapshot extent (the new file's); snapshot A owns
+    // the first file's via its own frozen tree. A subsequent snapshot B then freezes the
+    // diverged live state. Host apfsck-clean + Apple-kernel-clean (versioned omap + per-snapshot
+    // extent refcounts). SAK_DIVERGE_CERT_DIR persists each state for host apfsck.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString envDir = qEnvironmentVariable("SAK_DIVERGE_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("dvg-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("DVG"),
+                 .options = options})
+                .ok);
+    const QByteArray payloadA = QByteArray("diverge-file-a-").repeated(64);
+    const QByteArray payloadB = QByteArray("diverge-file-b-").repeated(96);
+    auto snapshot = [&](const QString& src, const QString& out, const QString& name) {
+        return PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = src,
+                                                                   .written_image_path = out,
+                                                                   .snapshot_name = name,
+                                                                   .options = options})
+            .ok;
+    };
+    // Insert the first file, then snapshot A (the file's extent lands in snapshot A's tree).
+    const QString withA = dir.filePath(QStringLiteral("dvg-a.apfs"));
+    apfsDivergeInsert(base, withA, QStringLiteral("a.bin"), payloadA, options);
+    const QString s1 = dir.filePath(QStringLiteral("dvg-1.apfs"));
+    QVERIFY(snapshot(withA, s1, QStringLiteral("snap-a")));
+    QCOMPARE(apfsLe64(readApfsImageBlock(s1, apfsApsbBlockOf(s1)), 0xD8), 1ULL);
+
+    // THE DIVERGE: insert a second file into the snapshotted volume; both files read back and
+    // the snapshot count is unchanged.
+    const QString diverged = dir.filePath(QStringLiteral("diverge.img"));
+    apfsDivergeInsert(s1, diverged, QStringLiteral("b.bin"), payloadB, options);
+    QCOMPARE(apfsLe64(readApfsImageBlock(diverged, apfsApsbBlockOf(diverged)), 0xD8), 1ULL);
+    apfsAssertReads(diverged, 2, QStringLiteral("/a.bin"), payloadA);
+    apfsAssertReads(diverged, 2, QStringLiteral("/b.bin"), payloadB);
+
+    // Snapshot B freezes the diverged live state; the volume now records two snapshots.
+    const QString s2 = dir.filePath(QStringLiteral("diverge-snapb.img"));
+    QVERIFY(snapshot(diverged, s2, QStringLiteral("snap-b")));
+    QCOMPARE(apfsLe64(readApfsImageBlock(s2, apfsApsbBlockOf(s2)), 0xD8), 2ULL);
+    apfsAssertReads(s2, 2, QStringLiteral("/b.bin"), payloadB);
+
+    apfsDivergeDeepChain(dir, options, s2);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotRevert() {

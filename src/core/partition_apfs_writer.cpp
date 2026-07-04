@@ -3183,10 +3183,9 @@ QByteArray emitExtentRefNode(const ApfsExtentRefNodePlan& plan,
 // extentref_oid points at), node[i] at nodeBlocks[i]. One node (<= root-leaf capacity) is
 // byte-identical to buildExtentRefTreeBlock at that block; more records split into leaves
 // under index nodes up to a root. Returns {} (blocker appended) if the run is too small.
-QVector<QByteArray> buildExtentRefTreeNodes(const ApfsExtentRefTreeParams& params,
-                                            const QVector<ApfsRootFilePayload>& files,
-                                            QStringList* blockers) {
-    const QVector<ExtentRefPhysRecord> records = collectExtentRefRecords(params.blockSize, files);
+QVector<QByteArray> buildExtentRefTreeNodesFromRecords(const ApfsExtentRefTreeParams& params,
+                                                       const QVector<ExtentRefPhysRecord>& records,
+                                                       QStringList* blockers) {
     const ApfsPhysBtreeCaps caps = extentRefCaps(params.blockSize);
     QVector<ApfsExtentRefNodePlan> plans;
     QVector<qsizetype> levelStart{0};
@@ -3222,6 +3221,14 @@ QVector<QByteArray> buildExtentRefTreeNodes(const ApfsExtentRefTreeParams& param
         blocks.append(emitExtentRefNode(plans.at(planIndex), planIndex, ctx, blockers));
     }
     return blocks;
+}
+
+QVector<QByteArray> buildExtentRefTreeNodes(const ApfsExtentRefTreeParams& params,
+                                            const QVector<ApfsRootFilePayload>& files,
+                                            QStringList* blockers) {
+    return buildExtentRefTreeNodesFromRecords(params,
+                                              collectExtentRefRecords(params.blockSize, files),
+                                              blockers);
 }
 
 QByteArray buildEmptyVariableTreeBlock(uint32_t blockSize,
@@ -5384,13 +5391,31 @@ struct ApfsLiveFsChain {
     QVector<ApfsObjectMapEntry> containerOmapOthers;
 };
 
+// The paddr of an oid's LIVE version in a (possibly versioned) omap leaf-entry set: the
+// entry with the largest xid. On a snapshotted volume the volume omap keeps several
+// (oid, xid) versions of the fs-tree root -- the snapshots resolve the smaller xids and the
+// live volume the largest -- so a naive index-0 / last-wins pick returns a snapshot's root.
+// Returns 0 when no entry matches the oid.
+uint64_t liveVersionPaddr(const QVector<ApfsObjectMapEntry>& entries, uint64_t oid) {
+    uint64_t bestXid = 0;
+    uint64_t paddr = 0;
+    bool found = false;
+    for (const ApfsObjectMapEntry& entry : entries) {
+        if (entry.oid == oid && (!found || entry.xid > bestXid)) {
+            bestXid = entry.xid;
+            paddr = entry.physicalBlock;
+            found = true;
+        }
+    }
+    return paddr;
+}
+
 // Resolve the live volume object-map tree from its already-read root node: fill
-// chain->volOmapTreeNodes with every node paddr and chain->rootTree with the fs-tree root.
-// Single-node omap (level 0, the certified <=112-node path): the fs-tree root oid 1028 is
-// the smallest key so it is index 0 -- readOmapSingleEntryPaddr reads it and the whole tree
-// is the one node. Kept byte-identical. Multi-level omap (level > 0, the P3 many-node case):
-// the root is an INDEX node whose values are child paddrs, so readOmapSingleEntryPaddr would
-// decode garbage; descend to collect every node paddr and resolve oid 1028 from the leaves.
+// chain->volOmapTreeNodes with every node paddr and chain->rootTree with the LIVE fs-tree
+// root (oid 1028 at its largest xid -- a snapshotted volume's omap is versioned). Single-node
+// omap (level 0, the certified <=112-node path): read the one node's leaf entries. Multi-level
+// omap (level > 0, the P3 many-node case): the root is an INDEX node whose values are child
+// paddrs, so descend to collect every node paddr, then resolve oid 1028 from the level-0 leaves.
 bool resolveLiveVolOmapTree(QIODevice* image,
                             const ApfsRepairGeometry& geometry,
                             const QByteArray& rootNode,
@@ -5399,20 +5424,31 @@ bool resolveLiveVolOmapTree(QIODevice* image,
     chain->volOmapTreeNodes.clear();
     if (le16(rootNode, kApfsBtreeNodeLevelOffset) == 0) {
         chain->volOmapTreeNodes.append(chain->volOmapTree);
-        chain->rootTree = readOmapSingleEntryPaddr(rootNode, geometry.blockSize);
-        return true;
+        chain->rootTree = liveVersionPaddr(readOmapLeafEntries(rootNode, geometry.blockSize),
+                                           kApfsFormatRootTreeOid);
+    } else {
+        QHash<uint64_t, uint64_t> omapOidToPaddr;
+        const ApfsLiveOmapWalk walk{&chain->volOmapTreeNodes, &omapOidToPaddr};
+        if (!collectLiveOmapTree(image, geometry, chain->volOmapTree, walk, blockers)) {
+            return false;
+        }
+        QVector<ApfsObjectMapEntry> leafEntries;
+        for (const uint64_t paddr : chain->volOmapTreeNodes) {
+            QByteArray node(geometry.blockSize, '\0');
+            if (!readApfsRepairBlock(image, geometry, paddr, &node, blockers)) {
+                return false;
+            }
+            if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+                leafEntries += readOmapLeafEntries(node, geometry.blockSize);
+            }
+        }
+        chain->rootTree = liveVersionPaddr(leafEntries, kApfsFormatRootTreeOid);
     }
-    QHash<uint64_t, uint64_t> omapOidToPaddr;
-    const ApfsLiveOmapWalk walk{&chain->volOmapTreeNodes, &omapOidToPaddr};
-    if (!collectLiveOmapTree(image, geometry, chain->volOmapTree, walk, blockers)) {
-        return false;
-    }
-    if (!omapOidToPaddr.contains(kApfsFormatRootTreeOid)) {
+    if (chain->rootTree == 0) {
         blockers->append(QStringLiteral(
             "APFS in-place commit: live volume object map has no fs-tree root (oid 1028) mapping"));
         return false;
     }
-    chain->rootTree = omapOidToPaddr.value(kApfsFormatRootTreeOid);
     return true;
 }
 
@@ -5467,6 +5503,11 @@ struct ApfsExtentRefWalk {
     ApfsRepairGeometry geometry;
     QHash<uint64_t, uint64_t>* owners{nullptr};
     QVector<uint64_t>* nodes{nullptr};
+    // Diverge: the full j_phys_ext record set of the LIVE extent-ref tree (paddr, block
+    // count, owner, refcnt), so a mutation of a snapshotted volume can carry the existing
+    // post-snapshot extents forward and append the new file's, rather than rebuilding the
+    // tree from the full live-file set (whose pre-snapshot extents the SNAPSHOT owns).
+    QVector<ExtentRefPhysRecord>* records{nullptr};
     int depthBudget{16};
 };
 
@@ -5494,7 +5535,7 @@ QVector<uint64_t> extentRefIndexChildPaddrs(const QByteArray& node, uint32_t blo
 // with different record counts decode correctly); a non-root leaf's value area ends at
 // blockSize.
 void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk& walk) {
-    if (walk.owners == nullptr) {
+    if (walk.owners == nullptr && walk.records == nullptr) {
         return;
     }
     const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
@@ -5503,14 +5544,24 @@ void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk&
     const qsizetype valueAreaEnd = static_cast<qsizetype>(walk.geometry.blockSize) -
                                    (isRoot ? kApfsBtreeInfoBytes : 0);
     const uint64_t paddrMask = (1ULL << kApfsObjTypeShift) - 1;
+    const uint64_t lenMask = (1ULL << kApfsObjTypeShift) - 1;
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes +
                               static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
         const uint16_t keyOffset = le16(node, toc);
         const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        const qsizetype value = valueAreaEnd - valueOffset;
         const uint64_t paddr = le64(node, keyAreaStart + keyOffset) & paddrMask;
-        walk.owners->insert(le64(node, valueAreaEnd - valueOffset + 8), paddr);
+        if (walk.owners != nullptr) {
+            walk.owners->insert(le64(node, value + 8), paddr);
+        }
+        if (walk.records != nullptr) {
+            walk.records->append({paddr,
+                                  le64(node, value) & lenMask,
+                                  le64(node, value + 8),
+                                  le32(node, value + 16)});
+        }
     }
 }
 
@@ -5559,7 +5610,7 @@ QHash<uint64_t, uint64_t> parseExtentRefOwners(QIODevice* image,
                                                uint64_t extentRefBlock,
                                                QStringList* blockers) {
     QHash<uint64_t, uint64_t> owners;
-    walkExtentRefTree({image, geometry, &owners, nullptr, 16}, extentRefBlock, blockers);
+    walkExtentRefTree({image, geometry, &owners, nullptr, nullptr, 16}, extentRefBlock, blockers);
     return owners;
 }
 
@@ -5570,8 +5621,21 @@ QVector<uint64_t> collectExtentRefTreeNodes(QIODevice* image,
                                             uint64_t extentRefBlock,
                                             QStringList* blockers) {
     QVector<uint64_t> nodes;
-    walkExtentRefTree({image, geometry, nullptr, &nodes, 16}, extentRefBlock, blockers);
+    walkExtentRefTree({image, geometry, nullptr, &nodes, nullptr, 16}, extentRefBlock, blockers);
     return nodes;
+}
+
+// Every j_phys_ext record the LIVE extent-ref tree carries. On a snapshotted volume the
+// live tree holds only the extents allocated since the last snapshot (each snapshot froze
+// its own delta), so a diverging mutation reproduces them and appends the new file's,
+// keeping refcounts correct without double-counting the snapshot-owned pre-snapshot blocks.
+QVector<ExtentRefPhysRecord> readLiveExtentRefRecords(QIODevice* image,
+                                                      const ApfsRepairGeometry& geometry,
+                                                      uint64_t extentRefBlock,
+                                                      QStringList* blockers) {
+    QVector<ExtentRefPhysRecord> records;
+    walkExtentRefTree({image, geometry, nullptr, nullptr, &records, 16}, extentRefBlock, blockers);
+    return records;
 }
 
 // Number of chunk-info blocks a device of `chunkCount` chunks needs: one cib per
@@ -6166,7 +6230,26 @@ struct ApfsCowFileInsert {
     int64_t fileCountDelta{1};       // +1 for a file insert, -1 for a file delete
     int64_t directoryCountDelta{0};  // +1 for a directory create, -1 for a directory delete
     uint64_t nextObjIdDelta{1};      // +1 when the mutation consumes an object id, else 0
+    // Diverge (mutating a snapshotted volume): the older volume-omap versions a snapshot
+    // still resolves (xid <= the most-recent snapshot xid), carried forward VERBATIM so the
+    // rebuilt versioned omap keeps them alongside the new (oid, newXid) mapping. Empty on the
+    // certified non-snapshot path (the omap holds only the single live version).
+    QVector<ApfsObjectMapEntry> retainedOmapMappings;
+    // Diverge: the exact j_phys_ext record set the new LIVE extent-ref tree must carry (the
+    // pre-existing post-snapshot extents plus the new file's). Empty => rebuild from `files`
+    // (the certified non-snapshot path, where the live tree covers every live file).
+    QVector<ExtentRefPhysRecord> extentRefRecordsOverride;
+    // Volume-omap mapping count for the chain layout: retained versions + one per fs node.
+    // 0 => fsNodes.size() (the certified path, one mapping per node, no retained versions).
+    qsizetype volMappingCount{0};
 };
+
+// The effective volume-omap mapping count for a commit's chain layout: the retained
+// snapshot versions plus one mapping per new fs-tree node, or just the node count on the
+// certified non-diverge path.
+qsizetype cowVolMappingCount(const ApfsCowFileInsert& cow) {
+    return cow.volMappingCount != 0 ? cow.volMappingCount : cow.fsNodes.size();
+}
 
 // Copy-on-write the file-system metadata chain to the newly allocated blocks
 // with the new file inserted: root tree -> volume object map -> volume
@@ -6182,8 +6265,16 @@ bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
     }
     const QVector<uint64_t> run =
         cow.extentRefBlocks.isEmpty() ? QVector<uint64_t>{cow.extentRefNew} : cow.extentRefBlocks;
+    // Diverge builds the live tree from an explicit record set (post-snapshot extents + the
+    // new file's); the certified path rebuilds it from the full live-file set.
     const QVector<QByteArray> nodes =
-        buildExtentRefTreeNodes({cow.geometry.blockSize, cow.newXid, run}, cow.files, blockers);
+        cow.extentRefRecordsOverride.isEmpty()
+            ? buildExtentRefTreeNodes({cow.geometry.blockSize, cow.newXid, run},
+                                      cow.files,
+                                      blockers)
+            : buildExtentRefTreeNodesFromRecords({cow.geometry.blockSize, cow.newXid, run},
+                                                 cow.extentRefRecordsOverride,
+                                                 blockers);
     if (nodes.isEmpty()) {
         return false;  // reserved run too small for the record set (blocker already appended)
     }
@@ -6235,9 +6326,14 @@ bool writeCowVolumeOmap(const ApfsCowFileInsert& cow,
     for (qsizetype i = 0; i < chain.volOmapTreeBlocks; ++i) {
         volTreeNodeBlocks.append(cow.newBlocks.at(chain.volOmapTreeBase + i));
     }
+    // Diverge: keep the older (oid, xid) versions a snapshot still resolves alongside the new
+    // (oid, newXid) mappings. buildObjectMapTreeNodes sorts by (oid, xid), so the versioned
+    // entries interleave correctly; the retained set is empty on the certified path.
+    QVector<ApfsObjectMapEntry> allMappings = cow.retainedOmapMappings;
+    allMappings += fsMappings;
     const QVector<QByteArray> volNodes = buildObjectMapTreeNodes(
         {bs, volOmapTreeBasePaddr, cow.newXid, volOmapTreeBasePaddr, volTreeNodeBlocks},
-        fsMappings,
+        allMappings,
         blockers);
     if (volNodes.size() != volTreeNodeBlocks.size()) {
         blockers->append(QStringLiteral("APFS in-place commit: volume omap tree needs %1 nodes but "
@@ -6254,13 +6350,38 @@ bool writeCowVolumeOmap(const ApfsCowFileInsert& cow,
     }
     QByteArray volHdr = buildObjectMapBlock({bs, volOmapHdr, volOmapTreeBasePaddr, cow.newXid, 0},
                                             blockers);
+    // Carry the live omap header's snapshot state (snapshot count, omap-snapshot-tree pointer,
+    // most-recent + pending-revert xids) across the COW: a fresh header would orphan the
+    // snapshots (apfsck "Snapshot: missing omap entry"). All zero on a snapshot-free volume, so
+    // this is byte-identical to the certified path there.
+    QByteArray liveOmapHdr(bs, '\0');
+    if (!readApfsRepairBlock(
+            cow.image, cow.geometry, cow.live.volOmapHdr, &liveOmapHdr, blockers)) {
+        return false;
+    }
+    writeLe32(&volHdr,
+              kApfsOmapSnapshotCountOffset,
+              le32(liveOmapHdr, kApfsOmapSnapshotCountOffset));
+    writeLe64(&volHdr,
+              kApfsOmapSnapshotTreeOidOffset,
+              le64(liveOmapHdr, kApfsOmapSnapshotTreeOidOffset));
+    writeLe64(&volHdr,
+              kApfsOmapMostRecentSnapshotOffset,
+              le64(liveOmapHdr, kApfsOmapMostRecentSnapshotOffset));
+    writeLe64(&volHdr,
+              kApfsOmapPendingRevertMinOffset,
+              le64(liveOmapHdr, kApfsOmapPendingRevertMinOffset));
+    writeLe64(&volHdr,
+              kApfsOmapPendingRevertMaxOffset,
+              le64(liveOmapHdr, kApfsOmapPendingRevertMaxOffset));
+    stampApfsObjectBlock(&volHdr, blockers);
     return writeApfsRepairBlock(cow.image, cow.geometry, volOmapHdr, volHdr, blockers);
 }
 
 bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const qsizetype nodeCount = cow.fsNodes.size();
-    const ApfsOmapChainLayout chain = omapChainLayout(nodeCount, nodeCount, bs);
+    const ApfsOmapChainLayout chain = omapChainLayout(nodeCount, cowVolMappingCount(cow), bs);
     const uint64_t volOmapHdr = cow.newBlocks.at(chain.volOmapHdr);
     const uint64_t volSb = cow.newBlocks.at(chain.volSb);
     const uint64_t ctrOmapTree = cow.newBlocks.at(chain.ctrOmapTreeBase);
@@ -7904,6 +8025,22 @@ QVector<uint64_t> fileFreedDataBlocks(const ApfsRootFilePayload& file, uint32_t 
     return blocks;
 }
 
+// Diverge (mutating a volume that already carries a snapshot): the state a file/dir
+// mutation must fold in so the snapshots stay intact. The volume object map is VERSIONED --
+// each snapshot resolves oid 1028 (the fs-tree root) to the largest (oid, xid) entry with
+// xid <= its own xid -- so the mutation KEEPS the older versions a snapshot still needs and
+// only the current-live version (if it postdates the last snapshot) is replaced/freed. The
+// live extent-ref tree carries only post-snapshot extents (each snapshot froze its own
+// delta), so the mutation extends that record set rather than rebuilding from every live
+// file. Inactive (all defaults) on the certified non-snapshot path -- byte-identical.
+struct ApfsDivergeState {
+    bool active{false};
+    uint64_t mostRecentSnapshotXid{0};
+    QVector<ApfsObjectMapEntry> retainedMappings;       // omap versions a snapshot still needs
+    bool freeLiveFsNodes{true};                         // free the current live fs-tree nodes?
+    QVector<ExtentRefPhysRecord> liveExtentRefRecords;  // extents already in the live tree
+};
+
 struct ApfsFsCommitFinalize {
     ApfsFsCommitContext ctx;
     uint64_t newXid{0};
@@ -7918,6 +8055,7 @@ struct ApfsFsCommitFinalize {
     int64_t directoryCountDelta{0};
     uint64_t nextObjIdDelta{0};
     uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
+    ApfsDivergeState diverge;       // snapshot-aware versioning (inactive on the plain path)
 };
 
 // Whether the live volume carries a snapshot (om_snap_count > 0). In-place
@@ -7930,6 +8068,63 @@ bool liveVolumeHasSnapshot(const ApfsFsCommitContext& ctx, QStringList* blockers
         return false;
     }
     return le32(volOmapHdr, kApfsOmapSnapshotCountOffset) > 0;
+}
+
+// Every leaf mapping of the live volume object map (all versions, xid included). Reads each
+// node the chain recorded and keeps the level-0 (leaf) entries -- a single-node omap is one
+// root|leaf; a multi-level omap's leaves are the level-0 nodes.
+QVector<ApfsObjectMapEntry> readLiveOmapVersionedEntries(const ApfsFsCommitContext& ctx,
+                                                         QStringList* blockers) {
+    QVector<ApfsObjectMapEntry> entries;
+    for (const uint64_t paddr : ctx.chain.volOmapTreeNodes) {
+        QByteArray node(ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(ctx.image, ctx.geometry, paddr, &node, blockers)) {
+            return {};
+        }
+        if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+            entries += readOmapLeafEntries(node, ctx.geometry.blockSize);
+        }
+    }
+    return entries;
+}
+
+// Fold the live volume's snapshot state into the diverge plan: which omap versions to keep
+// (those a snapshot resolves, xid <= the most-recent snapshot), whether the current live
+// fs-tree is snapshot-frozen (so its nodes must NOT be freed), and the extents the live
+// extent-ref tree already carries (extended, not rebuilt, by the mutation). Returns an
+// inactive plan on a snapshot-free volume so the certified path stays byte-identical.
+bool computeDivergeState(const ApfsFsCommitContext& ctx,
+                         ApfsDivergeState* state,
+                         QStringList* blockers) {
+    *state = ApfsDivergeState{};
+    QByteArray volOmapHdr(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(
+            ctx.image, ctx.geometry, ctx.chain.volOmapHdr, &volOmapHdr, blockers)) {
+        return false;
+    }
+    if (le32(volOmapHdr, kApfsOmapSnapshotCountOffset) == 0) {
+        return true;  // no snapshot: the plain COW replaces the single live version.
+    }
+    state->active = true;
+    state->mostRecentSnapshotXid = le64(volOmapHdr, kApfsOmapMostRecentSnapshotOffset);
+    const QVector<ApfsObjectMapEntry> entries = readLiveOmapVersionedEntries(ctx, blockers);
+    uint64_t liveFsTreeXid = 0;
+    for (const ApfsObjectMapEntry& e : entries) {
+        // Retain every version a snapshot still resolves (xid at or before the last snapshot);
+        // versions past it are live-only and get replaced by this commit's new mapping.
+        if (e.xid <= state->mostRecentSnapshotXid) {
+            state->retainedMappings.append(e);
+        }
+        if (e.oid == kApfsFormatRootTreeOid) {
+            liveFsTreeXid = std::max(liveFsTreeXid, e.xid);
+        }
+    }
+    // The current live fs-tree nodes are snapshot-frozen (must survive this commit) exactly
+    // when the live version does not postdate the last snapshot.
+    state->freeLiveFsNodes = liveFsTreeXid > state->mostRecentSnapshotXid;
+    state->liveExtentRefRecords =
+        readLiveExtentRefRecords(ctx.image, ctx.geometry, ctx.chain.extentRef, blockers);
+    return true;
 }
 
 // The current on-disk ci_bitmap_addr of data chunk `c`, read from its OWNING cib (cib 0
@@ -8009,29 +8204,40 @@ uint64_t computeFinalizeIpBitmapUsage(const ApfsFsCommitFinalize& f,
            spillBitmaps;
 }
 
+// The commit's volume-omap mapping count: one per new fs-tree node plus the retained
+// snapshot versions (diverge). Equals the node count on the certified non-snapshot path.
+qsizetype finalizeVolMappingCount(const ApfsFsCommitFinalize& f) {
+    return f.fsNodes.size() + f.diverge.retainedMappings.size();
+}
+
 // Writes the file-insert COW chain for the commit. Byte-identical to the inline
-// writeFileInsertCowChain call it replaces.
+// writeFileInsertCowChain call it replaces (diverge fields empty off the snapshot path).
 bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
                            qsizetype nodeCount,
                            int64_t netConsumed,
                            QStringList* blockers) {
+    const qsizetype volMappings = finalizeVolMappingCount(f);
     return writeFileInsertCowChain(
         {.image = f.ctx.image,
          .geometry = f.ctx.geometry,
          .newXid = f.newXid,
          .live = f.ctx.chain,
          .fsNodes = f.fsNodes,
-         .newBlocks = f.newBlocks.mid(
-             0,
-             omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
-                 .tail),
+         .newBlocks = f.newBlocks.mid(0,
+                                      omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                                      volMappings,
+                                                      f.ctx.geometry.blockSize)
+                                          .tail),
          .files = f.files,
          .allocBlockDelta = netConsumed,
          .extentRefNew = f.extentRefNew,
          .extentRefBlocks = f.extentRefBlocks,
          .fileCountDelta = f.fileCountDelta,
          .directoryCountDelta = f.directoryCountDelta,
-         .nextObjIdDelta = f.nextObjIdDelta},
+         .nextObjIdDelta = f.nextObjIdDelta,
+         .retainedOmapMappings = f.diverge.retainedMappings,
+         .extentRefRecordsOverride = f.diverge.liveExtentRefRecords,
+         .volMappingCount = volMappings},
         blockers);
 }
 
@@ -8053,8 +8259,12 @@ struct ApfsFinalizeFreeQueue {
 // moves by netConsumed (the queued blocks leave the volume but not the device).
 ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f,
                                                    QStringList* blockers) {
-    QVector<uint64_t> freed =
-        oldChainFreedBlocks(f.ctx.chain, f.ctx.oldFsNodes, f.extentRefNew != 0);
+    // Diverge: when the current live fs-tree is snapshot-frozen, its nodes are still owned by
+    // a snapshot (resolved through the retained versioned-omap entries) and must NOT be freed;
+    // only the omap/container chain + old extent-ref tree are released.
+    const QVector<uint64_t> oldFsNodes =
+        f.diverge.active && !f.diverge.freeLiveFsNodes ? QVector<uint64_t>{} : f.ctx.oldFsNodes;
+    QVector<uint64_t> freed = oldChainFreedBlocks(f.ctx.chain, oldFsNodes, f.extentRefNew != 0);
     freed += f.freedDataBlocks;
     const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
         f.ctx.image,
@@ -8373,11 +8583,17 @@ struct ApfsFinalizeApply {
 // records overflow a node. Both delta terms are zero -- hence byte-identical to the certified
 // path -- whenever the respective node count is unchanged (the single-node case).
 int64_t finalizeNetConsumed(const ApfsFsCommitFinalize& f, qsizetype nodeCount) {
-    const int64_t extraNodes = static_cast<int64_t>(nodeCount) -
-                               static_cast<int64_t>(f.ctx.oldFsNodes.size());
-    const int64_t newVolOmapBlocks = static_cast<int64_t>(
-        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
-            .volOmapTreeBlocks);
+    // Diverge: the current live fs-tree nodes are snapshot-frozen and NOT freed, so every new
+    // node is a net addition (freedFsNodes = 0); otherwise the old nodes are freed and only the
+    // node-count delta is consumed.
+    const qsizetype freedFsNodes =
+        f.diverge.active && !f.diverge.freeLiveFsNodes ? 0 : f.ctx.oldFsNodes.size();
+    const int64_t extraNodes = static_cast<int64_t>(nodeCount) - static_cast<int64_t>(freedFsNodes);
+    const int64_t newVolOmapBlocks =
+        static_cast<int64_t>(omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                             finalizeVolMappingCount(f),
+                                             f.ctx.geometry.blockSize)
+                                 .volOmapTreeBlocks);
     const int64_t oldVolOmapBlocks = static_cast<int64_t>(f.ctx.chain.volOmapTreeNodes.size());
     // Only when the extent-ref tree is re-COW'd (extentRefNew != 0) do its blocks move: the
     // new tree's node count is allocated and the old tree's nodes are freed.
@@ -8431,40 +8647,46 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
     // prefix. freedOldSlots pushes each repeated spill's old bitmap slot onto sm_fq[IP].
     const QVector<uint64_t> ipUsedSet =
         f.ctx.layout.allocChunk == 0 ? plan.ipUsedSet : ipBitmapPrefixSet(ipBitmapUsage);
-    return advanceCheckpoint(
-        {.image = f.ctx.image,
-         .geometry = f.ctx.geometry,
-         .nxsb = f.ctx.nxsb,
-         .live = f.ctx.live,
-         .newContainerOmap = f.newBlocks.at(
-             omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, f.ctx.geometry.blockSize)
-                 .ctrOmapHdr),
-         .spacemanFreeDelta = freeDelta,
-         .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
-         .newCibAddr = newAddr0,
-         .cibCount = f.ctx.layout.cibCount,
-         .ipSlotStride = groupSize,
-         .ipBitmapUsage = ipBitmapUsage,
-         .freedCibSlot = rotation.liveCib,
-         .prevFreedCibSlot = rotation.freeCib,
-         .extraFreedIpBlocks = plan.freedOldSlots,
-         .mainFqEntries = mainFq.entries,
-         .ipUsedSet = ipUsedSet,
-         .cibArrayRepoints = plan.cibRepoints},
-        result,
-        blockers);
+    return advanceCheckpoint({.image = f.ctx.image,
+                              .geometry = f.ctx.geometry,
+                              .nxsb = f.ctx.nxsb,
+                              .live = f.ctx.live,
+                              .newContainerOmap =
+                                  f.newBlocks.at(omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                                                 finalizeVolMappingCount(f),
+                                                                 f.ctx.geometry.blockSize)
+                                                     .ctrOmapHdr),
+                              .spacemanFreeDelta = freeDelta,
+                              .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
+                              .newCibAddr = newAddr0,
+                              .cibCount = f.ctx.layout.cibCount,
+                              .ipSlotStride = groupSize,
+                              .ipBitmapUsage = ipBitmapUsage,
+                              .freedCibSlot = rotation.liveCib,
+                              .prevFreedCibSlot = rotation.freeCib,
+                              .extraFreedIpBlocks = plan.freedOldSlots,
+                              .mainFqEntries = mainFq.entries,
+                              .ipUsedSet = ipUsedSet,
+                              .cibArrayRepoints = plan.cibRepoints},
+                             result,
+                             blockers);
 }
 
 bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
                       ApfsInPlaceCheckpointResult* result,
                       QStringList* blockers) {
-    // Mutating a container that already carries a snapshot is a documented follow-on
-    // (multi-version volume omap + live-version reader); fail closed. The A8 multi-volume
-    // + snapshot gate is met via mutate-then-snapshot.
-    if (liveVolumeHasSnapshot(f.ctx, blockers)) {
+    // Diverge: a mutation of a volume that already carries a snapshot rebuilds the volume omap
+    // as a VERSIONED tree (retaining the versions each snapshot resolves) and leaves the
+    // snapshot-frozen fs-tree nodes + extent-ref deltas in place. f.diverge (computed by the
+    // caller from the live snapshot state) carries the retained versions, the free-suppression
+    // flag, and the live extent-ref record set; it is inactive on a snapshot-free volume.
+    // A caller that did NOT compute a diverge plan (delete/patch/directory mutations) must fail
+    // closed on a snapshotted volume rather than free snapshot-owned blocks -- the file-insert
+    // path is diverge-aware, the others reach it via mutate-then-snapshot for now.
+    if (!f.diverge.active && liveVolumeHasSnapshot(f.ctx, blockers)) {
         blockers->append(QStringLiteral(
-            "APFS in-place mutation of a container that already has a snapshot is not yet "
-            "supported; create the snapshot after the file mutations instead"));
+            "APFS in-place mutation of a container that already has a snapshot is only supported "
+            "for file insert; perform other mutations before creating the snapshot"));
         return false;
     }
     const ApfsIpRotation rotation =
@@ -8494,10 +8716,15 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
 // preserved files contribute their real recovered extents, so the record count is exact for
 // the many-files driver and an estimate only when the new file itself fragments in pass 2 --
 // cowExtentRefTree fails closed if that estimate is exceeded, never corrupting.
+struct ApfsInsertSizing {
+    qsizetype nodeCount{0};
+    qsizetype extentRefRecords{0};
+};
+
 bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
                       const ApfsFileInsertRequest& request,
-                      qsizetype* nodeCount,
-                      qsizetype* extentRefRecords,
+                      const ApfsDivergeState& diverge,
+                      ApfsInsertSizing* out,
                       QStringList* blockers) {
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsFsTreeNode> probe;
@@ -8507,9 +8734,42 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
                           blockers)) {
         return false;
     }
-    *nodeCount = probe.size();
-    *extentRefRecords = collectExtentRefRecords(ctx.geometry.blockSize, files).size();
+    out->nodeCount = probe.size();
+    if (!diverge.active) {
+        out->extentRefRecords = collectExtentRefRecords(ctx.geometry.blockSize, files).size();
+        return true;
+    }
+    // The live extent-ref tree carries only the post-snapshot extents (the pre-snapshot ones
+    // the snapshots own), so it is the existing live record set plus THIS commit's new file's
+    // extents (estimated from pass 1 as one extent, exactly like the fs-tree sizing) -- not
+    // every live file. The new file is the last of the merged list.
+    const qsizetype newFileRecords =
+        files.isEmpty() ? 0
+                        : collectExtentRefRecords(ctx.geometry.blockSize, {files.last()}).size();
+    out->extentRefRecords = diverge.liveExtentRefRecords.size() + newFileRecords;
     return true;
+}
+
+// Diverge: extend the live extent-ref record set with THIS commit's freshly allocated extents
+// (the new file's data blocks -- the only records keyed by paddrs in dataBlockList), so the
+// live tree ends up = existing post-snapshot extents + the new file's. A no-op off the diverge
+// path or for a data-free insert.
+void extendDivergeExtentRecords(const ApfsFsCommitContext& ctx,
+                                const QVector<ApfsRootFilePayload>& files,
+                                const QVector<uint64_t>& dataBlockList,
+                                ApfsDivergeState* diverge) {
+    if (!diverge->active || dataBlockList.isEmpty()) {
+        return;
+    }
+    QSet<uint64_t> freshData;
+    for (const uint64_t block : dataBlockList) {
+        freshData.insert(block);
+    }
+    for (const ExtentRefPhysRecord& r : collectExtentRefRecords(ctx.geometry.blockSize, files)) {
+        if (freshData.contains(r.paddr)) {
+            diverge->liveExtentRefRecords.append(r);
+        }
+    }
 }
 
 struct ApfsInsertFsNodes {
@@ -8559,6 +8819,55 @@ uint64_t insertNextObjIdDelta(const ApfsFileInsertRequest& request) {
 // data-block allocation, then advance the checkpoint with nx_omap_oid
 // re-pointed at the new container object map. The fs-tree splits into an
 // internal root over leaf nodes once the records overflow a single node.
+// The scalar sizes a file-insert commit reserves from: the fs-tree node count, the volume-omap
+// mapping count (node count + retained snapshot versions, diverge), the extent-ref record
+// count, the data-block count, and whether the extent-ref tree is copied-on-written at all.
+struct ApfsInsertReserveInput {
+    qsizetype nodeCount{0};
+    qsizetype volMappingCount{0};
+    qsizetype extentRefRecords{0};
+    uint64_t dataBlocks{0};
+    bool cowExtentRef{false};
+};
+
+// The commit's reserved blocks, sliced into the omap-chain / extent-ref / data regions.
+struct ApfsInsertLayout {
+    QVector<uint64_t> newBlocks;
+    QVector<uint64_t> dataBlockList;
+    QVector<uint64_t> extentRefBlocks;
+    uint64_t chunk1BitmapBlock{0};
+};
+
+// Reserve a file-insert commit's blocks and slice them. The data blocks may be non-contiguous
+// (fragmented free space or a chunk-1 overflow); they are grouped into one file-extent +
+// extent-ref record per contiguous run. The omap chain past the fs nodes can span several
+// blocks (the volume omap tree grows multi-level with the fs-tree and the retained snapshot
+// versions), so the tail base is computed from volMappingCount rather than fixed.
+bool reserveInsertLayout(const ApfsFsCommitContext& ctx,
+                         const ApfsInsertReserveInput& in,
+                         ApfsInsertLayout* out,
+                         QStringList* blockers) {
+    const int extentRefSlots =
+        in.cowExtentRef
+            ? static_cast<int>(extentRefTreeBlockCount(in.extentRefRecords, ctx.geometry.blockSize))
+            : 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {in.nodeCount, extentRefSlots, in.dataBlocks},
+                                &out->newBlocks,
+                                &out->chunk1BitmapBlock,
+                                blockers)) {
+        return false;
+    }
+    const uint64_t tailBase = omapChainLayout(static_cast<uint64_t>(in.nodeCount),
+                                              in.volMappingCount,
+                                              ctx.geometry.blockSize)
+                                  .tail;
+    out->dataBlockList = out->newBlocks.mid(tailBase + extentRefSlots);
+    out->extentRefBlocks = extentRefSlots != 0 ? out->newBlocks.mid(tailBase, extentRefSlots)
+                                               : QVector<uint64_t>{};
+    return true;
+}
+
 bool commitInPlaceFileInsert(QIODevice* image,
                              const ApfsFileInsertRequest& request,
                              ApfsInPlaceCheckpointResult* result,
@@ -8567,58 +8876,45 @@ bool commitInPlaceFileInsert(QIODevice* image,
     if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
         return false;
     }
+    // Diverge: if the volume already carries a snapshot, the commit must keep the versioned
+    // omap + the snapshot-frozen fs-tree nodes and extend (not rebuild) the live extent-ref
+    // tree. Inactive plan on a snapshot-free volume -> the certified path is byte-identical.
+    ApfsDivergeState diverge;
+    ApfsInsertSizing sizing;
+    if (!computeDivergeState(ctx, &diverge, blockers) ||
+        !sizeInsertFsTree(ctx, request, diverge, &sizing, blockers)) {
+        return false;
+    }
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
-    qsizetype nodeCount = 0;
-    qsizetype extentRefRecords = 0;
-    if (!sizeInsertFsTree(ctx, request, &nodeCount, &extentRefRecords, blockers)) {
+    ApfsInsertLayout layout;
+    if (!reserveInsertLayout(ctx,
+                             {.nodeCount = sizing.nodeCount,
+                              .volMappingCount = sizing.nodeCount + diverge.retainedMappings.size(),
+                              .extentRefRecords = sizing.extentRefRecords,
+                              .dataBlocks = dataBlocks,
+                              .cowExtentRef = dataBlocks > 0 || request.cloneSourcePrivateId != 0},
+                             &layout,
+                             blockers)) {
         return false;
     }
-    // A file with data copy-on-writes the extent-ref tree; an empty new file leaves it in
-    // place. A clone allocates no data but still rewrites the tree (the shared blocks'
-    // refcount rises to 2), so it COWs it too. The tree spans as many blocks as its
-    // j_phys_ext record set needs -- one node up to the leaf capacity, then a multi-node
-    // physical B-tree -- so the reserve scales with the record count, not a fixed 1.
-    const bool cowExtentRef = dataBlocks > 0 || request.cloneSourcePrivateId != 0;
-    const int extentRefSlots =
-        cowExtentRef
-            ? static_cast<int>(extentRefTreeBlockCount(extentRefRecords, ctx.geometry.blockSize))
-            : 0;
-    QVector<uint64_t> newBlocks;
-    uint64_t chunk1BitmapBlock = 0;
-    if (!allocateFsCommitBlocks(ctx,
-                                {nodeCount, extentRefSlots, dataBlocks},
-                                &newBlocks,
-                                &chunk1BitmapBlock,
-                                blockers)) {
-        return false;
-    }
-    // The data blocks may be non-contiguous when free space is fragmented or when the
-    // file overflows into chunk 1; they are grouped into one file-extent + extent-ref
-    // record per contiguous run. The omap chain past the fs nodes can be several blocks
-    // (the volume omap tree grows multi-level with the fs-tree), so the tail base is
-    // computed rather than the fixed +5.
-    const uint64_t insertTailBase =
-        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(insertTailBase + extentRefSlots);
     ApfsInsertFsNodes built;
-    if (!buildInsertFsNodes(ctx, request, dataBlockList, &built, blockers)) {
+    if (!buildInsertFsNodes(ctx, request, layout.dataBlockList, &built, blockers)) {
         return false;
     }
-    const QVector<uint64_t> extentRefBlocks =
-        extentRefSlots != 0 ? newBlocks.mid(insertTailBase, extentRefSlots) : QVector<uint64_t>{};
-    const uint64_t extentRefNew = extentRefBlocks.value(0);
+    extendDivergeExtentRecords(ctx, built.files, layout.dataBlockList, &diverge);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
-                             .newBlocks = newBlocks,
+                             .newBlocks = layout.newBlocks,
                              .files = built.files,
-                             .extentRefNew = extentRefNew,
-                             .extentRefBlocks = extentRefBlocks,
+                             .extentRefNew = layout.extentRefBlocks.value(0),
+                             .extentRefBlocks = layout.extentRefBlocks,
                              .freedDataBlocks = {},
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
                              .fileCountDelta = request.hardlinkTargetId != 0 ? 0 : 1,
                              .nextObjIdDelta = insertNextObjIdDelta(request),
-                             .chunk1BitmapBlock = chunk1BitmapBlock},
+                             .chunk1BitmapBlock = layout.chunk1BitmapBlock,
+                             .diverge = diverge},
                             result,
                             blockers);
 }
@@ -8690,15 +8986,16 @@ bool commitInPlaceFilePatch(QIODevice* image,
                                        .explicitFileId = request.targetFileId};
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
-    qsizetype nodeCount = 0;
-    qsizetype extentRefRecords = 0;
-    if (!sizeInsertFsTree(ctx, insert, &nodeCount, &extentRefRecords, blockers)) {
+    ApfsInsertSizing sizing;
+    // Patch fails closed on a snapshotted volume (the finalize guard), so no diverge plan.
+    if (!sizeInsertFsTree(ctx, insert, ApfsDivergeState{}, &sizing, blockers)) {
         return false;
     }
+    const qsizetype nodeCount = sizing.nodeCount;
     const int extentRefSlots =
-        dataBlocks > 0
-            ? static_cast<int>(extentRefTreeBlockCount(extentRefRecords, ctx.geometry.blockSize))
-            : 0;
+        dataBlocks > 0 ? static_cast<int>(extentRefTreeBlockCount(sizing.extentRefRecords,
+                                                                  ctx.geometry.blockSize))
+                       : 0;
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     if (!allocateFsCommitBlocks(ctx,
