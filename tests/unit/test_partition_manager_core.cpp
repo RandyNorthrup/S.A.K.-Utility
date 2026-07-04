@@ -11213,6 +11213,37 @@ static void certifyPartialSourceShrinkReadsBack(const QDir& dir,
     QCOMPARE(sread.data, payload);
 }
 
+// Grow a multi-chunk source ACROSS the 126-chunk single-CIB boundary so the target needs N cibs:
+// cib 0 rotates crash-safely while cibs 1..N-1 are written once (the upper all-free chunks, plus
+// the immutable cib that carries the relocated pool when it lands past chunk 126). Each cib gets
+// its ordinal cib_index and an object xid equal to its newest chunk (genesis for an all-free cib).
+// apfsck-clean (WSL apfsprogs) across 127 (minimal 2-cib, cib 1 = 1 chunk), 130, and 260 (3-cib);
+// the pre-grow file reads back byte-exact. The 16-33 GiB images are sparse - only metadata blocks
+// are allocated on disk.
+static void certifyMultiCibGrowReadsBack(const QDir& dir,
+                                         const QString& withFile,
+                                         const PartitionApfsWriteOptions& options,
+                                         const QByteArray& payload) {
+    constexpr uint64_t kChunk = 128ULL * 1024ULL * 1024ULL;  // 32768 blocks * 4096 bytes
+    for (uint64_t chunks : {uint64_t{127}, uint64_t{130}, uint64_t{260}}) {
+        const QString out = dir.filePath(QStringLiteral("mcs-cib-%1.apfs").arg(chunks));
+        const auto commit =
+            PartitionApfsWriter::commitImageOnlyResize({.source_image_path = withFile,
+                                                        .written_image_path = out,
+                                                        .new_size_bytes = chunks * kChunk,
+                                                        .options = options});
+        QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+        QFile img(out);
+        QVERIFY(img.open(QIODevice::ReadOnly));
+        QCOMPARE(static_cast<uint64_t>(img.size()), chunks * kChunk);
+        img.close();
+        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+            out, QStringLiteral("/orig.bin"), static_cast<uint64_t>(payload.size()));
+        QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(read.data, payload);
+    }
+}
+
 static void certifyPostGrowInsertReadsBack(const QDir& dir,
                                            const QString& grown,
                                            const PartitionApfsWriteOptions& options,
@@ -11414,6 +11445,9 @@ void PartitionManagerCoreTests::apfsWriter_growsMultiChunkSourceContainer() {
     QCOMPARE(spilledRead.data, big);
     // A partial-last-chunk SOURCE grows too (relocated pool lands mid-chunk); see the helper.
     certifyPartialSourceGrowReadsBack(dir, options, payload);
+    // Crossing the 126-chunk single-CIB boundary builds an N-cib target (cib 0 rotates, cibs
+    // 1..N-1 immutable); see the helper. apfsck-clean across 127/130/260 chunks.
+    certifyMultiCibGrowReadsBack(dir, withFile, options, payload);
 }
 
 void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
