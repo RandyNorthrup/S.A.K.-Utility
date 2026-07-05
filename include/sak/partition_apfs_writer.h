@@ -518,6 +518,15 @@ struct PartitionApfsLiveLayoutProbe {
     uint32_t ip_bm_block_count{0};
     uint64_t ip_bm_base{0};
     QList<uint64_t> cib_addrs;
+    // Live IP-bitmap ring state (foreign-overflow finalize ground truth).
+    uint32_t sm_addr_offset{0};
+    uint32_t ip_bm_free_head{0};
+    uint32_t ip_bm_free_tail{0};
+    uint32_t ip_bm_xid_array_off{0};
+    uint32_t ip_bm_addr_array_off{0};
+    uint32_t ip_bm_free_next_off{0};
+    QList<uint64_t> live_bm_slots;  // ring slot of each live bitmap block
+    QList<uint64_t> live_bm_pop;    // set-bit count of each live bitmap block
     QStringList blockers;
 };
 

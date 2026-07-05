@@ -5771,6 +5771,17 @@ struct ApfsLiveContainerLayout {
     uint32_t ipBmBlockCount{0};  // sm_ip_bm_block_count    (bitmap RING length; mkapfs 16)
     uint64_t ipBmBase{0};        // sm_ip_bm_base           (ring's first block)
     QVector<uint64_t> cibAddrs;  // live chunk-info-block addresses (entries 0..cibCount-1)
+    // Live IP-bitmap ring state (foreign-overflow finalize ground truth). The ring holds
+    // ipBmBlockCount slots; bmSize of them are live (one per bitmap block), the rest form a
+    // free list threaded head..tail. The three inline arrays sit at the spaceman's own offsets.
+    uint32_t smAddrOffset{0};       // sm_dev[MAIN].sm_addr_offset (cib-address array base)
+    uint16_t ipBmFreeHead{0};       // sm_ip_bm_free_head (ring free-list head index)
+    uint16_t ipBmFreeTail{0};       // sm_ip_bm_free_tail (ring free-list tail index)
+    uint32_t ipBmXidArrayOff{0};    // per-live-slot xid array offset (0x144 field)
+    uint32_t ipBmAddrArrayOff{0};   // live-slot index array offset   (0x148 field)
+    uint32_t ipBmFreeNextOff{0};    // ring free-next linkage array   (0x14C field)
+    QVector<uint16_t> liveBmSlots;  // ring slot index of each of the bmSize live bitmap blocks
+    QVector<uint64_t> liveBmPop;    // set-bit count of each live bitmap block (used IP blocks)
 };
 
 // Read the target volume superblock through the container object map and record its object ids.
@@ -5833,9 +5844,33 @@ bool parseLiveContainerSpaceman(QIODevice* image,
     // parse_spaceman_device reads it: sm_addr_off + i*8). Read the real field rather than S.A.K.'s
     // computed offset so a foreign spaceman (whose array sits elsewhere) is enumerated correctly.
     const qsizetype cibArr = le32(sm, dev + kApfsSpacemanDeviceAddrOffsetOffset);
+    layout->smAddrOffset = static_cast<uint32_t>(cibArr);
     layout->cibAddrs.clear();
     for (uint32_t k = 0; k < layout->smMainCibCount; ++k) {
         layout->cibAddrs.append(le64(sm, cibArr + static_cast<qsizetype>(k) * 8));
+    }
+    // Live IP-bitmap ring state: the free-list head/tail, the three inline-array offsets, and the
+    // ring slot + set-bit count of each of the bmSize live bitmap blocks. Ground truth for
+    // generalizing the finalize to a real Apple overflow pool (bmSize > 1 => the used-set spans
+    // more than one bitmap block, which the certified single-block path zeroes).
+    layout->ipBmFreeHead = le16(sm, kApfsSpacemanIpBmFreeHeadOffset);
+    layout->ipBmFreeTail = le16(sm, kApfsSpacemanIpBmFreeTailOffset);
+    layout->ipBmXidArrayOff = le32(sm, kApfsSpacemanIpBmXidOffsetField);
+    layout->ipBmAddrArrayOff = le32(sm, kApfsSpacemanIpBitmapOffsetField);
+    layout->ipBmFreeNextOff = le32(sm, kApfsSpacemanIpBmFreeNextOffsetField);
+    layout->liveBmSlots.clear();
+    layout->liveBmPop.clear();
+    for (uint32_t i = 0; i < layout->ipBmSizeBlocks; ++i) {
+        const uint16_t slot = le16(sm, layout->ipBmAddrArrayOff + static_cast<qsizetype>(i) * 2);
+        layout->liveBmSlots.append(slot);
+        QByteArray bmp(geometry.blockSize, '\0');
+        uint64_t setBits = 0;
+        if (readApfsRepairBlock(image, geometry, layout->ipBmBase + slot, &bmp, blockers)) {
+            for (const unsigned char byte : bmp) {
+                setBits += static_cast<uint64_t>(qPopulationCount(byte));
+            }
+        }
+        layout->liveBmPop.append(setBits);
     }
     return true;
 }
@@ -20196,6 +20231,14 @@ PartitionApfsLiveLayoutProbe PartitionApfsWriter::probeLiveLayout(const QString&
     probe.ip_bm_block_count = layout.ipBmBlockCount;
     probe.ip_bm_base = layout.ipBmBase;
     probe.cib_addrs = QList<uint64_t>(layout.cibAddrs.cbegin(), layout.cibAddrs.cend());
+    probe.sm_addr_offset = layout.smAddrOffset;
+    probe.ip_bm_free_head = layout.ipBmFreeHead;
+    probe.ip_bm_free_tail = layout.ipBmFreeTail;
+    probe.ip_bm_xid_array_off = layout.ipBmXidArrayOff;
+    probe.ip_bm_addr_array_off = layout.ipBmAddrArrayOff;
+    probe.ip_bm_free_next_off = layout.ipBmFreeNextOff;
+    probe.live_bm_slots = QList<uint64_t>(layout.liveBmSlots.cbegin(), layout.liveBmSlots.cend());
+    probe.live_bm_pop = QList<uint64_t>(layout.liveBmPop.cbegin(), layout.liveBmPop.cend());
     probe.ok = true;
     return probe;
 }

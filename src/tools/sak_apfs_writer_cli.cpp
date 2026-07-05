@@ -1308,6 +1308,25 @@ std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocatio
     report.insert(QStringLiteral("ip_bm_block_count"),
                   static_cast<qint64>(probe.ip_bm_block_count));
     report.insert(QStringLiteral("ip_bm_base"), static_cast<qint64>(probe.ip_bm_base));
+    report.insert(QStringLiteral("sm_addr_offset"), static_cast<qint64>(probe.sm_addr_offset));
+    report.insert(QStringLiteral("ip_bm_free_head"), static_cast<qint64>(probe.ip_bm_free_head));
+    report.insert(QStringLiteral("ip_bm_free_tail"), static_cast<qint64>(probe.ip_bm_free_tail));
+    report.insert(QStringLiteral("ip_bm_xid_array_off"),
+                  static_cast<qint64>(probe.ip_bm_xid_array_off));
+    report.insert(QStringLiteral("ip_bm_addr_array_off"),
+                  static_cast<qint64>(probe.ip_bm_addr_array_off));
+    report.insert(QStringLiteral("ip_bm_free_next_off"),
+                  static_cast<qint64>(probe.ip_bm_free_next_off));
+    QJsonArray liveSlots;
+    for (const uint64_t slot : probe.live_bm_slots) {
+        liveSlots.append(static_cast<qint64>(slot));
+    }
+    report.insert(QStringLiteral("live_bm_slots"), liveSlots);
+    QJsonArray livePop;
+    for (const uint64_t pop : probe.live_bm_pop) {
+        livePop.append(static_cast<qint64>(pop));
+    }
+    report.insert(QStringLiteral("live_bm_pop"), livePop);
     QJsonArray cibs;
     for (const uint64_t addr : probe.cib_addrs) {
         cibs.append(static_cast<qint64>(addr));
