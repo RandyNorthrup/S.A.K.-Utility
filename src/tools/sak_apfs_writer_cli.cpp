@@ -1271,6 +1271,55 @@ std::optional<QJsonObject> buildListImageReport(const CliInvocation& invocation,
     return report;
 }
 
+std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocation, QString* error) {
+    const auto probe = sak::PartitionApfsWriter::probeLiveLayout(invocation.target_path);
+    QJsonObject report;
+    report.insert(QStringLiteral("tool"), QStringLiteral("sak_apfs_writer_cli"));
+    report.insert(QStringLiteral("command"), QStringLiteral("probe-layout"));
+    report.insert(QStringLiteral("ok"), probe.ok);
+    report.insert(QStringLiteral("block_size"), static_cast<qint64>(probe.block_size));
+    report.insert(QStringLiteral("block_count"), static_cast<qint64>(probe.block_count));
+    report.insert(QStringLiteral("latest_xid"), static_cast<qint64>(probe.latest_xid));
+    report.insert(QStringLiteral("nx_omap_oid"), static_cast<qint64>(probe.nx_omap_oid));
+    report.insert(QStringLiteral("spaceman_oid"), static_cast<qint64>(probe.spaceman_oid));
+    report.insert(QStringLiteral("volume_oid"), static_cast<qint64>(probe.volume_oid));
+    report.insert(QStringLiteral("volume_sb_block"), static_cast<qint64>(probe.volume_sb_block));
+    report.insert(QStringLiteral("vol_root_tree_oid"),
+                  static_cast<qint64>(probe.vol_root_tree_oid));
+    report.insert(QStringLiteral("vol_omap_oid"), static_cast<qint64>(probe.vol_omap_oid));
+    report.insert(QStringLiteral("vol_extentref_oid"),
+                  static_cast<qint64>(probe.vol_extentref_oid));
+    report.insert(QStringLiteral("vol_snap_meta_oid"),
+                  static_cast<qint64>(probe.vol_snap_meta_oid));
+    report.insert(QStringLiteral("sm_main_block_count"),
+                  static_cast<qint64>(probe.sm_main_block_count));
+    report.insert(QStringLiteral("sm_main_chunk_count"),
+                  static_cast<qint64>(probe.sm_main_chunk_count));
+    report.insert(QStringLiteral("sm_main_cib_count"),
+                  static_cast<qint64>(probe.sm_main_cib_count));
+    report.insert(QStringLiteral("sm_main_cab_count"),
+                  static_cast<qint64>(probe.sm_main_cab_count));
+    report.insert(QStringLiteral("sm_main_free_count"),
+                  static_cast<qint64>(probe.sm_main_free_count));
+    report.insert(QStringLiteral("ip_base"), static_cast<qint64>(probe.ip_base));
+    report.insert(QStringLiteral("ip_block_count"), static_cast<qint64>(probe.ip_block_count));
+    report.insert(QStringLiteral("ip_bm_size_blocks"),
+                  static_cast<qint64>(probe.ip_bm_size_blocks));
+    report.insert(QStringLiteral("ip_bm_block_count"),
+                  static_cast<qint64>(probe.ip_bm_block_count));
+    report.insert(QStringLiteral("ip_bm_base"), static_cast<qint64>(probe.ip_bm_base));
+    QJsonArray cibs;
+    for (const uint64_t addr : probe.cib_addrs) {
+        cibs.append(static_cast<qint64>(addr));
+    }
+    report.insert(QStringLiteral("cib_addrs"), cibs);
+    report.insert(QStringLiteral("blockers"), toJsonArray(probe.blockers));
+    if (!probe.ok) {
+        *error = probe.blockers.join(QStringLiteral("; "));
+    }
+    return report;
+}
+
 std::optional<QJsonObject> buildCommitCheckpointReport(const CliInvocation& invocation,
                                                        QString* error) {
     if (invocation.output_image_path.isEmpty()) {
@@ -2067,6 +2116,9 @@ std::optional<QJsonObject> buildCommitCommandReport(const CliInvocation& invocat
 std::optional<QJsonObject> buildCommandReport(const CliInvocation& invocation, QString* error) {
     if (invocation.command == QStringLiteral("list-image")) {
         return buildListImageReport(invocation, error);
+    }
+    if (invocation.command == QStringLiteral("probe-layout")) {
+        return buildProbeLayoutReport(invocation, error);
     }
     if (invocation.command == QStringLiteral("import-image")) {
         return buildImportImageReport(invocation, error);

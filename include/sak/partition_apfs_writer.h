@@ -488,6 +488,39 @@ struct PartitionApfsImageCheckpointCommitResult {
     QStringList warnings;
 };
 
+/// @brief Read-only probe of a container's REAL on-disk layout (foreign-volume in-place work):
+///        the live checkpoint position, the target volume-chain object ids, and the spaceman
+///        internal-pool bitmap-ring geometry parsed straight from the image. For a S.A.K.-
+///        generated container every field equals its format constant; a real Apple/mkapfs volume
+///        reports its own oids and its own N-block bitmap ring. Used to verify the adopt-state
+///        parser and to drive the generalized (non-frozen) COW allocation path.
+struct PartitionApfsLiveLayoutProbe {
+    bool ok{false};
+    uint32_t block_size{0};
+    uint64_t block_count{0};
+    uint64_t latest_xid{0};
+    uint64_t nx_omap_oid{0};
+    uint64_t spaceman_oid{0};
+    uint64_t volume_oid{0};
+    uint64_t volume_sb_block{0};
+    uint64_t vol_root_tree_oid{0};
+    uint64_t vol_omap_oid{0};
+    uint64_t vol_extentref_oid{0};
+    uint64_t vol_snap_meta_oid{0};
+    uint64_t sm_main_block_count{0};
+    uint64_t sm_main_chunk_count{0};
+    uint32_t sm_main_cib_count{0};
+    uint32_t sm_main_cab_count{0};
+    uint64_t sm_main_free_count{0};
+    uint64_t ip_base{0};
+    uint64_t ip_block_count{0};
+    uint32_t ip_bm_size_blocks{0};
+    uint32_t ip_bm_block_count{0};
+    uint64_t ip_bm_base{0};
+    QList<uint64_t> cib_addrs;
+    QStringList blockers;
+};
+
 /// @brief Request to insert one empty file into a generated APFS container with
 ///        a true in-place copy-on-write checkpoint commit (A2 increment 2).
 struct PartitionApfsImageFileInsertCommitRequest {
@@ -1072,6 +1105,11 @@ public:
         const PartitionApfsImageRepairRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyCheckpoint(
         const PartitionApfsImageCheckpointCommitRequest& request);
+    /// @brief Read-only: parse the REAL on-disk layout of any APFS container (S.A.K.-generated
+    ///        or a real Apple/mkapfs volume) - checkpoint position, volume-chain oids, spaceman
+    ///        internal-pool bitmap-ring geometry. The adopt-state substrate for foreign-volume
+    ///        in-place mutation; does not modify the image.
+    [[nodiscard]] static PartitionApfsLiveLayoutProbe probeLiveLayout(const QString& image_path);
     /// @brief Create-or-replace one root file with an in-place COW commit (the
     ///        production file-write primitive): a new name is one insert commit, an
     ///        existing name is a delete-then-insert replace. Reuses the insert request.
