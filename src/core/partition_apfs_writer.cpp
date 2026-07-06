@@ -2987,6 +2987,13 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
         // owner must match what the com.apple.ResourceFork dstream declares.
         const uint64_t owner = file.resourceFork ? file.resourceForkXattrObjId : file.fileId;
         for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
+            // A hole (sparse gap) has phys_block_num 0 and is NOT an owned physical block: it
+            // belongs in the fs-tree j_file_extent records but must never enter the extent-ref
+            // (j_phys_ext) tree, or fsck reports "physical extent (id 0): Bad phys_block_num".
+            // Block 0 is the container superblock, so paddr 0 unambiguously means a hole.
+            if (extent.paddr == 0) {
+                continue;
+            }
             ExtentRefPhysRecord* shared = nullptr;
             for (ExtentRefPhysRecord& candidate : records) {
                 if (candidate.paddr == extent.paddr) {
@@ -8832,6 +8839,23 @@ struct ApfsFinalizeFreeQueue {
 // releases the reclaimed runs, not this commit's frees; the cib/spaceman free
 // counts move by (reclaimed - allocated) while the volume allocated-count still
 // moves by netConsumed (the queued blocks leave the volume but not the device).
+// Foreign overflow: whether an aged free-queue run can be reclaimed by the current apply. Reclaim
+// clears bits in the boundary chunk (applyOverflowAllocation) or a FAR cib k>0 (applyForeignReclaim
+// copies-on-writes that cib). A run touching a cib-0 NON-boundary chunk cannot be reclaimed yet
+// (the boundary cib is rotated separately; a co-ordinated cib-0 reclaim is a follow-on), so it is
+// kept deferred rather than blocking the commit. On the real overflow layout the fs metadata lives
+// in cibs > 0, so this defers nothing in practice - it is a robustness guard, not a common path.
+bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry, uint64_t allocChunk) {
+    const uint64_t firstChunk = entry.paddr / kApfsSpacemanBlocksPerChunk;
+    const uint64_t lastChunk = (entry.paddr + entry.length - 1) / kApfsSpacemanBlocksPerChunk;
+    for (uint64_t c = firstChunk; c <= lastChunk; ++c) {
+        if (c / kApfsSpacemanChunksPerCib == 0 && c != allocChunk) {
+            return false;
+        }
+    }
+    return true;
+}
+
 ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f,
                                                    QStringList* blockers) {
     // Diverge: when the current live fs-tree is snapshot-frozen, its nodes are still owned by
@@ -8848,13 +8872,32 @@ ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f
         findEphemeralPaddrByOid(
             f.ctx.image, f.ctx.geometry, f.ctx.live, f.ctx.chain.mainFqTreeOid, blockers),
         blockers);
-    // Foreign overflow (first-cert milestone): the real volume's main free-queue holds hundreds of
-    // aged entries scattered across the whole device; reclaiming them into the boundary chunk's
-    // bitmap would write out of bounds (they live in far-away chunks) and needs multi-chunk bitmap
-    // COW - a production follow-on. Defer ALL frees (reclaim nothing) with a window == newXid, so
-    // applyOverflowAllocation only flips this commit's own boundary-chunk allocations.
-    const uint64_t window = f.ctx.foreignOverflow ? f.newXid : kMainFqRollbackWindow;
-    const ApfsMainFqAdvance mainFq = advanceMainFreeQueue(liveMainFq, freed, f.newXid, window);
+    // The real volume's main free-queue holds aged entries in far data chunks. Reclaiming them past
+    // the rollback window is done by the foreign multi-cib reclaim (buildForeignReclaimPlan/
+    // applyForeignReclaim copies-on-writes each owning cib + chunk bitmap and clears the freed
+    // bits), so the foreign path uses the same rollback window as the generated path rather than
+    // deferring forever. Runs the apply cannot reclaim yet (cib-0 non-boundary) are held back so
+    // the queue only ages reclaimable runs. Generated volumes reclaim every run, keeping this
+    // byte-identical.
+    QVector<ApfsFreeQueueEntry> reclaimable;
+    QVector<ApfsFreeQueueEntry> deferred;
+    for (const ApfsFreeQueueEntry& entry : liveMainFq) {
+        if (!f.ctx.foreignOverflow || foreignEntryReclaimable(entry, f.ctx.layout.allocChunk)) {
+            reclaimable.append(entry);
+        } else {
+            deferred.append(entry);
+        }
+    }
+    ApfsMainFqAdvance mainFq =
+        advanceMainFreeQueue(reclaimable, freed, f.newXid, kMainFqRollbackWindow);
+    if (!deferred.isEmpty()) {
+        mainFq.entries += deferred;
+        std::sort(mainFq.entries.begin(),
+                  mainFq.entries.end(),
+                  [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                      return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+                  });
+    }
     return {mainFq, static_cast<int64_t>(freed.size())};
 }
 
@@ -8919,6 +8962,34 @@ struct ApfsSpilledChunkPlan {
     // S4b: cib k>0 this commit copied-on-wrote -> its new free-pool address (the spaceman
     // cib-array entry k must be re-pointed at it). Empty when no spill touches a cib k>0.
     QVector<QPair<uint64_t, uint64_t>> cibRepoints;
+};
+
+// Foreign overflow deferred-free RECLAIM: a real Apple volume carries hundreds of aged main
+// free-queue entries scattered across far data chunks (not the boundary chunk this commit
+// allocates from). Once an entry ages past the rollback window it must be returned to the
+// bitmap: its chunk's allocation bitmap is copied-on-write with the freed bits CLEARED, the
+// owning cib is copied-on-write with that chunk entry updated (ci_bitmap_addr -> new slot,
+// ci_free_count += reclaimed, ci_xid = newXid), and the spaceman cib-array entry is re-pointed.
+// The bitmap/cib COW copies land in free internal-pool blocks; the old ones are released in the
+// fresh IP-bitmap ring slot (crash-safe, like the boundary rotation). A reclaimed block that
+// happens to land in the boundary chunk rides the existing boundary path (boundaryReclaimed).
+struct ApfsForeignReclaimChunk {
+    uint64_t chunk{0};
+    uint64_t newBitmapSlot{0};  // free IP block the COW'd (bits-cleared) bitmap is written to
+    QVector<uint64_t> blocks;   // the reclaimed absolute blocks in this chunk
+};
+struct ApfsForeignReclaimCib {
+    uint64_t k{0};           // cib index (> 0; the boundary chunk's cib 0 rotates separately)
+    uint64_t oldCibAddr{0};  // its current on-disk address (from liveCibAddrs[k])
+    uint64_t newCibSlot{0};  // free IP block the COW'd cib is written to
+    QVector<ApfsForeignReclaimChunk> chunks;
+};
+struct ApfsForeignReclaimPlan {
+    QVector<ApfsForeignReclaimCib> cibs;  // one per touched far cib, chunks nested
+    QVector<uint64_t> boundaryReclaimed;  // reclaimed blocks IN the boundary chunk (usually none)
+    QVector<uint64_t> newIpBlocks;        // every new IP slot (chunk bitmaps + cibs) to mark used
+    QVector<uint64_t> freedIpBlocks;      // every old IP block (old bitmaps + old cibs) to release
+    uint64_t totalFarReclaimed{0};        // reclaimed blocks NOT in the boundary chunk
 };
 
 // The lowest free-pool block not in `excluded`, or 0 if the pool is exhausted.
@@ -9153,6 +9224,7 @@ struct ApfsFinalizeApply {
     ApfsIpRotation rotation;
     ApfsSpilledChunkPlan plan;
     ApfsFinalizeFreeQueue fq;
+    ApfsForeignReclaimPlan reclaim;  // foreign overflow deferred-free reclaim (empty otherwise)
 };
 
 // The finalize tail: write the COW chain, advance the main free-queue, apply the
@@ -9232,10 +9304,13 @@ bool computeForeignIpRotation(const ApfsFsCommitContext& ctx,
 // Foreign overflow: the complete IP-bitmap block-0 used-set for this commit = the live scattered
 // used-set, with this commit's three old IP blocks (live cib, live chunk-0 bitmap, live boundary
 // bitmap) RELEASED and its three new COW copies (new cib, new chunk-0 bitmap, new boundary bitmap)
-// MARKED, as IP-relative indices. Written to a fresh ring slot, so the live slot the previous
-// checkpoint references is untouched (crash-safe).
+// MARKED, as IP-relative indices. Deferred-free reclaim adds its own swap: every reclaimed far
+// chunk's old bitmap + old owning cib is RELEASED and its COW copy MARKED (plan.freedIpBlocks /
+// plan.newIpBlocks). Written to a fresh ring slot, so the live slot the previous checkpoint
+// references is untouched (crash-safe). An empty reclaim plan leaves the set byte-identical.
 bool buildForeignIpUsedSet(const ApfsFsCommitFinalize& f,
                            const ApfsIpRotation& rotation,
+                           const ApfsForeignReclaimPlan& reclaim,
                            QVector<uint64_t>* out,
                            QStringList* blockers) {
     QByteArray ipBitmap(f.ctx.geometry.blockSize, '\0');
@@ -9252,16 +9327,185 @@ bool buildForeignIpUsedSet(const ApfsFsCommitFinalize& f,
     QSet<uint64_t> freedRel = {relOf(rotation.liveCib),
                                relOf(rotation.liveBitmap),
                                relOf(oldBoundaryBitmap)};
+    for (uint64_t abs : reclaim.freedIpBlocks) {
+        freedRel.insert(relOf(abs));
+    }
     out->clear();
     for (uint64_t rel : used) {
         if (!freedRel.contains(rel)) {
             out->append(rel);
         }
     }
-    for (uint64_t abs : {rotation.newCib, rotation.newBitmap, f.chunk1BitmapBlock}) {
+    QVector<uint64_t> marked = {rotation.newCib, rotation.newBitmap, f.chunk1BitmapBlock};
+    marked += reclaim.newIpBlocks;
+    for (uint64_t abs : marked) {
         const uint64_t rel = relOf(abs);
         if (!out->contains(rel)) {
             out->append(rel);
+        }
+    }
+    return true;
+}
+
+// Reclaimed blocks grouped for the COW: by data chunk, and by owning cib. A slot cursor hands out
+// the freshly allocated internal-pool blocks (one per touched chunk bitmap, one per touched cib) in
+// deterministic order.
+struct ApfsReclaimPartition {
+    QMap<uint64_t, QVector<uint64_t>> byChunk;    // chunk -> reclaimed blocks (sorted by key)
+    QMap<uint64_t, QVector<uint64_t>> cibChunks;  // cib k>0 -> its touched chunks (sorted)
+};
+struct ApfsIpSlotCursor {
+    QVector<uint64_t> slots;
+    int idx{0};
+};
+
+// Split the aged reclaimed blocks into boundary-chunk (rides the existing boundary path) vs far
+// chunks grouped by owning cib. Fails closed if a far chunk resolves to the boundary cib 0 (rotated
+// separately; never happens on the real overflow layout).
+bool partitionForeignReclaim(const ApfsFsCommitFinalize& f,
+                             const QVector<uint64_t>& reclaimed,
+                             ApfsReclaimPartition* part,
+                             ApfsForeignReclaimPlan* plan,
+                             QStringList* blockers) {
+    for (uint64_t block : reclaimed) {
+        const uint64_t c = block / kApfsSpacemanBlocksPerChunk;
+        if (c == f.ctx.layout.allocChunk) {
+            plan->boundaryReclaimed.append(block);
+        } else {
+            part->byChunk[c].append(block);
+        }
+    }
+    for (auto it = part->byChunk.cbegin(); it != part->byChunk.cend(); ++it) {
+        const uint64_t k = it.key() / kApfsSpacemanChunksPerCib;
+        if (k == 0) {
+            blockers->append(QStringLiteral(
+                "APFS foreign reclaim: a freed block resolves to the boundary cib - unsupported"));
+            return false;
+        }
+        part->cibChunks[k].append(it.key());
+    }
+    return true;
+}
+
+// Build the per-chunk reclaim records for one cib: assign each touched chunk its new (COW) bitmap
+// slot, record the old bitmap block as freed + the new one as used, and accumulate the far-reclaim
+// count. Returns the partial cib record (k/oldCibAddr/newCibSlot filled in by the caller).
+ApfsForeignReclaimCib buildReclaimCibChunks(const QByteArray& cib,
+                                            const QVector<uint64_t>& chunks,
+                                            const ApfsReclaimPartition& part,
+                                            ApfsIpSlotCursor* cur,
+                                            ApfsForeignReclaimPlan* plan) {
+    ApfsForeignReclaimCib rc;
+    for (uint64_t c : chunks) {
+        ApfsForeignReclaimChunk ch;
+        ch.chunk = c;
+        ch.blocks = part.byChunk.value(c);
+        ch.newBitmapSlot = cur->slots.at(cur->idx++);
+        const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                static_cast<qsizetype>(c % kApfsSpacemanChunksPerCib) *
+                                    kApfsChunkInfoEntryStride;
+        plan->freedIpBlocks.append(le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset));
+        plan->newIpBlocks.append(ch.newBitmapSlot);
+        plan->totalFarReclaimed += static_cast<uint64_t>(ch.blocks.size());
+        rc.chunks.append(ch);
+    }
+    return rc;
+}
+
+// Foreign overflow: partition the aged reclaimed blocks (main free-queue runs past the rollback
+// window) by owning far cib + chunk, and allocate the internal-pool blocks the reclaim COW needs
+// (one per touched chunk bitmap + one per touched cib). Fails closed if the internal pool cannot
+// satisfy the COW copies or an owning cib address cannot be resolved. An empty reclaimed set (or
+// one entirely in the boundary chunk) yields an empty far plan.
+bool buildForeignReclaimPlan(const ApfsFsCommitFinalize& f,
+                             const ApfsIpRotation& rotation,
+                             const QVector<uint64_t>& reclaimed,
+                             ApfsForeignReclaimPlan* plan,
+                             QStringList* blockers) {
+    ApfsReclaimPartition part;
+    if (!partitionForeignReclaim(f, reclaimed, &part, plan, blockers)) {
+        return false;
+    }
+    const int need = static_cast<int>(part.byChunk.size() + part.cibChunks.size());
+    if (need == 0) {
+        return true;
+    }
+    ApfsIpSlotCursor cur;
+    if (!allocateForeignIpBlocks(f.ctx,
+                                 {f.chunk1BitmapBlock, rotation.newCib, rotation.newBitmap},
+                                 need,
+                                 &cur.slots,
+                                 blockers)) {
+        return false;
+    }
+    for (auto it = part.cibChunks.cbegin(); it != part.cibChunks.cend(); ++it) {
+        const uint64_t oldCibAddr = f.ctx.liveCibAddrs.value(static_cast<qsizetype>(it.key()), 0);
+        if (oldCibAddr == 0) {
+            blockers->append(
+                QStringLiteral("APFS foreign reclaim: cannot resolve the owning cib address"));
+            return false;
+        }
+        QByteArray cib(f.ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(f.ctx.image, f.ctx.geometry, oldCibAddr, &cib, blockers)) {
+            return false;
+        }
+        ApfsForeignReclaimCib rc = buildReclaimCibChunks(cib, it.value(), part, &cur, plan);
+        rc.k = it.key();
+        rc.oldCibAddr = oldCibAddr;
+        rc.newCibSlot = cur.slots.at(cur.idx++);
+        plan->freedIpBlocks.append(oldCibAddr);
+        plan->newIpBlocks.append(rc.newCibSlot);
+        plan->cibs.append(rc);
+    }
+    return true;
+}
+
+// Foreign overflow: write the reclaim COW copies. For each touched far cib, copy the live cib
+// forward, and for each of its touched chunks copy that chunk's allocation bitmap forward with the
+// reclaimed bits CLEARED (returning the blocks to free) then update the chunk entry (bitmap_addr ->
+// new slot, ci_free_count += reclaimed, ci_xid = newXid). The cib object oid/xid move to the new
+// slot; the live cib is left intact for the previous checkpoint (crash-safe). No-op on an empty
+// plan (byte-identical to the certified no-reclaim insert).
+bool applyForeignReclaim(const ApfsFsCommitFinalize& f,
+                         const ApfsForeignReclaimPlan& plan,
+                         QStringList* blockers) {
+    for (const ApfsForeignReclaimCib& rc : plan.cibs) {
+        QByteArray cib(f.ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(f.ctx.image, f.ctx.geometry, rc.oldCibAddr, &cib, blockers)) {
+            return false;
+        }
+        for (const ApfsForeignReclaimChunk& ch : rc.chunks) {
+            const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                    static_cast<qsizetype>(ch.chunk % kApfsSpacemanChunksPerCib) *
+                                        kApfsChunkInfoEntryStride;
+            QByteArray bitmap(f.ctx.geometry.blockSize, '\0');
+            if (!readApfsRepairBlock(f.ctx.image,
+                                     f.ctx.geometry,
+                                     le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset),
+                                     &bitmap,
+                                     blockers)) {
+                return false;
+            }
+            const uint64_t chunkBase = ch.chunk * kApfsSpacemanBlocksPerChunk;
+            for (uint64_t block : ch.blocks) {
+                const uint64_t bit = block - chunkBase;
+                bitmap[static_cast<qsizetype>(bit / 8)] &= static_cast<char>(~(1 << (bit % 8)));
+            }
+            if (!writeApfsRepairBlock(
+                    f.ctx.image, f.ctx.geometry, ch.newBitmapSlot, bitmap, blockers)) {
+                return false;
+            }
+            writeLe32(&cib,
+                      entry + kApfsChunkInfoEntryFreeCountOffset,
+                      static_cast<uint32_t>(le32(cib, entry + kApfsChunkInfoEntryFreeCountOffset) +
+                                            static_cast<uint32_t>(ch.blocks.size())));
+            writeLe64(&cib, entry + kApfsChunkInfoEntryBitmapAddrOffset, ch.newBitmapSlot);
+            writeLe64(&cib, entry, f.newXid);
+        }
+        writeLe64(&cib, kApfsObjectOidOffset, rc.newCibSlot);
+        writeLe64(&cib, kApfsObjectXidOffset, f.newXid);
+        if (!stampAndWriteApfsBlock(f.ctx.image, f.ctx.geometry, rc.newCibSlot, &cib, blockers)) {
+            return false;
         }
     }
     return true;
@@ -9277,16 +9521,17 @@ struct ApfsFinalizeIpPlan {
 
 // The IP-bitmap ring's used-set + freed-slot plan the checkpoint advance consumes. Foreign overflow
 // uses the real scattered live used-set with this commit's three old IP blocks released and its
-// three new copies marked (no free-queue window - the release is direct in a fresh ring slot;
-// multi-commit deferred reclaim is a follow-on). Generated uses the exact S3 sparse set
+// three new copies marked, plus the deferred-free reclaim swap (each reclaimed far chunk's old
+// bitmap + owning cib released, its COW copy marked). Generated uses the exact S3 sparse set
 // (single-CIB) or the contiguous prefix, plus the rotation ghost window + spill freed slots.
 bool computeFinalizeIpPlan(const ApfsFsCommitFinalize& f,
-                           const ApfsIpRotation& rotation,
-                           const ApfsSpilledChunkPlan& plan,
+                           const ApfsFinalizeApply& in,
                            ApfsFinalizeIpPlan* out,
                            QStringList* blockers) {
+    const ApfsIpRotation& rotation = in.rotation;
+    const ApfsSpilledChunkPlan& plan = in.plan;
     if (f.ctx.foreignOverflow) {
-        if (!buildForeignIpUsedSet(f, rotation, &out->ipUsedSet, blockers)) {
+        if (!buildForeignIpUsedSet(f, rotation, in.reclaim, &out->ipUsedSet, blockers)) {
             return false;
         }
         out->ipBitmapUsage = static_cast<uint64_t>(out->ipUsedSet.size());
@@ -9303,35 +9548,67 @@ bool computeFinalizeIpPlan(const ApfsFsCommitFinalize& f,
     return true;
 }
 
+// Flip this commit's allocation into the bitmaps: the boundary chunk (metadata + data + any
+// boundary-chunk frees) plus, on the foreign path, the deferred-free reclaim COW of the far chunks.
+// The free-count delta is split so the boundary chunk's ci_free_count never absorbs the far
+// reclaimed blocks (those credit their own chunks in applyForeignReclaim) while the spaceman total
+// still moves by the full freeDelta. On the generated path totalFarReclaimed is 0 and boundaryFreed
+// is the whole reclaimed set, so this is byte-identical.
+bool finalizeApplyBitmaps(const ApfsFsCommitFinalize& f,
+                          const ApfsFinalizeApply& in,
+                          int64_t freeDelta,
+                          QStringList* blockers) {
+    const ApfsForeignReclaimPlan& reclaim = in.reclaim;
+    const int64_t boundaryFreeDelta = freeDelta - static_cast<int64_t>(reclaim.totalFarReclaimed);
+    const QVector<uint64_t>& boundaryFreed = f.ctx.foreignOverflow ? reclaim.boundaryReclaimed
+                                                                   : in.fq.mainFq.reclaimed;
+    if (!applyFileInsertAllocation({.image = f.ctx.image,
+                                    .geometry = f.ctx.geometry,
+                                    .layout = f.ctx.layout,
+                                    .rotation = in.rotation,
+                                    .freed = boundaryFreed,
+                                    .allocated = f.newBlocks,
+                                    .cibFreeDelta = boundaryFreeDelta,
+                                    .newXid = f.newXid,
+                                    .chunk1BitmapBlock = f.chunk1BitmapBlock,
+                                    .spilledSlots = in.plan.chunkSlots,
+                                    .cibRepoints = in.plan.cibRepoints,
+                                    .liveCibAddrs = f.ctx.liveCibAddrs},
+                                   blockers)) {
+        return false;
+    }
+    return !f.ctx.foreignOverflow || applyForeignReclaim(f, reclaim, blockers);
+}
+
+// The spaceman cib-array re-points for this commit: foreign reclaim re-points each touched far cib
+// at its COW copy (cib 0 is re-pointed separately by newCibAddr); the generated path uses the S3
+// spill repoints.
+QVector<QPair<uint64_t, uint64_t>> finalizeCibArrayRepoints(const ApfsFsCommitFinalize& f,
+                                                            const ApfsFinalizeApply& in) {
+    if (!f.ctx.foreignOverflow) {
+        return in.plan.cibRepoints;
+    }
+    QVector<QPair<uint64_t, uint64_t>> repoints;
+    for (const ApfsForeignReclaimCib& rc : in.reclaim.cibs) {
+        repoints.append({rc.k, rc.newCibSlot});
+    }
+    return repoints;
+}
+
 bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
                              const ApfsFinalizeApply& in,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     const ApfsIpRotation& rotation = in.rotation;
-    const ApfsSpilledChunkPlan& plan = in.plan;
-    const ApfsFinalizeFreeQueue& fq = in.fq;
+    const ApfsMainFqAdvance& mainFq = in.fq.mainFq;
     const qsizetype nodeCount = f.fsNodes.size();
     const int64_t netConsumed = finalizeNetConsumed(f, nodeCount);
     if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
         return false;
     }
-    const ApfsMainFqAdvance& mainFq = fq.mainFq;
-    const int64_t netQueued = fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t netQueued = in.fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
-    const uint64_t groupSize = f.ctx.layout.ipGroupStride;
-    if (!applyFileInsertAllocation({.image = f.ctx.image,
-                                    .geometry = f.ctx.geometry,
-                                    .layout = f.ctx.layout,
-                                    .rotation = rotation,
-                                    .freed = mainFq.reclaimed,
-                                    .allocated = f.newBlocks,
-                                    .cibFreeDelta = freeDelta,
-                                    .newXid = f.newXid,
-                                    .chunk1BitmapBlock = f.chunk1BitmapBlock,
-                                    .spilledSlots = plan.chunkSlots,
-                                    .cibRepoints = plan.cibRepoints,
-                                    .liveCibAddrs = f.ctx.liveCibAddrs},
-                                   blockers)) {
+    if (!finalizeApplyBitmaps(f, in, freeDelta, blockers)) {
         return false;
     }
     // CAB tier: re-emit cab 0 into its group slot pointing at the rotated cib 0.
@@ -9340,9 +9617,10 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
         return false;
     }
     ApfsFinalizeIpPlan ip;
-    if (!computeFinalizeIpPlan(f, rotation, plan, &ip, blockers)) {
+    if (!computeFinalizeIpPlan(f, in, &ip, blockers)) {
         return false;
     }
+    const QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints = finalizeCibArrayRepoints(f, in);
     return advanceCheckpoint({.image = f.ctx.image,
                               .geometry = f.ctx.geometry,
                               .nxsb = f.ctx.nxsb,
@@ -9356,14 +9634,14 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
                               .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
                               .newCibAddr = newAddr0,
                               .cibCount = f.ctx.layout.cibCount,
-                              .ipSlotStride = groupSize,
+                              .ipSlotStride = f.ctx.layout.ipGroupStride,
                               .ipBitmapUsage = ip.ipBitmapUsage,
                               .freedCibSlot = ip.freedCibSlot,
                               .prevFreedCibSlot = ip.prevFreedCibSlot,
                               .extraFreedIpBlocks = ip.extraFreedIpBlocks,
                               .mainFqEntries = mainFq.entries,
                               .ipUsedSet = ip.ipUsedSet,
-                              .cibArrayRepoints = plan.cibRepoints},
+                              .cibArrayRepoints = cibArrayRepoints},
                              result,
                              blockers);
 }
@@ -9410,7 +9688,15 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
         !planSpilledChunkBitmaps(f, rotation, fq.mainFq.reclaimed, &plan, blockers)) {
         return false;
     }
-    return finalizeApplyAndAdvance(f, {rotation, plan, fq}, result, blockers);
+    // Foreign overflow: the reclaimed runs live in far data chunks (owned by cibs > 0), so plan the
+    // multi-cib bitmap/cib COW that returns them to free. Empty on generated volumes and when there
+    // is nothing aged to reclaim (byte-identical to the certified foreign insert).
+    ApfsForeignReclaimPlan reclaim;
+    if (f.ctx.foreignOverflow &&
+        !buildForeignReclaimPlan(f, rotation, fq.mainFq.reclaimed, &reclaim, blockers)) {
+        return false;
+    }
+    return finalizeApplyAndAdvance(f, {rotation, plan, fq, reclaim}, result, blockers);
 }
 
 // Pass 1 of an insert: build the merged file list with a placeholder data-start
