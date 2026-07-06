@@ -8975,6 +8975,38 @@ bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry, uint64_t allocChun
     return true;
 }
 
+// Age the live main free-queue against this commit's freed blocks, holding back the runs the
+// current apply cannot reclaim yet. Foreign overflow keeps cib-0 non-boundary runs deferred (the
+// boundary cib rotates separately; a co-ordinated cib-0 reclaim is a follow-on) and reclaims the
+// rest through the multi-cib reclaim COW, so it uses the same rollback window as the generated
+// path. Generated volumes reclaim every run, keeping this byte-identical to a plain
+// advanceMainFreeQueue. Shared by the file-insert finalize and the snapshot checkpoint tail.
+ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
+                                            const QVector<ApfsFreeQueueEntry>& liveMainFq,
+                                            const QVector<uint64_t>& freed,
+                                            uint64_t newXid) {
+    QVector<ApfsFreeQueueEntry> reclaimable;
+    QVector<ApfsFreeQueueEntry> deferred;
+    for (const ApfsFreeQueueEntry& entry : liveMainFq) {
+        if (!ctx.foreignOverflow || foreignEntryReclaimable(entry, ctx.layout.allocChunk)) {
+            reclaimable.append(entry);
+        } else {
+            deferred.append(entry);
+        }
+    }
+    ApfsMainFqAdvance mainFq =
+        advanceMainFreeQueue(reclaimable, freed, newXid, kMainFqRollbackWindow);
+    if (!deferred.isEmpty()) {
+        mainFq.entries += deferred;
+        std::sort(mainFq.entries.begin(),
+                  mainFq.entries.end(),
+                  [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
+                      return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
+                  });
+    }
+    return mainFq;
+}
+
 ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f,
                                                    QStringList* blockers) {
     // Diverge: when the current live fs-tree is snapshot-frozen, its nodes are still owned by
@@ -8991,32 +9023,11 @@ ApfsFinalizeFreeQueue advanceFinalizeMainFreeQueue(const ApfsFsCommitFinalize& f
         findEphemeralPaddrByOid(
             f.ctx.image, f.ctx.geometry, f.ctx.live, f.ctx.chain.mainFqTreeOid, blockers),
         blockers);
-    // The real volume's main free-queue holds aged entries in far data chunks. Reclaiming them past
-    // the rollback window is done by the foreign multi-cib reclaim (buildForeignReclaimPlan/
-    // applyForeignReclaim copies-on-writes each owning cib + chunk bitmap and clears the freed
-    // bits), so the foreign path uses the same rollback window as the generated path rather than
-    // deferring forever. Runs the apply cannot reclaim yet (cib-0 non-boundary) are held back so
-    // the queue only ages reclaimable runs. Generated volumes reclaim every run, keeping this
-    // byte-identical.
-    QVector<ApfsFreeQueueEntry> reclaimable;
-    QVector<ApfsFreeQueueEntry> deferred;
-    for (const ApfsFreeQueueEntry& entry : liveMainFq) {
-        if (!f.ctx.foreignOverflow || foreignEntryReclaimable(entry, f.ctx.layout.allocChunk)) {
-            reclaimable.append(entry);
-        } else {
-            deferred.append(entry);
-        }
-    }
-    ApfsMainFqAdvance mainFq =
-        advanceMainFreeQueue(reclaimable, freed, f.newXid, kMainFqRollbackWindow);
-    if (!deferred.isEmpty()) {
-        mainFq.entries += deferred;
-        std::sort(mainFq.entries.begin(),
-                  mainFq.entries.end(),
-                  [](const ApfsFreeQueueEntry& a, const ApfsFreeQueueEntry& b) {
-                      return a.xid != b.xid ? a.xid < b.xid : a.paddr < b.paddr;
-                  });
-    }
+    // The real volume's main free-queue holds aged entries in far data chunks;
+    // advanceForeignAwareMainFq reclaims them past the rollback window through the multi-cib
+    // reclaim COW while holding back the runs the apply cannot reclaim yet (cib-0 non-boundary).
+    // Byte-identical on generated volumes.
+    const ApfsMainFqAdvance mainFq = advanceForeignAwareMainFq(f.ctx, liveMainFq, freed, f.newXid);
     return {mainFq, static_cast<int64_t>(freed.size())};
 }
 
@@ -9714,25 +9725,31 @@ QVector<QPair<uint64_t, uint64_t>> finalizeCibArrayRepoints(const ApfsFsCommitFi
     return repoints;
 }
 
-bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
-                             const ApfsFinalizeApply& in,
-                             ApfsInPlaceCheckpointResult* result,
-                             QStringList* blockers) {
-    const ApfsIpRotation& rotation = in.rotation;
-    const ApfsMainFqAdvance& mainFq = in.fq.mainFq;
-    const qsizetype nodeCount = f.fsNodes.size();
-    const int64_t netConsumed = finalizeNetConsumed(f, nodeCount);
-    if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
-        return false;
-    }
-    const int64_t netQueued = in.fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
-    const int64_t freeDelta = -netConsumed - netQueued;
-    if (!finalizeApplyBitmaps(f, in, freeDelta, blockers)) {
+// The commit-kind-specific scalars the shared apply/advance tail cannot derive itself: the
+// spaceman free-count delta, the re-pointed container-omap block, and the nx_next_obj_id advance.
+// File-insert derives them from the fs-tree; a snapshot passes its explicit values.
+struct ApfsCommitAdvanceParams {
+    int64_t freeDelta{0};
+    uint64_t containerOmapBlock{0};
+    uint64_t nextOidAdvance{0};
+};
+
+// Shared apply + checkpoint-advance tail: flip this commit's allocation (+ any foreign reclaim)
+// into the bitmaps, rotate cab 0 (CAB tier), compute the IP-bitmap used-set/freed-slot plan, and
+// advance the checkpoint that publishes the already-written COW chain. Everything but the
+// per-commit-kind scalars (ApfsCommitAdvanceParams) is identical, so the file-insert finalize and
+// the snapshot tail share this exact machinery.
+bool finalizeApplyBitmapsAndAdvance(const ApfsFsCommitFinalize& f,
+                                    const ApfsFinalizeApply& in,
+                                    const ApfsCommitAdvanceParams& p,
+                                    ApfsInPlaceCheckpointResult* result,
+                                    QStringList* blockers) {
+    if (!finalizeApplyBitmaps(f, in, p.freeDelta, blockers)) {
         return false;
     }
     // CAB tier: re-emit cab 0 into its group slot pointing at the rotated cib 0.
-    uint64_t newAddr0 = rotation.newCib;
-    if (!finalizeRotateCab0(f, rotation, &newAddr0, blockers)) {
+    uint64_t newAddr0 = in.rotation.newCib;
+    if (!finalizeRotateCab0(f, in.rotation, &newAddr0, blockers)) {
         return false;
     }
     ApfsFinalizeIpPlan ip;
@@ -9744,13 +9761,9 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
                               .geometry = f.ctx.geometry,
                               .nxsb = f.ctx.nxsb,
                               .live = f.ctx.live,
-                              .newContainerOmap =
-                                  f.newBlocks.at(omapChainLayout(static_cast<uint64_t>(nodeCount),
-                                                                 finalizeVolMappingCount(f),
-                                                                 f.ctx.geometry.blockSize)
-                                                     .ctrOmapHdr),
-                              .spacemanFreeDelta = freeDelta,
-                              .nextOidAdvance = static_cast<uint64_t>(nodeCount - 1),
+                              .newContainerOmap = p.containerOmapBlock,
+                              .spacemanFreeDelta = p.freeDelta,
+                              .nextOidAdvance = p.nextOidAdvance,
                               .newCibAddr = newAddr0,
                               .cibCount = f.ctx.layout.cibCount,
                               .ipSlotStride = f.ctx.layout.ipGroupStride,
@@ -9758,11 +9771,36 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
                               .freedCibSlot = ip.freedCibSlot,
                               .prevFreedCibSlot = ip.prevFreedCibSlot,
                               .extraFreedIpBlocks = ip.extraFreedIpBlocks,
-                              .mainFqEntries = mainFq.entries,
+                              .mainFqEntries = in.fq.mainFq.entries,
                               .ipUsedSet = ip.ipUsedSet,
                               .cibArrayRepoints = cibArrayRepoints},
                              result,
                              blockers);
+}
+
+bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
+                             const ApfsFinalizeApply& in,
+                             ApfsInPlaceCheckpointResult* result,
+                             QStringList* blockers) {
+    const ApfsMainFqAdvance& mainFq = in.fq.mainFq;
+    const qsizetype nodeCount = f.fsNodes.size();
+    const int64_t netConsumed = finalizeNetConsumed(f, nodeCount);
+    if (!writeFinalizeCowChain(f, nodeCount, netConsumed, blockers)) {
+        return false;
+    }
+    const int64_t netQueued = in.fq.freedCount - static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t freeDelta = -netConsumed - netQueued;
+    const uint64_t containerOmapBlock =
+        f.newBlocks.at(omapChainLayout(static_cast<uint64_t>(nodeCount),
+                                       finalizeVolMappingCount(f),
+                                       f.ctx.geometry.blockSize)
+                           .ctrOmapHdr);
+    return finalizeApplyBitmapsAndAdvance(
+        f,
+        in,
+        {freeDelta, containerOmapBlock, static_cast<uint64_t>(nodeCount - 1)},
+        result,
+        blockers);
 }
 
 bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
@@ -10566,10 +10604,69 @@ struct ApfsSnapshotCheckpointTail {
     uint64_t chunk1BitmapBlock{0};
 };
 
+// Foreign overflow snapshot checkpoint tail: the real-internal-pool analogue of the shared
+// snapshot tail. On a real Apple overflow container the snapshot's freshly written chain blocks
+// already live in the boundary chunk (allocateOverflowCommitBlocks) and its freed chain blocks
+// (old volume superblock/omap/snap-meta/container-omap) enqueue on the main free-queue; this
+// commit only marks the boundary allocation, rotates the real cib + chunk-0 bitmap out of free
+// internal-pool blocks, reclaims any aged far-chunk runs, and advances the checkpoint - the exact
+// machinery the foreign file-insert finalize uses, driven by the snapshot's explicit freed/
+// allocated sets, container-omap block, and a zero nx_next_obj_id advance. Deferred cib-0
+// non-boundary frees (the pre-existing macOS metadata that ages out) stay queued (fsck-clean),
+// exactly as on the file-mutating path, until the cib-0 reclaim follow-on lands.
+bool commitSnapshotCheckpointTailForeign(const ApfsSnapshotCheckpointTail& t,
+                                         ApfsInPlaceCheckpointResult* result,
+                                         QStringList* blockers) {
+    ApfsFsCommitFinalize f;
+    f.ctx = t.ctx;
+    f.newXid = t.newXid;
+    f.chunk1BitmapBlock = t.chunk1BitmapBlock;
+    f.newBlocks = t.allocated;
+    ApfsIpRotation rotation;
+    if (!computeForeignIpRotation(t.ctx, t.chunk1BitmapBlock, &rotation, blockers)) {
+        return false;
+    }
+    const QVector<ApfsFreeQueueEntry> liveMainFq = parseMainFreeQueueTree(
+        t.ctx.image,
+        t.ctx.geometry,
+        t.ctx.live,
+        findEphemeralPaddrByOid(
+            t.ctx.image, t.ctx.geometry, t.ctx.live, t.ctx.chain.mainFqTreeOid, blockers),
+        blockers);
+    const ApfsMainFqAdvance mainFq =
+        advanceForeignAwareMainFq(t.ctx, liveMainFq, t.freed, t.newXid);
+    const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
+                                static_cast<int64_t>(t.freed.size());
+    const int64_t netQueued = static_cast<int64_t>(t.freed.size()) -
+                              static_cast<int64_t>(mainFq.reclaimed.size());
+    const int64_t freeDelta = -netConsumed - netQueued;
+    ApfsForeignReclaimPlan reclaim;
+    if (!buildForeignReclaimPlan(f, rotation, mainFq.reclaimed, &reclaim, blockers)) {
+        return false;
+    }
+    const ApfsFinalizeApply in{
+        rotation, ApfsSpilledChunkPlan{}, {mainFq, static_cast<int64_t>(t.freed.size())}, reclaim};
+    return finalizeApplyBitmapsAndAdvance(
+        f, in, {freeDelta, t.containerOmapBlock, 0}, result, blockers);
+}
+
+// Generated snapshot tail IP-bitmap used-count: cib 0's three rotation groups plus the immutable
+// cib/cab/extra-chunk-bitmap slots and, single-CIB, the chunk-1 spill bitmap. (Foreign overflow
+// derives its used-set from the real scattered bitmap instead.)
+uint64_t snapshotGeneratedIpBitmapUsage(const ApfsFsCommitContext& ctx,
+                                        uint64_t chunk1BitmapBlock) {
+    const uint64_t extraBitmaps = ctx.layout.metadataChunks > 1 ? ctx.layout.metadataChunks - 2 : 0;
+    const uint64_t immutableCabCount = ctx.layout.cabCount > 0 ? ctx.layout.cabCount - 1 : 0;
+    return (ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps +
+           3 * ctx.layout.ipGroupStride +
+           (ctx.layout.allocChunk == 0 && chunk1BitmapBlock != 0 ? 1 : 0);
+}
+
 // Shared snapshot commit tail (create + delete + revert): thread the freed/allocated block
 // sets through the main free-queue, the allocation bitmap, the CIB/spaceman free counts, and
 // the checkpoint - the same crash-safe machinery the file-mutating commits use. The COW chain
-// must already be written; this advances the checkpoint that publishes it.
+// must already be written; this advances the checkpoint that publishes it. Foreign overflow
+// containers route to commitSnapshotCheckpointTailForeign (real internal pool + far reclaim).
 //
 // Every snapshot freed/allocated block is chunk-0 metadata (volume superblock, omap
 // header/tree, snap-meta tree, container omap header/tree, extent-ref) - a snapshot never
@@ -10581,6 +10678,9 @@ struct ApfsSnapshotCheckpointTail {
 bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
+    if (t.ctx.foreignOverflow) {
+        return commitSnapshotCheckpointTailForeign(t, result, blockers);
+    }
     const ApfsFsCommitContext& ctx = t.ctx;
     const int64_t netConsumed = static_cast<int64_t>(t.allocated.size()) -
                                 static_cast<int64_t>(t.freed.size());
@@ -10598,11 +10698,7 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                               static_cast<int64_t>(mainFq.reclaimed.size());
     const int64_t freeDelta = -netConsumed - netQueued;
     const uint64_t groupSize = ctx.layout.ipGroupStride;
-    const uint64_t extraBitmaps = ctx.layout.metadataChunks > 1 ? ctx.layout.metadataChunks - 2 : 0;
-    const uint64_t immutableCabCount = ctx.layout.cabCount > 0 ? ctx.layout.cabCount - 1 : 0;
-    const uint64_t ipBitmapUsage = (ctx.layout.cibCount - 1) + immutableCabCount + extraBitmaps +
-                                   3 * groupSize +
-                                   (ctx.layout.allocChunk == 0 && t.chunk1BitmapBlock != 0 ? 1 : 0);
+    const uint64_t ipBitmapUsage = snapshotGeneratedIpBitmapUsage(ctx, t.chunk1BitmapBlock);
     if (!applyFileInsertAllocation({.image = ctx.image,
                                     .geometry = ctx.geometry,
                                     .layout = ctx.layout,
