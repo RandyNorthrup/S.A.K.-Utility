@@ -4345,6 +4345,30 @@ bool writeApfsRepairBlock(QIODevice* image,
                           uint64_t blockIndex,
                           const QByteArray& block,
                           QStringList* blockers) {
+    // Fail-closed corruption guards. A commit writes only into the container's own block range,
+    // and block 0 is the container superblock (nx_superblock) - the reader's entry point. A bug
+    // that computes an out-of-range block, or overwrites block 0 with anything other than a valid
+    // NXSB object, silently bricks the container ("superblock not found" on the next read). Reject
+    // both here rather than issuing the write, naming the offending block so the caller is found.
+    if (geometry.blockCount != 0 && blockIndex >= geometry.blockCount) {
+        blockers->append(QStringLiteral("APFS write guard: block %1 is past the device end (%2)")
+                             .arg(blockIndex)
+                             .arg(geometry.blockCount));
+        return false;
+    }
+    if (blockIndex == 0 && (block.size() < kApfsObjectMagicOffset + 4 ||
+                            le32(block, kApfsObjectMagicOffset) != kApfsMagicNxsb)) {
+        blockers->append(
+            QStringLiteral(
+                "APFS write guard: refusing to overwrite the container superblock (block 0) with a "
+                "non-NXSB block (magic 0x%1)")
+                .arg(block.size() >= kApfsObjectMagicOffset + 4
+                         ? le32(block, kApfsObjectMagicOffset)
+                         : 0,
+                     0,
+                     16));
+        return false;
+    }
     const uint64_t offset = blockIndex * static_cast<uint64_t>(geometry.blockSize);
     if (!image->seek(static_cast<qint64>(offset)) || image->write(block) != block.size()) {
         blockers->append(QStringLiteral("Unable to write APFS repair block %1: %2")
@@ -6633,6 +6657,72 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
     return extents;
 }
 
+// One recovered hard-link name of an inode (its sibling-link record).
+struct ApfsInodeSibling {
+    uint64_t siblingId{0};
+    uint64_t parentId{0};
+    QString name;
+};
+
+// Recover every sibling-link (j_sibling_link) record of an inode from the live fs-tree, sorted by
+// sibling id. An inode with >= 2 siblings is hard-linked (macOS/S.A.K. write a sibling-link per
+// name only when nlink > 1); a single-name file has none, so this returns empty and the caller
+// leaves it byte-identical. Mirrors recoverFileDataExtents' leaf walk, matching on SIBLING_LINK +
+// inode id.
+QVector<ApfsInodeSibling> recoverInodeSiblings(QIODevice* image,
+                                               const ApfsRepairGeometry& geometry,
+                                               const ApfsLiveFsChain& chain,
+                                               uint64_t inodeId,
+                                               QStringList* blockers) {
+    QVector<uint64_t> nodes;
+    if (!collectOldFsTreeNodePaddrs(image, geometry, chain, &nodes, blockers)) {
+        return {};
+    }
+    QVector<ApfsInodeSibling> siblings;
+    const uint64_t oidMask = (1ULL << kApfsObjTypeShift) - 1;
+    for (uint64_t nodeBlock : nodes) {
+        QByteArray node(geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, geometry, nodeBlock, &node, blockers)) {
+            return {};
+        }
+        if (le16(node, kApfsBtreeNodeLevelOffset) != 0) {
+            continue;
+        }
+        const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+        const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
+                                       (isRoot ? kApfsBtreeInfoBytes : 0);
+        const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+        const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
+                                       le16(node, kApfsBtreeNodeTableLengthOffset);
+        for (uint32_t index = 0; index < nkeys; ++index) {
+            const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                                  static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+            const uint16_t keyOffset = le16(node, toc);
+            const uint16_t valueOffset = le16(node, toc + kApfsBtreeVariableTocValueOffset);
+            const uint64_t keyHeader = le64(node, keyAreaStart + keyOffset);
+            if ((keyHeader >> kApfsObjTypeShift) != kApfsRecordSiblingLink ||
+                (keyHeader & oidMask) != inodeId) {
+                continue;
+            }
+            const qsizetype value = valueAreaEnd - valueOffset;
+            const uint16_t nameLen = le16(node, value + 8);
+            ApfsInodeSibling sibling;
+            sibling.siblingId = le64(node,
+                                     keyAreaStart + keyOffset + kApfsFormattedRootInodeKeyBytes);
+            sibling.parentId = le64(node, value);
+            sibling.name =
+                QString::fromUtf8(node.mid(value + 8 + kUint16Size, nameLen > 0 ? nameLen - 1 : 0));
+            siblings.append(sibling);
+        }
+    }
+    std::sort(siblings.begin(),
+              siblings.end(),
+              [](const ApfsInodeSibling& a, const ApfsInodeSibling& b) {
+                  return a.siblingId < b.siblingId;
+              });
+    return siblings;
+}
+
 struct ApfsCowFileInsert {
     QIODevice* image{nullptr};
     ApfsRepairGeometry geometry;
@@ -7608,14 +7698,43 @@ struct ApfsLiveTreeSource {
 // fill in its data start, and recover a fragmented file's runs from the fs-tree so its
 // data is not moved. A single-extent file keeps the dataStartBlock fast path so its
 // records stay byte-identical.
+// Coalesce a hard-linked inode's names: an inode with >= 2 sibling-link records is referenced by
+// multiple directory entries. Represent it as ONE inode carrying additionalLinks (nlink = names)
+// with the lowest-sibling-id name as primary, instead of a duplicate inode record per name (which
+// fsck rejects as an out-of-order/duplicate fsroot key). No-op for a single-name file (sibs < 2),
+// keeping it byte-identical.
+void coalesceHardlinkNames(ApfsRootFilePayload* file, const QVector<ApfsInodeSibling>& sibs) {
+    if (sibs.size() < 2) {
+        return;
+    }
+    file->primarySiblingId = sibs.first().siblingId;
+    file->fileName = sibs.first().name;
+    file->parentDirectoryId = sibs.first().parentId;
+    file->additionalLinks.clear();
+    for (qsizetype i = 1; i < sibs.size(); ++i) {
+        file->additionalLinks.append({.name = sibs.at(i).name,
+                                      .parentId = sibs.at(i).parentId,
+                                      .siblingId = sibs.at(i).siblingId});
+    }
+}
+
 bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
                            const QVector<ApfsRootFilePayload>& inputFiles,
                            QVector<ApfsRootFilePayload>* files,
                            QStringList* blockers) {
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(source.image, source.geometry, source.chain.extentRef, blockers);
+    QSet<uint64_t> coalesced;  // inode ids already emitted (a hard link's later dir-entries skip)
     for (ApfsRootFilePayload existing : inputFiles) {
+        if (coalesced.contains(existing.fileId)) {
+            continue;  // a hard link's second+ directory entry: already carried in additionalLinks
+        }
+        coalesced.insert(existing.fileId);
         existing.privateId = existing.fileId;
+        coalesceHardlinkNames(
+            &existing,
+            recoverInodeSiblings(
+                source.image, source.geometry, source.chain, existing.fileId, blockers));
         const QVector<ApfsDataExtent> recovered = recoverFileDataExtents(
             source.image, source.geometry, source.chain, existing.fileId, blockers);
         // The start block comes from the file's OWN file-extent records, not the
@@ -10129,17 +10248,20 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
     bool found = false;
+    QSet<uint64_t> keptIds;  // preserved inode ids (a hard link's later dir-entries are coalesced)
     for (ApfsRootFilePayload file : in.allFiles) {
         // Keep each file's parent (root or a directory) so directory children survive
         // the commit; a flat-root container collected every file with the root parent.
         file.privateId = file.fileId;
         file.dataStartBlock = owners.value(file.fileId);
-        // Recover a fragmented file's runs (logical order) so the target frees every
-        // extent on delete and a preserved file keeps all of them; single-extent
-        // files keep the dataStartBlock fast path (byte-identical).
+        // Recover a file's real on-disk runs so the target frees EVERY allocated extent on
+        // delete (a real-Apple file may over-allocate its tail: more physical blocks than
+        // ceil(logical/bs), so the dataStartBlock fallback would leak the tail -> fsck orphan)
+        // and a preserved file keeps all of them. A non-over-allocated single-extent file
+        // recovers the same run the fallback would synthesize, so this stays byte-identical.
         const QVector<ApfsDataExtent> recovered =
             recoverFileDataExtents(in.image, in.geometry, in.chain, file.fileId, blockers);
-        if (recovered.size() > 1) {
+        if (!recovered.isEmpty()) {
             file.dataExtents = recovered;
         }
         // Match the target in its requested parent only (the root directory for a root
@@ -10148,7 +10270,13 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         if (file.parentDirectoryId == in.targetParentId && file.fileName == in.targetName) {
             *target = file;
             found = true;
-        } else {
+        } else if (!keptIds.contains(file.fileId)) {
+            // Preserve a hard-linked file as ONE inode with additionalLinks, not a duplicate
+            // inode per name (fsck rejects the duplicate fsroot key); later names are skipped.
+            keptIds.insert(file.fileId);
+            coalesceHardlinkNames(
+                &file,
+                recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers));
             remaining->append(file);
         }
     }
@@ -13173,7 +13301,8 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              .freedDataBlocks = fileFreedDataBlocks(target, ctx.geometry.blockSize),
                              .dataBlocksNew = 0,
                              .fileCountDelta = -1,
-                             .nextObjIdDelta = 0},
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = deleteChunk1Bitmap},
                             result,
                             blockers);
 }
@@ -13199,11 +13328,24 @@ void restoreRenamePayload(ApfsRootFilePayload* file,
                           QStringList* blockers) {
     file->privateId = file->fileId;
     file->dataStartBlock = owners.value(file->fileId);
+    // Preserve the file's exact on-disk extents across the rename/move: a real-Apple file may
+    // over-allocate its tail (physical > ceil(logical/bs)), so synthesizing from the logical size
+    // would shrink alloced_size and mismatch the inode -> fsck error. A non-over-allocated
+    // single-extent file recovers the same run the fallback would build, so this is byte-identical.
     const QVector<ApfsDataExtent> recovered =
         recoverFileDataExtents(in.image, in.geometry, in.chain, file->fileId, blockers);
-    if (recovered.size() > 1) {
+    if (!recovered.isEmpty()) {
         file->dataExtents = recovered;
     }
+}
+
+// A rename/move fails if the destination parent already holds a file with the new name (excluding
+// the moved file itself). Extracted to keep buildRenameFileList within the complexity budget.
+bool renameDestinationCollision(const ApfsRootFilePayload& file,
+                                bool isSource,
+                                uint64_t destParent,
+                                const QString& newName) {
+    return !isSource && file.parentDirectoryId == destParent && file.fileName == newName;
 }
 
 bool buildRenameFileList(const ApfsRenameListInput& in,
@@ -13215,6 +13357,7 @@ bool buildRenameFileList(const ApfsRenameListInput& in,
                                                             : in.targetParentId;
     bool found = false;
     bool duplicate = false;
+    QSet<uint64_t> keptIds;  // preserved inode ids (a hard link's later dir-entries are coalesced)
     for (ApfsRootFilePayload file : in.allFiles) {
         // Keep each file's parent so the rest of the tree survives; the source is matched
         // in its parent and any name collision in the DESTINATION parent (excluding the
@@ -13222,14 +13365,21 @@ bool buildRenameFileList(const ApfsRenameListInput& in,
         restoreRenamePayload(&file, in, owners, blockers);
         const bool isSource = file.parentDirectoryId == in.targetParentId &&
                               file.fileName == in.oldName;
-        duplicate = duplicate || (!isSource && file.parentDirectoryId == destParent &&
-                                  file.fileName == in.newName);
+        duplicate = duplicate || renameDestinationCollision(file, isSource, destParent, in.newName);
         if (isSource) {
             file.fileName = in.newName;
             file.parentDirectoryId = destParent;
             found = true;
+            files->append(file);
+        } else if (!keptIds.contains(file.fileId)) {
+            // Preserve a hard-linked file as ONE inode with additionalLinks, not a duplicate
+            // inode per name (fsck rejects the duplicate fsroot key); later names are skipped.
+            keptIds.insert(file.fileId);
+            coalesceHardlinkNames(
+                &file,
+                recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers));
+            files->append(file);
         }
-        files->append(file);
     }
     if (!found) {
         blockers->append(
@@ -13305,7 +13455,8 @@ bool commitInPlaceFileRename(QIODevice* image,
                              .freedDataBlocks = {},
                              .dataBlocksNew = 0,
                              .fileCountDelta = 0,
-                             .nextObjIdDelta = 0},
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = renameChunk1Bitmap},
                             result,
                             blockers);
 }
