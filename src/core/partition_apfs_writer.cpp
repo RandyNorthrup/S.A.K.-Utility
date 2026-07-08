@@ -6684,11 +6684,33 @@ struct ApfsRecoveredXattr {
 
 // The special-inode state a preserved file must carry forward so an in-place mutation reproduces it
 // byte-for-byte instead of rebuilding it as a plain inode: its extended attributes (compression +
-// user attrs) and the inode's internal_flags (to detect a sparse file, not yet preservable).
+// user attrs) and, for a sparse file, its internal_flags + dstream logical size (the hole reaches
+// up to it).
 struct ApfsRecoveredInodeState {
     QVector<ApfsRecoveredXattr> xattrs;
     uint64_t internalFlags{0};
+    uint64_t dstreamLogicalSize{0};
 };
+
+// The DSTREAM (type 8) xfield's logical size within an inode value at `base`, or 0 if absent (a
+// compressed inode carries no dstream). Mirrors writeInodeXfields: the xf header, then the TOC
+// entries, then each xfield's 8-byte-aligned value in TOC order.
+uint64_t inodeXfieldDstreamSize(const QByteArray& value, qsizetype base) {
+    const uint16_t xfieldCount = le16(value, base + kApfsInodeXfieldsOffset);
+    qsizetype toc = base + kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
+    qsizetype data = toc + static_cast<qsizetype>(xfieldCount) * kApfsXfieldTocEntryBytes;
+    for (uint16_t i = 0; i < xfieldCount; ++i) {
+        const uint8_t type = static_cast<uint8_t>(value.at(toc));
+        const uint16_t size = le16(value, toc + kApfsXfieldSizeOffset);
+        if (type == kApfsInodeDstreamField) {
+            return le64(value, data);
+        }
+        data += ((size + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
+                kApfsXfieldAlignment;
+        toc += kApfsXfieldTocEntryBytes;
+    }
+    return 0;
+}
 
 // Parse one XATTR leaf record (key name + value flags/xdata) into `out`.
 void recoverLeafXattr(const QByteArray& node,
@@ -6746,54 +6768,62 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
                 recoverLeafXattr(node, keyPos, valuePos, &state.xattrs);
             } else if (type == kApfsRecordInode) {
                 state.internalFlags = le64(node, valuePos + kApfsInodeInternalFlagsOffset);
+                state.dstreamLogicalSize = inodeXfieldDstreamSize(node, valuePos);
             }
         }
     }
     return state;
 }
 
-// Carry a preserved file's recovered special-inode state onto its rebuilt payload: inline decmpfs
-// compression, embedded user xattrs, and the sparse hole. Fails closed on the states whose faithful
-// reconstruction is not yet built -- resource-fork (algo *_RSRC / com.apple.ResourceFork)
-// compressed files (their separate blob stream must be preserved in place) and non-embedded xattrs
-// -- rather than silently rebuild the file wrong.
+// Carry a preserved file's recovered special-inode state onto its rebuilt payload: decmpfs
+// compression (inline OR resource-fork), the com.apple.ResourceFork data-stream pointer, embedded
+// user xattrs, and the sparse hole. Fails closed only on a non-embedded attribute whose faithful
+// reconstruction is not built, rather than silently rebuild the file wrong.
 bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
                               ApfsRootFilePayload* file,
                               QStringList* blockers) {
     for (const ApfsRecoveredXattr& x : state.xattrs) {
         if (x.name == QByteArray(kApfsXattrNameCompressed)) {
             const std::optional<ApfsDecmpfsHeader> header = apfsParseDecmpfsHeader(x.xdata);
-            if (!header || !apfsDecmpfsAlgoIsInline(header->algo)) {
+            if (!header) {
                 blockers->append(
-                    QStringLiteral("APFS in-place mutation cannot yet preserve the resource-fork "
-                                   "compressed file '%1'; mutate it before compression")
+                    QStringLiteral("APFS preserve: malformed com.apple.decmpfs on '%1'")
                         .arg(file->fileName));
                 return false;
             }
             file->compressed = true;
-            file->decmpfsXattr = x.xdata;
             file->uncompressedSize = header->uncompressed_size;
-        } else if (x.name == QByteArray(kApfsXattrNameResourceFork) ||
-                   x.flags != kApfsXattrDataEmbedded) {
+            if (apfsDecmpfsAlgoIsInline(header->algo)) {
+                file->decmpfsXattr = x.xdata;  // the full inline value carries the payload
+            } else {
+                // Resource-fork compression: keep the bare 16-byte header (algo *_RSRC); the blob
+                // lives in the com.apple.ResourceFork stream, recovered by
+                // preserveFileExtentsAndState.
+                file->resourceFork = true;
+                file->decmpfsXattr = x.xdata.left(kApfsDecmpfsHeaderBytes);
+            }
+        } else if (x.name == QByteArray(kApfsXattrNameResourceFork)) {
+            // j_xattr_dstream: le64 xattr_obj_id, then apfs_dstream { le64 size, ... }. The blob's
+            // extents are owned by xattr_obj_id and its byte length is the dstream size.
+            constexpr qsizetype kApfsXattrDstreamSizeOffset = 8;  // after the le64 xattr_obj_id
+            file->resourceForkXattrObjId = le64(x.xdata, 0);
+            file->logicalSizeOverride = le64(x.xdata, kApfsXattrDstreamSizeOffset);
+        } else if (x.flags == kApfsXattrDataEmbedded) {
+            file->xattrs.append({x.name, x.xdata});
+        } else {
             blockers->append(
-                QStringLiteral(
-                    "APFS in-place mutation cannot yet preserve the file '%1' (it carries "
-                    "a resource-fork or non-embedded attribute '%2')")
+                QStringLiteral("APFS in-place mutation cannot yet preserve the non-embedded "
+                               "attribute '%2' on file '%1'")
                     .arg(file->fileName, QString::fromUtf8(x.name)));
             return false;
-        } else {
-            file->xattrs.append({x.name, x.xdata});
         }
     }
     if ((state.internalFlags & kApfsInodeFlagIsSparse) != 0) {
-        // Preserving a sparse file's hole across a mutation needs the exact sparse-bytes accounting
-        // reconciled with apfsck (rebuilding it currently miscounts the hole); fail closed until
-        // that is harvested, rather than corrupt the file.
-        blockers->append(
-            QStringLiteral("APFS in-place mutation cannot yet preserve the sparse file '%1'; "
-                           "mutate it before making it sparse")
-                .arg(file->fileName));
-        return false;
+        // A sparse file: its logical size (the hole reaches up to it) is the dstream size; the
+        // trailing phys-0 hole is filtered from the preserved extents and re-synthesized by the
+        // sparse builder, so alloced_size / sparse_bytes recompute to the original values.
+        file->sparse = true;
+        file->sparseLogicalSize = state.dstreamLogicalSize;
     }
     return true;
 }
@@ -6818,10 +6848,28 @@ bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
     if (!backed.isEmpty()) {
         file->dataExtents = backed;
     }
-    return applyPreservedInodeState(
-        recoverInodeState(source.image, source.geometry, source.chain, file->fileId, blockers),
-        file,
-        blockers);
+    if (!applyPreservedInodeState(
+            recoverInodeState(source.image, source.geometry, source.chain, file->fileId, blockers),
+            file,
+            blockers)) {
+        return false;
+    }
+    // A resource-fork-compressed file's "cmpf" blob is a SEPARATE data stream owned by
+    // resourceForkXattrObjId (not the inode), so recover ITS extents; the rebuilt file re-emits the
+    // same com.apple.ResourceFork xattr + file-extent records and the blob stays in place.
+    if (file->resourceFork) {
+        const QVector<ApfsDataExtent> blob = recoverFileDataExtents(
+            source.image, source.geometry, source.chain, file->resourceForkXattrObjId, blockers);
+        if (blob.isEmpty()) {
+            blockers->append(
+                QStringLiteral("APFS preserve: resource-fork blob extents missing for '%1'")
+                    .arg(file->fileName));
+            return false;
+        }
+        file->dataExtents = blob;
+        file->dataStartBlock = blob.first().paddr;
+    }
+    return true;
 }
 
 // Merge every j_file_extent record of one fsroot LEAF node into byPaddr. Holes (paddr 0) are
