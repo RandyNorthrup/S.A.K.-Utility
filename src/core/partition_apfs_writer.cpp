@@ -10376,6 +10376,25 @@ bool reserveInsertLayout(const ApfsFsCommitContext& ctx,
     return true;
 }
 
+// Clone/hardlink on a snapshotted volume are not yet diverge-correct: a clone adds a second owner
+// to a shared extent (needs a KIND_UPDATE +1 delta the diverge-insert path does not emit, since it
+// allocates no fresh data), and a hardlink's extra sibling/omap records break the later
+// snapshot-delete versioned-omap teardown ("Leaked omap record"). Both would corrupt the volume or
+// its snapshots, so fail closed until the delta + teardown handling is harvested and built. A plain
+// file insert on a snapshotted volume IS diverge-correct (certified). Returns true (with a blocker)
+// when the commit must refuse.
+bool divergeRefusesCloneOrHardlink(const ApfsDivergeState& diverge,
+                                   const ApfsFileInsertRequest& request,
+                                   QStringList* blockers) {
+    if (diverge.active && (request.cloneSourcePrivateId != 0 || request.hardlinkTargetId != 0)) {
+        blockers->append(QStringLiteral(
+            "APFS clone/hardlink on a volume that already carries a snapshot is not yet supported; "
+            "perform the clone or hard link before creating the snapshot"));
+        return true;
+    }
+    return false;
+}
+
 bool commitInPlaceFileInsert(QIODevice* image,
                              const ApfsFileInsertRequest& request,
                              ApfsInPlaceCheckpointResult* result,
@@ -10391,6 +10410,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
     ApfsInsertSizing sizing;
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     if (!computeDivergeState(ctx, &diverge, blockers) ||
+        divergeRefusesCloneOrHardlink(diverge, request, blockers) ||
         !sizeInsertFsTree(ctx, request, diverge, &sizing, blockers)) {
         return false;
     }
