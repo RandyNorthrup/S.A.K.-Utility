@@ -10267,6 +10267,14 @@ void extendDivergeExtentRecords(const ApfsFsCommitContext& ctx,
             diverge->liveExtentRefRecords.append(r);
         }
     }
+    // The extent-ref B-tree is keyed by paddr and bulk-loaded in order, so keep the record set
+    // paddr-sorted after appending. A no-op on the certified insert path (its fresh extent is the
+    // highest paddr); needed once a diverge patch mixes in lower-paddr KIND_UPDATE deltas.
+    std::sort(diverge->liveExtentRefRecords.begin(),
+              diverge->liveExtentRefRecords.end(),
+              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
+                  return a.paddr < b.paddr;
+              });
 }
 
 struct ApfsInsertFsNodes {
@@ -10450,18 +10458,24 @@ struct ApfsFilePatchRequest {
     uint64_t targetFileId{0};  // the patched file's existing object id (preserved)
 };
 
-// The on-disk data blocks a file currently owns (its extents), recovered from the live
-// extent-ref tree - the blocks an in-place patch frees once the new data is written.
-QVector<uint64_t> recoverFileExtentBlocks(const ApfsFsCommitContext& ctx,
-                                          uint64_t fileId,
-                                          QStringList* blockers) {
-    ApfsRootFilePayload file;
-    file.fileId = fileId;
-    // Take the file's on-disk extents directly (paddr + length per run), so the freed
-    // list is correct without the file's byte data: a single-extent file needs its real
-    // extent here, not the data.size() fallback fileDataExtents uses for preserved files.
-    file.dataExtents = recoverFileDataExtents(ctx.image, ctx.geometry, ctx.chain, fileId, blockers);
-    return fileFreedDataBlocks(file, ctx.geometry.blockSize);
+// Split a patched file's current extents into the blocks the patch frees and (on a diverge)
+// the updated live delta record set. A patch is a diverge insert (the new data) fused with a
+// diverge delete (the old extents): on a snapshotted volume each pre-snapshot old extent gets a
+// KIND_UPDATE -1 delta (its block stays for the snapshot) and only live-exclusive old blocks are
+// freed; on a snapshot-free volume every old block is freed and the delta is unused.
+QVector<uint64_t> planPatchOldExtents(const ApfsFsCommitContext& ctx,
+                                      uint64_t targetFileId,
+                                      ApfsDivergeState* diverge,
+                                      QStringList* blockers) {
+    const QVector<ApfsDataExtent> oldExtents =
+        recoverFileDataExtents(ctx.image, ctx.geometry, ctx.chain, targetFileId, blockers);
+    if (!diverge->active) {
+        return fileFreedDataBlocks({.dataExtents = oldExtents}, ctx.geometry.blockSize);
+    }
+    const ApfsDivergeDeleteExtentPlan plan = planDivergeDeleteExtents(diverge->liveExtentRefRecords,
+                                                                      oldExtents);
+    diverge->liveExtentRefRecords = plan.liveRecords;
+    return plan.freedBlocks;
 }
 
 // A2: patch one file's data in place. Re-COW the file's data extents to new blocks
@@ -10469,7 +10483,9 @@ QVector<uint64_t> recoverFileExtentBlocks(const ApfsFsCommitContext& ctx,
 // the rest of the tree; the old extents are freed (net-zero file count and next-oid).
 // Mirrors commitInPlaceFileInsert but reuses the target's id (explicitFileId) and frees
 // the old data blocks - a true byte-range patch that is also crash-safe (the new data
-// and the COW'd fs-tree/extent-ref publish atomically at the checkpoint).
+// and the COW'd fs-tree/extent-ref publish atomically at the checkpoint). Diverge-aware: on
+// a snapshotted volume it extends the live delta tree (the new patched extents as KIND_NEW +
+// -1 deltas over pre-snapshot old extents) and keeps the snapshots intact.
 bool commitInPlaceFilePatch(QIODevice* image,
                             const ApfsFilePatchRequest& request,
                             ApfsInPlaceCheckpointResult* result,
@@ -10486,48 +10502,45 @@ bool commitInPlaceFilePatch(QIODevice* image,
                                        .explicitFileId = request.targetFileId};
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    const QVector<uint64_t> freedDataBlocks =
+        planPatchOldExtents(ctx, request.targetFileId, &diverge, blockers);
     ApfsInsertSizing sizing;
-    // Patch fails closed on a snapshotted volume (the finalize guard), so no diverge plan.
-    if (!sizeInsertFsTree(ctx, insert, ApfsDivergeState{}, &sizing, blockers)) {
+    if (!sizeInsertFsTree(ctx, insert, diverge, &sizing, blockers)) {
         return false;
     }
-    const qsizetype nodeCount = sizing.nodeCount;
-    const int extentRefSlots =
-        dataBlocks > 0 ? static_cast<int>(extentRefTreeBlockCount(sizing.extentRefRecords,
-                                                                  ctx.geometry.blockSize))
-                       : 0;
-    QVector<uint64_t> newBlocks;
-    uint64_t chunk1BitmapBlock = 0;
-    if (!allocateFsCommitBlocks(ctx,
-                                {nodeCount, extentRefSlots, dataBlocks},
-                                &newBlocks,
-                                &chunk1BitmapBlock,
-                                blockers)) {
+    ApfsInsertLayout layout;
+    if (!reserveInsertLayout(ctx,
+                             {.nodeCount = sizing.nodeCount,
+                              .volMappingCount = sizing.nodeCount + diverge.retainedMappings.size(),
+                              .extentRefRecords = sizing.extentRefRecords,
+                              .dataBlocks = dataBlocks,
+                              .cowExtentRef = dataBlocks > 0 || diverge.active},
+                             &layout,
+                             blockers)) {
         return false;
     }
-    const uint64_t patchTailBase =
-        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
-    const QVector<uint64_t> dataBlockList = newBlocks.mid(patchTailBase + extentRefSlots);
     ApfsInsertFsNodes built;
-    if (!buildInsertFsNodes(ctx, insert, dataBlockList, &built, blockers)) {
+    if (!buildInsertFsNodes(ctx, insert, layout.dataBlockList, &built, blockers)) {
         return false;
     }
-    const QVector<uint64_t> extentRefBlocks =
-        extentRefSlots != 0 ? newBlocks.mid(patchTailBase, extentRefSlots) : QVector<uint64_t>{};
-    const uint64_t extentRefNew = extentRefBlocks.value(0);
+    extendDivergeExtentRecords(ctx, built.files, layout.dataBlockList, &diverge);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = built.nodes,
-                             .newBlocks = newBlocks,
+                             .newBlocks = layout.newBlocks,
                              .files = built.files,
-                             .extentRefNew = extentRefNew,
-                             .extentRefBlocks = extentRefBlocks,
-                             .freedDataBlocks =
-                                 recoverFileExtentBlocks(ctx, request.targetFileId, blockers),
+                             .extentRefNew = layout.extentRefBlocks.value(0),
+                             .extentRefBlocks = layout.extentRefBlocks,
+                             .freedDataBlocks = freedDataBlocks,
                              .dataBlocksNew = static_cast<int64_t>(dataBlocks),
                              .fileCountDelta = 0,
                              .nextObjIdDelta = 0,
-                             .chunk1BitmapBlock = chunk1BitmapBlock},
+                             .chunk1BitmapBlock = layout.chunk1BitmapBlock,
+                             .diverge = diverge},
                             result,
                             blockers);
 }
