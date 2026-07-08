@@ -456,6 +456,17 @@ public:
         return result;
     }
 
+    // True when `path` names an HFS+ hard-link alias (so a generic delete routes to
+    // deleteHardlink). Discards the probe's path-resolution blockers so the caller's own delete
+    // re-reports a genuine not-found rather than surfacing a duplicate.
+    [[nodiscard]] bool pathIsHardLinkAlias(const QString& path) {
+        const qsizetype mark = m_blockers.size();
+        const auto probe = resolveCatalogPath(path);
+        const bool alias = probe.has_value() && probe->hardLinkAlias();
+        m_blockers.erase(m_blockers.begin() + mark, m_blockers.end());
+        return alias;
+    }
+
     // H5: delete a hard-link alias. Decrements the inode link count and stitches the
     // link chain; when the last alias is removed, the inode and its data blocks go too.
     [[nodiscard]] PartitionHfsFileWriteResult deleteHardlink(
@@ -567,6 +578,13 @@ public:
         appendCatalogMutationOptionBlockers(options, &result.blockers);
         if (!result.blockers.isEmpty()) {
             return result;
+        }
+
+        // An HFS+ hard-link alias owns no fork blocks of its own (its data lives in the iNode under
+        // the private metadata directory), so deleting it by path is a link-count decrement, not an
+        // allocated-file release -- route to the hard-link deleter transparently.
+        if (pathIsHardLinkAlias(path)) {
+            return deleteHardlink(path, options);
         }
 
         const auto plan =

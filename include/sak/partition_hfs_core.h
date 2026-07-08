@@ -664,9 +664,15 @@ QByteArray hfsCatalogSymlinkRecord(uint32_t fileId, const HfsForkData& fork) {
 // owns the original blocks), and only set the link-chain flag, hl_firstLinkID @4,
 // and the BSDInfo.special @44 = linkCount. Byte layout harvested from macOS Sequoia.
 void hfsStampHardLinkInodeFields(QByteArray* payload, uint32_t firstLinkId, uint32_t linkCount) {
+    // Preserve the inode's other catalog flags (notably kHfsCatalogHasAttributesMask when it owns
+    // extended attributes / a resource fork, and kHfsCatalogHasSecurityMask) and only ADD the
+    // thread-exists + link-chain bits. Overwriting the whole field cleared HasAttributes on an
+    // inode with xattrs, unbalancing the catalog vs attribute-tree bucket counts (fsck_hfs
+    // "Incorrect number of extended attributes").
+    const uint16_t flags = be16(*payload, kHfsCatalogRecordFlagsOffset);
     writeBe16(payload,
               kHfsCatalogRecordFlagsOffset,
-              kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
+              flags | kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
     writeBe32(payload, kHfsCatalogFirstLinkIdOffset, firstLinkId);
     writeBe32(payload, kHfsCatalogBsdSpecialOffset, linkCount);
 }
