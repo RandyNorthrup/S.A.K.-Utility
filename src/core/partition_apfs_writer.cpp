@@ -14206,6 +14206,13 @@ bool commitInPlaceFileRename(QIODevice* image,
             ctx, {nodeCount, 0, 0}, &newBlocks, &renameChunk1Bitmap, blockers)) {
         return false;
     }
+    // Diverge: rename changes no data extents (the file keeps its object id and its extents),
+    // so on a snapshotted volume it only reshapes the fs-tree + versions the omap; the extent-ref
+    // tree is kept in place (extentRefNew 0) and the snapshot-frozen fs nodes survive.
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = fsNodes,
@@ -14216,7 +14223,8 @@ bool commitInPlaceFileRename(QIODevice* image,
                              .dataBlocksNew = 0,
                              .fileCountDelta = 0,
                              .nextObjIdDelta = 0,
-                             .chunk1BitmapBlock = renameChunk1Bitmap},
+                             .chunk1BitmapBlock = renameChunk1Bitmap,
+                             .diverge = diverge},
                             result,
                             blockers);
 }
@@ -14273,6 +14281,13 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
             ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
         return false;
     }
+    // Diverge: directory create allocates no data extents, so on a snapshotted volume it only
+    // reshapes the fs-tree + versions the omap; extent-ref tree kept in place, snapshot fs nodes
+    // preserved.
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = fsNodes,
@@ -14284,7 +14299,8 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                              .fileCountDelta = 0,
                              .directoryCountDelta = 1,
                              .nextObjIdDelta = 1,
-                             .chunk1BitmapBlock = directoryChunk1Bitmap},
+                             .chunk1BitmapBlock = directoryChunk1Bitmap,
+                             .diverge = diverge},
                             result,
                             blockers);
 }
@@ -14365,6 +14381,13 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
             ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
         return false;
     }
+    // Diverge: an empty directory owns no data extents, so deleting it on a snapshotted volume
+    // only reshapes the fs-tree + versions the omap; nothing snapshot-owned is freed (the
+    // snapshot-frozen fs nodes are preserved, extent-ref tree kept in place).
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = fsNodes,
@@ -14376,7 +14399,8 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
                              .fileCountDelta = 0,
                              .directoryCountDelta = -1,
                              .nextObjIdDelta = 0,
-                             .chunk1BitmapBlock = directoryChunk1Bitmap},
+                             .chunk1BitmapBlock = directoryChunk1Bitmap,
+                             .diverge = diverge},
                             result,
                             blockers);
 }
