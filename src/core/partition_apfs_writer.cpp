@@ -9365,6 +9365,39 @@ ApfsDivergeDeleteExtentPlan planDivergeDeleteExtents(
     return plan;
 }
 
+// Diverge clone: the clone adds a SECOND owner (its own object id) to each shared extent, so the
+// live extent-ref refcount must rise by one. If a live KIND_NEW record already covers the extent
+// (a post-snapshot source), bump its refcount; otherwise (a pre-snapshot source whose base record
+// lives in a snapshot's frozen tree) append a KIND_UPDATE +1 delta. The exact mirror of the delete
+// -1 delta, so the snapshot-delete fold nets both signs back to the base refcount.
+QVector<ExtentRefPhysRecord> planDivergeCloneExtents(const QVector<ExtentRefPhysRecord>& liveDelta,
+                                                     const QVector<ApfsDataExtent>& sharedExtents) {
+    QVector<ExtentRefPhysRecord> out = liveDelta;
+    for (const ApfsDataExtent& e : sharedExtents) {
+        bool bumped = false;
+        for (ExtentRefPhysRecord& r : out) {
+            if (r.kind == kApfsExtentKindNew && r.paddr == e.paddr &&
+                r.blockCount == e.blockCount) {
+                r.refcnt += 1;
+                bumped = true;
+            }
+        }
+        if (!bumped) {
+            out.append({.paddr = e.paddr,
+                        .blockCount = e.blockCount,
+                        .owner = kApfsPhysExtUndefinedOwner,
+                        .refcnt = 1,
+                        .kind = kApfsExtentKindUpdate});
+        }
+    }
+    std::sort(out.begin(),
+              out.end(),
+              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
+                  return a.paddr < b.paddr;
+              });
+    return out;
+}
+
 // The current on-disk ci_bitmap_addr of data chunk `c`, read from its OWNING cib (cib 0
 // or, S4b, the cib k>0 that owns it). 0 == the chunk is still implicit-all-free (fresh).
 uint64_t liveChunkBitmapAddr(const ApfsFsCommitContext& ctx, uint64_t c, QStringList* blockers) {
@@ -10574,23 +10607,26 @@ bool reserveInsertLayout(const ApfsFsCommitContext& ctx,
     return true;
 }
 
-// Clone/hardlink on a snapshotted volume are not yet diverge-correct: a clone adds a second owner
-// to a shared extent (needs a KIND_UPDATE +1 delta the diverge-insert path does not emit, since it
-// allocates no fresh data), and a hardlink's extra sibling/omap records break the later
-// snapshot-delete versioned-omap teardown ("Leaked omap record"). Both would corrupt the volume or
-// its snapshots, so fail closed until the delta + teardown handling is harvested and built. A plain
-// file insert on a snapshotted volume IS diverge-correct (certified). Returns true (with a blocker)
-// when the commit must refuse.
-bool divergeRefusesCloneOrHardlink(const ApfsDivergeState& diverge,
-                                   const ApfsFileInsertRequest& request,
-                                   QStringList* blockers) {
-    if (diverge.active && (request.cloneSourcePrivateId != 0 || request.hardlinkTargetId != 0)) {
-        blockers->append(QStringLiteral(
-            "APFS clone/hardlink on a volume that already carries a snapshot is not yet supported; "
-            "perform the clone or hard link before creating the snapshot"));
+// Diverge: apply a clone's +1 extent-ref deltas to the live delta record set BEFORE sizing (a clone
+// shares the source's extents, adding one live reference each), so the reserved tree fits them.
+// A no-op off the clone path or off the diverge path. Fails closed if the source extents can't be
+// recovered.
+bool applyDivergeCloneDelta(const ApfsFsCommitContext& ctx,
+                            const ApfsFileInsertRequest& request,
+                            ApfsDivergeState* diverge,
+                            QStringList* blockers) {
+    if (!diverge->active || request.cloneSourcePrivateId == 0) {
         return true;
     }
-    return false;
+    const QVector<ApfsDataExtent> shared = recoverFileDataExtents(
+        ctx.image, ctx.geometry, ctx.chain, request.cloneSourcePrivateId, blockers);
+    if (shared.isEmpty()) {
+        blockers->append(
+            QStringLiteral("APFS diverge clone: could not recover the source file's extents"));
+        return false;
+    }
+    diverge->liveExtentRefRecords = planDivergeCloneExtents(diverge->liveExtentRefRecords, shared);
+    return true;
 }
 
 bool commitInPlaceFileInsert(QIODevice* image,
@@ -10608,7 +10644,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
     ApfsInsertSizing sizing;
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     if (!computeDivergeState(ctx, &diverge, blockers) ||
-        divergeRefusesCloneOrHardlink(diverge, request, blockers) ||
+        !applyDivergeCloneDelta(ctx, request, &diverge, blockers) ||
         !sizeInsertFsTree(ctx, request, diverge, &sizing, blockers)) {
         return false;
     }
@@ -13842,7 +13878,35 @@ bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
                                uint64_t snapshotExtentRefOid,
                                ApfsSnapshotDeleteRebuildPlan* plan,
                                QStringList* blockers) {
-    if (keepsSnapshots ||
+    if (keepsSnapshots) {
+        return true;  // keeping other snapshots: no single-version collapse.
+    }
+    // Versioned-omap teardown FIRST, and independent of the extent-ref state: if a S.A.K. diverge
+    // left the volume omap holding the snapshot's frozen fs-tree node versions alongside the live
+    // ones, collapse to single-version -- keep only the omap entries the LIVE fs-tree reaches, free
+    // the snapshot-exclusive node blocks. A HARDLINK diverge versions the omap but adds NO extents,
+    // so this must not be gated behind a populated extent-ref tree (that gate leaked the stale
+    // version: apfsck "Leaked omap record").
+    QVector<uint64_t> liveFsNodes;
+    if (!collectOldFsTreeNodePaddrs(ctx.image, ctx.geometry, ctx.chain, &liveFsNodes, blockers)) {
+        return false;
+    }
+    const QSet<uint64_t> liveNodePaddrs(liveFsNodes.begin(), liveFsNodes.end());
+    const bool versionedOmap =
+        splitVersionedOmapForDelete(readLiveOmapVersionedEntries(ctx, blockers),
+                                    liveNodePaddrs,
+                                    &plan->liveOmapEntries,
+                                    &plan->droppedOmapNodes);
+    if (versionedOmap) {
+        plan->omapTreeBlocks = static_cast<int>(
+            omapTreeBlockCount(plan->liveOmapEntries.size(), ctx.geometry.blockSize));
+    }
+    // Extent-ref rebuild: fold the snapshot's frozen tree with the live delta when the live tree is
+    // populated (a diverge that touched extents), OR when the omap is versioned but the live tree
+    // is empty (a hardlink diverge) -- there the fold reduces to the snapshot's base records and
+    // the rebuild path is what writes the collapsed omap. A single-version omap over an empty live
+    // tree stays on the certified re-adopt path (extentRefSlots 0, omap in place).
+    if (!versionedOmap &&
         !liveExtentRefTreeIsPopulated(ctx.image, ctx.geometry, ctx.chain.extentRef, blockers)) {
         return true;  // certified empty-live re-adopt path (or the tree is genuinely empty).
     }
@@ -13858,22 +13922,6 @@ bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
     // written node i -> extentRefRun[i]; see buildSnapshotDeleteRebuild).
     plan->extentRefSlots =
         static_cast<int>(extentRefTreeBlockCount(plan->records.size(), ctx.geometry.blockSize));
-    // Versioned-omap teardown: if a S.A.K. diverge left the volume omap holding the snapshot's
-    // frozen fs-tree nodes alongside the live ones, rebuild it single-version -- keep only the omap
-    // entries the LIVE fs-tree reaches, free the snapshot-exclusive node blocks. A single-version
-    // omap (kernel-revert path) leaves omapTreeBlocks 0 and the omap in place.
-    QVector<uint64_t> liveFsNodes;
-    if (!collectOldFsTreeNodePaddrs(ctx.image, ctx.geometry, ctx.chain, &liveFsNodes, blockers)) {
-        return false;
-    }
-    const QSet<uint64_t> liveNodePaddrs(liveFsNodes.begin(), liveFsNodes.end());
-    if (splitVersionedOmapForDelete(readLiveOmapVersionedEntries(ctx, blockers),
-                                    liveNodePaddrs,
-                                    &plan->liveOmapEntries,
-                                    &plan->droppedOmapNodes)) {
-        plan->omapTreeBlocks = static_cast<int>(
-            omapTreeBlockCount(plan->liveOmapEntries.size(), ctx.geometry.blockSize));
-    }
     return true;
 }
 
