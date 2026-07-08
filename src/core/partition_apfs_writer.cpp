@@ -13438,30 +13438,25 @@ struct ApfsSnapshotDeleteRebuildPlan {
     uint64_t newOmapTreeRoot{0};  // reserved block the rebuilt single-version omap tree is at
 };
 
-// The versioned volume omap after a S.A.K. diverge retains, per fs-tree oid, both the snapshot's
-// frozen version and the live one. Deleting the last snapshot leaves the snapshot's versions
-// unreferenced (apfsck "Leaked omap record"). Split the versioned entries into the LIVE set (the
-// max-xid mapping per oid, kept) and the older versions' node blocks (freed). Returns true when the
-// omap is actually versioned (some older version to drop); false leaves the omap single-version
-// (the certified / kernel-revert path -- no rebuild).
+// The versioned volume omap after a S.A.K. diverge retains BOTH the snapshot's frozen fs-tree node
+// versions and the live ones. Deleting the last snapshot leaves the snapshot's versions
+// unreferenced (apfsck "Leaked omap record: unexpected object type"). The live and snapshot node
+// sets are not merely different versions of the same oid -- a diverge that splits a multi-node
+// fs-tree allocates FRESH oids for the live nodes, so the snapshot nodes occupy disjoint oids and a
+// max-xid-per-oid split keeps them (they look like the only version of their oid). Instead keep
+// exactly the omap entries whose block the LIVE fs-tree actually reaches (`liveNodePaddrs`, walked
+// from the live root); every other entry is a snapshot-exclusive node block, freed. Returns true
+// when some entry is dropped (the omap is genuinely versioned); false leaves the omap
+// single-version (the certified / kernel-revert path -- no rebuild).
 bool splitVersionedOmapForDelete(const QVector<ApfsObjectMapEntry>& entries,
+                                 const QSet<uint64_t>& liveNodePaddrs,
                                  QVector<ApfsObjectMapEntry>* liveEntries,
                                  QVector<uint64_t>* droppedNodes) {
-    QSet<uint64_t> oids;
     for (const ApfsObjectMapEntry& e : entries) {
-        oids.insert(e.oid);
-    }
-    for (uint64_t oid : oids) {
-        const uint64_t livePaddr = liveVersionPaddr(entries, oid);
-        for (const ApfsObjectMapEntry& e : entries) {
-            if (e.oid != oid) {
-                continue;
-            }
-            if (e.physicalBlock == livePaddr) {
-                liveEntries->append(e);
-            } else {
-                droppedNodes->append(e.physicalBlock);
-            }
+        if (liveNodePaddrs.contains(e.physicalBlock)) {
+            liveEntries->append(e);
+        } else {
+            droppedNodes->append(e.physicalBlock);
         }
     }
     return !droppedNodes->isEmpty();
@@ -13490,24 +13485,21 @@ bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
     plan->records = folded.kept;
     plan->freedExtents = folded.freed;
     // Reserve exactly the node count a bulk-loaded extent-ref tree over the kept records needs: 1
-    // node up to a root-leaf's capacity, else leaves under index nodes up to a root (multi-node).
+    // node up to a root-leaf's capacity, else leaves under index nodes up to a root (multi-node,
+    // written node i -> extentRefRun[i]; see buildSnapshotDeleteRebuild).
     plan->extentRefSlots =
         static_cast<int>(extentRefTreeBlockCount(plan->records.size(), ctx.geometry.blockSize));
-    // A multi-node rebuilt extent-ref tree is plumbed (extentRefRun) but the delete-last teardown
-    // on a large fs-tree still leaks a versioned-omap record (apfsck "Leaked omap record"); fail
-    // closed until that is fixed + kernel-certified rather than write a tree apfsck rejects.
-    // Single-node (the certified small/foreign-revert volumes) proceeds.
-    if (plan->extentRefSlots > 1) {
-        blockers->append(QStringLiteral(
-            "APFS snapshot-delete: multi-node extent-ref rebuild over a large fs-tree "
-            "is not yet certified"));
+    // Versioned-omap teardown: if a S.A.K. diverge left the volume omap holding the snapshot's
+    // frozen fs-tree nodes alongside the live ones, rebuild it single-version -- keep only the omap
+    // entries the LIVE fs-tree reaches, free the snapshot-exclusive node blocks. A single-version
+    // omap (kernel-revert path) leaves omapTreeBlocks 0 and the omap in place.
+    QVector<uint64_t> liveFsNodes;
+    if (!collectOldFsTreeNodePaddrs(ctx.image, ctx.geometry, ctx.chain, &liveFsNodes, blockers)) {
         return false;
     }
-    // Versioned-omap teardown: if a S.A.K. diverge left the volume omap holding the snapshot's
-    // frozen fs-tree versions alongside the live ones, rebuild it single-version (keep the live
-    // max-xid mapping per oid, free the older ones). A single-version omap (kernel-revert path)
-    // leaves omapTreeBlocks 0 and the omap in place.
+    const QSet<uint64_t> liveNodePaddrs(liveFsNodes.begin(), liveFsNodes.end());
     if (splitVersionedOmapForDelete(readLiveOmapVersionedEntries(ctx, blockers),
+                                    liveNodePaddrs,
                                     &plan->liveOmapEntries,
                                     &plan->droppedOmapNodes)) {
         plan->omapTreeBlocks = static_cast<int>(
