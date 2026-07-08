@@ -7942,6 +7942,43 @@ void coalesceHardlinkNames(ApfsRootFilePayload* file, const QVector<ApfsInodeSib
     }
 }
 
+// Coalesce a hard-linked inode's names but DROP the one matching (delName, delParent) -- the name a
+// hard-link NAME delete removes. The remaining names rebuild the inode: >= 2 keep it hard-linked
+// (nlink = remaining names, lowest sibling primary); exactly 1 collapses it to a normal single-name
+// inode (no sibling-link/map records, the certified nlink-1 form) keyed on the surviving name. The
+// deleted name's dentry + sibling-link + sibling-map records are simply never re-emitted. A no-op
+// when no sibling matches the deleted name (a non-target inode is byte-identical to plain
+// coalesce).
+void coalesceHardlinkNamesExcluding(ApfsRootFilePayload* file,
+                                    const QVector<ApfsInodeSibling>& sibs,
+                                    const QString& delName,
+                                    uint64_t delParent) {
+    QVector<ApfsInodeSibling> kept;
+    bool dropped = false;
+    for (const ApfsInodeSibling& s : sibs) {
+        if (!dropped && s.name == delName && s.parentId == delParent) {
+            dropped = true;  // drop exactly one matching sibling
+            continue;
+        }
+        kept.append(s);
+    }
+    if (!dropped) {
+        coalesceHardlinkNames(file, sibs);  // this inode is not the delete target
+        return;
+    }
+    if (kept.size() >= 2) {
+        coalesceHardlinkNames(file, kept);
+        return;
+    }
+    // Down to one name: a normal inode carries no sibling records (nlink implicit 1).
+    if (kept.size() == 1) {
+        file->fileName = kept.first().name;
+        file->parentDirectoryId = kept.first().parentId;
+    }
+    file->primarySiblingId = 0;
+    file->additionalLinks.clear();
+}
+
 bool recoverPreservedFiles(const ApfsLiveTreeSource& source,
                            const QVector<ApfsRootFilePayload>& inputFiles,
                            QVector<ApfsRootFilePayload>* files,
@@ -10511,6 +10548,7 @@ struct ApfsDeleteListInput {
 bool buildDeleteFileList(const ApfsDeleteListInput& in,
                          QVector<ApfsRootFilePayload>* remaining,
                          ApfsRootFilePayload* target,
+                         bool* nameDelete,
                          QStringList* blockers) {
     const QHash<uint64_t, uint64_t> owners =
         parseExtentRefOwners(in.image, in.geometry, in.chain.extentRef, blockers);
@@ -10540,10 +10578,16 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         } else if (!keptIds.contains(file.fileId)) {
             // Preserve a hard-linked file as ONE inode with additionalLinks, not a duplicate
             // inode per name (fsck rejects the duplicate fsroot key); later names are skipped.
+            // Coalesce EXCLUDING the name being deleted, so deleting one link of a hard-linked
+            // inode drops just that name (the inode + its data + other names survive with a
+            // decremented link count); a non-target inode has no matching sibling, so
+            // byte-identical.
             keptIds.insert(file.fileId);
-            coalesceHardlinkNames(
+            coalesceHardlinkNamesExcluding(
                 &file,
-                recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers));
+                recoverInodeSiblings(in.image, in.geometry, in.chain, file.fileId, blockers),
+                in.targetName,
+                in.targetParentId);
             remaining->append(file);
         }
     }
@@ -10552,6 +10596,11 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
             QStringLiteral("APFS file-delete-commit: file '%1' was not found").arg(in.targetName));
         return false;
     }
+    // A hard-link NAME delete (the target inode still has >= 2 names) removes only a name: the
+    // inode, its data extents, and the other names survive, so no file/data is freed. A last-link
+    // (or single-name) delete removes the whole inode.
+    *nameDelete =
+        recoverInodeSiblings(in.image, in.geometry, in.chain, target->fileId, blockers).size() >= 2;
     return true;
 }
 
@@ -13915,6 +13964,59 @@ struct ApfsDeleteRequest {
 // target's records removed, free the target's data blocks and the old fs-tree/chain
 // blocks, return the freed blocks to the spaceman/CIB free counts, then advance the
 // checkpoint.
+// Reserved trees + blocks for a file-delete commit: the fs-tree over the remaining files, the
+// reserved block run, and the rebuilt extent-ref node run. Removing a file WITH data rewrites the
+// extent-ref tree over the REMAINING files' records (exact -- their extents come from the live
+// tree, no fresh allocation), so the reserve scales with that record count; deleting an empty file
+// (or a hard-link name whose inode keeps its data) leaves the tree in place.
+struct ApfsDeleteLayout {
+    QVector<ApfsFsTreeNode> fsNodes;
+    QVector<uint64_t> newBlocks;
+    QVector<uint64_t> extentRefBlocks;
+    uint64_t chunk1BitmapBlock{0};
+};
+
+struct ApfsDeleteLayoutInput {
+    const ApfsFsCommitContext& ctx;
+    const QVector<ApfsRootFilePayload>& remaining;
+    const QVector<ApfsRootDirectoryPayload>& directories;
+    uint64_t targetBlocks;  // deleted file's block count (0 = empty / hard-link name delete)
+};
+
+bool buildDeleteLayout(const ApfsDeleteLayoutInput& in,
+                       ApfsDeleteLayout* out,
+                       QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = in.ctx;
+    const int extentRefSlots =
+        in.targetBlocks > 0
+            ? static_cast<int>(extentRefTreeBlockCount(
+                  collectExtentRefRecords(ctx.geometry.blockSize, in.remaining).size(),
+                  ctx.geometry.blockSize))
+            : 0;
+    if (!buildFsTreeNodes({ctx.geometry.blockSize,
+                           in.remaining,
+                           in.directories,
+                           ctx.firstLeafOid,
+                           ctx.chain.rootTreeOid},
+                          &out->fsNodes,
+                          blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = out->fsNodes.size();
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, extentRefSlots, 0},
+                                &out->newBlocks,
+                                &out->chunk1BitmapBlock,
+                                blockers)) {
+        return false;
+    }
+    const uint64_t tailBase =
+        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
+    out->extentRefBlocks = extentRefSlots != 0 ? out->newBlocks.mid(tailBase, extentRefSlots)
+                                               : QVector<uint64_t>{};
+    return true;
+}
+
 bool commitInPlaceFileDelete(QIODevice* image,
                              const ApfsDeleteRequest& request,
                              ApfsInPlaceCheckpointResult* result,
@@ -13925,6 +14027,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     QVector<ApfsRootFilePayload> remaining;
     ApfsRootFilePayload target;
+    bool nameDelete = false;
     if (!buildDeleteFileList({ctx.image,
                               ctx.geometry,
                               ctx.chain,
@@ -13933,55 +14036,35 @@ bool commitInPlaceFileDelete(QIODevice* image,
                               request.targetParentId},
                              &remaining,
                              &target,
+                             &nameDelete,
                              blockers)) {
         return false;
     }
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
                                                     ctx.geometry.blockSize);
-    // Removing a file with data rewrites the extent-ref tree over the REMAINING files'
-    // records (exact -- their extents come from the live tree, no fresh allocation), so the
-    // reserve scales with that record count; deleting an empty file leaves the tree in place.
-    const int extentRefSlots =
-        targetBlocks > 0 ? static_cast<int>(extentRefTreeBlockCount(
-                               collectExtentRefRecords(ctx.geometry.blockSize, remaining).size(),
-                               ctx.geometry.blockSize))
-                         : 0;
-    QVector<ApfsFsTreeNode> fsNodes;
-    if (!buildFsTreeNodes({ctx.geometry.blockSize,
-                           remaining,
-                           request.directories,
-                           ctx.firstLeafOid,
-                           ctx.chain.rootTreeOid},
-                          &fsNodes,
-                          blockers)) {
+    ApfsDeleteLayout layout;
+    if (!buildDeleteLayout(
+            {ctx, remaining, request.directories, targetBlocks}, &layout, blockers)) {
         return false;
     }
-    const qsizetype nodeCount = fsNodes.size();
-    QVector<uint64_t> newBlocks;
-    uint64_t deleteChunk1Bitmap = 0;
-    if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, extentRefSlots, 0}, &newBlocks, &deleteChunk1Bitmap, blockers)) {
-        return false;
-    }
-    const uint64_t deleteTailBase =
-        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
-    const QVector<uint64_t> extentRefBlocks =
-        extentRefSlots != 0 ? newBlocks.mid(deleteTailBase, extentRefSlots) : QVector<uint64_t>{};
-    const uint64_t extentRefNew = extentRefBlocks.value(0);
-    return finalizeFsCommit({.ctx = ctx,
-                             .newXid = ctx.live.xid + 1,
-                             .fsNodes = fsNodes,
-                             .newBlocks = newBlocks,
-                             .files = remaining,
-                             .extentRefNew = extentRefNew,
-                             .extentRefBlocks = extentRefBlocks,
-                             .freedDataBlocks = fileFreedDataBlocks(target, ctx.geometry.blockSize),
-                             .dataBlocksNew = 0,
-                             .fileCountDelta = -1,
-                             .nextObjIdDelta = 0,
-                             .chunk1BitmapBlock = deleteChunk1Bitmap},
-                            result,
-                            blockers);
+    return finalizeFsCommit(
+        {.ctx = ctx,
+         .newXid = ctx.live.xid + 1,
+         .fsNodes = layout.fsNodes,
+         .newBlocks = layout.newBlocks,
+         .files = remaining,
+         .extentRefNew = layout.extentRefBlocks.value(0),
+         .extentRefBlocks = layout.extentRefBlocks,
+         // A hard-link NAME delete keeps the inode + its data (only a name goes),
+         // so it frees no data blocks and leaves the file count unchanged.
+         .freedDataBlocks = nameDelete ? QVector<uint64_t>{}
+                                       : fileFreedDataBlocks(target, ctx.geometry.blockSize),
+         .dataBlocksNew = 0,
+         .fileCountDelta = nameDelete ? 0 : -1,
+         .nextObjIdDelta = 0,
+         .chunk1BitmapBlock = layout.chunk1BitmapBlock},
+        result,
+        blockers);
 }
 
 struct ApfsRenameListInput {
