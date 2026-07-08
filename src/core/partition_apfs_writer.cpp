@@ -10098,6 +10098,7 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
                       const ApfsDivergeState& diverge,
                       ApfsInsertSizing* out,
                       QStringList* blockers) {
+    const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsFsTreeNode> probe;
     if (!buildChainedFileList({ctx.image, ctx.geometry, ctx.chain, request, 0}, &files, blockers) ||
@@ -10111,17 +10112,21 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
         return false;
     }
     out->nodeCount = probe.size();
+    // The new file's data blocks are not allocated yet (paddr 0), so collectExtentRefRecords skips
+    // them (paddr-0 holes are excluded). Its contiguous data run adds ONE j_phys_ext record once
+    // allocated; count it so the reservation matches the post-build tree (a clone adds no new
+    // paddr, only a refcount on an existing record, so dataBlocks is 0 there). Estimating one run
+    // is a lower bound on a fragmented allocation, so it never over-reserves (which would leak
+    // reserved blocks); a fragmented new file that needs more nodes fails closed rather than
+    // corrupting.
+    const qsizetype newFileRecords = dataBlocks > 0 ? 1 : 0;
     if (!diverge.active) {
-        out->extentRefRecords = collectExtentRefRecords(ctx.geometry.blockSize, files).size();
+        out->extentRefRecords = collectExtentRefRecords(ctx.geometry.blockSize, files).size() +
+                                newFileRecords;
         return true;
     }
-    // The live extent-ref tree carries only the post-snapshot extents (the pre-snapshot ones
-    // the snapshots own), so it is the existing live record set plus THIS commit's new file's
-    // extents (estimated from pass 1 as one extent, exactly like the fs-tree sizing) -- not
-    // every live file. The new file is the last of the merged list.
-    const qsizetype newFileRecords =
-        files.isEmpty() ? 0
-                        : collectExtentRefRecords(ctx.geometry.blockSize, {files.last()}).size();
+    // The live extent-ref tree carries only the post-snapshot extents (the pre-snapshot ones the
+    // snapshots own), so it is the existing live record set plus THIS commit's new file's extent.
     out->extentRefRecords = diverge.liveExtentRefRecords.size() + newFileRecords;
     return true;
 }
@@ -10260,11 +10265,11 @@ bool commitInPlaceFileInsert(QIODevice* image,
     // tree. Inactive plan on a snapshot-free volume -> the certified path is byte-identical.
     ApfsDivergeState diverge;
     ApfsInsertSizing sizing;
+    const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     if (!computeDivergeState(ctx, &diverge, blockers) ||
         !sizeInsertFsTree(ctx, request, diverge, &sizing, blockers)) {
         return false;
     }
-    const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     ApfsInsertLayout layout;
     if (!reserveInsertLayout(ctx,
                              {.nodeCount = sizing.nodeCount,
@@ -13419,9 +13424,10 @@ struct ApfsSnapshotDeleteRebuildPlan {
     // spaceman bitmap + free queue on delete, else they leak (apfsck "overallocation on Main
     // device").
     QVector<QPair<uint64_t, uint64_t>> freedExtents;
-    int extentRefSlots{0};
+    int extentRefSlots{0};          // reserved node count for the rebuilt tree (>1 = multi-node)
     uint64_t snapshotExtentRef{0};  // deleted snapshot's frozen tree (freed with the old live tree)
-    uint64_t rootBlock{0};          // reserved block the rebuilt KIND_NEW tree is written at
+    uint64_t rootBlock{0};          // root node block (nodeBlocks[0] of the reserved run)
+    QVector<uint64_t> extentRefRun;  // the full reserved node run (root at [0]); multi-node rebuild
     // Versioned-omap teardown (S.A.K.-diverge-then-delete-last): the LIVE (max-xid) omap mapping
     // per oid to keep, the older snapshot-retained versions' node blocks to free, and the reserved
     // block count for the rebuilt single-version omap tree (0 when the omap is already single-
@@ -13483,13 +13489,20 @@ bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
     }
     plan->records = folded.kept;
     plan->freedExtents = folded.freed;
-    if (plan->records.size() > extentRefCaps(ctx.geometry.blockSize).rootLeaf) {
-        blockers->append(
-            QStringLiteral("APFS snapshot-delete: rebuilding the live extent-ref tree over more "
-                           "extents than fit a single node is not yet supported"));
+    // Reserve exactly the node count a bulk-loaded extent-ref tree over the kept records needs: 1
+    // node up to a root-leaf's capacity, else leaves under index nodes up to a root (multi-node).
+    plan->extentRefSlots =
+        static_cast<int>(extentRefTreeBlockCount(plan->records.size(), ctx.geometry.blockSize));
+    // A multi-node rebuilt extent-ref tree is plumbed (extentRefRun) but the delete-last teardown
+    // on a large fs-tree still leaks a versioned-omap record (apfsck "Leaked omap record"); fail
+    // closed until that is fixed + kernel-certified rather than write a tree apfsck rejects.
+    // Single-node (the certified small/foreign-revert volumes) proceeds.
+    if (plan->extentRefSlots > 1) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-delete: multi-node extent-ref rebuild over a large fs-tree "
+            "is not yet certified"));
         return false;
     }
-    plan->extentRefSlots = 1;
     // Versioned-omap teardown: if a S.A.K. diverge left the volume omap holding the snapshot's
     // frozen fs-tree versions alongside the live ones, rebuild it single-version (keep the live
     // max-xid mapping per oid, free the older ones). A single-version omap (kernel-revert path)
@@ -13546,15 +13559,20 @@ bool buildSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
                                 const QVector<uint64_t>& omapTreeNodes,
                                 QVector<uint64_t>* freedNodes,
                                 QStringList* blockers) {
+    const QVector<uint64_t> run = plan.extentRefRun.isEmpty() ? QVector<uint64_t>{plan.rootBlock}
+                                                              : plan.extentRefRun;
     const QVector<QByteArray> tree = buildExtentRefTreeNodesFromRecords(
-        {ctx.geometry.blockSize, ctx.live.xid + 1, {plan.rootBlock}}, plan.records, blockers);
-    if (tree.size() != 1) {
-        blockers->append(QStringLiteral(
-            "APFS snapshot-delete: rebuilt extent-ref tree needs more than the reserved node"));
+        {ctx.geometry.blockSize, ctx.live.xid + 1, run}, plan.records, blockers);
+    if (tree.size() != run.size()) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-delete: rebuilt extent-ref tree node count differs from "
+                           "the reserved run"));
         return false;
     }
-    if (!writeApfsRepairBlock(ctx.image, ctx.geometry, plan.rootBlock, tree.at(0), blockers)) {
-        return false;
+    for (qsizetype i = 0; i < tree.size(); ++i) {  // node i -> run[i], root at run[0]
+        if (!writeApfsRepairBlock(ctx.image, ctx.geometry, run.at(i), tree.at(i), blockers)) {
+            return false;
+        }
     }
     QVector<uint64_t> omapFreed;
     if (!writeSnapshotDeleteOmapRebuild(ctx, plan, omapTreeNodes, &omapFreed, blockers)) {
@@ -13611,7 +13629,8 @@ bool executeSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
                                   const QVector<uint64_t>& newBlocks,
                                   ApfsSnapshotDeleteRebuildOutput* out,
                                   QStringList* blockers) {
-    out->rebuiltRoot = newBlocks.at(5);
+    plan->extentRefRun = newBlocks.mid(5, plan->extentRefSlots);  // [5 .. 5+slots): tree node run
+    out->rebuiltRoot = plan->extentRefRun.value(0);               // root at run[0]
     plan->rootBlock = out->rebuiltRoot;
     const qsizetype omapBase = 5 + plan->extentRefSlots;
     const QVector<uint64_t> omapTreeNodes = plan->omapTreeBlocks != 0
