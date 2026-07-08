@@ -3033,8 +3033,11 @@ uint64_t extentRefRecordKey(const ExtentRefPhysRecord& record) {
 // Write a record's 20-byte j_phys_ext leaf value at `value`: {block-count tagged KIND_NEW,
 // owning object id, reference count}.
 void writeExtentRefLeafValue(QByteArray* block, qsizetype value, const ExtentRefPhysRecord& r) {
-    constexpr uint64_t kApfsKindNew = 1;
-    writeLe64(block, value, r.blockCount | (kApfsKindNew << kApfsObjTypeShift));
+    // len_and_kind top nibble is the record kind: KIND_NEW (1) for an absolute-refcount base
+    // record, KIND_UPDATE (2) for a signed refcount delta (a diverge delete layers a -1 delta
+    // over the snapshot's frozen KIND_NEW base). r.kind defaults to 1, so every KIND_NEW caller
+    // stays byte-identical.
+    writeLe64(block, value, r.blockCount | (static_cast<uint64_t>(r.kind) << kApfsObjTypeShift));
     writeLe64(block, value + 8, r.owner);
     writeLe32(block, value + 16, r.refcnt);
 }
@@ -6974,6 +6977,11 @@ struct ApfsCowFileInsert {
     // pre-existing post-snapshot extents plus the new file's). Empty => rebuild from `files`
     // (the certified non-snapshot path, where the live tree covers every live file).
     QVector<ExtentRefPhysRecord> extentRefRecordsOverride;
+    // Diverge: force the explicit-record builder even when extentRefRecordsOverride is EMPTY (a
+    // diverge delete that removes the last post-snapshot extent leaves an empty live delta tree,
+    // which must NOT fall back to rebuilding a full KIND_NEW tree from every live file -- those
+    // pre-snapshot extents belong to the snapshot's frozen tree, not the live delta).
+    bool extentRefUseRecordsOverride{false};
     // Volume-omap mapping count for the chain layout: retained versions + one per fs node.
     // 0 => fsNodes.size() (the certified path, one mapping per node, no retained versions).
     qsizetype volMappingCount{0};
@@ -7002,14 +7010,15 @@ bool cowExtentRefTree(const ApfsCowFileInsert& cow, QStringList* blockers) {
         cow.extentRefBlocks.isEmpty() ? QVector<uint64_t>{cow.extentRefNew} : cow.extentRefBlocks;
     // Diverge builds the live tree from an explicit record set (post-snapshot extents + the
     // new file's); the certified path rebuilds it from the full live-file set.
+    const bool useRecords = cow.extentRefUseRecordsOverride ||
+                            !cow.extentRefRecordsOverride.isEmpty();
     const QVector<QByteArray> nodes =
-        cow.extentRefRecordsOverride.isEmpty()
-            ? buildExtentRefTreeNodes({cow.geometry.blockSize, cow.newXid, run},
-                                      cow.files,
-                                      blockers)
-            : buildExtentRefTreeNodesFromRecords({cow.geometry.blockSize, cow.newXid, run},
-                                                 cow.extentRefRecordsOverride,
-                                                 blockers);
+        useRecords ? buildExtentRefTreeNodesFromRecords({cow.geometry.blockSize, cow.newXid, run},
+                                                        cow.extentRefRecordsOverride,
+                                                        blockers)
+                   : buildExtentRefTreeNodes({cow.geometry.blockSize, cow.newXid, run},
+                                             cow.files,
+                                             blockers);
     if (nodes.isEmpty()) {
         return false;  // reserved run too small for the record set (blocker already appended)
     }
@@ -9089,6 +9098,75 @@ bool computeDivergeState(const ApfsFsCommitContext& ctx,
     return true;
 }
 
+// The owning_obj_id APFS stamps on a KIND_UPDATE refcount-delta record: PHYSEXT_TO_UNDEFINED
+// (all-ones). A delta record adjusts the refcount of a block whose base KIND_NEW record (and
+// therefore whose true owner) lives in a frozen snapshot's extent-ref tree, so the delta itself
+// carries no real owner. Harvested verbatim from a real macOS diverge volume (predelete.txt):
+// "kind=2 owner=18446744073709551615 refcnt=4294967295".
+constexpr uint64_t kApfsPhysExtUndefinedOwner = 0xFF'FF'FF'FF'FF'FF'FF'FFULL;
+constexpr uint32_t kApfsPhysExtRefcntMinusOne = 0xFF'FF'FF'FFU;
+
+// The extent-ref delta a diverge delete records, plus the data blocks it may return to the
+// spaceman. On a snapshotted volume the live extent-ref tree is a DELTA over each snapshot's
+// frozen KIND_NEW base, so a delete cannot simply free the file's blocks.
+struct ApfsDivergeDeleteExtentPlan {
+    QVector<ExtentRefPhysRecord> liveRecords;  // the new live delta record set
+    QVector<uint64_t> freedBlocks;             // live-exclusive blocks safe to free
+};
+
+// Classify a deleted file's extents against the live delta tree so the snapshots stay intact:
+//  - an extent covered by a live KIND_NEW record was allocated AFTER the most recent snapshot
+//    (live-exclusive): drop that record and free its blocks.
+//  - an extent NOT in the live delta was frozen by a snapshot: append a KIND_UPDATE -1 delta
+//    (the live volume releases its reference; the block stays allocated for the snapshot) and
+//    free nothing. When the snapshot is later deleted, foldSnapshotDeleteExtentRecords nets the
+//    snapshot's +1 base against this -1 delta to zero and reclaims the block.
+// This reproduces exactly what the macOS kernel writes (real harvest: predelete.txt).
+//
+// The deleted file's extents that a live KIND_NEW record covers exactly: those were allocated
+// after the most recent snapshot (live-exclusive), so their records are dropped and blocks freed.
+QSet<uint64_t> liveExclusiveDeletedPaddrs(const QVector<ExtentRefPhysRecord>& liveDelta,
+                                          const QVector<ApfsDataExtent>& deletedExtents) {
+    QSet<uint64_t> paddrs;
+    for (const ApfsDataExtent& e : deletedExtents) {
+        for (const ExtentRefPhysRecord& r : liveDelta) {
+            if (r.kind == kApfsExtentKindNew && r.paddr == e.paddr &&
+                r.blockCount == e.blockCount) {
+                paddrs.insert(e.paddr);
+            }
+        }
+    }
+    return paddrs;
+}
+
+ApfsDivergeDeleteExtentPlan planDivergeDeleteExtents(
+    const QVector<ExtentRefPhysRecord>& liveDelta, const QVector<ApfsDataExtent>& deletedExtents) {
+    ApfsDivergeDeleteExtentPlan plan;
+    const QSet<uint64_t> droppedPaddrs = liveExclusiveDeletedPaddrs(liveDelta, deletedExtents);
+    for (const ExtentRefPhysRecord& r : liveDelta) {
+        if (r.kind == kApfsExtentKindNew && droppedPaddrs.contains(r.paddr)) {
+            plan.freedBlocks += dataBlockRange(r.paddr, r.blockCount);
+        } else {
+            plan.liveRecords.append(r);
+        }
+    }
+    for (const ApfsDataExtent& e : deletedExtents) {
+        if (!droppedPaddrs.contains(e.paddr)) {
+            plan.liveRecords.append({.paddr = e.paddr,
+                                     .blockCount = e.blockCount,
+                                     .owner = kApfsPhysExtUndefinedOwner,
+                                     .refcnt = kApfsPhysExtRefcntMinusOne,
+                                     .kind = kApfsExtentKindUpdate});
+        }
+    }
+    std::sort(plan.liveRecords.begin(),
+              plan.liveRecords.end(),
+              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
+                  return a.paddr < b.paddr;
+              });
+    return plan;
+}
+
 // The current on-disk ci_bitmap_addr of data chunk `c`, read from its OWNING cib (cib 0
 // or, S4b, the cib k>0 that owns it). 0 == the chunk is still implicit-all-free (fresh).
 uint64_t liveChunkBitmapAddr(const ApfsFsCommitContext& ctx, uint64_t c, QStringList* blockers) {
@@ -9199,6 +9277,7 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
          .nextObjIdDelta = f.nextObjIdDelta,
          .retainedOmapMappings = f.diverge.retainedMappings,
          .extentRefRecordsOverride = f.diverge.liveExtentRefRecords,
+         .extentRefUseRecordsOverride = f.diverge.active,
          .volMappingCount = volMappings},
         blockers);
 }
@@ -13981,17 +14060,25 @@ struct ApfsDeleteLayoutInput {
     const QVector<ApfsRootFilePayload>& remaining;
     const QVector<ApfsRootDirectoryPayload>& directories;
     uint64_t targetBlocks;  // deleted file's block count (0 = empty / hard-link name delete)
+    // Diverge: size the extent-ref reservation from this delta record count instead of the full
+    // remaining-file set (the live tree is a delta over the snapshots, not every live file). -1 =
+    // the certified non-snapshot path (rebuild from `remaining`).
+    qsizetype divergeRecordCount{-1};
 };
 
 bool buildDeleteLayout(const ApfsDeleteLayoutInput& in,
                        ApfsDeleteLayout* out,
                        QStringList* blockers) {
     const ApfsFsCommitContext& ctx = in.ctx;
+    const qsizetype recordCount =
+        in.divergeRecordCount >= 0
+            ? in.divergeRecordCount
+            : collectExtentRefRecords(ctx.geometry.blockSize, in.remaining).size();
+    // A diverge delete always rebuilds the (delta) live tree even when it becomes empty, so it
+    // reserves at least one node; the non-snapshot path only rebuilds when the file had blocks.
     const int extentRefSlots =
-        in.targetBlocks > 0
-            ? static_cast<int>(extentRefTreeBlockCount(
-                  collectExtentRefRecords(ctx.geometry.blockSize, in.remaining).size(),
-                  ctx.geometry.blockSize))
+        (in.targetBlocks > 0 || in.divergeRecordCount >= 0)
+            ? static_cast<int>(extentRefTreeBlockCount(recordCount, ctx.geometry.blockSize))
             : 0;
     if (!buildFsTreeNodes({ctx.geometry.blockSize,
                            in.remaining,
@@ -14042,29 +14129,46 @@ bool commitInPlaceFileDelete(QIODevice* image,
     }
     const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
                                                     ctx.geometry.blockSize);
-    ApfsDeleteLayout layout;
-    if (!buildDeleteLayout(
-            {ctx, remaining, request.directories, targetBlocks}, &layout, blockers)) {
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
         return false;
     }
-    return finalizeFsCommit(
-        {.ctx = ctx,
-         .newXid = ctx.live.xid + 1,
-         .fsNodes = layout.fsNodes,
-         .newBlocks = layout.newBlocks,
-         .files = remaining,
-         .extentRefNew = layout.extentRefBlocks.value(0),
-         .extentRefBlocks = layout.extentRefBlocks,
-         // A hard-link NAME delete keeps the inode + its data (only a name goes),
-         // so it frees no data blocks and leaves the file count unchanged.
-         .freedDataBlocks = nameDelete ? QVector<uint64_t>{}
-                                       : fileFreedDataBlocks(target, ctx.geometry.blockSize),
-         .dataBlocksNew = 0,
-         .fileCountDelta = nameDelete ? 0 : -1,
-         .nextObjIdDelta = 0,
-         .chunk1BitmapBlock = layout.chunk1BitmapBlock},
-        result,
-        blockers);
+    // Diverge delete (the volume already carries a snapshot): the live extent-ref tree is a delta
+    // over the snapshots' frozen KIND_NEW base, so the delete rebuilds that delta instead of the
+    // full-file tree and frees ONLY the deleted file's live-exclusive (post-snapshot) blocks. A
+    // pre-snapshot block gets a KIND_UPDATE -1 delta and stays allocated for the snapshot. A hard-
+    // link NAME delete keeps the inode + its data, so it neither reshapes extents nor frees data.
+    QVector<uint64_t> freedDataBlocks =
+        nameDelete ? QVector<uint64_t>{} : fileFreedDataBlocks(target, ctx.geometry.blockSize);
+    qsizetype divergeRecordCount = -1;
+    if (diverge.active && !nameDelete) {
+        const ApfsDivergeDeleteExtentPlan plan = planDivergeDeleteExtents(
+            diverge.liveExtentRefRecords, fileDataExtents(target, ctx.geometry.blockSize));
+        diverge.liveExtentRefRecords = plan.liveRecords;
+        freedDataBlocks = plan.freedBlocks;
+        divergeRecordCount = plan.liveRecords.size();
+    }
+    ApfsDeleteLayout layout;
+    if (!buildDeleteLayout({ctx, remaining, request.directories, targetBlocks, divergeRecordCount},
+                           &layout,
+                           blockers)) {
+        return false;
+    }
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = layout.fsNodes,
+                             .newBlocks = layout.newBlocks,
+                             .files = remaining,
+                             .extentRefNew = layout.extentRefBlocks.value(0),
+                             .extentRefBlocks = layout.extentRefBlocks,
+                             .freedDataBlocks = freedDataBlocks,
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = nameDelete ? 0 : -1,
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = layout.chunk1BitmapBlock,
+                             .diverge = diverge},
+                            result,
+                            blockers);
 }
 
 struct ApfsRenameListInput {
