@@ -8681,12 +8681,18 @@ bool loadFsCommitContext(QIODevice* image,
     }
     // Metadata-overflow tier: the boundary chunk (metadataChunks - 1) must live in cib 0
     // (index < chunks_per_cib) so the cib-0 rotation carries its updated entry; a boundary chunk in
-    // an immutable cib would need that cib to rotate too - not yet built. Checked AFTER the foreign
-    // re-anchor so a real volume's re-derived low boundary chunk is honored.
+    // an immutable cib would need that cib to rotate too. This is an OUT-OF-RANGE robustness guard,
+    // not a reachable limitation: the reserved prefix grows ~1 chunk per ~1.3 TiB (an 8 TiB
+    // container measures allocChunk 6, ip_block_count 198177), so the boundary chunk only leaves
+    // cib 0 (allocChunk >= 127) above ~168 TiB -- far past the 24 TiB CAB FORMAT cap and the 32 TiB
+    // commit cap (kApfsInPlaceCommitMaxBytes). No supported container can reach it; it fails closed
+    // rather than corrupt if a future larger tier ever does. Checked AFTER the foreign re-anchor so
+    // a real volume's re-derived low boundary chunk is honored.
     if (ctx->layout.allocChunk >= kApfsSpacemanChunksPerCib) {
         blockers->append(QStringLiteral(
-            "APFS in-place commit on this metadata-overflow container is not yet supported: the "
-            "boundary chunk falls outside cib 0"));
+            "APFS in-place commit on this metadata-overflow container is not supported: the "
+            "boundary "
+            "chunk falls outside cib 0 (only reachable above ~168 TiB, past the format cap)"));
         return false;
     }
     return true;
