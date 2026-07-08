@@ -6820,8 +6820,8 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
 
 // Carry a preserved file's recovered special-inode state onto its rebuilt payload: decmpfs
 // compression (inline OR resource-fork), the com.apple.ResourceFork data-stream pointer, embedded
-// user xattrs, and the sparse hole. Fails closed only on a non-embedded attribute whose faithful
-// reconstruction is not built, rather than silently rebuild the file wrong.
+// user xattrs, large data-stream xattrs, and the sparse hole -- every special-inode form is
+// reproduced (the stream extents are recovered by preserveFileExtentsAndState).
 bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
                               ApfsRootFilePayload* file,
                               QStringList* blockers) {
