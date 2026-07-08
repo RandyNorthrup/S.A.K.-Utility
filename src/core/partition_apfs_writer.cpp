@@ -8438,28 +8438,16 @@ QByteArray apfsEncodeLzfseResourceChunk(const QByteArray& chunk) {
 }
 
 // Stamp a pre-built inline-compressed decmpfs value onto the insert request: drop the data
-// stream, flag the inode UF_COMPRESSED, and record the uncompressed size. Fails closed when the
-// value would not fit an embedded xattr (resource-fork compression for larger files is a
-// documented follow-on). Shared by the zlib/LZFSE/LZVN inline paths.
-bool applyInlineDecmpfsToRequest(ApfsFileInsertRequest* request,
+// stream, flag the inode UF_COMPRESSED, and record the uncompressed size. The callers invoke this
+// only when the value fits an embedded xattr (else they route to a resource fork), so it always
+// succeeds. Shared by the zlib/LZFSE/LZVN inline paths.
+void applyInlineDecmpfsToRequest(ApfsFileInsertRequest* request,
                                  const QByteArray& decmpfs,
-                                 bool fits,
-                                 uint64_t uncompressedSize,
-                                 QStringList* blockers) {
-    if (!fits) {
-        blockers->append(
-            QStringLiteral("APFS inline compression: the compressed com.apple.decmpfs attribute "
-                           "(%1 bytes) exceeds the embedded-xattr limit (%2 bytes); resource-fork "
-                           "compression for larger files is not yet supported")
-                .arg(decmpfs.size())
-                .arg(kApfsXattrMaxEmbeddedSize));
-        return false;
-    }
+                                 uint64_t uncompressedSize) {
     request->fileData.clear();
     request->compressed = true;
     request->decmpfsXattr = decmpfs;
     request->uncompressedSize = uncompressedSize;
-    return true;
 }
 
 // Stamp a pre-built resource-fork blob onto the request: the blob becomes the payload (allocated +
@@ -8512,7 +8500,8 @@ bool applyLzvnCompression(const QByteArray& data,
     bool fits = false;
     const QByteArray value = apfsBuildInlineLzvnDecmpfs(data, &fits);
     if (fits && inlineViable) {
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+        applyInlineDecmpfsToRequest(request, value, size);
+        return true;
     }
     return stampResourceForkRequest(request,
                                     apfsBuildBlockOffsResourceFork(data,
@@ -8532,7 +8521,8 @@ bool applyLzfseCompression(const QByteArray& data,
     bool fits = false;
     const QByteArray value = apfsBuildInlineLzfseDecmpfs(data, &fits);
     if (fits && inlineViable) {
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+        applyInlineDecmpfsToRequest(request, value, size);
+        return true;
     }
     return stampResourceForkRequest(request,
                                     apfsBuildBlockOffsResourceFork(data,
@@ -8552,7 +8542,8 @@ bool applyZlibCompression(const QByteArray& data,
     bool fits = false;
     const QByteArray value = apfsBuildInlineZlibDecmpfs(data, &fits);
     if (fits && inlineViable) {
-        return applyInlineDecmpfsToRequest(request, value, fits, size, blockers);
+        applyInlineDecmpfsToRequest(request, value, size);
+        return true;
     }
     return applyResourceForkToRequest(request, data, kApfsCompressZlibRsrc, blockers);
 }
