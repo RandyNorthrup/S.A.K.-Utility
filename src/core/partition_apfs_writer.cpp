@@ -1318,6 +1318,17 @@ struct ApfsDataExtent {
     uint64_t blockCount{0};
 };
 
+// A large extended attribute stored as a DATA STREAM (macOS uses this above the ~3804-byte embedded
+// limit): a j_xattr_dstream naming a fresh object id whose file-extent records hold the value's
+// blocks. Recovered from a real Apple file so an in-place mutation preserves it byte-for-byte.
+struct ApfsDataStreamXattr {
+    QByteArray name;
+    uint64_t objId{0};
+    uint64_t size{0};         // the attribute value's byte length (dstream size)
+    uint64_t allocedSize{0};  // block-aligned allocated bytes (dstream alloced_size)
+    QVector<ApfsDataExtent> extents;
+};
+
 // A7 (A-h) hard link: one additional name (beyond a file's primary name) resolving to
 // the same inode. parentId is the directory holding the name; siblingId is the unique
 // sibling-record id assigned to it.
@@ -1358,6 +1369,11 @@ struct ApfsRootFilePayload {
     // com.apple.system.Security, Finder info, ...). Each becomes a j_xattr record
     // with an embedded value. Empty keeps the certified layout byte-identical.
     QVector<QPair<QByteArray, QByteArray>> xattrs;
+    // A large (> ~3804 byte) extended attribute macOS stores as a DATA-STREAM xattr: its value
+    // lives in a stream owned by a fresh object id (not the inode). Preserved in place across a
+    // mutation (its extents are kept, its j_xattr_dstream + file-extent records re-emitted). Empty
+    // keeps every file byte-identical. Only populated by recoverInodeState for a real Apple file.
+    QVector<ApfsDataStreamXattr> streamXattrs;
     // A7 (A-h): when set, the inode is sparse -- the dstream logical size exceeds
     // the bytes its extents cover, and the uncovered logical ranges read as zeros
     // (a hole). The reader already zero-fills gaps between extents.
@@ -1809,6 +1825,10 @@ QByteArray xattrEmbeddedValue(uint16_t flags, const QByteArray& xdata) {
 
 // Bytes of a j_xattr_dstream (le64 xattr_obj_id + a 40-byte apfs_dstream).
 constexpr qsizetype kApfsXattrDstreamBytes = 48;
+// Field offsets inside a j_xattr_dstream: the owning object id (0), then apfs_dstream.size (8) and
+// apfs_dstream.alloced_size (16).
+constexpr qsizetype kApfsXattrDstreamSizeOffset = 8;
+constexpr qsizetype kApfsXattrDstreamAllocedOffset = 16;
 
 // j_xattr_val for a data-stream attribute (a resource fork): flags XATTR_DATA_STREAM,
 // xdata = j_xattr_dstream { le64 xattr_obj_id; apfs_dstream{ size, alloced_size,
@@ -1968,6 +1988,21 @@ void appendResourceForkRecords(QVector<ApfsBtreeKeyValue>* records,
     }
 }
 
+// Emit each preserved DATA-STREAM extended attribute: a j_xattr_dstream naming its object id plus
+// the file-extent records that carry the value's blocks (keyed by that object id, like a resource
+// fork). Used to preserve a real Apple file's large (> embedded-limit) xattr across a mutation.
+void appendDataStreamXattrs(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
+    for (const ApfsDataStreamXattr& sx : file.streamXattrs) {
+        records->append({xattrKey(file.fileId, sx.name),
+                         resourceForkXattrValue(sx.objId, sx.size, sx.allocedSize)});
+        for (const ApfsDataExtent& extent : sx.extents) {
+            records->append(
+                {fileExtentKey(sx.objId, extent.logicalBlock * kSupportedApfsBlockSizeBytes),
+                 fileExtentValue(extent.blockCount * kSupportedApfsBlockSizeBytes, extent.paddr)});
+        }
+    }
+}
+
 // A7 (A-h) hard links: emit the sibling-link + sibling-map records that track every
 // name of a hard-linked inode, plus the extra dentries for the additional names. The
 // primary name's dentry already carries its sibling-id xfield (written by the caller).
@@ -2068,10 +2103,12 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
             appendResourceForkRecords(records, file);
         }
         appendInodeXattrs(records, file);
+        appendDataStreamXattrs(records, file);
         return;
     }
     appendFileDataStreamRecords(records, file);
     appendInodeXattrs(records, file);
+    appendDataStreamXattrs(records, file);
 }
 
 void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
@@ -2978,6 +3015,25 @@ struct ExtentRefPhysRecord {
     uint32_t kind{1};
 };
 
+// Merge one physical extent into the paddr-keyed record set: a hole (phys 0) is skipped (never an
+// owned block); a shared block (clone) bumps refcnt and keeps the lowest owner; else a new
+// KIND_NEW record. Shared by the file-data and data-stream-xattr extent walks.
+void mergeExtentRefRecord(QVector<ExtentRefPhysRecord>* records,
+                          const ApfsDataExtent& extent,
+                          uint64_t owner) {
+    if (extent.paddr == 0) {
+        return;  // a sparse hole: in the fs-tree only, never the extent-ref (j_phys_ext) tree.
+    }
+    for (ExtentRefPhysRecord& candidate : *records) {
+        if (candidate.paddr == extent.paddr) {
+            candidate.refcnt += 1;
+            candidate.owner = std::min(candidate.owner, owner);
+            return;
+        }
+    }
+    records->append({extent.paddr, extent.blockCount, owner, 1});
+}
+
 // Collects one merged j_phys_ext record per distinct physical block across all
 // files, paddr-sorted. A7 (A-h) clones: when two files (the source and its
 // clone) reference the same physical block, emit ONE record with refcnt = the
@@ -2992,25 +3048,12 @@ QVector<ExtentRefPhysRecord> collectExtentRefRecords(uint32_t blockSize,
         // owner must match what the com.apple.ResourceFork dstream declares.
         const uint64_t owner = file.resourceFork ? file.resourceForkXattrObjId : file.fileId;
         for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
-            // A hole (sparse gap) has phys_block_num 0 and is NOT an owned physical block: it
-            // belongs in the fs-tree j_file_extent records but must never enter the extent-ref
-            // (j_phys_ext) tree, or fsck reports "physical extent (id 0): Bad phys_block_num".
-            // Block 0 is the container superblock, so paddr 0 unambiguously means a hole.
-            if (extent.paddr == 0) {
-                continue;
-            }
-            ExtentRefPhysRecord* shared = nullptr;
-            for (ExtentRefPhysRecord& candidate : records) {
-                if (candidate.paddr == extent.paddr) {
-                    shared = &candidate;
-                    break;
-                }
-            }
-            if (shared != nullptr) {
-                shared->refcnt += 1;
-                shared->owner = std::min(shared->owner, owner);
-            } else {
-                records.append({extent.paddr, extent.blockCount, owner, 1});
+            mergeExtentRefRecord(&records, extent, owner);
+        }
+        // A large data-stream xattr's value blocks are owned by ITS object id, not the inode's.
+        for (const ApfsDataStreamXattr& sx : file.streamXattrs) {
+            for (const ApfsDataExtent& extent : sx.extents) {
+                mergeExtentRefRecord(&records, extent, sx.objId);
             }
         }
     }
@@ -6805,17 +6848,19 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
         } else if (x.name == QByteArray(kApfsXattrNameResourceFork)) {
             // j_xattr_dstream: le64 xattr_obj_id, then apfs_dstream { le64 size, ... }. The blob's
             // extents are owned by xattr_obj_id and its byte length is the dstream size.
-            constexpr qsizetype kApfsXattrDstreamSizeOffset = 8;  // after the le64 xattr_obj_id
             file->resourceForkXattrObjId = le64(x.xdata, 0);
             file->logicalSizeOverride = le64(x.xdata, kApfsXattrDstreamSizeOffset);
         } else if (x.flags == kApfsXattrDataEmbedded) {
             file->xattrs.append({x.name, x.xdata});
         } else {
-            blockers->append(
-                QStringLiteral("APFS in-place mutation cannot yet preserve the non-embedded "
-                               "attribute '%2' on file '%1'")
-                    .arg(file->fileName, QString::fromUtf8(x.name)));
-            return false;
+            // A large (data-stream) xattr: its value lives in a stream owned by le64 @0 of the
+            // j_xattr_dstream (size @8, alloced_size @16). Keep the id + sizes; its extents are
+            // recovered by preserveFileExtentsAndState and re-emitted in place.
+            file->streamXattrs.append(
+                {.name = x.name,
+                 .objId = le64(x.xdata, 0),
+                 .size = le64(x.xdata, kApfsXattrDstreamSizeOffset),
+                 .allocedSize = le64(x.xdata, kApfsXattrDstreamAllocedOffset)});
         }
     }
     if ((state.internalFlags & kApfsInodeFlagIsSparse) != 0) {
@@ -6868,6 +6913,19 @@ bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
         }
         file->dataExtents = blob;
         file->dataStartBlock = blob.first().paddr;
+    }
+    // Each large data-stream xattr's value blocks are a separate stream owned by its own object id;
+    // recover those extents so the rebuilt file re-emits the identical j_xattr_dstream +
+    // file-extent records (the value stays in place).
+    for (ApfsDataStreamXattr& sx : file->streamXattrs) {
+        sx.extents =
+            recoverFileDataExtents(source.image, source.geometry, source.chain, sx.objId, blockers);
+        if (sx.extents.isEmpty()) {
+            blockers->append(
+                QStringLiteral("APFS preserve: data-stream xattr '%1' extents missing on '%2'")
+                    .arg(QString::fromUtf8(sx.name), file->fileName));
+            return false;
+        }
     }
     return true;
 }
