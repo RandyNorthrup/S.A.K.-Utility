@@ -2971,6 +2971,11 @@ struct ExtentRefPhysRecord {
     uint64_t blockCount{0};
     uint64_t owner{0};
     uint32_t refcnt{1};
+    // j_phys_ext_val kind (top 4 bits of len_and_kind): 1 = APFS_KIND_NEW (absolute refcount base),
+    // 2 = APFS_KIND_UPDATE (a signed refcount delta layered over an older version's KIND_NEW
+    // record). A snapshotted volume's LIVE tree carries UPDATE deltas over the snapshot's NEW base;
+    // deleting the last snapshot folds them (see foldSnapshotDeleteExtentRecords).
+    uint32_t kind{1};
 };
 
 // Collects one merged j_phys_ext record per distinct physical block across all
@@ -6009,7 +6014,8 @@ void collectExtentRefLeafOwners(const QByteArray& node, const ApfsExtentRefWalk&
             walk.records->append({paddr,
                                   le64(node, value) & lenMask,
                                   le64(node, value + 8),
-                                  le32(node, value + 16)});
+                                  le32(node, value + 16),
+                                  static_cast<uint32_t>(le64(node, value) >> kApfsObjTypeShift)});
         }
     }
 }
@@ -6655,6 +6661,224 @@ QVector<ApfsDataExtent> recoverFileDataExtents(QIODevice* image,
         return a.logicalBlock < b.logicalBlock;
     });
     return extents;
+}
+
+// Merge every j_file_extent record of one fsroot LEAF node into byPaddr. Holes (paddr 0) are
+// skipped; the length is masked to 56 bits (top byte = flags); shared paddrs (clones) bump refcnt
+// and keep the lowest owner id.
+void mergeLeafFileExtentRecords(const QByteArray& node,
+                                const ApfsRepairGeometry& geometry,
+                                QMap<uint64_t, ExtentRefPhysRecord>* byPaddr) {
+    constexpr uint64_t kApfsFileExtentLenMask = 0x00'FF'FF'FF'FF'FF'FF'FFULL;
+    const uint64_t oidMask = (1ULL << kApfsObjTypeShift) - 1;
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(geometry.blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes +
+                                   le16(node, kApfsBtreeNodeTableLengthOffset);
+    for (uint32_t index = 0; index < nkeys; ++index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes +
+                              static_cast<qsizetype>(index) * kApfsBtreeVariableTocEntryBytes;
+        const uint64_t keyHeader = le64(node, keyAreaStart + le16(node, toc));
+        if ((keyHeader >> kApfsObjTypeShift) != kApfsRecordFileExtent) {
+            continue;
+        }
+        const qsizetype value = valueAreaEnd - le16(node, toc + kApfsBtreeVariableTocValueOffset);
+        const uint64_t len = (le64(node, value) & kApfsFileExtentLenMask) /
+                             kSupportedApfsBlockSizeBytes;
+        const uint64_t paddr = le64(node, value + kApfsFileExtentValuePhysicalBlockOffset);
+        if (paddr == 0 || len == 0) {
+            continue;
+        }
+        const uint64_t owner = keyHeader & oidMask;
+        auto it = byPaddr->find(paddr);
+        if (it != byPaddr->end()) {
+            it->refcnt += 1;
+            it->owner = std::min(it->owner, owner);
+        } else {
+            byPaddr->insert(paddr, {paddr, len, owner, 1});
+        }
+    }
+}
+
+// The set of blocks the LIVE fsroot references, as sorted [start, end) ranges, from EVERY
+// j_file_extent in the fsroot (all files -- regular, hidden system like .Spotlight-V100 /
+// .fseventsd, resource-fork xattr dstreams, all owners).
+QVector<QPair<uint64_t, uint64_t>> collectLiveFsrootExtentRanges(QIODevice* image,
+                                                                 const ApfsRepairGeometry& geometry,
+                                                                 const ApfsLiveFsChain& chain,
+                                                                 QStringList* blockers) {
+    QVector<uint64_t> nodes;
+    QMap<uint64_t, ExtentRefPhysRecord> byPaddr;
+    if (collectOldFsTreeNodePaddrs(image, geometry, chain, &nodes, blockers)) {
+        for (uint64_t nodeBlock : nodes) {
+            QByteArray node(geometry.blockSize, '\0');
+            if (!readApfsRepairBlock(image, geometry, nodeBlock, &node, blockers)) {
+                return {};
+            }
+            if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+                mergeLeafFileExtentRecords(node, geometry, &byPaddr);
+            }
+        }
+    }
+    QVector<QPair<uint64_t, uint64_t>> ranges;
+    ranges.reserve(byPaddr.size());
+    for (const ExtentRefPhysRecord& r : byPaddr) {
+        ranges.append({r.paddr, r.paddr + r.blockCount});
+    }
+    std::sort(ranges.begin(), ranges.end());
+    return ranges;
+}
+
+// The result of folding a deleted snapshot's KIND_NEW base extent-ref tree with the live volume's
+// delta tree: the standalone KIND_NEW records the live volume keeps (refcount > 0) and the
+// snapshot-exclusive extents whose refcount fell to 0 (returned to the spaceman on delete).
+struct ApfsExtentFoldResult {
+    QVector<ExtentRefPhysRecord> kept;         // paddr-sorted, coalesced KIND_NEW records
+    QVector<QPair<uint64_t, uint64_t>> freed;  // (paddr, blockCount) snapshot-exclusive, sorted
+};
+
+// j_phys_ext_val kinds (top nibble of len_and_kind).
+constexpr uint32_t kApfsExtentKindNew = 1;  // absolute refcount base
+constexpr uint32_t kApfsExtentKindUpdate =
+    2;                                      // signed refcount delta over an older KIND_NEW record
+
+// The folded refcount of one elementary interval [a, b): the snapshot base's absolute refcount, the
+// combined total after applying the live tree's deltas, and the block's owning object id (the live
+// KIND_NEW owner when present, else the base owner).
+struct ApfsFoldedInterval {
+    int64_t baseSum{0};
+    int64_t total{0};
+    uint64_t owner{0};
+};
+
+// Sum the snapshot base + live delta refcounts covering [a, b). Both live kinds contribute
+// (int32_t)refcnt: KIND_NEW adds its absolute count over base 0, KIND_UPDATE adds its signed delta.
+ApfsFoldedInterval foldInterval(uint64_t a,
+                                uint64_t b,
+                                const QVector<ExtentRefPhysRecord>& base,
+                                const QVector<ExtentRefPhysRecord>& live) {
+    ApfsFoldedInterval cell;
+    for (const ExtentRefPhysRecord& r : base) {
+        if (r.paddr <= a && r.paddr + r.blockCount >= b) {
+            cell.baseSum += static_cast<int32_t>(r.refcnt);
+            if (cell.owner == 0) {
+                cell.owner = r.owner;
+            }
+        }
+    }
+    cell.total = cell.baseSum;
+    for (const ExtentRefPhysRecord& r : live) {
+        if (r.paddr <= a && r.paddr + r.blockCount >= b) {
+            cell.total += static_cast<int32_t>(r.refcnt);
+            if (r.kind == kApfsExtentKindNew) {
+                cell.owner = r.owner;  // the live (post-revert) owner wins over a stale base owner
+            }
+        }
+    }
+    return cell;
+}
+
+// Append [a, b) as a KIND_NEW record with refcount `refcnt`, coalescing with the previous record
+// when physically contiguous and identical (owner + refcount).
+void appendKeptExtent(
+    QVector<ExtentRefPhysRecord>* kept, uint64_t a, uint64_t b, uint64_t owner, uint32_t refcnt) {
+    if (!kept->isEmpty() && kept->last().paddr + kept->last().blockCount == a &&
+        kept->last().owner == owner && kept->last().refcnt == refcnt) {
+        kept->last().blockCount += (b - a);
+    } else {
+        kept->append({a, b - a, owner, refcnt, kApfsExtentKindNew});
+    }
+}
+
+// Append [a, b) to the freed set, coalescing with the previous contiguous run.
+void appendFreedExtent(QVector<QPair<uint64_t, uint64_t>>* freed, uint64_t a, uint64_t b) {
+    if (!freed->isEmpty() && freed->last().first + freed->last().second == a) {
+        freed->last().second += (b - a);
+    } else {
+        freed->append({a, b - a});
+    }
+}
+
+// Every distinct record boundary across the base + live trees, sorted (the sweep coordinates).
+QVector<uint64_t> extentFoldBoundaries(const QVector<ExtentRefPhysRecord>& base,
+                                       const QVector<ExtentRefPhysRecord>& live) {
+    QSet<uint64_t> set;
+    for (const QVector<ExtentRefPhysRecord>* recs : {&base, &live}) {
+        for (const ExtentRefPhysRecord& r : *recs) {
+            set.insert(r.paddr);
+            set.insert(r.paddr + r.blockCount);
+        }
+    }
+    QVector<uint64_t> bounds(set.begin(), set.end());
+    std::sort(bounds.begin(), bounds.end());
+    return bounds;
+}
+
+// Fold a deleted snapshot's KIND_NEW base extent-ref tree with the live volume's delta tree so the
+// live volume can stand alone once the snapshot (and its base tree) are gone. APFS layers the live
+// tree over the snapshot's: a KIND_NEW live record is a block allocated after the snapshot; a
+// KIND_UPDATE live record is a SIGNED refcount delta (e.g. 0xFFFFFFFF = -1, when the live volume
+// COWed away from a pre-snapshot block). A coordinate-compressed sweep over every record boundary
+// yields elementary intervals; each is kept as a KIND_NEW record when its folded refcount is > 0
+// and freed when a base block's refcount reaches 0. Splitting at boundaries is what makes the kept
+// records match the live fsroot EXACTLY even when the kernel's revert reallocated an extent's
+// head/tail (a whole-extent copy from the stale base tree would orphan the shifted blocks and miss
+// the reallocated ones).
+ApfsExtentFoldResult foldSnapshotDeleteExtentRecords(const QVector<ExtentRefPhysRecord>& base,
+                                                     const QVector<ExtentRefPhysRecord>& live) {
+    const QVector<uint64_t> bounds = extentFoldBoundaries(base, live);
+    ApfsExtentFoldResult out;
+    for (qsizetype i = 0; i + 1 < bounds.size(); ++i) {
+        const uint64_t a = bounds.at(i);
+        const uint64_t b = bounds.at(i + 1);
+        const ApfsFoldedInterval cell = foldInterval(a, b, base, live);
+        if (cell.total > 0) {
+            appendKeptExtent(&out.kept, a, b, cell.owner, static_cast<uint32_t>(cell.total));
+        } else if (cell.baseSum > 0) {
+            appendFreedExtent(&out.freed, a, b);  // only the deleted snapshot referenced it
+        }
+    }
+    return out;
+}
+
+// Fold the deleted snapshot's KIND_NEW base extent-ref tree with the live delta tree into the
+// standalone KIND_NEW records + snapshot-exclusive freed extents for a delete-last rebuild, then
+// fail closed unless every live fsroot file-extent is covered by a kept record (a coverage guard:
+// a fold that left any referenced block uncovered would corrupt the volume, so refuse rather than
+// write it).
+ApfsExtentFoldResult collectLiveExtentRefRebuildRecords(QIODevice* image,
+                                                        const ApfsRepairGeometry& geometry,
+                                                        const ApfsLiveFsChain& chain,
+                                                        uint64_t snapshotExtentRefOid,
+                                                        QStringList* blockers) {
+    const ApfsExtentFoldResult folded = foldSnapshotDeleteExtentRecords(
+        readLiveExtentRefRecords(image, geometry, snapshotExtentRefOid, blockers),
+        readLiveExtentRefRecords(image, geometry, chain.extentRef, blockers));
+    const QVector<QPair<uint64_t, uint64_t>> fsroot =
+        collectLiveFsrootExtentRanges(image, geometry, chain, blockers);
+    for (const QPair<uint64_t, uint64_t>& ref : fsroot) {
+        uint64_t covered = ref.first;
+        for (const ExtentRefPhysRecord& r : folded.kept) {
+            if (r.paddr > covered) {
+                break;  // kept is paddr-sorted; a gap before the next record leaves a hole
+            }
+            if (r.paddr + r.blockCount > covered) {
+                covered = r.paddr + r.blockCount;
+                if (covered >= ref.second) {
+                    break;
+                }
+            }
+        }
+        if (covered < ref.second) {
+            blockers->append(
+                QStringLiteral("APFS snapshot-delete: folded extent-ref tree does not cover a live "
+                               "fsroot extent"));
+            return {};
+        }
+    }
+    return folded;
 }
 
 // One recovered hard-link name of an inode (its sibling-link record).
@@ -12807,12 +13031,49 @@ struct ApfsSnapshotDeleteCow {
     QVector<ApfsSnapshotMetadata> remaining;
     // Rebuilt omap-snapshot tree block (used only when `remaining` is non-empty).
     uint64_t newOmapSnapTree{0};
+    // Delete-last rebuild: when the live extent-ref tree is the kernel's populated one, the live
+    // volume is re-pointed at a freshly built KIND_NEW tree over the live fsroot's extents (this
+    // block) instead of re-adopting the deleted snapshot's stale frozen tree. 0 = the S.A.K. empty-
+    // live re-adopt path.
+    uint64_t rebuiltExtentRefRoot{0};
+    // Versioned-omap teardown: the rebuilt single-version omap tree root to point the volume omap
+    // header at (0 = leave the omap tree pointer unchanged).
+    uint64_t newOmapTreeRoot{0};
+    // Delete-last rebuild: exact apfs_fs_alloc_count for the rebuilt volume (0 = use the
+    // alloc-delta).
+    uint64_t rebuiltAllocCount{0};
 };
+
+// Whether the live volume's extent-ref tree already carries records (a populated, authoritative
+// tree) rather than S.A.K.'s post-create EMPTY delta tree. Reads only the tree root's key count.
+// S.A.K. snapshot-create re-points the live volume at a fresh EMPTY extent-ref tree and hands the
+// snapshot the original full tree, so a pure-S.A.K. delete-last correctly RE-ADOPTS the snapshot's
+// tree (the empty live tree is incomplete). But once the KERNEL takes over the volume (it completes
+// a revert on mount, then runs its own commits) the live extent-ref tree becomes the kernel's own
+// full tree matching the reverted fsroot; re-adopting the snapshot's now-stale frozen tree over it
+// corrupts. This distinguishes the two: empty live tree -> S.A.K. model (re-adopt); populated live
+// tree -> kernel-authoritative (keep it). The extent-ref tree is a physical object (o_oid ==
+// paddr).
+bool liveExtentRefTreeIsPopulated(QIODevice* image,
+                                  const ApfsRepairGeometry& geometry,
+                                  uint64_t extentRefOid,
+                                  QStringList* blockers) {
+    if (extentRefOid == 0) {
+        return false;
+    }
+    QByteArray root(geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, geometry, extentRefOid, &root, blockers)) {
+        return false;
+    }
+    return le32(root, kApfsBtreeNodeCountOffset) > 0;
+}
 
 // Copy-on-write chain for a snapshot delete. Deleting the LAST snapshot rewrites the
 // snap-meta tree empty, clears the volume omap header's snapshot state (count/tree/most-
 // recent to the snapshot-free zero), and the live volume re-adopts the snapshot's extent-ref
-// tree. Deleting one of SEVERAL rebuilds the snap-meta + omap-snapshot trees with the kept
+// tree (finalizeSnapshotDelete fails closed before reaching here if the live tree is already the
+// kernel's populated, refcounted one, which would need refcount teardown rather than a re-adopt).
+// Deleting one of SEVERAL rebuilds the snap-meta + omap-snapshot trees with the kept
 // snapshots, drops num_snapshots by one, and leaves the live extent-ref tree in place (each
 // kept snapshot retains its own frozen refs). The snapshot-exclusive frozen blocks are freed
 // by the finalize step. alloc_count is the inverse of create: -2 to reach the snapshot-free
@@ -12879,14 +13140,25 @@ bool writeSnapshotDeleteVolume(const ApfsSnapshotDeleteCow& cow,
               le32(volOmap, kApfsOmapSnapshotCountOffset) - 1);
     writeLe64(&volOmap, kApfsOmapSnapshotTreeOidOffset, keepsSnapshots ? cow.newOmapSnapTree : 0);
     writeLe64(&volOmap, kApfsOmapMostRecentSnapshotOffset, w.mostRecentXid);
+    // Versioned-omap teardown (delete-last): re-point the header at the rebuilt single-version omap
+    // tree (0 = leave the live pointer, the single-version / kernel-revert path).
+    if (cow.newOmapTreeRoot != 0) {
+        writeLe64(&volOmap, kApfsOmapTreeOidOffset, cow.newOmapTreeRoot);
+    }
     if (!stampAndWriteApfsBlock(cow.image, cow.geometry, w.volOmapHdr, &volOmap, blockers)) {
         return false;
     }
     QByteArray vol = liveVol;
     writeLe64(&vol, kApfsObjectXidOffset, xid);
     writeLe64(&vol, kApfsVolumeOmapOidOffset, w.volOmapHdr);
-    if (!keepsSnapshots && cow.snapshotExtentRef != 0) {
-        writeLe64(&vol, kApfsVolumeExtentRefTreeOidOffset, cow.snapshotExtentRef);
+    if (!keepsSnapshots) {
+        // Rebuild (kernel-populated live tree): point at the freshly built KIND_NEW tree. Otherwise
+        // the certified empty-live path re-adopts the deleted snapshot's frozen tree.
+        if (cow.rebuiltExtentRefRoot != 0) {
+            writeLe64(&vol, kApfsVolumeExtentRefTreeOidOffset, cow.rebuiltExtentRefRoot);
+        } else if (cow.snapshotExtentRef != 0) {
+            writeLe64(&vol, kApfsVolumeExtentRefTreeOidOffset, cow.snapshotExtentRef);
+        }
     }
     writeLe64(&vol, kApfsVolumeSnapMetaTreeOidOffset, w.snapMetaTree);
     writeLe64(&vol, kApfsVolumeNumSnapshotsOffset, le64(vol, kApfsVolumeNumSnapshotsOffset) - 1);
@@ -12913,8 +13185,12 @@ bool writeSnapshotDeleteCowChain(const ApfsSnapshotDeleteCow& cow, QStringList* 
         return false;
     }
     const uint64_t curAlloc = le64(liveVol, kApfsVolumeAllocatedBlockCountOffset);
-    const uint64_t newAlloc = curAlloc - (keepsSnapshots ? kApfsSnapshotSubsequentAllocDelta
-                                                         : kApfsSnapshotAllocDelta);
+    // A delete-last rebuild recomputes apfs_fs_alloc_count exactly (it changed the metadata +
+    // extent KINDs); every other path uses the create-mirroring alloc-delta.
+    const uint64_t newAlloc = cow.rebuiltAllocCount != 0
+                                  ? cow.rebuiltAllocCount
+                                  : curAlloc - (keepsSnapshots ? kApfsSnapshotSubsequentAllocDelta
+                                                               : kApfsSnapshotAllocDelta);
     uint64_t mostRecentXid = 0;
     if (!writeSnapshotDeleteSnapTrees(cow, snapMetaTree, &mostRecentXid, blockers) ||
         !writeSnapshotDeleteVolume(
@@ -12947,6 +13223,18 @@ struct ApfsSnapshotDeleteFinalize {
     // tree is re-homed onto the next-oldest kept snapshot and THIS now-orphaned empty tree is
     // freed instead of the deleted snapshot's (records-bearing) tree. 0 = no re-home.
     uint64_t reHomedFreedExtentRef{0};
+    // Delete-last rebuild (kernel-populated live tree): the freshly built single-node KIND_NEW
+    // extent-ref tree block (over the live fsroot's extents), and the old live + deleted-snapshot
+    // extent-ref tree nodes to free wholesale instead of the single old-live root. 0 / empty on the
+    // certified empty-live re-adopt path.
+    uint64_t rebuiltExtentRefRoot{0};
+    QVector<uint64_t> freedExtentRefNodes;
+    // Versioned-omap teardown: the rebuilt single-version omap tree root the live volume omap
+    // header is re-pointed at (0 = the omap was single-version, left in place).
+    uint64_t newOmapTreeRoot{0};
+    // Delete-last rebuild: the exact apfs_fs_alloc_count for the rebuilt single-version volume
+    // (data extents + metadata objects). 0 = the re-adopt path's curAlloc - alloc-delta.
+    uint64_t rebuiltAllocCount{0};
 };
 
 // Snapshot-delete commit tail: write the COW chain, then advance the checkpoint. Deleting the
@@ -12961,6 +13249,7 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
     const ApfsFsCommitContext& ctx = f.ctx;
     const uint64_t newXid = ctx.live.xid + 1;
     const bool keepsSnapshots = !f.remaining.isEmpty();
+    const bool rebuild = !keepsSnapshots && f.rebuiltExtentRefRoot != 0;
     if (!writeSnapshotDeleteCowChain({.image = ctx.image,
                                       .geometry = ctx.geometry,
                                       .newXid = newXid,
@@ -12968,7 +13257,10 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
                                       .newBlocks = f.newBlocks,
                                       .snapshotExtentRef = f.frozen.extentRefOid,
                                       .remaining = f.remaining,
-                                      .newOmapSnapTree = keepsSnapshots ? f.newBlocks.at(0) : 0},
+                                      .newOmapSnapTree = keepsSnapshots ? f.newBlocks.at(0) : 0,
+                                      .rebuiltExtentRefRoot = f.rebuiltExtentRefRoot,
+                                      .newOmapTreeRoot = f.newOmapTreeRoot,
+                                      .rebuiltAllocCount = f.rebuiltAllocCount},
                                      blockers)) {
         return false;
     }
@@ -12979,13 +13271,23 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
                                ctx.chain.ctrOmapHdr,
                                f.omapSnapTree,
                                f.frozen.sblockOid};
-    // Deleting the last snapshot re-adopts its extent-ref tree into the live volume, so the
-    // orphaned empty live tree is freed instead. While snapshots remain, the deleted snapshot's
-    // own (empty) tree is freed; but when the deleted snapshot was the records OWNER, its tree
-    // was re-homed onto the next-oldest kept snapshot and the orphaned empty tree is freed here.
+    // Extent-ref tree disposal on delete-last:
+    //  - REBUILD (kernel-populated live tree): the live volume now points at a fresh KIND_NEW tree,
+    //    so free BOTH old trees wholesale -- every node of the old live (KIND_UPDATE) tree AND of
+    //    the deleted snapshot's (KIND_NEW) tree; the shared data extents stay, carried by the new
+    //    tree. (The snapshot's frozen sblock is already in the base set above.)
+    //  - empty-live re-adopt (certified): the snapshot's tree becomes the live volume's, so the old
+    //    orphaned empty live tree is freed. While snapshots remain, the deleted snapshot's own
+    //    (or re-homed orphaned) tree is freed and the live tree stays.
     const uint64_t keptFreed = f.reHomedFreedExtentRef != 0 ? f.reHomedFreedExtentRef
                                                             : f.frozen.extentRefOid;
-    freed.append(keepsSnapshots ? keptFreed : ctx.chain.extentRef);
+    if (keepsSnapshots) {
+        freed.append(keptFreed);
+    } else if (rebuild) {
+        freed += f.freedExtentRefNodes;
+    } else {
+        freed.append(ctx.chain.extentRef);
+    }
     return commitSnapshotCheckpointTail({.ctx = ctx,
                                          .newXid = newXid,
                                          .freed = freed,
@@ -13062,61 +13364,329 @@ uint64_t reHomeSnapshotExtentRef(const ApfsSnapshotMetadata& target,
     return orphanedEmptyTree;
 }
 
-bool commitInPlaceSnapshotDelete(QIODevice* image,
+// The snapshot a delete targets plus the surviving state: the kept snapshots, the live snap-meta
+// and omap-snapshot trees to rewrite/free, and the target's frozen refs.
+struct ApfsSnapshotDeleteSelection {
+    ApfsSnapshotMetadata target;
+    QVector<ApfsSnapshotMetadata> remaining;
+    ApfsSnapshotFrozenRefs frozen;
+    uint64_t oldSnapMetaTree{0};
+    uint64_t omapSnapTree{0};
+};
+
+// Read the live volume's snapshot state and pick the snapshot to delete (@snapshotName, or the sole
+// one when empty). Fails closed if the volume has no snapshot, the name is missing, or the target's
+// frozen blocks cannot be recovered.
+bool resolveSnapshotDeleteTarget(QIODevice* image,
+                                 const ApfsFsCommitContext& ctx,
                                  const QString& snapshotName,
-                                 ApfsInPlaceCheckpointResult* result,
+                                 ApfsSnapshotDeleteSelection* sel,
                                  QStringList* blockers) {
-    ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
-        return false;
-    }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
+    QByteArray liveOmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers) ||
+        !readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &liveOmap, blockers)) {
         return false;
     }
     if (le64(liveVol, kApfsVolumeNumSnapshotsOffset) == 0) {
         blockers->append(QStringLiteral("APFS snapshot-delete: the volume carries no snapshot"));
         return false;
     }
-    const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
-    QByteArray liveOmap(ctx.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(image, ctx.geometry, ctx.chain.volOmapHdr, &liveOmap, blockers)) {
-        return false;
-    }
-    const uint64_t omapSnapTree = le64(liveOmap, kApfsOmapSnapshotTreeOidOffset);
+    sel->oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
+    sel->omapSnapTree = le64(liveOmap, kApfsOmapSnapshotTreeOidOffset);
     const QVector<ApfsSnapshotMetadata> all =
-        readAllSnapshotMetadata(image, ctx.geometry, oldSnapMetaTree, blockers);
-    ApfsSnapshotMetadata target;
-    QVector<ApfsSnapshotMetadata> remaining;
-    if (!selectSnapshotToDelete(all, snapshotName, &target, &remaining, blockers)) {
+        readAllSnapshotMetadata(image, ctx.geometry, sel->oldSnapMetaTree, blockers);
+    if (!selectSnapshotToDelete(all, snapshotName, &sel->target, &sel->remaining, blockers)) {
         return false;
     }
-    if (target.sblockOid == 0 || omapSnapTree == 0) {
+    if (sel->target.sblockOid == 0 || sel->omapSnapTree == 0) {
         blockers->append(
             QStringLiteral("APFS snapshot-delete: could not recover the snapshot's frozen blocks"));
         return false;
     }
-    const ApfsSnapshotFrozenRefs frozen{.sblockOid = target.sblockOid,
-                                        .extentRefOid = target.extentRefTreeOid,
-                                        .found = true};
-    // Re-home the shared extent-ref tree if the deleted snapshot is the records owner (mutates
-    // `remaining` so the rebuilt snap-meta points the new owner at the records).
-    const uint64_t reHomedFreed = reHomeSnapshotExtentRef(target, &remaining);
-    QVector<uint64_t> newBlocks;
-    uint64_t chunk1BitmapBlock = 0;
-    // Keeping snapshots needs one extra block for the rebuilt omap-snapshot tree.
-    if (!allocateFsCommitBlocks(
-            ctx, {remaining.isEmpty() ? 0 : 1, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
+    sel->frozen = {.sblockOid = sel->target.sblockOid,
+                   .extentRefOid = sel->target.extentRefTreeOid,
+                   .found = true};
+    return true;
+}
+
+// The delete-last extent-ref rebuild plan: the live files (with recovered physical extents) to
+// rebuild the KIND_NEW tree over, and the reserved-block count (1 when rebuilding, 0 on the
+// certified empty-live re-adopt path).
+struct ApfsSnapshotDeleteRebuildPlan {
+    QVector<ExtentRefPhysRecord> records;  // every live fsroot physical extent (KIND_NEW)
+    // Extents only the deleted snapshot referenced (folded refcount reached 0): returned to the
+    // spaceman bitmap + free queue on delete, else they leak (apfsck "overallocation on Main
+    // device").
+    QVector<QPair<uint64_t, uint64_t>> freedExtents;
+    int extentRefSlots{0};
+    uint64_t snapshotExtentRef{0};  // deleted snapshot's frozen tree (freed with the old live tree)
+    uint64_t rootBlock{0};          // reserved block the rebuilt KIND_NEW tree is written at
+    // Versioned-omap teardown (S.A.K.-diverge-then-delete-last): the LIVE (max-xid) omap mapping
+    // per oid to keep, the older snapshot-retained versions' node blocks to free, and the reserved
+    // block count for the rebuilt single-version omap tree (0 when the omap is already single-
+    // version, e.g. the kernel-revert path -- then the omap is left in place).
+    QVector<ApfsObjectMapEntry> liveOmapEntries;
+    QVector<uint64_t> droppedOmapNodes;
+    int omapTreeBlocks{0};
+    uint64_t newOmapTreeRoot{0};  // reserved block the rebuilt single-version omap tree is at
+};
+
+// The versioned volume omap after a S.A.K. diverge retains, per fs-tree oid, both the snapshot's
+// frozen version and the live one. Deleting the last snapshot leaves the snapshot's versions
+// unreferenced (apfsck "Leaked omap record"). Split the versioned entries into the LIVE set (the
+// max-xid mapping per oid, kept) and the older versions' node blocks (freed). Returns true when the
+// omap is actually versioned (some older version to drop); false leaves the omap single-version
+// (the certified / kernel-revert path -- no rebuild).
+bool splitVersionedOmapForDelete(const QVector<ApfsObjectMapEntry>& entries,
+                                 QVector<ApfsObjectMapEntry>* liveEntries,
+                                 QVector<uint64_t>* droppedNodes) {
+    QSet<uint64_t> oids;
+    for (const ApfsObjectMapEntry& e : entries) {
+        oids.insert(e.oid);
+    }
+    for (uint64_t oid : oids) {
+        const uint64_t livePaddr = liveVersionPaddr(entries, oid);
+        for (const ApfsObjectMapEntry& e : entries) {
+            if (e.oid != oid) {
+                continue;
+            }
+            if (e.physicalBlock == livePaddr) {
+                liveEntries->append(e);
+            } else {
+                droppedNodes->append(e.physicalBlock);
+            }
+        }
+    }
+    return !droppedNodes->isEmpty();
+}
+
+// Decide whether a delete-last needs an extent-ref rebuild (the live tree is the kernel's populated
+// one, e.g. after a kernel-completed revert) and, if so, collect the live fsroot's real physical
+// extents (every j_file_extent, so the rebuilt tree covers exactly what the volume allocates --
+// hidden system files included). Fails closed if the extent set overflows a single node (multi-node
+// rebuild is a scoped follow-on) -- never corrupts. On the empty-live path leaves
+// plan->extentRefSlots 0 (certified re-adopt).
+bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
+                               bool keepsSnapshots,
+                               uint64_t snapshotExtentRefOid,
+                               ApfsSnapshotDeleteRebuildPlan* plan,
+                               QStringList* blockers) {
+    if (keepsSnapshots ||
+        !liveExtentRefTreeIsPopulated(ctx.image, ctx.geometry, ctx.chain.extentRef, blockers)) {
+        return true;  // certified empty-live re-adopt path (or the tree is genuinely empty).
+    }
+    const ApfsExtentFoldResult folded = collectLiveExtentRefRebuildRecords(
+        ctx.image, ctx.geometry, ctx.chain, snapshotExtentRefOid, blockers);
+    if (!blockers->isEmpty()) {
+        return false;  // the fold's fsroot-coverage guard tripped (or a read failed)
+    }
+    plan->records = folded.kept;
+    plan->freedExtents = folded.freed;
+    if (plan->records.size() > extentRefCaps(ctx.geometry.blockSize).rootLeaf) {
+        blockers->append(
+            QStringLiteral("APFS snapshot-delete: rebuilding the live extent-ref tree over more "
+                           "extents than fit a single node is not yet supported"));
         return false;
     }
+    plan->extentRefSlots = 1;
+    // Versioned-omap teardown: if a S.A.K. diverge left the volume omap holding the snapshot's
+    // frozen fs-tree versions alongside the live ones, rebuild it single-version (keep the live
+    // max-xid mapping per oid, free the older ones). A single-version omap (kernel-revert path)
+    // leaves omapTreeBlocks 0 and the omap in place.
+    if (splitVersionedOmapForDelete(readLiveOmapVersionedEntries(ctx, blockers),
+                                    &plan->liveOmapEntries,
+                                    &plan->droppedOmapNodes)) {
+        plan->omapTreeBlocks = static_cast<int>(
+            omapTreeBlockCount(plan->liveOmapEntries.size(), ctx.geometry.blockSize));
+    }
+    return true;
+}
+
+// Write the rebuilt single-version omap tree (plan.liveOmapEntries) into its reserved node run
+// (newOmapTreeRoot..) and return every OLD volume-omap node + dropped snapshot-version fs-tree node
+// to free. No-op (returns true, empty) when the omap was already single-version (omapTreeBlocks 0).
+bool writeSnapshotDeleteOmapRebuild(const ApfsFsCommitContext& ctx,
+                                    const ApfsSnapshotDeleteRebuildPlan& plan,
+                                    const QVector<uint64_t>& omapTreeNodes,
+                                    QVector<uint64_t>* freedNodes,
+                                    QStringList* blockers) {
+    if (plan.omapTreeBlocks == 0) {
+        return true;
+    }
+    const QVector<QByteArray> nodes = buildObjectMapTreeNodes({ctx.geometry.blockSize,
+                                                               plan.newOmapTreeRoot,
+                                                               ctx.live.xid + 1,
+                                                               plan.newOmapTreeRoot,
+                                                               omapTreeNodes},
+                                                              plan.liveOmapEntries,
+                                                              blockers);
+    if (nodes.size() != omapTreeNodes.size()) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-delete: rebuilt omap tree needs a different node count than reserved"));
+        return false;
+    }
+    for (qsizetype i = 0; i < nodes.size(); ++i) {
+        if (!writeApfsRepairBlock(
+                ctx.image, ctx.geometry, omapTreeNodes.at(i), nodes.at(i), blockers)) {
+            return false;
+        }
+    }
+    *freedNodes = ctx.chain.volOmapTreeNodes + plan.droppedOmapNodes;
+    return true;
+}
+
+// Build + write the rebuilt trees for a delete-last on a kernel/diverge-populated volume: the
+// single-node KIND_NEW live extent-ref tree at plan.rootBlock and (when the omap is versioned) the
+// single-version omap tree at plan.newOmapTreeRoot. Returns every old-tree + dropped node to free:
+// old live + deleted-snapshot extent-ref trees, old volume-omap nodes, dropped snapshot omap
+// versions (all distinct trees/blocks, so a plain concat needs no dedup).
+bool buildSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
+                                const ApfsSnapshotDeleteRebuildPlan& plan,
+                                const QVector<uint64_t>& omapTreeNodes,
+                                QVector<uint64_t>* freedNodes,
+                                QStringList* blockers) {
+    const QVector<QByteArray> tree = buildExtentRefTreeNodesFromRecords(
+        {ctx.geometry.blockSize, ctx.live.xid + 1, {plan.rootBlock}}, plan.records, blockers);
+    if (tree.size() != 1) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-delete: rebuilt extent-ref tree needs more than the reserved node"));
+        return false;
+    }
+    if (!writeApfsRepairBlock(ctx.image, ctx.geometry, plan.rootBlock, tree.at(0), blockers)) {
+        return false;
+    }
+    QVector<uint64_t> omapFreed;
+    if (!writeSnapshotDeleteOmapRebuild(ctx, plan, omapTreeNodes, &omapFreed, blockers)) {
+        return false;
+    }
+    *freedNodes =
+        collectExtentRefTreeNodes(ctx.image, ctx.geometry, ctx.chain.extentRef, blockers) +
+        collectExtentRefTreeNodes(ctx.image, ctx.geometry, plan.snapshotExtentRef, blockers) +
+        omapFreed;
+    // The snapshot-exclusive DATA extents (folded refcount reached 0) return to the spaceman too,
+    // via the same bitmap-clear + free-queue path the checkpoint tail applies to every freed block.
+    for (const QPair<uint64_t, uint64_t>& ext : plan.freedExtents) {
+        for (uint64_t b = 0; b < ext.second; ++b) {
+            freedNodes->append(ext.first + b);
+        }
+    }
+    return true;
+}
+
+// The volume's apfs_fs_alloc_count after a delete-last REBUILD, computed exactly as apfsck sums
+// vsb->v_block_count: every KIND_NEW data-extent block + every volume metadata object (each live
+// fs-tree node, the volume omap tree nodes + header, the rebuilt extent-ref tree, the snap-meta
+// tree). Matches apfsck's object.c/extents.c counting; the volume superblock itself is type FS and
+// is not counted. Replaces the curAlloc - kApfsSnapshotAllocDelta delta, which only holds for the
+// re-adopt (no tree rebuilt) path. `keptOmapNodeCount` is the live omap tree node count when the
+// omap was NOT rebuilt (single-version); 0 when it was (use plan.omapTreeBlocks then).
+uint64_t computeRebuiltVolumeAllocCount(const ApfsSnapshotDeleteRebuildPlan& plan,
+                                        uint64_t fsTreeNodeCount,
+                                        uint64_t keptOmapNodeCount) {
+    uint64_t dataBlocks = 0;
+    for (const ExtentRefPhysRecord& r : plan.records) {
+        dataBlocks += r.blockCount;
+    }
+    const uint64_t omapNodes = plan.omapTreeBlocks != 0 ? static_cast<uint64_t>(plan.omapTreeBlocks)
+                                                        : keptOmapNodeCount;
+    // fs-tree nodes + volume omap tree nodes + omap header (1) + extent-ref tree + snap-meta (1).
+    return dataBlocks + fsTreeNodeCount + omapNodes + 1 +
+           static_cast<uint64_t>(plan.extentRefSlots) + 1;
+}
+
+// Outputs of the delete-last rebuild that finalizeSnapshotDelete consumes.
+struct ApfsSnapshotDeleteRebuildOutput {
+    uint64_t rebuiltRoot{0};
+    uint64_t newOmapTreeRoot{0};
+    uint64_t rebuiltAllocCount{0};
+    QVector<uint64_t> freedNodes;
+};
+
+// Build the delete-last rebuild (extent-ref + versioned omap) into the reserved newBlocks tail and
+// compute the rebuilt volume's exact alloc count. newBlocks layout on delete-last: [0..4] chain,
+// [5..] extent-ref, then the omap tree. plan->snapshotExtentRef must already be set.
+bool executeSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
+                                  ApfsSnapshotDeleteRebuildPlan* plan,
+                                  const QVector<uint64_t>& newBlocks,
+                                  ApfsSnapshotDeleteRebuildOutput* out,
+                                  QStringList* blockers) {
+    out->rebuiltRoot = newBlocks.at(5);
+    plan->rootBlock = out->rebuiltRoot;
+    const qsizetype omapBase = 5 + plan->extentRefSlots;
+    const QVector<uint64_t> omapTreeNodes = plan->omapTreeBlocks != 0
+                                                ? newBlocks.mid(omapBase, plan->omapTreeBlocks)
+                                                : QVector<uint64_t>{};
+    plan->newOmapTreeRoot = omapTreeNodes.value(0);
+    if (!buildSnapshotDeleteRebuild(ctx, *plan, omapTreeNodes, &out->freedNodes, blockers)) {
+        return false;
+    }
+    // The live fs-tree node count is the omap mapping count: the rebuilt single-version set, or
+    // (single-version omap, not rebuilt) the live versioned entries (already one per oid).
+    const uint64_t fsTreeNodes =
+        plan->liveOmapEntries.isEmpty()
+            ? static_cast<uint64_t>(readLiveOmapVersionedEntries(ctx, blockers).size())
+            : static_cast<uint64_t>(plan->liveOmapEntries.size());
+    out->rebuiltAllocCount = computeRebuiltVolumeAllocCount(
+        *plan, fsTreeNodes, static_cast<uint64_t>(ctx.chain.volOmapTreeNodes.size()));
+    out->newOmapTreeRoot = plan->newOmapTreeRoot;
+    return true;
+}
+
+bool commitInPlaceSnapshotDelete(QIODevice* image,
+                                 const QString& snapshotName,
+                                 ApfsInPlaceCheckpointResult* result,
+                                 QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    ApfsSnapshotDeleteSelection sel;
+    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true) ||
+        !resolveSnapshotDeleteTarget(image, ctx, snapshotName, &sel, blockers)) {
+        return false;
+    }
+    // Re-home the shared extent-ref tree if the deleted snapshot is the records owner (mutates
+    // `remaining` so the rebuilt snap-meta points the new owner at the records).
+    const uint64_t reHomedFreed = reHomeSnapshotExtentRef(sel.target, &sel.remaining);
+    const bool keepsSnapshots = !sel.remaining.isEmpty();
+    ApfsSnapshotDeleteRebuildPlan plan;
+    if (!planSnapshotDeleteRebuild(ctx, keepsSnapshots, sel.frozen.extentRefOid, &plan, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t chunk1BitmapBlock = 0;
+    // Keeping snapshots needs one extra fsNode block for the rebuilt omap-snapshot tree; a
+    // delete-last rebuild reserves plan.extentRefSlots blocks (past the 5 chain blocks) for the
+    // new extent-ref tree, then plan.omapTreeBlocks blocks (as the "data" tail) for the rebuilt
+    // single-version omap tree. Layout: [0..4]=chain, [5..]=extent-ref, then omap tree.
+    if (!allocateFsCommitBlocks(ctx,
+                                {keepsSnapshots ? 1 : 0,
+                                 plan.extentRefSlots,
+                                 static_cast<uint64_t>(plan.omapTreeBlocks)},
+                                &newBlocks,
+                                &chunk1BitmapBlock,
+                                blockers)) {
+        return false;
+    }
+    // Build + write the rebuilt trees (extent-ref + versioned omap) and compute the exact alloc
+    // count, when the live tree is the kernel/diverge-populated one; a no-op on the re-adopt path.
+    ApfsSnapshotDeleteRebuildOutput rebuilt;
+    if (plan.extentRefSlots != 0) {
+        plan.snapshotExtentRef = sel.frozen.extentRefOid;
+        if (!executeSnapshotDeleteRebuild(ctx, &plan, newBlocks, &rebuilt, blockers)) {
+            return false;
+        }
+    }
     return finalizeSnapshotDelete({.ctx = ctx,
-                                   .oldSnapMetaTree = oldSnapMetaTree,
-                                   .omapSnapTree = omapSnapTree,
-                                   .frozen = frozen,
+                                   .oldSnapMetaTree = sel.oldSnapMetaTree,
+                                   .omapSnapTree = sel.omapSnapTree,
+                                   .frozen = sel.frozen,
                                    .newBlocks = newBlocks,
                                    .chunk1BitmapBlock = chunk1BitmapBlock,
-                                   .remaining = remaining,
-                                   .reHomedFreedExtentRef = reHomedFreed},
+                                   .remaining = sel.remaining,
+                                   .reHomedFreedExtentRef = reHomedFreed,
+                                   .rebuiltExtentRefRoot = rebuilt.rebuiltRoot,
+                                   .freedExtentRefNodes = rebuilt.freedNodes,
+                                   .newOmapTreeRoot = rebuilt.newOmapTreeRoot,
+                                   .rebuiltAllocCount = rebuilt.rebuiltAllocCount},
                                   result,
                                   blockers);
 }
