@@ -1262,6 +1262,11 @@ QByteArray testCompressedResourceForkBytes(uint32_t type, const QByteArray& cont
     if (type == 12) {
         return testChunkedResourceFork(testLzfseRawBlock(content));
     }
+    if (type == 14) {
+        // LZBITMAP resource fork uses the same block_offs table as LZVN/LZFSE; each
+        // block is a real LZBITMAP (or stored) stream from the shared codec.
+        return testChunkedResourceFork(apfsLzbitmapEncodeBlock(content));
+    }
     return {};
 }
 
@@ -1273,7 +1278,9 @@ QByteArray testCompressedAttrPayload(uint32_t type, const QByteArray& content) {
         attrPayload.append(testLzvnRawChunk(content));
     } else if (type == 11) {
         attrPayload.append(testLzfseRawBlock(content));
-    } else if (type != 4 && type != 8 && type != 12) {
+    } else if (type == 13) {
+        attrPayload.append(apfsLzbitmapEncodeBlock(content));
+    } else if (type != 4 && type != 8 && type != 12 && type != 14) {
         attrPayload.append(QByteArray(8, 'x'));
     }
     return attrPayload;
@@ -4053,6 +4060,18 @@ void verifyHfsLzvnLzfseReadBack(QTemporaryDir& temp,
                                  .content = rawContent,
                                  .readCap = 4096,
                                  .expectedWarning = QString()});
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzbitmap-inline.img",
+                                 .type = 13,
+                                 .content = inlineContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QStringLiteral("decmpfs type-13")});
+    verifyHfsCompressedReadBack(temp,
+                                {.imageName = "hfs-decmpfs-lzbitmap-resource.img",
+                                 .type = 14,
+                                 .content = rawContent,
+                                 .readCap = 4096,
+                                 .expectedWarning = QString()});
 }
 
 }  // namespace
@@ -4192,9 +4211,11 @@ void verifyHfsDecmpfsCodecReplace(QTemporaryDir& temp,
         {8, "hfs-decmpfs-lzvn-resource-write.img", "decmpfs type-8"},
         {11, "hfs-decmpfs-lzfse-inline-write.img", "decmpfs type-11"},
         {12, "hfs-decmpfs-lzfse-resource-write.img", "decmpfs type-12"},
+        {13, "hfs-decmpfs-lzbitmap-inline-write.img", "decmpfs type-13"},
+        {14, "hfs-decmpfs-lzbitmap-resource-write.img", "decmpfs type-14"},
     };
     for (const auto& codecCase : codecCases) {
-        const bool isResource = codecCase.type == 8 || codecCase.type == 12;
+        const bool isResource = codecCase.type == 8 || codecCase.type == 12 || codecCase.type == 14;
         // Resource-case seeds stay single-chunk so they fit the fixture's
         // 16-block resource fork before the replacement grows it.
         const QByteArray seedContent = isResource ? QByteArray(2000, 's') : inlineContent;

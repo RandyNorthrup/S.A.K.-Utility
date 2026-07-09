@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "sak/apfs_lzbitmap.h"
 #include "sak/partition_hfs_case_folding.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
@@ -770,6 +771,8 @@ constexpr uint32_t kHfsDecmpfsTypeLzvnInline = 7;
 constexpr uint32_t kHfsDecmpfsTypeLzvnResource = 8;
 constexpr uint32_t kHfsDecmpfsTypeLzfseInline = 11;
 constexpr uint32_t kHfsDecmpfsTypeLzfseResource = 12;
+constexpr uint32_t kHfsDecmpfsTypeLzbitmapInline = 13;
+constexpr uint32_t kHfsDecmpfsTypeLzbitmapResource = 14;
 constexpr char kHfsDecmpfsLzvnRawChunkMarker = 0x06;
 constexpr qsizetype kHfsDecmpfsLzfseEncodeSlackBytes = 64;
 constexpr qsizetype kHfsDecmpfsChunkTableMinimumBytes = kUint32Size * 2;
@@ -929,9 +932,33 @@ size_t sak_lzfse_decode(void* dst, size_t dst_size, const void* src, size_t src_
            compressionType == kHfsDecmpfsTypeLzfseResource;
 }
 
+[[nodiscard]] bool decmpfsTypeUsesLzbitmap(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeLzbitmapInline ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
+}
+
+// A decmpfs type whose compressed payload lives inline in the com.apple.decmpfs xattr.
+[[nodiscard]] bool decmpfsTypeIsInline(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeZlibInline ||
+           compressionType == kHfsDecmpfsTypeLzvnInline ||
+           compressionType == kHfsDecmpfsTypeLzfseInline ||
+           compressionType == kHfsDecmpfsTypeLzbitmapInline;
+}
+
+// A decmpfs type whose compressed payload lives in the com.apple.ResourceFork stream.
+[[nodiscard]] bool decmpfsTypeIsResource(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeZlibResource ||
+           compressionType == kHfsDecmpfsTypeLzvnResource ||
+           compressionType == kHfsDecmpfsTypeLzfseResource ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
+}
+
 [[nodiscard]] bool decmpfsTypeUsesChunkedOffsetTable(uint32_t compressionType) {
+    // LZVN, LZFSE and LZBITMAP resource forks all use the bare little-endian
+    // block_offs table (unlike ZLIB, which uses the Apple 'cmpf' rsrc blob).
     return compressionType == kHfsDecmpfsTypeLzvnResource ||
-           compressionType == kHfsDecmpfsTypeLzfseResource;
+           compressionType == kHfsDecmpfsTypeLzfseResource ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
 }
 
 std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expectedBytes) {
@@ -1000,6 +1027,16 @@ QByteArray encodeLzfseChunk(const QByteArray& chunk) {
     return compressed;
 }
 
+// One decmpfs LZBITMAP block: the exact 64 KiB-block codec APFS uses (algorithm 14),
+// reused here. Each on-disk block is a 0x5A LZBITMAP stream or a 0x0F-nibble stored block.
+std::optional<QByteArray> decodeLzbitmapChunk(const QByteArray& chunk, uint32_t expectedBytes) {
+    return apfsLzbitmapDecodeBlock(chunk, static_cast<int>(expectedBytes));
+}
+
+QByteArray encodeLzbitmapChunk(const QByteArray& chunk) {
+    return apfsLzbitmapEncodeBlock(chunk);
+}
+
 std::optional<QByteArray> decodeDecmpfsCodecChunk(uint32_t compressionType,
                                                   const QByteArray& chunk,
                                                   uint32_t expectedBytes) {
@@ -1008,6 +1045,9 @@ std::optional<QByteArray> decodeDecmpfsCodecChunk(uint32_t compressionType,
     }
     if (decmpfsTypeUsesLzfse(compressionType)) {
         return decodeLzfseChunk(chunk, expectedBytes);
+    }
+    if (decmpfsTypeUsesLzbitmap(compressionType)) {
+        return decodeLzbitmapChunk(chunk, expectedBytes);
     }
     return decodeDecmpfsChunk(chunk, expectedBytes);
 }
@@ -1018,6 +1058,9 @@ QByteArray encodeDecmpfsCodecChunk(uint32_t compressionType, const QByteArray& c
     }
     if (decmpfsTypeUsesLzfse(compressionType)) {
         return encodeLzfseChunk(chunk);
+    }
+    if (decmpfsTypeUsesLzbitmap(compressionType)) {
+        return encodeLzbitmapChunk(chunk);
     }
     return encodeDecmpfsChunk(chunk);
 }

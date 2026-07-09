@@ -8506,14 +8506,10 @@ private:
         if (!header.has_value()) {
             return std::nullopt;
         }
-        if (header->compression_type == kHfsDecmpfsTypeZlibInline ||
-            header->compression_type == kHfsDecmpfsTypeLzvnInline ||
-            header->compression_type == kHfsDecmpfsTypeLzfseInline) {
+        if (decmpfsTypeIsInline(header->compression_type)) {
             return decodeCompressedInlineFile(*header, attributeData, result);
         }
-        if (header->compression_type == kHfsDecmpfsTypeZlibResource ||
-            header->compression_type == kHfsDecmpfsTypeLzvnResource ||
-            header->compression_type == kHfsDecmpfsTypeLzfseResource) {
+        if (decmpfsTypeIsResource(header->compression_type)) {
             return decodeCompressedResourceFile(record, *header, result);
         }
         result->blockers.append(QStringLiteral("HFS+ decmpfs compression type %1 is not supported")
@@ -8614,15 +8610,11 @@ private:
         uint32_t compressionType,
         const HfsCompressedReplaceRequest& request,
         QStringList* blockers) {
-        if (compressionType == kHfsDecmpfsTypeZlibInline ||
-            compressionType == kHfsDecmpfsTypeLzvnInline ||
-            compressionType == kHfsDecmpfsTypeLzfseInline) {
+        if (decmpfsTypeIsInline(compressionType)) {
             return writeCompressedInlineReplacement(
                 compressionType, *request.record, *request.data, *request.options, blockers);
         }
-        if (compressionType == kHfsDecmpfsTypeZlibResource ||
-            compressionType == kHfsDecmpfsTypeLzvnResource ||
-            compressionType == kHfsDecmpfsTypeLzfseResource) {
+        if (decmpfsTypeIsResource(compressionType)) {
             return writeCompressedResourceReplacement(compressionType, request, blockers);
         }
         blockers->append(QStringLiteral("HFS+ decmpfs compression type %1 is not supported")
