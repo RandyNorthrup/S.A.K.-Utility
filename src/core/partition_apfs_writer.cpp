@@ -671,19 +671,6 @@ constexpr QLatin1StringView kEvidenceRollbackBoundary("rollback-boundary");
            name.contains(QLatin1Char(':'));
 }
 
-QString nulTerminatedUtf8Field(const QByteArray& block, qsizetype offset, qsizetype maxBytes) {
-    if (offset < 0 || maxBytes <= 0 || offset >= block.size()) {
-        return {};
-    }
-    const qsizetype available = std::min(maxBytes, block.size() - offset);
-    const char* begin = block.constData() + offset;
-    qsizetype length = 0;
-    while (length < available && begin[length] != '\0') {
-        ++length;
-    }
-    return QString::fromUtf8(begin, length);
-}
-
 void writeLe16(QByteArray* bytes, qsizetype offset, uint16_t value) {
     qToLittleEndian<uint16_t>(value, reinterpret_cast<uchar*>(bytes->data() + offset));
 }
@@ -7249,6 +7236,9 @@ struct ApfsCowFileInsert {
     // Volume-omap mapping count for the chain layout: retained versions + one per fs node.
     // 0 => fsNodes.size() (the certified path, one mapping per node, no retained versions).
     qsizetype volMappingCount{0};
+    // Optional new volume name (apfs_volname). Empty keeps the existing label; when set, the
+    // COW'd volume superblock's name field is rewritten (a metadata-only volume-label change).
+    QString newVolumeName;
 };
 
 // The effective volume-omap mapping count for a commit's chain layout: the retained
@@ -7428,6 +7418,9 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
               le64(vol, kApfsVolumeAllocatedBlockCountOffset) +
                   static_cast<uint64_t>(cow.allocBlockDelta));
     writeLe64(&vol, kApfsObjectXidOffset, cow.newXid);
+    if (!cow.newVolumeName.isEmpty()) {
+        writeAscii(&vol, kApfsVolumeNameOffset, cow.newVolumeName.toUtf8(), kApfsVolumeNameBytes);
+    }
     if (!stampAndWriteApfsBlock(cow.image, cow.geometry, volSb, &vol, blockers)) {
         return false;
     }
@@ -9262,6 +9255,7 @@ struct ApfsFsCommitFinalize {
     uint64_t nextObjIdDelta{0};
     uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
     ApfsDivergeState diverge;       // snapshot-aware versioning (inactive on the plain path)
+    QString newVolumeName;          // new apfs_volname (empty = keep the existing label)
 };
 
 // Whether the live volume carries a snapshot (om_snap_count > 0). In-place
@@ -9546,7 +9540,8 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
          .retainedOmapMappings = f.diverge.retainedMappings,
          .extentRefRecordsOverride = f.diverge.liveExtentRefRecords,
          .extentRefUseRecordsOverride = f.diverge.active,
-         .volMappingCount = volMappings},
+         .volMappingCount = volMappings,
+         .newVolumeName = f.newVolumeName},
         blockers);
 }
 
@@ -14836,6 +14831,71 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
                             blockers);
 }
 
+struct ApfsVolumeLabelRequest {
+    QVector<ApfsRootFilePayload> existingFiles;  // every file (root + children), preserved
+    QVector<ApfsRootDirectoryPayload> existingDirectories;  // every directory, preserved
+    QString newVolumeName;                                  // the new apfs_volname
+};
+
+// Change one volume's label (apfs_volname) with a true in-place copy-on-write commit. The
+// full fs-tree is preserved and re-emitted verbatim (no file/directory/extent change, no
+// object id consumed); only the COW'd volume superblock's name field is rewritten and the
+// checkpoint advances. Reuses the certified finalizeFsCommit engine, so the change is
+// crash-safe and diverge-aware (a snapshotted volume keeps its snapshots + versioned omap).
+bool commitInPlaceVolumeLabel(QIODevice* image,
+                              const ApfsVolumeLabelRequest& request,
+                              ApfsInPlaceCheckpointResult* result,
+                              QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootFilePayload> files;
+    if (!recoverPreservedFiles(
+            {ctx.image, ctx.geometry, ctx.chain}, request.existingFiles, &files, blockers)) {
+        return false;
+    }
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes({ctx.geometry.blockSize,
+                           files,
+                           request.existingDirectories,
+                           ctx.firstLeafOid,
+                           ctx.chain.rootTreeOid},
+                          &fsNodes,
+                          blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
+    QVector<uint64_t> newBlocks;
+    uint64_t labelChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(ctx, {nodeCount, 0, 0}, &newBlocks, &labelChunk1Bitmap, blockers)) {
+        return false;
+    }
+    // Diverge: a label change touches no data extents and no fs-tree content, so on a
+    // snapshotted volume it only versions the omap; extent-ref tree kept in place, the
+    // snapshot-frozen fs nodes are preserved.
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = files,
+                             .extentRefNew = 0,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = 0,
+                             .directoryCountDelta = 0,
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = labelChunk1Bitmap,
+                             .diverge = diverge,
+                             .newVolumeName = request.newVolumeName},
+                            result,
+                            blockers);
+}
+
 // A2-3: create-or-replace one root file with a true in-place copy-on-write commit
 // (the production mutation route's file-write primitive). A new name is one insert
 // commit; an existing name is a faithful replace - a delete commit (frees the old
@@ -19005,45 +19065,6 @@ bool runRootDirectoryRewriteOnScratch(const ApfsRootDirectoryRewriteScratch& scr
     return blockers->isEmpty();
 }
 
-bool runVolumeLabelChangeOnTarget(QIODevice* image,
-                                  uint64_t expectedContainerBytes,
-                                  const QString& cleanVolumeName,
-                                  QString* oldVolumeName,
-                                  QStringList* blockers) {
-    uint32_t blockSize = 0;
-    uint64_t blockCount = 0;
-    if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
-        return false;
-    }
-    if (expectedContainerBytes > 0 && (expectedContainerBytes % blockSize != 0 ||
-                                       blockCount != expectedContainerBytes / blockSize)) {
-        blockers->append(QStringLiteral(
-            "APFS volume-label target geometry does not match expected container size"));
-        return false;
-    }
-    const ApfsRepairGeometry geometry{.blockSize = blockSize, .blockCount = blockCount};
-    if (!appendGeneratedApfsLayoutBlockers(
-            image, geometry, QLatin1StringView("volume-label"), false, blockers)) {
-        return false;
-    }
-
-    QByteArray volumeBlock;
-    if (!readGeneratedLayoutBlock(
-            image, geometry, kApfsFormatVolumeSuperblockBlock, &volumeBlock, blockers)) {
-        return false;
-    }
-    if (oldVolumeName) {
-        *oldVolumeName =
-            nulTerminatedUtf8Field(volumeBlock, kApfsVolumeNameOffset, kApfsVolumeNameBytes);
-    }
-    writeAscii(&volumeBlock, kApfsVolumeNameOffset, cleanVolumeName.toUtf8(), kApfsVolumeNameBytes);
-    if (!stampApfsObjectBlock(&volumeBlock, blockers)) {
-        return false;
-    }
-    return writeApfsRepairBlock(
-        image, geometry, kApfsFormatVolumeSuperblockBlock, volumeBlock, blockers);
-}
-
 QString rootDirectoryFilePath(const QString& directoryName, const QString& fileName) {
     return QStringLiteral("/%1/%2").arg(directoryName, fileName);
 }
@@ -21198,31 +21219,38 @@ PartitionApfsImageDirectoryMutationResult PartitionApfsWriter::deleteImageOnlyRo
 // Copies the source to the scratch image, opens it, changes the volume label, reads
 // it back, and finalizes the result. Byte-identical to the inline tail it replaces
 // (early-returns on copy/open failure without finalizing, exactly as before).
-void runImageOnlyVolumeLabelScratchChange(uint64_t sourceSizeBytes,
-                                          PartitionApfsImageVolumeLabelResult* result) {
-    if (!copyToScratchImage(result->source_image_path,
-                            result->written_image_path,
-                            QLatin1StringView("volume-label"),
-                            &result->blockers)) {
+// Change an image-only volume's label with a true in-place copy-on-write commit: the full
+// fs-tree is preserved and the COW'd volume superblock's name field is rewritten (no legacy
+// scratch rewrite). The source's live label is captured for the result summary, the source is
+// copied to the written image, and the commit + a read-back verify the new name.
+void runImageOnlyVolumeLabelCommit(PartitionApfsImageVolumeLabelResult* result) {
+    const QLatin1StringView purpose("volume-label");
+    QVector<ApfsRootFilePayload> files;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result->source_image_path, &files, &directories, &result->blockers)) {
         return;
     }
-
+    const auto sourceListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        result->source_image_path, QStringLiteral("/"), 1);
+    if (sourceListing.ok) {
+        result->old_volume_name = sourceListing.volume_name;
+    }
+    if (!copyToScratchImage(
+            result->source_image_path, result->written_image_path, purpose, &result->blockers)) {
+        return;
+    }
     QFile image;
-    if (!openScratchImage(result->written_image_path,
-                          QLatin1StringView("volume-label"),
-                          &image,
-                          &result->blockers)) {
+    if (!openScratchImage(result->written_image_path, purpose, &image, &result->blockers)) {
         return;
     }
-    QStringList labelBlockers;
-    runVolumeLabelChangeOnTarget(
-        &image, sourceSizeBytes, result->new_volume_name, &result->old_volume_name, &labelBlockers);
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    commitInPlaceVolumeLabel(
+        &image, {files, directories, result->new_volume_name}, &commit, &commitBlockers);
     image.close();
-    result->blockers.append(labelBlockers);
-    appendVolumeLabelReadback(result->written_image_path,
-                              result->new_volume_name,
-                              QLatin1StringView("volume-label"),
-                              &result->blockers);
+    result->blockers.append(commitBlockers);
+    appendVolumeLabelReadback(
+        result->written_image_path, result->new_volume_name, purpose, &result->blockers);
     finalizeVolumeLabelResult(result);
 }
 
@@ -21237,7 +21265,8 @@ PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLa
 
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("volume-label"),
-                                                &result.blockers);
+                                                &result.blockers,
+                                                kApfsInPlaceCommitMaxBytes);
     if (!source.ok) {
         return result;
     }
@@ -21268,7 +21297,7 @@ PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLa
         return result;
     }
 
-    runImageOnlyVolumeLabelScratchChange(static_cast<uint64_t>(source.info.size()), &result);
+    runImageOnlyVolumeLabelCommit(&result);
     return result;
 }
 
@@ -21971,6 +22000,16 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
         return result;
     }
 
+    QVector<ApfsRootFilePayload> files;
+    QVector<ApfsRootDirectoryPayload> directories;
+    if (!collectFullFsTree(result.target_path, &files, &directories, &result.blockers)) {
+        return result;
+    }
+    const auto sourceListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
+        result.target_path, QStringLiteral("/"), 1);
+    if (sourceListing.ok) {
+        result.old_volume_name = sourceListing.volume_name;
+    }
     QString openError;
     auto target = openFileOrRawDeviceReadWrite(result.target_path, &openError);
     if (!target) {
@@ -21978,14 +22017,14 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
             QStringLiteral("Unable to open APFS raw volume-label target: %1").arg(openError));
         return result;
     }
-    QStringList labelBlockers;
-    runVolumeLabelChangeOnTarget(target.get(),
-                                 request.target_container_bytes,
-                                 result.new_volume_name,
-                                 &result.old_volume_name,
-                                 &labelBlockers);
+    // In-place COW commit applied directly to the confirmed raw device: the full fs-tree is
+    // preserved and only the COW'd volume superblock's name field is rewritten.
+    ApfsInPlaceCheckpointResult commit;
+    QStringList commitBlockers;
+    commitInPlaceVolumeLabel(
+        target.get(), {files, directories, result.new_volume_name}, &commit, &commitBlockers);
     target->close();
-    result.blockers.append(labelBlockers);
+    result.blockers.append(commitBlockers);
     appendVolumeLabelReadback(result.target_path,
                               result.new_volume_name,
                               QLatin1StringView("raw volume-label"),
