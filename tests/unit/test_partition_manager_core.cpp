@@ -1479,6 +1479,100 @@ QByteArray hfsSplitReadyFixture(const HfsSplitFixtureOptions& options = {}) {
     return image;
 }
 
+// Multi-map-node fixture: the header node's map record is deliberately a single byte (node
+// numbers 0..7 only), with a continuation kBTreeMapNode (node 2) covering higher node numbers.
+// Nodes 0..7 are marked used and the leaf (node 1) is split-ready, so creating a file must
+// allocate node 8 (and its split partner node 9) - nodes tracked only in the continuation map
+// node. Exercises the multi-map read + allocate + write-back path with a tiny image.
+constexpr uint32_t kTestHfsMultiMapTotalNodes = 10;
+constexpr uint32_t kTestHfsMultiMapMapNode = 2;
+// Must exceed kTestHfsAllocationStartBlock (60) so the allocation-file block fits.
+constexpr uint32_t kTestHfsMultiMapVolumeBlocks = 128;
+
+void writeHfsMultiMapHeaderNode(QByteArray* image) {
+    QByteArray node(kTestHfsCatalogNodeSize, '\0');
+    node[kTestHfsBTreeKindOffset] = static_cast<char>(1);
+    writeBe32(&node, 0, kTestHfsMultiMapMapNode);  // header forward link -> continuation map node
+    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, 3);
+    const qsizetype header = kTestHfsBTreeHeaderRecordOffset;
+    writeBe16(&node, header + kTestHfsBTreeHeaderTreeDepthOffset, 1);
+    writeBe32(&node, header + kTestHfsBTreeHeaderRootNodeOffset, 1);
+    writeBe32(&node, header + kTestHfsBTreeHeaderLeafRecordsOffset, kTestHfsSplitFixtureFileCount);
+    writeBe32(&node, header + kTestHfsBTreeHeaderFirstLeafNodeOffset, 1);
+    writeBe32(&node, header + kTestHfsBTreeHeaderLastLeafNodeOffset, 1);
+    writeBe16(&node, header + kTestHfsBTreeHeaderNodeSizeOffset, kTestHfsCatalogNodeSize);
+    writeBe16(&node, header + kTestHfsBTreeHeaderMaxKeyLengthOffset, kTestHfsCatalogMaxKeyLength);
+    writeBe32(&node, header + kTestHfsBTreeHeaderTotalNodesOffset, kTestHfsMultiMapTotalNodes);
+    writeBe32(&node, header + kTestHfsBTreeHeaderFreeNodesOffset, 2);  // nodes 8 and 9
+    node[header + kTestHfsBTreeHeaderKeyCompareTypeOffset] = static_cast<char>(0xCF);
+    writeBe32(&node,
+              header + kTestHfsBTreeHeaderAttributesOffset,
+              kTestHfsBTreeBigKeysMask | kTestHfsBTreeVariableIndexKeysMask);
+    writeHfsNodeOffsets(&node, {14, 120, 248}, 249);  // map record [248,249) = 8 bits
+    for (uint32_t n = 0; n < 8; ++n) {
+        setFixtureMapBit(&node, n, true);             // nodes 0..7 marked used
+    }
+    std::copy(node.cbegin(),
+              node.cend(),
+              image->begin() + kTestHfsCatalogStartBlock * kTestHfsBlockSize);
+}
+
+void writeHfsMultiMapMapNode(QByteArray* image) {
+    const qsizetype nodeOffset =
+        static_cast<qsizetype>(kTestHfsCatalogStartBlock + kTestHfsMultiMapMapNode) *
+        kTestHfsBlockSize;
+    QByteArray node(kTestHfsCatalogNodeSize, '\0');
+    node[kTestHfsBTreeKindOffset] = static_cast<char>(2);           // kBTreeMapNode
+    writeBe16(&node, kTestHfsBTreeNumRecordsOffset, 1);
+    writeHfsNodeOffsets(&node, {14}, kTestHfsCatalogNodeSize - 4);  // map record [14, size-4)
+    std::copy(node.cbegin(), node.cend(), image->begin() + nodeOffset);
+}
+
+QByteArray hfsMultiMapCatalogFixture() {
+    QByteArray image(static_cast<qsizetype>(kTestHfsMultiMapVolumeBlocks * kTestHfsBlockSize),
+                     '\0');
+    writeAscii(&image, kTestHfsHeaderOffset, "H+");
+    writeBe16(&image, kTestHfsHeaderOffset + kTestHfsVersionOffset, 4);
+    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsAttributesOffset, kTestHfsJournaledMask);
+    writeBe32(&image,
+              kTestHfsHeaderOffset + kTestHfsFileCountOffset,
+              kTestHfsSplitFixtureFileCount);
+    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsFolderCountOffset, 0);
+    writeBe32(&image, kTestHfsHeaderOffset + kTestHfsBlockSizeOffset, kTestHfsBlockSize);
+    writeBe32(&image,
+              kTestHfsHeaderOffset + kTestHfsTotalBlocksOffset,
+              kTestHfsMultiMapVolumeBlocks);
+
+    const uint32_t catalogEnd = kTestHfsCatalogStartBlock + kTestHfsMultiMapTotalNodes;
+    QVector<uint32_t> usedBlocks{kTestHfsAllocationStartBlock};
+    for (uint32_t block = 0; block < catalogEnd; ++block) {
+        usedBlocks.append(block);
+    }
+    writeHfsAllocationFork(&image, usedBlocks);
+    writeBe32(&image,
+              kTestHfsHeaderOffset + kTestHfsFreeBlocksOffset,
+              kTestHfsMultiMapVolumeBlocks - catalogEnd - 1);
+    writeHfsFork(&image,
+                 kTestHfsHeaderOffset + kTestHfsCatalogForkOffset,
+                 static_cast<uint64_t>(kTestHfsCatalogNodeSize) * kTestHfsMultiMapTotalNodes,
+                 kTestHfsMultiMapTotalNodes,
+                 kTestHfsCatalogStartBlock);
+
+    // Header node (node 0, 1-byte map record + forward link) and the split-ready leaf (node 1).
+    writeHfsMultiMapHeaderNode(&image);
+    QVector<QByteArray> records;
+    for (int index = 0; index < kTestHfsSplitFixtureFileCount; ++index) {
+        const QString name = QStringLiteral("file-%1%2")
+                                 .arg(QChar(QLatin1Char(static_cast<char>('a' + index / 8))))
+                                 .arg(QChar(QLatin1Char(static_cast<char>('a' + index % 8))));
+        records.append(hfsCatalogRecord(
+            2, name, hfsEmptyFileRecordFixture(16U + static_cast<uint32_t>(index))));
+    }
+    writeHfsCatalogLeafRecords(&image, kTestHfsCatalogStartBlock + 1, records);
+    writeHfsMultiMapMapNode(&image);  // node 2 covers node numbers 8+ (nodes 8/9 free)
+    return image;
+}
+
 constexpr uint32_t kTestHfsDeepCatalogVolumeBlocks = 256;
 constexpr uint32_t kTestHfsDeepCatalogStartBlock = 64;
 constexpr uint32_t kTestHfsDeepCatalogTotalNodes = 160;
@@ -1782,6 +1876,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_handlesOnOtherDeviceJournal();
     void hfsFileSystemWriter_writesIntoWrappedVolume();
     void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
+    void hfsFileSystemWriter_mutatesMultiMapNodeCatalog();
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
     void hfsFileSystemWriter_growsForkIntoExtentsOverflowRecords();
     void hfsFileSystemWriter_splitsExtentsOverflowRootLeaf();
@@ -5215,6 +5310,51 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsCatalogNodePoolOrFailsC
                                     inconsistentMap,
                                     "hfs-split-bad-map.img",
                                     QStringLiteral("inconsistent with allocated nodes"));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_mutatesMultiMapNodeCatalog() {
+    // Arbitrary-width B-trees: a catalog whose node-allocation map spans a continuation
+    // kBTreeMapNode. Creating a file splits the full leaf and must allocate nodes that are
+    // tracked only in the continuation map node, then write that map node back.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-multi-map-node");
+
+    const QString imagePath = temp.filePath(QStringLiteral("hfs-multimap.img"));
+    QVERIFY(writeBytes(imagePath, hfsMultiMapCatalogFixture()));
+
+    // Fixture sanity: the reader lists the 14 seed files before any mutation.
+    const auto pre =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 40);
+    QVERIFY2(pre.ok, qPrintable(pre.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(pre.entries.size(), kTestHfsSplitFixtureFileCount);
+
+    const auto created = PartitionHfsFileSystemWriter::createEmptyFileFromImage(
+        imagePath, QStringLiteral("/mm-created.txt"), options);
+    QVERIFY2(created.ok, qPrintable(created.blockers.join(QStringLiteral("; "))));
+
+    // The split allocated node 8 (and its partner node 9), both tracked only in the
+    // continuation map node (node 2). Its bitmap's first byte now has those bits set.
+    const QByteArray after = readBytes(imagePath);
+    const qsizetype mapNodeOffset =
+        static_cast<qsizetype>(kTestHfsCatalogStartBlock + kTestHfsMultiMapMapNode) *
+        kTestHfsBlockSize;
+    const auto mapByte = static_cast<uint8_t>(after.at(mapNodeOffset + 14));
+    QVERIFY2((mapByte & 0x80U) != 0,
+             "continuation map node did not record the node allocated past the header map");
+
+    // Round-trip: the reader lists the split leaves plus the new file.
+    const auto root =
+        PartitionHfsFileSystemReader::listDirectoryFromImage(imagePath, QStringLiteral("/"), 40);
+    QVERIFY2(root.ok, qPrintable(root.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(root.entries.size(), kTestHfsSplitFixtureFileCount + 1);
+    QVERIFY(std::any_of(root.entries.cbegin(), root.entries.cend(), [](const auto& entry) {
+        return entry.name == QStringLiteral("mm-created.txt") && entry.regular_file;
+    }));
 }
 
 namespace {

@@ -198,6 +198,7 @@ constexpr qsizetype kBTreeNumRecordsOffset = 10;
 constexpr int8_t kBTreeLeafNode = -1;
 constexpr int8_t kBTreeIndexNode = 0;
 constexpr int8_t kBTreeHeaderNode = 1;
+constexpr int8_t kBTreeMapNode = 2;  // continuation node-allocation-map node (BTNodeDescriptor)
 constexpr qsizetype kBTreeNodeForwardLinkOffset = 0;
 constexpr qsizetype kBTreeNodeBackwardLinkOffset = 4;
 constexpr qsizetype kBTreeHeaderRecordOffset = 14;

@@ -1133,11 +1133,53 @@ private:
         QByteArray bytes;
     };
 
+    // One continuation map node (BTNodeDescriptor kind == kBTMapNode) chained off the header
+    // node's forward link. Its single record is a bitmap segment covering node numbers past the
+    // header node's own map record. Empty on the common single-map-node tree.
+    struct HfsBTreeMapNodeSegment {
+        uint32_t node_number{0};
+        QByteArray node;
+        qsizetype map_offset{0};
+        qsizetype map_end{0};
+        bool dirty{false};
+    };
+
     struct HfsBTreeHeaderNodeContext {
         QByteArray node;
         qsizetype map_offset{0};
         qsizetype map_end{0};
+        // Continuation map nodes (arbitrary-width B-trees, > ~32000 nodes). The header's own
+        // map record covers node numbers [0, headerMapBits); each segment covers the next
+        // contiguous run. Empty when the whole node map fits the header node (byte-identical
+        // to the pre-multi-map behaviour).
+        QVector<HfsBTreeMapNodeSegment> map_nodes;
     };
+
+    // Bit capacity of one map record (header or continuation map node).
+    [[nodiscard]] static uint64_t mapSegmentBits(qsizetype mapOffset, qsizetype mapEnd) {
+        return static_cast<uint64_t>(mapEnd - mapOffset) * kBitsPerByte;
+    }
+
+    // Total node-map bit capacity across the header record and every continuation map node.
+    [[nodiscard]] static uint64_t headerMapCapacityBits(const HfsBTreeHeaderNodeContext& header) {
+        uint64_t bits = mapSegmentBits(header.map_offset, header.map_end);
+        for (const auto& segment : header.map_nodes) {
+            bits += mapSegmentBits(segment.map_offset, segment.map_end);
+        }
+        return bits;
+    }
+
+    // Emit a node write for every continuation map node whose bitmap this mutation changed.
+    // A single-map-node tree has no segments, so this appends nothing (byte-identical).
+    template <class AppendWriteFn>
+    static void appendDirtyMapNodeWrites(const HfsBTreeHeaderNodeContext& header,
+                                         AppendWriteFn appendWrite) {
+        for (const auto& segment : header.map_nodes) {
+            if (segment.dirty) {
+                appendWrite(segment.node_number, segment.node);
+            }
+        }
+    }
 
     struct HfsExtentsTreeMutation {
         bool materialize{false};
@@ -4089,6 +4131,55 @@ private:
         return HfsBTreeHeaderNodeContext{.node = node, .map_offset = mapOffset, .map_end = mapEnd};
     }
 
+    // Follow the header node's forward-link chain of continuation map nodes (arbitrary-width
+    // B-trees). Each is a kBTreeMapNode whose single record extends the node-allocation bitmap.
+    // A tree whose map fits the header node has a zero forward link, so this is a no-op there
+    // (byte-identical to the pre-multi-map behaviour). @p readNode reads a node by number.
+    template <class ReaderFn>
+    [[nodiscard]] bool loadHeaderMapNodeChain(HfsBTreeHeaderNodeContext* ctx,
+                                              ReaderFn readNode,
+                                              const QString& label,
+                                              QStringList* blockers) {
+        uint32_t next = be32(ctx->node, kBTreeNodeForwardLinkOffset);
+        QSet<uint32_t> visited;
+        while (next != 0) {
+            if (visited.contains(next)) {
+                blockers->append(QStringLiteral("HFS+ %1 map-node chain is cyclic").arg(label));
+                return false;
+            }
+            visited.insert(next);
+            const auto node = readNode(next);
+            if (!node.has_value()) {
+                blockers->append(m_blockers);
+                return false;
+            }
+            if (static_cast<int8_t>(node->at(kBTreeKindOffset)) != kBTreeMapNode) {
+                blockers->append(
+                    QStringLiteral("HFS+ %1 map node %2 is invalid").arg(label).arg(next));
+                return false;
+            }
+            const uint16_t numRecords = be16(*node, kBTreeNumRecordsOffset);
+            const auto offsets = recordOffsets(*node, numRecords);
+            if (numRecords < 1 || !offsets.has_value() || offsets->isEmpty()) {
+                blockers->append(QStringLiteral("HFS+ %1 map node %2 record table is invalid")
+                                     .arg(label)
+                                     .arg(next));
+                return false;
+            }
+            const qsizetype mapOffset = offsets->at(0);
+            const qsizetype mapEnd = recordEnd(*node, *offsets, 0);
+            if (mapEnd <= mapOffset || mapEnd > node->size()) {
+                blockers->append(QStringLiteral("HFS+ %1 map node %2 map record is invalid")
+                                     .arg(label)
+                                     .arg(next));
+                return false;
+            }
+            ctx->map_nodes.append(HfsBTreeMapNodeSegment{next, *node, mapOffset, mapEnd, false});
+            next = be32(*node, kBTreeNodeForwardLinkOffset);
+        }
+        return true;
+    }
+
     [[nodiscard]] std::optional<HfsBTreeHeaderNodeContext> loadCatalogHeaderNodeForMutation(
         QStringList* blockers) {
         const auto node = readCatalogNode(0);
@@ -4096,7 +4187,15 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        return parseBTreeHeaderNodeForMutation(*node, QStringLiteral("catalog"), blockers);
+        auto ctx = parseBTreeHeaderNodeForMutation(*node, QStringLiteral("catalog"), blockers);
+        if (ctx.has_value() && !loadHeaderMapNodeChain(
+                                   &*ctx,
+                                   [this](uint32_t n) { return readCatalogNode(n); },
+                                   QStringLiteral("catalog"),
+                                   blockers)) {
+            return std::nullopt;
+        }
+        return ctx;
     }
 
     [[nodiscard]] std::optional<HfsBTreeHeaderNodeContext> loadExtentsHeaderNodeForMutation(
@@ -4106,33 +4205,72 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        return parseBTreeHeaderNodeForMutation(*node, QStringLiteral("extents overflow"), blockers);
+        auto ctx =
+            parseBTreeHeaderNodeForMutation(*node, QStringLiteral("extents overflow"), blockers);
+        if (ctx.has_value() && !loadHeaderMapNodeChain(
+                                   &*ctx,
+                                   [this](uint32_t n) { return readExtentsNode(n); },
+                                   QStringLiteral("extents overflow"),
+                                   blockers)) {
+            return std::nullopt;
+        }
+        return ctx;
     }
 
     [[nodiscard]] static bool headerMapBitSet(const HfsBTreeHeaderNodeContext& header,
                                               uint32_t nodeNumber) {
-        const qsizetype byteOffset = header.map_offset +
-                                     static_cast<qsizetype>(nodeNumber / kBitsPerByte);
-        if (byteOffset >= header.map_end) {
-            return false;
+        const uint64_t headerBits = mapSegmentBits(header.map_offset, header.map_end);
+        if (nodeNumber < headerBits) {
+            const qsizetype byteOffset = header.map_offset +
+                                         static_cast<qsizetype>(nodeNumber / kBitsPerByte);
+            const auto value = static_cast<quint8>(header.node.at(byteOffset));
+            const auto mask = static_cast<quint8>(0x80U >> (nodeNumber % kBitsPerByte));
+            return (value & mask) != 0;
         }
-        const auto value = static_cast<quint8>(header.node.at(byteOffset));
-        const auto mask = static_cast<quint8>(0x80U >> (nodeNumber % kBitsPerByte));
-        return (value & mask) != 0;
+        // Continuation map node: locate the segment that covers this node number.
+        uint64_t base = headerBits;
+        for (const auto& segment : header.map_nodes) {
+            const uint64_t segBits = mapSegmentBits(segment.map_offset, segment.map_end);
+            if (nodeNumber < base + segBits) {
+                const auto rel = static_cast<qsizetype>(nodeNumber - base);
+                const qsizetype byteOffset = segment.map_offset + rel / kBitsPerByte;
+                const auto value = static_cast<quint8>(segment.node.at(byteOffset));
+                const auto mask = static_cast<quint8>(0x80U >> (rel % kBitsPerByte));
+                return (value & mask) != 0;
+            }
+            base += segBits;
+        }
+        return false;
     }
 
     static void writeHeaderMapBit(HfsBTreeHeaderNodeContext* header,
                                   uint32_t nodeNumber,
                                   bool set) {
-        const qsizetype byteOffset = header->map_offset +
-                                     static_cast<qsizetype>(nodeNumber / kBitsPerByte);
-        if (byteOffset >= header->map_end) {
+        const uint64_t headerBits = mapSegmentBits(header->map_offset, header->map_end);
+        if (nodeNumber < headerBits) {
+            const qsizetype byteOffset = header->map_offset +
+                                         static_cast<qsizetype>(nodeNumber / kBitsPerByte);
+            const auto value = static_cast<quint8>(header->node.at(byteOffset));
+            const auto mask = static_cast<quint8>(0x80U >> (nodeNumber % kBitsPerByte));
+            header->node[byteOffset] =
+                static_cast<char>(set ? (value | mask) : (value & static_cast<quint8>(~mask)));
             return;
         }
-        const auto value = static_cast<quint8>(header->node.at(byteOffset));
-        const auto mask = static_cast<quint8>(0x80U >> (nodeNumber % kBitsPerByte));
-        header->node[byteOffset] = static_cast<char>(set ? (value | mask)
-                                                         : (value & static_cast<quint8>(~mask)));
+        uint64_t base = headerBits;
+        for (auto& segment : header->map_nodes) {
+            const uint64_t segBits = mapSegmentBits(segment.map_offset, segment.map_end);
+            if (nodeNumber < base + segBits) {
+                const auto rel = static_cast<qsizetype>(nodeNumber - base);
+                const qsizetype byteOffset = segment.map_offset + rel / kBitsPerByte;
+                const auto value = static_cast<quint8>(segment.node.at(byteOffset));
+                const auto mask = static_cast<quint8>(0x80U >> (rel % kBitsPerByte));
+                segment.node[byteOffset] =
+                    static_cast<char>(set ? (value | mask) : (value & static_cast<quint8>(~mask)));
+                segment.dirty = true;
+                return;
+            }
+            base += segBits;
+        }
     }
 
     [[nodiscard]] static std::optional<QByteArray> rawRecordKeyBytes(
@@ -4307,11 +4445,12 @@ private:
 
     [[nodiscard]] bool validateCatalogModelMap(const HfsCatalogTreeModel& model,
                                                QStringList* blockers) const {
-        const uint64_t mapCapacityBits =
-            static_cast<uint64_t>(model.header.map_end - model.header.map_offset) * kBitsPerByte;
+        // Node-map bit capacity now includes any continuation map nodes loaded off the header
+        // (arbitrary-width trees). A node count exceeding even that is a genuine inconsistency.
+        const uint64_t mapCapacityBits = headerMapCapacityBits(model.header);
         if (static_cast<uint64_t>(m_catalog.total_nodes) > mapCapacityBits) {
             blockers->append(QStringLiteral(
-                "HFS+ catalog B-tree node map spans multiple map nodes; mutation is blocked"));
+                "HFS+ catalog B-tree node map is larger than the header and map-node bitmaps"));
             return false;
         }
         if (!headerMapBitSet(model.header, 0) ||
@@ -4896,6 +5035,9 @@ private:
                   headerRecord + kBTreeHeaderFreeNodesOffset,
                   static_cast<uint32_t>(model.working_free_nodes));
         mutation->header_node = updatedHeader.node;
+        appendDirtyMapNodeWrites(model.header, [&](uint32_t nodeNumber, const QByteArray& bytes) {
+            mutation->commit_writes.append(HfsBTreeNodeWrite{nodeNumber, bytes});
+        });
 
         mutation->updated_header = m_catalog;
         mutation->updated_header.tree_depth = shape.tree_depth;
@@ -5062,6 +5204,31 @@ private:
             .arg(tree.label);
     }
 
+    // Reads a special-file B-tree's header node (node 0) and loads its continuation
+    // map-node chain, so callers see the full node-allocation bitmap capacity.
+    [[nodiscard]] std::optional<HfsBTreeHeaderNodeContext> loadSpecialTreeHeaderWithMapChain(
+        const HfsSpecialTreeTarget& tree, uint32_t nodeSize, QStringList* blockers) {
+        const auto headerNode =
+            readForkBytes(*tree.fork, tree.file_id, kHfsDataForkType, 0, nodeSize);
+        if (!headerNode.has_value()) {
+            blockers->append(m_blockers);
+            return std::nullopt;
+        }
+        auto ctx = parseBTreeHeaderNodeForMutation(*headerNode, tree.label, blockers);
+        if (ctx.has_value() &&
+            !loadHeaderMapNodeChain(
+                &*ctx,
+                [&](uint32_t n) {
+                    return readForkBytes(
+                        *tree.fork, tree.file_id, kHfsDataForkType, n * nodeSize, nodeSize);
+                },
+                tree.label,
+                blockers)) {
+            return std::nullopt;
+        }
+        return ctx;
+    }
+
     // H-a: plans how many allocation blocks to add to a special-file B-tree so it
     // gains at least minNewNodes free nodes, keeping the fork byte size a whole
     // multiple of the node size and staying inside the header node's map record.
@@ -5074,13 +5241,9 @@ private:
                 QStringLiteral("HFS+ %1 node-pool growth: invalid geometry").arg(tree.label));
             return std::nullopt;
         }
-        const auto headerNode =
-            readForkBytes(*tree.fork, tree.file_id, kHfsDataForkType, 0, nodeSize);
-        if (!headerNode.has_value()) {
-            blockers->append(m_blockers);
-            return std::nullopt;
-        }
-        const auto headerCtx = parseBTreeHeaderNodeForMutation(*headerNode, tree.label, blockers);
+        // Includes any existing continuation map nodes so growth of a tree that already spans
+        // map nodes is permitted up to their combined bitmap size.
+        auto headerCtx = loadSpecialTreeHeaderWithMapChain(tree, nodeSize, blockers);
         if (!headerCtx.has_value()) {
             return std::nullopt;
         }
@@ -5093,11 +5256,10 @@ private:
         }
         const uint64_t newForkBytes = oldForkBytes + static_cast<uint64_t>(addBlocks) * blockSize;
         const uint32_t newTotalNodes = static_cast<uint32_t>(newForkBytes / nodeSize);
-        const uint64_t mapCapacityBits =
-            static_cast<uint64_t>(headerCtx->map_end - headerCtx->map_offset) * kBitsPerByte;
+        const uint64_t mapCapacityBits = headerMapCapacityBits(*headerCtx);
         if (static_cast<uint64_t>(newTotalNodes) > mapCapacityBits) {
-            blockers->append(QStringLiteral("HFS+ %1 node-pool growth would span multiple map "
-                                            "nodes; not supported")
+            blockers->append(QStringLiteral("HFS+ %1 node-pool growth past the header and map-node "
+                                            "bitmap capacity is not supported")
                                  .arg(tree.label));
             return std::nullopt;
         }
@@ -5120,7 +5282,7 @@ private:
                                     .total_blocks = tree.fork->total_blocks + addBlocks,
                                     .extents = combined},
             .allocation_bytes = *allocationBytes,
-            .header_node = *headerNode,
+            .header_node = headerCtx->node,
             .add_blocks = addBlocks,
             .new_total_nodes = newTotalNodes,
             .new_nodes = newTotalNodes - tree.header->total_nodes,
@@ -5552,12 +5714,11 @@ private:
 
     [[nodiscard]] bool validateExtentsModelMap(const HfsExtentsTreeModel& model,
                                                QStringList* blockers) const {
-        const uint64_t mapCapacityBits =
-            static_cast<uint64_t>(model.header.map_end - model.header.map_offset) * kBitsPerByte;
+        const uint64_t mapCapacityBits = headerMapCapacityBits(model.header);
         if (static_cast<uint64_t>(m_extents.total_nodes) > mapCapacityBits) {
             blockers->append(QStringLiteral(
-                "HFS+ extents overflow B-tree node map spans multiple map nodes; mutation is "
-                "blocked"));
+                "HFS+ extents overflow B-tree node map is larger than the header and map-node "
+                "bitmaps"));
             return false;
         }
         if (!headerMapBitSet(model.header, 0)) {
@@ -5970,6 +6131,9 @@ private:
                   headerRecord + kBTreeHeaderFreeNodesOffset,
                   static_cast<uint32_t>(model.working_free_nodes));
         mutation->header_node = updatedHeader.node;
+        appendDirtyMapNodeWrites(model.header, [&](uint32_t nodeNumber, const QByteArray& bytes) {
+            mutation->node_writes.append(HfsBTreeNodeWrite{nodeNumber, bytes});
+        });
         mutation->updated_header = m_extents;
         mutation->updated_header.tree_depth = treeDepth;
         mutation->updated_header.root_node = rootNode;
@@ -6261,11 +6425,10 @@ private:
         model.tree = tree;
         model.header = *header;
         model.working_free_nodes = static_cast<int>(tree.free_nodes);
-        const uint64_t mapCapacityBits =
-            static_cast<uint64_t>(model.header.map_end - model.header.map_offset) * kBitsPerByte;
+        const uint64_t mapCapacityBits = headerMapCapacityBits(model.header);
         if (static_cast<uint64_t>(tree.total_nodes) > mapCapacityBits) {
             blockers->append(QStringLiteral(
-                "HFS+ attributes B-tree node map spans multiple map nodes; mutation is blocked"));
+                "HFS+ attributes B-tree node map is larger than the header and map-node bitmaps"));
             return std::nullopt;
         }
         if (!headerMapBitSet(model.header, 0)) {
@@ -6606,6 +6769,9 @@ private:
                   headerRecord + kBTreeHeaderFreeNodesOffset,
                   static_cast<uint32_t>(model.working_free_nodes));
         mutation->header_node = updatedHeader.node;
+        appendDirtyMapNodeWrites(model.header, [&](uint32_t nodeNumber, const QByteArray& bytes) {
+            mutation->node_writes.append(HfsBTreeNodeWrite{nodeNumber, bytes});
+        });
         mutation->updated_header = model.tree;
         mutation->updated_header.tree_depth = treeDepth;
         mutation->updated_header.root_node = rootNode;
@@ -6860,7 +7026,16 @@ private:
             blockers->append(m_blockers);
             return std::nullopt;
         }
-        return parseBTreeHeaderNodeForMutation(*node, QStringLiteral("attributes"), blockers);
+        auto ctx = parseBTreeHeaderNodeForMutation(*node, QStringLiteral("attributes"), blockers);
+        if (ctx.has_value() &&
+            !loadHeaderMapNodeChain(
+                &*ctx,
+                [this, &tree](uint32_t n) { return readAttributesNode(tree, n); },
+                QStringLiteral("attributes"),
+                blockers)) {
+            return std::nullopt;
+        }
+        return ctx;
     }
 
 
