@@ -8771,12 +8771,10 @@ bool appendSealedVolumeBlocker(QIODevice* image,
 // grow region (the fresh-format base collides with pinned file-system metadata once
 // ip_block_count grows). Re-anchor layout.cib0Base/ipBase on the spaceman's actual on-disk
 // ip_base so rotation + allocation follow the relocated pool; a non-grown container's ip_base
-// equals the canonical base, so this is a no-op for every certified tier (byte-identical). The
-// file/dir mutation engine is not yet relocation-aware, so a relocated pool fails closed off
-// the resize path (which handles the relocation directly) - a later increment.
+// equals the canonical base, so this is a no-op for every certified tier (byte-identical). Every
+// mutation caller is relocation-aware (this re-anchor), so there is no fail-close.
 bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
                               uint64_t blockCount,
-                              bool allowRelocatedIp,
                               QStringList* blockers) {
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
                                 kApfsSpacemanBlocksPerChunk;
@@ -8786,13 +8784,6 @@ bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
         readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     if (actualIpBase == 0 || actualIpBase == canonicalIpBase) {
         return true;
-    }
-    if (!allowRelocatedIp) {
-        blockers->append(QStringLiteral(
-            "APFS in-place mutation of a chunk-adding-grown container (relocated internal pool) "
-            "is not yet supported; the container grew apfsck-clean, but re-mutating it is a later "
-            "increment"));
-        return false;
     }
     // A chunk-adding grow lays the relocated pool out ROTATION-GROUPS-FIRST: the ghost/live/spare
     // ring occupies ip-rel [0, 3*ipGroupStride) with cib 0 rotating through it, and the immutable
@@ -8873,10 +8864,7 @@ bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* bl
     return true;
 }
 
-bool loadFsCommitContext(QIODevice* image,
-                         ApfsFsCommitContext* ctx,
-                         QStringList* blockers,
-                         bool allowRelocatedIp = false) {
+bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList* blockers) {
     uint32_t blockSize = 0;
     uint64_t blockCount = 0;
     if (!readApfsRepairGeometry(image, &blockSize, &blockCount, blockers)) {
@@ -8904,7 +8892,7 @@ bool loadFsCommitContext(QIODevice* image,
         return false;
     }
     ctx->layout = computeGeneratedLayout(blockCount);
-    if (!resolveRelocatedIpLayout(ctx, blockCount, allowRelocatedIp, blockers)) {
+    if (!resolveRelocatedIpLayout(ctx, blockCount, blockers)) {
         return false;
     }
     if (!collectOldFsTreeNodePaddrs(image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
@@ -10683,7 +10671,7 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     // Diverge: if the volume already carries a snapshot, the commit must keep the versioned
@@ -10794,7 +10782,7 @@ bool commitInPlaceFilePatch(QIODevice* image,
                             ApfsInPlaceCheckpointResult* result,
                             QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     const ApfsFileInsertRequest insert{.existingFiles = request.otherFiles,
@@ -11500,7 +11488,7 @@ bool preflightResizeGrow(QIODevice* image,
         blockers->append(QStringLiteral("APFS resize-grow: the grow amount must be non-zero"));
         return false;
     }
-    if (!loadFsCommitContext(image, ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, ctx, blockers)) {
         return false;
     }
     const uint64_t newSizeBytes = (ctx->geometry.blockCount + growDeltaBlocks) *
@@ -13302,7 +13290,7 @@ bool commitInPlaceResizeShrinkImage(QIODevice* image,
                                     ApfsInPlaceCheckpointResult* result,
                                     QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     return commitInPlaceResizeShrink(&ctx, newBlockCount, result, blockers);
@@ -13386,7 +13374,7 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
         return false;
     }
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
@@ -14116,7 +14104,7 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
                                  QStringList* blockers) {
     ApfsFsCommitContext ctx;
     ApfsSnapshotDeleteSelection sel;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true) ||
+    if (!loadFsCommitContext(image, &ctx, blockers) ||
         !resolveSnapshotDeleteTarget(image, ctx, snapshotName, &sel, blockers)) {
         return false;
     }
@@ -14324,7 +14312,7 @@ bool commitInPlaceSnapshotRevert(QIODevice* image,
                                  ApfsInPlaceCheckpointResult* result,
                                  QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QByteArray liveVol(ctx.geometry.blockSize, '\0');
@@ -14447,7 +14435,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QVector<ApfsRootFilePayload> remaining;
@@ -14616,7 +14604,7 @@ bool commitInPlaceFileRename(QIODevice* image,
                              ApfsInPlaceCheckpointResult* result,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QVector<ApfsRootFilePayload> files;
@@ -14692,7 +14680,7 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QByteArray volSb(ctx.geometry.blockSize, '\0');
@@ -14795,7 +14783,7 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
     ApfsFsCommitContext ctx;
-    if (!loadFsCommitContext(image, &ctx, blockers, /*allowRelocatedIp=*/true)) {
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
     QVector<ApfsRootDirectoryPayload> remainingDirectories;
