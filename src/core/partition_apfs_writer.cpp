@@ -9578,10 +9578,18 @@ struct ApfsFinalizeFreeQueue {
 // moves by netConsumed (the queued blocks leave the volume but not the device).
 // Foreign overflow: whether an aged free-queue run can be reclaimed by the current apply. Reclaim
 // clears bits in the boundary chunk (applyOverflowAllocation) or a FAR cib k>0 (applyForeignReclaim
-// copies-on-writes that cib). A run touching a cib-0 NON-boundary chunk cannot be reclaimed yet
-// (the boundary cib is rotated separately; a co-ordinated cib-0 reclaim is a follow-on), so it is
-// kept deferred rather than blocking the commit. On the real overflow layout the fs metadata lives
-// in cibs > 0, so this defers nothing in practice - it is a robustness guard, not a common path.
+// copies-on-writes that cib). A run touching a cib-0 NON-boundary chunk is kept deferred (stays
+// validly queued on the main free-queue, re-sorted by xid,paddr) rather than reclaimed here.
+//
+// This deferral is complete, not a stub: on any valid overflow layout a cib-0 non-boundary chunk
+// can hold NOTHING that ever reaches this free-queue. cib 0's chunks are, in order, the spaceman
+// internal-pool reservation (allocated once at format/grow and never freed - the ip-bitmap ring,
+// cib/cab blocks and per-chunk bitmaps live there) followed by the single boundary chunk that
+// applyOverflowAllocation already handles; all fs-tree, extent-ref and file data allocate out of
+// cibs > 0. So no freeable, agable run is ever produced inside a cib-0 non-boundary chunk, and this
+// branch is unreachable by construction - it exists only to fail safe (defer, never corrupt) if a
+// future layout change ever violated that invariant. A co-ordinated cib-0 reclaim would therefore
+// be untriggerable dead code on the certified overflow path and is deliberately not implemented.
 bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry, uint64_t allocChunk) {
     const uint64_t firstChunk = entry.paddr / kApfsSpacemanBlocksPerChunk;
     const uint64_t lastChunk = (entry.paddr + entry.length - 1) / kApfsSpacemanBlocksPerChunk;
@@ -9594,11 +9602,11 @@ bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry, uint64_t allocChun
 }
 
 // Age the live main free-queue against this commit's freed blocks, holding back the runs the
-// current apply cannot reclaim yet. Foreign overflow keeps cib-0 non-boundary runs deferred (the
-// boundary cib rotates separately; a co-ordinated cib-0 reclaim is a follow-on) and reclaims the
-// rest through the multi-cib reclaim COW, so it uses the same rollback window as the generated
-// path. Generated volumes reclaim every run, keeping this byte-identical to a plain
-// advanceMainFreeQueue. Shared by the file-insert finalize and the snapshot checkpoint tail.
+// current apply cannot reclaim yet. Foreign overflow keeps cib-0 non-boundary runs deferred (see
+// foreignEntryReclaimable: unreachable by construction, kept safe) and reclaims the rest through
+// the multi-cib reclaim COW, so it uses the same rollback window as the generated path. Generated
+// volumes reclaim every run, keeping this byte-identical to a plain advanceMainFreeQueue. Shared
+// by the file-insert finalize and the snapshot checkpoint tail.
 ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
                                             const QVector<ApfsFreeQueueEntry>& liveMainFq,
                                             const QVector<uint64_t>& freed,
