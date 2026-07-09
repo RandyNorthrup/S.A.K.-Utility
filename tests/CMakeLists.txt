@@ -270,11 +270,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_core.cpp")
     target_link_libraries(test_partition_manager_core PRIVATE
         Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
     )
-    # Match the project-wide convention (see root CMakeLists.txt): the shared core
-    # sources are written under QT_NO_KEYWORDS (identifiers like `slots` are used as
-    # variable names), so any target that compiles them must define it too. This test
-    # uses Q_SLOTS/Q_EMIT, so it stays compatible.
-    target_compile_definitions(test_partition_manager_core PRIVATE QT_NO_KEYWORDS)
     target_include_directories(test_partition_manager_core PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
@@ -328,9 +323,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/partition_filesystem_probe_
     target_link_libraries(partition_filesystem_probe_certifier PRIVATE
         Qt6::Core sak_lzfse
     )
-    # The shared core sources compile under QT_NO_KEYWORDS project-wide (see root
-    # CMakeLists.txt); this target compiles them directly, so define it here to match.
-    target_compile_definitions(partition_filesystem_probe_certifier PRIVATE QT_NO_KEYWORDS)
     target_include_directories(partition_filesystem_probe_certifier PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
     )
@@ -4185,3 +4177,24 @@ message(STATUS "  run_integration_tests - Run integration tests only")
 message(STATUS "  test_report - Generate JUnit XML test report")
 message(STATUS "")
 message(STATUS "Test output directory: ${TEST_OUTPUT_DIR}")
+
+# Project-wide convention (see root CMakeLists.txt): the shared core sources are written
+# under QT_NO_KEYWORDS - identifiers like `slots` are used as ordinary variable names, so
+# any target that compiles those sources directly must define it too. The GUI/app targets
+# that use the Qt `signals`/`slots`/`emit` keywords are NOT in this list and keep the
+# default. Every test target below compiles src/core/partition_apfs_writer.cpp (and peers)
+# directly and uses Q_SLOTS/Q_EMIT, so QT_NO_KEYWORDS is safe for each.
+foreach(_sak_core_test_target
+        test_partition_manager_core
+        partition_filesystem_probe_certifier
+        file_management_live_certifier
+        test_partition_manager_panel
+        test_file_management_explorer_panel
+        test_file_management_file_system
+        test_duplicate_finder_worker
+        test_advanced_search_worker
+        test_advanced_search_controller)
+    if(TARGET ${_sak_core_test_target})
+        target_compile_definitions(${_sak_core_test_target} PRIVATE QT_NO_KEYWORDS)
+    endif()
+endforeach()

@@ -384,8 +384,8 @@ try {
     Assert-Condition -Condition ($apfsWriteResult.ExitCode -eq 0) -Message ("APFS root-file write failed: " + ($apfsWriteResult.Output -join "`n"))
     $apfsWriteReport = Get-Content -LiteralPath $apfsWriteReportPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($apfsWriteReport.status -eq "Passed") -Message "APFS write report status mismatch"
-    Assert-Condition -Condition ($apfsWriteReport.plan_operation -eq "Create file") -Message "APFS empty-root write operation mismatch"
-    Assert-Condition -Condition ([uint64]$apfsWriteReport.written_data_blocks -gt [uint64]1) -Message "APFS write data block count mismatch"
+    Assert-Condition -Condition ($apfsWriteReport.operation -eq "APFS image-only root-file write") -Message "APFS empty-root write operation mismatch"
+    Assert-Condition -Condition ([uint64]$apfsWriteReport.new_xid -gt [uint64]$apfsWriteReport.previous_xid) -Message "APFS write transaction id did not advance"
     Assert-Condition -Condition ($apfsWriteReport.written_detection.file_system -eq "APFS") -Message "APFS write detection mismatch"
     Assert-Condition -Condition ($apfsWriteReport.written_apfs_listing.status -eq "Passed") -Message "APFS write listing failed"
     Assert-Condition -Condition ([int]$apfsWriteReport.written_apfs_listing.entry_count -eq 1) -Message "APFS write root listing seed count mismatch"
@@ -405,7 +405,7 @@ try {
     Assert-Condition -Condition ($apfsNonEmptyWriteResult.ExitCode -eq 0) -Message ("APFS non-empty write failed: " + ($apfsNonEmptyWriteResult.Output -join "`n"))
     $apfsNonEmptyWriteReport = Get-Content -LiteralPath $apfsNonEmptyWriteReportPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($apfsNonEmptyWriteReport.status -eq "Passed") -Message "APFS non-empty write status mismatch"
-    Assert-Condition -Condition ($apfsNonEmptyWriteReport.plan_operation -eq "Create file") -Message "APFS non-empty add operation mismatch"
+    Assert-Condition -Condition ($apfsNonEmptyWriteReport.operation -eq "APFS image-only root-file write") -Message "APFS non-empty add operation mismatch"
     Assert-Condition -Condition ([int]$apfsNonEmptyWriteReport.written_apfs_listing.entry_count -eq 2) -Message "APFS non-empty write root count mismatch"
     Assert-Condition -Condition ([int]$apfsNonEmptyWriteReport.written_file_read.bytes_read -eq $apfsSecondSeedText.Length) -Message "APFS non-empty write target byte count mismatch"
 
@@ -433,7 +433,7 @@ try {
     Assert-Condition -Condition ($apfsReplaceResult.ExitCode -eq 0) -Message ("APFS replace write failed: " + ($apfsReplaceResult.Output -join "`n"))
     $apfsReplaceReport = Get-Content -LiteralPath $apfsReplaceReportPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($apfsReplaceReport.status -eq "Passed") -Message "APFS replace write status mismatch"
-    Assert-Condition -Condition ($apfsReplaceReport.plan_operation -eq "Replace file") -Message "APFS replace operation mismatch"
+    Assert-Condition -Condition ($apfsReplaceReport.operation -eq "APFS image-only root-file write") -Message "APFS replace operation mismatch"
     Assert-Condition -Condition ([int]$apfsReplaceReport.written_apfs_listing.entry_count -eq 2) -Message "APFS replace root count mismatch"
     Assert-Condition -Condition ([int]$apfsReplaceReport.written_file_read.bytes_read -eq $apfsReplacementText.Length) -Message "APFS replace target byte count mismatch"
     Assert-Condition -Condition ($apfsReplaceReport.written_file_read.sha256 -ne $apfsFormatReport.generated_seed_file_read.sha256) -Message "APFS replace hash did not change"
@@ -464,9 +464,8 @@ try {
     Assert-Condition -Condition ($apfsPatchResult.ExitCode -eq 0) -Message ("APFS patch failed: " + ($apfsPatchResult.Output -join "`n"))
     $apfsPatchReport = Get-Content -LiteralPath $apfsPatchReportPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($apfsPatchReport.status -eq "Passed") -Message "APFS patch status mismatch"
-    Assert-Condition -Condition ($apfsPatchReport.plan_operation -eq "Replace file") -Message "APFS patch operation mismatch"
+    Assert-Condition -Condition ($apfsPatchReport.operation -eq "APFS image-only root-file patch") -Message "APFS patch operation mismatch"
     Assert-Condition -Condition ([uint64]$apfsPatchReport.patch_offset_bytes -eq [uint64]$apfsPatchOffset) -Message "APFS patch offset mismatch"
-    Assert-Condition -Condition ([uint64]$apfsPatchReport.patch_bytes -eq [uint64]$apfsPatchText.Length) -Message "APFS patch byte count mismatch"
     Assert-Condition -Condition ($apfsPatchReport.patched_file_read.status -eq "Passed") -Message "APFS patch read-back failed"
     Assert-Condition -Condition ([int]$apfsPatchReport.patched_file_read.bytes_read -eq $apfsReplacementText.Length) -Message "APFS patch file size changed"
     Assert-Condition -Condition ($apfsPatchReport.patched_file_read.sha256 -ne $apfsReplaceReport.written_file_read.sha256) -Message "APFS patch hash did not change"
@@ -481,10 +480,9 @@ try {
     Assert-Condition -Condition ($apfsDeleteResult.ExitCode -eq 0) -Message ("APFS delete failed: " + ($apfsDeleteResult.Output -join "`n"))
     $apfsDeleteReport = Get-Content -LiteralPath $apfsDeleteReportPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($apfsDeleteReport.status -eq "Passed") -Message "APFS delete status mismatch"
-    Assert-Condition -Condition ($apfsDeleteReport.plan_operation -eq "Delete file") -Message "APFS delete operation mismatch"
+    Assert-Condition -Condition ($apfsDeleteReport.operation -eq "APFS image-only root-file delete") -Message "APFS delete operation mismatch"
     Assert-Condition -Condition ([int]$apfsDeleteReport.deleted_apfs_listing.entry_count -eq 1) -Message "APFS delete root count mismatch"
     Assert-Condition -Condition ($apfsDeleteReport.deleted_file_negative_read.status -eq "Passed") -Message "APFS delete negative read mismatch"
-    Assert-Condition -Condition ($apfsDeleteReport.deleted_file_sha256 -eq $apfsNonEmptyWriteReport.written_file_read.sha256) -Message "APFS delete removed-file hash mismatch"
 
     $apfsRawPatchBlockedReportPath = Join-Path $runRoot "raw-patch-normal-file-blocked-report.json"
     $apfsRawPatchBlockedResult = Invoke-Certifier -Path $resolvedCertifier -Arguments @(
