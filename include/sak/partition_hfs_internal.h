@@ -7618,16 +7618,30 @@ private:
     [[nodiscard]] std::optional<HfsJournalState> journalStateFromInfoBlock(
         const QByteArray& jib, QStringList* blockers) const {
         const uint32_t flags = be32(jib, 0);
-        if ((flags & kHfsJournalInFsMask) == 0 || (flags & kHfsJournalOnOtherDeviceMask) != 0) {
-            blockers->append(
-                QStringLiteral("HFS+ journal replay requires an in-filesystem journal"));
-            return std::nullopt;
-        }
         HfsJournalState state;
+        // A journal awaiting initialization has never logged a transaction, so there is
+        // nothing to replay regardless of where its (unused) region would live - including
+        // an on-other-device journal. Check this before the location gate so a freshly
+        // created external-journal volume replays as a clean no-op instead of failing.
         if ((flags & kHfsJournalNeedInitMask) != 0) {
-            // A journal awaiting initialization has never logged a transaction.
             state.needs_init = true;
             return state;
+        }
+        // The journal region fields (offset/size) address the volume's own bytes only for an
+        // in-filesystem journal. An on-other-device journal keeps its transactions on a
+        // separate device that is not present in this volume image, so its pending
+        // transactions cannot be replayed from the volume alone. (Read and write mutations do
+        // not depend on replay and work on such a volume; only this explicit replay does not.)
+        if ((flags & kHfsJournalOnOtherDeviceMask) != 0) {
+            blockers->append(QStringLiteral(
+                "HFS+ on-other-device journal keeps its transactions on a separate device that is "
+                "not part of this volume image, so they cannot be replayed from the volume alone"));
+            return std::nullopt;
+        }
+        if ((flags & kHfsJournalInFsMask) == 0) {
+            blockers->append(
+                QStringLiteral("HFS+ journal info block does not locate an in-filesystem journal"));
+            return std::nullopt;
         }
         state.region.journal_offset = be64(jib, kHfsJournalInfoOffsetField);
         state.region.size = be64(jib, kHfsJournalInfoSizeField);

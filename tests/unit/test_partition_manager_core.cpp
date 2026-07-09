@@ -1779,6 +1779,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_survivesRandomizedCreateDeleteChurn();
     void hfsFileSystemWriter_replaysJournalTransactions();
     void hfsFileSystemWriter_replaysBigEndianJournal();
+    void hfsFileSystemWriter_handlesOnOtherDeviceJournal();
     void hfsFileSystemWriter_writesIntoWrappedVolume();
     void hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed();
     void hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit();
@@ -4956,6 +4957,50 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_replaysJournalTransactions()
                                                                                    options);
     QVERIFY(!notJournaled.ok);
     QVERIFY(notJournaled.blockers.join(' ').contains(QStringLiteral("not journaled")));
+}
+
+void PartitionManagerCoreTests::hfsFileSystemWriter_handlesOnOtherDeviceJournal() {
+    // An on-other-device (external) journal keeps its transactions on a separate device that
+    // is not part of this volume image. Read and write mutations do not depend on replay and
+    // work normally; only explicit journal replay is affected. A journal that has never been
+    // initialized has nothing to replay regardless of location, so replay no-ops cleanly.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    PartitionHfsFileWriteOptions options;
+    options.enable_writer = true;
+    options.target_write_confirmed = true;
+    options.allow_journaled_volume = true;
+    options.evidence_id = QStringLiteral("unit.hfs-external-journal");
+
+    // A journaled image whose JournalInfoBlock lives at block 50.
+    const QByteArray expectedImage = hfsReaderFixture();
+    const HfsJournalEndianWriters leWriters{writeTestLe16, writeTestLe32, writeTestLe64};
+    qsizetype journalBase = 0;
+    const QByteArray image = buildHfsJournalDirtyImage(expectedImage, leWriters, &journalBase);
+    const qsizetype jibOffset = static_cast<qsizetype>(50) * kTestHfsBlockSize;
+
+    // Case A: external + needs-init (never logged) -> replay is a clean no-op.
+    QByteArray needsInit = image;
+    writeBe32(&needsInit, jibOffset, 0x02u | 0x04u);  // OnOtherDevice | NeedInit
+    const QString needsInitPath = temp.filePath(QStringLiteral("hfs-extjournal-needsinit.img"));
+    QVERIFY(writeBytes(needsInitPath, needsInit));
+    const auto replayed = PartitionHfsFileSystemWriter::replayJournalFromImage(needsInitPath,
+                                                                               options);
+    QVERIFY2(replayed.ok, qPrintable(replayed.blockers.join(QStringLiteral("; "))));
+    QVERIFY(replayed.warnings.join(' ').contains(QStringLiteral("awaits initialization")));
+    QCOMPARE(readBytes(needsInitPath), needsInit);  // no-op left the image byte-identical
+
+    // Case B: external with a real (non-init) journal -> its transactions live off-device and
+    // cannot be replayed from the volume image alone; fail closed with an accurate message.
+    QByteArray external = image;
+    writeBe32(&external, jibOffset, 0x02u);  // OnOtherDevice only
+    const QString externalPath = temp.filePath(QStringLiteral("hfs-extjournal-dirty.img"));
+    QVERIFY(writeBytes(externalPath, external));
+    const auto blocked = PartitionHfsFileSystemWriter::replayJournalFromImage(externalPath,
+                                                                              options);
+    QVERIFY(!blocked.ok);
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("separate device")));
+    QCOMPARE(readBytes(externalPath), external);  // fail-closed left the image untouched
 }
 
 void PartitionManagerCoreTests::hfsFileSystemWriter_replaysBigEndianJournal() {
