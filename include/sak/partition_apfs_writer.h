@@ -116,48 +116,6 @@ struct PartitionApfsImageRepairResult {
     uint64_t repaired_checksum_blocks{0};
 };
 
-struct PartitionApfsImageFileWriteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    QString payload_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsImageFileDeleteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t deleted_file_bytes{0};
-    QString deleted_file_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t freed_data_blocks{0};
-};
-
-struct PartitionApfsImageDirectoryMutationResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QStringList blockers;
-    QStringList warnings;
-};
-
 struct PartitionApfsImageVolumeLabelResult {
     bool ok{false};
     PartitionApfsImageMutationPlan plan;
@@ -166,76 +124,6 @@ struct PartitionApfsImageVolumeLabelResult {
     QString written_image_sha256;
     QString old_volume_name;
     QString new_volume_name;
-    QStringList blockers;
-    QStringList warnings;
-};
-
-struct PartitionApfsImageFilePatchResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    uint64_t patch_offset_bytes{0};
-    uint64_t patch_bytes{0};
-    QString patch_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawFileWriteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    QString payload_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawFileDeleteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t deleted_file_bytes{0};
-    QString deleted_file_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t freed_data_blocks{0};
-};
-
-struct PartitionApfsRawFilePatchResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    uint64_t patch_offset_bytes{0};
-    uint64_t patch_bytes{0};
-    QString patch_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawDirectoryMutationResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
     QStringList blockers;
     QStringList warnings;
 };
@@ -306,21 +194,6 @@ struct PartitionApfsImageRepairRequest {
     PartitionApfsWriteOptions options;
 };
 
-struct PartitionApfsImageRootFileWriteRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    QByteArray file_data;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsImageRootFileDeleteRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    PartitionApfsWriteOptions options;
-};
-
 struct PartitionApfsImageRootDirectoryFileWriteRequest {
     QString source_image_path;
     QString written_image_path;
@@ -338,25 +211,6 @@ struct PartitionApfsImageRootDirectoryFileDeleteRequest {
     PartitionApfsWriteOptions options;
 };
 
-struct PartitionApfsImageRootDirectoryFilePatchRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsImageRootFilePatchRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
-};
-
 struct PartitionApfsImageRootDirectoryMutationRequest {
     QString source_image_path;
     QString written_image_path;
@@ -371,78 +225,6 @@ struct PartitionApfsImageVolumeLabelRequest {
     QString source_image_path;
     QString written_image_path;
     QString volume_name;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFileWriteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    QByteArray file_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFileDeleteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFileWriteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    QByteArray file_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFileDeleteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFilePatchRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFilePatchRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryMutationRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
 };
 
@@ -1124,8 +906,7 @@ public:
     ///        existing name is a delete-then-insert replace. Reuses the insert request.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileWrite(
         const PartitionApfsImageFileInsertCommitRequest& request);
-    /// @brief Create one empty root directory with an in-place COW commit (the
-    ///        full-tree analogue of the legacy rewrite-based createImageOnlyRootDirectory).
+    /// @brief Create one empty root directory with an in-place COW commit.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyDirectoryCreate(
         const PartitionApfsImageRootDirectoryMutationRequest& request);
     /// @brief Delete one empty root directory with an in-place COW commit.
@@ -1237,40 +1018,8 @@ public:
     ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
     static void setRawDeviceTargetPredicateForTesting(
         std::function<bool(const QString&)> predicate);
-    [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
-        const PartitionApfsImageRootFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(
-        const PartitionApfsImageRootFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFilePatchResult patchImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsImageFilePatchResult patchImageOnlyRootFile(
-        const PartitionApfsImageRootFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsImageDirectoryMutationResult createImageOnlyRootDirectory(
-        const PartitionApfsImageRootDirectoryMutationRequest& request);
-    [[nodiscard]] static PartitionApfsImageDirectoryMutationResult deleteImageOnlyRootDirectory(
-        const PartitionApfsImageRootDirectoryMutationRequest& request);
     [[nodiscard]] static PartitionApfsImageVolumeLabelResult changeImageOnlyVolumeLabel(
         const PartitionApfsImageVolumeLabelRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileWriteResult writeRawRootFile(
-        const PartitionApfsRawRootFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileDeleteResult deleteRawRootFile(
-        const PartitionApfsRawRootFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileWriteResult writeRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileDeleteResult deleteRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFilePatchResult patchRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsRawFilePatchResult patchRawRootFile(
-        const PartitionApfsRawRootFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsRawDirectoryMutationResult createRawRootDirectory(
-        const PartitionApfsRawRootDirectoryMutationRequest& request);
-    [[nodiscard]] static PartitionApfsRawDirectoryMutationResult deleteRawRootDirectory(
-        const PartitionApfsRawRootDirectoryMutationRequest& request);
     [[nodiscard]] static PartitionApfsRawVolumeLabelResult changeRawVolumeLabel(
         const PartitionApfsRawVolumeLabelRequest& request);
     [[nodiscard]] static PartitionApfsRawRepairResult repairRawObjectChecksums(

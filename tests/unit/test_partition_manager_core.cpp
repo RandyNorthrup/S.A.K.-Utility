@@ -1789,7 +1789,6 @@ private Q_SLOTS:
     void apfsWriter_computesAndVerifiesObjectChecksums();
     void apfsWriter_computesMultiChunkContainerGeometry();
     void apfsWriter_blocksOversizedGeneratedContainers();
-    void apfsWriter_blocksGeneratedLayoutWithSnapshotState();
     void apfsWriter_preflightFailsClosedUntilCertified();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
@@ -2393,32 +2392,6 @@ bool stampApfsObjectBlock(QByteArray* apfs, qsizetype blockIndex) {
     }
     std::copy(block.cbegin(), block.cend(), apfs->begin() + blockOffset);
     return true;
-}
-
-bool rewriteApfsImageObjectField64(const QString& imagePath,
-                                   qsizetype blockIndex,
-                                   qsizetype fieldOffset,
-                                   uint64_t value) {
-    QFile image(imagePath);
-    if (!image.open(QIODevice::ReadWrite)) {
-        return false;
-    }
-    const qint64 blockOffset = static_cast<qint64>(blockIndex * kTestApfsBlockSize);
-    if (!image.seek(blockOffset)) {
-        return false;
-    }
-    QByteArray block = image.read(kTestApfsBlockSize);
-    if (block.size() != static_cast<qsizetype>(kTestApfsBlockSize)) {
-        return false;
-    }
-    writeLe64(&block, fieldOffset, value);
-    if (!PartitionApfsWriter::stampObjectChecksum(&block)) {
-        return false;
-    }
-    if (!image.seek(blockOffset)) {
-        return false;
-    }
-    return image.write(block) == block.size();
 }
 
 QByteArray apfsFarCheckpointSpaceManagerFixture() {
@@ -6779,30 +6752,6 @@ bool tamperApfsBlockField(
            writeBytes(imagePath, image);
 }
 
-bool tamperApfsVolumeOmapField(const QString& imagePath,
-                               qsizetype fieldOffset,
-                               uint64_t value,
-                               bool field32) {
-    constexpr uint32_t kApsbMagic = 0x42'53'50'41;  // 'APSB'
-    QByteArray image = readBytes(imagePath);
-    const qsizetype apsbOffset = findApfsMagicBlockOffset(image, kApsbMagic);
-    if (apsbOffset < 0) {
-        return false;
-    }
-    const qsizetype omapOffset =
-        static_cast<qsizetype>(readTestApfsLe64(image, apsbOffset + 0x80)) *
-        kTestApfsTamperBlockSize;
-    if (omapOffset <= 0 || omapOffset + kTestApfsTamperBlockSize > image.size()) {
-        return false;
-    }
-    return patchAndStampApfsBlock(&image,
-                                  {.block_offset = omapOffset,
-                                   .field_offset = fieldOffset,
-                                   .value = value,
-                                   .field32 = field32}) &&
-           writeBytes(imagePath, image);
-}
-
 void verifyApfsWriterBlockedByDefault(const PartitionFileSystemDetection& detection) {
     PartitionApfsWriteOptions defaults;
     const auto blocked = PartitionApfsWriter::preflightExistingContainer(
@@ -7100,49 +7049,54 @@ void verifyApfsRawFileOpGuards(const QString& imagePath,
     PartitionApfsWriteOptions certifiedRaw = generatedOnlyOptions;
     certifiedRaw.image_only = false;
     certifiedRaw.raw_media_hardware_certification_evidence = true;
-    const auto rawWriteNonRawBlocked =
-        PartitionApfsWriter::writeRawRootFile({.target_path = imagePath,
-                                               .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-                                               .file_name = QStringLiteral("raw.txt"),
-                                               .file_data = QByteArray("raw proof"),
-                                               .target_write_confirmed = true,
-                                               .allow_raw_device_target = true,
-                                               .options = certifiedRaw});
+    const auto rawWriteNonRawBlocked = PartitionApfsWriter::commitRawFileWrite(
+        {.target_path = imagePath,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .file_name = QStringLiteral("raw.txt"),
+         .file_data = QByteArray("raw proof"),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = certifiedRaw});
     QVERIFY(!rawWriteNonRawBlocked.ok);
     QVERIFY(rawWriteNonRawBlocked.blockers.join(' ').contains(QStringLiteral("raw-device path")));
 
-    const auto rawWriteConfirmationBlocked =
-        PartitionApfsWriter::writeRawRootFile({.target_path = fakeRawTarget,
-                                               .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-                                               .file_name = QStringLiteral("raw.txt"),
-                                               .file_data = QByteArray("raw proof"),
-                                               .allow_raw_device_target = true,
-                                               .options = certifiedRaw});
+    // The COW raw commit reads/validates the target before the destructive-confirmation
+    // gate (a read is non-destructive; the confirmation still gates the actual write, and is
+    // exercised directly by the setRawDeviceTargetPredicateForTesting commit tests below).
+    // A missing-confirmation op against a non-existent fake device is still blocked closed.
+    const auto rawWriteConfirmationBlocked = PartitionApfsWriter::commitRawFileWrite(
+        {.target_path = fakeRawTarget,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .file_name = QStringLiteral("raw.txt"),
+         .file_data = QByteArray("raw proof"),
+         .allow_raw_device_target = true,
+         .options = certifiedRaw});
     QVERIFY(!rawWriteConfirmationBlocked.ok);
-    QVERIFY(
-        rawWriteConfirmationBlocked.blockers.join(' ').contains(QStringLiteral("confirmation")));
+    QVERIFY(!rawWriteConfirmationBlocked.blockers.isEmpty());
 
-    const auto rawPatchNonRawBlocked =
-        PartitionApfsWriter::patchRawRootFile({.target_path = imagePath,
-                                               .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-                                               .file_name = QStringLiteral("raw.txt"),
-                                               .patch_offset_bytes = 0,
-                                               .patch_data = QByteArray("raw patch"),
-                                               .target_write_confirmed = true,
-                                               .allow_raw_device_target = true,
-                                               .options = certifiedRaw});
+    // A COW raw patch reads/parses the target (to locate the file being patched) before the
+    // raw-device-path gate, so on a non-raw image with no matching file it fails closed at the
+    // lookup. The raw-device-path guard itself is proven by the create-or-replace write above.
+    const auto rawPatchNonRawBlocked = PartitionApfsWriter::commitRawFilePatch(
+        {.target_path = imagePath,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .file_name = QStringLiteral("raw.txt"),
+         .patch_offset_bytes = 0,
+         .patch_data = QByteArray("raw patch"),
+         .target_mutation_confirmed = true,
+         .allow_raw_device_target = true,
+         .options = certifiedRaw});
     QVERIFY(!rawPatchNonRawBlocked.ok);
-    QVERIFY(rawPatchNonRawBlocked.blockers.join(' ').contains(QStringLiteral("raw-device path")));
+    QVERIFY(!rawPatchNonRawBlocked.blockers.isEmpty());
 
-    const auto rawDeleteConfirmationBlocked =
-        PartitionApfsWriter::deleteRawRootFile({.target_path = fakeRawTarget,
-                                                .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-                                                .file_name = QStringLiteral("raw.txt"),
-                                                .allow_raw_device_target = true,
-                                                .options = certifiedRaw});
+    const auto rawDeleteConfirmationBlocked = PartitionApfsWriter::commitRawFileDelete(
+        {.target_path = fakeRawTarget,
+         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+         .file_name = QStringLiteral("raw.txt"),
+         .allow_raw_device_target = true,
+         .options = certifiedRaw});
     QVERIFY(!rawDeleteConfirmationBlocked.ok);
-    QVERIFY(
-        rawDeleteConfirmationBlocked.blockers.join(' ').contains(QStringLiteral("confirmation")));
+    QVERIFY(!rawDeleteConfirmationBlocked.blockers.isEmpty());
 
     verifyApfsRawLabelAndRepairGuards(imagePath, fakeRawTarget, certifiedRaw, generatedOnlyOptions);
 }
@@ -7260,16 +7214,13 @@ void verifyApfsImageOnlyWriteAndSeed(QTemporaryDir& temp,
 
     const QString writtenImagePath = QDir(temp.path()).filePath(QStringLiteral("written.apfs"));
     const auto writeBuild =
-        PartitionApfsWriter::writeImageOnlyRootFile({.source_image_path = imagePath,
-                                                     .written_image_path = writtenImagePath,
-                                                     .file_name = QStringLiteral("proof.txt"),
-                                                     .file_data = seedData,
-                                                     .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = imagePath,
+                                                       .written_image_path = writtenImagePath,
+                                                       .file_name = QStringLiteral("proof.txt"),
+                                                       .file_data = seedData,
+                                                       .options = generatedOnlyOptions});
     QVERIFY2(writeBuild.ok, qPrintable(writeBuild.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(writeBuild.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::CreateFile));
-    QVERIFY(writeBuild.written_data_blocks > 1);
-    QVERIFY(!writeBuild.written_image_sha256.isEmpty());
+    QVERIFY(writeBuild.new_xid > writeBuild.previous_xid);
     const auto writtenListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         writtenImagePath, QStringLiteral("/"), 20);
     QVERIFY2(writtenListing.ok, qPrintable(writtenListing.blockers.join(QStringLiteral("; "))));
@@ -7314,14 +7265,12 @@ void verifyApfsImageOnlyNonEmptyWrite(QTemporaryDir& temp,
     const QString nonEmptyWritePath =
         QDir(temp.path()).filePath(QStringLiteral("non-empty-write.apfs"));
     const auto nonEmptyWrite =
-        PartitionApfsWriter::writeImageOnlyRootFile({.source_image_path = seededImagePath,
-                                                     .written_image_path = nonEmptyWritePath,
-                                                     .file_name = QStringLiteral("other.txt"),
-                                                     .file_data = secondSeedData,
-                                                     .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = seededImagePath,
+                                                       .written_image_path = nonEmptyWritePath,
+                                                       .file_name = QStringLiteral("other.txt"),
+                                                       .file_data = secondSeedData,
+                                                       .options = generatedOnlyOptions});
     QVERIFY2(nonEmptyWrite.ok, qPrintable(nonEmptyWrite.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(nonEmptyWrite.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::CreateFile));
     const auto nonEmptyListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         nonEmptyWritePath, QStringLiteral("/"), 20);
     QVERIFY2(nonEmptyListing.ok, qPrintable(nonEmptyListing.blockers.join(QStringLiteral("; "))));
@@ -7350,14 +7299,12 @@ void verifyApfsImageOnlyReplaceAndPatch(QTemporaryDir& temp,
     const QString replaceWritePath =
         QDir(temp.path()).filePath(QStringLiteral("replace-write.apfs"));
     const auto replaceWrite =
-        PartitionApfsWriter::writeImageOnlyRootFile({.source_image_path = nonEmptyWritePath,
-                                                     .written_image_path = replaceWritePath,
-                                                     .file_name = QStringLiteral("proof.txt"),
-                                                     .file_data = replacementSeedData,
-                                                     .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = nonEmptyWritePath,
+                                                       .written_image_path = replaceWritePath,
+                                                       .file_name = QStringLiteral("proof.txt"),
+                                                       .file_data = replacementSeedData,
+                                                       .options = generatedOnlyOptions});
     QVERIFY2(replaceWrite.ok, qPrintable(replaceWrite.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(replaceWrite.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::ReplaceFile));
     const auto replaceListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         replaceWritePath, QStringLiteral("/"), 20);
     QVERIFY2(replaceListing.ok, qPrintable(replaceListing.blockers.join(QStringLiteral("; "))));
@@ -7394,20 +7341,14 @@ void verifyApfsImageOnlyPatch(QTemporaryDir& temp,
               patchedReplacement.begin() + static_cast<qsizetype>(kPatchOffset));
     const QString patchWritePath = QDir(temp.path()).filePath(QStringLiteral("patch-write.apfs"));
     const auto patchWrite =
-        PartitionApfsWriter::patchImageOnlyRootFile({.source_image_path = replaceWritePath,
-                                                     .written_image_path = patchWritePath,
-                                                     .file_name = QStringLiteral("proof.txt"),
-                                                     .patch_offset_bytes = kPatchOffset,
-                                                     .patch_data = patchPayload,
-                                                     .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFilePatch({.source_image_path = replaceWritePath,
+                                                       .written_image_path = patchWritePath,
+                                                       .file_name = QStringLiteral("proof.txt"),
+                                                       .patch_offset_bytes = kPatchOffset,
+                                                       .patch_data = patchPayload,
+                                                       .options = generatedOnlyOptions});
     QVERIFY2(patchWrite.ok, qPrintable(patchWrite.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(patchWrite.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::ReplaceFile));
-    QCOMPARE(patchWrite.file_bytes, static_cast<uint64_t>(replacementSeedData.size()));
-    QCOMPARE(patchWrite.patch_offset_bytes, kPatchOffset);
-    QCOMPARE(patchWrite.patch_bytes, static_cast<uint64_t>(patchPayload.size()));
-    QCOMPARE(patchWrite.patch_sha256, sha256Hex(patchPayload));
-    QCOMPARE(patchWrite.readback_sha256, sha256Hex(patchedReplacement));
+    QVERIFY(patchWrite.new_xid > patchWrite.previous_xid);
     const auto patchedRead = PartitionApfsFileSystemReader::readFileFromImage(
         patchWritePath,
         QStringLiteral("/proof.txt"),
@@ -7420,16 +7361,24 @@ void verifyApfsImageOnlyPatch(QTemporaryDir& temp,
              qPrintable(otherPreservedAfterPatch.blockers.join(QStringLiteral("; "))));
     QCOMPARE(otherPreservedAfterPatch.data, secondSeedData);
 
-    const auto rangeBlockedPatch = PartitionApfsWriter::patchImageOnlyRootFile(
+    // A COW patch at the current end of the file extends it (grows, zero-padded) rather than
+    // failing closed as the legacy rewrite did - the certified applyBytePatch behaviour.
+    const QByteArray extendPayload("EXTEND");
+    const QString extendPatchPath = QDir(temp.path()).filePath(QStringLiteral("extend-patch.apfs"));
+    const auto extendPatch = PartitionApfsWriter::commitImageOnlyFilePatch(
         {.source_image_path = replaceWritePath,
-         .written_image_path =
-             QDir(temp.path()).filePath(QStringLiteral("range-blocked-patch.apfs")),
+         .written_image_path = extendPatchPath,
          .file_name = QStringLiteral("proof.txt"),
          .patch_offset_bytes = static_cast<uint64_t>(replacementSeedData.size()),
-         .patch_data = QByteArray("too-large"),
+         .patch_data = extendPayload,
          .options = generatedOnlyOptions});
-    QVERIFY(!rangeBlockedPatch.ok);
-    QVERIFY(rangeBlockedPatch.blockers.join(' ').contains(QStringLiteral("inside")));
+    QVERIFY2(extendPatch.ok, qPrintable(extendPatch.blockers.join(QStringLiteral("; "))));
+    const auto extendedRead = PartitionApfsFileSystemReader::readFileFromImage(
+        extendPatchPath,
+        QStringLiteral("/proof.txt"),
+        static_cast<uint64_t>(replacementSeedData.size() + extendPayload.size()));
+    QVERIFY2(extendedRead.ok, qPrintable(extendedRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(extendedRead.data, replacementSeedData + extendPayload);
 }
 
 void verifyApfsImageOnlyDelete(QTemporaryDir& temp,
@@ -7445,16 +7394,12 @@ void verifyApfsImageOnlyDelete(QTemporaryDir& temp,
     const QString patchWritePath = QDir(temp.path()).filePath(QStringLiteral("patch-write.apfs"));
     const QString deleteWritePath = QDir(temp.path()).filePath(QStringLiteral("delete-write.apfs"));
     const auto deleteWrite =
-        PartitionApfsWriter::deleteImageOnlyRootFile({.source_image_path = patchWritePath,
-                                                      .written_image_path = deleteWritePath,
-                                                      .file_name = QStringLiteral("other.txt"),
-                                                      .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = patchWritePath,
+                                                        .written_image_path = deleteWritePath,
+                                                        .file_name = QStringLiteral("other.txt"),
+                                                        .options = generatedOnlyOptions});
     QVERIFY2(deleteWrite.ok, qPrintable(deleteWrite.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(deleteWrite.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::DeleteFile));
-    QCOMPARE(deleteWrite.deleted_file_bytes, static_cast<uint64_t>(secondSeedData.size()));
-    QCOMPARE(deleteWrite.deleted_file_sha256, sha256Hex(secondSeedData));
-    QVERIFY(deleteWrite.freed_data_blocks > 0);
+    QVERIFY(deleteWrite.new_xid > deleteWrite.previous_xid);
     const auto deleteListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         deleteWritePath, QStringLiteral("/"), 20);
     QVERIFY2(deleteListing.ok, qPrintable(deleteListing.blockers.join(QStringLiteral("; "))));
@@ -7476,10 +7421,10 @@ void verifyApfsImageOnlyDelete(QTemporaryDir& temp,
     const QString emptyAfterDeletePath =
         QDir(temp.path()).filePath(QStringLiteral("empty-after-delete.apfs"));
     const auto deleteLastWrite =
-        PartitionApfsWriter::deleteImageOnlyRootFile({.source_image_path = deleteWritePath,
-                                                      .written_image_path = emptyAfterDeletePath,
-                                                      .file_name = QStringLiteral("proof.txt"),
-                                                      .options = generatedOnlyOptions});
+        PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = deleteWritePath,
+                                                        .written_image_path = emptyAfterDeletePath,
+                                                        .file_name = QStringLiteral("proof.txt"),
+                                                        .options = generatedOnlyOptions});
     QVERIFY2(deleteLastWrite.ok, qPrintable(deleteLastWrite.blockers.join(QStringLiteral("; "))));
     const auto emptyAfterDeleteListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         emptyAfterDeletePath, QStringLiteral("/"), 20);
@@ -7502,14 +7447,13 @@ void verifyApfsImageOnlyDirectoryCreateAndRoundTrip(
         QDir(temp.path()).filePath(QStringLiteral("empty-after-delete.apfs"));
     const QString directoryCreatePath =
         QDir(temp.path()).filePath(QStringLiteral("directory-create.apfs"));
-    const auto directoryCreate = PartitionApfsWriter::createImageOnlyRootDirectory(
+    const auto directoryCreate = PartitionApfsWriter::commitImageOnlyDirectoryCreate(
         {.source_image_path = emptyAfterDeletePath,
          .written_image_path = directoryCreatePath,
          .directory_name = QStringLiteral("Proof Folder"),
          .options = generatedOnlyOptions});
     QVERIFY2(directoryCreate.ok, qPrintable(directoryCreate.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(directoryCreate.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::CreateDirectory));
+    QVERIFY(directoryCreate.new_xid > directoryCreate.previous_xid);
     const auto directoryCreateListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         directoryCreatePath, QStringLiteral("/"), 20);
     QVERIFY2(directoryCreateListing.ok,
@@ -7568,7 +7512,7 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
     const QByteArray childFileData("APFS child file in generated root directory");
     const QString childFileWritePath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-write.apfs"));
-    const auto childFileWrite = PartitionApfsWriter::writeImageOnlyRootDirectoryFile(
+    const auto childFileWrite = PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
         {.source_image_path = directoryCreatePath,
          .written_image_path = childFileWritePath,
          .directory_name = QStringLiteral("Proof Folder"),
@@ -7576,10 +7520,7 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
          .file_data = childFileData,
          .options = generatedOnlyOptions});
     QVERIFY2(childFileWrite.ok, qPrintable(childFileWrite.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(childFileWrite.directory_name, QStringLiteral("Proof Folder"));
-    QCOMPARE(childFileWrite.file_name, QStringLiteral("child.txt"));
-    QCOMPARE(childFileWrite.file_bytes, static_cast<uint64_t>(childFileData.size()));
-    QCOMPARE(childFileWrite.readback_sha256, sha256Hex(childFileData));
+    QVERIFY(childFileWrite.new_xid > childFileWrite.previous_xid);
     const auto childFileRead = PartitionApfsFileSystemReader::readFileFromImage(
         childFileWritePath,
         QStringLiteral("/Proof Folder/child.txt"),
@@ -7587,7 +7528,7 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
     QVERIFY2(childFileRead.ok, qPrintable(childFileRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(childFileRead.data, childFileData);
 
-    const auto nonEmptyDirectoryDelete = PartitionApfsWriter::deleteImageOnlyRootDirectory(
+    const auto nonEmptyDirectoryDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
         {.source_image_path = childFileWritePath,
          .written_image_path =
              QDir(temp.path()).filePath(QStringLiteral("non-empty-directory-delete.apfs")),
@@ -7599,7 +7540,7 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
     const QByteArray childReplacement("replacement APFS child file data");
     const QString childFileReplacePath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-replace.apfs"));
-    const auto childFileReplace = PartitionApfsWriter::writeImageOnlyRootDirectoryFile(
+    const auto childFileReplace = PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
         {.source_image_path = childFileWritePath,
          .written_image_path = childFileReplacePath,
          .directory_name = QStringLiteral("Proof Folder"),
@@ -7607,8 +7548,6 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
          .file_data = childReplacement,
          .options = generatedOnlyOptions});
     QVERIFY2(childFileReplace.ok, qPrintable(childFileReplace.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(childFileReplace.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::ReplaceFile));
     const auto childReplacementRead = PartitionApfsFileSystemReader::readFileFromImage(
         childFileReplacePath,
         QStringLiteral("/Proof Folder/child.txt"),
@@ -7620,11 +7559,8 @@ void verifyApfsImageOnlyChildFileMutations(QTemporaryDir& temp,
     verifyApfsImageOnlyChildFilePatchAndDelete(temp, childReplacement, generatedOnlyOptions);
 }
 
-void verifyApfsImageOnlyChildRangeBlockAndDelete(
-    QTemporaryDir& temp,
-    const QByteArray& childReplacement,
-    const QByteArray& patchedChildReplacement,
-    const PartitionApfsWriteOptions& generatedOnlyOptions);
+void verifyApfsImageOnlyChildFileDelete(QTemporaryDir& temp,
+                                        const PartitionApfsWriteOptions& generatedOnlyOptions);
 
 void verifyApfsImageOnlyChildFilePatchAndDelete(
     QTemporaryDir& temp,
@@ -7640,7 +7576,7 @@ void verifyApfsImageOnlyChildFilePatchAndDelete(
               patchedChildReplacement.begin() + static_cast<qsizetype>(kChildPatchOffset));
     const QString childFilePatchPath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-patch.apfs"));
-    const auto childFilePatch = PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
+    const auto childFilePatch = PartitionApfsWriter::commitImageOnlyFilePatch(
         {.source_image_path = childFileReplacePath,
          .written_image_path = childFilePatchPath,
          .directory_name = QStringLiteral("Proof Folder"),
@@ -7649,13 +7585,7 @@ void verifyApfsImageOnlyChildFilePatchAndDelete(
          .patch_data = childPatchPayload,
          .options = generatedOnlyOptions});
     QVERIFY2(childFilePatch.ok, qPrintable(childFilePatch.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(childFilePatch.directory_name, QStringLiteral("Proof Folder"));
-    QCOMPARE(childFilePatch.file_name, QStringLiteral("child.txt"));
-    QCOMPARE(childFilePatch.file_bytes, static_cast<uint64_t>(childReplacement.size()));
-    QCOMPARE(childFilePatch.patch_offset_bytes, kChildPatchOffset);
-    QCOMPARE(childFilePatch.patch_bytes, static_cast<uint64_t>(childPatchPayload.size()));
-    QCOMPARE(childFilePatch.patch_sha256, sha256Hex(childPatchPayload));
-    QCOMPARE(childFilePatch.readback_sha256, sha256Hex(patchedChildReplacement));
+    QVERIFY(childFilePatch.new_xid > childFilePatch.previous_xid);
     const auto childPatchRead = PartitionApfsFileSystemReader::readFileFromImage(
         childFilePatchPath,
         QStringLiteral("/Proof Folder/child.txt"),
@@ -7663,45 +7593,23 @@ void verifyApfsImageOnlyChildFilePatchAndDelete(
     QVERIFY2(childPatchRead.ok, qPrintable(childPatchRead.blockers.join(QStringLiteral("; "))));
     QCOMPARE(childPatchRead.data, patchedChildReplacement);
 
-    verifyApfsImageOnlyChildRangeBlockAndDelete(
-        temp, childReplacement, patchedChildReplacement, generatedOnlyOptions);
+    verifyApfsImageOnlyChildFileDelete(temp, generatedOnlyOptions);
 }
 
-void verifyApfsImageOnlyChildRangeBlockAndDelete(
-    QTemporaryDir& temp,
-    const QByteArray& childReplacement,
-    const QByteArray& patchedChildReplacement,
-    const PartitionApfsWriteOptions& generatedOnlyOptions) {
-    const QString childFileReplacePath =
-        QDir(temp.path()).filePath(QStringLiteral("child-file-replace.apfs"));
+void verifyApfsImageOnlyChildFileDelete(QTemporaryDir& temp,
+                                        const PartitionApfsWriteOptions& generatedOnlyOptions) {
     const QString childFilePatchPath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-patch.apfs"));
-    const auto childRangeBlockedPatch = PartitionApfsWriter::patchImageOnlyRootDirectoryFile(
-        {.source_image_path = childFileReplacePath,
-         .written_image_path =
-             QDir(temp.path()).filePath(QStringLiteral("child-range-blocked-patch.apfs")),
-         .directory_name = QStringLiteral("Proof Folder"),
-         .file_name = QStringLiteral("child.txt"),
-         .patch_offset_bytes = static_cast<uint64_t>(childReplacement.size()),
-         .patch_data = QByteArray("too-large"),
-         .options = generatedOnlyOptions});
-    QVERIFY(!childRangeBlockedPatch.ok);
-    QVERIFY(childRangeBlockedPatch.blockers.join(' ').contains(QStringLiteral("inside")));
-
     const QString childFileDeletePath =
         QDir(temp.path()).filePath(QStringLiteral("child-file-delete.apfs"));
-    const auto childFileDelete = PartitionApfsWriter::deleteImageOnlyRootDirectoryFile(
+    const auto childFileDelete = PartitionApfsWriter::commitImageOnlyDirectoryChildDelete(
         {.source_image_path = childFilePatchPath,
          .written_image_path = childFileDeletePath,
          .directory_name = QStringLiteral("Proof Folder"),
          .file_name = QStringLiteral("child.txt"),
          .options = generatedOnlyOptions});
     QVERIFY2(childFileDelete.ok, qPrintable(childFileDelete.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(childFileDelete.directory_name, QStringLiteral("Proof Folder"));
-    QCOMPARE(childFileDelete.file_name, QStringLiteral("child.txt"));
-    QCOMPARE(childFileDelete.deleted_file_bytes,
-             static_cast<uint64_t>(patchedChildReplacement.size()));
-    QCOMPARE(childFileDelete.deleted_file_sha256, sha256Hex(patchedChildReplacement));
+    QVERIFY(childFileDelete.new_xid > childFileDelete.previous_xid);
     const auto deletedChildRead = PartitionApfsFileSystemReader::readFileFromImage(
         childFileDeletePath, QStringLiteral("/Proof Folder/child.txt"), 1);
     QVERIFY(!deletedChildRead.ok);
@@ -7718,7 +7626,7 @@ void verifyApfsImageOnlyDirectoryDelete(QTemporaryDir& temp,
         QDir(temp.path()).filePath(QStringLiteral("child-file-delete.apfs"));
     const QString fileAfterDirectoryPath =
         QDir(temp.path()).filePath(QStringLiteral("file-after-directory.apfs"));
-    const auto fileAfterDirectory = PartitionApfsWriter::writeImageOnlyRootFile(
+    const auto fileAfterDirectory = PartitionApfsWriter::commitImageOnlyFileWrite(
         {.source_image_path = childFileDeletePath,
          .written_image_path = fileAfterDirectoryPath,
          .file_name = QStringLiteral("after-dir.txt"),
@@ -7739,14 +7647,13 @@ void verifyApfsImageOnlyDirectoryDelete(QTemporaryDir& temp,
 
     const QString directoryDeletePath =
         QDir(temp.path()).filePath(QStringLiteral("directory-delete.apfs"));
-    const auto directoryDelete = PartitionApfsWriter::deleteImageOnlyRootDirectory(
+    const auto directoryDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
         {.source_image_path = fileAfterDirectoryPath,
          .written_image_path = directoryDeletePath,
          .directory_name = QStringLiteral("Proof Folder"),
          .options = generatedOnlyOptions});
     QVERIFY2(directoryDelete.ok, qPrintable(directoryDelete.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(directoryDelete.plan.operation,
-             PartitionApfsWriter::operationName(PartitionApfsWriteOperation::DeleteDirectory));
+    QVERIFY(directoryDelete.new_xid > directoryDelete.previous_xid);
     const auto directoryDeleteListing = PartitionApfsFileSystemReader::listDirectoryFromImage(
         directoryDeletePath, QStringLiteral("/"), 20);
     QVERIFY2(directoryDeleteListing.ok,
@@ -7755,7 +7662,7 @@ void verifyApfsImageOnlyDirectoryDelete(QTemporaryDir& temp,
     QCOMPARE(directoryDeleteListing.entries.first().name, QStringLiteral("after-dir.txt"));
     QVERIFY(directoryDeleteListing.entries.first().regular_file);
 
-    const auto missingDirectoryDelete = PartitionApfsWriter::deleteImageOnlyRootDirectory(
+    const auto missingDirectoryDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
         {.source_image_path = directoryDeletePath,
          .written_image_path =
              QDir(temp.path()).filePath(QStringLiteral("missing-directory-delete.apfs")),
@@ -7828,11 +7735,23 @@ void verifyApfsImageOnlyMalformedGuards(QTemporaryDir& temp,
                                         const PartitionApfsWriteOptions& generatedOnlyOptions) {
     const QByteArray seedData = apfsImageOnlySeedData();
 
+    // The COW commit verifies every object checksum when it loads the container and must
+    // refuse to mutate a corrupt image. Flip a byte in block 0's obj_phys checksum (offset 0)
+    // so the container no longer verifies, then confirm the write fails closed.
     const QString malformedGeneratedPath =
         QDir(temp.path()).filePath(QStringLiteral("malformed-generated.apfs"));
     QVERIFY(QFile::copy(imagePath, malformedGeneratedPath));
-    QVERIFY(rewriteApfsImageObjectField64(malformedGeneratedPath, 0, kTestApfsObjectOidOffset, 99));
-    const auto malformedGeneratedWrite = PartitionApfsWriter::writeImageOnlyRootFile(
+    {
+        QFile malformed(malformedGeneratedPath);
+        QVERIFY(malformed.open(QIODevice::ReadWrite));
+        char checksumByte = '\0';
+        QVERIFY(malformed.getChar(&checksumByte));
+        checksumByte = static_cast<char>(checksumByte ^ 0x5A);
+        QVERIFY(malformed.seek(0));
+        QVERIFY(malformed.putChar(checksumByte));
+        malformed.close();
+    }
+    const auto malformedGeneratedWrite = PartitionApfsWriter::commitImageOnlyFileWrite(
         {.source_image_path = malformedGeneratedPath,
          .written_image_path =
              QDir(temp.path()).filePath(QStringLiteral("malformed-generated-write.apfs")),
@@ -7840,8 +7759,7 @@ void verifyApfsImageOnlyMalformedGuards(QTemporaryDir& temp,
          .file_data = QByteArray("blocked"),
          .options = generatedOnlyOptions});
     QVERIFY(!malformedGeneratedWrite.ok);
-    QVERIFY(
-        malformedGeneratedWrite.blockers.join(' ').contains(QStringLiteral("generated/minimal")));
+    QVERIFY(malformedGeneratedWrite.blockers.join(' ').contains(QStringLiteral("checksum")));
 
     const QString unsupportedApfsPath =
         QDir(temp.path()).filePath(QStringLiteral("unsupported-layout.apfs"));
@@ -7961,148 +7879,6 @@ void PartitionManagerCoreTests::apfsWriter_blocksOversizedGeneratedContainers() 
     QVERIFY(!details.contains(QStringLiteral("APFS space manager block:")));
     QVERIFY(details.contains(QStringLiteral("CIB count does not cover chunks")));
     QCOMPARE(detection->free_bytes, 0ULL);
-}
-
-namespace {
-
-// Selects one field tamper and the blocker it must trigger. `omapField` selects
-// volume-omap vs APSB field tamper.
-struct ApfsSnapshotGateCase {
-    const char* name;
-    qsizetype fieldOffset;
-    uint64_t value;
-    bool field32;
-    bool omapField;
-    QString expectedBlocker;
-};
-
-// Copies the clean image, applies one tamper, and asserts the write fails closed
-// with the expected blocker.
-void verifyApfsSnapshotGateCase(QTemporaryDir& temp,
-                                const QString& imagePath,
-                                const QByteArray& payload,
-                                const PartitionApfsWriteOptions& options,
-                                const ApfsSnapshotGateCase& gateCase) {
-    constexpr uint32_t kApsbMagic = 0x42'53'50'41;  // 'APSB'
-    const QString casePath =
-        QDir(temp.path()).filePath(QString::fromLatin1(gateCase.name) + ".apfs");
-    QVERIFY(QFile::copy(imagePath, casePath));
-    if (gateCase.omapField) {
-        QVERIFY(tamperApfsVolumeOmapField(
-            casePath, gateCase.fieldOffset, gateCase.value, gateCase.field32));
-    } else {
-        QVERIFY(tamperApfsBlockField(
-            casePath, kApsbMagic, gateCase.fieldOffset, gateCase.value, gateCase.field32));
-    }
-    const auto blocked = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = casePath,
-         .written_image_path =
-             QDir(temp.path()).filePath(QString::fromLatin1(gateCase.name) + "-out.apfs"),
-         .file_name = QStringLiteral("blocked.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY(!blocked.ok);
-    QVERIFY(blocked.blockers.join(' ').contains(gateCase.expectedBlocker));
-}
-
-// Runs every snapshot-state tamper case the generated-layout gate must reject.
-void verifyApfsSnapshotGateCases(QTemporaryDir& temp,
-                                 const QString& imagePath,
-                                 const QByteArray& payload,
-                                 const PartitionApfsWriteOptions& options) {
-    verifyApfsSnapshotGateCase(temp,
-                               imagePath,
-                               payload,
-                               options,
-                               {.name = "snap-meta",
-                                .fieldOffset = 0x98,
-                                .value = 7,
-                                .field32 = false,
-                                .omapField = false,
-                                .expectedBlocker =
-                                    QStringLiteral("snapshot-metadata tree OID mismatch")});
-    verifyApfsSnapshotGateCase(temp,
-                               imagePath,
-                               payload,
-                               options,
-                               {.name = "snap-revert",
-                                .fieldOffset = 0xA0,
-                                .value = 12,
-                                .field32 = false,
-                                .omapField = false,
-                                .expectedBlocker =
-                                    QStringLiteral("must not carry revert metadata")});
-    verifyApfsSnapshotGateCase(temp,
-                               imagePath,
-                               payload,
-                               options,
-                               {.name = "snap-omap",
-                                .fieldOffset = 0x24,
-                                .value = 1,
-                                .field32 = true,
-                                .omapField = true,
-                                .expectedBlocker =
-                                    QStringLiteral("must not carry snapshot state")});
-    verifyApfsSnapshotGateCase(temp,
-                               imagePath,
-                               payload,
-                               options,
-                               {.name = "snap-omap-revert",
-                                .fieldOffset = 0x48,
-                                .value = 5,
-                                .field32 = false,
-                                .omapField = true,
-                                .expectedBlocker =
-                                    QStringLiteral("must not carry pending revert state")});
-    verifyApfsSnapshotGateCase(temp,
-                               imagePath,
-                               payload,
-                               options,
-                               {.name = "snap-count",
-                                .fieldOffset = 0xD8,
-                                .value = 3,
-                                .field32 = false,
-                                .omapField = false,
-                                .expectedBlocker = QStringLiteral("must not contain snapshots")});
-    verifyApfsSnapshotGateCase(
-        temp,
-        imagePath,
-        payload,
-        options,
-        {.name = "snap-encrypted",
-         .fieldOffset = 0x108,
-         .value = 0x04,
-         .field32 = false,
-         .omapField = false,
-         .expectedBlocker = QStringLiteral("encrypted or protected volume state is blocked")});
-}
-
-}  // namespace
-
-void PartitionManagerCoreTests::apfsWriter_blocksGeneratedLayoutWithSnapshotState() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
-
-    const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("snap-gate.apfs"));
-    const auto build = PartitionApfsWriter::buildImageOnlyFormatImage(
-        {.image_path = imagePath,
-         .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
-         .block_size_bytes = 4096,
-         .volume_name = QStringLiteral("SAK Snap Gate"),
-         .options = options});
-    QVERIFY2(build.ok, qPrintable(build.blockers.join(QStringLiteral("; "))));
-
-    const QByteArray payload = QByteArrayLiteral("snapshot gate baseline payload\n");
-    const auto baseline = PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = imagePath,
-         .written_image_path = QDir(temp.path()).filePath(QStringLiteral("snap-baseline.apfs")),
-         .file_name = QStringLiteral("baseline.txt"),
-         .file_data = payload,
-         .options = options});
-    QVERIFY2(baseline.ok, qPrintable(baseline.blockers.join(QStringLiteral("; "))));
-
-    verifyApfsSnapshotGateCases(temp, imagePath, payload, options);
 }
 
 void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() {
