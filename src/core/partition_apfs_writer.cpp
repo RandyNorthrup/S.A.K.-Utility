@@ -4378,6 +4378,20 @@ bool readApfsRepairBlock(QIODevice* image,
     return true;
 }
 
+// The highest block index a commit may write: the LARGER of the container's logical block
+// count and the actual backing-device size. "Device end" means the real device - during a
+// resize-grow the commit context still carries the OLD nx_block_count (its layout math needs
+// it) while the backing image has already been extended, so grow-region writes are legitimate.
+// For every non-grow commit the two are equal, so the bound is byte-identical to the logical
+// count (it never narrows the writable range). 0 means "unbounded" (no geometry, no device).
+uint64_t apfsWritableBlockBound(QIODevice* image, const ApfsRepairGeometry& geometry) {
+    const uint64_t deviceBytes =
+        image != nullptr ? static_cast<uint64_t>(std::max<qint64>(0, image->size())) : 0;
+    const uint64_t deviceBlocks =
+        (deviceBytes != 0 && geometry.blockSize != 0) ? deviceBytes / geometry.blockSize : 0;
+    return std::max(geometry.blockCount, deviceBlocks);
+}
+
 bool writeApfsRepairBlock(QIODevice* image,
                           const ApfsRepairGeometry& geometry,
                           uint64_t blockIndex,
@@ -4388,10 +4402,11 @@ bool writeApfsRepairBlock(QIODevice* image,
     // that computes an out-of-range block, or overwrites block 0 with anything other than a valid
     // NXSB object, silently bricks the container ("superblock not found" on the next read). Reject
     // both here rather than issuing the write, naming the offending block so the caller is found.
-    if (geometry.blockCount != 0 && blockIndex >= geometry.blockCount) {
+    const uint64_t writableBlocks = apfsWritableBlockBound(image, geometry);
+    if (writableBlocks != 0 && blockIndex >= writableBlocks) {
         blockers->append(QStringLiteral("APFS write guard: block %1 is past the device end (%2)")
                              .arg(blockIndex)
-                             .arg(geometry.blockCount));
+                             .arg(writableBlocks));
         return false;
     }
     if (blockIndex == 0 && (block.size() < kApfsObjectMagicOffset + 4 ||
