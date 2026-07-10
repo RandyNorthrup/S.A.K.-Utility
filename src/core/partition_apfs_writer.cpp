@@ -8949,10 +8949,15 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
 
 // How many blocks a commit allocates: K fs-tree nodes + the five-block
 // object-map chain + an optional extent-ref tree block + the file's data blocks.
+// volMappingCount is the volume-omap mapping count that sizes the omap chain: it is
+// the fs-tree node count PLUS the retained snapshot versions on a diverge commit, so
+// it can push the omap tree multi-level while fsNodeCount alone stays single-leaf.
+// 0 means "no diverge retention" and the omap chain is sized by fsNodeCount.
 struct ApfsCommitBlockSizing {
     qsizetype fsNodeCount{0};
     int extentRefSlots{0};
     uint64_t dataBlocks{0};
+    qsizetype volMappingCount{0};  // 0 => size the omap chain by fsNodeCount
 };
 
 // The main free-queue rollback window: a freed block is reclaimed (returned to the
@@ -9176,12 +9181,16 @@ bool allocateFsCommitBlocks(const ApfsFsCommitContext& ctx,
                             QStringList* blockers) {
     *chunk1BitmapBlock = 0;
     // The omap chain past the fs nodes is V (volume omap tree) + 1 (vol hdr) + 1 (vol sb)
-    // + C (container omap tree) + 1 (ctr hdr). V grows past 1 once the fs-tree (hence the
-    // volume-omap mapping count == fsNodeCount) exceeds one omap leaf; C stays 1. For a
-    // single-node volume omap V==C==1 so chainBlocks==5, byte-identical to the prior
-    // literal + 5.
-    const ApfsOmapChainLayout omapChain =
-        omapChainLayout(0, sizing.fsNodeCount, ctx.geometry.blockSize);
+    // + C (container omap tree) + 1 (ctr hdr). V grows past 1 once the VOLUME-OMAP MAPPING
+    // COUNT exceeds one omap leaf; C stays 1. That mapping count is fsNodeCount on a plain
+    // commit, but on a diverge commit it is fsNodeCount + the retained snapshot versions, so
+    // it must be sized by volMappingCount (finalize slices the omap tail by the same count).
+    // Sizing it by fsNodeCount alone under-reserves the chain and the omap tree then overruns
+    // the extent-ref/data blocks. For a single-node volume omap V==C==1 so chainBlocks==5,
+    // byte-identical to the prior literal + 5.
+    const qsizetype omapMappings = sizing.volMappingCount != 0 ? sizing.volMappingCount
+                                                               : sizing.fsNodeCount;
+    const ApfsOmapChainLayout omapChain = omapChainLayout(0, omapMappings, ctx.geometry.blockSize);
     const int metaCount = static_cast<int>(sizing.fsNodeCount) +
                           static_cast<int>(omapChain.chainBlocks) + sizing.extentRefSlots;
     const int need = metaCount + static_cast<int>(sizing.dataBlocks);
@@ -10448,14 +10457,14 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     // as a VERSIONED tree (retaining the versions each snapshot resolves) and leaves the
     // snapshot-frozen fs-tree nodes + extent-ref deltas in place. f.diverge (computed by the
     // caller from the live snapshot state) carries the retained versions, the free-suppression
-    // flag, and the live extent-ref record set; it is inactive on a snapshot-free volume.
-    // A caller that did NOT compute a diverge plan (delete/patch/directory mutations) must fail
-    // closed on a snapshotted volume rather than free snapshot-owned blocks -- the file-insert
-    // path is diverge-aware, the others reach it via mutate-then-snapshot for now.
+    // flag, and the live extent-ref record set; it is inactive on a snapshot-free volume. Every
+    // file/directory mutation caller now computes a diverge plan, so this stays a defensive net:
+    // a future caller that reaches finalize with an inactive plan on a snapshotted volume fails
+    // closed rather than freeing snapshot-owned blocks.
     if (!f.diverge.active && liveVolumeHasSnapshot(f.ctx, blockers)) {
         blockers->append(QStringLiteral(
-            "APFS in-place mutation of a container that already has a snapshot is only supported "
-            "for file insert; perform other mutations before creating the snapshot"));
+            "APFS in-place mutation reached finalize without a diverge plan on a container that "
+            "already has a snapshot; this would free snapshot-owned blocks"));
         return false;
     }
     ApfsIpRotation rotation;
@@ -10658,7 +10667,7 @@ bool reserveInsertLayout(const ApfsFsCommitContext& ctx,
             ? static_cast<int>(extentRefTreeBlockCount(in.extentRefRecords, ctx.geometry.blockSize))
             : 0;
     if (!allocateFsCommitBlocks(ctx,
-                                {in.nodeCount, extentRefSlots, in.dataBlocks},
+                                {in.nodeCount, extentRefSlots, in.dataBlocks, in.volMappingCount},
                                 &out->newBlocks,
                                 &out->chunk1BitmapBlock,
                                 blockers)) {
@@ -14420,6 +14429,9 @@ struct ApfsDeleteLayoutInput {
     // remaining-file set (the live tree is a delta over the snapshots, not every live file). -1 =
     // the certified non-snapshot path (rebuild from `remaining`).
     qsizetype divergeRecordCount{-1};
+    // Diverge: retained snapshot omap versions this commit keeps. Added to the rebuilt node count
+    // to size the omap chain (0 on the non-snapshot path).
+    qsizetype retainedMappingCount{0};
 };
 
 bool buildDeleteLayout(const ApfsDeleteLayoutInput& in,
@@ -14446,15 +14458,19 @@ bool buildDeleteLayout(const ApfsDeleteLayoutInput& in,
         return false;
     }
     const qsizetype nodeCount = out->fsNodes.size();
+    // Diverge: the omap chain (and the extent-ref slice below) must be sized by the full mapping
+    // count -- rebuilt nodes plus retained snapshot versions -- not the node count alone, or the
+    // reservation under-sizes and the omap tree overruns the extent-ref blocks.
+    const qsizetype volMappings = nodeCount + in.retainedMappingCount;
     if (!allocateFsCommitBlocks(ctx,
-                                {nodeCount, extentRefSlots, 0},
+                                {nodeCount, extentRefSlots, 0, volMappings},
                                 &out->newBlocks,
                                 &out->chunk1BitmapBlock,
                                 blockers)) {
         return false;
     }
     const uint64_t tailBase =
-        omapChainLayout(static_cast<uint64_t>(nodeCount), nodeCount, ctx.geometry.blockSize).tail;
+        omapChainLayout(static_cast<uint64_t>(nodeCount), volMappings, ctx.geometry.blockSize).tail;
     out->extentRefBlocks = extentRefSlots != 0 ? out->newBlocks.mid(tailBase, extentRefSlots)
                                                : QVector<uint64_t>{};
     return true;
@@ -14489,11 +14505,10 @@ bool commitInPlaceFileDelete(QIODevice* image,
     if (!computeDivergeState(ctx, &diverge, blockers)) {
         return false;
     }
-    // Diverge delete (the volume already carries a snapshot): the live extent-ref tree is a delta
-    // over the snapshots' frozen KIND_NEW base, so the delete rebuilds that delta instead of the
-    // full-file tree and frees ONLY the deleted file's live-exclusive (post-snapshot) blocks. A
-    // pre-snapshot block gets a KIND_UPDATE -1 delta and stays allocated for the snapshot. A hard-
-    // link NAME delete keeps the inode + its data, so it neither reshapes extents nor frees data.
+    // Diverge delete (volume already snapshotted): the live extent-ref tree is a delta over the
+    // snapshots' frozen KIND_NEW base, so the delete rebuilds that delta and frees ONLY the file's
+    // live-exclusive (post-snapshot) blocks; a pre-snapshot block gets a KIND_UPDATE -1 delta and
+    // stays allocated. A hard-link NAME delete keeps the inode + data (no extent reshape, no free).
     QVector<uint64_t> freedDataBlocks =
         nameDelete ? QVector<uint64_t>{} : fileFreedDataBlocks(target, ctx.geometry.blockSize);
     qsizetype divergeRecordCount = -1;
@@ -14505,7 +14520,12 @@ bool commitInPlaceFileDelete(QIODevice* image,
         divergeRecordCount = plan.liveRecords.size();
     }
     ApfsDeleteLayout layout;
-    if (!buildDeleteLayout({ctx, remaining, request.directories, targetBlocks, divergeRecordCount},
+    if (!buildDeleteLayout({ctx,
+                            remaining,
+                            request.directories,
+                            targetBlocks,
+                            divergeRecordCount,
+                            diverge.retainedMappings.size()},
                            &layout,
                            blockers)) {
         return false;
@@ -14685,17 +14705,18 @@ bool commitInPlaceFileRename(QIODevice* image,
         return false;
     }
     const qsizetype nodeCount = fsNodes.size();
+    // Diverge (computed BEFORE the reservation so its retained-version count sizes the omap chain):
+    // rename changes no data extents, so on a snapshotted volume it only reshapes the fs-tree +
+    // versions the omap; the extent-ref tree and snapshot-frozen fs nodes survive.
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    const qsizetype volMappings = nodeCount + diverge.retainedMappings.size();
     QVector<uint64_t> newBlocks;
     uint64_t renameChunk1Bitmap = 0;
     if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, 0, 0}, &newBlocks, &renameChunk1Bitmap, blockers)) {
-        return false;
-    }
-    // Diverge: rename changes no data extents (the file keeps its object id and its extents),
-    // so on a snapshotted volume it only reshapes the fs-tree + versions the omap; the extent-ref
-    // tree is kept in place (extentRefNew 0) and the snapshot-frozen fs nodes survive.
-    ApfsDivergeState diverge;
-    if (!computeDivergeState(ctx, &diverge, blockers)) {
+            ctx, {nodeCount, 0, 0, volMappings}, &newBlocks, &renameChunk1Bitmap, blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,
@@ -14760,17 +14781,21 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
         return false;
     }
     const qsizetype nodeCount = fsNodes.size();
-    QVector<uint64_t> newBlocks;
-    uint64_t directoryChunk1Bitmap = 0;
-    if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
-        return false;
-    }
     // Diverge: directory create allocates no data extents, so on a snapshotted volume it only
     // reshapes the fs-tree + versions the omap; extent-ref tree kept in place, snapshot fs nodes
-    // preserved.
+    // preserved. Computed BEFORE the reservation so its retained-version count sizes the omap
+    // chain.
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t directoryChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, 0, 0, nodeCount + diverge.retainedMappings.size()},
+                                &newBlocks,
+                                &directoryChunk1Bitmap,
+                                blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,
@@ -14860,17 +14885,21 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
         return false;
     }
     const qsizetype nodeCount = fsNodes.size();
-    QVector<uint64_t> newBlocks;
-    uint64_t directoryChunk1Bitmap = 0;
-    if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, 0, 0}, &newBlocks, &directoryChunk1Bitmap, blockers)) {
-        return false;
-    }
     // Diverge: an empty directory owns no data extents, so deleting it on a snapshotted volume
     // only reshapes the fs-tree + versions the omap; nothing snapshot-owned is freed (the
-    // snapshot-frozen fs nodes are preserved, extent-ref tree kept in place).
+    // snapshot-frozen fs nodes are preserved, extent-ref tree kept in place). Computed BEFORE the
+    // reservation so its retained-version count sizes the omap chain.
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t directoryChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, 0, 0, nodeCount + diverge.retainedMappings.size()},
+                                &newBlocks,
+                                &directoryChunk1Bitmap,
+                                blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,
@@ -15047,17 +15076,21 @@ bool commitInPlaceDirectoryRename(QIODevice* image,
         return false;
     }
     const qsizetype nodeCount = fsNodes.size();
-    QVector<uint64_t> newBlocks;
-    uint64_t renameChunk1Bitmap = 0;
-    if (!allocateFsCommitBlocks(
-            ctx, {nodeCount, 0, 0}, &newBlocks, &renameChunk1Bitmap, blockers)) {
-        return false;
-    }
     // Diverge: a directory rename/move touches no data extents (every inode keeps its id and
     // extents), so on a snapshotted volume it only reshapes the fs-tree + versions the omap; the
-    // extent-ref tree is kept in place and the snapshot-frozen fs nodes survive.
+    // extent-ref tree is kept in place and the snapshot-frozen fs nodes survive. Computed BEFORE
+    // the reservation so its retained-version count sizes the omap chain (finalize slices by it).
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t renameChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, 0, 0, nodeCount + diverge.retainedMappings.size()},
+                                &newBlocks,
+                                &renameChunk1Bitmap,
+                                blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,
@@ -15149,16 +15182,21 @@ bool commitInPlaceVolumeLabel(QIODevice* image,
         return false;
     }
     const qsizetype nodeCount = fsNodes.size();
-    QVector<uint64_t> newBlocks;
-    uint64_t labelChunk1Bitmap = 0;
-    if (!allocateFsCommitBlocks(ctx, {nodeCount, 0, 0}, &newBlocks, &labelChunk1Bitmap, blockers)) {
-        return false;
-    }
     // Diverge: a label change touches no data extents and no fs-tree content, so on a
     // snapshotted volume it only versions the omap; extent-ref tree kept in place, the
-    // snapshot-frozen fs nodes are preserved.
+    // snapshot-frozen fs nodes are preserved. Computed BEFORE the reservation so its
+    // retained-version count sizes the omap chain.
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    QVector<uint64_t> newBlocks;
+    uint64_t labelChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(ctx,
+                                {nodeCount, 0, 0, nodeCount + diverge.retainedMappings.size()},
+                                &newBlocks,
+                                &labelChunk1Bitmap,
+                                blockers)) {
         return false;
     }
     return finalizeFsCommit({.ctx = ctx,

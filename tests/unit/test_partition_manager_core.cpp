@@ -1913,6 +1913,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceNestedDirectoryRoundTrip();
     void apfsWriter_inPlaceDirectoryRenamePreservesSubtree();
     void apfsWriter_renameDispatchAndCollisionGuards();
+    void apfsWriter_certOmapBoundaryDivergeEmit();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9564,6 +9565,66 @@ void PartitionManagerCoreTests::apfsWriter_renameDispatchAndCollisionGuards() {
          .new_file_name = QStringLiteral("docs"),
          .options = options});
     QVERIFY2(!ontoDir.ok, "renaming a file onto a sibling directory name must fail closed");
+}
+
+void PartitionManagerCoreTests::apfsWriter_certOmapBoundaryDivergeEmit() {
+    // Throwaway boundary cert (env-gated, not run in normal CI): build a volume whose fs-tree has
+    // enough nodes that after a snapshot the diverge commit's volume-omap mapping count (live nodes
+    // + retained snapshot versions) crosses the single-omap-leaf boundary, forcing a multi-level
+    // versioned omap. This is the case that under-reserved the omap chain before the
+    // volMappingCount fix. Emits the diverged image to SAK_CERT_OUT for apfsck/kernel cert.
+    const QString out = qEnvironmentVariable("SAK_CERT_OUT");
+    if (out.isEmpty()) {
+        QSKIP("cert-emit only: set SAK_CERT_OUT (and optional SAK_CERT_N)");
+    }
+    const int fileCount = qEnvironmentVariable("SAK_CERT_N", QStringLiteral("500")).toInt();
+    // Long names make each inode+dirent record big, so the fs-tree reaches many nodes (hence the
+    // omap crosses its single-leaf boundary) with far fewer inserts.
+    const QString namePad(200, QLatin1Char('x'));
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString a = dir.filePath(QStringLiteral("omapb-a.apfs"));
+    const QString b = dir.filePath(QStringLiteral("omapb-b.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = a,
+                 .target_container_bytes = 512ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("OMAPB"),
+                 .options = options})
+                .ok);
+    QString src = a;
+    QString dst = b;
+    for (int i = 0; i < fileCount; ++i) {
+        QFile::remove(dst);  // the commit refuses to overwrite an existing target path
+        const auto ins = PartitionApfsWriter::commitImageOnlyFileInsert(
+            {.source_image_path = src,
+             .written_image_path = dst,
+             .file_name =
+                 QStringLiteral("bf_%1_%2.dat").arg(i, 5, 10, QLatin1Char('0')).arg(namePad),
+             .options = options});
+        QVERIFY2(ins.ok,
+                 qPrintable(QStringLiteral("insert %1: %2")
+                                .arg(i)
+                                .arg(ins.blockers.join(QStringLiteral("; ")))));
+        std::swap(src, dst);
+    }
+    const QString snapped = dir.filePath(QStringLiteral("omapb-snap.apfs"));
+    QVERIFY2(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                 {.source_image_path = src,
+                  .written_image_path = snapped,
+                  .snapshot_name = QStringLiteral("boundary_snap"),
+                  .create_time_ns = 1,
+                  .options = options})
+                 .ok,
+             "snapshot create");
+    const auto diverge = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = snapped,
+         .written_image_path = out,
+         .file_name = QStringLiteral("diverge_after_snapshot.dat"),
+         .options = options});
+    QVERIFY2(diverge.ok, qPrintable(diverge.blockers.join(QStringLiteral("; "))));
 }
 
 namespace {
