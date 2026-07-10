@@ -510,3 +510,6 @@ scripts/sign-config.ps1
 
 # Local Qt 6.10.3 verification build tree
 build-qt610/
+
+# Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
+.claude/

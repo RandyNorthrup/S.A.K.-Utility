@@ -14555,6 +14555,21 @@ bool renameDestinationCollision(const ApfsRootFilePayload& file,
     return !isSource && file.parentDirectoryId == destParent && file.fileName == newName;
 }
 
+// A file rename/move also fails if the destination parent already holds a DIRECTORY named
+// newName. One name per parent is an APFS invariant, and a file-vs-directory duplicate dirent is
+// as much an fsck error as file-vs-file; buildRenameFileList sees only the file list, so this is
+// checked against the directory list. Mirror of directoryDestinationNameTaken's file half.
+bool renameDirectoryNameCollision(const QVector<ApfsRootDirectoryPayload>& directories,
+                                  uint64_t destParent,
+                                  const QString& newName) {
+    for (const auto& directory : directories) {
+        if (directory.parentDirectoryId == destParent && directory.directoryName == newName) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool buildRenameFileList(const ApfsRenameListInput& in,
                          QVector<ApfsRootFilePayload>* files,
                          QStringList* blockers) {
@@ -14623,6 +14638,15 @@ bool commitInPlaceFileRename(QIODevice* image,
                              QStringList* blockers) {
     ApfsFsCommitContext ctx;
     if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    const uint64_t destParent = request.destinationParentDirectoryId != 0
+                                    ? request.destinationParentDirectoryId
+                                    : request.parentDirectoryId;
+    if (renameDirectoryNameCollision(request.directories, destParent, request.newName)) {
+        blockers->append(
+            QStringLiteral("APFS file-rename-commit: a directory named '%1' already exists")
+                .arg(request.newName));
         return false;
     }
     QVector<ApfsRootFilePayload> files;
@@ -14885,6 +14909,17 @@ uint64_t parentOfDirectory(const QVector<ApfsRootDirectoryPayload>& directories,
     return 0;
 }
 
+// True if `id` names an existing directory in the collected tree. The container root is always
+// a valid parent even though it has no directory record, so callers test it separately.
+bool directoryRecordExists(const QVector<ApfsRootDirectoryPayload>& directories, uint64_t id) {
+    for (const auto& directory : directories) {
+        if (directory.directoryId == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The destination parent already holds an entry - a file or a subdirectory - named newName,
 // other than the directory being moved itself. One name per parent is an APFS invariant; a
 // duplicate dirent is an fsck error, so the rename fails closed.
@@ -14938,6 +14973,14 @@ bool applyDirectoryRename(const ApfsDirectoryRenameRequest& in,
         blockers->append(
             QStringLiteral("APFS directory-rename-commit: directory '%1' was not found")
                 .arg(in.oldName));
+        return false;
+    }
+    // The destination parent must be the container root or a real directory: writing a bogus
+    // nonzero parent id would orphan the subtree. Callers resolve it first, but the helper stays
+    // safe on its own so a future caller cannot slip an unresolved id through.
+    if (destParent != kApfsRootDirectoryId && !directoryRecordExists(*directories, destParent)) {
+        blockers->append(
+            QStringLiteral("APFS directory-rename-commit: destination directory does not exist"));
         return false;
     }
     if (directoryDestinationNameTaken(in, destParent, movedId)) {
@@ -19814,7 +19857,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
-    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    const uint64_t parentId = resolveDirectoryIdByPath(directories, cleanDirectoryName);
     if (parentId == 0) {
         result.blockers.append(
             QStringLiteral("APFS directory-child-rename-commit: directory '%1' was not found")
@@ -19831,10 +19874,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(&image,
-                                {allFiles, oldName, newName, directories, parentId},
-                                &commit,
-                                &commitBlockers)) {
+    // Dispatch file vs directory so renaming a subdirectory child (not just a file child)
+    // routes to the directory rename commit; same parent, so no destination parent.
+    if (commitInPlaceRenameOrMove(&image,
+                                  {allFiles, directories, oldName, newName, parentId},
+                                  &commit,
+                                  &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -19873,8 +19918,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     if (!collectFullFsTree(result.source_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
-    const uint64_t sourceParent = resolveParentId(directories, sourceDir);
-    const uint64_t destParent = resolveParentId(directories, destDir);
+    // Resolve source/dest parents by full path so an image-only move works at arbitrary depth
+    // ("docs/sub" walks docs -> sub), matching the raw move path; a single root-level name or an
+    // empty component (the container root) resolves identically to the prior by-name lookup.
+    const uint64_t sourceParent = resolveDirectoryIdByPath(directories, sourceDir);
+    const uint64_t destParent = resolveDirectoryIdByPath(directories, destDir);
     if (sourceParent == 0 || destParent == 0) {
         result.blockers.append(QStringLiteral(
             "APFS file-move-commit: a source or destination directory was not found"));
@@ -20863,7 +20911,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     if (!collectFullFsTree(result.written_image_path, &allFiles, &directories, &result.blockers)) {
         return result;
     }
-    const uint64_t parentId = resolveDirectoryId(directories, cleanDirectoryName);
+    const uint64_t parentId = resolveDirectoryIdByPath(directories, cleanDirectoryName);
     if (parentId == 0) {
         result.blockers.append(
             QStringLiteral("APFS raw directory-child-rename-commit: directory '%1' was not found")
@@ -20883,10 +20931,12 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(target.get(),
-                                {allFiles, oldName, newName, directories, parentId},
-                                &commit,
-                                &commitBlockers)) {
+    // Dispatch file vs directory so a subdirectory child renames via the directory commit, not
+    // just a file child; same parent, so no destination parent.
+    if (commitInPlaceRenameOrMove(target.get(),
+                                  {allFiles, directories, oldName, newName, parentId},
+                                  &commit,
+                                  &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

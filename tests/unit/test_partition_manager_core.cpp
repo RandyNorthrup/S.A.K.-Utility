@@ -1912,6 +1912,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceNestedDirectoryRoundTrip();
     void apfsWriter_inPlaceDirectoryRenamePreservesSubtree();
+    void apfsWriter_renameDispatchAndCollisionGuards();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9524,6 +9525,45 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryRenamePreservesSubtre
                                              QString(),
                                              QStringLiteral("taken"));
     QVERIFY(!collision.ok);
+}
+
+void PartitionManagerCoreTests::apfsWriter_renameDispatchAndCollisionGuards() {
+    // Two seams a second-pass review found: (1) a subdirectory child (not just a file child) must
+    // rename via the directory commit, so a nested /docs/sub renames instead of failing closed;
+    // (2) renaming a file onto a name already held by a sibling DIRECTORY must fail closed, or the
+    // rebuilt tree gains a duplicate dirent under one parent (an fsck error).
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+
+    QString built;  // root.txt, second.txt, /docs/{a.txt, sub}
+    buildApfsNestedTreeContainer(dir, options, &built);
+
+    // Nested subdirectory child rename: /docs/sub -> /docs/subx (was file-only, failed closed).
+    const QString subRenamed = dir.filePath(QStringLiteral("a2rd-sub.apfs"));
+    const auto subRename = PartitionApfsWriter::commitImageOnlyDirectoryChildRename(
+        {.source_image_path = built,
+         .written_image_path = subRenamed,
+         .directory_name = QStringLiteral("docs"),
+         .file_name = QStringLiteral("sub"),
+         .new_file_name = QStringLiteral("subx"),
+         .options = options});
+    QVERIFY2(subRename.ok, qPrintable(subRename.blockers.join(QStringLiteral("; "))));
+    const QStringList docsNames = apfsListEntryNames(subRenamed, QStringLiteral("/docs"));
+    QVERIFY2(docsNames.contains(QStringLiteral("subx")), qPrintable(docsNames.join(",")));
+    QVERIFY2(!docsNames.contains(QStringLiteral("sub")), qPrintable(docsNames.join(",")));
+    QVERIFY2(docsNames.contains(QStringLiteral("a.txt")), qPrintable(docsNames.join(",")));
+
+    // File-onto-directory collision: rename root.txt -> "docs" (a sibling directory) fails closed.
+    const auto ontoDir = PartitionApfsWriter::commitImageOnlyDirectoryChildRename(
+        {.source_image_path = built,
+         .written_image_path = dir.filePath(QStringLiteral("a2rd-onto.apfs")),
+         .directory_name = QString(),
+         .file_name = QStringLiteral("root.txt"),
+         .new_file_name = QStringLiteral("docs"),
+         .options = options});
+    QVERIFY2(!ontoDir.ok, "renaming a file onto a sibling directory name must fail closed");
 }
 
 namespace {
