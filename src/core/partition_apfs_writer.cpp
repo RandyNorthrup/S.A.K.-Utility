@@ -14854,6 +14854,211 @@ bool commitInPlaceDirectoryDelete(QIODevice* image,
                             blockers);
 }
 
+struct ApfsDirectoryRenameRequest {
+    QVector<ApfsRootFilePayload> existingFiles;             // every file, preserved verbatim
+    QVector<ApfsRootDirectoryPayload> existingDirectories;  // every directory; target reparented
+    QString oldName;
+    QString newName;
+    uint64_t sourceParentId{kApfsRootDirectoryId};
+    uint64_t destinationParentId{0};  // 0 = same parent (rename, not move)
+};
+
+// Object id of the directory named `name` directly under `parentId` (0 if there is none).
+uint64_t directoryIdUnder(const QVector<ApfsRootDirectoryPayload>& directories,
+                          uint64_t parentId,
+                          const QString& name) {
+    for (const auto& directory : directories) {
+        if (directory.parentDirectoryId == parentId && directory.directoryName == name) {
+            return directory.directoryId;
+        }
+    }
+    return 0;
+}
+
+// Parent object id of the directory whose id is `id` (0 if absent).
+uint64_t parentOfDirectory(const QVector<ApfsRootDirectoryPayload>& directories, uint64_t id) {
+    for (const auto& directory : directories) {
+        if (directory.directoryId == id) {
+            return directory.parentDirectoryId;
+        }
+    }
+    return 0;
+}
+
+// The destination parent already holds an entry - a file or a subdirectory - named newName,
+// other than the directory being moved itself. One name per parent is an APFS invariant; a
+// duplicate dirent is an fsck error, so the rename fails closed.
+bool directoryDestinationNameTaken(const ApfsDirectoryRenameRequest& in,
+                                   uint64_t destParent,
+                                   uint64_t movedDirectoryId) {
+    for (const auto& file : in.existingFiles) {
+        if (file.parentDirectoryId == destParent && file.fileName == in.newName) {
+            return true;
+        }
+    }
+    for (const auto& directory : in.existingDirectories) {
+        if (directory.directoryId != movedDirectoryId &&
+            directory.parentDirectoryId == destParent && directory.directoryName == in.newName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// destParent is the moved directory itself or lives somewhere beneath it. Moving a directory
+// into its own subtree would sever that subtree into an unreachable cycle, so it is rejected.
+// Walks destParent up its parent chain to the container root; bounded by the directory count.
+bool directoryDestinationInsideSubtree(const QVector<ApfsRootDirectoryPayload>& directories,
+                                       uint64_t destParent,
+                                       uint64_t movedDirectoryId) {
+    uint64_t walk = destParent;
+    for (qsizetype guard = 0; guard <= directories.size(); ++guard) {
+        if (walk == movedDirectoryId) {
+            return true;
+        }
+        if (walk == kApfsRootDirectoryId || walk == 0) {
+            return false;
+        }
+        walk = parentOfDirectory(directories, walk);
+    }
+    return false;
+}
+
+// Rename and/or reparent the target directory in `directories` in place. Its children keep
+// parentDirectoryId == the directory's own id, so the whole subtree follows with no per-child
+// edit. Fails closed when the directory is absent, the destination name is taken, or the move
+// would create a cycle.
+bool applyDirectoryRename(const ApfsDirectoryRenameRequest& in,
+                          QVector<ApfsRootDirectoryPayload>* directories,
+                          QStringList* blockers) {
+    const uint64_t destParent = in.destinationParentId != 0 ? in.destinationParentId
+                                                            : in.sourceParentId;
+    const uint64_t movedId = directoryIdUnder(*directories, in.sourceParentId, in.oldName);
+    if (movedId == 0) {
+        blockers->append(
+            QStringLiteral("APFS directory-rename-commit: directory '%1' was not found")
+                .arg(in.oldName));
+        return false;
+    }
+    if (directoryDestinationNameTaken(in, destParent, movedId)) {
+        blockers->append(
+            QStringLiteral("APFS directory-rename-commit: an entry named '%1' already exists")
+                .arg(in.newName));
+        return false;
+    }
+    if (directoryDestinationInsideSubtree(*directories, destParent, movedId)) {
+        blockers->append(
+            QStringLiteral("APFS directory-rename-commit: cannot move a directory "
+                           "into itself or its own subtree"));
+        return false;
+    }
+    for (auto& directory : *directories) {
+        if (directory.directoryId == movedId) {
+            directory.directoryName = in.newName;
+            directory.parentDirectoryId = destParent;
+            break;
+        }
+    }
+    return true;
+}
+
+// Rename or move one directory with a true in-place copy-on-write commit. Only the moved
+// directory's inode parent_id + its dirent (parent, name) change and the two affected parents'
+// valences are recomputed; every child inode/extent is preserved because children reference the
+// directory by object id, not by path. No data extents, object ids, or file/dir counts change.
+// Reuses the certified finalizeFsCommit engine, so it is crash-safe and diverge-aware.
+bool commitInPlaceDirectoryRename(QIODevice* image,
+                                  const ApfsDirectoryRenameRequest& request,
+                                  ApfsInPlaceCheckpointResult* result,
+                                  QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootDirectoryPayload> directories = request.existingDirectories;
+    if (!applyDirectoryRename(request, &directories, blockers)) {
+        return false;
+    }
+    QVector<ApfsRootFilePayload> files;
+    if (!recoverPreservedFiles(
+            {ctx.image, ctx.geometry, ctx.chain}, request.existingFiles, &files, blockers)) {
+        return false;
+    }
+    QVector<ApfsFsTreeNode> fsNodes;
+    if (!buildFsTreeNodes(
+            {ctx.geometry.blockSize, files, directories, ctx.firstLeafOid, ctx.chain.rootTreeOid},
+            &fsNodes,
+            blockers)) {
+        return false;
+    }
+    const qsizetype nodeCount = fsNodes.size();
+    QVector<uint64_t> newBlocks;
+    uint64_t renameChunk1Bitmap = 0;
+    if (!allocateFsCommitBlocks(
+            ctx, {nodeCount, 0, 0}, &newBlocks, &renameChunk1Bitmap, blockers)) {
+        return false;
+    }
+    // Diverge: a directory rename/move touches no data extents (every inode keeps its id and
+    // extents), so on a snapshotted volume it only reshapes the fs-tree + versions the omap; the
+    // extent-ref tree is kept in place and the snapshot-frozen fs nodes survive.
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = fsNodes,
+                             .newBlocks = newBlocks,
+                             .files = files,
+                             .extentRefNew = 0,
+                             .freedDataBlocks = {},
+                             .dataBlocksNew = 0,
+                             .fileCountDelta = 0,
+                             .directoryCountDelta = 0,
+                             .nextObjIdDelta = 0,
+                             .chunk1BitmapBlock = renameChunk1Bitmap,
+                             .diverge = diverge},
+                            result,
+                            blockers);
+}
+
+struct ApfsRenameOrMoveInput {
+    QVector<ApfsRootFilePayload> allFiles;
+    QVector<ApfsRootDirectoryPayload> directories;
+    QString oldName;
+    QString newName;
+    uint64_t sourceParentId{kApfsRootDirectoryId};
+    uint64_t destinationParentId{0};  // 0 = same parent (rename, not move)
+};
+
+// One entry for the bridge's rename/move: dispatch to the directory or file in-place commit by
+// whether oldName under sourceParent names a directory. Exactly one COW checkpoint either way.
+bool commitInPlaceRenameOrMove(QIODevice* image,
+                               const ApfsRenameOrMoveInput& in,
+                               ApfsInPlaceCheckpointResult* result,
+                               QStringList* blockers) {
+    if (directoryIdUnder(in.directories, in.sourceParentId, in.oldName) != 0) {
+        return commitInPlaceDirectoryRename(image,
+                                            {in.allFiles,
+                                             in.directories,
+                                             in.oldName,
+                                             in.newName,
+                                             in.sourceParentId,
+                                             in.destinationParentId},
+                                            result,
+                                            blockers);
+    }
+    return commitInPlaceFileRename(image,
+                                   {in.allFiles,
+                                    in.oldName,
+                                    in.newName,
+                                    in.directories,
+                                    in.sourceParentId,
+                                    in.destinationParentId},
+                                   result,
+                                   blockers);
+}
+
 struct ApfsVolumeLabelRequest {
     QVector<ApfsRootFilePayload> existingFiles;  // every file (root + children), preserved
     QVector<ApfsRootDirectoryPayload> existingDirectories;  // every directory, preserved
@@ -19685,10 +19890,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(&image,
-                                {allFiles, oldName, newName, directories, sourceParent, destParent},
-                                &commit,
-                                &commitBlockers)) {
+    if (commitInPlaceRenameOrMove(
+            &image,
+            {allFiles, directories, oldName, newName, sourceParent, destParent},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -20149,8 +20355,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(
-            &image, {allFiles, oldName, newName, directories}, &commit, &commitBlockers)) {
+    if (commitInPlaceRenameOrMove(
+            &image,
+            {allFiles, directories, oldName, newName, kApfsRootDirectoryId, 0},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -20405,10 +20614,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileRenam
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(target.get(),
-                                {allFiles, oldName, newName, directories, targetParentId},
-                                &commit,
-                                &commitBlockers)) {
+    if (commitInPlaceRenameOrMove(target.get(),
+                                  {allFiles, directories, oldName, newName, targetParentId, 0},
+                                  &commit,
+                                  &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -20731,10 +20940,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileMove(
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceFileRename(target.get(),
-                                {allFiles, oldName, newName, directories, sourceParent, destParent},
-                                &commit,
-                                &commitBlockers)) {
+    if (commitInPlaceRenameOrMove(
+            target.get(),
+            {allFiles, directories, oldName, newName, sourceParent, destParent},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

@@ -1911,6 +1911,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFileWriteCreatesThenReplaces();
     void apfsWriter_inPlaceDirectoryCreatePreservesTree();
     void apfsWriter_inPlaceNestedDirectoryRoundTrip();
+    void apfsWriter_inPlaceDirectoryRenamePreservesSubtree();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9423,6 +9424,106 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceNestedDirectoryRoundTrip() {
          .options = options});
     QVERIFY2(!deleteNonEmpty.ok,
              "deleting a directory that contains only a subdirectory must fail closed");
+}
+
+namespace {
+
+// Names of the entries the reader lists directly under `path`.
+QStringList apfsListEntryNames(const QString& image, const QString& path) {
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(image, path, 40);
+    QStringList names;
+    for (const auto& entry : listing.entries) {
+        names << entry.name;
+    }
+    return names;
+}
+
+// Rename or move a directory (empty destDir = container root) through the in-place COW commit.
+PartitionApfsImageCheckpointCommitResult apfsMoveDirectory(const QString& src,
+                                                           const QString& dst,
+                                                           const QString& name,
+                                                           const QString& destDir,
+                                                           const QString& newName) {
+    return PartitionApfsWriter::commitImageOnlyFileMove(
+        {.source_image_path = src,
+         .written_image_path = dst,
+         .source_directory_name = QString(),
+         .file_name = name,
+         .destination_directory_name = destDir,
+         .new_file_name = newName,
+         .options = certifiedApfsImageOnlyOptions()});
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryRenamePreservesSubtree() {
+    // Rename/move a directory through the in-place COW commit: the moved directory keeps its
+    // object id, so its children (a file + a nested subdirectory) follow with no per-child edit.
+    // Host reader round-trip; macOS-kernel mount reads /archive/draft, fsck_apfs clean. Moving a
+    // directory into its own subtree and colliding with an existing name fail closed.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+
+    QString built;  // root.txt, second.txt, /docs/{a.txt, sub}
+    buildApfsNestedTreeContainer(dir, options, &built);
+
+    // Rename /docs -> /archive at root; the whole subtree follows.
+    const QString renamed = dir.filePath(QStringLiteral("a2dr-renamed.apfs"));
+    const auto rename = apfsMoveDirectory(
+        built, renamed, QStringLiteral("docs"), QString(), QStringLiteral("archive"));
+    QVERIFY2(rename.ok, qPrintable(rename.blockers.join(QStringLiteral("; "))));
+    const QStringList rootNames = apfsListEntryNames(renamed, QStringLiteral("/"));
+    QVERIFY2(rootNames.contains(QStringLiteral("archive")), qPrintable(rootNames.join(",")));
+    QVERIFY2(!rootNames.contains(QStringLiteral("docs")), qPrintable(rootNames.join(",")));
+    QVERIFY2(rootNames.contains(QStringLiteral("root.txt")), qPrintable(rootNames.join(",")));
+    QVERIFY2(rootNames.contains(QStringLiteral("second.txt")), qPrintable(rootNames.join(",")));
+    const QStringList archiveNames = apfsListEntryNames(renamed, QStringLiteral("/archive"));
+    QVERIFY2(archiveNames.contains(QStringLiteral("a.txt")), qPrintable(archiveNames.join(",")));
+    QVERIFY2(archiveNames.contains(QStringLiteral("sub")), qPrintable(archiveNames.join(",")));
+
+    // Move /archive into a new /box: /box/archive keeps the subtree.
+    const QString withBox = dir.filePath(QStringLiteral("a2dr-box.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = renamed,
+                 .written_image_path = withBox,
+                 .directory_name = QStringLiteral("box"),
+                 .options = options})
+                .ok);
+    const QString moved = dir.filePath(QStringLiteral("a2dr-moved.apfs"));
+    const auto move = apfsMoveDirectory(withBox,
+                                        moved,
+                                        QStringLiteral("archive"),
+                                        QStringLiteral("box"),
+                                        QStringLiteral("archive"));
+    QVERIFY2(move.ok, qPrintable(move.blockers.join(QStringLiteral("; "))));
+    const QStringList boxArchive = apfsListEntryNames(moved, QStringLiteral("/box/archive"));
+    QVERIFY2(boxArchive.contains(QStringLiteral("a.txt")), qPrintable(boxArchive.join(",")));
+    QVERIFY2(boxArchive.contains(QStringLiteral("sub")), qPrintable(boxArchive.join(",")));
+
+    // Self-into-subtree fails closed (moving box into box would sever its subtree).
+    const auto cycle = apfsMoveDirectory(moved,
+                                         dir.filePath(QStringLiteral("a2dr-cycle.apfs")),
+                                         QStringLiteral("box"),
+                                         QStringLiteral("box"),
+                                         QStringLiteral("box"));
+    QVERIFY(!cycle.ok);
+
+    // Collision fails closed: rename /box onto an existing sibling directory name.
+    const QString withTaken = dir.filePath(QStringLiteral("a2dr-taken.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = moved,
+                 .written_image_path = withTaken,
+                 .directory_name = QStringLiteral("taken"),
+                 .options = options})
+                .ok);
+    const auto collision = apfsMoveDirectory(withTaken,
+                                             dir.filePath(QStringLiteral("a2dr-collision.apfs")),
+                                             QStringLiteral("box"),
+                                             QString(),
+                                             QStringLiteral("taken"));
+    QVERIFY(!collision.ok);
 }
 
 namespace {
