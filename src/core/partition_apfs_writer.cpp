@@ -4488,9 +4488,13 @@ QByteArray newestCheckpointSuperblock(QIODevice* image,
     uint64_t bestXid = le64(block0, kApfsObjectXidOffset);
     for (uint32_t index = 0; index < descBlocks; ++index) {
         QByteArray block(geometry.blockSize, '\0');
-        QStringList ignore;
-        if (!readApfsRepairBlock(image, geometry, descBase + index, &block, &ignore)) {
-            continue;
+        if (!readApfsRepairBlock(image, geometry, descBase + index, &block, blockers)) {
+            // A descriptor-ring slot that will not read means we cannot prove we located the
+            // newest superblock. Record the failure (readApfsRepairBlock appended a blocker) and
+            // fall back to block 0 so the commit gate fails closed rather than silently COWing
+            // from a stale checkpoint. A slot that reads but is not an NXSB is normal (it holds a
+            // checkpoint-map object) and is skipped below without error.
+            return block0;
         }
         if (le32(block, kApfsObjectMagicOffset) != kApfsMagicNxsb) {
             continue;
@@ -4501,7 +4505,6 @@ QByteArray newestCheckpointSuperblock(QIODevice* image,
             bestXid = xid;
         }
     }
-    Q_UNUSED(blockers);
     return best;
 }
 
@@ -5479,6 +5482,15 @@ void adoptLiveFreeQueueOids(ApfsCheckpointAdvanceRequest* request, const QByteAr
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
+    // Fail closed before the atomic publish if any earlier commit step recorded an error. Several
+    // live-state readers (versioned omap, extent-ref collection, main free-queue, chunk bitmaps,
+    // newest-superblock) append a blocker on I/O failure yet return an in-band empty/zero result;
+    // this gate stops publishing a checkpoint built from that truncated state. Crash-safe: the COW
+    // chain + rotated bitmaps live in NEW blocks and the previous checkpoint still stands. Empty
+    // (transparent) on the certified success path.
+    if (!blockers->isEmpty()) {
+        return false;
+    }
     const ApfsRepairGeometry geometry = request.geometry;
     const ApfsLiveCheckpoint live = request.live;
     QByteArray checkpointMap(geometry.blockSize, '\0');
