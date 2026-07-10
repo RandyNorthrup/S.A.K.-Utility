@@ -18969,7 +18969,8 @@ PartitionApfsImageVolumeLabelResult PartitionApfsWriter::changeImageOnlyVolumeLa
     result.written_image_path = request.written_image_path.trimmed();
     result.new_volume_name = normalizedApfsVolumeName(request.volume_name);
     result.warnings.append(QStringLiteral(
-        "Generated APFS volume-label change is limited to S.A.K.-generated single-volume images"));
+        "APFS volume-label change rewrites only the volume superblock name through the certified "
+        "in-place COW engine; the full file-system tree is preserved"));
 
     const auto source = validateImageOnlySource(result.source_image_path,
                                                 QLatin1StringView("volume-label"),
@@ -19015,8 +19016,9 @@ PartitionApfsRawVolumeLabelResult PartitionApfsWriter::changeRawVolumeLabel(
     result.target_path = request.target_path.trimmed();
     result.new_volume_name = normalizedApfsVolumeName(request.volume_name);
     result.warnings.append(
-        QStringLiteral("Raw APFS volume-label change is limited to S.A.K. generated APFS layouts; "
-                       "arbitrary Apple APFS metadata mutation remains blocked by layout guards"));
+        QStringLiteral("Raw APFS volume-label change rewrites only the volume superblock name "
+                       "through the certified in-place COW engine; the full file-system tree is "
+                       "preserved (generated and real Apple APFS containers)"));
 
     appendRawTargetMutationBlockers({.targetPath = result.target_path,
                                      .targetBytes = request.target_container_bytes,

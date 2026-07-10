@@ -830,18 +830,15 @@ NonNativeFilesystemCheckState nonNativeFilesystemCheckState(
     return resolveNonNativeCheckToolState(state, capability);
 }
 
-ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<PartitionTarget>& target,
-                                                    const PartitionInfoEx* partition) {
+// Common APFS mutation gate: the selection is an APFS volume, is not a protected
+// (system/boot/EFI/MSR/recovery/read-only) partition, and exposes a raw target path. Fills
+// target_path/partition_size_bytes and leaves state.enabled true on success. It does NOT
+// require a S.A.K.-generated layout - the caller layers that on where it applies.
+ApfsRootFileMutationState apfsMutationTargetState(const PartitionInfoEx* partition) {
     ApfsRootFileMutationState state;
-    Q_UNUSED(target);
     const auto* volume = selectedFilesystemVolume(partition);
     if (!volume || !isApfsFilesystem(volume->file_system)) {
         state.reason = QObject::tr("Select an APFS partition.");
-        return state;
-    }
-    if (!hasGeneratedApfsRepairEvidence(volume->file_system_details)) {
-        state.reason = QObject::tr(
-            "APFS container actions are available only for APFS containers created by this tool.");
         return state;
     }
     if (!partitionAllowsNonNativeRepair(*partition)) {
@@ -856,21 +853,51 @@ ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<Partitio
         return state;
     }
     state.enabled = true;
-    state.reason = QObject::tr("Queue an APFS container action.");
     state.partition_size_bytes = partition ? partition->size_bytes : 0;
     return state;
 }
 
-// "Change Label" is one verb for every file system: Windows-native volumes rename through
-// the Windows label path, and a generated APFS container renames through the certified COW
-// volume-label commit. The action is offered when either path is available.
-PartitionActionAvailability changeLabelAvailability(const std::optional<PartitionTarget>& target,
+// Snapshot/resize stay limited to S.A.K.-generated containers (their layout invariants are
+// what those commits are certified against).
+ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<PartitionTarget>& target,
                                                     const PartitionInfoEx* partition) {
+    Q_UNUSED(target);
+    ApfsRootFileMutationState state = apfsMutationTargetState(partition);
+    if (!state.enabled) {
+        return state;
+    }
+    const auto* volume = selectedFilesystemVolume(partition);
+    if (!volume || !hasGeneratedApfsRepairEvidence(volume->file_system_details)) {
+        state.enabled = false;
+        state.target_path.clear();
+        state.reason = QObject::tr(
+            "APFS container actions are available only for APFS containers created by this tool.");
+        return state;
+    }
+    state.reason = QObject::tr("Queue an APFS container action.");
+    return state;
+}
+
+// Volume rename works on any writable APFS volume - S.A.K.-generated or a real Apple
+// container - because the label commit rewrites only the volume superblock name through the
+// certified in-place COW engine (the full file-system tree is preserved; host apfsck clean).
+ApfsRootFileMutationState apfsVolumeLabelMutationState(const PartitionInfoEx* partition) {
+    ApfsRootFileMutationState state = apfsMutationTargetState(partition);
+    if (state.enabled) {
+        state.reason = QObject::tr("Rename this APFS volume.");
+    }
+    return state;
+}
+
+// "Change Label" is one verb for every file system: Windows-native volumes rename through
+// the Windows label path, and any writable APFS volume (generated or a real Apple container)
+// renames through the certified COW volume-label commit. Offered when either path applies.
+PartitionActionAvailability changeLabelAvailability(const PartitionInfoEx* partition) {
     const auto windowsAvailability = partitionActionAvailability(partition, windowsNativePolicy());
     if (windowsAvailability.enabled) {
         return windowsAvailability;
     }
-    const auto apfs = apfsRootFileMutationState(target, partition);
+    const auto apfs = apfsVolumeLabelMutationState(partition);
     if (apfs.enabled) {
         return {true, apfs.reason};
     }
@@ -1005,7 +1032,7 @@ void updateChangeLabelButton(QAbstractButton* button,
                              const std::optional<PartitionTarget>& target,
                              const PartitionInfoEx* partition) {
     const bool targetMatch = target && buttonAllowsTarget(button, target);
-    const auto availability = changeLabelAvailability(target, partition);
+    const auto availability = changeLabelAvailability(partition);
     button->setEnabled(targetMatch && availability.enabled && !operationRunning);
     const QString defaultTooltip = button->property(kActionDefaultTooltipProperty).toString();
     const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
@@ -9403,7 +9430,7 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
     addContextMenuAction(menu, this, {tr("Change Drive Letter"), kIconProperties}, [this]() {
         onSetDriveLetter();
     });
-    const auto changeLabel = changeLabelAvailability(selectedTarget(), partition);
+    const auto changeLabel = changeLabelAvailability(partition);
     addContextMenuAction(
         menu,
         this,
@@ -9667,9 +9694,8 @@ void PartitionManagerPanel::onSetDriveLetter() {
 void PartitionManagerPanel::onSetPartitionLabel() {
     const auto* partition = selectedPartition();
     // APFS volumes carry no Windows drive letter and rename through the certified COW
-    // volume-label commit, so route a generated APFS container before the Windows path.
-    const auto apfsLabel = apfsRootFileMutationState(selectedTarget(), partition);
-    if (apfsLabel.enabled) {
+    // volume-label commit, so route any writable APFS volume before the Windows path.
+    if (apfsVolumeLabelMutationState(partition).enabled) {
         onChangeApfsVolumeLabel();
         return;
     }
@@ -9700,7 +9726,7 @@ void PartitionManagerPanel::onSetPartitionLabel() {
 
 void PartitionManagerPanel::onChangeApfsVolumeLabel() {
     const auto* partition = selectedPartition();
-    const auto state = apfsRootFileMutationState(selectedTarget(), partition);
+    const auto state = apfsVolumeLabelMutationState(partition);
     if (!state.enabled) {
         showWarningLogged(this, tr("Change Label"), state.reason);
         return;

@@ -1982,16 +1982,30 @@ void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts
     table->selectRow(1);
     QApplication::processEvents();
 
+    // Snapshot/resize stay limited to generated containers, so APFS Container is disabled.
     auto* button = findToolButtonByName(&panel, QStringLiteral("APFS Container"));
     QVERIFY2(button != nullptr, "APFS Container action should exist");
     QVERIFY(!button->isEnabled());
     QVERIFY(button->toolTip().contains(QStringLiteral("created by this tool")));
 
-    // A non-generated APFS volume has no drive letter and fails the generated gate, so the
-    // unified Change Label action stays disabled for it.
+    // Volume rename is COW-certified for real Apple containers, so the unified Change Label
+    // action enables for a non-generated APFS volume and queues the label change.
     auto* changeLabel = findToolButtonByName(&panel, QStringLiteral("Change Label"));
     QVERIFY2(changeLabel != nullptr, "Change Label action should exist");
-    QVERIFY(!changeLabel->isEnabled());
+    QVERIFY2(changeLabel->isEnabled(), "Change Label should enable for a foreign APFS volume");
+    QVERIFY(changeLabel->toolTip().contains(QStringLiteral("Rename this APFS volume")));
+
+    bool handled = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Change Label input dialog should open");
+        dialog->setTextValue(QStringLiteral("ForeignRenamed"));
+        handled = true;
+        dialog->accept();
+    });
+    changeLabel->click();
+    QVERIFY(handled);
+    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Change Volume Label"));
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
