@@ -857,24 +857,17 @@ ApfsRootFileMutationState apfsMutationTargetState(const PartitionInfoEx* partiti
     return state;
 }
 
-// Snapshot/resize stay limited to S.A.K.-generated containers (their layout invariants are
-// what those commits are certified against).
+// Snapshot create/delete/revert and container resize (grow/shrink) run through the certified
+// in-place COW engine on generated AND real Apple containers - each is host apfsck clean and
+// macOS-kernel certified (mount + listSnapshots + fsck on newfs_apfs containers) - so the APFS
+// Container action uses the common gate: any writable APFS volume.
 ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<PartitionTarget>& target,
                                                     const PartitionInfoEx* partition) {
     Q_UNUSED(target);
     ApfsRootFileMutationState state = apfsMutationTargetState(partition);
-    if (!state.enabled) {
-        return state;
+    if (state.enabled) {
+        state.reason = QObject::tr("Queue an APFS container action.");
     }
-    const auto* volume = selectedFilesystemVolume(partition);
-    if (!volume || !hasGeneratedApfsRepairEvidence(volume->file_system_details)) {
-        state.enabled = false;
-        state.target_path.clear();
-        state.reason = QObject::tr(
-            "APFS container actions are available only for APFS containers created by this tool.");
-        return state;
-    }
-    state.reason = QObject::tr("Queue an APFS container action.");
     return state;
 }
 

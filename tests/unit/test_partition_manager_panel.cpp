@@ -72,7 +72,7 @@ private Q_SLOTS:
     void propertiesDialogShowsRawFilesystemMetadata();
     void propertiesAndInspectShowRawFilesystemSanityNotes();
     void extFilesystemWriteActionsQueueWithConfirmation() const;
-    void apfsRootFileMutationActionGatesGeneratedLayouts();
+    void apfsRootFileMutationActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
@@ -1965,7 +1965,7 @@ void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation(
     queueExtResizeAndVerify(false);
 }
 
-void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts() {
+void PartitionManagerPanelTests::apfsRootFileMutationActionAllowsWritableApfsVolumes() {
     queueApfsRootFileMutationAndVerify();
     queueApfsVolumeLabelChangeAndVerify();
 
@@ -1982,14 +1982,14 @@ void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts
     table->selectRow(1);
     QApplication::processEvents();
 
-    // Snapshot/resize stay limited to generated containers, so APFS Container is disabled.
+    // A non-generated (real Apple) APFS volume: snapshot/resize and rename are all COW-certified
+    // for foreign containers (host apfsck + macOS-kernel mount/listSnapshots/fsck), so the APFS
+    // Container action now enables for it too.
     auto* button = findToolButtonByName(&panel, QStringLiteral("APFS Container"));
     QVERIFY2(button != nullptr, "APFS Container action should exist");
-    QVERIFY(!button->isEnabled());
-    QVERIFY(button->toolTip().contains(QStringLiteral("created by this tool")));
+    QVERIFY2(button->isEnabled(), "APFS Container should enable for a foreign APFS volume");
+    QVERIFY(button->toolTip().contains(QStringLiteral("Queue an APFS container action")));
 
-    // Volume rename is COW-certified for real Apple containers, so the unified Change Label
-    // action enables for a non-generated APFS volume and queues the label change.
     auto* changeLabel = findToolButtonByName(&panel, QStringLiteral("Change Label"));
     QVERIFY2(changeLabel != nullptr, "Change Label action should exist");
     QVERIFY2(changeLabel->isEnabled(), "Change Label should enable for a foreign APFS volume");
