@@ -19,6 +19,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QImage>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
@@ -962,11 +963,41 @@ sak::PartitionInventory generatedApfsInventoryFixture() {
 }
 
 void verifyApfsContainerModeItems(QComboBox* mode) {
-    QCOMPARE(mode->currentText(), QStringLiteral("Change volume label"));
+    // Volume-label rename moved to the unified "Change Label" action, so the container
+    // dialog now offers only snapshot and resize modes.
+    QVERIFY(!comboHasItem(mode, QStringLiteral("Change volume label")));
+    QCOMPARE(mode->currentText(), QStringLiteral("Create snapshot"));
     QVERIFY(comboHasItem(mode, QStringLiteral("Create snapshot")));
     QVERIFY(comboHasItem(mode, QStringLiteral("Delete snapshot")));
     QVERIFY(comboHasItem(mode, QStringLiteral("Revert to snapshot")));
     QVERIFY(comboHasItem(mode, QStringLiteral("Resize container to fill partition")));
+}
+
+void queueApfsVolumeLabelChangeAndVerify() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(generatedApfsInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    // A generated APFS volume renames through the unified Change Label verb (no Windows
+    // drive letter required); it routes to the certified COW volume-label commit.
+    auto* changeLabel = findToolButtonByName(&panel, QStringLiteral("Change Label"));
+    QVERIFY2(changeLabel != nullptr, "Change Label action should exist");
+    QVERIFY2(changeLabel->isEnabled(), "Change Label should enable for a generated APFS volume");
+
+    bool handled = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        QVERIFY2(dialog != nullptr, "Change Label input dialog should open");
+        dialog->setTextValue(QStringLiteral("Renamed"));
+        handled = true;
+        dialog->accept();
+    });
+    changeLabel->click();
+    QVERIFY(handled);
+    verifySingleQueuedOperation(&panel, QStringLiteral("APFS Change Volume Label"));
 }
 
 void queueApfsRootFileMutationAndVerify() {
@@ -1936,6 +1967,7 @@ void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation(
 
 void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts() {
     queueApfsRootFileMutationAndVerify();
+    queueApfsVolumeLabelChangeAndVerify();
 
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
@@ -1954,6 +1986,12 @@ void PartitionManagerPanelTests::apfsRootFileMutationActionGatesGeneratedLayouts
     QVERIFY2(button != nullptr, "APFS Container action should exist");
     QVERIFY(!button->isEnabled());
     QVERIFY(button->toolTip().contains(QStringLiteral("created by this tool")));
+
+    // A non-generated APFS volume has no drive letter and fails the generated gate, so the
+    // unified Change Label action stays disabled for it.
+    auto* changeLabel = findToolButtonByName(&panel, QStringLiteral("Change Label"));
+    QVERIFY2(changeLabel != nullptr, "Change Label action should exist");
+    QVERIFY(!changeLabel->isEnabled());
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {

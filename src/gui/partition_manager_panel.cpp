@@ -265,8 +265,8 @@ constexpr const char* kInspectNonNativeFilesystemActionProperty =
 constexpr const char* kBrowseNonNativeFilesystemActionProperty =
     "partitionBrowseNonNativeFilesystemAction";
 constexpr const char* kApfsRootFileMutationActionProperty = "partitionApfsRootFileMutationAction";
+constexpr const char* kChangeLabelActionProperty = "partitionChangeLabelAction";
 constexpr const char* kHfsCatalogCheckOperation = "hfs-catalog-check";
-constexpr const char* kApfsVolumeLabelMode = "change-volume-label";
 constexpr const char* kApfsSnapshotCreateMode = "snapshot-create";
 constexpr const char* kApfsSnapshotDeleteMode = "snapshot-delete";
 constexpr const char* kApfsSnapshotRevertMode = "snapshot-revert";
@@ -407,6 +407,10 @@ bool isBrowseNonNativeFilesystemAction(const QAbstractButton* button) {
 
 bool isApfsRootFileMutationAction(const QAbstractButton* button) {
     return button && button->property(kApfsRootFileMutationActionProperty).toBool();
+}
+
+bool isChangeLabelAction(const QAbstractButton* button) {
+    return button && button->property(kChangeLabelActionProperty).toBool();
 }
 
 bool isExtFilesystem(const QString& fileSystem);
@@ -857,6 +861,39 @@ ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<Partitio
     return state;
 }
 
+// "Change Label" is one verb for every file system: Windows-native volumes rename through
+// the Windows label path, and a generated APFS container renames through the certified COW
+// volume-label commit. The action is offered when either path is available.
+PartitionActionAvailability changeLabelAvailability(const std::optional<PartitionTarget>& target,
+                                                    const PartitionInfoEx* partition) {
+    const auto windowsAvailability = partitionActionAvailability(partition, windowsNativePolicy());
+    if (windowsAvailability.enabled) {
+        return windowsAvailability;
+    }
+    const auto apfs = apfsRootFileMutationState(target, partition);
+    if (apfs.enabled) {
+        return {true, apfs.reason};
+    }
+    // Neither path applies; surface the Windows-native reason as the default explanation.
+    return windowsAvailability;
+}
+
+// Container-scoped APFS mutations share the same confirmed raw-write payload shell; the
+// per-action field (label / snapshot name) is layered on top by the caller.
+QJsonObject apfsContainerBasePayload(const QString& targetPath) {
+    return QJsonObject{{QStringLiteral("non_native_file_system_tool"), true},
+                       {QStringLiteral("file_system"), QStringLiteral("APFS")},
+                       {QStringLiteral("target_path"), targetPath},
+                       {QStringLiteral("target_wipe_confirmed"), true},
+                       {QStringLiteral("apfs_generated_layout_confirmed"), true}};
+}
+
+QJsonObject apfsVolumeLabelPayload(const ApfsRootFileMutationState& state, const QString& label) {
+    QJsonObject payload = apfsContainerBasePayload(state.target_path);
+    payload[QStringLiteral("label")] = label;
+    return payload;
+}
+
 NonNativeFilesystemInspectState nonNativeFilesystemInspectState(const PartitionInfoEx* partition) {
     NonNativeFilesystemInspectState state;
     if (!partition || !partition->volume || partition->volume->file_system.trimmed().isEmpty()) {
@@ -963,10 +1000,31 @@ void updateApfsRootFileMutationButton(QAbstractButton* button,
     button->setAccessibleDescription(reason);
 }
 
+void updateChangeLabelButton(QAbstractButton* button,
+                             bool operationRunning,
+                             const std::optional<PartitionTarget>& target,
+                             const PartitionInfoEx* partition) {
+    const bool targetMatch = target && buttonAllowsTarget(button, target);
+    const auto availability = changeLabelAvailability(target, partition);
+    button->setEnabled(targetMatch && availability.enabled && !operationRunning);
+    const QString defaultTooltip = button->property(kActionDefaultTooltipProperty).toString();
+    const QString reason = operationRunning ? QObject::tr("Partition operation is already running.")
+                                            : (!targetMatch || availability.reason.isEmpty()
+                                                   ? defaultTooltip
+                                                   : availability.reason);
+    button->setToolTip(reason);
+    button->setStatusTip(reason);
+    button->setAccessibleDescription(reason);
+}
+
 bool updateSpecialTargetButtonState(QAbstractButton* button,
                                     bool operationRunning,
                                     const std::optional<PartitionTarget>& target,
                                     const PartitionInfoEx* partition) {
+    if (isChangeLabelAction(button)) {
+        updateChangeLabelButton(button, operationRunning, target, partition);
+        return true;
+    }
     if (isApfsRootFileMutationAction(button)) {
         updateApfsRootFileMutationButton(button, operationRunning, target, partition);
         return true;
@@ -8122,6 +8180,9 @@ QToolButton* PartitionManagerPanel::createConfiguredActionLink(QWidget* parent,
     if (spec.options.apfs_root_file_mutation) {
         button->setProperty(kApfsRootFileMutationActionProperty, true);
     }
+    if (spec.options.change_label) {
+        button->setProperty(kChangeLabelActionProperty, true);
+    }
     m_targetButtons.append(button);
     return button;
 }
@@ -8285,9 +8346,10 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFile
                            {actionTargetKindList({kActionTargetPartition})}),
             makeActionSpec(tr("Change Label"),
                            kIconProperties,
-                           tr("Set partition label"),
+                           tr("Rename the selected volume"),
                            &PartitionManagerPanel::onSetPartitionLabel,
-                           {actionTargetKindList({kActionTargetPartition}), true, true}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .change_label = true}),
             makeActionSpec(tr("Check File System"),
                            kIconSurface,
                            tr("Scan file system"),
@@ -8322,7 +8384,7 @@ PartitionManagerPanel::nonNativeFilesystemActionSpecs() const {
                         true}),
         makeActionSpec(tr("APFS Container"),
                        kIconProperties,
-                       tr("Queue an APFS container action: volume label, snapshot, or resize"),
+                       tr("Queue an APFS container action: snapshot or resize"),
                        &PartitionManagerPanel::onApfsRootFileMutation,
                        {actionTargetKindList({kActionTargetPartition}),
                         false,
@@ -9341,11 +9403,12 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
     addContextMenuAction(menu, this, {tr("Change Drive Letter"), kIconProperties}, [this]() {
         onSetDriveLetter();
     });
-    addContextMenuAction(menu,
-                         this,
-                         partitionContextActionSpec(
-                             tr("Change Label"), kIconProperties, partition, windowsNativePolicy()),
-                         [this]() { onSetPartitionLabel(); });
+    const auto changeLabel = changeLabelAvailability(selectedTarget(), partition);
+    addContextMenuAction(
+        menu,
+        this,
+        {tr("Change Label"), kIconProperties, changeLabel.enabled, changeLabel.reason},
+        [this]() { onSetPartitionLabel(); });
     addContextMenuAction(menu,
                          this,
                          partitionContextActionSpec(tr("Convert File System"),
@@ -9603,6 +9666,13 @@ void PartitionManagerPanel::onSetDriveLetter() {
 
 void PartitionManagerPanel::onSetPartitionLabel() {
     const auto* partition = selectedPartition();
+    // APFS volumes carry no Windows drive letter and rename through the certified COW
+    // volume-label commit, so route a generated APFS container before the Windows path.
+    const auto apfsLabel = apfsRootFileMutationState(selectedTarget(), partition);
+    if (apfsLabel.enabled) {
+        onChangeApfsVolumeLabel();
+        return;
+    }
     if (!partition || !partition->volume || partition->volume->drive_letter.isEmpty()) {
         showWarningLogged(this,
                           tr("Change Label"),
@@ -9626,6 +9696,29 @@ void PartitionManagerPanel::onSetPartitionLabel() {
         queueOperation(PartitionOperationType::SetPartitionLabel,
                        withValue(QStringLiteral("label"), label));
     }
+}
+
+void PartitionManagerPanel::onChangeApfsVolumeLabel() {
+    const auto* partition = selectedPartition();
+    const auto state = apfsRootFileMutationState(selectedTarget(), partition);
+    if (!state.enabled) {
+        showWarningLogged(this, tr("Change Label"), state.reason);
+        return;
+    }
+    const QString current = partition && partition->volume ? partition->volume->label : QString();
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Change Label"), tr("New APFS volume name:"), QLineEdit::Normal, current, &ok);
+    if (!ok) {
+        return;
+    }
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        showWarningLogged(this, tr("Change Label"), tr("An APFS volume name cannot be empty."));
+        return;
+    }
+    queueOperation(PartitionOperationType::ApfsChangeVolumeLabel,
+                   apfsVolumeLabelPayload(state, trimmed));
 }
 
 void PartitionManagerPanel::onExploreSelected() {
@@ -9778,20 +9871,19 @@ struct ApfsRootFileMutationDialogWidgets {
 };
 
 struct ApfsRootFileMutationRequest {
-    PartitionOperationType type{PartitionOperationType::ApfsChangeVolumeLabel};
+    PartitionOperationType type{PartitionOperationType::ApfsSnapshotCreate};
     QString name;
 };
 
 PartitionOperationType apfsMutationTypeForMode(const QString& mode) {
     static const QHash<QString, PartitionOperationType> kModes = {
-        {QString::fromLatin1(kApfsVolumeLabelMode), PartitionOperationType::ApfsChangeVolumeLabel},
         {QString::fromLatin1(kApfsSnapshotCreateMode), PartitionOperationType::ApfsSnapshotCreate},
         {QString::fromLatin1(kApfsSnapshotDeleteMode), PartitionOperationType::ApfsSnapshotDelete},
         {QString::fromLatin1(kApfsSnapshotRevertMode), PartitionOperationType::ApfsSnapshotRevert},
         {QString::fromLatin1(kApfsResizeContainerMode),
          PartitionOperationType::ApfsResizeContainer},
     };
-    return kModes.value(mode, PartitionOperationType::ApfsChangeVolumeLabel);
+    return kModes.value(mode, PartitionOperationType::ApfsSnapshotCreate);
 }
 
 bool apfsMutationIsSnapshot(PartitionOperationType type) {
@@ -9804,16 +9896,10 @@ bool apfsMutationIsResize(PartitionOperationType type) {
     return type == PartitionOperationType::ApfsResizeContainer;
 }
 
-bool apfsMutationIsVolumeLabel(PartitionOperationType type) {
-    return type == PartitionOperationType::ApfsChangeVolumeLabel;
-}
-
 QString apfsMutationPreview(PartitionOperationType type,
                             const QString& name,
                             uint64_t partitionSizeBytes) {
     switch (type) {
-    case PartitionOperationType::ApfsChangeVolumeLabel:
-        return QObject::tr("Queue APFS volume-label change to %1.").arg(name);
     case PartitionOperationType::ApfsSnapshotCreate:
         return QObject::tr("Queue APFS snapshot create named %1.").arg(name);
     case PartitionOperationType::ApfsSnapshotDelete:
@@ -9831,9 +9917,6 @@ QString apfsMutationPreview(PartitionOperationType type,
 }
 
 QString apfsMutationNamePlaceholder(PartitionOperationType type) {
-    if (apfsMutationIsVolumeLabel(type)) {
-        return QObject::tr("New volume label");
-    }
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("Snapshot name");
     }
@@ -9841,9 +9924,6 @@ QString apfsMutationNamePlaceholder(PartitionOperationType type) {
 }
 
 QString apfsMutationFallbackName(PartitionOperationType type) {
-    if (apfsMutationIsVolumeLabel(type)) {
-        return QObject::tr("(volume label)");
-    }
     if (apfsMutationIsSnapshot(type)) {
         return QObject::tr("(snapshot)");
     }
@@ -9853,7 +9933,7 @@ QString apfsMutationFallbackName(PartitionOperationType type) {
 bool apfsMutationDialogCanAccept(const ApfsRootFileMutationDialogWidgets& widgets,
                                  PartitionOperationType type,
                                  const QString& name) {
-    // Resize takes no name; label and snapshot modes need one.
+    // Resize takes no name; snapshot modes need one.
     const bool hasName = apfsMutationIsResize(type) || !name.isEmpty();
     return hasName && widgets.confirm->isChecked();
 }
@@ -9875,7 +9955,6 @@ void syncApfsRootFileMutationDialog(const ApfsRootFileMutationDialogWidgets& wid
 
 void populateApfsRootFileMutationModes(QComboBox* mode) {
     mode->setAccessibleName(QObject::tr("APFS container action mode"));
-    mode->addItem(QObject::tr("Change volume label"), QString::fromLatin1(kApfsVolumeLabelMode));
     mode->addItem(QObject::tr("Create snapshot"), QString::fromLatin1(kApfsSnapshotCreateMode));
     mode->addItem(QObject::tr("Delete snapshot"), QString::fromLatin1(kApfsSnapshotDeleteMode));
     mode->addItem(QObject::tr("Revert to snapshot"), QString::fromLatin1(kApfsSnapshotRevertMode));
@@ -9929,14 +10008,8 @@ std::optional<ApfsRootFileMutationRequest> showApfsRootFileMutationDialog(
 
 QJsonObject apfsRootFileMutationPayload(const ApfsRootFileMutationState& state,
                                         const ApfsRootFileMutationRequest& request) {
-    QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
-                        {QStringLiteral("file_system"), QStringLiteral("APFS")},
-                        {QStringLiteral("target_path"), state.target_path},
-                        {QStringLiteral("target_wipe_confirmed"), true},
-                        {QStringLiteral("apfs_generated_layout_confirmed"), true}};
-    if (apfsMutationIsVolumeLabel(request.type)) {
-        payload[QStringLiteral("label")] = request.name;
-    } else if (apfsMutationIsSnapshot(request.type)) {
+    QJsonObject payload = apfsContainerBasePayload(state.target_path);
+    if (apfsMutationIsSnapshot(request.type)) {
         payload[QStringLiteral("apfs_snapshot_name")] = request.name;
     }
     return payload;

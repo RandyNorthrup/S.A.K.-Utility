@@ -69,6 +69,7 @@ private Q_SLOTS:
     void onFormatPartition();
     void onSetDriveLetter();
     void onSetPartitionLabel();
+    void onChangeApfsVolumeLabel();
     void onCheckFileSystem();
     void onInspectNonNativeFileSystem();
     void onBrowseNonNativeFileSystem();
@@ -138,8 +139,11 @@ private:
         bool browse_non_native_filesystem{false};
         // Action runs the non-native check/repair path (fsck-class tools).
         bool check_non_native_filesystem{false};
-        // Action queues an APFS container op (label/snapshot/resize) on a generated container.
+        // Action queues an APFS container op (snapshot/resize) on a generated container.
         bool apfs_root_file_mutation{false};
+        // Action is the unified "Change Label" verb (Windows-native volume label or a
+        // generated APFS container's COW volume-label commit); enablement spans both paths.
+        bool change_label{false};
     };
 
     struct ActionLinkSpec {
