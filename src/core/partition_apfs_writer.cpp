@@ -245,6 +245,21 @@ constexpr uint8_t kApfsInodeNameField = 4;
 constexpr int kApfsObjTypeShift = 60;
 constexpr uint16_t kApfsModeDirectory = 0040000;
 constexpr uint16_t kApfsModeRegularFile = 0100000;
+constexpr uint16_t kApfsModeTypeMask = 0170000;
+constexpr uint16_t kApfsModeSymlink = 0120000;
+
+// One recovered extended attribute: its name (trailing NUL stripped), the j_xattr_val flags
+// (kept verbatim -- FILE_SYSTEM_OWNED etc.), and the embedded xdata (the attribute value, or
+// a j_xattr_dstream descriptor for a data-stream xattr).
+struct ApfsRecoveredXattr {
+    QByteArray name;
+    uint16_t flags{0};
+    QByteArray xdata;
+};
+// A dirent's DT_* type is the inode's mode type nibble (IFTODT: mode >> 12).
+constexpr int kApfsModeToDirentShift = 12;
+// INO_EXT_TYPE_RDEV: a device inode's dev_t rides in a 4-byte inode xfield.
+constexpr uint8_t kApfsInodeRdevField = 14;
 constexpr qsizetype kApfsObjectOidOffset = 0x08;
 constexpr qsizetype kApfsObjectXidOffset = 0x10;
 constexpr qsizetype kApfsObjectTypeOffset = 0x18;
@@ -360,6 +375,8 @@ constexpr qsizetype kApfsVolumeRevertToSblockOidOffset = 0xA8;
 constexpr qsizetype kApfsVolumeNextObjectIdOffset = 0xB0;
 constexpr qsizetype kApfsVolumeFileCountOffset = 0xB8;
 constexpr qsizetype kApfsVolumeDirectoryCountOffset = 0xC0;
+constexpr qsizetype kApfsVolumeSymlinkCountOffset = 0xC8;
+constexpr qsizetype kApfsVolumeOtherObjectCountOffset = 0xD0;
 constexpr qsizetype kApfsVolumeExtentRefTreeOidOffset = 0x90;
 constexpr qsizetype kApfsVolumeNumSnapshotsOffset = 0xD8;
 // j_snap_metadata value layout (snapshot-metadata tree leaf record, A3 create).
@@ -1405,6 +1422,18 @@ struct ApfsRootFilePayload {
     // "neither bit" form on a dstream-decmpfs file -- instead of re-deriving NO_RSRC_FORK.
     // False keeps every generated file byte-identical.
     bool preservedRsrcBits{false};
+    // Preservation of a NON-REGULAR inode (symlink / FIFO / socket / device): its full
+    // st_mode (type + permission bits). The inode emits with this mode, its dirent with the
+    // matching DT_* type, and NO data stream (a symlink's target rides in its embedded
+    // com.apple.fs.symlink xattr). 0 = regular file (byte-identical everywhere else).
+    uint16_t specialMode{0};
+    // A device inode's rdev, re-emitted as an INO_EXT_TYPE_RDEV xfield (0 = none).
+    uint32_t rdev{0};
+    // Preserved embedded xattrs carried VERBATIM with their j_xattr_val flags (e.g. the
+    // FILE_SYSTEM_OWNED bit on com.apple.fs.symlink -- apfsck rejects a symlink target
+    // xattr without it). `xattrs` (above) stays the generated-attribute path with plain
+    // DATA_EMBEDDED flags.
+    QVector<ApfsRecoveredXattr> preservedXattrs;
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1581,6 +1610,8 @@ struct ApfsInodeParams {
     // Preservation: extraInternalFlags already carries the original NO_RSRC/HAS_RSRC bits
     // verbatim (possibly neither), so do not default-add NO_RSRC_FORK.
     bool rsrcBitsExplicit = false;
+    // A preserved device inode's dev_t, re-emitted as an INO_EXT_TYPE_RDEV xfield (0 = none).
+    uint32_t rdev = 0;
 };
 
 // internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
@@ -1620,6 +1651,8 @@ struct InodeXfieldParams {
     uint64_t allocedSizeBytes{0};
     // A6 per-file encryption: the dstream's default_crypto_id (0 = unencrypted).
     uint64_t cryptoId{0};
+    // A preserved device inode's dev_t (INO_EXT_TYPE_RDEV xfield; 0 = none).
+    uint32_t rdev{0};
 };
 
 // Write the inode's extended-field blob: the xf header, the TOC entries (NAME +
@@ -1628,13 +1661,18 @@ struct InodeXfieldParams {
 // alloced_size is the block-aligned logical size (covers holes), and sparse_bytes is
 // the unbacked (hole) byte count.
 void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
-    const qsizetype dstreamBytes = x.hasDstream ? kApfsDstreamMinBytes : 0;
-    const qsizetype sparseFieldBytes = x.sparse ? 8 : 0;
-    const qsizetype xfieldCount = 1 + (x.hasDstream ? 1 : 0) + (x.sparse ? 1 : 0);
+    const qsizetype dstreamBytes = static_cast<qsizetype>(x.hasDstream) * kApfsDstreamMinBytes;
+    const qsizetype sparseFieldBytes = static_cast<qsizetype>(x.sparse) * 8;
+    // The rdev value is 4 bytes in an 8-aligned slot.
+    const qsizetype rdevFieldBytes = static_cast<qsizetype>(x.rdev != 0) * 8;
+    const qsizetype xfieldCount = 1 + static_cast<qsizetype>(x.hasDstream) +
+                                  static_cast<qsizetype>(x.sparse) +
+                                  static_cast<qsizetype>(x.rdev != 0);
     writeLe16(value, kApfsInodeXfieldsOffset, static_cast<uint16_t>(xfieldCount));
     writeLe16(value,
               kApfsInodeXfieldsOffset + kApfsXfieldDataBytesOffset,
-              static_cast<uint16_t>(x.namePadded + dstreamBytes + sparseFieldBytes));
+              static_cast<uint16_t>(x.namePadded + dstreamBytes + sparseFieldBytes +
+                                    rdevFieldBytes));
     qsizetype toc = kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
     (*value)[toc] = static_cast<char>(kApfsInodeNameField);
     (*value)[toc + 1] = 0x02;
@@ -1650,6 +1688,12 @@ void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
         (*value)[toc] = static_cast<char>(kApfsInodeSparseBytesField);
         (*value)[toc + 1] = static_cast<char>(kApfsXfieldFlagsSparseBytes);
         writeLe16(value, toc + kApfsXfieldSizeOffset, 8);
+    }
+    if (x.rdev != 0) {
+        toc += kApfsXfieldTocEntryBytes;
+        (*value)[toc] = static_cast<char>(kApfsInodeRdevField);
+        (*value)[toc + 1] = static_cast<char>(0x20);  // XF_SYSTEM_FIELD
+        writeLe16(value, toc + kApfsXfieldSizeOffset, 4);
     }
     const qsizetype dataStart = kApfsInodeXfieldsOffset + x.tocBytes;
     std::copy(x.nameBytes.cbegin(), x.nameBytes.cend(), value->begin() + dataStart);
@@ -1674,6 +1718,9 @@ void writeInodeXfields(QByteArray* value, const InodeXfieldParams& x) {
                   dataStart + x.namePadded + dstreamBytes,
                   roundedSize > x.allocedSizeBytes ? roundedSize - x.allocedSizeBytes : 0);
     }
+    if (x.rdev != 0) {
+        writeLe32(value, dataStart + x.namePadded + dstreamBytes + sparseFieldBytes, x.rdev);
+    }
 }
 
 QByteArray inodeValue(const ApfsInodeParams& params) {
@@ -1689,23 +1736,28 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                  allocedSizeBytes,
                  cryptoId,
                  protectionClass,
-                 rsrcBitsExplicit] = params;
+                 rsrcBitsExplicit,
+                 rdev] = params;
     // A compressed regular file carries the NAME xfield only (its bytes live in the
-    // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM.
-    const bool regularFile = (mode & kApfsModeRegularFile) == kApfsModeRegularFile;
+    // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM. The
+    // type-mask compare matters: S_IFLNK/S_IFSOCK include the S_IFREG bit, and a preserved
+    // symlink/socket must NOT grow a data stream.
+    const bool regularFile = (mode & kApfsModeTypeMask) == kApfsModeRegularFile;
     const bool hasDstream = regularFile && !compressed;
     // A sparse regular file carries an extra INO_EXT_TYPE_SPARSE_BYTES xfield.
     const bool sparse = hasDstream && (extraInternalFlags & kApfsInodeFlagIsSparse) != 0;
     const QByteArray nameBytes = name.toUtf8() + '\0';
-    const qsizetype xfieldCount = 1 + (hasDstream ? 1 : 0) + (sparse ? 1 : 0);
+    const qsizetype xfieldCount = 1 + static_cast<qsizetype>(hasDstream) +
+                                  static_cast<qsizetype>(sparse) +
+                                  static_cast<qsizetype>(rdev != 0);
     const qsizetype tocBytes = kApfsXfieldHeaderBytes + xfieldCount * kApfsXfieldTocEntryBytes;
     const qsizetype namePadded =
         ((nameBytes.size() + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
         kApfsXfieldAlignment;
-    const qsizetype dstreamBytes = hasDstream ? kApfsDstreamMinBytes : 0;
-    const qsizetype sparseFieldBytes = sparse ? 8 : 0;
+    const qsizetype dstreamBytes = static_cast<qsizetype>(hasDstream) * kApfsDstreamMinBytes;
+    const qsizetype sparseFieldBytes = static_cast<qsizetype>(sparse) * 8;
     const qsizetype valueBytes = kApfsInodeXfieldsOffset + tocBytes + namePadded + dstreamBytes +
-                                 sparseFieldBytes;
+                                 sparseFieldBytes + static_cast<qsizetype>(rdev != 0) * 8;
     QByteArray value(valueBytes, '\0');
     writeLe64(&value, 0, parentId);
     writeLe64(&value, kApfsInodePrivateIdOffset, privateId);
@@ -1729,7 +1781,8 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                        .tocBytes = tocBytes,
                        .sizeBytes = sizeBytes,
                        .allocedSizeBytes = allocedSizeBytes,
-                       .cryptoId = cryptoId});
+                       .cryptoId = cryptoId,
+                       .rdev = rdev});
     return value;
 }
 
@@ -1949,6 +2002,13 @@ uint64_t inodeAttributeFlags(const ApfsRootFilePayload& file) {
             flags |= kApfsInodeFlagHasFinderInfo;
         }
     }
+    for (const ApfsRecoveredXattr& x : file.preservedXattrs) {
+        if (x.name == QByteArray(kApfsXattrNameSecurity)) {
+            flags |= kApfsInodeFlagHasSecurityEa;
+        } else if (x.name == QByteArray(kApfsXattrNameFinderInfo)) {
+            flags |= kApfsInodeFlagHasFinderInfo;
+        }
+    }
     return flags;
 }
 
@@ -1966,11 +2026,16 @@ uint64_t fileAllocedBytes(const ApfsRootFilePayload& file, uint32_t blockSize) {
 }
 
 // Emit one j_xattr record per arbitrary named attribute (ACL, Finder info, user
-// xattrs); each value rides embedded in the record (XATTR_DATA_EMBEDDED).
+// xattrs); each value rides embedded in the record (XATTR_DATA_EMBEDDED). A preserved
+// attribute re-emits with its ORIGINAL flags (e.g. FILE_SYSTEM_OWNED on
+// com.apple.fs.symlink).
 void appendInodeXattrs(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
     for (const auto& [name, value] : file.xattrs) {
         records->append(
             {xattrKey(file.fileId, name), xattrEmbeddedValue(kApfsXattrDataEmbedded, value)});
+    }
+    for (const ApfsRecoveredXattr& x : file.preservedXattrs) {
+        records->append({xattrKey(file.fileId, x.name), xattrEmbeddedValue(x.flags, x.xdata)});
     }
 }
 
@@ -2084,11 +2149,18 @@ void appendFileDataStreamRecords(QVector<ApfsBtreeKeyValue>* records,
 void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFilePayload& file) {
     const uint64_t logicalSize = file.sparse ? file.sparseLogicalSize : fileLogicalSize(file);
     const int32_t linkCount = 1 + static_cast<int32_t>(file.additionalLinks.size());
+    // A preserved non-regular inode (symlink / FIFO / socket / device) keeps its full mode
+    // and its dirent carries the matching DT_* type (IFTODT: the mode's type nibble).
+    const uint16_t mode = file.specialMode != 0 ? file.specialMode : kApfsModeRegularFile;
+    const uint16_t direntType =
+        file.specialMode != 0 ? static_cast<uint16_t>((file.specialMode & kApfsModeTypeMask) >>
+                                                      kApfsModeToDirentShift)
+                              : kApfsDirTypeRegularFile;
     records->append(
         {fsKey(file.fileId, kApfsRecordInode),
          inodeValue({.parentId = file.parentDirectoryId,
                      .privateId = file.privateId,
-                     .mode = kApfsModeRegularFile,
+                     .mode = mode,
                      .name = file.fileName,
                      .sizeBytes = logicalSize,
                      .childOrLinkCount = linkCount,
@@ -2101,13 +2173,21 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                      .allocedSizeBytes = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes),
                      .cryptoId = file.cryptoId,
                      .protectionClass = file.protectionClass,
-                     .rsrcBitsExplicit = file.preservedRsrcBits})});
-    records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
-                     file.additionalLinks.isEmpty()
-                         ? directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)
-                         : directoryEntryValueWithSibling(
-                               file.fileId, kApfsDirTypeRegularFile, file.primarySiblingId)});
+                     .rsrcBitsExplicit = file.preservedRsrcBits,
+                     .rdev = file.rdev})});
+    records->append(
+        {directoryEntryKey(file.parentDirectoryId, file.fileName),
+         file.additionalLinks.isEmpty()
+             ? directoryEntryValue(file.fileId, direntType)
+             : directoryEntryValueWithSibling(file.fileId, direntType, file.primarySiblingId)});
     appendHardLinkRecords(records, file);
+    if (file.specialMode != 0) {
+        // A non-regular inode has no data stream (a symlink's target rides in its embedded
+        // com.apple.fs.symlink xattr, emitted with the other preserved xattrs below).
+        appendInodeXattrs(records, file);
+        appendDataStreamXattrs(records, file);
+        return;
+    }
     if (file.compressed) {
         // A transparently-compressed file's inode is UF_COMPRESSED with no data-stream
         // xfield; the 16-byte decmpfs header rides in an embedded com.apple.decmpfs xattr.
@@ -6801,14 +6881,6 @@ struct ApfsLiveTreeSource {
     ApfsLiveFsChain chain;
 };
 
-// One recovered extended attribute: its name (trailing NUL stripped), the j_xattr_val flags, and
-// the embedded xdata (the attribute value, or a j_xattr_dstream for a data-stream xattr).
-struct ApfsRecoveredXattr {
-    QByteArray name;
-    uint16_t flags{0};
-    QByteArray xdata;
-};
-
 // The special-inode state a preserved file must carry forward so an in-place mutation reproduces it
 // byte-for-byte instead of rebuilding it as a plain inode: its extended attributes (compression +
 // user attrs) and, for a sparse file, its internal_flags + dstream logical size (the hole reaches
@@ -6817,20 +6889,25 @@ struct ApfsRecoveredInodeState {
     QVector<ApfsRecoveredXattr> xattrs;
     uint64_t internalFlags{0};
     uint64_t dstreamLogicalSize{0};
+    uint32_t rdev{0};  // INO_EXT_TYPE_RDEV (a device inode's dev_t; 0 = none)
 };
 
-// The DSTREAM (type 8) xfield's logical size within an inode value at `base`, or 0 if absent (a
-// compressed inode carries no dstream). Mirrors writeInodeXfields: the xf header, then the TOC
-// entries, then each xfield's 8-byte-aligned value in TOC order.
-uint64_t inodeXfieldDstreamSize(const QByteArray& value, qsizetype base) {
+// The value of one inode xfield (looked up by type) within an inode value at `base`, or 0
+// if absent. widthBytes selects the read width (8 for a DSTREAM's leading size field, 4 for
+// RDEV). Mirrors writeInodeXfields: the xf header, then the TOC entries, then each xfield's
+// 8-byte-aligned value in TOC order.
+uint64_t inodeXfieldValue(const QByteArray& value,
+                          qsizetype base,
+                          uint8_t fieldType,
+                          int widthBytes) {
     const uint16_t xfieldCount = le16(value, base + kApfsInodeXfieldsOffset);
     qsizetype toc = base + kApfsInodeXfieldsOffset + kApfsXfieldHeaderBytes;
     qsizetype data = toc + static_cast<qsizetype>(xfieldCount) * kApfsXfieldTocEntryBytes;
     for (uint16_t i = 0; i < xfieldCount; ++i) {
         const uint8_t type = static_cast<uint8_t>(value.at(toc));
         const uint16_t size = le16(value, toc + kApfsXfieldSizeOffset);
-        if (type == kApfsInodeDstreamField) {
-            return le64(value, data);
+        if (type == fieldType) {
+            return widthBytes == 4 ? le32(value, data) : le64(value, data);
         }
         data += ((size + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) *
                 kApfsXfieldAlignment;
@@ -6895,7 +6972,10 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
                 recoverLeafXattr(node, keyPos, valuePos, &state.xattrs);
             } else if (type == kApfsRecordInode) {
                 state.internalFlags = le64(node, valuePos + kApfsInodeInternalFlagsOffset);
-                state.dstreamLogicalSize = inodeXfieldDstreamSize(node, valuePos);
+                state.dstreamLogicalSize =
+                    inodeXfieldValue(node, valuePos, kApfsInodeDstreamField, 8);
+                state.rdev =
+                    static_cast<uint32_t>(inodeXfieldValue(node, valuePos, kApfsInodeRdevField, 4));
             }
         }
     }
@@ -6961,8 +7041,10 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
             }
         } else if (x.name == QByteArray(kApfsXattrNameResourceFork)) {
             fork = x;
-        } else if (x.flags == kApfsXattrDataEmbedded) {
-            file->xattrs.append({x.name, x.xdata});
+        } else if ((x.flags & kApfsXattrDataEmbedded) != 0) {
+            // Verbatim, flags included: com.apple.fs.symlink carries FILE_SYSTEM_OWNED and
+            // apfsck rejects the symlink target xattr without it.
+            file->preservedXattrs.append(x);
         } else {
             file->streamXattrs.append(recoveredStreamXattr(x));
         }
@@ -6981,11 +7063,13 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
     }
     // Carry the original resource-fork internal_flags bits verbatim (the kernel writes
     // HAS_RSRC_FORK for a fork-carrying file, NO_RSRC_FORK for a plain one, and NEITHER on a
-    // dstream-decmpfs file with a leftover empty fork), plus the clone-history bits.
+    // dstream-decmpfs file with a leftover empty fork), plus the clone-history bits and a
+    // device inode's rdev.
     file->preservedRsrcBits = true;
     file->extraInodeFlags |= state.internalFlags &
                              (kApfsInodeFlagHasRsrcFork | kApfsInodeFlagNoRsrcFork |
                               kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned);
+    file->rdev = state.rdev;
     if ((state.internalFlags & kApfsInodeFlagIsSparse) != 0) {
         // A sparse file: its logical size (the hole reaches up to it) is the dstream size; the
         // trailing phys-0 hole is filtered from the preserved extents and re-synthesized by the
@@ -7427,9 +7511,11 @@ struct ApfsCowFileInsert {
     // at extentRefNew. The COW commit reserves extentRefTreeBlockCount() blocks so the tree
     // can span many nodes; other callers (clone/snapshot with few records) leave it empty.
     QVector<uint64_t> extentRefBlocks;
-    int64_t fileCountDelta{1};       // +1 for a file insert, -1 for a file delete
-    int64_t directoryCountDelta{0};  // +1 for a directory create, -1 for a directory delete
-    uint64_t nextObjIdDelta{1};      // +1 when the mutation consumes an object id, else 0
+    int64_t fileCountDelta{1};         // +1 for a file insert, -1 for a file delete
+    int64_t directoryCountDelta{0};    // +1 for a directory create, -1 for a directory delete
+    int64_t symlinkCountDelta{0};      // -1 when a symlink inode is deleted
+    int64_t otherObjectCountDelta{0};  // -1 when a FIFO/socket/device inode is deleted
+    uint64_t nextObjIdDelta{1};        // +1 when the mutation consumes an object id, else 0
     // Diverge (mutating a snapshotted volume): the older volume-omap versions a snapshot
     // still resolves (xid <= the most-recent snapshot xid), carried forward VERBATIM so the
     // rebuilt versioned omap keeps them alongside the new (oid, newXid) mapping. Empty on the
@@ -7621,6 +7707,14 @@ bool writeFileInsertCowChain(const ApfsCowFileInsert& cow, QStringList* blockers
               kApfsVolumeDirectoryCountOffset,
               le64(vol, kApfsVolumeDirectoryCountOffset) +
                   static_cast<uint64_t>(cow.directoryCountDelta));
+    writeLe64(&vol,
+              kApfsVolumeSymlinkCountOffset,
+              le64(vol, kApfsVolumeSymlinkCountOffset) +
+                  static_cast<uint64_t>(cow.symlinkCountDelta));
+    writeLe64(&vol,
+              kApfsVolumeOtherObjectCountOffset,
+              le64(vol, kApfsVolumeOtherObjectCountOffset) +
+                  static_cast<uint64_t>(cow.otherObjectCountDelta));
     writeLe64(&vol,
               kApfsVolumeNextObjectIdOffset,
               le64(vol, kApfsVolumeNextObjectIdOffset) + cow.nextObjIdDelta);
@@ -8377,6 +8471,7 @@ struct ApfsFileInsertRequest {
     QVector<ApfsDataStreamXattr> preservedStreamXattrs;
     uint64_t preservedExtraInodeFlags{0};
     bool preservedRsrcBits{false};
+    QVector<ApfsRecoveredXattr> preservedXattrs;  // embedded, flags verbatim
 
     // The payload's effective logical size (streamed size when streaming, else the
     // in-memory buffer size).
@@ -8526,7 +8621,8 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                    .additionalLinks = in.request.preservedLinks,
                    .primarySiblingId = in.request.preservedPrimarySiblingId,
                    .logicalSizeOverride = streamed ? in.request.streamSize : 0,
-                   .preservedRsrcBits = in.request.preservedRsrcBits});
+                   .preservedRsrcBits = in.request.preservedRsrcBits,
+                   .preservedXattrs = in.request.preservedXattrs});
 }
 
 bool buildChainedFileList(const ApfsChainedListInput& in,
@@ -9491,6 +9587,8 @@ struct ApfsFsCommitFinalize {
     int64_t dataBlocksNew{0};            // data blocks the commit allocates
     int64_t fileCountDelta{0};
     int64_t directoryCountDelta{0};
+    int64_t symlinkCountDelta{0};
+    int64_t otherObjectCountDelta{0};
     uint64_t nextObjIdDelta{0};
     uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
     ApfsDivergeState diverge;       // snapshot-aware versioning (inactive on the plain path)
@@ -9805,6 +9903,8 @@ bool writeFinalizeCowChain(const ApfsFsCommitFinalize& f,
          .extentRefBlocks = f.extentRefBlocks,
          .fileCountDelta = f.fileCountDelta,
          .directoryCountDelta = f.directoryCountDelta,
+         .symlinkCountDelta = f.symlinkCountDelta,
+         .otherObjectCountDelta = f.otherObjectCountDelta,
          .nextObjIdDelta = f.nextObjIdDelta,
          .retainedOmapMappings = f.diverge.retainedMappings,
          .extentRefRecordsOverride = f.diverge.liveExtentRefRecords,
@@ -11026,7 +11126,7 @@ struct ApfsFilePatchRequest {
 // and what the patch releases (the decmpfs payload stream / compressed blob -- the content
 // is being replaced with plain patched bytes, so the compression state is dropped).
 struct ApfsPatchTargetState {
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<ApfsRecoveredXattr> xattrs;  // embedded, flags verbatim
     QVector<ApfsDataStreamXattr> streamXattrs;
     QVector<ApfsHardLinkName> links;
     uint64_t primarySiblingId{0};
@@ -11057,8 +11157,8 @@ void classifyPatchTargetXattr(const ApfsLiveTreeSource& source,
         out->extraInodeFlags |= kApfsInodeFlagHasRsrcFork;
         return;
     }
-    if (x.flags == kApfsXattrDataEmbedded) {
-        out->xattrs.append({x.name, x.xdata});
+    if ((x.flags & kApfsXattrDataEmbedded) != 0) {
+        out->xattrs.append(x);  // flags verbatim (FILE_SYSTEM_OWNED etc.)
         return;
     }
     out->streamXattrs.append(recoveredStreamXattr(x));
@@ -11167,12 +11267,12 @@ bool commitInPlaceFilePatch(QIODevice* image,
                                        .directories = request.directories,
                                        .newFileParentId = request.parentDirectoryId,
                                        .explicitFileId = request.targetFileId,
-                                       .xattrs = preserved.xattrs,
                                        .preservedLinks = preserved.links,
                                        .preservedPrimarySiblingId = preserved.primarySiblingId,
                                        .preservedStreamXattrs = preserved.streamXattrs,
                                        .preservedExtraInodeFlags = preserved.extraInodeFlags,
-                                       .preservedRsrcBits = preserved.extraInodeFlags != 0};
+                                       .preservedRsrcBits = preserved.extraInodeFlags != 0,
+                                       .preservedXattrs = preserved.xattrs};
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
     ApfsDivergeState diverge;
@@ -14996,6 +15096,28 @@ bool buildDeleteLayout(const ApfsDeleteLayoutInput& in,
     return true;
 }
 
+// The deleted inode leaves the superblock counter matching its TYPE: num_files for a regular
+// file, num_symlinks for a symlink, num_other_fsobjects for a FIFO/socket/device (apfsck
+// cross-checks each against the records). A hard-link NAME delete keeps the inode (all zero).
+struct ApfsDeleteCountDeltas {
+    int64_t files{0};
+    int64_t symlinks{0};
+    int64_t others{0};
+};
+
+ApfsDeleteCountDeltas deleteCountDeltas(const ApfsRootFilePayload& target, bool nameDelete) {
+    if (nameDelete) {
+        return {};
+    }
+    if (target.specialMode == 0) {
+        return {.files = -1};
+    }
+    if ((target.specialMode & kApfsModeTypeMask) == kApfsModeSymlink) {
+        return {.symlinks = -1};
+    }
+    return {.others = -1};
+}
+
 bool commitInPlaceFileDelete(QIODevice* image,
                              const ApfsDeleteRequest& request,
                              ApfsInPlaceCheckpointResult* result,
@@ -15019,13 +15141,10 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              blockers)) {
         return false;
     }
-    // Diverge delete (volume already snapshotted): the live extent-ref tree is a delta over the
-    // snapshots' frozen KIND_NEW base, so the delete rebuilds that delta and frees ONLY the file's
-    // live-exclusive (post-snapshot) blocks; a pre-snapshot block gets a KIND_UPDATE -1 delta and
-    // stays allocated. A hard-link NAME delete keeps the inode + data (no extent reshape, no free).
+    // Diverge delete: rebuild the live delta, free only live-exclusive blocks; a NAME delete
+    // keeps the inode. The extent-ref rebuild is gated on the actually-freed block count.
     QVector<uint64_t> freedDataBlocks =
         nameDelete ? QVector<uint64_t>{} : fileFreedDataBlocks(target, ctx.geometry.blockSize);
-    // Gate the extent-ref rebuild on the blocks actually freed (own runs + auxiliary streams).
     const uint64_t targetBlocks = static_cast<uint64_t>(freedDataBlocks.size());
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
@@ -15050,6 +15169,7 @@ bool commitInPlaceFileDelete(QIODevice* image,
                            blockers)) {
         return false;
     }
+    const ApfsDeleteCountDeltas counts = deleteCountDeltas(target, nameDelete);
     return finalizeFsCommit({.ctx = ctx,
                              .newXid = ctx.live.xid + 1,
                              .fsNodes = layout.fsNodes,
@@ -15059,7 +15179,9 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              .extentRefBlocks = layout.extentRefBlocks,
                              .freedDataBlocks = freedDataBlocks,
                              .dataBlocksNew = 0,
-                             .fileCountDelta = nameDelete ? 0 : -1,
+                             .fileCountDelta = counts.files,
+                             .symlinkCountDelta = counts.symlinks,
+                             .otherObjectCountDelta = counts.others,
                              .nextObjIdDelta = 0,
                              .chunk1BitmapBlock = layout.chunk1BitmapBlock,
                              .diverge = diverge},
@@ -15844,6 +15966,16 @@ bool collectDirectorySubtree(const ApfsTreeCollect& sink,
                                 .data = QByteArray(static_cast<qsizetype>(entry.size_bytes), '\0'),
                                 .parentDirectoryId = dirObjectId,
                                 .fileId = entry.object_id});
+        } else {
+            // A non-regular entry (symlink / FIFO / socket / device): preserve it verbatim
+            // with its full mode. Dropping it silently deleted the inode AND left the volume
+            // superblock's per-type counters stale (apfsck "bad symlink count"). A symlink's
+            // target rides in its embedded com.apple.fs.symlink xattr (recovered like any
+            // other xattr); a device's rdev xfield is recovered by preserveFileExtentsAndState.
+            sink.files->append({.fileName = entry.name,
+                                .parentDirectoryId = dirObjectId,
+                                .fileId = entry.object_id,
+                                .specialMode = entry.mode});
         }
     }
     return true;

@@ -29,6 +29,9 @@ struct PartitionApfsFileEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // The inode's full st_mode (type + permission bits), so a non-regular entry
+    // (symlink, FIFO, socket, device) can be preserved verbatim across a mutation.
+    uint16_t mode{0};
 };
 
 struct PartitionApfsFileReadResult {

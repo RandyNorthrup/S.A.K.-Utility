@@ -1803,6 +1803,7 @@ private:
                              (mode & kApfsModeTypeMask) == kApfsModeRegularFile;
         entry.symlink = record.directory_type == kApfsDirTypeSymlink ||
                         (mode & kApfsModeTypeMask) == kApfsModeSymlink;
+        entry.mode = mode;
         entry.type = entryTypeName(record.directory_type, mode);
         return entry;
     }
