@@ -1916,6 +1916,7 @@ private Q_SLOTS:
     void apfsWriter_certOmapBoundaryDivergeEmit();
     void apfsWriter_certSnapshotDivergeSequence();
     void apfsWriter_certSnapshotCreateAfterDiverge();
+    void apfsWriter_probeForeignMultiBlockIp();
     void apfsWriter_certDivergeCloneDeletePatch();
     void apfsWriter_snapshotDeleteExtentFoldFailsClosed();
     void apfsWriter_rawNestedDirectoryCreate();
@@ -9794,6 +9795,39 @@ QString apfsDivergeSnapshotSetup(const QDir& dir, const PartitionApfsWriteOption
     return snap.ok ? s1 : QString();
 }
 }  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp() {
+    // Pass-4 verification harness: raw in-place file-insert into a FOREIGN container whose
+    // internal- pool bitmap spans >1 block (ip_bm_size_in_blocks>1, e.g. a >=1.35 TiB mkapfs
+    // container). SAK_IPBM_ORACLE points at such a container (a device path like
+    // \\.\Harddisk2Partition2, or a pre-mkapfs'd image); raw in-place, no clone. FINDING
+    // (2026-07-11, real 8TB, ip_bm_size=6): advanceIpBitmapRing advances the multi-block ring
+    // correctly and apfsck -cw stays CLEAN, because IP-pool usage clusters in block 0 and never
+    // reaches index 32768 within the supported <=24 TiB range -- so the block-0-only read/zero path
+    // is empirically correct (pass-4 unreachable).
+    const QString oracle = qEnvironmentVariable("SAK_IPBM_ORACLE");
+    if (oracle.isEmpty()) {
+        QSKIP("set SAK_IPBM_ORACLE to a pre-mkapfs'd multi-block-IP container");
+    }
+    const PartitionApfsWriteOptions rawOptions = certifiedApfsRawCommitOptions();
+    const uint64_t bytes =
+        qEnvironmentVariable("SAK_IPBM_BYTES", QStringLiteral("1649267441664")).toULongLong();
+    ApfsRawTargetPredicateGuard guard;
+    PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+        [oracle](const QString& p) { return p == oracle; });
+    const auto ins =
+        PartitionApfsWriter::commitRawFileInsert({.target_path = oracle,
+                                                  .target_container_bytes = bytes,
+                                                  .file_name = QStringLiteral("ipbm_probe.dat"),
+                                                  .file_data = QByteArray(4096, 'Z'),
+                                                  .target_mutation_confirmed = true,
+                                                  .allow_raw_device_target = true,
+                                                  .options = rawOptions});
+    qWarning("IPBM raw-insert ok=%d blockers=[%s]",
+             ins.ok,
+             qPrintable(ins.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(ins.ok, qPrintable(ins.blockers.join(QStringLiteral("; "))));
+}
 
 void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
     // Env-gated cert (bug #3): mutating a snapshotted volume DIVERGES rather than failing closed.
