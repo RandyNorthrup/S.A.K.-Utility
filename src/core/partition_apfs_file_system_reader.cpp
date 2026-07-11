@@ -155,6 +155,7 @@ constexpr qsizetype kApfsInodePrivateIdOffset = 0x08;
 constexpr qsizetype kApfsInodeModeOffset = 0x50;
 constexpr qsizetype kApfsInodeInternalFlagsOffset = 0x30;
 constexpr uint64_t kApfsInodeFlagSparse = 0x00'00'02'00;  // APFS_INODE_IS_SPARSE
+constexpr qsizetype kApfsInodeUncompressedSizeOffset = 0x54;
 constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
 constexpr uint16_t kApfsModeTypeMask = 0170000;
 constexpr uint16_t kApfsModeDirectory = 0040000;
@@ -439,6 +440,9 @@ struct InodeRecord {
     uint64_t size{0};
     uint16_t mode{0};
     bool sparse{false};  // A7 (A-h): INODE_IS_SPARSE -- a trailing/embedded hole reads as zeros
+    // The j_inode_val uncompressed-size field, valid when internal_flags carries
+    // APFS_INODE_HAS_UNCOMPRESSED_SIZE (a compressed file's logical size; 0 otherwise).
+    uint64_t uncompressed_size{0};
 };
 
 struct FileExtentRecord {
@@ -832,8 +836,53 @@ private:
         return true;
     }
 
+    // The com.apple.decmpfs attribute value for @fileId: the embedded value when present,
+    // else a DSTREAM-backed value assembled from its own stream extents (truncated to the
+    // recorded byte length) so both layouts decode identically. Empty = not compressed;
+    // nullopt = the stream assembly failed (blocker already appended).
+    [[nodiscard]] std::optional<QByteArray> decmpfsAttributeFor(
+        uint64_t fileId, PartitionApfsFileReadResult* result) {
+        const QByteArray embedded = decmpfsByInode_.value(fileId);
+        if (!embedded.isEmpty()) {
+            return embedded;
+        }
+        const auto stream = decmpfsStreamByInode_.constFind(fileId);
+        if (stream == decmpfsStreamByInode_.cend()) {
+            return QByteArray{};
+        }
+        const auto blob = assembleResourceForkBlob(stream->first, result);
+        if (!blob.has_value()) {
+            return std::nullopt;
+        }
+        return blob->left(static_cast<qsizetype>(stream->second));
+    }
+
+    // Build the read target for a compressed file: its logical size is the decmpfs header's
+    // uncompressed_size; a *_RSRC file additionally carries its com.apple.ResourceFork data
+    // stream's object id (0 when absent, i.e. the inline case).
+    [[nodiscard]] std::optional<FileReadTarget> compressedFileReadTarget(
+        const InodeRecord& inode,
+        const QByteArray& attribute,
+        uint64_t effectiveMax,
+        uint64_t fileId,
+        PartitionApfsFileReadResult* result) const {
+        const auto header = apfsParseDecmpfsHeader(attribute);
+        if (!header.has_value()) {
+            result->blockers.append(QStringLiteral("APFS decmpfs attribute is malformed"));
+            return std::nullopt;
+        }
+        const uint64_t bytesToRead = std::min<uint64_t>(header->uncompressed_size, effectiveMax);
+        if (header->uncompressed_size > bytesToRead) {
+            result->warnings.append(
+                QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
+        }
+        return FileReadTarget{
+            inode, bytesToRead, true, attribute, resourceForkObjIdByInode_.value(fileId, 0)};
+    }
+
+    // Non-const: a DSTREAM-backed decmpfs attribute is assembled from its stream extents here.
     [[nodiscard]] std::optional<FileReadTarget> resolveFileReadTarget(
-        const QString& path, uint64_t maxBytes, PartitionApfsFileReadResult* result) const {
+        const QString& path, uint64_t maxBytes, PartitionApfsFileReadResult* result) {
         const QString normalized = cleanPath(path);
         const auto record = resolveFile(normalized, result);
         if (!record.has_value()) {
@@ -855,26 +904,13 @@ private:
             maxBytes == 0 ? kMaxFileReadBytes : std::min<uint64_t>(maxBytes, kMaxFileReadBytes);
         // A compressed file has no data stream; its logical size is the decmpfs
         // header's uncompressed_size, decoded from the attribute on read.
-        const auto decmpfs = decmpfsByInode_.constFind(record->file_id);
-        if (decmpfs != decmpfsByInode_.cend()) {
-            const auto header = apfsParseDecmpfsHeader(*decmpfs);
-            if (!header.has_value()) {
-                result->blockers.append(QStringLiteral("APFS decmpfs attribute is malformed"));
-                return std::nullopt;
-            }
-            const uint64_t logical = header->uncompressed_size;
-            const uint64_t bytesToRead = std::min<uint64_t>(logical, effectiveMax);
-            if (logical > bytesToRead) {
-                result->warnings.append(
-                    QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
-            }
-            // A resource-fork-compressed file carries a com.apple.ResourceFork data stream
-            // (0 when absent, i.e. the inline case).
-            return FileReadTarget{*inode,
-                                  bytesToRead,
-                                  true,
-                                  *decmpfs,
-                                  resourceForkObjIdByInode_.value(record->file_id, 0)};
+        const auto resolved = decmpfsAttributeFor(record->file_id, result);
+        if (!resolved.has_value()) {
+            return std::nullopt;
+        }
+        if (!resolved->isEmpty()) {
+            return compressedFileReadTarget(
+                *inode, *resolved, effectiveMax, record->file_id, result);
         }
         const uint64_t bytesToRead = std::min<uint64_t>(inode->size, effectiveMax);
         if (inode->size > bytesToRead) {
@@ -1498,27 +1534,31 @@ private:
         return *key;
     }
 
-    // Capture an embedded com.apple.decmpfs attribute so a compressed file's
-    // logical content can be reconstructed from the attribute instead of the
-    // (absent) data stream. Resource-fork compression (dstream-backed) is a
-    // documented read follow-on; this handles the inline-xattr case.
-    // Capture a data-stream (resource-fork) xattr: record the com.apple.ResourceFork's owning
-    // object id (the le64 at the start of its j_xattr_dstream) so the compressed-file reader can
-    // assemble the cmpf blob from that id's extents. Other data-stream xattrs are ignored.
-    void captureResourceForkXattr(const QByteArray& node,
-                                  const BtreeEntryView& entry,
-                                  uint64_t objectId,
-                                  const QString& name,
-                                  uint16_t flags) {
-        constexpr qsizetype kXattrObjIdBytes = 8;  // le64 xattr_obj_id at j_xattr_dstream[0]
+    // Capture a data-stream xattr the compressed-file read path needs: for
+    // com.apple.ResourceFork, the owning object id (the le64 at the start of its
+    // j_xattr_dstream) so the cmpf blob can be assembled from that id's extents; for a
+    // DSTREAM-backed com.apple.decmpfs (the kernel writes one when the inline payload
+    // outgrows the embed limit), the owning object id plus the stream's byte length so the
+    // attribute value itself can be assembled at read time. Other stream xattrs are ignored.
+    void captureStreamXattr(const QByteArray& node,
+                            const BtreeEntryView& entry,
+                            uint64_t objectId,
+                            const QString& name,
+                            uint16_t flags) {
+        constexpr qsizetype kXattrDstreamMinBytes = 16;  // le64 xattr_obj_id + le64 dstream.size
         if ((flags & kApfsXattrDataStream) == 0 ||
-            name != QLatin1StringView(kApfsXattrNameResourceFork) ||
-            entry.value_offset + kApfsXattrValueXdataOffset + kXattrObjIdBytes >
+            entry.value_offset + kApfsXattrValueXdataOffset + kXattrDstreamMinBytes >
                 entry.value_offset + entry.value_length) {
             return;
         }
-        resourceForkObjIdByInode_.insert(
-            objectId, le64(node, entry.value_offset + kApfsXattrValueXdataOffset));
+        const uint64_t streamObjId = le64(node, entry.value_offset + kApfsXattrValueXdataOffset);
+        if (name == QLatin1StringView(kApfsXattrNameResourceFork)) {
+            resourceForkObjIdByInode_.insert(objectId, streamObjId);
+        } else if (name == QLatin1StringView(kApfsXattrNameCompressed)) {
+            const uint64_t streamBytes = le64(node,
+                                              entry.value_offset + kApfsXattrValueXdataOffset + 8);
+            decmpfsStreamByInode_.insert(objectId, {streamObjId, streamBytes});
+        }
     }
 
     void parseXattrRecord(const QByteArray& node, const BtreeEntryView& entry, uint64_t objectId) {
@@ -1539,7 +1579,7 @@ private:
         const uint16_t flags = le16(node, entry.value_offset + kApfsXattrValueFlagsOffset);
         const uint16_t xdataLen = le16(node, entry.value_offset + kApfsXattrValueXdataLenOffset);
         if ((flags & kApfsXattrDataEmbedded) == 0) {
-            captureResourceForkXattr(node, entry, objectId, name, flags);
+            captureStreamXattr(node, entry, objectId, name, flags);
             return;
         }
         if (entry.value_offset + kApfsXattrValueXdataOffset + xdataLen >
@@ -1599,8 +1639,14 @@ private:
         record.private_id = le64(node, entry.value_offset + kApfsInodePrivateIdOffset);
         record.mode = le16(node, entry.value_offset + kApfsInodeModeOffset);
         record.size = inodeDstreamSize(node, entry);
-        record.sparse = (le64(node, entry.value_offset + kApfsInodeInternalFlagsOffset) &
-                         kApfsInodeFlagSparse) != 0;
+        const uint64_t internalFlags = le64(node,
+                                            entry.value_offset + kApfsInodeInternalFlagsOffset);
+        record.sparse = (internalFlags & kApfsInodeFlagSparse) != 0;
+        if ((internalFlags & kApfsInodeHasUncompressedSize) != 0 &&
+            entry.value_length >= kApfsInodeUncompressedSizeOffset + 8) {
+            record.uncompressed_size = le64(node,
+                                            entry.value_offset + kApfsInodeUncompressedSizeOffset);
+        }
         inodeById_.insert(record.object_id, record);
     }
 
@@ -1740,13 +1786,16 @@ private:
         entry.object_id = record.file_id;
         entry.size_bytes = inode == inodeById_.cend() ? 0 : inode->size;
         // A compressed file has no data stream (inode size 0); report its logical
-        // size from the decmpfs header so listings show the real size.
+        // size from the decmpfs header so listings show the real size. A DSTREAM-backed
+        // decmpfs has no embedded header -- use the inode's uncompressed-size field.
         const auto decmpfs = decmpfsByInode_.constFind(record.file_id);
         if (decmpfs != decmpfsByInode_.cend()) {
             const auto header = apfsParseDecmpfsHeader(*decmpfs);
             if (header.has_value()) {
                 entry.size_bytes = header->uncompressed_size;
             }
+        } else if (entry.size_bytes == 0 && inode != inodeById_.cend()) {
+            entry.size_bytes = inode->uncompressed_size;
         }
         entry.directory = record.directory_type == kApfsDirTypeDirectory ||
                           (mode & kApfsModeTypeMask) == kApfsModeDirectory;
@@ -2052,6 +2101,9 @@ private:
     // A5 follow-on: for a resource-fork-compressed file, the object id owning its
     // com.apple.ResourceFork data stream (the cmpf blob's extents), keyed by inode id.
     QHash<uint64_t, uint64_t> resourceForkObjIdByInode_;
+    // DSTREAM-backed com.apple.decmpfs (the attribute value lives in its own data
+    // stream): {owning object id, attribute byte length} keyed by inode id.
+    QHash<uint64_t, QPair<uint64_t, uint64_t>> decmpfsStreamByInode_;
     // A7 (A-h): every embedded named attribute (ACL, Finder info, user xattrs)
     // keyed by inode object id, surfaced on a file read result.
     QMultiHash<uint64_t, QPair<QString, QByteArray>> xattrsByInode_;

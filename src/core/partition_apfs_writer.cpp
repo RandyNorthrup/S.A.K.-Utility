@@ -8367,6 +8367,16 @@ struct ApfsFileInsertRequest {
     // byte-identical. Placed last so the positional aggregate init stays valid.
     QString streamPath;
     uint64_t streamSize{0};
+    // In-place patch (explicitFileId != 0): the target's preserved special-inode state so
+    // the patched file is not rebuilt as a plain inode. Embedded xattrs ride in `xattrs`;
+    // these carry its other hard-link names (same sibling ids), its untouched data-stream
+    // xattrs (extents already recovered), and its verbatim rsrc-fork flag bits. All empty
+    // on every insert path, keeping it byte-identical.
+    QVector<ApfsHardLinkName> preservedLinks;
+    uint64_t preservedPrimarySiblingId{0};
+    QVector<ApfsDataStreamXattr> preservedStreamXattrs;
+    uint64_t preservedExtraInodeFlags{0};
+    bool preservedRsrcBits{false};
 
     // The payload's effective logical size (streamed size when streaming, else the
     // in-memory buffer size).
@@ -8509,9 +8519,14 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                    .resourceFork = in.request.resourceFork,
                    .resourceForkXattrObjId = in.request.resourceFork ? newFileId + 1 : 0,
                    .xattrs = in.request.xattrs,
+                   .streamXattrs = in.request.preservedStreamXattrs,
                    .sparse = in.request.sparse,
                    .sparseLogicalSize = in.request.sparseLogicalSize,
-                   .logicalSizeOverride = streamed ? in.request.streamSize : 0});
+                   .extraInodeFlags = in.request.preservedExtraInodeFlags,
+                   .additionalLinks = in.request.preservedLinks,
+                   .primarySiblingId = in.request.preservedPrimarySiblingId,
+                   .logicalSizeOverride = streamed ? in.request.streamSize : 0,
+                   .preservedRsrcBits = in.request.preservedRsrcBits});
 }
 
 bool buildChainedFileList(const ApfsChainedListInput& in,
@@ -11006,17 +11021,117 @@ struct ApfsFilePatchRequest {
     uint64_t targetFileId{0};  // the patched file's existing object id (preserved)
 };
 
+// The patch target's preserved special-inode state: what survives the data replacement
+// (embedded xattrs, hard-link names, untouched data-stream xattrs, verbatim fork flag bits)
+// and what the patch releases (the decmpfs payload stream / compressed blob -- the content
+// is being replaced with plain patched bytes, so the compression state is dropped).
+struct ApfsPatchTargetState {
+    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<ApfsDataStreamXattr> streamXattrs;
+    QVector<ApfsHardLinkName> links;
+    uint64_t primarySiblingId{0};
+    uint64_t extraInodeFlags{0};
+    QVector<ApfsDataExtent> droppedStreamExtents;
+};
+
+// Classify one recovered xattr of the patch target: compression state is dropped (its
+// payload stream's extents are freed), a non-empty classic fork and every other stream
+// xattr are preserved, and embedded attributes ride through verbatim.
+void classifyPatchTargetXattr(const ApfsLiveTreeSource& source,
+                              const ApfsRecoveredXattr& x,
+                              ApfsPatchTargetState* out,
+                              QStringList* blockers) {
+    if (x.name == QByteArray(kApfsXattrNameCompressed)) {
+        if ((x.flags & kApfsXattrDataStream) != 0) {
+            out->droppedStreamExtents += recoverFileDataExtents(
+                source.image, source.geometry, source.chain, le64(x.xdata, 0), blockers);
+        }
+        return;  // an embedded (inline or *_RSRC header) decmpfs value is simply dropped
+    }
+    if (x.name == QByteArray(kApfsXattrNameResourceFork)) {
+        const ApfsDataStreamXattr fork = recoveredStreamXattr(x);
+        if (fork.size == 0) {
+            return;  // a leftover empty fork adds nothing to the plain patched file
+        }
+        out->streamXattrs.append(fork);
+        out->extraInodeFlags |= kApfsInodeFlagHasRsrcFork;
+        return;
+    }
+    if (x.flags == kApfsXattrDataEmbedded) {
+        out->xattrs.append({x.name, x.xdata});
+        return;
+    }
+    out->streamXattrs.append(recoveredStreamXattr(x));
+}
+
+// Distribute a hard-linked patch target's sibling names: the patched name keeps its own
+// sibling id as primary; every other name re-emits verbatim through additionalLinks. A
+// single-name file has no sibling records, leaving both empty (byte-identical).
+void assignPatchTargetLinks(const QVector<ApfsInodeSibling>& sibs,
+                            const ApfsFilePatchRequest& request,
+                            ApfsPatchTargetState* out) {
+    for (const ApfsInodeSibling& s : sibs) {
+        if (out->primarySiblingId == 0 && s.name == request.fileName &&
+            s.parentId == request.parentDirectoryId) {
+            out->primarySiblingId = s.siblingId;  // the patched name stays the primary
+        } else {
+            out->links.append({.name = s.name, .parentId = s.parentId, .siblingId = s.siblingId});
+        }
+    }
+}
+
+// Recover everything the patched inode must carry across the data replacement. The
+// *_RSRC compressed blob is found through the (compressed) fork classification below:
+// a fork on a *_RSRC file IS the dropped blob, so drop it when the decmpfs header says so.
+bool recoverPatchTargetState(const ApfsFsCommitContext& ctx,
+                             const ApfsFilePatchRequest& request,
+                             ApfsPatchTargetState* out,
+                             QStringList* blockers) {
+    const ApfsLiveTreeSource source{ctx.image, ctx.geometry, ctx.chain};
+    ApfsRootFilePayload probe;  // reuse the preserve classifier to detect *_RSRC compression
+    probe.fileName = request.fileName;
+    const ApfsRecoveredInodeState state = recoverInodeState(
+        source.image, source.geometry, source.chain, request.targetFileId, blockers);
+    if (!applyPreservedInodeState(state, &probe, blockers)) {
+        return false;
+    }
+    for (const ApfsRecoveredXattr& x : state.xattrs) {
+        if (probe.resourceFork && x.name == QByteArray(kApfsXattrNameResourceFork)) {
+            // The fork holds the *_RSRC compressed blob; the patch replaces the content, so
+            // the blob's blocks are freed rather than preserved.
+            out->droppedStreamExtents += recoverFileDataExtents(
+                source.image, source.geometry, source.chain, le64(x.xdata, 0), blockers);
+            continue;
+        }
+        classifyPatchTargetXattr(source, x, out, blockers);
+    }
+    for (ApfsDataStreamXattr& sx : out->streamXattrs) {
+        sx.extents =
+            recoverFileDataExtents(source.image, source.geometry, source.chain, sx.objId, blockers);
+        if (sx.extents.isEmpty() && sx.size != 0) {
+            blockers->append(
+                QStringLiteral("APFS patch: data-stream xattr '%1' extents missing on '%2'")
+                    .arg(QString::fromUtf8(sx.name), request.fileName));
+            return false;
+        }
+    }
+    assignPatchTargetLinks(
+        recoverInodeSiblings(
+            source.image, source.geometry, source.chain, request.targetFileId, blockers),
+        request,
+        out);
+    return true;
+}
+
 // Split a patched file's current extents into the blocks the patch frees and (on a diverge)
 // the updated live delta record set. A patch is a diverge insert (the new data) fused with a
 // diverge delete (the old extents): on a snapshotted volume each pre-snapshot old extent gets a
 // KIND_UPDATE -1 delta (its block stays for the snapshot) and only live-exclusive old blocks are
-// freed; on a snapshot-free volume every old block is freed and the delta is unused.
+// freed; on a snapshot-free volume every old block is freed and the delta is unused. The old
+// extents cover the inode's own runs plus the dropped compression streams.
 QVector<uint64_t> planPatchOldExtents(const ApfsFsCommitContext& ctx,
-                                      uint64_t targetFileId,
-                                      ApfsDivergeState* diverge,
-                                      QStringList* blockers) {
-    const QVector<ApfsDataExtent> oldExtents =
-        recoverFileDataExtents(ctx.image, ctx.geometry, ctx.chain, targetFileId, blockers);
+                                      const QVector<ApfsDataExtent>& oldExtents,
+                                      ApfsDivergeState* diverge) {
     if (!diverge->active) {
         return fileFreedDataBlocks({.dataExtents = oldExtents}, ctx.geometry.blockSize);
     }
@@ -11042,20 +11157,32 @@ bool commitInPlaceFilePatch(QIODevice* image,
     if (!loadFsCommitContext(image, &ctx, blockers)) {
         return false;
     }
+    ApfsPatchTargetState preserved;
+    if (!recoverPatchTargetState(ctx, request, &preserved, blockers)) {
+        return false;
+    }
     const ApfsFileInsertRequest insert{.existingFiles = request.otherFiles,
                                        .fileName = request.fileName,
                                        .fileData = request.patchedData,
                                        .directories = request.directories,
                                        .newFileParentId = request.parentDirectoryId,
-                                       .explicitFileId = request.targetFileId};
+                                       .explicitFileId = request.targetFileId,
+                                       .xattrs = preserved.xattrs,
+                                       .preservedLinks = preserved.links,
+                                       .preservedPrimarySiblingId = preserved.primarySiblingId,
+                                       .preservedStreamXattrs = preserved.streamXattrs,
+                                       .preservedExtraInodeFlags = preserved.extraInodeFlags,
+                                       .preservedRsrcBits = preserved.extraInodeFlags != 0};
     const uint64_t dataBlocks = roundedBlockCount(static_cast<uint64_t>(request.patchedData.size()),
                                                   ctx.geometry.blockSize);
     ApfsDivergeState diverge;
     if (!computeDivergeState(ctx, &diverge, blockers)) {
         return false;
     }
-    const QVector<uint64_t> freedDataBlocks =
-        planPatchOldExtents(ctx, request.targetFileId, &diverge, blockers);
+    const QVector<ApfsDataExtent> oldExtents =
+        recoverFileDataExtents(ctx.image, ctx.geometry, ctx.chain, request.targetFileId, blockers) +
+        preserved.droppedStreamExtents;
+    const QVector<uint64_t> freedDataBlocks = planPatchOldExtents(ctx, oldExtents, &diverge);
     ApfsInsertSizing sizing;
     if (!sizeInsertFsTree(ctx, insert, diverge, &sizing, blockers)) {
         return false;
@@ -11107,7 +11234,10 @@ QByteArray applyBytePatch(QByteArray data, uint64_t offset, const QByteArray& pa
 }
 
 // Split the collected tree into the patch target (matched by parent + name) and the
-// other files (preserved). Returns false if the target is absent.
+// other files (preserved). EVERY directory entry of the target inode leaves otherFiles --
+// a hard-linked target's other names re-emit through the patched payload's preservedLinks,
+// and preserving them separately would duplicate the inode record (fsck-fatal). Returns
+// false if the target is absent.
 bool selectPatchTarget(const QVector<ApfsRootFilePayload>& allFiles,
                        uint64_t parentId,
                        const QString& fileName,
@@ -11118,11 +11248,17 @@ bool selectPatchTarget(const QVector<ApfsRootFilePayload>& allFiles,
         if (!found && file.parentDirectoryId == parentId && file.fileName == fileName) {
             *targetFileId = file.fileId;
             found = true;
-        } else {
+        }
+    }
+    if (!found) {
+        return false;
+    }
+    for (const ApfsRootFilePayload& file : allFiles) {
+        if (file.fileId != *targetFileId) {
             otherFiles->append(file);
         }
     }
-    return found;
+    return true;
 }
 
 uint64_t resolveParentId(const QVector<ApfsRootDirectoryPayload>& directories,
