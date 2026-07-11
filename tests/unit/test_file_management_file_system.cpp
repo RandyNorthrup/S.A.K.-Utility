@@ -116,6 +116,22 @@ private Q_SLOTS:
         QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("24 TiB")));
     }
 
+    void apfsNestedDirectoryDeleteFailsClosed() {
+        // The COW engine's directory-delete resolves only ROOT directories, so a nested target must
+        // fail closed rather than send the first path component (the root ancestor) as the delete
+        // name. The guard fires before any device access, so a manual (unopened) target is enough.
+        const auto target = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
+            QStringLiteral("APFS"),
+            128ULL * 1024ULL * 1024ULL);
+        QVERIFY(target.can_write_files);
+        const auto result = sak::FileManagementFileSystemBridge::deleteDirectory(
+            target, QStringLiteral("/docs/sub"));
+        QVERIFY2(!result.ok, "nested APFS directory delete must fail closed");
+        QVERIFY2(result.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("nested")),
+                 qPrintable(result.blockers.join(QStringLiteral("; "))));
+    }
+
     void renderPreviewDecodesTextAndDumpsBinary() {
         // Text bytes decode verbatim, are not flagged binary, and carry the caller's
         // truncation flag through.

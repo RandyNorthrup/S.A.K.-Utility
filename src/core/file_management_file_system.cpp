@@ -846,13 +846,25 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                                                   "limited to root directories"));
         }
         const auto parts = apfsParts(cleanPath);
+        // The COW engine's directory-delete resolves only ROOT directories (it ignores a parent
+        // path), so a nested target must fail closed instead of silently deleting the wrong
+        // directory: parts.value(0) would send the FIRST path component (the root ancestor) rather
+        // than the leaf. Nested directory delete is a scoped follow-on (mirror createDirectory's
+        // parent_directory_path once the engine's delete resolves a parent).
+        if (parts.size() != 1) {
+            return mutationBlocked(fs,
+                                   cleanPath,
+                                   QStringLiteral("APFS directory delete is limited to root "
+                                                  "directories; nested directory delete is not yet "
+                                                  "supported"));
+        }
         // Root directories use the certified crash-safe in-place COW engine
         // (fails closed on a non-empty directory; empty children first).
         return fromApfsCommitResult(
             PartitionApfsWriter::commitRawDirectoryDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
+                 .directory_name = parts.last(),
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),
