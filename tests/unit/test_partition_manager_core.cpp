@@ -1917,6 +1917,7 @@ private Q_SLOTS:
     void apfsWriter_certSnapshotDivergeSequence();
     void apfsWriter_certSnapshotCreateAfterDiverge();
     void apfsWriter_certDivergeCloneDeletePatch();
+    void apfsWriter_snapshotDeleteExtentFoldFailsClosed();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9837,32 +9838,57 @@ void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
         QVERIFY2(pt.ok, qPrintable(pt.blockers.join(QStringLiteral("; "))));
         return;
     }
-    // del / deldelsnap: delete a.dat on the snapshotted volume.
-    const QString afterDel =
-        probe == QStringLiteral("deldelsnap") ? dir.filePath(QStringLiteral("pdd-del.apfs")) : out;
+    // del: delete a.dat on the snapshotted volume.
     const auto del =
         PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = s1,
-                                                        .written_image_path = afterDel,
+                                                        .written_image_path = out,
                                                         .file_name = QStringLiteral("a.dat"),
                                                         .options = options});
     QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
-    if (probe != QStringLiteral("deldelsnap")) {
-        return;
-    }
+}
+
+void PartitionManagerCoreTests::apfsWriter_snapshotDeleteExtentFoldFailsClosed() {
+    // bug #3b (CI regression): format -> a.dat -> S1 -> delete a.dat (diverge, a KIND_UPDATE -1
+    // over S1's frozen base) -> S2 (freezes the delta) -> delete S1. Deleting the base-owner while
+    // a survivor holds a refcount delta over its extents needs the cross-snapshot extent-ref fold,
+    // which is not yet implemented; it must FAIL CLOSED, never emit the "Physical extent record:
+    // bad reference count" corruption apfsck caught before the guard.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString s1 = apfsDivergeSnapshotSetup(dir, options);
+    QVERIFY2(!s1.isEmpty(), "diverge setup failed");
+    const QString afterDel = dir.filePath(QStringLiteral("pdd-del.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = s1,
+                                                            .written_image_path = afterDel,
+                                                            .file_name = QStringLiteral("a.dat"),
+                                                            .options = options})
+                .ok);
     const QString withS2 = dir.filePath(QStringLiteral("pdd-s2.apfs"));
-    const auto s2 =
+    QVERIFY(
         PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = afterDel,
                                                             .written_image_path = withS2,
                                                             .snapshot_name = QStringLiteral("s2"),
                                                             .create_time_ns = 2,
-                                                            .options = options});
-    QVERIFY2(s2.ok, qPrintable(s2.blockers.join(QStringLiteral("; "))));
+                                                            .options = options})
+            .ok);
+    const QString out = dir.filePath(QStringLiteral("pdd-dels1.apfs"));
     const auto dels1 =
         PartitionApfsWriter::commitImageOnlySnapshotDelete({.source_image_path = withS2,
                                                             .written_image_path = out,
                                                             .snapshot_name = QStringLiteral("s1"),
                                                             .options = options});
-    QVERIFY2(dels1.ok, qPrintable(dels1.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(!dels1.ok, "expected the cross-snapshot extent-ref fold guard to fail closed");
+    QVERIFY2(dels1.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("extent-ref fold")),
+             qPrintable(dels1.blockers.join(QStringLiteral("; "))));
+    // The guard returns before any block write, so the scratch clone is the byte-unchanged
+    // 2-snapshot source: no partial/corrupt delete published. It still reports both snapshots and
+    // stays readable.
+    QCOMPARE(apfsLe64(readApfsImageBlock(out, apfsApsbBlockOf(out)), 0xD8), 2ULL);
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
 }
 
 namespace {

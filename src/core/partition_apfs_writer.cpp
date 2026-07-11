@@ -14328,6 +14328,40 @@ bool buildSnapshotDeleteRebuiltTrees(const ApfsFsCommitContext& ctx,
     return true;
 }
 
+// The cross-snapshot extent-ref FOLD -- netting a deleted snapshot's KIND_NEW base against the
+// KIND_UPDATE refcount deltas a SURVIVING snapshot (or the live volume) layered over it, when a
+// diverge deleted / overwrote / cloned a pre-snapshot block between snapshots -- is not yet
+// implemented. Deleting a snapshot in that state via the plain re-home leaves a base record with no
+// live reference, or a delta with no base (apfsck "Physical extent record: bad reference count").
+// Fail closed on any such delta; the quiescent and insert-only diverge multi-snapshot deletes carry
+// only KIND_NEW records and pass. Scoped follow-on (bug #3b: keeps-snapshots extent-ref fold).
+bool keepsSnapshotDeleteHasExtentDelta(const ApfsFsCommitContext& ctx,
+                                       const QVector<ApfsSnapshotMetadata>& remaining,
+                                       QStringList* blockers) {
+    QVector<uint64_t> trees{ctx.chain.extentRef};
+    for (const ApfsSnapshotMetadata& s : remaining) {
+        trees.append(s.extentRefTreeOid);
+    }
+    for (const uint64_t tree : trees) {
+        if (tree == 0) {
+            continue;
+        }
+        const QVector<ExtentRefPhysRecord> records =
+            readLiveExtentRefRecords(ctx.image, ctx.geometry, tree, blockers);
+        for (const ExtentRefPhysRecord& r : records) {
+            if (r.kind == kApfsExtentKindUpdate) {
+                blockers->append(QStringLiteral(
+                    "APFS snapshot-delete: a surviving snapshot or the live volume carries a "
+                    "refcount delta over the deleted snapshot's extents (a diverge that deleted, "
+                    "overwrote, or cloned a pre-snapshot block between snapshots); the cross-"
+                    "snapshot extent-ref fold is not yet supported"));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool commitInPlaceSnapshotDelete(QIODevice* image,
                                  const QString& snapshotName,
                                  ApfsInPlaceCheckpointResult* result,
@@ -14336,6 +14370,12 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
     ApfsSnapshotDeleteSelection sel;
     if (!loadFsCommitContext(image, &ctx, blockers) ||
         !resolveSnapshotDeleteTarget(image, ctx, snapshotName, &sel, blockers)) {
+        return false;
+    }
+    // The cross-snapshot extent-ref fold is a scoped follow-on: fail closed rather than corrupt
+    // when a surviving snapshot / the live volume holds a refcount delta over the deleted snapshot.
+    if (!sel.remaining.isEmpty() &&
+        keepsSnapshotDeleteHasExtentDelta(ctx, sel.remaining, blockers)) {
         return false;
     }
     // Re-home the shared extent-ref tree if the deleted snapshot is the records owner (mutates
