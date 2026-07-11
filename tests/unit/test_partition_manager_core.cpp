@@ -1918,6 +1918,7 @@ private Q_SLOTS:
     void apfsWriter_certSnapshotCreateAfterDiverge();
     void apfsWriter_probeForeignMultiBlockIp();
     void apfsWriter_probeForeignSparsePreserve();
+    void apfsWriter_caseSensitiveVolumeFailsClosed();
     void apfsWriter_certDivergeCloneDeletePatch();
     void apfsWriter_snapshotDeleteExtentFoldFailsClosed();
     void apfsWriter_rawNestedDirectoryCreate();
@@ -9883,6 +9884,49 @@ void PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp() {
              ins.ok,
              qPrintable(ins.blockers.join(QStringLiteral("; "))));
     QVERIFY2(ins.ok, qPrintable(ins.blockers.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::apfsWriter_caseSensitiveVolumeFailsClosed() {
+    // Pass-2 encoding gate: this writer emits HASHED j_drec keys (case-folded NFD hash), the
+    // APFS_INCOMPAT_CASE_INSENSITIVE volume format. A case-SENSITIVE volume (flag 0x1 clear)
+    // stores a different key encoding, so any in-place mutation must fail closed. Clear the
+    // flag on a generated image (re-stamping the checksum via the repair path) and verify the
+    // insert refuses.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("cs-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SAKCS"),
+                 .options = options})
+                .ok);
+    const quint64 apsb = apfsApsbBlockOf(base);
+    QFile image(base);
+    QVERIFY(image.open(QIODevice::ReadWrite));
+    QVERIFY(image.seek(static_cast<qint64>(apsb) * 4096 + 0x38));
+    char flags = '\0';
+    QVERIFY(image.getChar(&flags));
+    QVERIFY((flags & 0x01) != 0);
+    QVERIFY(image.seek(static_cast<qint64>(apsb) * 4096 + 0x38));
+    QVERIFY(image.putChar(static_cast<char>(flags & ~0x01)));  // case-SENSITIVE
+    image.close();
+    const QString repaired = dir.filePath(QStringLiteral("cs-repaired.apfs"));
+    QVERIFY(PartitionApfsWriter::repairImageOnlyObjectChecksums(
+                {.source_image_path = base, .repaired_image_path = repaired, .options = options})
+                .ok);
+    const auto ins = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = repaired,
+         .written_image_path = dir.filePath(QStringLiteral("cs.out")),
+         .file_name = QStringLiteral("x.txt"),
+         .file_data = QByteArrayLiteral("x"),
+         .options = options});
+    QVERIFY2(!ins.ok, "mutating a case-sensitive volume must fail closed");
+    QVERIFY2(ins.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("case-sensitive")),
+             qPrintable(ins.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve() {

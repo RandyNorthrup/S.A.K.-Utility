@@ -365,6 +365,7 @@ constexpr qsizetype kApfsVolumeIncompatibleFeaturesOffset = 0x38;
 // APFS_INCOMPAT_SEALED_VOLUME and carries an integrity-meta object. Mutating it
 // breaks the volume seal, so S.A.K. fails closed on any sealed-volume commit.
 constexpr uint64_t kApfsVolumeIncompatSealed = 0x00'00'00'20;
+constexpr uint64_t kApfsVolumeIncompatCaseInsensitive = 0x00'00'00'01;
 constexpr qsizetype kApfsVolumeIntegrityMetaOidOffset = 0x400;
 constexpr qsizetype kApfsVolumeAllocatedBlockCountOffset = 0x58;
 constexpr qsizetype kApfsVolumeOmapOidOffset = 0x80;
@@ -2251,11 +2252,18 @@ void sortFsTreeRecords(QVector<ApfsBtreeKeyValue>* records) {
                          if (leftType != rightType) {
                              return leftType < rightType;
                          }
-                         // Sibling directory entries order by the numeric
-                         // name_len_and_hash word; extents by logical offset.
+                         // Sibling directory entries order by the numeric name_len_and_hash
+                         // word, then by the raw NAME bytes -- two names can collide in the
+                         // 22-bit hash (+ equal length) and Apple's comparator breaks the tie
+                         // on the name, so an untied sort could mis-order them.
                          if (leftType == kApfsRecordDirectoryEntry) {
-                             return le32(left.key, kApfsDrecNameLengthOffset) <
-                                    le32(right.key, kApfsDrecNameLengthOffset);
+                             const uint32_t leftHash = le32(left.key, kApfsDrecNameLengthOffset);
+                             const uint32_t rightHash = le32(right.key, kApfsDrecNameLengthOffset);
+                             if (leftHash != rightHash) {
+                                 return leftHash < rightHash;
+                             }
+                             return left.key.mid(kApfsDrecNameOffset) <
+                                    right.key.mid(kApfsDrecNameOffset);
                          }
                          if (leftType == kApfsRecordFileExtent) {
                              return le64(left.key, kApfsFileExtentKeyLogicalOffset) <
@@ -2613,7 +2621,14 @@ bool buildFsInteriorLevels(const ApfsFsTreeBuildInput& in,
         if (writeFsTreeNodeBody(&rootTry, state->childPointers, rootValueEnd, &rootProbe)) {
             break;  // the current pointers fit one root node
         }
-        const auto groups = distributeIndexRecordsIntoNodes(state->childPointers, in.blockSize);
+        auto groups = distributeIndexRecordsIntoNodes(state->childPointers, in.blockSize);
+        if (groups.size() == 1 && groups.first().size() > 1) {
+            // The pointers overflow the ROOT (its 40-byte trailer shrinks the capacity) yet fit
+            // ONE interior node: split in two so the root never carries a single child (the
+            // degenerate one-child-root shape).
+            const QVector<ApfsBtreeKeyValue> all = groups.first();
+            groups = {all.mid(0, all.size() / 2), all.mid(all.size() / 2)};
+        }
         QVector<ApfsBtreeKeyValue> nextPointers;
         for (const auto& group : groups) {
             const uint64_t nodeOid = state->nextOid++;
@@ -2641,6 +2656,16 @@ bool buildFsTreeNodes(const ApfsFsTreeBuildInput& in,
                       QVector<ApfsFsTreeNode>* nodes,
                       QStringList* blockers) {
     const QVector<ApfsBtreeKeyValue> records = buildFsTreeRecords(in.files, in.directories);
+    // Defense-in-depth: a duplicate fs-tree key (e.g. an upstream coalescing bug emitting one
+    // inode twice) corrupts the bulk-loaded tree (apfsck "keys are out of order"); fail closed
+    // before any block is written. The record set is sorted, so duplicates are adjacent.
+    for (qsizetype i = 1; i < records.size(); ++i) {
+        if (records.at(i).key == records.at(i - 1).key) {
+            blockers->append(QStringLiteral(
+                "APFS fs-tree build: duplicate record key; refusing to emit a corrupt tree"));
+            return false;
+        }
+    }
     const qsizetype rootValueEnd = static_cast<qsizetype>(in.blockSize) - kApfsBtreeInfoBytes;
     QStringList probe;
     QByteArray single =
@@ -9157,13 +9182,23 @@ bool appendSealedVolumeBlocker(QIODevice* image,
     if (!readApfsRepairBlock(image, geometry, volSbBlock, &volSb, blockers)) {
         return false;
     }
-    const bool sealedFeature =
-        (le64(volSb, kApfsVolumeIncompatibleFeaturesOffset) & kApfsVolumeIncompatSealed) != 0;
-    if (sealedFeature || le64(volSb, kApfsVolumeIntegrityMetaOidOffset) != 0) {
+    const uint64_t incompatible = le64(volSb, kApfsVolumeIncompatibleFeaturesOffset);
+    if ((incompatible & kApfsVolumeIncompatSealed) != 0 ||
+        le64(volSb, kApfsVolumeIntegrityMetaOidOffset) != 0) {
         blockers->append(
             QStringLiteral("APFS sealed (signed-system) volume: any mutation breaks the volume "
                            "seal and is blocked; a typed seal-invalidation confirmation is "
                            "required to override"));
+        return false;
+    }
+    // Pass-2 encoding gate: this writer emits HASHED j_drec keys whose 22-bit hash is computed
+    // over the CASE-FOLDED NFD name -- exactly the APFS_INCOMPAT_CASE_INSENSITIVE (0x1) volume
+    // format. A case-SENSITIVE volume stores unhashed (or normalization-only-hashed) keys;
+    // emitting our hashed form there interleaves incompatible key encodings in the same tree.
+    if ((incompatible & kApfsVolumeIncompatCaseInsensitive) == 0) {
+        blockers->append(
+            QStringLiteral("APFS case-sensitive volume: its directory records use a different "
+                           "j_drec key encoding than this writer emits; mutation is blocked"));
         return false;
     }
     return true;
