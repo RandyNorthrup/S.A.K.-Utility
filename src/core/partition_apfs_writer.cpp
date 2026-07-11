@@ -3521,6 +3521,35 @@ struct ApfsVariableKvTree {
     QVector<ApfsVariableKvRecord> records;
 };
 
+// True when the variable-kv records fit one node: the TOC + all key bytes grow forward from
+// keyAreaStart and all value bytes grow backward from valueAreaEnd, so they fit iff the forward and
+// backward regions do not cross. Appends a blocker and returns false otherwise (buildVariableKv-
+// LeafBlock then fails closed rather than copying past the block buffer). A multi-node split (the
+// sibling extent-ref tree has one) is a scoped follow-on; reachable by ~40+ snapshots in one leaf.
+bool variableKvRecordsFitNode(const QVector<ApfsVariableKvRecord>& records,
+                              qsizetype keyAreaStart,
+                              qsizetype valueAreaEnd,
+                              uint32_t blockSize,
+                              QStringList* blockers) {
+    qsizetype totalKeyBytes = 0;
+    qsizetype totalValueBytes = 0;
+    for (const ApfsVariableKvRecord& record : records) {
+        totalKeyBytes += record.key.size();
+        totalValueBytes += record.value.size();
+    }
+    if (keyAreaStart + totalKeyBytes + totalValueBytes <= valueAreaEnd) {
+        return true;
+    }
+    blockers->append(
+        QStringLiteral("APFS variable-kv node: %1 records (%2 key + %3 value bytes) overflow a "
+                       "single %4-byte node; a multi-node split is not yet supported")
+            .arg(records.size())
+            .arg(totalKeyBytes)
+            .arg(totalValueBytes)
+            .arg(blockSize));
+    return false;
+}
+
 QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList* blockers) {
     const uint32_t blockSize = tree.blockSize;
     const QVector<ApfsVariableKvRecord>& records = tree.records;
@@ -3535,6 +3564,13 @@ QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList*
     writeLe16(&block, kApfsBtreeNodeTableLengthOffset, static_cast<uint16_t>(tocLength));
     const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + tocLength;
     const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) - kApfsBtreeInfoBytes;
+    // Fail closed when the records do not fit ONE node -- the copies below would run past the block
+    // buffer (a host-side heap overflow). The blocker aborts the commit before any checkpoint
+    // publishes, so the on-disk volume is never corrupted.
+    if (!variableKvRecordsFitNode(records, keyAreaStart, valueAreaEnd, blockSize, blockers)) {
+        stampApfsObjectBlock(&block, blockers);
+        return block;  // header-only; never published
+    }
     qsizetype keyCursor = 0;
     qsizetype valueBackCursor = 0;
     uint32_t longestKey = 0;

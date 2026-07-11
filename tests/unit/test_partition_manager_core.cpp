@@ -1922,6 +1922,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
+    void apfsWriter_snapshotMetaLeafCapacityFailsClosed();
     void apfsWriter_inPlaceMultiSnapshotDelete();
     void apfsWriter_multiSnapshotDeleteOwnerWithFile();
     void apfsWriter_inPlaceDivergeBetweenSnapshots();
@@ -10168,6 +10169,67 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotCreate() {
         PartitionApfsFileSystemReader::listDirectoryFromImage(snap3, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
     QCOMPARE(listing.volume_name, QStringLiteral("MULTISNAP"));
+}
+
+void PartitionManagerCoreTests::apfsWriter_snapshotMetaLeafCapacityFailsClosed() {
+    // Pass-5 bug #5: the snap-meta tree is a single variable-kv leaf. Accumulating enough snapshots
+    // eventually overflows one node; before the capacity guard, buildVariableKvLeafBlock copied
+    // keys and values past the block buffer (a host-side heap overflow) and emitted an invalid
+    // node. Create snapshots in a loop: every commit must either succeed or fail closed with the
+    // capacity blocker -- never crash, and the last good image must stay readable (no corruption
+    // published).
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    // SAK_SNAPCAP_CERT_DIR persists the last-good (near-capacity) image for host apfsck.
+    const QString envDir = qEnvironmentVariable("SAK_SNAPCAP_CERT_DIR");
+    const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
+    const QString base = dir.filePath(QStringLiteral("snapcap-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SNAPCAP"),
+                 .options = options})
+                .ok);
+    QString src = base;
+    QString lastGood = base;
+    int created = 0;
+    bool sawCapacityBlocker = false;
+    for (int i = 0; i < 200; ++i) {
+        const QString dst = dir.filePath(QStringLiteral("snapcap-%1.apfs").arg(i));
+        // Long names make each snap-meta record big so the single-leaf capacity is reached quickly.
+        const auto c = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+            {.source_image_path = src,
+             .written_image_path = dst,
+             .snapshot_name = QStringLiteral("snapshot_number_%1_%2")
+                                  .arg(i, 4, 10, QLatin1Char('0'))
+                                  .arg(QString(80, QLatin1Char('s'))),
+             .create_time_ns = static_cast<quint64>(i + 1),
+             .options = options});
+        if (c.ok) {
+            lastGood = dst;
+            src = dst;
+            ++created;
+            continue;
+        }
+        // Fail closed: the capacity blocker (not a crash, not a different error).
+        QVERIFY2(
+            c.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("overflow a single")),
+            qPrintable(QStringLiteral("snapshot %1 failed for an unexpected reason: %2")
+                           .arg(i)
+                           .arg(c.blockers.join(QStringLiteral("; ")))));
+        sawCapacityBlocker = true;
+        break;
+    }
+    QVERIFY2(sawCapacityBlocker, "expected the single-leaf snap-meta capacity guard to fire");
+    QVERIFY2(created > 5, "expected many snapshots to succeed before the guard fires");
+    // The last image accepted before the guard fired is intact and lists its snapshots.
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(lastGood, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(lastGood, apfsApsbBlockOf(lastGood)), 0xD8),
+             static_cast<quint64>(created));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {
