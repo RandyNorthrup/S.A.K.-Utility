@@ -1940,12 +1940,15 @@ uint64_t inodeAttributeFlags(const ApfsRootFilePayload& file) {
     return flags;
 }
 
-// Bytes a file actually allocates on disk: the sum of its data-extent blocks. For
-// a sparse file this is less than the rounded logical size (the hole is unallocated).
+// Bytes a file actually allocates on disk: the sum of its BACKED data-extent blocks. For
+// a sparse file this is less than the rounded logical size (a phys-0 hole extent covers
+// logical range without allocating anything).
 uint64_t fileAllocedBytes(const ApfsRootFilePayload& file, uint32_t blockSize) {
     uint64_t blocks = 0;
     for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
-        blocks += extent.blockCount;
+        if (extent.paddr != 0) {
+            blocks += extent.blockCount;
+        }
     }
     return blocks * blockSize;
 }
@@ -2044,14 +2047,24 @@ void appendFileDataStreamRecords(QVector<ApfsBtreeKeyValue>* records,
                                                  file.wrappedFileKey));
     }
     if (file.sparse) {
-        // The trailing hole is an explicit file-extent with phys_block_num 0 so the
-        // dstream's extents stay consecutive up to its logical size (apfsck requires
-        // it, and the hole's length feeds the sparse-bytes accounting). No block is
-        // allocated for a phys 0 extent.
-        const uint64_t alloced = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes);
-        if (file.sparseLogicalSize > alloced) {
-            records->append({fileExtentKey(file.privateId, alloced),
-                             fileExtentValue(file.sparseLogicalSize - alloced, 0)});
+        // The trailing hole is an explicit file-extent with phys_block_num 0 so the dstream's
+        // extents stay consecutive up to its logical size (apfsck requires it, and the hole's
+        // length feeds the sparse-bytes accounting). Synthesize only the hole PAST the last
+        // record: a preserved Apple file already carries its leading/middle holes as explicit
+        // phys-0 extents in dataExtents. Block-aligned like the kernel writes it, so the hole
+        // extents sum to the inode's sparse_bytes xfield (rounded size minus backed bytes).
+        uint64_t coverageEnd = 0;
+        for (const ApfsDataExtent& extent : dataExtents) {
+            coverageEnd =
+                std::max(coverageEnd,
+                         (extent.logicalBlock + extent.blockCount) * kSupportedApfsBlockSizeBytes);
+        }
+        const uint64_t roundedLogical = roundedBlockCount(file.sparseLogicalSize,
+                                                          kSupportedApfsBlockSizeBytes) *
+                                        kSupportedApfsBlockSizeBytes;
+        if (roundedLogical > coverageEnd) {
+            records->append({fileExtentKey(file.privateId, coverageEnd),
+                             fileExtentValue(roundedLogical - coverageEnd, 0)});
         }
     }
 }
@@ -6928,24 +6941,26 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
 }
 
 // Carry a preserved file's on-disk data + special-inode state forward across an in-place mutation:
-// keep its exact BACKED (phys != 0) extents (a real-Apple file may over-allocate its tail; a hole
-// is re-synthesized by the sparse builder) and reproduce its compression / xattrs. Shared by every
-// preservation path (insert/delete/dir via recoverPreservedFiles, and rename/move) so none rebuilds
-// a compressed/xattr'd file as a plain inode. Fails closed on the not-yet-preservable states.
+// keep its exact extents INCLUDING phys-0 holes (a real Apple sparse file records leading/middle
+// holes as explicit phys-0 extents; dropping them breaks the dstream's logical coverage -- apfsck
+// "Data stream: extents are not consecutive" / "wrong count of sparse bytes") and reproduce its
+// compression / xattrs. Shared by every preservation path (insert/delete/dir via
+// recoverPreservedFiles, and rename/move) so none rebuilds a compressed/xattr'd file as a plain
+// inode. Fails closed on the not-yet-preservable states.
 bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
                                  const QVector<ApfsDataExtent>& recovered,
                                  uint64_t fallbackStartBlock,
                                  ApfsRootFilePayload* file,
                                  QStringList* blockers) {
-    QVector<ApfsDataExtent> backed;
+    file->dataStartBlock = fallbackStartBlock;
     for (const ApfsDataExtent& extent : recovered) {
         if (extent.paddr != 0) {
-            backed.append(extent);
+            file->dataStartBlock = extent.paddr;
+            break;
         }
     }
-    file->dataStartBlock = backed.isEmpty() ? fallbackStartBlock : backed.first().paddr;
-    if (!backed.isEmpty()) {
-        file->dataExtents = backed;
+    if (!recovered.isEmpty()) {
+        file->dataExtents = recovered;
     }
     if (!applyPreservedInodeState(
             recoverInodeState(source.image, source.geometry, source.chain, file->fileId, blockers),
@@ -9291,11 +9306,15 @@ QVector<uint64_t> dataBlockRange(uint64_t start, uint64_t count) {
 }
 
 // Every data block a file occupies across all its runs (for the freed list on
-// delete). A single-extent file reduces to one contiguous dataBlockRange.
+// delete). A single-extent file reduces to one contiguous dataBlockRange. A phys-0
+// hole extent allocates nothing -- freeing it would enqueue container block 0 (the
+// nx_superblock) and its neighbors to the spaceman.
 QVector<uint64_t> fileFreedDataBlocks(const ApfsRootFilePayload& file, uint32_t blockSize) {
     QVector<uint64_t> blocks;
     for (const ApfsDataExtent& extent : fileDataExtents(file, blockSize)) {
-        blocks += dataBlockRange(extent.paddr, extent.blockCount);
+        if (extent.paddr != 0) {
+            blocks += dataBlockRange(extent.paddr, extent.blockCount);
+        }
     }
     return blocks;
 }
@@ -9490,7 +9509,9 @@ ApfsDivergeDeleteExtentPlan planDivergeDeleteExtents(
         }
     }
     for (const ApfsDataExtent& e : deletedExtents) {
-        if (!droppedPaddrs.contains(e.paddr)) {
+        // A phys-0 hole extent lives in the fs-tree only -- no extent-ref record exists for it,
+        // so a -1 delta keyed at paddr 0 would corrupt the extent-ref tree.
+        if (e.paddr != 0 && !droppedPaddrs.contains(e.paddr)) {
             plan.liveRecords.append({.paddr = e.paddr,
                                      .blockCount = e.blockCount,
                                      .owner = kApfsPhysExtUndefinedOwner,
@@ -9511,6 +9532,9 @@ QVector<ExtentRefPhysRecord> planDivergeCloneExtents(const QVector<ExtentRefPhys
                                                      const QVector<ApfsDataExtent>& sharedExtents) {
     QVector<ExtentRefPhysRecord> out = liveDelta;
     for (const ApfsDataExtent& e : sharedExtents) {
+        if (e.paddr == 0) {
+            continue;  // a hole is not a shared block: no extent-ref record to bump
+        }
         bool bumped = false;
         for (ExtentRefPhysRecord& r : out) {
             if (r.kind == kApfsExtentKindNew && r.paddr == e.paddr &&

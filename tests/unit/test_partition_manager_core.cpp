@@ -1917,6 +1917,7 @@ private Q_SLOTS:
     void apfsWriter_certSnapshotDivergeSequence();
     void apfsWriter_certSnapshotCreateAfterDiverge();
     void apfsWriter_probeForeignMultiBlockIp();
+    void apfsWriter_probeForeignSparsePreserve();
     void apfsWriter_certDivergeCloneDeletePatch();
     void apfsWriter_snapshotDeleteExtentFoldFailsClosed();
     void apfsWriter_rawNestedDirectoryCreate();
@@ -1940,6 +1941,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
+    void apfsWriter_unalignedSparsePreserveAndDelete();
     void apfsWriter_clonesFileSharingPhysicalExtents();
     void apfsWriter_addsHardLinkToFile();
     void apfsWriter_growsContainerInChunk();
@@ -9829,6 +9831,49 @@ void PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp() {
     QVERIFY2(ins.ok, qPrintable(ins.blockers.join(QStringLiteral("; "))));
 }
 
+void PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve() {
+    // Pass-3 sparse-preservation probe: mutate a FOREIGN (Mac-created) container that holds real
+    // sparse files (leading/middle/trailing holes). SAK_SPARSE_ORACLE points at the source image;
+    // SAK_CERT_OUT receives the mutated copy for apfsck. SAK_PROBE selects the mutation:
+    // insert (preserve sparse neighbors), delete / patch (free a sparse target's extents -- the
+    // paddr-0 hole must never reach the freed-block list).
+    const QString oracle = qEnvironmentVariable("SAK_SPARSE_ORACLE");
+    const QString out = qEnvironmentVariable("SAK_CERT_OUT");
+    if (oracle.isEmpty() || out.isEmpty()) {
+        QSKIP("probe-emit only: set SAK_SPARSE_ORACLE and SAK_CERT_OUT (+ SAK_PROBE)");
+    }
+    const QString probe = qEnvironmentVariable("SAK_PROBE", QStringLiteral("insert"));
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    PartitionApfsImageCheckpointCommitResult r;
+    if (probe == QStringLiteral("delete")) {
+        r = PartitionApfsWriter::commitImageOnlyFileDelete(
+            {.source_image_path = oracle,
+             .written_image_path = out,
+             .file_name = qEnvironmentVariable("SAK_TARGET", QStringLiteral("f_mid.bin")),
+             .options = options});
+    } else if (probe == QStringLiteral("patch")) {
+        r = PartitionApfsWriter::commitImageOnlyFilePatch(
+            {.source_image_path = oracle,
+             .written_image_path = out,
+             .file_name = qEnvironmentVariable("SAK_TARGET", QStringLiteral("f_mid.bin")),
+             .patch_offset_bytes = 0,
+             .patch_data = QByteArray(64, 'P'),
+             .options = options});
+    } else {
+        r = PartitionApfsWriter::commitImageOnlyFileInsert(
+            {.source_image_path = oracle,
+             .written_image_path = out,
+             .file_name = QStringLiteral("probe.txt"),
+             .file_data = QByteArray(4096, 'Q'),
+             .options = options});
+    }
+    qWarning("sparse-probe %s ok=%d blockers=[%s]",
+             qPrintable(probe),
+             r.ok,
+             qPrintable(r.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(r.ok, qPrintable(r.blockers.join(QStringLiteral("; "))));
+}
+
 void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
     // Env-gated cert (bug #3): mutating a snapshotted volume DIVERGES rather than failing closed.
     // SAK_PROBE={del,clonedel,patch} emit apfsck-clean images (clonedel exercises the #3a coalesce
@@ -11658,6 +11703,72 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
 
     // The container superblock stays self-consistent (object checksum + xid).
     verifyApfsContainerSuperblockChecksum(out);
+}
+
+void PartitionManagerCoreTests::apfsWriter_unalignedSparsePreserveAndDelete() {
+    // Pass-3 sparse preservation (regression): a sparse file with an UNALIGNED logical size must
+    // survive a later mutation intact -- its explicit phys-0 hole extent is preserved verbatim
+    // (not dropped + re-synthesized at the wrong offset/length), and deleting it must free only
+    // its BACKED blocks (a phys-0 hole in the freed list would return container block 0 to the
+    // spaceman). Foreign leading/middle-hole shapes are certified by the Mac-oracle probe
+    // (apfsWriter_probeForeignSparsePreserve); this guards the generated round-trip in CI.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("sparse-base.apfs"));
+    QVERIFY2(PartitionApfsWriter::buildImageOnlyFormatImage(
+                 {.image_path = base,
+                  .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                  .block_size_bytes = 4096,
+                  .volume_name = QStringLiteral("SAKSPARSE"),
+                  .options = options})
+                 .ok,
+             "format sparse base");
+
+    const QByteArray payload = QByteArrayLiteral("unaligned sparse payload");
+    const uint64_t logicalSize = 10'000;  // NOT a block multiple: hole must round to 12288
+    const QString withSparse = dir.filePath(QStringLiteral("sparse-1.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = withSparse,
+                                                        .file_name = QStringLiteral("sparse.bin"),
+                                                        .file_data = payload,
+                                                        .sparse_logical_size = logicalSize,
+                                                        .options = options})
+            .ok);
+
+    // A second insert PRESERVES sparse.bin (recover extents incl. the hole + re-emit).
+    const QString withBoth = dir.filePath(QStringLiteral("sparse-2.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = withSparse,
+                                                            .written_image_path = withBoth,
+                                                            .file_name = QStringLiteral("b.txt"),
+                                                            .file_data = QByteArrayLiteral("bb"),
+                                                            .options = options})
+                .ok);
+    const auto read = PartitionApfsFileSystemReader::readFileFromImage(
+        withBoth, QStringLiteral("/sparse.bin"), logicalSize);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(static_cast<uint64_t>(read.data.size()), logicalSize);
+    QCOMPARE(read.data.left(payload.size()), payload);
+    QCOMPARE(read.data.mid(payload.size()),
+             QByteArray(static_cast<qsizetype>(logicalSize) - payload.size(), '\0'));
+
+    // Deleting the preserved sparse file frees only its backed block; the container stays
+    // readable and self-consistent (a phys-0 free would corrupt the spaceman/superblock).
+    const QString afterDelete = dir.filePath(QStringLiteral("sparse-3.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = withBoth,
+                                                        .written_image_path = afterDelete,
+                                                        .file_name = QStringLiteral("sparse.bin"),
+                                                        .options = options})
+            .ok);
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(afterDelete, QStringLiteral("/"), 20);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("b.txt"));
+    verifyApfsContainerSuperblockChecksum(afterDelete);
 }
 
 void PartitionManagerCoreTests::apfsWriter_clonesFileSharingPhysicalExtents() {
