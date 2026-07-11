@@ -13769,6 +13769,12 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
                                                             : f.frozen.extentRefOid;
     if (keepsSnapshots) {
         freed.append(keptFreed);
+        // A diverged-omap teardown rebuilt the volume omap into fresh blocks: free the old omap
+        // tree nodes and the deleted snapshot's exclusive fs-tree nodes (freedExtentRefNodes).
+        // No-op on the quiescent keeps-snapshots path (omap unchanged, freedExtentRefNodes empty).
+        if (f.newOmapTreeRoot != 0) {
+            freed += f.freedExtentRefNodes;
+        }
     } else if (rebuild) {
         freed += f.freedExtentRefNodes;
     } else {
@@ -13919,23 +13925,71 @@ struct ApfsSnapshotDeleteRebuildPlan {
     uint64_t newOmapTreeRoot{0};  // reserved block the rebuilt single-version omap tree is at
 };
 
+// Resolve every omap oid to the paddr of the version a snapshot frozen at @xid reads: the entry
+// with the largest xid at or before @xid, per oid. A S.A.K. diverge keeps several (oid, xid)
+// versions of an fs-tree node in the volume omap -- the kept snapshots resolve the smaller xids,
+// the live volume the largest -- so a naive last-wins pick would walk the live tree, not the
+// snapshot's. Entries postdating the snapshot are skipped.
+QHash<uint64_t, uint64_t> resolveOmapAtXid(const QVector<ApfsObjectMapEntry>& entries,
+                                           uint64_t xid) {
+    QHash<uint64_t, uint64_t> paddr;
+    QHash<uint64_t, uint64_t> bestXid;
+    for (const ApfsObjectMapEntry& e : entries) {
+        if (e.xid > xid) {
+            continue;  // a later live / other-snapshot version this snapshot never saw
+        }
+        auto it = bestXid.find(e.oid);
+        if (it == bestXid.end() || e.xid > it.value()) {
+            bestXid[e.oid] = e.xid;
+            paddr[e.oid] = e.physicalBlock;
+        }
+    }
+    return paddr;
+}
+
+// Every fs-tree node block a KEPT snapshot's frozen tree occupies, walked from its frozen
+// superblock's root oid through the volume omap resolved at the snapshot's xid. These blocks must
+// survive a versioned-omap teardown that deletes a DIFFERENT snapshot -- they are shared with, or
+// exclusive to, a survivor, not the deleted snapshot. Appends into @paddrs (a running union).
+bool collectSnapshotFsTreeNodePaddrs(const ApfsFsCommitContext& ctx,
+                                     const ApfsSnapshotMetadata& snap,
+                                     const QVector<ApfsObjectMapEntry>& versionedEntries,
+                                     QVector<uint64_t>* paddrs,
+                                     QStringList* blockers) {
+    QByteArray frozenSb(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, snap.sblockOid, &frozenSb, blockers)) {
+        return false;
+    }
+    const uint64_t rootOid = le64(frozenSb, kApfsVolumeRootTreeOidOffset);
+    const QHash<uint64_t, uint64_t> omap = resolveOmapAtXid(versionedEntries, snap.snapXid);
+    const uint64_t rootPaddr = omap.value(rootOid, 0);
+    if (rootPaddr == 0) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-delete: kept snapshot's fs-tree root has no object-map mapping"));
+        return false;
+    }
+    const ApfsFsTreeCollect collect{&omap, paddrs};
+    return collectFsTreeSubtree(ctx.image, ctx.geometry, rootPaddr, collect, blockers);
+}
+
 // The versioned volume omap after a S.A.K. diverge retains BOTH the snapshot's frozen fs-tree node
-// versions and the live ones. Deleting the last snapshot leaves the snapshot's versions
-// unreferenced (apfsck "Leaked omap record: unexpected object type"). The live and snapshot node
-// sets are not merely different versions of the same oid -- a diverge that splits a multi-node
-// fs-tree allocates FRESH oids for the live nodes, so the snapshot nodes occupy disjoint oids and a
-// max-xid-per-oid split keeps them (they look like the only version of their oid). Instead keep
-// exactly the omap entries whose block the LIVE fs-tree actually reaches (`liveNodePaddrs`, walked
-// from the live root); every other entry is a snapshot-exclusive node block, freed. Returns true
-// when some entry is dropped (the omap is genuinely versioned); false leaves the omap
-// single-version (the certified / kernel-revert path -- no rebuild).
+// versions and the live ones. Deleting a snapshot leaves ITS exclusive versions unreferenced
+// (apfsck "Leaked omap record: unexpected object type"). The live and snapshot node sets are not
+// merely different versions of the same oid -- a diverge that splits a multi-node fs-tree allocates
+// FRESH oids for the live nodes, so the snapshot nodes occupy disjoint oids and a max-xid-per-oid
+// split keeps them (they look like the only version of their oid). Instead keep exactly the omap
+// entries whose block the surviving trees actually reach (`keepNodePaddrs` -- the union of the live
+// root walk and every KEPT snapshot's frozen-root walk); every other entry is a block exclusive to
+// the deleted snapshot, freed. Returns true when some entry is dropped (the omap is genuinely
+// versioned); false leaves the omap single-version (the certified / kernel-revert path -- no
+// rebuild).
 bool splitVersionedOmapForDelete(const QVector<ApfsObjectMapEntry>& entries,
-                                 const QSet<uint64_t>& liveNodePaddrs,
-                                 QVector<ApfsObjectMapEntry>* liveEntries,
+                                 const QSet<uint64_t>& keepNodePaddrs,
+                                 QVector<ApfsObjectMapEntry>* keptEntries,
                                  QVector<uint64_t>* droppedNodes) {
     for (const ApfsObjectMapEntry& e : entries) {
-        if (liveNodePaddrs.contains(e.physicalBlock)) {
-            liveEntries->append(e);
+        if (keepNodePaddrs.contains(e.physicalBlock)) {
+            keptEntries->append(e);
         } else {
             droppedNodes->append(e.physicalBlock);
         }
@@ -13950,32 +14004,41 @@ bool splitVersionedOmapForDelete(const QVector<ApfsObjectMapEntry>& entries,
 // rebuild is a scoped follow-on) -- never corrupts. On the empty-live path leaves
 // plan->extentRefSlots 0 (certified re-adopt).
 bool planSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
-                               bool keepsSnapshots,
+                               const QVector<ApfsSnapshotMetadata>& remaining,
                                uint64_t snapshotExtentRefOid,
                                ApfsSnapshotDeleteRebuildPlan* plan,
                                QStringList* blockers) {
-    if (keepsSnapshots) {
-        return true;  // keeping other snapshots: no single-version collapse.
-    }
+    const bool keepsSnapshots = !remaining.isEmpty();
     // Versioned-omap teardown FIRST, and independent of the extent-ref state: if a S.A.K. diverge
-    // left the volume omap holding the snapshot's frozen fs-tree node versions alongside the live
-    // ones, collapse to single-version -- keep only the omap entries the LIVE fs-tree reaches, free
-    // the snapshot-exclusive node blocks. A HARDLINK diverge versions the omap but adds NO extents,
-    // so this must not be gated behind a populated extent-ref tree (that gate leaked the stale
-    // version: apfsck "Leaked omap record").
-    QVector<uint64_t> liveFsNodes;
-    if (!collectOldFsTreeNodePaddrs(ctx.image, ctx.geometry, ctx.chain, &liveFsNodes, blockers)) {
+    // left the volume omap holding the deleted snapshot's frozen fs-tree node versions alongside
+    // the live (and any kept-snapshot) ones, drop just the deleted snapshot's exclusive versions --
+    // keep every omap entry a SURVIVING tree reaches: the live root walk UNION each kept snapshot's
+    // frozen-root walk (resolved at the snapshot's xid). Freeing only live-reachable blocks would
+    // wrongly free a kept snapshot's frozen nodes (a diverge gives the live nodes fresh oids, so
+    // the kept snapshot's nodes occupy disjoint oids version-GC cannot prune). A HARDLINK diverge
+    // versions the omap but adds NO extents, so this must not be gated behind a populated
+    // extent-ref tree (that gate leaked the stale version: apfsck "Leaked omap record").
+    const QVector<ApfsObjectMapEntry> versioned = readLiveOmapVersionedEntries(ctx, blockers);
+    QVector<uint64_t> keepNodes;
+    if (!collectOldFsTreeNodePaddrs(ctx.image, ctx.geometry, ctx.chain, &keepNodes, blockers)) {
         return false;
     }
-    const QSet<uint64_t> liveNodePaddrs(liveFsNodes.begin(), liveFsNodes.end());
-    const bool versionedOmap =
-        splitVersionedOmapForDelete(readLiveOmapVersionedEntries(ctx, blockers),
-                                    liveNodePaddrs,
-                                    &plan->liveOmapEntries,
-                                    &plan->droppedOmapNodes);
+    for (const ApfsSnapshotMetadata& snap : remaining) {
+        if (!collectSnapshotFsTreeNodePaddrs(ctx, snap, versioned, &keepNodes, blockers)) {
+            return false;
+        }
+    }
+    const QSet<uint64_t> keepNodePaddrs(keepNodes.begin(), keepNodes.end());
+    const bool versionedOmap = splitVersionedOmapForDelete(
+        versioned, keepNodePaddrs, &plan->liveOmapEntries, &plan->droppedOmapNodes);
     if (versionedOmap) {
         plan->omapTreeBlocks = static_cast<int>(
             omapTreeBlockCount(plan->liveOmapEntries.size(), ctx.geometry.blockSize));
+    }
+    if (keepsSnapshots) {
+        // Keeping snapshots: only the versioned omap is collapsed. Extent-ref coverage stays with
+        // the kept snapshots (or the re-homed records owner), so there is no live extent-ref fold.
+        return true;
     }
     // Extent-ref rebuild: fold the snapshot's frozen tree with the live delta when the live tree is
     // populated (a diverge that touched extents), OR when the omap is versioned but the live tree
@@ -14137,6 +14200,61 @@ bool executeSnapshotDeleteRebuild(const ApfsFsCommitContext& ctx,
     return true;
 }
 
+// Rebuild ONLY the versioned volume omap for a keeps-snapshots delete whose omap diverged: drop the
+// deleted snapshot's exclusive node versions, keep the live + kept-snapshot ones. The extent-ref
+// trees stay per-snapshot (handled by the re-home), so there is no extent-ref fold here. newBlocks
+// layout on this path: [0]=omap-snapshot tree, [1..5]=chain, [6..]=rebuilt omap tree. Returns the
+// rebuilt root, the blocks to free (old omap tree nodes + the dropped snapshot's fs-tree nodes),
+// and the exact apfs_fs_alloc_count: the quiescent subsequent-delete delta (the frozen superblock),
+// minus the now-unleaked dropped nodes (apfsck counted each leaked block, so removing them lowers
+// v_block_count one-for-one), plus the omap tree's node-count churn.
+bool executeKeptSnapshotOmapTeardown(const ApfsFsCommitContext& ctx,
+                                     ApfsSnapshotDeleteRebuildPlan* plan,
+                                     const QVector<uint64_t>& newBlocks,
+                                     ApfsSnapshotDeleteRebuildOutput* out,
+                                     QStringList* blockers) {
+    constexpr qsizetype kKeptSnapshotOmapBase = 6;  // 1 (omap-snap tree) + 5 (chain)
+    const QVector<uint64_t> omapTreeNodes = newBlocks.mid(kKeptSnapshotOmapBase,
+                                                          plan->omapTreeBlocks);
+    plan->newOmapTreeRoot = omapTreeNodes.value(0);
+    if (!writeSnapshotDeleteOmapRebuild(ctx, *plan, omapTreeNodes, &out->freedNodes, blockers)) {
+        return false;
+    }
+    QByteArray liveVol(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.chain.volSb, &liveVol, blockers)) {
+        return false;
+    }
+    const uint64_t curAlloc = le64(liveVol, kApfsVolumeAllocatedBlockCountOffset);
+    out->rebuiltAllocCount = curAlloc + static_cast<uint64_t>(plan->omapTreeBlocks) -
+                             kApfsSnapshotSubsequentAllocDelta -
+                             static_cast<uint64_t>(plan->droppedOmapNodes.size()) -
+                             static_cast<uint64_t>(ctx.chain.volOmapTreeNodes.size());
+    out->newOmapTreeRoot = plan->newOmapTreeRoot;
+    return true;
+}
+
+// Dispatch the snapshot-delete rebuild by kind and fill @out. Delete-last with a
+// populated/versioned live tree folds the extent-ref tree + collapses the omap
+// (executeSnapshotDeleteRebuild); a keeps- snapshots delete whose omap diverged rebuilds only the
+// versioned omap (executeKeptSnapshotOmap- Teardown, no extent-ref fold). A quiescent delete leaves
+// @out zeroed -- the certified re-adopt path. extentRefSlots is set only on a delete-last rebuild
+// (a kept-snapshot teardown always leaves it 0), so it distinguishes the two kinds;
+// plan->snapshotExtentRef must already be set (the delete-last fold consumes it). Returns true
+// (leaving @out zeroed) when no rebuild is needed.
+bool buildSnapshotDeleteRebuiltTrees(const ApfsFsCommitContext& ctx,
+                                     ApfsSnapshotDeleteRebuildPlan* plan,
+                                     const QVector<uint64_t>& newBlocks,
+                                     ApfsSnapshotDeleteRebuildOutput* out,
+                                     QStringList* blockers) {
+    if (plan->extentRefSlots != 0) {
+        return executeSnapshotDeleteRebuild(ctx, plan, newBlocks, out, blockers);
+    }
+    if (plan->omapTreeBlocks != 0) {
+        return executeKeptSnapshotOmapTeardown(ctx, plan, newBlocks, out, blockers);
+    }
+    return true;
+}
+
 bool commitInPlaceSnapshotDelete(QIODevice* image,
                                  const QString& snapshotName,
                                  ApfsInPlaceCheckpointResult* result,
@@ -14152,7 +14270,7 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
     const uint64_t reHomedFreed = reHomeSnapshotExtentRef(sel.target, &sel.remaining);
     const bool keepsSnapshots = !sel.remaining.isEmpty();
     ApfsSnapshotDeleteRebuildPlan plan;
-    if (!planSnapshotDeleteRebuild(ctx, keepsSnapshots, sel.frozen.extentRefOid, &plan, blockers)) {
+    if (!planSnapshotDeleteRebuild(ctx, sel.remaining, sel.frozen.extentRefOid, &plan, blockers)) {
         return false;
     }
     QVector<uint64_t> newBlocks;
@@ -14170,14 +14288,12 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
                                 blockers)) {
         return false;
     }
-    // Build + write the rebuilt trees (extent-ref + versioned omap) and compute the exact alloc
-    // count, when the live tree is the kernel/diverge-populated one; a no-op on the re-adopt path.
+    // Build + write the rebuilt trees and compute the exact alloc count (a no-op on the certified
+    // quiescent re-adopt path). Dispatched by the rebuild kind below.
     ApfsSnapshotDeleteRebuildOutput rebuilt;
-    if (plan.extentRefSlots != 0) {
-        plan.snapshotExtentRef = sel.frozen.extentRefOid;
-        if (!executeSnapshotDeleteRebuild(ctx, &plan, newBlocks, &rebuilt, blockers)) {
-            return false;
-        }
+    plan.snapshotExtentRef = sel.frozen.extentRefOid;  // consumed only by the delete-last fold
+    if (!buildSnapshotDeleteRebuiltTrees(ctx, &plan, newBlocks, &rebuilt, blockers)) {
+        return false;
     }
     return finalizeSnapshotDelete({.ctx = ctx,
                                    .oldSnapMetaTree = sel.oldSnapMetaTree,
