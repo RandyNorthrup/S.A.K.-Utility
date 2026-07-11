@@ -1400,6 +1400,11 @@ struct ApfsRootFilePayload {
     QByteArray perFileKey;      // 32 raw bytes; encrypts the data blocks (never on disk)
     QByteArray wrappedFileKey;  // 40 bytes = RFC3394(VEK, perFileKey); the on-disk key
     uint32_t protectionClass{0};
+    // Preservation: the original inode's resource-fork internal_flags bits (NO_RSRC_FORK /
+    // HAS_RSRC_FORK) are carried VERBATIM in extraInodeFlags -- including the kernel-written
+    // "neither bit" form on a dstream-decmpfs file -- instead of re-deriving NO_RSRC_FORK.
+    // False keeps every generated file byte-identical.
+    bool preservedRsrcBits{false};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1573,15 +1578,21 @@ struct ApfsInodeParams {
     // default_protection_class (offset 0x3C). 0 = unencrypted (byte-identical).
     uint64_t cryptoId = 0;
     uint32_t protectionClass = 0;
+    // Preservation: extraInternalFlags already carries the original NO_RSRC/HAS_RSRC bits
+    // verbatim (possibly neither), so do not default-add NO_RSRC_FORK.
+    bool rsrcBitsExplicit = false;
 };
 
 // internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
 // fork; a resource-fork-compressed file instead carries APFS_INODE_HAS_RSRC_FORK (already
 // in `extra`), and the two are mutually exclusive (apfsck rejects both). Add
 // APFS_INODE_HAS_UNCOMPRESSED_SIZE for a compressed inode, plus any A7 attribute flags.
-uint64_t inodeInternalFlags(bool compressed, uint64_t extra) {
-    const uint64_t rsrcBase = (extra & kApfsInodeFlagHasRsrcFork) != 0 ? 0ULL
-                                                                       : kApfsInodeFlagNoRsrcFork;
+// rsrcBitsExplicit: a preserved inode's original bits ride in `extra` verbatim (the kernel
+// leaves BOTH bits clear on a dstream-decmpfs file), so no default is added.
+uint64_t inodeInternalFlags(bool compressed, uint64_t extra, bool rsrcBitsExplicit) {
+    const uint64_t rsrcBase = rsrcBitsExplicit || (extra & kApfsInodeFlagHasRsrcFork) != 0
+                                  ? 0ULL
+                                  : kApfsInodeFlagNoRsrcFork;
     return rsrcBase | (compressed ? kApfsInodeHasUncompressedSize : 0ULL) | extra;
 }
 
@@ -1677,7 +1688,8 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
                  extraInternalFlags,
                  allocedSizeBytes,
                  cryptoId,
-                 protectionClass] = params;
+                 protectionClass,
+                 rsrcBitsExplicit] = params;
     // A compressed regular file carries the NAME xfield only (its bytes live in the
     // decmpfs xattr); an uncompressed regular file additionally carries a DSTREAM.
     const bool regularFile = (mode & kApfsModeRegularFile) == kApfsModeRegularFile;
@@ -1703,7 +1715,7 @@ QByteArray inodeValue(const ApfsInodeParams& params) {
     writeLe64(&value, 0x28, kApfsGeneratedTimestamp);
     writeLe64(&value,
               kApfsInodeInternalFlagsOffset,
-              inodeInternalFlags(compressed, extraInternalFlags));
+              inodeInternalFlags(compressed, extraInternalFlags, rsrcBitsExplicit));
     writeLe32(&value, 0x38, static_cast<uint32_t>(childOrLinkCount));
     writeLe32(&value, kApfsInodeDefaultProtectionClassOffset, protectionClass);
     const uint16_t permissions = (mode & 0777) ? 0 : (regularFile ? 0644 : 0755);
@@ -2088,7 +2100,8 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
                      // matches its physical extents. Equals the rounded size for a normal file.
                      .allocedSizeBytes = fileAllocedBytes(file, kSupportedApfsBlockSizeBytes),
                      .cryptoId = file.cryptoId,
-                     .protectionClass = file.protectionClass})});
+                     .protectionClass = file.protectionClass,
+                     .rsrcBitsExplicit = file.preservedRsrcBits})});
     records->append({directoryEntryKey(file.parentDirectoryId, file.fileName),
                      file.additionalLinks.isEmpty()
                          ? directoryEntryValue(file.fileId, kApfsDirTypeRegularFile)
@@ -2098,8 +2111,12 @@ void appendRootFileRecords(QVector<ApfsBtreeKeyValue>* records, const ApfsRootFi
     if (file.compressed) {
         // A transparently-compressed file's inode is UF_COMPRESSED with no data-stream
         // xfield; the 16-byte decmpfs header rides in an embedded com.apple.decmpfs xattr.
-        records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameCompressed)),
-                         xattrEmbeddedValue(kApfsXattrDataEmbedded, file.decmpfsXattr)});
+        // A preserved DSTREAM-backed decmpfs (decmpfsXattr empty) re-emits through
+        // streamXattrs instead -- header and payload stay in their original stream blocks.
+        if (!file.decmpfsXattr.isEmpty()) {
+            records->append({xattrKey(file.fileId, QByteArray(kApfsXattrNameCompressed)),
+                             xattrEmbeddedValue(kApfsXattrDataEmbedded, file.decmpfsXattr)});
+        }
         if (file.resourceFork) {
             // Large compressed content: the "cmpf" blob lives in a com.apple.ResourceFork
             // data stream whose extents are owned by resourceForkXattrObjId (a fresh object
@@ -6885,51 +6902,90 @@ ApfsRecoveredInodeState recoverInodeState(QIODevice* image,
     return state;
 }
 
+// The preserved j_xattr_dstream descriptor of one recovered attribute (le64 xattr_obj_id @0,
+// then apfs_dstream: size @8, alloced_size @16), as a streamXattrs entry whose extents
+// preserveFileExtentsAndState recovers.
+ApfsDataStreamXattr recoveredStreamXattr(const ApfsRecoveredXattr& x) {
+    return {.name = x.name,
+            .objId = le64(x.xdata, 0),
+            .size = le64(x.xdata, kApfsXattrDstreamSizeOffset),
+            .allocedSize = le64(x.xdata, kApfsXattrDstreamAllocedOffset)};
+}
+
+// Carry a preserved com.apple.decmpfs attribute: an EMBEDDED value holds the 16-byte header
+// (+ inline payload); a DSTREAM-backed value (the kernel writes one when the inline payload
+// outgrows the embed limit) is preserved as a data-stream xattr, and the header inside the
+// stream is read by preserveFileExtentsAndState once its extents are recovered.
+bool applyPreservedDecmpfs(const ApfsRecoveredXattr& x,
+                           ApfsRootFilePayload* file,
+                           QStringList* blockers) {
+    if ((x.flags & kApfsXattrDataStream) != 0) {
+        file->compressed = true;
+        file->streamXattrs.append(recoveredStreamXattr(x));
+        return true;
+    }
+    const std::optional<ApfsDecmpfsHeader> header = apfsParseDecmpfsHeader(x.xdata);
+    if (!header) {
+        blockers->append(QStringLiteral("APFS preserve: malformed com.apple.decmpfs on '%1'")
+                             .arg(file->fileName));
+        return false;
+    }
+    file->compressed = true;
+    file->uncompressedSize = header->uncompressed_size;
+    if (apfsDecmpfsAlgoIsInline(header->algo)) {
+        file->decmpfsXattr = x.xdata;  // the full inline value carries the payload
+    } else {
+        // Resource-fork compression: keep the bare 16-byte header (algo *_RSRC); the blob
+        // lives in the com.apple.ResourceFork stream, recovered by
+        // preserveFileExtentsAndState.
+        file->resourceFork = true;
+        file->decmpfsXattr = x.xdata.left(kApfsDecmpfsHeaderBytes);
+    }
+    return true;
+}
+
 // Carry a preserved file's recovered special-inode state onto its rebuilt payload: decmpfs
-// compression (inline OR resource-fork), the com.apple.ResourceFork data-stream pointer, embedded
-// user xattrs, large data-stream xattrs, and the sparse hole -- every special-inode form is
-// reproduced (the stream extents are recovered by preserveFileExtentsAndState).
+// compression (inline, dstream-backed inline, or resource-fork), the com.apple.ResourceFork
+// stream (the compressed blob pointer on a *_RSRC file, else a CLASSIC fork preserved as an
+// ordinary data-stream xattr -- possibly empty), embedded user xattrs, large data-stream
+// xattrs, and the sparse hole -- every special-inode form is reproduced (the stream extents
+// are recovered by preserveFileExtentsAndState).
 bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
                               ApfsRootFilePayload* file,
                               QStringList* blockers) {
+    std::optional<ApfsRecoveredXattr> fork;  // classified after the loop (needs the decmpfs algo)
     for (const ApfsRecoveredXattr& x : state.xattrs) {
         if (x.name == QByteArray(kApfsXattrNameCompressed)) {
-            const std::optional<ApfsDecmpfsHeader> header = apfsParseDecmpfsHeader(x.xdata);
-            if (!header) {
-                blockers->append(
-                    QStringLiteral("APFS preserve: malformed com.apple.decmpfs on '%1'")
-                        .arg(file->fileName));
+            if (!applyPreservedDecmpfs(x, file, blockers)) {
                 return false;
             }
-            file->compressed = true;
-            file->uncompressedSize = header->uncompressed_size;
-            if (apfsDecmpfsAlgoIsInline(header->algo)) {
-                file->decmpfsXattr = x.xdata;  // the full inline value carries the payload
-            } else {
-                // Resource-fork compression: keep the bare 16-byte header (algo *_RSRC); the blob
-                // lives in the com.apple.ResourceFork stream, recovered by
-                // preserveFileExtentsAndState.
-                file->resourceFork = true;
-                file->decmpfsXattr = x.xdata.left(kApfsDecmpfsHeaderBytes);
-            }
         } else if (x.name == QByteArray(kApfsXattrNameResourceFork)) {
-            // j_xattr_dstream: le64 xattr_obj_id, then apfs_dstream { le64 size, ... }. The blob's
-            // extents are owned by xattr_obj_id and its byte length is the dstream size.
-            file->resourceForkXattrObjId = le64(x.xdata, 0);
-            file->logicalSizeOverride = le64(x.xdata, kApfsXattrDstreamSizeOffset);
+            fork = x;
         } else if (x.flags == kApfsXattrDataEmbedded) {
             file->xattrs.append({x.name, x.xdata});
         } else {
-            // A large (data-stream) xattr: its value lives in a stream owned by le64 @0 of the
-            // j_xattr_dstream (size @8, alloced_size @16). Keep the id + sizes; its extents are
-            // recovered by preserveFileExtentsAndState and re-emitted in place.
-            file->streamXattrs.append(
-                {.name = x.name,
-                 .objId = le64(x.xdata, 0),
-                 .size = le64(x.xdata, kApfsXattrDstreamSizeOffset),
-                 .allocedSize = le64(x.xdata, kApfsXattrDstreamAllocedOffset)});
+            file->streamXattrs.append(recoveredStreamXattr(x));
         }
     }
+    if (fork.has_value()) {
+        if (file->resourceFork) {
+            // The *_RSRC compressed blob: its extents replace the (extent-less) inode data and
+            // its byte length is the dstream size.
+            file->resourceForkXattrObjId = le64(fork->xdata, 0);
+            file->logicalSizeOverride = le64(fork->xdata, kApfsXattrDstreamSizeOffset);
+        } else {
+            // A classic (uncompressed, possibly empty) resource fork: an ordinary data-stream
+            // xattr preserved verbatim next to the data fork.
+            file->streamXattrs.append(recoveredStreamXattr(*fork));
+        }
+    }
+    // Carry the original resource-fork internal_flags bits verbatim (the kernel writes
+    // HAS_RSRC_FORK for a fork-carrying file, NO_RSRC_FORK for a plain one, and NEITHER on a
+    // dstream-decmpfs file with a leftover empty fork), plus the clone-history bits.
+    file->preservedRsrcBits = true;
+    file->extraInodeFlags |= state.internalFlags &
+                             (kApfsInodeFlagHasRsrcFork | kApfsInodeFlagNoRsrcFork |
+                              kApfsInodeFlagWasCloned | kApfsInodeFlagWasEverCloned);
     if ((state.internalFlags & kApfsInodeFlagIsSparse) != 0) {
         // A sparse file: its logical size (the hole reaches up to it) is the dstream size; the
         // trailing phys-0 hole is filtered from the preserved extents and re-synthesized by the
@@ -6940,6 +6996,40 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
     return true;
 }
 
+// Read the decmpfs header out of a preserved DSTREAM-backed com.apple.decmpfs attribute's first
+// block and carry its uncompressed size onto the rebuilt inode. The algo must be an inline-class
+// one (a *_RSRC algo with a stream-backed header is not a layout the kernel writes).
+bool readPreservedStreamDecmpfsHeader(const ApfsLiveTreeSource& source,
+                                      ApfsRootFilePayload* file,
+                                      QStringList* blockers) {
+    if (!file->compressed || !file->decmpfsXattr.isEmpty()) {
+        return true;  // no decmpfs, or the embedded value already carries the header
+    }
+    for (const ApfsDataStreamXattr& sx : file->streamXattrs) {
+        if (sx.name != QByteArray(kApfsXattrNameCompressed) || sx.extents.isEmpty()) {
+            continue;
+        }
+        QByteArray block(source.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(
+                source.image, source.geometry, sx.extents.first().paddr, &block, blockers)) {
+            return false;
+        }
+        const std::optional<ApfsDecmpfsHeader> header = apfsParseDecmpfsHeader(block);
+        if (!header || header->signature != kApfsDecmpfsMagic ||
+            !apfsDecmpfsAlgoIsInline(header->algo)) {
+            blockers->append(
+                QStringLiteral("APFS preserve: unsupported dstream decmpfs header on '%1'")
+                    .arg(file->fileName));
+            return false;
+        }
+        file->uncompressedSize = header->uncompressed_size;
+        return true;
+    }
+    blockers->append(QStringLiteral("APFS preserve: dstream decmpfs stream missing on '%1'")
+                         .arg(file->fileName));
+    return false;
+}
+
 // Carry a preserved file's on-disk data + special-inode state forward across an in-place mutation:
 // keep its exact extents INCLUDING phys-0 holes (a real Apple sparse file records leading/middle
 // holes as explicit phys-0 extents; dropping them breaks the dstream's logical coverage -- apfsck
@@ -6947,6 +7037,45 @@ bool applyPreservedInodeState(const ApfsRecoveredInodeState& state,
 // compression / xattrs. Shared by every preservation path (insert/delete/dir via
 // recoverPreservedFiles, and rename/move) so none rebuilds a compressed/xattr'd file as a plain
 // inode. Fails closed on the not-yet-preservable states.
+// A resource-fork-compressed file's "cmpf" blob is a SEPARATE data stream owned by
+// resourceForkXattrObjId (not the inode), so recover ITS extents; the rebuilt file re-emits the
+// same com.apple.ResourceFork xattr + file-extent records and the blob stays in place.
+bool recoverCompressedBlobExtents(const ApfsLiveTreeSource& source,
+                                  ApfsRootFilePayload* file,
+                                  QStringList* blockers) {
+    const QVector<ApfsDataExtent> blob = recoverFileDataExtents(
+        source.image, source.geometry, source.chain, file->resourceForkXattrObjId, blockers);
+    if (blob.isEmpty()) {
+        blockers->append(
+            QStringLiteral("APFS preserve: resource-fork blob extents missing for '%1'")
+                .arg(file->fileName));
+        return false;
+    }
+    file->dataExtents = blob;
+    file->dataStartBlock = blob.first().paddr;
+    return true;
+}
+
+// Recover each data-stream xattr's value extents (a separate stream owned by its own object id)
+// so the rebuilt file re-emits the identical j_xattr_dstream + file-extent records in place. A
+// zero-length stream (the kernel leaves an EMPTY com.apple.ResourceFork behind) legitimately has
+// no extent records.
+bool recoverStreamXattrExtents(const ApfsLiveTreeSource& source,
+                               ApfsRootFilePayload* file,
+                               QStringList* blockers) {
+    for (ApfsDataStreamXattr& sx : file->streamXattrs) {
+        sx.extents =
+            recoverFileDataExtents(source.image, source.geometry, source.chain, sx.objId, blockers);
+        if (sx.extents.isEmpty() && sx.size != 0) {
+            blockers->append(
+                QStringLiteral("APFS preserve: data-stream xattr '%1' extents missing on '%2'")
+                    .arg(QString::fromUtf8(sx.name), file->fileName));
+            return false;
+        }
+    }
+    return true;
+}
+
 bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
                                  const QVector<ApfsDataExtent>& recovered,
                                  uint64_t fallbackStartBlock,
@@ -6968,35 +7097,35 @@ bool preserveFileExtentsAndState(const ApfsLiveTreeSource& source,
             blockers)) {
         return false;
     }
-    // A resource-fork-compressed file's "cmpf" blob is a SEPARATE data stream owned by
-    // resourceForkXattrObjId (not the inode), so recover ITS extents; the rebuilt file re-emits the
-    // same com.apple.ResourceFork xattr + file-extent records and the blob stays in place.
-    if (file->resourceFork) {
-        const QVector<ApfsDataExtent> blob = recoverFileDataExtents(
-            source.image, source.geometry, source.chain, file->resourceForkXattrObjId, blockers);
-        if (blob.isEmpty()) {
-            blockers->append(
-                QStringLiteral("APFS preserve: resource-fork blob extents missing for '%1'")
-                    .arg(file->fileName));
-            return false;
-        }
-        file->dataExtents = blob;
-        file->dataStartBlock = blob.first().paddr;
+    if (file->resourceFork && !recoverCompressedBlobExtents(source, file, blockers)) {
+        return false;
     }
-    // Each large data-stream xattr's value blocks are a separate stream owned by its own object id;
-    // recover those extents so the rebuilt file re-emits the identical j_xattr_dstream +
-    // file-extent records (the value stays in place).
-    for (ApfsDataStreamXattr& sx : file->streamXattrs) {
-        sx.extents =
-            recoverFileDataExtents(source.image, source.geometry, source.chain, sx.objId, blockers);
-        if (sx.extents.isEmpty()) {
-            blockers->append(
-                QStringLiteral("APFS preserve: data-stream xattr '%1' extents missing on '%2'")
-                    .arg(QString::fromUtf8(sx.name), file->fileName));
-            return false;
-        }
+    if (!recoverStreamXattrExtents(source, file, blockers)) {
+        return false;
     }
-    return true;
+    // A dstream-backed com.apple.decmpfs: the 16-byte header (algo + uncompressed size) lives in
+    // the stream's FIRST block, needed for the rebuilt inode's uncompressed-size field.
+    return readPreservedStreamDecmpfsHeader(source, file, blockers);
+}
+
+// Every extent a deleted inode's auxiliary data streams occupy (classic/compressed resource
+// fork, dstream-backed decmpfs, large data-stream xattrs -- any DATA_STREAM-flagged xattr),
+// so a whole-inode delete frees them together with the inode's own runs (apfsck cross-checks
+// apfs_fs_alloc_count against the referenced blocks).
+QVector<ApfsDataExtent> recoverAuxStreamExtents(const ApfsLiveTreeSource& source,
+                                                uint64_t fileId,
+                                                QStringList* blockers) {
+    QVector<ApfsDataExtent> extents;
+    const ApfsRecoveredInodeState state =
+        recoverInodeState(source.image, source.geometry, source.chain, fileId, blockers);
+    for (const ApfsRecoveredXattr& x : state.xattrs) {
+        if ((x.flags & kApfsXattrDataStream) == 0) {
+            continue;
+        }
+        extents += recoverFileDataExtents(
+            source.image, source.geometry, source.chain, le64(x.xdata, 0), blockers);
+    }
+    return extents;
 }
 
 // Merge every j_file_extent record of one fsroot LEAF node into byPaddr. Holes (paddr 0) are
@@ -11079,11 +11208,13 @@ bool buildDeleteFileList(const ApfsDeleteListInput& in,
         // file, or a directory id for a directory child), so a same-named file under a
         // different parent is left untouched.
         if (file.parentDirectoryId == in.targetParentId && file.fileName == in.targetName) {
-            // The target is being deleted, so it only needs its extents (to free them); its
-            // compression/xattr state is irrelevant.
+            // The delete target only needs its extents to free: the inode's own runs PLUS every
+            // auxiliary stream (forks, dstream decmpfs, large xattrs) or apfsck flags the leak.
             file.dataStartBlock = owners.value(file.fileId);
-            if (!recovered.isEmpty()) {
-                file.dataExtents = recovered;
+            const QVector<ApfsDataExtent> aux =
+                recoverAuxStreamExtents({in.image, in.geometry, in.chain}, file.fileId, blockers);
+            if (!recovered.isEmpty() || !aux.isEmpty()) {
+                file.dataExtents = recovered + aux;
             }
             *target = file;
             found = true;
@@ -14752,18 +14883,18 @@ bool commitInPlaceFileDelete(QIODevice* image,
                              blockers)) {
         return false;
     }
-    const uint64_t targetBlocks = roundedBlockCount(static_cast<uint64_t>(target.data.size()),
-                                                    ctx.geometry.blockSize);
-    ApfsDivergeState diverge;
-    if (!computeDivergeState(ctx, &diverge, blockers)) {
-        return false;
-    }
     // Diverge delete (volume already snapshotted): the live extent-ref tree is a delta over the
     // snapshots' frozen KIND_NEW base, so the delete rebuilds that delta and frees ONLY the file's
     // live-exclusive (post-snapshot) blocks; a pre-snapshot block gets a KIND_UPDATE -1 delta and
     // stays allocated. A hard-link NAME delete keeps the inode + data (no extent reshape, no free).
     QVector<uint64_t> freedDataBlocks =
         nameDelete ? QVector<uint64_t>{} : fileFreedDataBlocks(target, ctx.geometry.blockSize);
+    // Gate the extent-ref rebuild on the blocks actually freed (own runs + auxiliary streams).
+    const uint64_t targetBlocks = static_cast<uint64_t>(freedDataBlocks.size());
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
     qsizetype divergeRecordCount = -1;
     if (diverge.active && !nameDelete) {
         const ApfsDivergeDeleteExtentPlan plan = planDivergeDeleteExtents(
