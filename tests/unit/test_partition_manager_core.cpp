@@ -1915,6 +1915,7 @@ private Q_SLOTS:
     void apfsWriter_renameDispatchAndCollisionGuards();
     void apfsWriter_certOmapBoundaryDivergeEmit();
     void apfsWriter_certSnapshotDivergeSequence();
+    void apfsWriter_certSnapshotCreateAfterDiverge();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9690,6 +9691,75 @@ void PartitionManagerCoreTests::apfsWriter_certSnapshotDivergeSequence() {
          .snapshot_name = QStringLiteral("snap_s1"),
          .options = options});
     QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+}
+
+void PartitionManagerCoreTests::apfsWriter_certSnapshotCreateAfterDiverge() {
+    // Pass-5 bug #4 repro: snapshot-CREATE after a DATA diverge. Unlike the zero-byte insert
+    // sequence, files here carry multi-block data so the snapshot shares real file blocks with the
+    // prior snapshot -- the case writeSnapshotCreateCowChain's fixed +2/+1 alloc-count delta was
+    // documented not to cover. Emits the post-S2 (or post-S3 via SAK_CERT_SNAPS=3) image to
+    // SAK_CERT_OUT for apfsck: a "bad block count" report confirms the bug; clean refutes it.
+    const QString out = qEnvironmentVariable("SAK_CERT_OUT");
+    if (out.isEmpty()) {
+        QSKIP("cert-emit only: set SAK_CERT_OUT");
+    }
+    const int snaps = qEnvironmentVariable("SAK_CERT_SNAPS", QStringLiteral("2")).toInt();
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QByteArray blockData(12ULL * 1024ULL, 'A');  // 3 data blocks per file
+    const QString base = dir.filePath(QStringLiteral("scad-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SCAD"),
+                 .options = options})
+                .ok);
+    QString src = base;
+    int step = 0;
+    const auto insert = [&](const QString& name, const QByteArray& data) {
+        const QString dst = dir.filePath(QStringLiteral("scad-%1.apfs").arg(step++));
+        const auto r = PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = src,
+                                                                       .written_image_path = dst,
+                                                                       .file_name = name,
+                                                                       .file_data = data,
+                                                                       .options = options});
+        QVERIFY2(r.ok,
+                 qPrintable(QStringLiteral("insert %1: %2")
+                                .arg(name)
+                                .arg(r.blockers.join(QStringLiteral("; ")))));
+        src = dst;
+    };
+    const auto snapshot = [&](const QString& name, quint64 t, const QString& finalOut) {
+        const QString dst = finalOut.isEmpty()
+                                ? dir.filePath(QStringLiteral("scad-%1.apfs").arg(step++))
+                                : finalOut;
+        const auto r =
+            PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = src,
+                                                                .written_image_path = dst,
+                                                                .snapshot_name = name,
+                                                                .create_time_ns = t,
+                                                                .options = options});
+        QVERIFY2(r.ok,
+                 qPrintable(QStringLiteral("snapshot %1: %2")
+                                .arg(name)
+                                .arg(r.blockers.join(QStringLiteral("; ")))));
+        src = dst;
+    };
+    insert(QStringLiteral("file_a.dat"), blockData);
+    snapshot(QStringLiteral("snap_s1"), 1, snaps == 1 ? out : QString());
+    if (snaps == 1) {
+        return;
+    }
+    insert(QStringLiteral("file_b.dat"), blockData);
+    snapshot(QStringLiteral("snap_s2"), 2, snaps == 2 ? out : QString());
+    if (snaps == 2) {
+        return;
+    }
+    insert(QStringLiteral("file_c.dat"), blockData);
+    snapshot(QStringLiteral("snap_s3"), 3, out);
 }
 
 namespace {
