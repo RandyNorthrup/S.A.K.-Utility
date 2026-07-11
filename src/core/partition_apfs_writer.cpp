@@ -499,6 +499,10 @@ constexpr qsizetype kApfsOmapValuePaddrOffset = 8;
 // A6: omap value flag marking an AES-XTS-encrypted virtual object, and the volume
 // fs_flags value for a software-encrypted whole-volume-key (FileVault) volume.
 constexpr uint32_t kApfsOmapValueEncrypted = 0x00'00'00'04;
+// OMAP_VAL_DELETED: the mapping is a tombstone for a deleted virtual object (no live block). Real
+// macOS omaps carry these; a S.A.K.-generated omap never does. Used only as a fail-closed guard so
+// a future foreign-omap teardown never treats a tombstone's paddr as a freeable block.
+constexpr uint32_t kApfsOmapValueDeleted = 0x00'00'00'01;
 constexpr uint64_t kApfsVolumeFsFlagsOneKey = 0x8;
 constexpr qsizetype kApfsObjectMapKeyBytes = 16;
 constexpr qsizetype kApfsObjectMapValueBytes = 16;
@@ -13988,6 +13992,14 @@ bool splitVersionedOmapForDelete(const QVector<ApfsObjectMapEntry>& entries,
                                  QVector<ApfsObjectMapEntry>* keptEntries,
                                  QVector<uint64_t>* droppedNodes) {
     for (const ApfsObjectMapEntry& e : entries) {
+        // A paddr-0 / OMAP_VAL_DELETED (0x1) tombstone entry addresses no real block: never emit it
+        // as a kept mapping and never route it to droppedNodes -- the free-queue enqueue path has
+        // no block-0 skip, so freeing paddr 0 would clear the container superblock's bitmap bit. A
+        // S.A.K.-generated versioned omap never carries such a record (the writer only emits real
+        // allocated paddrs); this is a fail-closed guard for any future foreign-omap teardown.
+        if (e.physicalBlock == 0 || (e.flags & kApfsOmapValueDeleted) != 0) {
+            continue;
+        }
         if (keepNodePaddrs.contains(e.physicalBlock)) {
             keptEntries->append(e);
         } else {
