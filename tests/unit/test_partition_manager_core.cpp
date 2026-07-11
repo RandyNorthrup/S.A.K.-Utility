@@ -1916,6 +1916,7 @@ private Q_SLOTS:
     void apfsWriter_certOmapBoundaryDivergeEmit();
     void apfsWriter_certSnapshotDivergeSequence();
     void apfsWriter_certSnapshotCreateAfterDiverge();
+    void apfsWriter_certDivergeCloneDeletePatch();
     void apfsWriter_rawNestedDirectoryCreate();
     void apfsWriter_inPlaceDirectoryMutationsRoundTrip();
     void apfsWriter_inPlaceDirectoryChildRename();
@@ -9760,6 +9761,108 @@ void PartitionManagerCoreTests::apfsWriter_certSnapshotCreateAfterDiverge() {
     }
     insert(QStringLiteral("file_c.dat"), blockData);
     snapshot(QStringLiteral("snap_s3"), 3, out);
+}
+
+namespace {
+// format -> insert a.dat (12 KiB) -> snapshot s1; returns the s1 image path. Shared diverge setup.
+QString apfsDivergeSnapshotSetup(const QDir& dir, const PartitionApfsWriteOptions& options) {
+    const QString base = dir.filePath(QStringLiteral("pdd-base.apfs"));
+    [&] {
+        QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                    {.image_path = base,
+                     .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                     .block_size_bytes = 4096,
+                     .volume_name = QStringLiteral("PDD"),
+                     .options = options})
+                    .ok);
+    }();
+    const QString withA = dir.filePath(QStringLiteral("pdd-a.apfs"));
+    const auto ins =
+        PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = base,
+                                                        .written_image_path = withA,
+                                                        .file_name = QStringLiteral("a.dat"),
+                                                        .file_data = QByteArray(12 * 1024, 'A'),
+                                                        .options = options});
+    const QString s1 = dir.filePath(QStringLiteral("pdd-s1.apfs"));
+    const auto snap = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+        {.source_image_path = ins.ok ? withA : base,
+         .written_image_path = s1,
+         .snapshot_name = QStringLiteral("s1"),
+         .create_time_ns = 1,
+         .options = options});
+    return snap.ok ? s1 : QString();
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
+    // Env-gated cert (bug #3): mutating a snapshotted volume DIVERGES rather than failing closed.
+    // SAK_PROBE={del,clonedel,patch} emit apfsck-clean images (clonedel exercises the #3a coalesce
+    // fix); deldelsnap (delete a.dat, snapshot s2, delete owner s1) is the still-dirty #3b repro.
+    const QString out = qEnvironmentVariable("SAK_CERT_OUT");
+    if (out.isEmpty()) {
+        QSKIP("cert-emit only: set SAK_CERT_OUT and SAK_PROBE");
+    }
+    const QString probe = qEnvironmentVariable("SAK_PROBE", QStringLiteral("clonedel"));
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString s1 = apfsDivergeSnapshotSetup(dir, options);
+    QVERIFY2(!s1.isEmpty(), "diverge setup (format + a.dat + snapshot s1) failed");
+    if (probe == QStringLiteral("clonedel")) {
+        const QString withClone = dir.filePath(QStringLiteral("pdd-clone.apfs"));
+        const auto cl = PartitionApfsWriter::commitImageOnlyFileClone(
+            {.source_image_path = s1,
+             .written_image_path = withClone,
+             .source_file_name = QStringLiteral("a.dat"),
+             .clone_file_name = QStringLiteral("a2.dat"),
+             .options = options});
+        QVERIFY2(cl.ok, qPrintable(cl.blockers.join(QStringLiteral("; "))));
+        const auto del =
+            PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = withClone,
+                                                            .written_image_path = out,
+                                                            .file_name = QStringLiteral("a2.dat"),
+                                                            .options = options});
+        QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+        return;
+    }
+    if (probe == QStringLiteral("patch")) {
+        const auto pt =
+            PartitionApfsWriter::commitImageOnlyFilePatch({.source_image_path = s1,
+                                                           .written_image_path = out,
+                                                           .file_name = QStringLiteral("a.dat"),
+                                                           .patch_offset_bytes = 0,
+                                                           .patch_data = QByteArray(12 * 1024, 'B'),
+                                                           .options = options});
+        QVERIFY2(pt.ok, qPrintable(pt.blockers.join(QStringLiteral("; "))));
+        return;
+    }
+    // del / deldelsnap: delete a.dat on the snapshotted volume.
+    const QString afterDel =
+        probe == QStringLiteral("deldelsnap") ? dir.filePath(QStringLiteral("pdd-del.apfs")) : out;
+    const auto del =
+        PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = s1,
+                                                        .written_image_path = afterDel,
+                                                        .file_name = QStringLiteral("a.dat"),
+                                                        .options = options});
+    QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+    if (probe != QStringLiteral("deldelsnap")) {
+        return;
+    }
+    const QString withS2 = dir.filePath(QStringLiteral("pdd-s2.apfs"));
+    const auto s2 =
+        PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = afterDel,
+                                                            .written_image_path = withS2,
+                                                            .snapshot_name = QStringLiteral("s2"),
+                                                            .create_time_ns = 2,
+                                                            .options = options});
+    QVERIFY2(s2.ok, qPrintable(s2.blockers.join(QStringLiteral("; "))));
+    const auto dels1 =
+        PartitionApfsWriter::commitImageOnlySnapshotDelete({.source_image_path = withS2,
+                                                            .written_image_path = out,
+                                                            .snapshot_name = QStringLiteral("s1"),
+                                                            .options = options});
+    QVERIFY2(dels1.ok, qPrintable(dels1.blockers.join(QStringLiteral("; "))));
 }
 
 namespace {

@@ -9411,6 +9411,40 @@ bool computeDivergeState(const ApfsFsCommitContext& ctx,
 constexpr uint64_t kApfsPhysExtUndefinedOwner = 0xFF'FF'FF'FF'FF'FF'FF'FFULL;
 constexpr uint32_t kApfsPhysExtRefcntMinusOne = 0xFF'FF'FF'FFU;
 
+// Collapse an extent-ref delta record set to at most ONE record per paddr (the B-tree key). Two
+// diverge ops can touch the same shared block -- clone a pre-snapshot file (+1) then delete the
+// clone (-1), or clone the same source twice (+1, +1) -- and their KIND_UPDATE deltas must net into
+// a single record, not coexist as duplicate keys (apfsck "B-tree: keys are out of order"). Sums
+// KIND_UPDATE refcnt deltas as signed int32 and drops any that net to zero (no delta over the
+// snapshot base); a KIND_NEW record for the paddr (a post-snapshot base) absorbs any same-paddr
+// KIND_UPDATE into its own refcount. A record set already unique per paddr passes through unchanged
+// (byte-identical to the prior paddr sort), so the certified single-op diverge paths do not move.
+QVector<ExtentRefPhysRecord> coalesceExtentRefDeltas(const QVector<ExtentRefPhysRecord>& records) {
+    QMap<uint64_t, ExtentRefPhysRecord> byPaddr;  // QMap iterates ascending by paddr (the key sort)
+    for (const ExtentRefPhysRecord& r : records) {
+        auto it = byPaddr.find(r.paddr);
+        if (it == byPaddr.end()) {
+            byPaddr.insert(r.paddr, r);
+            continue;
+        }
+        ExtentRefPhysRecord& acc = it.value();
+        acc.refcnt = static_cast<uint32_t>(static_cast<int32_t>(acc.refcnt) +
+                                           static_cast<int32_t>(r.refcnt));
+        if (r.kind == kApfsExtentKindNew) {  // a real base record dominates the shared paddr
+            acc.kind = kApfsExtentKindNew;
+            acc.owner = r.owner;
+        }
+    }
+    QVector<ExtentRefPhysRecord> out;
+    for (const ExtentRefPhysRecord& r : byPaddr) {
+        if (r.kind == kApfsExtentKindUpdate && static_cast<int32_t>(r.refcnt) == 0) {
+            continue;  // +1 and -1 cancelled: no delta over the snapshot base, drop the key
+        }
+        out.append(r);
+    }
+    return out;
+}
+
 // The extent-ref delta a diverge delete records, plus the data blocks it may return to the
 // spaceman. On a snapshotted volume the live extent-ref tree is a DELTA over each snapshot's
 // frozen KIND_NEW base, so a delete cannot simply free the file's blocks.
@@ -9464,11 +9498,7 @@ ApfsDivergeDeleteExtentPlan planDivergeDeleteExtents(
                                      .kind = kApfsExtentKindUpdate});
         }
     }
-    std::sort(plan.liveRecords.begin(),
-              plan.liveRecords.end(),
-              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
-                  return a.paddr < b.paddr;
-              });
+    plan.liveRecords = coalesceExtentRefDeltas(plan.liveRecords);
     return plan;
 }
 
@@ -9497,12 +9527,7 @@ QVector<ExtentRefPhysRecord> planDivergeCloneExtents(const QVector<ExtentRefPhys
                         .kind = kApfsExtentKindUpdate});
         }
     }
-    std::sort(out.begin(),
-              out.end(),
-              [](const ExtentRefPhysRecord& a, const ExtentRefPhysRecord& b) {
-                  return a.paddr < b.paddr;
-              });
-    return out;
+    return coalesceExtentRefDeltas(out);
 }
 
 // The current on-disk ci_bitmap_addr of data chunk `c`, read from its OWNING cib (cib 0
