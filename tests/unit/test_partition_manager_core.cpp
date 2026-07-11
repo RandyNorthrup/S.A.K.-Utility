@@ -9796,6 +9796,60 @@ QString apfsDivergeSnapshotSetup(const QDir& dir, const PartitionApfsWriteOption
          .options = options});
     return snap.ok ? s1 : QString();
 }
+
+// Emit the cross-snapshot extent-ref MERGE probes: diverge-delete a.dat over S1, snapshot S2
+// (freezing the -1 delta), then the per-probe snapshot delete whose merged commit apfsck + the
+// macOS kernel certify. deldelsnap deletes the base OWNER (S1 merges into S2); delsnapnewest
+// deletes the NEWEST (S2 merges into the live tree); delmiddle adds an insert-diverge + S3 and
+// deletes the MIDDLE (S2 merges into S3).
+void apfsFoldProbeEmit(const QDir& dir,
+                       const QString& s1,
+                       const QString& out,
+                       const QString& probe,
+                       const PartitionApfsWriteOptions& options) {
+    const QString afterDel = dir.filePath(QStringLiteral("fold-del.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyFileDelete({.source_image_path = s1,
+                                                            .written_image_path = afterDel,
+                                                            .file_name = QStringLiteral("a.dat"),
+                                                            .options = options})
+                .ok);
+    const QString withS2 = dir.filePath(QStringLiteral("fold-s2.apfs"));
+    QVERIFY(
+        PartitionApfsWriter::commitImageOnlySnapshotCreate({.source_image_path = afterDel,
+                                                            .written_image_path = withS2,
+                                                            .snapshot_name = QStringLiteral("s2"),
+                                                            .create_time_ns = 2,
+                                                            .options = options})
+            .ok);
+    QString source = withS2;
+    QString deleteName = probe == QStringLiteral("deldelsnap") ? QStringLiteral("s1")
+                                                               : QStringLiteral("s2");
+    if (probe == QStringLiteral("delmiddle")) {
+        const QString withB = dir.filePath(QStringLiteral("fold-b.apfs"));
+        QVERIFY(
+            PartitionApfsWriter::commitImageOnlyFileInsert({.source_image_path = withS2,
+                                                            .written_image_path = withB,
+                                                            .file_name = QStringLiteral("b.dat"),
+                                                            .file_data = QByteArray(8 * 1024, 'B'),
+                                                            .options = options})
+                .ok);
+        const QString withS3 = dir.filePath(QStringLiteral("fold-s3.apfs"));
+        QVERIFY(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                    {.source_image_path = withB,
+                     .written_image_path = withS3,
+                     .snapshot_name = QStringLiteral("s3"),
+                     .create_time_ns = 3,
+                     .options = options})
+                    .ok);
+        source = withS3;
+    }
+    const auto del =
+        PartitionApfsWriter::commitImageOnlySnapshotDelete({.source_image_path = source,
+                                                            .written_image_path = out,
+                                                            .snapshot_name = deleteName,
+                                                            .options = options});
+    QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+}
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp() {
@@ -9889,6 +9943,11 @@ void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
     const QDir dir(temp.path());
     const QString s1 = apfsDivergeSnapshotSetup(dir, options);
     QVERIFY2(!s1.isEmpty(), "diverge setup (format + a.dat + snapshot s1) failed");
+    if (probe == QStringLiteral("deldelsnap") || probe == QStringLiteral("delsnapnewest") ||
+        probe == QStringLiteral("delmiddle")) {
+        apfsFoldProbeEmit(dir, s1, out, probe, options);
+        return;
+    }
     if (probe == QStringLiteral("clonedel")) {
         const QString withClone = dir.filePath(QStringLiteral("pdd-clone.apfs"));
         const auto cl = PartitionApfsWriter::commitImageOnlyFileClone(
@@ -9927,11 +9986,13 @@ void PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch() {
 }
 
 void PartitionManagerCoreTests::apfsWriter_snapshotDeleteExtentFoldFailsClosed() {
-    // bug #3b (CI regression): format -> a.dat -> S1 -> delete a.dat (diverge, a KIND_UPDATE -1
-    // over S1's frozen base) -> S2 (freezes the delta) -> delete S1. Deleting the base-owner while
-    // a survivor holds a refcount delta over its extents needs the cross-snapshot extent-ref fold,
-    // which is not yet implemented; it must FAIL CLOSED, never emit the "Physical extent record:
-    // bad reference count" corruption apfsck caught before the guard.
+    // bug #3b (CI regression, now the cross-snapshot MERGE): format -> a.dat -> S1 -> delete
+    // a.dat (diverge, a KIND_UPDATE -1 over S1's frozen base) -> S2 (freezes the delta) ->
+    // delete S1. Deleting the base owner while a survivor holds a refcount delta over its
+    // extents merges S1's base into S2's tree (netting a.dat's blocks to zero and freeing
+    // them); pre-merge this either failed closed or (unguarded) emitted "Physical extent
+    // record: bad reference count". Both directions certified against host apfsck + the Mac
+    // kernel via the diverge probes; this guards the merged commit's structure in CI.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -9958,16 +10019,22 @@ void PartitionManagerCoreTests::apfsWriter_snapshotDeleteExtentFoldFailsClosed()
                                                             .written_image_path = out,
                                                             .snapshot_name = QStringLiteral("s1"),
                                                             .options = options});
-    QVERIFY2(!dels1.ok, "expected the cross-snapshot extent-ref fold guard to fail closed");
-    QVERIFY2(dels1.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("extent-ref fold")),
-             qPrintable(dels1.blockers.join(QStringLiteral("; "))));
-    // The guard returns before any block write, so the scratch clone is the byte-unchanged
-    // 2-snapshot source: no partial/corrupt delete published. It still reports both snapshots and
-    // stays readable.
-    QCOMPARE(apfsLe64(readApfsImageBlock(out, apfsApsbBlockOf(out)), 0xD8), 2ULL);
+    QVERIFY2(dels1.ok, qPrintable(dels1.blockers.join(QStringLiteral("; "))));
+    // One snapshot (s2) remains and the volume stays readable (a.dat was deleted pre-S2).
+    QCOMPARE(apfsLe64(readApfsImageBlock(out, apfsApsbBlockOf(out)), 0xD8), 1ULL);
     const auto listing =
         PartitionApfsFileSystemReader::listDirectoryFromImage(out, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    QVERIFY(listing.entries.isEmpty());
+    // Deleting the surviving snapshot afterwards lands on the delete-last path cleanly.
+    const QString out2 = dir.filePath(QStringLiteral("pdd-dels2.apfs"));
+    const auto dels2 =
+        PartitionApfsWriter::commitImageOnlySnapshotDelete({.source_image_path = out,
+                                                            .written_image_path = out2,
+                                                            .snapshot_name = QStringLiteral("s2"),
+                                                            .options = options});
+    QVERIFY2(dels2.ok, qPrintable(dels2.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(apfsLe64(readApfsImageBlock(out2, apfsApsbBlockOf(out2)), 0xD8), 0ULL);
 }
 
 namespace {
