@@ -1306,8 +1306,8 @@ Tests:
 - [x] Local copy/paste smoke. (`copyFileToHostCopiesLocalFileByteExactWithHash`, `writeFileFromHostPathStreamsLocalCopyWithNoCap`)
 - [ ] ext4 raw copy-out smoke. (needs a live/local ext4 image)
 - [ ] HFS+ live import/write/read/delete certification through command route.
-- [ ] APFS generated-layout live import/write/read/delete certification through command route.
-- [ ] APFS large paste blocker test.
+- [x] APFS generated-layout live import/write/read/delete certification through command route. (2026-07-12 physical Disk 1 128 MiB S.A.K.-generated APFS: create/write/read/delete all Passed via `file_management_live_certifier --destructive`, EXIT 0)
+- [x] APFS large paste blocker test. (2026-07-11 physical: both real Apple APFS drives report `explorer_can_write=false` with the arbitrary-media blocker)
 
 Exit gate:
 
@@ -1428,7 +1428,7 @@ Certification checklist:
 - [ ] Run `git diff --check`.
 - [ ] Run release readiness or document unrelated blocker.
 - [ ] Run HFS+ destructive live File Explorer command-route certification.
-- [ ] Run APFS generated-layout destructive live File Explorer command-route certification.
+- [x] Run APFS generated-layout destructive live File Explorer command-route certification. (2026-07-12, physical: wiped Disk 1 (28 GB USB flash), created a 128 MiB partition, generated a S.A.K. APFS container (raw-format Passed), then ran the destructive command-route cert -- create-directory / write-file (77 B) / read-after-write byte-exact (sha 931b0b41...) / duplicate-finder / advanced-search / delete-file / read-after-delete / delete-directory all Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-apfs-128mb-file-management-cert/)
 - [ ] Run ext4 read-only raw copy-out certification.
 - [ ] Run XFS/Btrfs blocker proof.
 - [x] Run large APFS write blocker proof. (physical read-only `file_management_live_certifier` run, 2026-07-11, against Disk 1 Part 2 = 28 GB "APFS Test Disk" and Disk 2 Part 2 = 7.45 TB Seagate: both report `explorer_can_write=false` with the exact "writes are limited to APFS containers created by this tool" blocker; status Passed, EXIT 0; evidence artifacts/file-management-live-certification/disk1-disk2-apfs-readonly-20260711/)
