@@ -96,6 +96,9 @@ private:
     void showHistoryMenu(bool back, const QPoint& global_pos);
     /// Steps the pane history several entries at once, then loads once.
     void jumpHistory(int steps, bool back);
+    /// Sort flyout (Files ArrangementOptions): sort-by + direction.
+    void rebuildSortMenu(QMenu* menu);
+    void applySortOrder(int column, Qt::SortOrder order);
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();
@@ -303,10 +306,6 @@ private:
     QLineEdit* m_search_box{nullptr};
     QPushButton* m_search_button{nullptr};
     QPushButton* m_command_button{nullptr};
-    QPushButton* m_open_button{nullptr};
-    QPushButton* m_copy_path_button{nullptr};
-    QPushButton* m_new_folder_button{nullptr};
-    QPushButton* m_write_file_button{nullptr};
     QPushButton* m_rename_button{nullptr};
     QPushButton* m_delete_button{nullptr};
     QToolButton* m_view_button{nullptr};

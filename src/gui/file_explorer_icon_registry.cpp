@@ -228,22 +228,11 @@ private:
 
 [[nodiscard]] QVector<IconDescriptor> fluentGlyphDescriptors() {
     QVector<IconDescriptor> items;
-    static constexpr std::array kFluentKeys = {"nav-back",
-                                               "nav-forward",
-                                               "nav-up",
-                                               "search",
-                                               "plus",
-                                               "chevron-right",
-                                               "home",
-                                               "drive",
-                                               "folder",
-                                               "file",
-                                               "image-file",
-                                               "recent",
-                                               "tag",
-                                               "shield",
-                                               "scan-disks",
-                                               "close"};
+    static constexpr std::array kFluentKeys = {
+        "nav-back",      "nav-forward", "nav-up", "search", "plus",
+        "chevron-right", "home",        "drive",  "folder", "file",
+        "image-file",    "recent",      "tag",    "shield", "scan-disks",
+        "close",         "select-mode", "sort",   "copy",   "paste"};
     items.reserve(static_cast<qsizetype>(kFluentKeys.size()));
     for (const char* key : kFluentKeys) {
         items.append(fluentDescriptor(key));
@@ -309,6 +298,11 @@ QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId 
         {Id::TogglePreviewPane, "details-pane"},
         {Id::ToggleDualPane, "dual-pane"},
         {Id::OpenInSecondPane, "dual-pane"},
+        {Id::CopyItems, "copy"},
+        {Id::Paste, "paste"},
+        {Id::Properties, "properties-general"},
+        {Id::SelectAll, "select-mode"},
+        {Id::Home, "home"},
     });
     const auto it = std::ranges::find(kIconKeys, command, &std::pair<Id, const char*>::first);
     return it != kIconKeys.end() ? QString::fromLatin1(it->second) : QString();

@@ -139,5 +139,9 @@
         <file>icons/fluent/shield.svg</file>
         <file>icons/fluent/scan-disks.svg</file>
         <file>icons/fluent/close.svg</file>
+        <file>icons/fluent/select-mode.svg</file>
+        <file>icons/fluent/sort.svg</file>
+        <file>icons/fluent/copy.svg</file>
+        <file>icons/fluent/paste.svg</file>
     </qresource>
 </RCC>

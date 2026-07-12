@@ -500,15 +500,99 @@ void FileManagementExplorerPanel::setupUi() {
 void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
                                                          QVBoxLayout* center_layout) {
     m_command_bar = new FileExplorerCommandBar(center);
-    m_new_folder_button = m_command_bar->newFolderButton();
-    m_write_file_button = m_command_bar->writeFileButton();
-    m_open_button = m_command_bar->openButton();
-    m_copy_path_button = m_command_bar->copyPathButton();
     m_rename_button = m_command_bar->renameButton();
     m_delete_button = m_command_bar->deleteButton();
     m_view_button = m_command_bar->viewButton();
     m_details_toggle_button = m_command_bar->detailsToggleButton();
     center_layout->addWidget(m_command_bar);
+
+    // Flyout menus rebuild on open so entries always carry the live command
+    // context (enabled state + blockers), matching how the context menus work.
+    connect(m_command_bar->newMenu(), &QMenu::aboutToShow, this, [this]() {
+        QMenu* menu = m_command_bar->newMenu();
+        menu->clear();
+        const FileExplorerCommandContext context = commandContext();
+        addCommandMenuAction(menu, FileExplorerCommandId::NewFolder, context);
+        addCommandMenuAction(menu, FileExplorerCommandId::WriteFile, context);
+    });
+    connect(m_command_bar->selectionMenu(), &QMenu::aboutToShow, this, [this]() {
+        QMenu* menu = m_command_bar->selectionMenu();
+        menu->clear();
+        const FileExplorerCommandContext context = commandContext();
+        addCommandMenuAction(menu, FileExplorerCommandId::SelectAll, context);
+        addCommandMenuAction(menu, FileExplorerCommandId::InvertSelection, context);
+        addCommandMenuAction(menu, FileExplorerCommandId::ClearSelection, context);
+    });
+    connect(m_command_bar->sortMenu(), &QMenu::aboutToShow, this, [this]() {
+        rebuildSortMenu(m_command_bar->sortMenu());
+    });
+    connect(m_command_bar->copyButton(), &QPushButton::clicked, this, [this]() {
+        executeCommand(FileExplorerCommandId::CopyItems);
+    });
+    connect(m_command_bar->pasteButton(), &QPushButton::clicked, this, [this]() {
+        executeCommand(FileExplorerCommandId::Paste);
+    });
+    connect(m_command_bar->propertiesButton(), &QPushButton::clicked, this, [this]() {
+        executeCommand(FileExplorerCommandId::Properties);
+    });
+}
+
+void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu) {
+    if (!menu) {
+        return;
+    }
+    menu->clear();
+    // Files sort flyout (Toolbar.xaml ArrangementOptions): checkable sort-by
+    // entries, then Ascending/Descending. Sorting runs through the shared
+    // proxy model, so it applies to every layout mode.
+    auto* proxy = m_pane ? m_pane->sortFilterModel() : nullptr;
+    if (!proxy) {
+        return;
+    }
+    const int current_column = proxy->sortColumn() < 0 ? FileExplorerItemModel::NameColumn
+                                                       : proxy->sortColumn();
+    const Qt::SortOrder current_order = proxy->sortOrder();
+    static constexpr std::array kSortColumns = {
+        std::pair{FileExplorerItemModel::NameColumn, QT_TR_NOOP("Name")},
+        std::pair{FileExplorerItemModel::ModifiedColumn, QT_TR_NOOP("Date modified")},
+        std::pair{FileExplorerItemModel::CreatedColumn, QT_TR_NOOP("Date created")},
+        std::pair{FileExplorerItemModel::SizeColumn, QT_TR_NOOP("Size")},
+        std::pair{FileExplorerItemModel::TypeColumn, QT_TR_NOOP("Type")},
+        std::pair{FileExplorerItemModel::TagsColumn, QT_TR_NOOP("Tags")},
+        std::pair{FileExplorerItemModel::PathColumn, QT_TR_NOOP("Path")},
+    };
+    for (const auto& [column, label] : kSortColumns) {
+        QAction* action = menu->addAction(tr(label));
+        action->setCheckable(true);
+        action->setChecked(column == current_column);
+        const int sort_column = column;
+        connect(action, &QAction::triggered, this, [this, sort_column]() {
+            applySortOrder(sort_column, m_pane->sortFilterModel()->sortOrder());
+        });
+    }
+    menu->addSeparator();
+    QAction* ascending = menu->addAction(tr("Ascending"));
+    ascending->setCheckable(true);
+    ascending->setChecked(current_order == Qt::AscendingOrder);
+    connect(ascending, &QAction::triggered, this, [this, current_column]() {
+        applySortOrder(current_column, Qt::AscendingOrder);
+    });
+    QAction* descending = menu->addAction(tr("Descending"));
+    descending->setCheckable(true);
+    descending->setChecked(current_order == Qt::DescendingOrder);
+    connect(descending, &QAction::triggered, this, [this, current_column]() {
+        applySortOrder(current_column, Qt::DescendingOrder);
+    });
+}
+
+void FileManagementExplorerPanel::applySortOrder(const int column, const Qt::SortOrder order) {
+    if (!m_pane || !m_pane->sortFilterModel()) {
+        return;
+    }
+    m_pane->sortFilterModel()->sort(column, order);
+    if (auto* table = m_pane->tableView()) {
+        table->horizontalHeader()->setSortIndicator(column, order);
+    }
 }
 
 void FileManagementExplorerPanel::buildStatusRow(QVBoxLayout* root_layout) {
@@ -687,20 +771,6 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
             this,
             &FileManagementExplorerPanel::onForwardClicked);
     connect(m_up_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onUpClicked);
-    connect(
-        m_open_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onOpenSelected);
-    connect(m_copy_path_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::onCopyPathClicked);
-    connect(m_new_folder_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::onNewFolderClicked);
-    connect(m_write_file_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::onWriteFileClicked);
     connect(m_rename_button,
             &QPushButton::clicked,
             this,
@@ -3143,12 +3213,15 @@ void FileManagementExplorerPanel::updateActionButtons() {
     applyCommandState(m_back_button, FileExplorerCommandId::Back, context);
     applyCommandState(m_forward_button, FileExplorerCommandId::Forward, context);
     applyCommandState(m_up_button, FileExplorerCommandId::Up, context);
-    applyCommandState(m_open_button, FileExplorerCommandId::Open, context);
-    applyCommandState(m_copy_path_button, FileExplorerCommandId::CopyPath, context);
-    applyCommandState(m_new_folder_button, FileExplorerCommandId::NewFolder, context);
-    applyCommandState(m_write_file_button, FileExplorerCommandId::WriteFile, context);
     applyCommandState(m_rename_button, FileExplorerCommandId::Rename, context);
     applyCommandState(m_delete_button, FileExplorerCommandId::Delete, context);
+    if (m_command_bar) {
+        applyCommandState(m_command_bar->copyButton(), FileExplorerCommandId::CopyItems, context);
+        applyCommandState(m_command_bar->pasteButton(), FileExplorerCommandId::Paste, context);
+        applyCommandState(m_command_bar->propertiesButton(),
+                          FileExplorerCommandId::Properties,
+                          context);
+    }
     rebuildViewMenu(context);
     updateDetailsPane();
 }

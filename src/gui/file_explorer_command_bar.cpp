@@ -9,19 +9,36 @@
 
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QMenu>
 
 namespace sak {
 
 namespace {
 
-QPushButton* makeCommandButton(QWidget* parent,
-                               const char* object_name,
-                               const FileExplorerCommandId command,
-                               const QString& accessible_name,
-                               const QString& tool_tip) {
+// Files Toolbar.xaml: primary command buttons are icon-only with labels on
+// flyout groups only; the toolbar card uses an 8px radius (styled via QSS).
+QPushButton* makeItemCommandButton(QWidget* parent,
+                                   const char* object_name,
+                                   const FileExplorerCommandId command,
+                                   const QString& accessible_name,
+                                   const QString& tool_tip) {
     auto* button = new QPushButton(parent);
     button->setObjectName(QString::fromLatin1(object_name));
     button->setIcon(FileExplorerIconRegistry::iconForCommand(command));
+    button->setAccessibleName(accessible_name);
+    button->setToolTip(tool_tip);
+    return button;
+}
+
+QToolButton* makeFlyoutButton(QWidget* parent,
+                              const char* object_name,
+                              const QIcon& icon,
+                              const QString& accessible_name,
+                              const QString& tool_tip) {
+    auto* button = new QToolButton(parent);
+    button->setObjectName(QString::fromLatin1(object_name));
+    button->setIcon(icon);
+    button->setPopupMode(QToolButton::InstantPopup);
     button->setAccessibleName(accessible_name);
     button->setToolTip(tool_tip);
     return button;
@@ -43,62 +60,90 @@ FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent
         ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     commandRow->setSpacing(ui::kSpacingTight);
 
-    createCreationButtons(commandRow);
-    commandRow->addWidget(makeSeparator(this));
-    createItemButtons(commandRow);
+    createLeftCommands(commandRow);
     commandRow->addStretch(1);
-    createViewButtons(commandRow);
+    createRightCommands(commandRow);
 }
 
-void FileExplorerCommandBar::createCreationButtons(QHBoxLayout* commandRow) {
-    m_new_folder_button = makeCommandButton(this,
-                                            "fileExplorerNewFolderButton",
-                                            FileExplorerCommandId::NewFolder,
-                                            tr("Create folder in selected target"),
-                                            tr("Create a folder in the current target path"));
-    m_new_folder_button->setText(tr("New Folder"));
-    commandRow->addWidget(m_new_folder_button);
+void FileExplorerCommandBar::createLeftCommands(QHBoxLayout* commandRow) {
+    // Files ToolbarSections.cs AlwaysVisible order: New (labeled group
+    // flyout), separator, then icon-only Cut/Copy/Paste/Rename/Share/
+    // Delete/Properties. Cut and Share are documented C-track deviations
+    // (Cut lands with the C3 transfer engine; Share is EXCLUDED).
+    m_new_button = makeFlyoutButton(this,
+                                    "fileExplorerNewButton",
+                                    FileExplorerIconRegistry::iconForKey(QStringLiteral("plus")),
+                                    tr("New item"),
+                                    tr("Create a folder or write a file into the current path"));
+    m_new_button->setText(tr("New"));
+    m_new_button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_new_menu = new QMenu(m_new_button);
+    m_new_menu->setObjectName(QStringLiteral("fileExplorerNewMenu"));
+    m_new_button->setMenu(m_new_menu);
+    commandRow->addWidget(m_new_button);
 
-    m_write_file_button = makeCommandButton(this,
-                                            "fileExplorerWriteFileButton",
-                                            FileExplorerCommandId::WriteFile,
-                                            tr("Write file to selected target"),
-                                            tr("Copy a local file into the current target path"));
-    m_write_file_button->setText(tr("Write File"));
-    commandRow->addWidget(m_write_file_button);
-}
+    commandRow->addWidget(makeSeparator(this));
 
-void FileExplorerCommandBar::createItemButtons(QHBoxLayout* commandRow) {
-    m_open_button = makeCommandButton(this,
-                                      "fileExplorerOpenButton",
-                                      FileExplorerCommandId::Open,
-                                      tr("Open selected explorer item"),
-                                      tr("Open the selected item"));
-    commandRow->addWidget(m_open_button);
+    m_copy_button = makeItemCommandButton(this,
+                                          "fileExplorerCopyButton",
+                                          FileExplorerCommandId::CopyItems,
+                                          tr("Copy selected items"),
+                                          tr("Copy the selected items to the clipboard"));
+    commandRow->addWidget(m_copy_button);
 
-    m_copy_path_button = makeCommandButton(this,
-                                           "fileExplorerCopyPathButton",
-                                           FileExplorerCommandId::CopyItemPath,
-                                           tr("Copy selected explorer path"),
-                                           tr("Copy the selected item path"));
-    commandRow->addWidget(m_copy_path_button);
+    m_paste_button = makeItemCommandButton(this,
+                                           "fileExplorerPasteButton",
+                                           FileExplorerCommandId::Paste,
+                                           tr("Paste"),
+                                           tr("Paste clipboard files into the current path"));
+    commandRow->addWidget(m_paste_button);
 
-    m_rename_button = makeCommandButton(this,
-                                        "fileExplorerRenameButton",
-                                        FileExplorerCommandId::Rename,
-                                        tr("Rename selected explorer item"),
-                                        tr("Rename or move the selected item where supported"));
+    m_rename_button = makeItemCommandButton(this,
+                                            "fileExplorerRenameButton",
+                                            FileExplorerCommandId::Rename,
+                                            tr("Rename selected explorer item"),
+                                            tr("Rename or move the selected item"));
     commandRow->addWidget(m_rename_button);
 
-    m_delete_button = makeCommandButton(this,
-                                        "fileExplorerDeleteButton",
-                                        FileExplorerCommandId::Delete,
-                                        tr("Delete selected explorer item"),
-                                        tr("Delete the selected item from the target"));
+    m_delete_button = makeItemCommandButton(this,
+                                            "fileExplorerDeleteButton",
+                                            FileExplorerCommandId::Delete,
+                                            tr("Delete selected explorer item"),
+                                            tr("Delete the selected item from the target"));
     commandRow->addWidget(m_delete_button);
+
+    m_properties_button = makeItemCommandButton(this,
+                                                "fileExplorerPropertiesButton",
+                                                FileExplorerCommandId::Properties,
+                                                tr("Item properties"),
+                                                tr("Show properties for the selected item"));
+    commandRow->addWidget(m_properties_button);
 }
 
-void FileExplorerCommandBar::createViewButtons(QHBoxLayout* commandRow) {
+void FileExplorerCommandBar::createRightCommands(QHBoxLayout* commandRow) {
+    // Files base command bar: selection options, sort (with group-by once
+    // grouping lands in C5), layout, info-pane toggle - all icon-only.
+    m_selection_button =
+        makeFlyoutButton(this,
+                         "fileExplorerSelectionButton",
+                         FileExplorerIconRegistry::iconForKey(QStringLiteral("select-mode")),
+                         tr("Selection options"),
+                         tr("Select all, invert selection, or clear selection"));
+    m_selection_menu = new QMenu(m_selection_button);
+    m_selection_menu->setObjectName(QStringLiteral("fileExplorerSelectionMenu"));
+    m_selection_button->setMenu(m_selection_menu);
+    commandRow->addWidget(m_selection_button);
+
+    m_sort_button = makeFlyoutButton(this,
+                                     "fileExplorerSortButton",
+                                     FileExplorerIconRegistry::iconForKey(QStringLiteral("sort")),
+                                     tr("Sort options"),
+                                     tr("Sort the current folder"));
+    m_sort_menu = new QMenu(m_sort_button);
+    m_sort_menu->setObjectName(QStringLiteral("fileExplorerSortMenu"));
+    m_sort_button->setMenu(m_sort_menu);
+    commandRow->addWidget(m_sort_button);
+
     m_view_button = new QToolButton(this);
     m_view_button->setObjectName(QStringLiteral("fileExplorerViewButton"));
     m_view_button->setText(tr("View"));
@@ -111,28 +156,28 @@ void FileExplorerCommandBar::createViewButtons(QHBoxLayout* commandRow) {
     commandRow->addWidget(m_view_button);
 
     m_details_toggle_button =
-        makeCommandButton(this,
-                          "fileExplorerDetailsToggleButton",
-                          FileExplorerCommandId::TogglePreviewPane,
-                          tr("Toggle File Explorer details pane"),
-                          tr("Show or hide preview, properties, safety, and evidence"));
+        makeItemCommandButton(this,
+                              "fileExplorerDetailsToggleButton",
+                              FileExplorerCommandId::TogglePreviewPane,
+                              tr("Toggle File Explorer details pane"),
+                              tr("Show or hide preview, properties, safety, and evidence"));
     commandRow->addWidget(m_details_toggle_button);
 }
 
-QPushButton* FileExplorerCommandBar::newFolderButton() const {
-    return m_new_folder_button;
+QToolButton* FileExplorerCommandBar::newButton() const {
+    return m_new_button;
 }
 
-QPushButton* FileExplorerCommandBar::writeFileButton() const {
-    return m_write_file_button;
+QMenu* FileExplorerCommandBar::newMenu() const {
+    return m_new_menu;
 }
 
-QPushButton* FileExplorerCommandBar::openButton() const {
-    return m_open_button;
+QPushButton* FileExplorerCommandBar::copyButton() const {
+    return m_copy_button;
 }
 
-QPushButton* FileExplorerCommandBar::copyPathButton() const {
-    return m_copy_path_button;
+QPushButton* FileExplorerCommandBar::pasteButton() const {
+    return m_paste_button;
 }
 
 QPushButton* FileExplorerCommandBar::renameButton() const {
@@ -141,6 +186,26 @@ QPushButton* FileExplorerCommandBar::renameButton() const {
 
 QPushButton* FileExplorerCommandBar::deleteButton() const {
     return m_delete_button;
+}
+
+QPushButton* FileExplorerCommandBar::propertiesButton() const {
+    return m_properties_button;
+}
+
+QToolButton* FileExplorerCommandBar::selectionButton() const {
+    return m_selection_button;
+}
+
+QMenu* FileExplorerCommandBar::selectionMenu() const {
+    return m_selection_menu;
+}
+
+QToolButton* FileExplorerCommandBar::sortButton() const {
+    return m_sort_button;
+}
+
+QMenu* FileExplorerCommandBar::sortMenu() const {
+    return m_sort_menu;
 }
 
 QToolButton* FileExplorerCommandBar::viewButton() const {
