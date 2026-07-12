@@ -108,6 +108,13 @@ private:
     void closeTabsRelative(int index, int direction);
     /// Files status bar col0: "N items | N selected | size".
     void updateStatusCounts();
+    /// Sidebar section visibility (Files SidebarContextMenu toggles).
+    [[nodiscard]] bool sidebarSectionVisible(const QString& section_id) const;
+    void setSidebarSectionVisible(const QString& section_id, bool visible);
+    void addSidebarSectionToggleMenu(QMenu* parent_menu);
+    void appendVisibleSidebarSections();
+    void appendTagRows();
+    void installAuxiliaryShortcuts();
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();

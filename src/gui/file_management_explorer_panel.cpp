@@ -1059,6 +1059,10 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         });
     }
 
+    installAuxiliaryShortcuts();
+}
+
+void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
     auto* searchShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+F")), this);
     searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(searchShortcut,
@@ -1072,6 +1076,15 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
             &QShortcut::activated,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
+
+    // Files ToggleSidebarAction: Ctrl+B shows/hides the sidebar pane.
+    auto* sidebarShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+B")), this);
+    sidebarShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(sidebarShortcut, &QShortcut::activated, this, [this]() {
+        if (m_sidebar_toggle_button) {
+            m_sidebar_toggle_button->click();
+        }
+    });
 
     const auto openCommand = FileExplorerCommandRegistry::command(FileExplorerCommandId::Open);
     if (!openCommand.shortcut.trimmed().isEmpty()) {
@@ -1176,6 +1189,98 @@ void FileManagementExplorerPanel::appendStaleFavoriteRow(const QString& target_i
                          .arg(target_id));
 }
 
+bool FileManagementExplorerPanel::sidebarSectionVisible(const QString& section_id) const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.beginGroup(QStringLiteral("SidebarSections"));
+    const bool visible = settings.value(section_id, true).toBool();
+    settings.endGroup();
+    settings.endGroup();
+    return visible;
+}
+
+void FileManagementExplorerPanel::setSidebarSectionVisible(const QString& section_id,
+                                                           const bool visible) {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.beginGroup(QStringLiteral("SidebarSections"));
+    settings.setValue(section_id, visible);
+    settings.endGroup();
+    settings.endGroup();
+    settings.sync();
+    rebuildTargetList();
+}
+
+void FileManagementExplorerPanel::addSidebarSectionToggleMenu(QMenu* parent_menu) {
+    // Files MainPage.xaml SidebarContextMenu: one checkable toggle per
+    // sidebar section, applied immediately.
+    QMenu* sections = parent_menu->addMenu(tr("Show sections"));
+    sections->setObjectName(QStringLiteral("fileExplorerSidebarSectionsMenu"));
+    static constexpr std::array kSections = {
+        std::pair{"home", QT_TR_NOOP("Home")},
+        std::pair{"favorites", QT_TR_NOOP("Favorites")},
+        std::pair{"thispc", QT_TR_NOOP("This PC")},
+        std::pair{"mounted", QT_TR_NOOP("Mounted Volumes")},
+        std::pair{"partitions", QT_TR_NOOP("Disks and Partitions")},
+        std::pair{"rawimages", QT_TR_NOOP("Raw Images")},
+        std::pair{"recent", QT_TR_NOOP("Recent")},
+        std::pair{"certification", QT_TR_NOOP("Certification Targets")},
+        std::pair{"tags", QT_TR_NOOP("Tags")},
+    };
+    for (const auto& [id, label] : kSections) {
+        QAction* action = sections->addAction(tr(label));
+        action->setCheckable(true);
+        const QString section_id = QString::fromLatin1(id);
+        action->setChecked(sidebarSectionVisible(section_id));
+        connect(action, &QAction::toggled, this, [this, section_id](const bool checked) {
+            setSidebarSectionVisible(section_id, checked);
+        });
+    }
+}
+
+void FileManagementExplorerPanel::appendVisibleSidebarSections() {
+    if (sidebarSectionVisible(QStringLiteral("favorites"))) {
+        appendSidebarTargetsById(tr("Favorites"),
+                                 m_favorite_target_ids,
+                                 /*warn_when_missing=*/true);
+    }
+    if (sidebarSectionVisible(QStringLiteral("thispc"))) {
+        appendSidebarTargetsWhere(tr("This PC"), &isLocalFsTarget);
+    }
+    if (sidebarSectionVisible(QStringLiteral("mounted"))) {
+        appendSidebarTargetsWhere(tr("Mounted Volumes"), &isMountedVolumeTarget);
+    }
+    if (sidebarSectionVisible(QStringLiteral("partitions"))) {
+        appendSidebarTargetsWhere(tr("Disks and Partitions"), &isPartitionTarget);
+    }
+    if (sidebarSectionVisible(QStringLiteral("rawimages"))) {
+        appendSidebarTargetsWhere(tr("Raw Images"), &isRawImageTarget);
+    }
+    if (sidebarSectionVisible(QStringLiteral("recent"))) {
+        appendSidebarTargetsById(tr("Recent"), m_recent_target_ids);
+    }
+    if (sidebarSectionVisible(QStringLiteral("certification"))) {
+        appendSidebarTargetsWhere(tr("Certification Targets"), &isCertificationTarget);
+    }
+
+    appendTagRows();
+}
+
+void FileManagementExplorerPanel::appendTagRows() {
+    const QStringList tags = allKnownTags();
+    if (tags.isEmpty() || !sidebarSectionVisible(QStringLiteral("tags"))) {
+        return;
+    }
+    appendSidebarHeader(tr("Tags"));
+    for (const QString& tag : tags) {
+        auto* item = new QListWidgetItem(
+            FileExplorerIconRegistry::iconForKey(QStringLiteral("tag")), tag, m_target_list);
+        item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Tag));
+        item->setData(kSidebarTagRole, tag);
+        item->setToolTip(tr("Filter the current folder to items tagged '%1'").arg(tag));
+    }
+}
+
 void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_target_id) {
     if (!m_target_list) {
         return;
@@ -1191,32 +1296,19 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     m_target_list->blockSignals(true);
     m_target_list->clear();
 
-    appendSidebarHeader(tr("Home"));
-    auto* home = new QListWidgetItem(FileExplorerIconRegistry::iconForKey(QStringLiteral("home")),
-                                     tr("Home"),
-                                     m_target_list);
-    home->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Home));
-    home->setToolTip(tr("Open the first mounted local target."));
-
-    appendSidebarTargetsById(tr("Favorites"), m_favorite_target_ids, /*warn_when_missing=*/true);
-    appendSidebarTargetsWhere(tr("This PC"), &isLocalFsTarget);
-    appendSidebarTargetsWhere(tr("Mounted Volumes"), &isMountedVolumeTarget);
-    appendSidebarTargetsWhere(tr("Disks and Partitions"), &isPartitionTarget);
-    appendSidebarTargetsWhere(tr("Raw Images"), &isRawImageTarget);
-    appendSidebarTargetsById(tr("Recent"), m_recent_target_ids);
-    appendSidebarTargetsWhere(tr("Certification Targets"), &isCertificationTarget);
-
-    const QStringList tags = allKnownTags();
-    if (!tags.isEmpty()) {
-        appendSidebarHeader(tr("Tags"));
-        for (const QString& tag : tags) {
-            auto* item = new QListWidgetItem(
-                FileExplorerIconRegistry::iconForKey(QStringLiteral("tag")), tag, m_target_list);
-            item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Tag));
-            item->setData(kSidebarTagRole, tag);
-            item->setToolTip(tr("Filter the current folder to items tagged '%1'").arg(tag));
-        }
+    // Sections are settings-gated in a fixed order, mirroring the Files
+    // sidebar (SidebarViewModel.SectionOrder + Show*Section settings).
+    if (sidebarSectionVisible(QStringLiteral("home"))) {
+        appendSidebarHeader(tr("Home"));
+        auto* home =
+            new QListWidgetItem(FileExplorerIconRegistry::iconForKey(QStringLiteral("home")),
+                                tr("Home"),
+                                m_target_list);
+        home->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Home));
+        home->setToolTip(tr("Open the first mounted local target."));
     }
+
+    appendVisibleSidebarSections();
 
     m_target_list->blockSignals(false);
     if (!current_id.isEmpty()) {
@@ -4339,6 +4431,8 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     clearRecent->setEnabled(!m_recent_target_ids.isEmpty());
     connect(
         clearRecent, &QAction::triggered, this, &FileManagementExplorerPanel::clearRecentTargets);
+    menu.addSeparator();
+    addSidebarSectionToggleMenu(&menu);
     menu.exec(m_target_list->viewport()->mapToGlobal(position));
 }
 
