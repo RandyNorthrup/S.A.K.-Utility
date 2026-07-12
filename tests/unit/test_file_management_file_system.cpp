@@ -286,7 +286,7 @@ private Q_SLOTS:
         QVERIFY(!arbitraryApfs.can_write_files);
         const QString apfsNote = Bridge::safetyNotes(arbitraryApfs).join(QStringLiteral(" "));
         QVERIFY2(apfsNote.contains(QStringLiteral("known container size")), qPrintable(apfsNote));
-        QVERIFY2(apfsNote.contains(QStringLiteral("32 TiB")), qPrintable(apfsNote));
+        QVERIFY2(apfsNote.contains(sak::apfsCapacityRangeText()), qPrintable(apfsNote));
 
         // A write-capable APFS slice states the certified-engine path and that both
         // S.A.K.-generated and real Apple-created (foreign) containers are supported.

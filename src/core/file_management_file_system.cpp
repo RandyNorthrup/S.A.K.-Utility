@@ -733,9 +733,10 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
                       "volumes) fail closed with exact blockers.")
                 : QStringLiteral(
                       "APFS writes need a known container size within the certified engine "
-                      "range (64 MiB through 32 TiB); this target is read-only because its "
-                      "size is unknown or out of range. Fusion/Tier2 sets and "
-                      "unprovided-credential encrypted volumes also stay read-only."));
+                      "range (%1); this target is read-only because its size is unknown or "
+                      "out of range. Fusion/Tier2 sets and unprovided-credential encrypted "
+                      "volumes also stay read-only.")
+                      .arg(apfsCapacityRangeText()));
     } else if (fs.contains(QStringLiteral("hfs"))) {
         notes.append(target.can_write_files
                          ? QStringLiteral("HFS+/HFSX writes commit through the Apple-certified "

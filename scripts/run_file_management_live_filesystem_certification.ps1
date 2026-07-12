@@ -23,6 +23,7 @@ param(
     [uint64]$ReadMaxBytes = 1048576,
     [int]$WorkerTimeoutMs = 180000,
     [switch]$Destructive,
+    [switch]$AllowForeignApfsDestructive,
     [switch]$SkipApfs,
     [switch]$SkipHfs,
     [switch]$AllowBootOrSystemDisk,
@@ -168,6 +169,9 @@ if (-not (Test-IsAdmin)) {
     if ($Destructive) {
         $argsList.Add("-Destructive")
     }
+    if ($AllowForeignApfsDestructive) {
+        $argsList.Add("-AllowForeignApfsDestructive")
+    }
     if ($SkipApfs) {
         $argsList.Add("-SkipApfs")
     }
@@ -234,10 +238,10 @@ if (-not $SkipApfs -and -not $apfs) {
 if (-not $SkipHfs -and -not $hfs) {
     throw "Disk $($disk.Number) has no HFS+ partition."
 }
-if ($Destructive -and $apfs) {
+if ($Destructive -and $apfs -and -not $AllowForeignApfsDestructive) {
     $maxGeneratedSingleChunkBytes = [uint64]134217728
     if ([uint64]$apfs.Size -gt $maxGeneratedSingleChunkBytes) {
-        throw "APFS destructive live certification currently requires a 64-128 MiB S.A.K.-generated one-spaceman-chunk APFS partition; selected partition is $($apfs.Size) bytes."
+        throw "APFS destructive live certification defaults to a 64-128 MiB S.A.K.-generated one-spaceman-chunk APFS partition; selected partition is $($apfs.Size) bytes. Pass -AllowForeignApfsDestructive for real Apple / multi-chunk containers."
     }
 }
 
@@ -280,6 +284,9 @@ $certifierArgs = @(
 )
 if ($Destructive) {
     $certifierArgs += "--destructive"
+}
+if ($AllowForeignApfsDestructive) {
+    $certifierArgs += "--allow-foreign-apfs-destructive"
 }
 if ($apfs) {
     $certifierArgs += @(

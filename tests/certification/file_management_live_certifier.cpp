@@ -48,6 +48,10 @@ struct Config {
     QString output_path;
     QVector<TargetSpec> targets;
     bool destructive{false};
+    // Explicit opt-in for destructive APFS runs on real Apple-created (foreign) or
+    // multi-chunk containers: waives the one-spaceman-chunk generated-size gate and
+    // lets the bridge derive the container size from the superblock when none is given.
+    bool allow_foreign_apfs_destructive{false};
     int max_depth{kDefaultMaxDepth};
     int max_directories{kDefaultMaxDirectories};
     int max_entries_per_directory{kDefaultMaxEntriesPerDirectory};
@@ -155,23 +159,31 @@ QString targetSizeKey(const QString& fileSystem) {
     return key.isEmpty() ? fileSystem.trimmed().toLower() : key;
 }
 
-void appendTargetSpecErrors(QStringList& errors, const TargetSpec& target, const bool destructive) {
+void appendTargetSpecErrors(QStringList& errors,
+                            const TargetSpec& target,
+                            const bool destructive,
+                            const bool allow_foreign_apfs) {
     if (target.file_system.trimmed().isEmpty() || target.path.trimmed().isEmpty()) {
         errors.append(QStringLiteral("--target values must use FS=path"));
     }
     const bool destructive_apfs = destructive &&
                                   sak::FileManagementFileSystemBridge::normalizedFileSystem(
                                       target.file_system) == QStringLiteral("apfs");
-    if (destructive_apfs && target.size_bytes == 0) {
-        errors.append(
-            QStringLiteral("--target-size APFS=bytes is required for destructive APFS raw writes"));
+    if (!destructive_apfs || allow_foreign_apfs) {
+        // With the explicit foreign opt-in the bridge range-gates the write itself,
+        // deriving the container size from the APFS superblock when none is supplied.
+        return;
     }
-    if (destructive_apfs && target.size_bytes != 0 &&
-        (target.size_bytes < kMinimumGeneratedApfsBytes ||
-         target.size_bytes > kGeneratedApfsSingleChunkMaxBytes)) {
+    if (target.size_bytes == 0) {
+        errors.append(
+            QStringLiteral("--target-size APFS=bytes is required for destructive APFS raw writes "
+                           "(or pass --allow-foreign-apfs-destructive)"));
+    } else if (target.size_bytes < kMinimumGeneratedApfsBytes ||
+               target.size_bytes > kGeneratedApfsSingleChunkMaxBytes) {
         errors.append(QStringLiteral(
-            "Destructive APFS live certification currently supports one-spaceman-chunk "
-            "generated targets only (64 MiB through 128 MiB)"));
+            "Destructive APFS live certification defaults to one-spaceman-chunk "
+            "generated targets (64 MiB through 128 MiB); pass "
+            "--allow-foreign-apfs-destructive for real Apple / multi-chunk containers"));
     }
 }
 
@@ -184,7 +196,8 @@ QStringList parseErrors(const Config& config) {
         errors.append(QStringLiteral("At least one --target FS=path argument is required"));
     }
     for (const auto& target : config.targets) {
-        appendTargetSpecErrors(errors, target, config.destructive);
+        appendTargetSpecErrors(
+            errors, target, config.destructive, config.allow_foreign_apfs_destructive);
     }
     return errors;
 }
@@ -202,6 +215,8 @@ Config parseConfig(const QStringList& args) {
     config.read_max_bytes =
         parseUInt64Arg(args, QStringLiteral("--read-max-bytes"), config.read_max_bytes);
     config.destructive = hasArg(args, QStringLiteral("--destructive"));
+    config.allow_foreign_apfs_destructive =
+        hasArg(args, QStringLiteral("--allow-foreign-apfs-destructive"));
 
     QHash<QString, uint64_t> targetSizes;
     const auto targetSizeValues = repeatedArgValues(args, QStringLiteral("--target-size"));
