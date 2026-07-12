@@ -137,6 +137,8 @@ private:
     void promptCurrentFolderFilter();
     void showCommandPalette();
     void updateDetailsPane();
+    [[nodiscard]] QString composeStatusText(const FileManagementTarget& target,
+                                            const FileExplorerSelection& selection) const;
     void updatePreviewPane(const FileManagementTarget& target,
                            const FileExplorerSelection& selection);
     void showPreviewHint(const QString& message);
@@ -160,6 +162,7 @@ private:
     void ensureSecondPane();
     void activatePane(int index);
     void toggleDualPane();
+    void togglePaneOrientation();
     void openSelectionInSecondPane();
     void highlightActivePane();
     [[nodiscard]] FileExplorerTabState captureCurrentTab() const;

@@ -1222,9 +1222,9 @@ Status: substantially implemented and now test-covered. The tab strip
 active-pane highlight, open-in-second-pane, independent per-pane
 target/path/history, command routing to the active pane) work and have unit/GUI
 tests, and duplicate tab / closed-tab restore now ship as registry commands.
-Remaining genuine gaps: cross-restart tab persistence, horizontal split, per-pane
-view mode re-application, active-pane status summary, and the open-in-second-pane
-/ active-pane-routing GUI test lanes.
+Horizontal (stacked) split, per-pane view-mode re-application, and an active-pane
+status summary now ship too. Remaining genuine gaps: cross-restart tab
+persistence and the open-in-second-pane / active-pane-routing GUI test lanes.
 
 Tabs checklist:
 
@@ -1242,13 +1242,13 @@ Dual-pane checklist:
 
 - [x] Add second pane toggle. (`dualPaneToggleAddsSecondPane`)
 - [x] Add vertical split. (`m_pane_splitter` side-by-side)
-- [ ] Add horizontal split if practical. (splitter orientation fixed; `FileExplorerPaneSplit` scaffolding unused)
+- [x] Add horizontal split if practical. (`togglePaneOrientation` + "Stack Panes Vertically" view-menu action flips splitter orientation; `dualPaneStackActionFlipsSplitterOrientation`)
 - [x] Add active pane highlight. (`highlightActivePane`)
 - [x] Add open folder in second pane. (`OpenInSecondPane` command -> `openSelectionInSecondPane`)
 - [x] Add independent target/path/history per pane. (`dualPaneStatesTrackIndependentHistories`)
-- [ ] Add independent view mode per pane. (view mode is per-widget/incidental, not re-applied on pane activation)
+- [x] Add independent view mode per pane. (view settings live in each pane state and `activatePane` re-applies them via `applyViewSettings`)
 - [x] Add command routing to active pane. (active pane repointed on `activatePane`)
-- [ ] Add status bar active pane summary. (status reflects the active pane only, no both-pane summary)
+- [x] Add status bar active pane summary. (status label appends an active-pane / other-pane path line when dual pane is on)
 
 Tests:
 

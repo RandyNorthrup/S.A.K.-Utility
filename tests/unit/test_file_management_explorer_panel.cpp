@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QTableView>
@@ -943,6 +944,41 @@ private Q_SLOTS:
         dualPane->trigger();
         QApplication::processEvents();
         QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+    }
+
+    void dualPaneStackActionFlipsSplitterOrientation() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1200, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view);
+        QVERIFY(view->menu());
+        auto* splitter = child<QSplitter>(&panel, "fileExplorerPaneSplitter");
+        QVERIFY(splitter);
+        QCOMPARE(splitter->orientation(), Qt::Horizontal);
+
+        // Stacking is inert until dual pane is active.
+        QAction* stack = actionStartingWith(view->menu(), QStringLiteral("Stack Panes Vertically"));
+        QVERIFY(stack);
+        QVERIFY(!stack->isEnabled());
+
+        actionStartingWith(view->menu(), QStringLiteral("Dual Pane"))->trigger();
+        QApplication::processEvents();
+
+        stack = actionStartingWith(view->menu(), QStringLiteral("Stack Panes Vertically"));
+        QVERIFY(stack->isEnabled());
+        stack->trigger();
+        QApplication::processEvents();
+        QCOMPARE(splitter->orientation(), Qt::Vertical);
+
+        // Menu rebuild reflects the current orientation as checked.
+        stack = actionStartingWith(view->menu(), QStringLiteral("Stack Panes Vertically"));
+        QVERIFY(stack->isChecked());
+        stack->trigger();
+        QApplication::processEvents();
+        QCOMPARE(splitter->orientation(), Qt::Horizontal);
     }
 
     void commandPaletteFilterNarrowsCommandList() {

@@ -1427,6 +1427,18 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     }
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
+    auto* stackAction = menu->addAction(tr("Stack Panes Vertically"));
+    stackAction->setObjectName(QStringLiteral("fileExplorerStackPanesAction"));
+    stackAction->setCheckable(true);
+    stackAction->setChecked(m_pane_splitter && m_pane_splitter->orientation() == Qt::Vertical);
+    stackAction->setEnabled(m_dual_pane_enabled);
+    stackAction->setToolTip(m_dual_pane_enabled
+                                ? tr("Switch between side-by-side and stacked panes.")
+                                : tr("Enable dual pane first."));
+    connect(stackAction,
+            &QAction::triggered,
+            this,
+            &FileManagementExplorerPanel::togglePaneOrientation);
     addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
     addCommandMenuAction(menu, FileExplorerCommandId::DuplicateTab, context);
     addCommandMenuAction(menu, FileExplorerCommandId::ReopenClosedTab, context);
@@ -1899,17 +1911,29 @@ void FileManagementExplorerPanel::updateDetailsPane() {
     }
     updatePreviewPane(target, selection);
     if (m_status_label) {
-        if (target.root_path.isEmpty()) {
-            m_status_label->setText(tr("No target selected"));
-        } else {
-            m_status_label->setText(
-                tr("%1 | %2 | %3 selected | writes %4")
-                    .arg(target.label,
-                         target.file_system,
-                         QString::number(selection.count()),
-                         target.can_write_files ? tr("enabled") : tr("blocked")));
-        }
+        m_status_label->setText(composeStatusText(target, selection));
     }
+}
+
+QString FileManagementExplorerPanel::composeStatusText(
+    const FileManagementTarget& target, const FileExplorerSelection& selection) const {
+    if (target.root_path.isEmpty()) {
+        return tr("No target selected");
+    }
+    QString text = tr("%1 | %2 | %3 selected | writes %4")
+                       .arg(target.label,
+                            target.file_system,
+                            QString::number(selection.count()),
+                            target.can_write_files ? tr("enabled") : tr("blocked"));
+    if (m_dual_pane_enabled) {
+        const QString active_side = m_active_pane_index == 0 ? tr("Left") : tr("Right");
+        const QString other_side = m_active_pane_index == 0 ? tr("Right") : tr("Left");
+        const QString other_path = m_secondary_state.location.path.isEmpty()
+                                       ? tr("(empty)")
+                                       : m_secondary_state.location.path;
+        text += tr("\nActive pane: %1  |  %2: %3").arg(active_side, other_side, other_path);
+    }
+    return text;
 }
 
 void FileManagementExplorerPanel::updatePreviewPane(const FileManagementTarget& target,
@@ -2265,8 +2289,20 @@ void FileManagementExplorerPanel::activatePane(int index) {
     if (m_path_edit) {
         m_path_edit->setText(m_current_path);
     }
+    applyViewSettings();  // re-apply the now-active pane's own view mode/size/toggles
     highlightActivePane();
     updateActionButtons();
+}
+
+void FileManagementExplorerPanel::togglePaneOrientation() {
+    if (!m_pane_splitter) {
+        return;
+    }
+    const bool stacked = m_pane_splitter->orientation() == Qt::Vertical;
+    m_pane_splitter->setOrientation(stacked ? Qt::Horizontal : Qt::Vertical);
+    Q_EMIT statusMessage(stacked ? tr("Panes arranged side by side")
+                                 : tr("Panes stacked vertically"),
+                         sak::kTimerStatusMessageMs);
 }
 
 void FileManagementExplorerPanel::highlightActivePane() {
