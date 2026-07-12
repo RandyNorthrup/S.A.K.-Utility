@@ -148,6 +148,14 @@ Current `FileManagementExplorerPanel` has the M0-M4 Files-like foundation:
 - Files Community MIT-derived SVG icon registry for mapped explorer commands, layout picker entries, pane toggles, Open, Copy Path, New Folder, Write File, Rename, Delete, Refresh, and dual-pane commands.
 - Favorites/recent/last-target persistence and target properties.
 - Target identity guard before raw/non-native mutation routes in the panel.
+- Basic explorer tab strip inside the File Explorer tab: new tab, close tab, and
+  tab switching, with each tab owning its own `FileExplorerTabState` (target,
+  path, history, selection, view). Its auto-generated close buttons carry
+  accessible names. Duplicate tab, closed-tab restore, and cross-restart tab
+  persistence are still M8/M11 work.
+- Dual-pane split: toggle, active-pane highlight, open-in-second-pane, and
+  independent target/path/history per pane, with commands routed to the active
+  pane. Per-pane view mode and a status-bar active-pane summary remain M8 work.
 
 Current backend proof is stronger than the UI:
 
@@ -156,7 +164,7 @@ Current backend proof is stronger than the UI:
 - HFS+ live File Explorer write/read/search/rename/delete proof passed.
 - APFS File Explorer write/read/search/delete proof passed; the APFS driver track (A1-A8) is Apple-native certified through the A8 physical-USB destructive/crash/rollback gate (2026-06-28), superseding the earlier 128 MiB Windows-side-only proof.
 
-Current gap: the shell now looks and behaves like a primary file manager, but later milestones still need deeper multi-level Columns polish, tabs, dual pane, richer omnibar search results, richer previews, copy-out/import queues, icon render parity, and final live-device certification.
+Current gap: the shell now looks and behaves like a primary file manager, with basic tabs and dual pane already present, but later milestones still need deeper multi-level Columns polish, tab duplicate/restore/persistence, per-pane view mode and dual-pane status summary, richer omnibar search results, richer previews, copy-out/import queues, icon render parity, and final live-device certification.
 
 ## Files Parity Guardrail
 
@@ -864,7 +872,7 @@ Checklist:
 - [x] Define command IDs for the implemented registry commands.
 - [x] Implement command enablement without UI dependencies.
 - [x] Return exact blocker text for disabled raw write commands.
-- [x] Keep APFS 64-128 MiB generated-layout write gate centralized in `FileManagementFileSystemBridge`.
+- [x] Keep the APFS generated-layout write gate (64 MiB through the certified 32 TiB cap) centralized in `FileManagementFileSystemBridge`.
 - [x] Keep HFS+/HFSX certified-write state centralized in `FileManagementFileSystemBridge`.
 
 Tests:
@@ -1181,7 +1189,7 @@ Tests:
 - [ ] GUI preview text file.
 - [ ] GUI preview binary hex.
 - [ ] GUI properties for local file.
-- [ ] GUI safety pane for ext4, HFS, APFS 128 MiB, APFS large, XFS/Btrfs.
+- [ ] GUI safety pane for ext4, HFS, APFS generated-layout, APFS large/arbitrary, XFS/Btrfs.
 - [ ] Evidence path rendering test.
 
 Exit gate:
@@ -1192,6 +1200,13 @@ Exit gate:
 ### M8 - Explorer Tabs And Dual Pane
 
 Goal: add Files-style multitasking.
+
+Status: partially implemented in the shell. The tab strip (new/close/switch with
+per-tab `FileExplorerTabState`) and dual pane (toggle, active-pane highlight,
+open-in-second-pane, independent per-pane target/path/history, command routing to
+the active pane) already work. The boxes below stay unchecked until the remaining
+items (duplicate tab, closed-tab restore, cross-restart persistence, per-pane view
+mode, active-pane status summary) and the M8 unit/GUI test lanes land.
 
 Tabs checklist:
 
@@ -1248,7 +1263,7 @@ Copy-in/import checklist:
 
 - [ ] Paste/import local file into local folder.
 - [ ] Paste/import local file into certified HFS+/HFSX target.
-- [ ] Paste/import local file into certified 64-128 MiB generated APFS target.
+- [ ] Paste/import local file into a certified generated-layout APFS target (up to the 32 TiB cap).
 - [ ] Block paste/import into ext raw/image.
 - [ ] Block paste/import into APFS large target.
 - [ ] Block paste/import into arbitrary APFS.
@@ -1271,7 +1286,7 @@ Tests:
 - [ ] Local copy/paste smoke.
 - [ ] ext4 raw copy-out smoke.
 - [ ] HFS+ live import/write/read/delete certification through command route.
-- [ ] APFS 128 MiB live import/write/read/delete certification through command route.
+- [ ] APFS generated-layout live import/write/read/delete certification through command route.
 - [ ] APFS large paste blocker test.
 
 Exit gate:
@@ -1393,7 +1408,7 @@ Certification checklist:
 - [ ] Run `git diff --check`.
 - [ ] Run release readiness or document unrelated blocker.
 - [ ] Run HFS+ destructive live File Explorer command-route certification.
-- [ ] Run APFS 128 MiB destructive live File Explorer command-route certification.
+- [ ] Run APFS generated-layout destructive live File Explorer command-route certification.
 - [ ] Run ext4 read-only raw copy-out certification.
 - [ ] Run XFS/Btrfs blocker proof.
 - [ ] Run large APFS write blocker proof.
