@@ -153,6 +153,7 @@ private:
     [[nodiscard]] QStringList buildDetailsProperties(const FileManagementTarget& target,
                                                      const FileExplorerSelection& selection) const;
     [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
+    [[nodiscard]] QStringList commandAvailabilityLines() const;
     [[nodiscard]] QStringList buildDetailsEvidence(const FileManagementTarget& target) const;
     [[nodiscard]] int resolveContextMenuTargetIndex(const QPoint& position);
     [[nodiscard]] QString favoriteActionLabel(int target_index, bool has_target) const;

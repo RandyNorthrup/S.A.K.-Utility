@@ -196,6 +196,47 @@ private Q_SLOTS:
         QCOMPARE(result.sha256, expected);
     }
 
+    void identifierLabelIsFileSystemSpecific() {
+        using Bridge = sak::FileManagementFileSystemBridge;
+        QCOMPARE(Bridge::identifierLabel(QStringLiteral("APFS")), QStringLiteral("Object ID"));
+        QCOMPARE(Bridge::identifierLabel(QStringLiteral("HFS+")), QStringLiteral("Catalog ID"));
+        QCOMPARE(Bridge::identifierLabel(QStringLiteral("hfsx")), QStringLiteral("Catalog ID"));
+        QCOMPARE(Bridge::identifierLabel(QStringLiteral("ext4")), QStringLiteral("Inode"));
+        QCOMPARE(Bridge::identifierLabel(QStringLiteral("NTFS")), QStringLiteral("Identifier"));
+    }
+
+    void safetyNotesNameTheRealBlocker() {
+        using Bridge = sak::FileManagementFileSystemBridge;
+
+        // A blocked (arbitrary) APFS target explains the generated-layout limit and cap.
+        const auto arbitraryApfs = Bridge::manualTarget(QStringLiteral("C:/fixtures/apfs.img"),
+                                                        QStringLiteral("APFS"));
+        QVERIFY(!arbitraryApfs.can_write_files);
+        const QString apfsNote = Bridge::safetyNotes(arbitraryApfs).join(QStringLiteral(" "));
+        QVERIFY2(apfsNote.contains(QStringLiteral("generated-layout")), qPrintable(apfsNote));
+        QVERIFY2(apfsNote.contains(QStringLiteral("32 TiB")), qPrintable(apfsNote));
+
+        // A write-capable generated APFS slice states the certified-engine path.
+        const auto writableApfs =
+            Bridge::manualTarget(QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
+                                 QStringLiteral("APFS"),
+                                 128ULL * 1024ULL * 1024ULL);
+        QVERIFY(writableApfs.can_write_files);
+        QVERIFY(Bridge::safetyNotes(writableApfs)
+                    .join(QStringLiteral(" "))
+                    .contains(QStringLiteral("COW engine")));
+
+        // XFS/Btrfs and ext each get their own specific note.
+        QVERIFY(Bridge::safetyNotes(
+                    Bridge::manualTarget(QStringLiteral("C:/x.img"), QStringLiteral("XFS")))
+                    .join(QStringLiteral(" "))
+                    .contains(QStringLiteral("metadata-only")));
+        QVERIFY(Bridge::safetyNotes(
+                    Bridge::manualTarget(QStringLiteral("C:/e.img"), QStringLiteral("ext4")))
+                    .join(QStringLiteral(" "))
+                    .contains(QStringLiteral("read-only browse/read/copy-out")));
+    }
+
     void inventoryPartitionBuildsRawAlias() {
         sak::PartitionInventory inventory;
         sak::PartitionDiskInfo disk;

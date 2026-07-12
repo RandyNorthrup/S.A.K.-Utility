@@ -1160,10 +1160,11 @@ and auto-populates on selection: text/hex/image preview with a 1 MiB read cap an
 an explicit blocker/hint, a Properties block, a Safety block (write/read/browse
 state, per-command availability, raw-target advisory), and an Evidence block
 (target id/source, last-mutation path/result/bytes/SHA-256/warnings). Genuine
-remaining gaps: hash-on-demand for the selected file, file-system-labelled
-properties (only a generic Identifier is surfaced today), HFS+ fork/resource and
-APFS extent summaries (the bridge entry struct has no such fields yet), evidence
-report file links, and file-system-specific "why blocked" wording in Safety.
+remaining gaps: HFS+ fork/resource and APFS extent summaries (the bridge entry
+struct has no such fields yet) and evidence report file links. Hash-on-demand,
+file-system-labelled properties (Object ID / Catalog ID / Inode), and
+file-system-specific "why blocked" Safety wording (with target identity + file
+system) now ship.
 On-demand hashing runs on a worker thread (local files hashed in full via a
 chunked reader, raw targets hashed over a bounded read window and reported as
 capped); preview reads still run synchronously on the UI thread under the 1 MiB
@@ -1181,7 +1182,7 @@ Checklist:
 - [x] Add raw-readable image preview if read cap and decoder are safe. (same route through capped `readFile`)
 - [x] Add unsupported preview blocker. (`verifyShellDetailsAndPreviewPanes` asserts a non-empty hint)
 - [x] Add hash-on-demand command. (`Hash` command -> `FileManagementFileSystemBridge::hashFile`, computed on a worker thread; `hashFileComputesSha256OfLocalFile`, `registryHashNeedsSingleReadableSelection`)
-- [ ] Add file-system-specific metadata. (only a generic Identifier field today)
+- [x] Add file-system-specific metadata. (`FileManagementFileSystemBridge::identifierLabel` labels the entry identifier as Object ID / Catalog ID / Inode per file system; `identifierLabelIsFileSystemSpecific`)
 - [ ] Add HFS+ fork/resource/attribute summary where reader exposes it.
 - [ ] Add APFS object/extent summary where reader exposes it.
 - [x] Add target write state. (`targetSelectionFeedsOmnibarAndSafetyPane`)
@@ -1191,12 +1192,12 @@ Checklist:
 
 Safety pane checklist:
 
-- [ ] Shows raw target identity. (advisory shown; the id/root string lives in Properties/Evidence)
-- [ ] Shows file system. (shown in Properties/status label, not in the Safety block)
+- [x] Shows raw target identity. (Safety block now leads with Target / Identity root-path lines)
+- [x] Shows file system. (Safety block "File system" line)
 - [x] Shows write capability.
-- [ ] Shows why APFS large target is read-only. (generic not-created-by-this-tool blocker, no size-specific wording)
-- [ ] Shows why arbitrary APFS is read-only. (same generic blocker)
-- [ ] Shows why XFS/Btrfs browse/write is blocked. (generic no-reader blocker, not XFS/Btrfs-specific)
+- [x] Shows why APFS large target is read-only. (`FileManagementFileSystemBridge::safetyNotes` names the 64 MiB-32 TiB generated-layout limit; `safetyNotesNameTheRealBlocker`)
+- [x] Shows why arbitrary APFS is read-only. (same generated-layout / arbitrary-Apple-media note)
+- [x] Shows why XFS/Btrfs browse/write is blocked. (metadata-only note; `safetyNotesNameTheRealBlocker`)
 - [x] Shows destructive-operation confirmation requirements.
 
 Tests:

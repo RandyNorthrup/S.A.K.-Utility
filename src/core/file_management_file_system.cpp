@@ -651,6 +651,51 @@ QString FileManagementFileSystemBridge::capabilitySummary(const FileManagementTa
     return parts.join(QStringLiteral(" - "));
 }
 
+QString FileManagementFileSystemBridge::identifierLabel(const QString& file_system) {
+    const QString fs = file_system.toLower();
+    if (fs.contains(QStringLiteral("apfs"))) {
+        return QStringLiteral("Object ID");
+    }
+    if (fs.contains(QStringLiteral("hfs"))) {
+        return QStringLiteral("Catalog ID");
+    }
+    if (fs.contains(QStringLiteral("ext"))) {
+        return QStringLiteral("Inode");
+    }
+    return QStringLiteral("Identifier");
+}
+
+QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarget& target) {
+    const QString fs = target.file_system.toLower();
+    QStringList notes;
+    if (fs.contains(QStringLiteral("apfs"))) {
+        notes.append(target.can_write_files
+                         ? QStringLiteral("APFS writes commit through the Apple-certified in-place "
+                                          "COW engine on this S.A.K. generated-layout container.")
+                         : QStringLiteral(
+                               "APFS writes are limited to S.A.K. generated-layout containers "
+                               "within the certified size range (64 MiB through 32 TiB). Arbitrary "
+                               "Apple media, out-of-range containers, Fusion/Tier2 sets, and "
+                               "unprovided-credential encrypted volumes stay read-only at the "
+                               "Apply layer."));
+    } else if (fs.contains(QStringLiteral("hfs"))) {
+        notes.append(target.can_write_files
+                         ? QStringLiteral("HFS+/HFSX writes commit through the Apple-certified "
+                                          "catalog/extents/attributes B-tree writer.")
+                         : QStringLiteral("This HFS+/HFSX target is read-only; certified writes "
+                                          "require a write-capable raw/image slice."));
+    } else if (fs.contains(QStringLiteral("xfs")) || fs.contains(QStringLiteral("btrfs"))) {
+        notes.append(
+            QStringLiteral("XFS/Btrfs targets are metadata-only in this build; no "
+                           "browse/read/write reader ships yet."));
+    } else if (fs.contains(QStringLiteral("ext"))) {
+        notes.append(
+            QStringLiteral("ext2/ext3/ext4 targets are read-only browse/read/copy-out; "
+                           "no write path ships."));
+    }
+    return notes;
+}
+
 FileManagementListResult FileManagementFileSystemBridge::listDirectory(
     const FileManagementTarget& target, const QString& path, int max_entries) {
     const QString fs = normalizedFileSystem(target.file_system);

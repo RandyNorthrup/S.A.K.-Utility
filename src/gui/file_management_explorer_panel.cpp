@@ -1780,7 +1780,7 @@ void FileManagementExplorerPanel::showCommandPalette() {
 namespace {
 
 // One-entry metadata block for the Properties tab (name, kind, size, dates, identifier, link).
-QStringList describeEntry(const FileManagementEntry& entry) {
+QStringList describeEntry(const FileManagementEntry& entry, const QString& file_system) {
     QStringList lines;
     const QString kind = entry.directory        ? FileManagementExplorerPanel::tr("Folder")
                          : entry.symlink        ? FileManagementExplorerPanel::tr("Symbolic link")
@@ -1800,7 +1800,8 @@ QStringList describeEntry(const FileManagementEntry& entry) {
                          .arg(entry.created_time.toString(Qt::ISODate)));
     }
     if (!entry.identifier.isEmpty()) {
-        lines.append(FileManagementExplorerPanel::tr("Identifier: %1").arg(entry.identifier));
+        lines.append(FileManagementExplorerPanel::tr("%1: %2").arg(
+            FileManagementFileSystemBridge::identifierLabel(file_system), entry.identifier));
     }
     if (!entry.link_target.isEmpty()) {
         lines.append(FileManagementExplorerPanel::tr("Link target: %1").arg(entry.link_target));
@@ -1825,7 +1826,7 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
         tr("Capability: %1").arg(FileManagementFileSystemBridge::capabilitySummary(target)));
     if (selection.count() == 1) {
         properties.append(QString());
-        properties.append(describeEntry(selection.entries.first()));
+        properties.append(describeEntry(selection.entries.first(), target.file_system));
     } else if (!selection.isEmpty()) {
         properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
         properties.append(selection.paths().join(QStringLiteral("\n")));
@@ -1840,10 +1841,16 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
         safety.append(tr("No File Explorer target selected."));
         return safety;
     }
+    safety.append(tr("Target: %1").arg(target.label));
+    safety.append(tr("File system: %1").arg(target.file_system));
+    safety.append(tr("Identity: %1").arg(target.root_path));
     safety.append(
         tr("Write state: %1").arg(target.can_write_files ? tr("enabled") : tr("blocked")));
     safety.append(tr("Read state: %1").arg(target.can_read_files ? tr("enabled") : tr("blocked")));
     safety.append(tr("Browse state: %1").arg(target.can_browse ? tr("enabled") : tr("blocked")));
+    for (const QString& note : FileManagementFileSystemBridge::safetyNotes(target)) {
+        safety.append(note);
+    }
     if (!target.local_file_system) {
         safety.append(
             tr("Raw/non-native target: create, write, rename, and delete require "
@@ -1857,8 +1864,14 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
             safety.append(tr("- %1").arg(blocker));
         }
     }
-    const auto context = commandContext();
     safety.append(QString());
+    safety.append(commandAvailabilityLines());
+    return safety;
+}
+
+QStringList FileManagementExplorerPanel::commandAvailabilityLines() const {
+    const auto context = commandContext();
+    QStringList lines;
     for (const FileExplorerCommandId command : {FileExplorerCommandId::NewFolder,
                                                 FileExplorerCommandId::WriteFile,
                                                 FileExplorerCommandId::Rename,
@@ -1866,10 +1879,10 @@ QStringList FileManagementExplorerPanel::buildDetailsSafety(
                                                 FileExplorerCommandId::OpenInNewTab,
                                                 FileExplorerCommandId::ToggleDualPane}) {
         const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command, context);
-        safety.append(
+        lines.append(
             tr("%1: %2").arg(state.command.text, state.enabled ? tr("available") : state.blocker));
     }
-    return safety;
+    return lines;
 }
 
 QStringList FileManagementExplorerPanel::buildDetailsEvidence(

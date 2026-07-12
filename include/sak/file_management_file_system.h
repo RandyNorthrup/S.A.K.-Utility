@@ -123,6 +123,11 @@ public:
     [[nodiscard]] static bool isReadableNonNativeFileSystem(const QString& file_system);
     [[nodiscard]] static QString normalizedFileSystem(const QString& file_system);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
+    /// File-system-specific label for an entry's on-disk identifier (APFS Object
+    /// ID, HFS Catalog ID, ext Inode, else generic Identifier).
+    [[nodiscard]] static QString identifierLabel(const QString& file_system);
+    /// File-system-specific plain-language notes on why writes/reads are (un)available.
+    [[nodiscard]] static QStringList safetyNotes(const FileManagementTarget& target);
 
     [[nodiscard]] static FileManagementListResult listDirectory(
         const FileManagementTarget& target,
