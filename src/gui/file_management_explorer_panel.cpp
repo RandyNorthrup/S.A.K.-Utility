@@ -1007,8 +1007,10 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
                     activatePane(pane_index);
                     onTableContextMenuRequested(point);
                 });
-        // Mouse-level interactions (slow-double-click rename arm/cancel).
+        // Mouse-level interactions (rename tap, mouse4/5, middle-click,
+        // empty double-click, Ctrl+wheel) and the Enter activation matrix.
         view->viewport()->installEventFilter(this);
+        view->installEventFilter(this);
     }
     // Inline rename commits arrive from the model; queued so the editor is
     // fully closed before the bridge mutation and listing reload run.
@@ -1036,11 +1038,116 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
 }
 
 bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (auto* view = qobject_cast<QAbstractItemView*>(watched)) {
+        if (event && event->type() == QEvent::KeyPress &&
+            handleViewKeyPress(view, static_cast<QKeyEvent*>(event))) {
+            return true;
+        }
+        return QWidget::eventFilter(watched, event);
+    }
     auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
     if (view && event) {
+        if (handleViewportMouseEvent(view, event)) {
+            return true;
+        }
         handleRenameTapEvent(view, event);
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void FileManagementExplorerPanel::activatePaneForView(QAbstractItemView* view) {
+    const bool in_second_pane = m_pane_b && m_pane_b->itemViews().contains(view);
+    activatePane(in_second_pane ? 1 : 0);
+}
+
+bool FileManagementExplorerPanel::handleViewKeyPress(QAbstractItemView* view, QKeyEvent* key) {
+    if (key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) {
+        return false;
+    }
+    // Files FileList_PreviewKeyDown activation matrix: Enter opens,
+    // Ctrl+Enter opens selected folders in new tabs, Ctrl+Shift+Enter opens
+    // in the other pane, Alt+Enter shows properties.
+    const Qt::KeyboardModifiers mods = key->modifiers() &
+                                       (Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier);
+    activatePaneForView(view);
+    if (mods == Qt::NoModifier) {
+        executeCommand(FileExplorerCommandId::Open);
+        return true;
+    }
+    if (mods == Qt::ControlModifier) {
+        openSelectedFoldersInNewTabs();
+        return true;
+    }
+    if (mods == (Qt::ControlModifier | Qt::ShiftModifier)) {
+        executeCommand(FileExplorerCommandId::OpenInSecondPane);
+        return true;
+    }
+    if (mods == Qt::AltModifier) {
+        executeCommand(FileExplorerCommandId::Properties);
+        return true;
+    }
+    return false;
+}
+
+bool FileManagementExplorerPanel::handleViewportMouseEvent(QAbstractItemView* view, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress) {
+        return handleViewportMousePress(view, static_cast<QMouseEvent*>(event));
+    }
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        // Files DoubleClickToGoUp (FoldersSettingsService, default true):
+        // double-click on empty space navigates to the parent folder.
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton && !view->indexAt(mouse->pos()).isValid() &&
+            doubleClickToGoUpEnabled()) {
+            activatePaneForView(view);
+            executeCommand(FileExplorerCommandId::Up);
+            return true;
+        }
+        return false;
+    }
+    if (event->type() == QEvent::Wheel) {
+        // Files BaseLayoutViewModel: Ctrl+mouse-wheel steps the layout size.
+        const auto* wheel = static_cast<QWheelEvent*>(event);
+        if (wheel->modifiers().testFlag(Qt::ControlModifier)) {
+            stepItemSize(wheel->angleDelta().y() >= 0 ? 1 : -1);
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+bool FileManagementExplorerPanel::handleViewportMousePress(QAbstractItemView* view,
+                                                           const QMouseEvent* mouse) {
+    // Files BaseShellPage CoreWindow_PointerPressed: mouse4/5 navigate
+    // back/forward (NavigateBack Mouse4 / NavigateForward Mouse5 hotkeys).
+    if (mouse->button() == Qt::BackButton) {
+        activatePaneForView(view);
+        executeCommand(FileExplorerCommandId::Back);
+        return true;
+    }
+    if (mouse->button() == Qt::ForwardButton) {
+        activatePaneForView(view);
+        executeCommand(FileExplorerCommandId::Forward);
+        return true;
+    }
+    // Files BaseLayoutViewModel ItemPointerPressed: middle-click on a folder
+    // always opens it in a new tab.
+    if (mouse->button() == Qt::MiddleButton) {
+        const QModelIndex index = view->indexAt(mouse->pos());
+        if (index.isValid() && index.data(FileExplorerItemModel::EntryDirectoryRole).toBool()) {
+            activatePaneForView(view);
+            openPathInNewTab(index.data(FileExplorerItemModel::EntryPathRole).toString());
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FileManagementExplorerPanel::doubleClickToGoUpEnabled() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    return settings.value(QStringLiteral("DoubleClickToGoUp"), true).toBool();
 }
 
 void FileManagementExplorerPanel::handleRenameTapEvent(QAbstractItemView* view, QEvent* event) {
@@ -1219,14 +1326,8 @@ void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
         }
     });
 
-    const auto openCommand = FileExplorerCommandRegistry::command(FileExplorerCommandId::Open);
-    if (!openCommand.shortcut.trimmed().isEmpty()) {
-        auto* openShortcut = new QShortcut(QKeySequence(openCommand.shortcut), m_pane);
-        openShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-        connect(openShortcut, &QShortcut::activated, this, [this]() {
-            executeCommand(FileExplorerCommandId::Open);
-        });
-    }
+    // Open (Enter) is handled by the per-view key filter, which owns the
+    // whole Files Enter activation matrix (plain/Ctrl/Ctrl+Shift/Alt).
 
     installFilesAliasShortcuts();
     installTabShortcuts();
@@ -4003,7 +4104,7 @@ void FileManagementExplorerPanel::onTabSwitched(int index) {
     restoreTab(m_tabs.at(index));
 }
 
-void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
+void FileManagementExplorerPanel::openPathInNewTab(const QString& path) {
     if (!m_tab_bar) {
         return;
     }
@@ -4011,8 +4112,8 @@ void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
         m_tabs[m_active_tab] = captureCurrentTab();
     }
     FileExplorerTabState fresh = captureCurrentTab();
-    if (selectedIsDirectory()) {
-        fresh.primary.location.path = selectedPath();
+    if (!path.isEmpty()) {
+        fresh.primary.location.path = path;
         fresh.primary.back_stack.clear();
         fresh.primary.forward_stack.clear();
     }
@@ -4021,6 +4122,23 @@ void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
     m_tab_bar->addTab(fresh.title);
     nameTabCloseButtons();
     m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
+}
+
+void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
+    // Files OpenInNewTab: a selected folder opens its own tab; otherwise the
+    // new tab clones the current location (NewTabAction).
+    openPathInNewTab(selectedIsDirectory() ? selectedPath() : QString());
+}
+
+void FileManagementExplorerPanel::openSelectedFoldersInNewTabs() {
+    // Files FileList_PreviewKeyDown Ctrl+Enter: every selected folder opens
+    // in a new tab.
+    const FileExplorerSelection selection = currentSelection();
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (entry.directory) {
+            openPathInNewTab(entry.path);
+        }
+    }
 }
 
 void FileManagementExplorerPanel::duplicateCurrentTab() {
@@ -4751,7 +4869,11 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
 }
 
 void FileManagementExplorerPanel::onItemDoubleClicked(const QModelIndex& index) {
-    Q_UNUSED(index)
+    // Empty-area double-clicks are handled by the viewport filter
+    // (DoubleClickToGoUp); only a real item activates.
+    if (!index.isValid()) {
+        return;
+    }
     onOpenSelected();
 }
 

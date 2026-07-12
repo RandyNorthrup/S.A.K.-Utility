@@ -184,6 +184,29 @@ int navigateAndFindRow(QLineEdit* pathEdit,
     return file_row;
 }
 
+// Select the row whose name contains the fragment and wait until the
+// selection survives an event-loop pass (async listing reloads reset the
+// model and wipe selections).
+bool selectRowStable(QTableView* table, const QString& name_fragment) {
+    return QTest::qWaitFor(
+        [table, &name_fragment]() {
+            int found = -1;
+            for (int row = 0; row < table->model()->rowCount(); ++row) {
+                if (table->model()->index(row, 0).data().toString().contains(name_fragment)) {
+                    found = row;
+                    break;
+                }
+            }
+            if (found < 0) {
+                return false;
+            }
+            table->selectRow(found);
+            QApplication::processEvents();
+            return table->selectionModel()->selectedRows().size() == 1;
+        },
+        5000);
+}
+
 int firstTargetRow(QListWidget* list) {
     if (!list) {
         return -1;
@@ -1161,11 +1184,8 @@ private Q_SLOTS:
 
         // Escape reverts: the editor claims the key ahead of the panel's
         // clear-selection shortcut and no rename is issued.
-        const int renamed_row =
-            navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("beta"));
-        QVERIFY(renamed_row >= 0);
-        table->selectRow(renamed_row);
-        QApplication::processEvents();
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("beta")) >= 0);
+        QVERIFY(selectRowStable(table, QStringLiteral("beta")));
         QTest::keyClick(&panel, Qt::Key_F2);
         auto* second_editor =
             table->findChild<QLineEdit*>(QStringLiteral("fileExplorerRenameEditor"));
@@ -1175,6 +1195,88 @@ private Q_SLOTS:
         QTest::qWait(200);
         QVERIFY(QFile::exists(QDir(dir.path()).filePath(QStringLiteral("beta.txt"))));
         QVERIFY(!QFile::exists(QDir(dir.path()).filePath(QStringLiteral("gamma.txt"))));
+    }
+
+    void activationMatrixAndMouseNavigation() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("subdir")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        auto* tabBar = child<QTabBar>(&panel, "fileExplorerTabBar");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        QVERIFY(tabBar);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("subdir")) >= 0);
+
+        // Ctrl+Enter opens the selected folder in a new tab (Files
+        // FileList_PreviewKeyDown) and focuses it.
+        const int tabs_before = tabBar->count();
+        QVERIFY(selectRowStable(table, QStringLiteral("subdir")));
+        QTest::keyClick(table, Qt::Key_Return, Qt::ControlModifier);
+        QTRY_COMPARE(tabBar->count(), tabs_before + 1);
+        QTRY_VERIFY(pathEdit->text().contains(QStringLiteral("subdir")));
+
+        // Plain Enter opens the selected folder in place (OpenItemAction).
+        QTest::keyClick(&panel, Qt::Key_1, Qt::ControlModifier);
+        QTRY_VERIFY(!pathEdit->text().contains(QStringLiteral("subdir")));
+        QVERIFY(selectRowStable(table, QStringLiteral("subdir")));
+        QTest::keyClick(table, Qt::Key_Return);
+        QTRY_VERIFY(pathEdit->text().contains(QStringLiteral("subdir")));
+
+        verifyMouseNavigationAndWheel(panel, pathEdit, table);
+    }
+
+    void verifyMouseNavigationAndWheel(sak::FileManagementExplorerPanel& panel,
+                                       QLineEdit* pathEdit,
+                                       QTableView* table) {
+        // Mouse button 4 navigates back (NavigateBackAction ThirdHotKey).
+        {
+            const QPoint pos = table->viewport()->rect().center();
+            QMouseEvent back_press(QEvent::MouseButtonPress,
+                                   pos,
+                                   table->viewport()->mapToGlobal(pos),
+                                   Qt::BackButton,
+                                   Qt::BackButton,
+                                   Qt::NoModifier);
+            QVERIFY(QApplication::sendEvent(table->viewport(), &back_press));
+        }
+        QTRY_VERIFY(!pathEdit->text().contains(QStringLiteral("subdir")));
+
+        // Double-click on empty space navigates up (DoubleClickToGoUp,
+        // Files default true).
+        const QString before_up = pathEdit->text();
+        QTest::mouseDClick(table->viewport(),
+                           Qt::LeftButton,
+                           {},
+                           table->viewport()->rect().bottomRight() - QPoint(5, 5));
+        QTRY_VERIFY(pathEdit->text() != before_up);
+
+        // Ctrl+mouse-wheel steps the item size (BaseLayoutViewModel).
+        auto* grid = child<QListView>(&panel, "fileExplorerGridView");
+        QVERIFY(grid);
+        const QSize size_before = grid->iconSize();
+        const QPoint wheel_pos = table->viewport()->rect().center();
+        QWheelEvent wheel(wheel_pos,
+                          table->viewport()->mapToGlobal(wheel_pos),
+                          QPoint(),
+                          QPoint(0, 120),
+                          Qt::NoButton,
+                          Qt::ControlModifier,
+                          Qt::NoScrollPhase,
+                          false);
+        QVERIFY(QApplication::sendEvent(table->viewport(), &wheel));
+        QTRY_VERIFY(grid->iconSize() != size_before);
     }
 
     void searchShortcutAppliesCurrentFolderFilter() {

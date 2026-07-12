@@ -41,6 +41,7 @@ class QImage;
 class QTabBar;
 class QShortcut;
 class QAbstractItemView;
+class QKeyEvent;
 class QMouseEvent;
 class QTimer;
 
@@ -215,6 +216,13 @@ private:
     void toggleCurrentItemSelection();
     void stepItemSize(int direction);
     void performInlineRename(int row, const QString& new_name);
+    void activatePaneForView(QAbstractItemView* view);
+    bool handleViewKeyPress(QAbstractItemView* view, QKeyEvent* key);
+    bool handleViewportMouseEvent(QAbstractItemView* view, QEvent* event);
+    bool handleViewportMousePress(QAbstractItemView* view, const QMouseEvent* mouse);
+    [[nodiscard]] bool doubleClickToGoUpEnabled() const;
+    void openPathInNewTab(const QString& path);
+    void openSelectedFoldersInNewTabs();
     void handleRenameTapEvent(QAbstractItemView* view, QEvent* event);
     void handleRenameTapRelease(QAbstractItemView* view, const QMouseEvent* mouse);
     void armRenameTapCandidate(QAbstractItemView* view, const QMouseEvent* mouse);
