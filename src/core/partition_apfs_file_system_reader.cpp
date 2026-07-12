@@ -871,6 +871,17 @@ private:
             result->blockers.append(QStringLiteral("APFS decmpfs attribute is malformed"));
             return std::nullopt;
         }
+        // The decode paths materialize the FULL uncompressed payload before truncating, so a
+        // malformed header with a huge uncompressed_size would allocate it verbatim (OOM).
+        // Fail closed past the read ceiling instead.
+        if (header->uncompressed_size > kMaxFileReadBytes) {
+            result->blockers.append(
+                QStringLiteral("APFS compressed file reports %1 uncompressed bytes, over the "
+                               "%2-byte read ceiling")
+                    .arg(header->uncompressed_size)
+                    .arg(kMaxFileReadBytes));
+            return std::nullopt;
+        }
         const uint64_t bytesToRead = std::min<uint64_t>(header->uncompressed_size, effectiveMax);
         if (header->uncompressed_size > bytesToRead) {
             result->warnings.append(
@@ -959,6 +970,17 @@ private:
                     payload, header->uncompressed_size, &out, &result->blockers)) {
                 return false;
             }
+        } else if (header->algo == kApfsCompressLzbitmapAttr) {
+            // Inline LZBITMAP (algo 13, the Apple Silicon default): the payload after the
+            // 16-byte header is one lzbitmap block. Previously misrouted to the resource-fork
+            // path (algo 13 was not classified inline), which failed the read outright.
+            const QByteArray payload = target.decmpfs_xattr.mid(kApfsDecmpfsHeaderBytes);
+            const auto lzbitmapOut = apfsDecodeInlineLzbitmap(payload, header->uncompressed_size);
+            if (!lzbitmapOut.has_value()) {
+                result->blockers.append(QStringLiteral("APFS inline LZBITMAP decode failed"));
+                return false;
+            }
+            out = *lzbitmapOut;
         } else {
             result->blockers.append(
                 QStringLiteral("APFS decmpfs decode failed for algorithm %1").arg(header->algo));
@@ -986,7 +1008,9 @@ private:
         PartitionApfsFileReadResult blobRead;
         uint64_t cursor = 0;
         for (const auto& extent : extents) {
-            if (!appendReadableExtent(extent, totalBytes, &cursor, &blobRead)) {
+            // A stream xattr's extents may legitimately skip block-aligned gaps; keep the
+            // sparse (zero-fill) behavior for the blob assembly.
+            if (!appendReadableExtent(extent, totalBytes, true, &cursor, &blobRead)) {
                 result->blockers.append(blobRead.blockers);
                 return std::nullopt;
             }
@@ -1057,7 +1081,8 @@ private:
 
         uint64_t cursor = 0;
         for (const auto& extent : extents) {
-            if (!appendReadableExtent(extent, target.bytes_to_read, &cursor, result)) {
+            if (!appendReadableExtent(
+                    extent, target.bytes_to_read, target.inode.sparse, &cursor, result)) {
                 return false;
             }
         }
@@ -1076,6 +1101,7 @@ private:
 
     [[nodiscard]] bool appendReadableExtent(const FileExtentRecord& extent,
                                             uint64_t bytesToRead,
+                                            bool sparseInode,
                                             uint64_t* cursor,
                                             PartitionApfsFileReadResult* result) {
         if (!cursor || *cursor >= bytesToRead) {
@@ -1094,7 +1120,9 @@ private:
                 QStringLiteral("APFS encrypted file extents require a volume credential"));
             return false;
         }
-        appendSparsePrefix(extent, bytesToRead, cursor, result);
+        if (!appendSparsePrefix(extent, bytesToRead, sparseInode, cursor, result)) {
+            return false;
+        }
         if (*cursor >= bytesToRead || extent.logical_offset + extent.length <= *cursor) {
             return true;
         }
@@ -1121,17 +1149,27 @@ private:
         return true;
     }
 
-    void appendSparsePrefix(const FileExtentRecord& extent,
-                            uint64_t bytesToRead,
-                            uint64_t* cursor,
-                            PartitionApfsFileReadResult* result) const {
+    // Zero-fill the logical gap before @extent. A gap is only legitimate on a SPARSE inode
+    // (an implicit hole); on a dense file it means an extent record was lost -- silently
+    // reading zeros there would mask corruption as file content, so fail closed instead.
+    [[nodiscard]] bool appendSparsePrefix(const FileExtentRecord& extent,
+                                          uint64_t bytesToRead,
+                                          bool sparseInode,
+                                          uint64_t* cursor,
+                                          PartitionApfsFileReadResult* result) const {
         if (!cursor || extent.logical_offset <= *cursor) {
-            return;
+            return true;
+        }
+        if (!sparseInode) {
+            result->blockers.append(QStringLiteral(
+                "APFS dense file has a gap in its extent records (a missing extent)"));
+            return false;
         }
         const uint64_t sparseBytes = std::min<uint64_t>(extent.logical_offset - *cursor,
                                                         bytesToRead - *cursor);
         result->data.append(QByteArray(static_cast<int>(sparseBytes), '\0'));
         *cursor += sparseBytes;
+        return true;
     }
 
     [[nodiscard]] bool mount(PartitionApfsFileReadResult* result) {
@@ -1609,8 +1647,17 @@ private:
                          kApfsDrecNameLengthMask;
         }
         if (nameLength == 0 || nameOffset + nameLength > entry.key_offset + entry.key_length) {
+            // Legacy (unhashed) j_drec key fallback: the 2-byte name_len must itself lie
+            // inside the key, and the name it declares must not spill past the key into a
+            // neighboring record (a malformed length would silently read garbage as a name).
+            if (entry.key_length < kApfsDrecLegacyNameOffset) {
+                return;
+            }
             nameOffset = entry.key_offset + kApfsDrecLegacyNameOffset;
             nameLength = le16(node, entry.key_offset + kApfsDrecNameLengthOffset);
+            if (nameOffset + nameLength > entry.key_offset + entry.key_length) {
+                return;
+            }
         }
         if (nameLength <= 0 || nameOffset >= node.size()) {
             return;
@@ -1871,6 +1918,16 @@ private:
                                          PartitionApfsFileReadResult* result) {
         const auto perFileKey = extentPerFileKey(extent, result);
         if (!perFileKey.has_value()) {
+            return false;
+        }
+        // Bound the extent BEFORE the byte-offset multiplication: a malformed paddr near 2^64
+        // wraps `physical_block * blockSize_` and the per-block bounds check below would then
+        // pass for the WRONG block (reading unrelated data as file content).
+        const uint64_t extentBlocks = (extent.length + blockSize_ - 1) / blockSize_;
+        if (blockCount_ != 0 && (extent.physical_block >= blockCount_ ||
+                                 extentBlocks > blockCount_ - extent.physical_block)) {
+            result->blockers.append(
+                QStringLiteral("APFS file extent lies outside the container bounds"));
             return false;
         }
         uint64_t remaining = length;

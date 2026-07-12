@@ -104,6 +104,17 @@ inline constexpr int kApfsLzbitmapMaxBlockBytes = kApfsLzbitmapBlockSize + 1;
     return std::nullopt;
 }
 
+// Decode an INLINE LZBITMAP (decmpfs algo 13) payload -- the bytes after the 16-byte header
+// are ONE on-disk lzbitmap block (an inline file is a single block of at most 64 KiB).
+// nullopt on any mismatch (fail closed).
+[[nodiscard]] inline std::optional<QByteArray> apfsDecodeInlineLzbitmap(const QByteArray& payload,
+                                                                        uint64_t uncompressedSize) {
+    if (uncompressedSize > static_cast<uint64_t>(kApfsLzbitmapBlockSize)) {
+        return std::nullopt;
+    }
+    return apfsLzbitmapDecodeBlock(payload, static_cast<int>(uncompressedSize));
+}
+
 // Build a block_offs resource-fork dstream for @data, encoding each 64 KiB block with @encodeBlock
 // (returns the on-disk per-block bytes, <= 64 KiB + 1): a le32 block_offs[] table of
 // (blockCount + 1) entries (the last equal to the total size) followed by the per-block bytes.

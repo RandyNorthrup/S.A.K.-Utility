@@ -51,6 +51,7 @@ inline constexpr uint32_t kApfsCompressPlainAttr = 9;
 inline constexpr uint32_t kApfsCompressPlainRsrc = 10;
 inline constexpr uint32_t kApfsCompressLzfseAttr = 11;
 inline constexpr uint32_t kApfsCompressLzfseRsrc = 12;
+inline constexpr uint32_t kApfsCompressLzbitmapAttr = 13;
 inline constexpr uint32_t kApfsCompressLzbitmapRsrc = 14;
 
 // Inline payload markers: a zlib stream starts 0x78; a stored (uncompressed)
@@ -192,7 +193,8 @@ struct ApfsDecmpfsHeader {
 
 [[nodiscard]] inline bool apfsDecmpfsAlgoIsInline(uint32_t algo) {
     return algo == kApfsCompressZlibAttr || algo == kApfsCompressLzvnAttr ||
-           algo == kApfsCompressPlainAttr || algo == kApfsCompressLzfseAttr;
+           algo == kApfsCompressPlainAttr || algo == kApfsCompressLzfseAttr ||
+           algo == kApfsCompressLzbitmapAttr;
 }
 
 }  // namespace sak

@@ -1982,6 +1982,7 @@ private Q_SLOTS:
     void apfsWriter_resourceForkLzfseCompressedFileRoundTrips();
     void apfsLzbitmapCodecRoundTrips();
     void apfsLzbitmapResourceForkLayoutMatchesApfsck();
+    void apfsLzbitmapInlineAlgoDecodes();
     void apfsWriter_lzbitmapCompressedFileRoundTrips();
     void apfsWriter_multiNodeExtentRefTreeRoundTrips();
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
@@ -14810,6 +14811,35 @@ void PartitionManagerCoreTests::apfsLzbitmapCodecRoundTrips() {
         QVERIFY2(parsed.has_value(), "lzbitmap resource fork must parse back");
         QCOMPARE(*parsed, payload);
     }
+}
+
+void PartitionManagerCoreTests::apfsLzbitmapInlineAlgoDecodes() {
+    // Pass-6: decmpfs algo 13 (INLINE LZBITMAP, the Apple Silicon default for small files) must
+    // classify as inline -- it was previously misrouted to the resource-fork read path, failing
+    // every such file -- and its payload (one lzbitmap block after the 16-byte header) must
+    // decode byte-exact, including the 0xFF stored-block fallback and the oversize fail-closed.
+    QVERIFY(sak::apfsDecmpfsAlgoIsInline(sak::kApfsCompressLzbitmapAttr));
+    QByteArray compressible;
+    while (compressible.size() < 9000) {
+        compressible.append(QByteArrayLiteral("inline lzbitmap payload, again and again. "));
+    }
+    QByteArray incompressible(4096, '\0');
+    quint32 state = 0xC0'FF'EE'11u;
+    for (qsizetype i = 0; i < incompressible.size(); ++i) {
+        state = state * 1'103'515'245u + 12'345u;
+        incompressible[i] = static_cast<char>((state >> 16) & 0xFF);
+    }
+    for (const QByteArray& payload : {compressible, incompressible}) {
+        const QByteArray encoded = sak::apfsLzbitmapEncodeBlock(payload);
+        const auto decoded = sak::apfsDecodeInlineLzbitmap(encoded,
+                                                           static_cast<uint64_t>(payload.size()));
+        QVERIFY2(decoded.has_value(), "inline lzbitmap block must decode");
+        QCOMPARE(*decoded, payload);
+    }
+    // Over one block (> 64 KiB) is not a valid INLINE payload: fail closed, never allocate it.
+    QVERIFY(!sak::apfsDecodeInlineLzbitmap(QByteArray(16, 'x'),
+                                           static_cast<uint64_t>(sak::kApfsLzbitmapBlockSize) + 1)
+                 .has_value());
 }
 
 void PartitionManagerCoreTests::apfsLzbitmapResourceForkLayoutMatchesApfsck() {
