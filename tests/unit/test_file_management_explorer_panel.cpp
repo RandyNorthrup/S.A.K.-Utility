@@ -1073,6 +1073,41 @@ private Q_SLOTS:
         QVERIFY(details->isVisible());
     }
 
+    void filesTabHotkeysDriveTabStrip() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* tabBar = child<QTabBar>(&panel, "fileExplorerTabBar");
+        QVERIFY(tabBar);
+        const int before = tabBar->count();
+        panel.setFocus();
+
+        // Files NewTabAction: Ctrl+T opens a tab at the current location.
+        QTest::keyClick(&panel, Qt::Key_T, Qt::ControlModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabBar->count(), before + 1);
+
+        // MainPage accelerators: Ctrl+1 selects the first tab, Ctrl+9 the last.
+        QTest::keyClick(&panel, Qt::Key_1, Qt::ControlModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabBar->currentIndex(), 0);
+        QTest::keyClick(&panel, Qt::Key_9, Qt::ControlModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabBar->currentIndex(), tabBar->count() - 1);
+
+        // Files NextTabAction: Ctrl+Tab cycles (wraps to the first tab here).
+        QTest::keyClick(&panel, Qt::Key_Tab, Qt::ControlModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabBar->currentIndex(), 0);
+
+        // Files CloseSelectedTabAction: Ctrl+W closes the current tab.
+        QTest::keyClick(&panel, Qt::Key_W, Qt::ControlModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabBar->count(), before);
+    }
+
     void searchShortcutAppliesCurrentFolderFilter() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);

@@ -59,6 +59,11 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::Paste, Group::File},
         {Id::CopyToOtherPane, Group::Pane},
         {Id::ComparePanes, Group::Pane},
+        {Id::ToggleSelect, Group::File},
+        {Id::CopyItemPathQuoted, Group::Target},
+        {Id::IncreaseSize, Group::View},
+        {Id::DecreaseSize, Group::View},
+        {Id::FocusOtherPane, Group::Pane},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -234,24 +239,9 @@ bool isReadCommand(const FileExplorerCommandId id) {
     return id == Preview || id == Hash || id == CopyOut || id == CopyItems;
 }
 
-// Cross-pane commands need an active split with a target in the inactive pane; the
-// copy additionally needs a readable source and a writable destination.
-std::optional<FileExplorerCommandState> crossPaneState(const FileExplorerCommandId id,
-                                                       const FileExplorerCommandContext& context,
-                                                       const FileExplorerCommand& entry) {
-    using enum FileExplorerCommandId;
-    if (id != CopyToOtherPane && id != ComparePanes) {
-        return std::nullopt;
-    }
-    if (!context.dual_pane_active) {
-        return disabledState(entry, QStringLiteral("Enable dual pane first."));
-    }
-    if (FileExplorerTargetId::fromTarget(context.other_pane_target).isEmpty()) {
-        return disabledState(entry, QStringLiteral("Open a target in the other pane first."));
-    }
-    if (id == ComparePanes) {
-        return enabledState(entry);
-    }
+// Cross-pane copy needs a readable source and a writable destination.
+FileExplorerCommandState crossPaneCopyState(const FileExplorerCommandContext& context,
+                                            const FileExplorerCommand& entry) {
     if (!context.target.can_read_files) {
         return disabledState(entry, readBlocker(context.target));
     }
@@ -264,6 +254,30 @@ std::optional<FileExplorerCommandState> crossPaneState(const FileExplorerCommand
                                             "into a local folder first."));
     }
     return enabledState(entry);
+}
+
+// Cross-pane commands need an active split; all but pane focus additionally
+// need a target in the inactive pane.
+std::optional<FileExplorerCommandState> crossPaneState(const FileExplorerCommandId id,
+                                                       const FileExplorerCommandContext& context,
+                                                       const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id != CopyToOtherPane && id != ComparePanes && id != FocusOtherPane) {
+        return std::nullopt;
+    }
+    if (!context.dual_pane_active) {
+        return disabledState(entry, QStringLiteral("Enable dual pane first."));
+    }
+    if (id == FocusOtherPane) {
+        return enabledState(entry);
+    }
+    if (FileExplorerTargetId::fromTarget(context.other_pane_target).isEmpty()) {
+        return disabledState(entry, QStringLiteral("Open a target in the other pane first."));
+    }
+    if (id == ComparePanes) {
+        return enabledState(entry);
+    }
+    return crossPaneCopyState(context, entry);
 }
 
 // Paste additionally needs pasteable file items on the clipboard. Checked after the
@@ -346,6 +360,13 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Copy selected item path."),
                     QStringLiteral("Ctrl+Shift+C"),
                     {.selection_required = true}),
+        // Files CopyItemPathWithQuotesAction: each selected path wrapped in
+        // double quotes, newline-joined.
+        makeCommand(FileExplorerCommandId::CopyItemPathQuoted,
+                    QStringLiteral("Copy Item Path (Quoted)"),
+                    QStringLiteral("Copy selected item path wrapped in quotes."),
+                    QStringLiteral("Ctrl+Alt+C"),
+                    {.selection_required = true}),
         makeCommand(FileExplorerCommandId::Preview,
                     QStringLiteral("Preview"),
                     QStringLiteral("Preview selected item."),
@@ -375,6 +396,11 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Select All"),
                     QStringLiteral("Select every item in the current folder."),
                     QStringLiteral("Ctrl+A")),
+        // Files ToggleSelectAction: Ctrl+Space toggles the focused item.
+        makeCommand(FileExplorerCommandId::ToggleSelect,
+                    QStringLiteral("Toggle Selection"),
+                    QStringLiteral("Toggle selection of the focused item."),
+                    QStringLiteral("Ctrl+Space")),
         makeCommand(FileExplorerCommandId::ClearSelection,
                     QStringLiteral("Clear Selection"),
                     QStringLiteral("Clear current selection."),
@@ -393,10 +419,12 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Create a folder in the current location."),
                     QStringLiteral("Ctrl+Shift+N"),
                     {.write_operation = true}),
+        // Ctrl+Shift+I mirrors Files AddItemAction (new-item flow); Files
+        // reserves Ctrl+Shift+V for paste-into-selection (C3).
         makeCommand(FileExplorerCommandId::WriteFile,
                     QStringLiteral("Write File"),
                     QStringLiteral("Import or write a file into the current location."),
-                    QStringLiteral("Ctrl+Shift+V"),
+                    QStringLiteral("Ctrl+Shift+I"),
                     {.write_operation = true}),
         makeCommand(FileExplorerCommandId::Paste,
                     QStringLiteral("Paste"),
@@ -434,14 +462,16 @@ QVector<FileExplorerCommand> viewCommands() {
                     QStringLiteral("List"),
                     QStringLiteral("Switch to list view."),
                     QStringLiteral("Ctrl+Shift+2")),
+        // Files LayoutAction keys: 1 Details, 2 List, 3 Cards, 4 Grid,
+        // 5 Columns, 6 Adaptive.
         makeCommand(FileExplorerCommandId::ViewGrid,
                     QStringLiteral("Grid"),
                     QStringLiteral("Switch to grid view."),
-                    QStringLiteral("Ctrl+Shift+3")),
+                    QStringLiteral("Ctrl+Shift+4")),
         makeCommand(FileExplorerCommandId::ViewCards,
                     QStringLiteral("Cards"),
                     QStringLiteral("Switch to cards view."),
-                    QStringLiteral("Ctrl+Shift+4")),
+                    QStringLiteral("Ctrl+Shift+3")),
         makeCommand(FileExplorerCommandId::ViewColumns,
                     QStringLiteral("Columns"),
                     QStringLiteral("Switch to columns view."),
@@ -454,10 +484,30 @@ QVector<FileExplorerCommand> viewCommands() {
                     QStringLiteral("Preview Pane"),
                     QStringLiteral("Toggle preview and details pane."),
                     QStringLiteral("Ctrl+Alt+I")),
+        // Files LayoutIncreaseSize/LayoutDecreaseSize (Ctrl+= / Ctrl+-,
+        // also Ctrl+mouse-wheel).
+        makeCommand(FileExplorerCommandId::IncreaseSize,
+                    QStringLiteral("Increase Size"),
+                    QStringLiteral("Increase item size in the current view."),
+                    QStringLiteral("Ctrl+=")),
+        makeCommand(FileExplorerCommandId::DecreaseSize,
+                    QStringLiteral("Decrease Size"),
+                    QStringLiteral("Decrease item size in the current view."),
+                    QStringLiteral("Ctrl+-")),
+    };
+}
+
+// Pane and tab commands.
+QVector<FileExplorerCommand> paneAndTabCommands() {
+    return {
         makeCommand(FileExplorerCommandId::ToggleDualPane,
                     QStringLiteral("Dual Pane"),
                     QStringLiteral("Toggle dual-pane explorer layout."),
-                    QStringLiteral("Ctrl+Alt+D")),
+                    QStringLiteral("Ctrl+Shift+S")),
+        makeCommand(FileExplorerCommandId::FocusOtherPane,
+                    QStringLiteral("Focus Other Pane"),
+                    QStringLiteral("Move focus to the other explorer pane."),
+                    QStringLiteral("Ctrl+Shift+Right")),
         makeCommand(FileExplorerCommandId::DuplicateTab,
                     QStringLiteral("Duplicate Tab"),
                     QStringLiteral("Open a copy of the current tab."),
@@ -485,6 +535,7 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
     registry.append(clipboardAndSelectionCommands());
     registry.append(writeCommands());
     registry.append(viewCommands());
+    registry.append(paneAndTabCommands());
     return registry;
 }
 
@@ -568,6 +619,11 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::Paste, "paste"},
         {Id::CopyToOtherPane, "copy-to-other-pane"},
         {Id::ComparePanes, "compare-panes"},
+        {Id::ToggleSelect, "toggle-select"},
+        {Id::CopyItemPathQuoted, "copy-item-path-quoted"},
+        {Id::IncreaseSize, "increase-size"},
+        {Id::DecreaseSize, "decrease-size"},
+        {Id::FocusOtherPane, "focus-other-pane"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

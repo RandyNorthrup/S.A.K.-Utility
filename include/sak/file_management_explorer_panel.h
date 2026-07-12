@@ -37,6 +37,7 @@ class QToolButton;
 class QVBoxLayout;
 class QImage;
 class QTabBar;
+class QShortcut;
 
 namespace sak {
 
@@ -114,6 +115,12 @@ private:
     void appendVisibleSidebarSections();
     void appendTagRows();
     void installAuxiliaryShortcuts();
+    void installFilesAliasShortcuts();
+    void installTabShortcuts();
+    void installPaneShortcuts();
+    QShortcut* addPanelShortcut(const QString& key_sequence);
+    void cycleTab(int direction);
+    void selectTabByNumber(int digit);
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();
@@ -192,12 +199,15 @@ private:
     void appendItemSizeMenuRow(QMenu* menu);
     void executeCommand(FileExplorerCommandId command);
     bool dispatchNavigationCommand(FileExplorerCommandId command);
+    bool dispatchCopyPathCommand(FileExplorerCommandId command);
     bool dispatchSelectionCommand(FileExplorerCommandId command);
     bool dispatchSelectionEditCommand(FileExplorerCommandId command);
     bool dispatchFileViewCommand(FileExplorerCommandId command);
     bool dispatchWriteCommand(FileExplorerCommandId command);
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
+    void toggleCurrentItemSelection();
+    void stepItemSize(int direction);
     void toggleHiddenItems();
     void toggleFileExtensions();
     void showSelectedItemProperties();

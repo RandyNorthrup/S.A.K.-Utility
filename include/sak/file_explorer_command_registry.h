@@ -51,6 +51,11 @@ enum class FileExplorerCommandId {
     Paste,
     CopyToOtherPane,
     ComparePanes,
+    ToggleSelect,
+    CopyItemPathQuoted,
+    IncreaseSize,
+    DecreaseSize,
+    FocusOtherPane,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

@@ -1020,9 +1020,14 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::Back,
         FileExplorerCommandId::Forward,
         FileExplorerCommandId::Up,
+        FileExplorerCommandId::Home,
         FileExplorerCommandId::Refresh,
         FileExplorerCommandId::CopyItemPath,
+        FileExplorerCommandId::CopyItemPathQuoted,
+        FileExplorerCommandId::Preview,
+        FileExplorerCommandId::Properties,
         FileExplorerCommandId::SelectAll,
+        FileExplorerCommandId::ToggleSelect,
         FileExplorerCommandId::ClearSelection,
         FileExplorerCommandId::NewFolder,
         FileExplorerCommandId::WriteFile,
@@ -1037,6 +1042,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::ViewColumns,
         FileExplorerCommandId::ViewAdaptive,
         FileExplorerCommandId::TogglePreviewPane,
+        FileExplorerCommandId::ToggleDualPane,
         FileExplorerCommandId::DuplicateTab,
         FileExplorerCommandId::ReopenClosedTab,
         FileExplorerCommandId::Hash,
@@ -1044,6 +1050,9 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::CopyItems,
         FileExplorerCommandId::Paste,
         FileExplorerCommandId::CopyToOtherPane,
+        FileExplorerCommandId::FocusOtherPane,
+        FileExplorerCommandId::IncreaseSize,
+        FileExplorerCommandId::DecreaseSize,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -1092,6 +1101,106 @@ void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
         connect(openShortcut, &QShortcut::activated, this, [this]() {
             executeCommand(FileExplorerCommandId::Open);
         });
+    }
+
+    installFilesAliasShortcuts();
+    installTabShortcuts();
+    installPaneShortcuts();
+}
+
+QShortcut* FileManagementExplorerPanel::addPanelShortcut(const QString& key_sequence) {
+    auto* shortcut = new QShortcut(QKeySequence(key_sequence), this);
+    shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    return shortcut;
+}
+
+void FileManagementExplorerPanel::installFilesAliasShortcuts() {
+    // Files secondary hotkeys: Backspace = NavigateBack, Ctrl+R =
+    // RefreshItems, Ctrl+D = DeleteItem, F3 = Search. Line edits keep these
+    // keys because QLineEdit claims them in ShortcutOverride.
+    connect(addPanelShortcut(QStringLiteral("Backspace")), &QShortcut::activated, this, [this]() {
+        executeCommand(FileExplorerCommandId::Back);
+    });
+    connect(addPanelShortcut(QStringLiteral("Ctrl+R")), &QShortcut::activated, this, [this]() {
+        executeCommand(FileExplorerCommandId::Refresh);
+    });
+    connect(addPanelShortcut(QStringLiteral("Ctrl+D")), &QShortcut::activated, this, [this]() {
+        executeCommand(FileExplorerCommandId::Delete);
+    });
+    connect(addPanelShortcut(QStringLiteral("F3")),
+            &QShortcut::activated,
+            this,
+            &FileManagementExplorerPanel::promptCurrentFolderFilter);
+    // Files EditPathAction: Ctrl+L / Alt+D focus the omnibar path editor.
+    for (const auto* key : {"Ctrl+L", "Alt+D"}) {
+        connect(addPanelShortcut(QString::fromLatin1(key)), &QShortcut::activated, this, [this]() {
+            if (m_omnibar) {
+                m_omnibar->setAddressEditMode(true);
+            }
+        });
+    }
+}
+
+void FileManagementExplorerPanel::installTabShortcuts() {
+    // Files NewTab / CloseSelectedTab / NextTab / PreviousTab actions plus
+    // the MainPage Ctrl+1..9 tab-selection accelerators.
+    connect(addPanelShortcut(QStringLiteral("Ctrl+T")),
+            &QShortcut::activated,
+            this,
+            &FileManagementExplorerPanel::openCurrentLocationInNewTab);
+    for (const auto* key : {"Ctrl+W", "Ctrl+F4"}) {
+        connect(addPanelShortcut(QString::fromLatin1(key)), &QShortcut::activated, this, [this]() {
+            if (m_tab_bar) {
+                onTabCloseRequested(m_tab_bar->currentIndex());
+            }
+        });
+    }
+    connect(addPanelShortcut(QStringLiteral("Ctrl+Tab")), &QShortcut::activated, this, [this]() {
+        cycleTab(1);
+    });
+    connect(addPanelShortcut(QStringLiteral("Ctrl+Shift+Tab")),
+            &QShortcut::activated,
+            this,
+            [this]() { cycleTab(-1); });
+    for (int digit = 1; digit <= 9; ++digit) {
+        connect(addPanelShortcut(QStringLiteral("Ctrl+%1").arg(digit)),
+                &QShortcut::activated,
+                this,
+                [this, digit]() { selectTabByNumber(digit); });
+    }
+}
+
+void FileManagementExplorerPanel::installPaneShortcuts() {
+    // Files SplitPaneVertically / SplitPaneHorizontally / CloseActivePane.
+    connect(addPanelShortcut(QStringLiteral("Alt+Shift+V")), &QShortcut::activated, this, [this]() {
+        splitPane(Qt::Horizontal);
+    });
+    connect(addPanelShortcut(QStringLiteral("Alt+Shift+H")), &QShortcut::activated, this, [this]() {
+        splitPane(Qt::Vertical);
+    });
+    connect(addPanelShortcut(QStringLiteral("Ctrl+Alt+W")), &QShortcut::activated, this, [this]() {
+        if (m_dual_pane_enabled) {
+            toggleDualPane();
+        }
+    });
+}
+
+void FileManagementExplorerPanel::cycleTab(const int direction) {
+    if (!m_tab_bar || m_tab_bar->count() < 2) {
+        return;
+    }
+    const int count = m_tab_bar->count();
+    m_tab_bar->setCurrentIndex((m_tab_bar->currentIndex() + direction + count) % count);
+}
+
+void FileManagementExplorerPanel::selectTabByNumber(const int digit) {
+    if (!m_tab_bar) {
+        return;
+    }
+    // Files MainPageViewModel: Ctrl+9 selects the last tab regardless of count.
+    const int index = digit == 9 ? m_tab_bar->count() - 1 : digit - 1;
+    if (index >= 0 && index < m_tab_bar->count()) {
+        m_tab_bar->setCurrentIndex(index);
     }
 }
 
@@ -2547,6 +2656,13 @@ bool FileManagementExplorerPanel::dispatchNavigationCommand(const FileExplorerCo
     case FileExplorerCommandId::Refresh:
         loadDirectory(m_current_path, false);
         return true;
+    default:
+        return dispatchCopyPathCommand(command);
+    }
+}
+
+bool FileManagementExplorerPanel::dispatchCopyPathCommand(const FileExplorerCommandId command) {
+    switch (command) {
     case FileExplorerCommandId::CopyPath:
         QApplication::clipboard()->setText(m_current_path);
         Q_EMIT statusMessage(tr("Current path copied"), sak::kTimerStatusMessageMs);
@@ -2555,6 +2671,16 @@ bool FileManagementExplorerPanel::dispatchNavigationCommand(const FileExplorerCo
         QApplication::clipboard()->setText(currentSelection().paths().join(QStringLiteral("\n")));
         Q_EMIT statusMessage(tr("Item path copied"), sak::kTimerStatusMessageMs);
         return true;
+    case FileExplorerCommandId::CopyItemPathQuoted: {
+        // Files CopyItemPathWithQuotesAction: "path" per line.
+        QStringList quoted;
+        for (const QString& path : currentSelection().paths()) {
+            quoted.append(QStringLiteral("\"%1\"").arg(path));
+        }
+        QApplication::clipboard()->setText(quoted.join(QStringLiteral("\n")));
+        Q_EMIT statusMessage(tr("Quoted item path copied"), sak::kTimerStatusMessageMs);
+        return true;
+    }
     default:
         return false;
     }
@@ -2575,6 +2701,9 @@ bool FileManagementExplorerPanel::dispatchSelectionEditCommand(
         return true;
     case FileExplorerCommandId::InvertSelection:
         invertCurrentSelection();
+        return true;
+    case FileExplorerCommandId::ToggleSelect:
+        toggleCurrentItemSelection();
         return true;
     default:
         return false;
@@ -2627,6 +2756,11 @@ bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
     case FileExplorerCommandId::ComparePanes:
         comparePanes();
         return true;
+    case FileExplorerCommandId::FocusOtherPane:
+        if (m_dual_pane_enabled) {
+            activatePane(1 - m_active_pane_index);
+        }
+        return true;
     default:
         return false;
     }
@@ -2674,6 +2808,12 @@ bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerComm
         return true;
     case FileExplorerCommandId::ToggleFileExtensions:
         toggleFileExtensions();
+        return true;
+    case FileExplorerCommandId::IncreaseSize:
+        stepItemSize(1);
+        return true;
+    case FileExplorerCommandId::DecreaseSize:
+        stepItemSize(-1);
         return true;
     default:
         return false;
@@ -2838,6 +2978,34 @@ void FileManagementExplorerPanel::invertCurrentSelection() {
         selection_model->select(
             row_selection, selected ? QItemSelectionModel::Deselect : QItemSelectionModel::Select);
     }
+}
+
+void FileManagementExplorerPanel::toggleCurrentItemSelection() {
+    // Files ToggleSelectAction (Ctrl+Space): toggle the focused row only.
+    auto* view = currentItemView();
+    if (!view || !view->selectionModel()) {
+        return;
+    }
+    const QModelIndex current = view->currentIndex();
+    if (!current.isValid()) {
+        return;
+    }
+    view->selectionModel()->select(current,
+                                   QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
+}
+
+void FileManagementExplorerPanel::stepItemSize(const int direction) {
+    // Files LayoutIncreaseSize/LayoutDecreaseSize step the active layout's
+    // size kind; until the C5 size-kind tables land this steps the shared
+    // pixel size by the slider step, clamped (no layout cycling at bounds).
+    const int stepped = m_pane_state.view.item_size_px + direction * kSizeSliderSingleStep;
+    const int clamped = std::clamp(stepped, kFileExplorerItemSizeMin, kFileExplorerItemSizeMax);
+    if (clamped == m_pane_state.view.item_size_px) {
+        return;
+    }
+    m_pane_state.view.item_size_px = clamped;
+    applyViewSettings();
+    saveViewSettings();
 }
 
 void FileManagementExplorerPanel::toggleHiddenItems() {
