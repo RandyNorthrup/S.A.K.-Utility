@@ -11126,7 +11126,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceSnapshotRevertTagsDeferredReve
     // superblock paddr) while everything else (num_snapshots, alloc_count, root tree,
     // next_obj_id) is unchanged and the snapshot is kept; a kernel mount then completes the
     // revert. A revert with no snapshot, or one already pending, fails closed. Byte recipe
-    // harvested from a real macOS revert (temp/a3cert/revert-recipe-decoded.txt).
+    // harvested from a real macOS revert (docs/apfs-harvest/snapshot-revert-recipe.txt).
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());

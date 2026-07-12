@@ -12225,7 +12225,7 @@ bool writeSnapshotVolumeChain(const ApfsSnapshotCreateCow& cow,
 // tree, and the live extent-ref tree are left in place (shared with the snapshot until
 // a later write diverges); only the snapshot structures and the volume/container
 // superblock + object-map headers are written. Byte recipe harvested from a real
-// macOS sealed-system snapshot (temp/snapshot-recipe-resolved.txt).
+// macOS sealed-system snapshot (docs/apfs-harvest/snapshot-create-recipe.txt).
 bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     ApfsSnapshotCowState st;
@@ -15681,7 +15681,7 @@ struct ApfsSnapshotRevertCow {
 // discarded by the kernel when it completes the revert on the next mount. The snap-meta
 // tree and volume omap header are re-emitted byte-identical (the revert does not change
 // their content); only their block xid moves with the new checkpoint. Byte recipe
-// harvested from a real macOS revert (temp/a3cert/revert-recipe-decoded.txt).
+// harvested from a real macOS revert (docs/apfs-harvest/snapshot-revert-recipe.txt).
 bool writeSnapshotRevertCowChain(const ApfsSnapshotRevertCow& cow, QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const uint64_t snapMetaTree = cow.newBlocks.at(0);

@@ -1,0 +1,60 @@
+A3 SNAPSHOT-CREATE -- RESOLVED BYTE RECIPE (all UNSUREs nailed from installed macOS, blocks dumped host-side)
+
+PRECONDITION (our generated containers): APSB.num_snapshots(0xD8)=0, omap.om_snap_count(0x24)=0,
+omap.om_snapshot_tree_oid(0x38)=0, omap.om_most_recent_snap(0x40)=0. First-snapshot increment.
+
+LET XID = live.xid+1 (the commit's transaction id). snapXid = XID.
+
+NEW BLOCKS (8), allocated via allocateFsCommitBlocks(sizing fsNodeCount=3 -> 3+5=8):
+ [0] frozenExtentRef  -- byte copy of live extent-ref tree block; o_oid=its paddr, o_xid=XID, restamp.
+                         -> j_snap_metadata.extentref_tree_oid = this paddr.
+ [1] frozenSblock     -- byte copy of live APSB with:
+                         o_oid = its own paddr (PHYSICAL!), o_type = 0x4000000d (OBJ_PHYSICAL|FS),
+                         o_subtype=0, o_xid=XID, magic 'APSB' kept,
+                         0x80 omap_oid=0, 0x88 root_tree_oid=KEEP, 0x90 extentref_oid=0,
+                         0x98 snapmeta_oid=0, 0xA0 revert_xid=0, 0xA8 revert_sblock=0,
+                         0xB0 next_obj_id=KEEP (pre-increment), 0xD8 num_snapshots=newCount(=1).
+                         -> j_snap_metadata.sblock_oid = this paddr.
+ [2] omapSnapTree     -- fixed-kv btree ROOT|LEAF|FIXED_KV (node flags 0x0007), subtype 0x13,
+                         TOC len 576, info flags 0x10, key_size 8, val_size 16, longest 8/16,
+                         1 record: key = snapXid u64, val = omap_snapshot{oms_flags u32=0,
+                         oms_pad u32=0, oms_oid u64=0} (16 bytes ALL ZERO).
+                         o_oid=its paddr, o_xid=XID.
+ [3] snapMetaTree     -- variable-kv btree ROOT|LEAF (node flags 0x0003), subtype 0x10,
+                         info flags 0x52 (== buildExtentRefTreeBlock), key_size/val_size 0.
+                         2 records, sorted by key-header u64 ascending (metadata 0x1.. < name 0xb..):
+                         R1 j_snap_metadata:
+                            key (8) = obj_id_and_type = (1<<60)|snapXid
+                            val (50+name): extentref_tree_oid u64@0x00 = frozenExtentRef paddr,
+                              sblock_oid u64@0x08 = frozenSblock paddr,
+                              create_time u64@0x10 = ns since 1970 UTC,
+                              change_time u64@0x18 = same,
+                              inum u64@0x20 = live APSB next_obj_id (pre-increment),
+                              extentref_tree_type u32@0x28 = 0x40000002,
+                              flags u32@0x2C = 0,
+                              name_len u16@0x30 = len(name)+1 (incl NUL),
+                              name @0x32 = UTF-8 NUL-terminated.
+                         R2 j_snap_name:
+                            key (8+2+name) = obj_id_and_type u64 = (11<<60)|0x0fffffffffffffff,
+                              name_len u16, name (NUL-term),
+                            val (8) = snap_xid u64 = snapXid.
+ [4] volOmapHdr       -- COW of live volume omap_phys: copy live block, o_oid=its paddr, o_xid=XID,
+                         om_tree_oid(0x30)=KEEP (omap tree unchanged), om_snap_count(0x24)+=1,
+                         om_snapshot_tree_oid(0x38)=omapSnapTree paddr, om_most_recent_snap(0x40)=XID,
+                         pending_revert_min/max(0x48/0x50)=0.
+ [5] volSb            -- COW of live APSB: copy, o_xid=XID, omap_oid(0x80)=volOmapHdr,
+                         snap_meta_tree_oid(0x98)=snapMetaTree, num_snapshots(0xD8)+=1,
+                         next_obj_id(0xB0)+=1, alloc_block_count += netConsumed. o_oid stays virtual.
+ [6] ctrOmapTree      -- container omap tree mapping {volume fs_oid -> volSb} at XID (buildObjectMapTreeBlock).
+ [7] ctrOmapHdr       -- container omap_phys (buildObjectMapBlock, flags 1).
+
+UNCHANGED / SHARED (NOT freed, NOT moved): root fs-tree, volume omap TREE (om_tree_oid), live extent-ref tree.
+FREED (COWed away -> main free-queue): old volSb, old volOmapHdr, old snapMetaTree, old ctrOmapTree, old ctrOmapHdr.
+netConsumed = 8 new - 5 freed = +3 (frozenExtentRef + frozenSblock + omapSnapTree).
+Volume next_obj_id += 1. nx_next_oid += 0 (no new fs-tree leaves). file/dir count unchanged.
+
+KEY ORDER snap-meta: metadata (type 1) sorts before name (type 11) because type is high nibble of the
+8-byte key header; within a type, by id then name.
+
+VERIFIED against installed macOS MacHD volume (sealed-system snapshot xid 745): frozen sblock o_type
+0x4000000d, oms val all-zero, info flags omap-snap 0x10 / snap-meta 0x52.

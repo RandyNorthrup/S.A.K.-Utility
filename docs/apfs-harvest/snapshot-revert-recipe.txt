@@ -1,0 +1,52 @@
+A3 APFS snapshot REVERT -- byte-exact ground truth
+Harvested 2026-06-26 on real macOS 15.7.4 (xnu-11417, Intel), SIP+ARV+AMFI off,
+ad-hoc-entitled __fs_snapshot helper (op 5). Throwaway 2 GB sparse image.
+Captures: temp/a3cert/hv6final/s{1..5}_*.bin (12 MiB raw container each).
+
+Field offsets (authoritative, from partition_apfs_writer.cpp):
+  obj:  oid 0x08, xid 0x10, type 0x18
+  omap_phys: snap_count 0x24, snap_tree_oid 0x38, most_recent_snap 0x40,
+             pending_revert_min 0x48, pending_revert_max 0x50
+  APSB: alloc_count 0x58, omap_oid 0x80, root_tree 0x88, extentref 0x90,
+        snap_meta 0x98, revert_to_xid 0xA0, revert_to_sblock_oid 0xA8,
+        next_obj_id 0xB0, num_snapshots 0xD8
+  type 0x0000000d = live volume APSB; 0x4000000d = frozen snapshot phys sblock.
+
+Timeline (latest live APSB per stage):
+  s2 after_create  xid4 blk2081: alloc9  omap2077 root1028 extref2076 snapmeta2075 revxid0 revsblk0 nextobj19 numsnap1
+                   frozen snap   xid4 blk2074 type4000000d: omap0 extref0 snapmeta0 root1028 alloc6 numsnap0
+                   omap2077 xid4: snapcount1 snaptree2078 mostrecent4 prmin0 prmax0
+  s3 after_diverge xid5 blk2089: alloc11 omap2087 root1028 extref2085 snapmeta2075 revxid0 revsblk0 nextobj20 numsnap1
+                   omap2087 xid5: snapcount1 snaptree2078 mostrecent4 prmin0 prmax0
+  s4 after_revert  xid6 blk2092: alloc11 omap2087 root1028 extref2085 snapmeta2075 REVXID4 REVSBLK2074 nextobj20 numsnap1
+       == DEFERRED TAG: COW volume sb only; set revert_to_xid=snapXid(4) +
+          revert_to_sblock_oid=frozenSblockPaddr(2074). EVERYTHING ELSE identical
+          to xid5 (omap2087, root1028, extref2085, snapmeta2075, alloc11, numsnap1,
+          nextobj20 all REUSED). Volume omap header + snap-meta + trees NOT rewritten.
+  s5 after_remount KERNEL COMPLETES (xid6->10):
+       xid7 blk2101: alloc13 revxid4 revsblk2074 (in progress)
+       xid8 blk2104: alloc13 revxid4 revsblk2074
+       xid9 blk2111: alloc10 omap2109 extref2107 snapmeta2108 REVXID0 REVSBLK0 nextobj22 numsnap1
+                     omap2109 xid9: snapcount2 mostrecent9 PRMIN5 PRMAX9  (purges diverged xids 5..9)
+       xid10 blk2117 (FINAL): alloc9 omap2114 root1028 extref2107 snapmeta2108 revxid0 revsblk0 nextobj22 numsnap1
+                     omap2114 xid10: snapcount1 snaptree2116 mostrecent4 prmin0 prmax0
+
+Key facts:
+ - Revert is DEFERRED. op 5 only tags the live volume sb (2 fields). diverge.txt
+   still present until remount; kernel completes on next mount.
+ - Snapshot is KEPT (num_snapshots stays 1 throughout).
+ - next_obj_id is MONOTONIC (20 at tag, 22 final -- NOT rolled back to snapshot's 18).
+ - Final alloc_count == post-create alloc (9): reverted content == snapshot content.
+ - root_tree_oid stays virtual 1028; the omap remap (kernel) makes it resolve to the
+   snapshot tree. pending_revert_min/max are used transiently by the kernel during
+   completion, then cleared; the TAG itself leaves omap pending_revert = 0.
+
+S.A.K. plan: commitInPlaceSnapshotRevert writes the TAG (s4): COW only the volume
+superblock (+ container omap re-point + checkpoint advance), set revert_to_xid +
+revert_to_sblock_oid, leave volume omap header / snap-meta / root / extentref /
+alloc / numsnap / next_obj_id unchanged. freed={old volSb, ctrOmapTree, ctrOmapHdr};
+allocated={new volSb, ctrOmapTree, ctrOmapHdr}; netConsumed 0; alloc unchanged.
+Snapshot xid + frozen sblock paddr come from omap most_recent_snap (0x40) + the
+snap-meta j_snap_metadata sblockOid (readSnapshotFrozenRefs already recovers it).
+Certification: kernel-mount the tagged image (kernel completes revert like the
+remount) -> diverge gone, snapshot kept, fsck_apfs clean.
