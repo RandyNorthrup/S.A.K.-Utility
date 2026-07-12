@@ -392,6 +392,7 @@ Implemented command registry:
 - View mode: details/list/cards/grid/columns.
 - Toggle preview/details pane.
 - Toggle dual pane.
+- Hash selected item (SHA-256).
 
 Planned command groups:
 
@@ -401,7 +402,6 @@ Planned command groups:
 - Bulk delete for certified writer targets with explicit confirmation.
 - Compare panes.
 - Export folder recursively for supported read-only readers.
-- Hash selected item.
 - Verify selected raw file read-back.
 
 Phase-3 commands:
@@ -1164,7 +1164,10 @@ remaining gaps: hash-on-demand for the selected file, file-system-labelled
 properties (only a generic Identifier is surfaced today), HFS+ fork/resource and
 APFS extent summaries (the bridge entry struct has no such fields yet), evidence
 report file links, and file-system-specific "why blocked" wording in Safety.
-Preview reads currently run synchronously on the UI thread under the 1 MiB cap.
+On-demand hashing runs on a worker thread (local files hashed in full via a
+chunked reader, raw targets hashed over a bounded read window and reported as
+capped); preview reads still run synchronously on the UI thread under the 1 MiB
+cap.
 
 Checklist:
 
@@ -1177,7 +1180,7 @@ Checklist:
 - [x] Add local image preview. (`detailsPanePreviewSwitchesBetweenTextAndImage`; `renderPreviewForEntry`)
 - [x] Add raw-readable image preview if read cap and decoder are safe. (same route through capped `readFile`)
 - [x] Add unsupported preview blocker. (`verifyShellDetailsAndPreviewPanes` asserts a non-empty hint)
-- [ ] Add hash-on-demand command.
+- [x] Add hash-on-demand command. (`Hash` command -> `FileManagementFileSystemBridge::hashFile`, computed on a worker thread; `hashFileComputesSha256OfLocalFile`, `registryHashNeedsSingleReadableSelection`)
 - [ ] Add file-system-specific metadata. (only a generic Identifier field today)
 - [ ] Add HFS+ fork/resource/attribute summary where reader exposes it.
 - [ ] Add APFS object/extent summary where reader exposes it.

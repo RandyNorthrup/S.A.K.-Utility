@@ -318,6 +318,25 @@ private Q_SLOTS:
         }
     }
 
+    void registryHashNeedsSingleReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: hashing has nothing to act on.
+        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Hash,
+                                                         contextFor(writableLocalTarget(), false))
+                     .enabled);
+        // A single readable file, even on a read-only raw target, can be hashed.
+        QVERIFY(sak::FileExplorerCommandRegistry::state(
+                    FileExplorerCommandId::Hash,
+                    contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true))
+                    .enabled);
+        // A target with no read capability blocks hashing with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::Hash,
+            contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        QVERIFY(!blocked.blocker.isEmpty());
+    }
+
     void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
         // Tabs and dual pane are shipped features, but the registry still exposes
         // a build-availability gate: when a host reports it cannot host tabs or a

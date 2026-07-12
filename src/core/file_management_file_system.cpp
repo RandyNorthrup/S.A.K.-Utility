@@ -6,6 +6,8 @@
 
 #include "sak/file_management_file_system.h"
 
+#include "sak/error_codes.h"
+#include "sak/file_hash.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_ext_file_system_reader.h"
@@ -13,12 +15,14 @@
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QStorageInfo>
 
 #include <algorithm>
+#include <filesystem>
 #include <optional>
 
 namespace sak {
@@ -699,6 +703,41 @@ FileManagementReadResult FileManagementFileSystemBridge::readFile(
     result.file_system = displayFileSystem(fs);
     result.blockers.append(
         QStringLiteral("No File Management reader is registered for %1").arg(result.file_system));
+    return result;
+}
+
+FileManagementHashResult FileManagementFileSystemBridge::hashFile(
+    const FileManagementTarget& target, const QString& path, uint64_t max_bytes) {
+    FileManagementHashResult result;
+    result.file_system = displayFileSystem(normalizedFileSystem(target.file_system));
+
+    if (target.local_file_system) {
+        // Local files hash in full through the chunked reader (memory-safe for large files).
+        const QString local = path.trimmed().isEmpty() ? target.root_path : path;
+        const auto digest = file_hasher(hash_algorithm::sha256)
+                                .calculateHash(std::filesystem::path(local.toStdWString()));
+        if (!digest) {
+            result.blockers.append(QStringLiteral("Could not hash %1.").arg(local));
+            return result;
+        }
+        result.ok = true;
+        result.sha256 = QString::fromStdString(*digest);
+        result.hashed_bytes = static_cast<uint64_t>(QFileInfo(local).size());
+        return result;
+    }
+
+    // Raw/non-native targets are read through their reader up to the cap, then hashed.
+    const FileManagementReadResult read = readFile(target, path, max_bytes);
+    if (!read.ok) {
+        result.blockers = read.blockers;
+        return result;
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(read.data);
+    result.ok = true;
+    result.sha256 = QString::fromLatin1(hash.result().toHex());
+    result.hashed_bytes = static_cast<uint64_t>(read.data.size());
+    result.capped = max_bytes != 0 && static_cast<uint64_t>(read.data.size()) >= max_bytes;
     return result;
 }
 

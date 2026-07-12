@@ -103,6 +103,7 @@ private:
     void loadColumnsPreview(const QString& path);
     void populateTable(const FileManagementListResult& result);
     void previewSelectedFile();
+    void hashSelectedFile();
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;
@@ -219,6 +220,10 @@ private:
     QString m_last_preview_path;
     // Result of the most recent mutation, surfaced in the Evidence tab (path + hashes).
     FileManagementMutationResult m_last_mutation;
+    // Most recent on-demand hash of a selected file, surfaced in the Evidence tab.
+    QString m_last_hash_name;
+    QString m_last_hash_sha256;
+    bool m_last_hash_capped{false};
     FileExplorerItemModel* m_item_model{nullptr};
     QVector<FileManagementTarget> m_targets;
     QString m_current_path{QStringLiteral("/")};

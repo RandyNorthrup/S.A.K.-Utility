@@ -99,6 +99,16 @@ struct FileManagementPreview {
     uint64_t shown_bytes{0};  ///< Number of source bytes represented in @ref text.
 };
 
+/// @brief Result of an on-demand SHA-256 hash of a file.
+struct FileManagementHashResult {
+    bool ok{false};
+    QString file_system;
+    QString sha256;            ///< Lowercase hex SHA-256 digest.
+    bool capped{false};        ///< True when only the first @ref hashed_bytes were hashed.
+    uint64_t hashed_bytes{0};  ///< Number of source bytes fed into the digest.
+    QStringList blockers;
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -119,6 +129,12 @@ public:
         const QString& path = {},
         int max_entries = kDefaultFileManagementListEntries);
     [[nodiscard]] static FileManagementReadResult readFile(const FileManagementTarget& target,
+                                                           const QString& path,
+                                                           uint64_t max_bytes);
+    /// Compute the SHA-256 of @p path. Local targets are hashed in full via a chunked reader;
+    /// raw/non-native targets are hashed from up to @p max_bytes read through the file-system
+    /// reader (the result is marked @ref FileManagementHashResult::capped when that limit is hit).
+    [[nodiscard]] static FileManagementHashResult hashFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);
     /// Render @p data (already capped to a preview window by the caller) into a display-ready

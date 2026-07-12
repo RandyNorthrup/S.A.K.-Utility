@@ -64,6 +64,9 @@ namespace {
 constexpr int kExplorerPreviewMaxBytes = 1024 * 1024;
 constexpr int kExplorerImagePreviewMaxPx = 480;
 constexpr int kExplorerListMaxEntries = 10'000;
+// Raw/non-native reads for on-demand hashing are bounded to keep peak RAM sane; a larger
+// raw file is hashed over its first window and reported as capped. Local files hash in full.
+constexpr uint64_t kExplorerHashMaxBytes = 512ULL * 1024 * 1024;
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kCommandIdRole = Qt::UserRole + 3;
@@ -676,6 +679,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::TogglePreviewPane,
         FileExplorerCommandId::DuplicateTab,
         FileExplorerCommandId::ReopenClosedTab,
+        FileExplorerCommandId::Hash,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -1224,6 +1228,45 @@ void FileManagementExplorerPanel::previewSelectedFile() {
     dialog.exec();
 }
 
+void FileManagementExplorerPanel::hashSelectedFile() {
+    const FileExplorerSelection selection = currentSelection();
+    if (!selection.hasSingleEntry()) {
+        return;
+    }
+    const FileManagementEntry entry = selection.entries.first();
+    if (entry.directory || !entry.regular_file) {
+        Q_EMIT statusMessage(tr("Select a single file to hash."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    const FileManagementTarget target = currentTarget();
+    const QString path = entry.path;
+    Q_EMIT statusMessage(tr("Hashing %1...").arg(entry.name), sak::kTimerStatusMessageMs);
+
+    auto* watcher = new QFutureWatcher<FileManagementHashResult>(this);
+    connect(watcher,
+            &QFutureWatcher<FileManagementHashResult>::finished,
+            this,
+            [this, watcher, name = entry.name]() {
+                watcher->deleteLater();
+                const FileManagementHashResult result = watcher->result();
+                if (!result.ok) {
+                    Q_EMIT statusMessage(
+                        tr("Hash failed: %1").arg(result.blockers.join(QStringLiteral("; "))),
+                        sak::kTimerStatusMessageMs);
+                    return;
+                }
+                m_last_hash_name = name;
+                m_last_hash_sha256 = result.sha256;
+                m_last_hash_capped = result.capped;
+                updateDetailsPane();
+                Q_EMIT statusMessage(tr("SHA-256 of %1: %2").arg(name, result.sha256),
+                                     sak::kTimerStatusMessageMs);
+            });
+    watcher->setFuture(QtConcurrent::run([target, path]() {
+        return FileManagementFileSystemBridge::hashFile(target, path, kExplorerHashMaxBytes);
+    }));
+}
+
 void FileManagementExplorerPanel::logMessage(const QString& message) {
     if (!message.trimmed().isEmpty()) {
         Q_EMIT logOutput(message);
@@ -1465,6 +1508,9 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
         return true;
     case FileExplorerCommandId::Properties:
         showSelectedItemProperties();
+        return true;
+    case FileExplorerCommandId::Hash:
+        hashSelectedFile();
         return true;
     case FileExplorerCommandId::SelectAll:
         if (auto* view = currentItemView()) {
@@ -1785,6 +1831,13 @@ QStringList FileManagementExplorerPanel::buildDetailsEvidence(
     if (!target.root_path.isEmpty()) {
         evidence.append(tr("Target ID: %1").arg(target.id));
         evidence.append(tr("Source: %1").arg(target.source));
+    }
+    if (!m_last_hash_sha256.isEmpty()) {
+        evidence.append(QString());
+        evidence.append(tr("Hashed file: %1").arg(m_last_hash_name));
+        evidence.append(m_last_hash_capped
+                            ? tr("SHA-256 (capped to first window): %1").arg(m_last_hash_sha256)
+                            : tr("SHA-256: %1").arg(m_last_hash_sha256));
     }
     if (m_last_mutation.path.isEmpty()) {
         evidence.append(tr("No File Explorer mutation has run this session."));
@@ -2486,6 +2539,7 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     menu.addSeparator();
     addCommandMenuAction(&menu, FileExplorerCommandId::Preview, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
     menu.addSeparator();

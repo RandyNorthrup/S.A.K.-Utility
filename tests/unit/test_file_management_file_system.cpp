@@ -6,6 +6,7 @@
 
 #include "sak/file_management_file_system.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -168,6 +169,31 @@ private Q_SLOTS:
         QVERIFY(dump.is_binary);
         QVERIFY(dump.truncated);
         QCOMPARE(dump.shown_bytes, static_cast<uint64_t>(4096));
+    }
+
+    void hashFileComputesSha256OfLocalFile() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QByteArray payload("hash this content through the bridge");
+        QFile file(QDir(temp.path()).filePath(QStringLiteral("hash.bin")));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(payload), static_cast<qint64>(payload.size()));
+        file.close();
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(temp.path());
+        const auto listing =
+            sak::FileManagementFileSystemBridge::listDirectory(target, temp.path(), 10);
+        QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+
+        const auto result = sak::FileManagementFileSystemBridge::hashFile(
+            target, listing.entries.first().path, 512ULL * 1024 * 1024);
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QVERIFY(!result.capped);
+        QCOMPARE(result.hashed_bytes, static_cast<uint64_t>(payload.size()));
+
+        const QString expected = QString::fromLatin1(
+            QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+        QCOMPARE(result.sha256, expected);
     }
 
     void inventoryPartitionBuildsRawAlias() {

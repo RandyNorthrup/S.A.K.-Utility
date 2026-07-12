@@ -45,6 +45,7 @@ enum class FileExplorerCommandId {
     ToggleDualPane,
     DuplicateTab,
     ReopenClosedTab,
+    Hash,
 };
 
 struct FileExplorerCommand {

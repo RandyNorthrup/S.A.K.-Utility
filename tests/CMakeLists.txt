@@ -997,6 +997,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/file_hash.cpp
         ../src/core/apfs_crypto.cpp
         ../src/core/apfs_keybag.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
@@ -1050,6 +1051,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_file_system.cpp
     add_executable(test_file_management_file_system
         unit/test_file_management_file_system.cpp
         ../src/core/file_management_file_system.cpp
+        ../src/core/file_hash.cpp
+        ../src/core/logger.cpp
         ../src/core/apfs_crypto.cpp
         ../src/core/apfs_keybag.cpp
         ../src/core/partition_apfs_file_system_reader.cpp

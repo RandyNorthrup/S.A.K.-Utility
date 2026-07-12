@@ -156,7 +156,7 @@ std::optional<FileExplorerCommandState> navigationOverrideState(
 bool requiresSingleSelection(const FileExplorerCommandId id) {
     using enum FileExplorerCommandId;
     static constexpr auto kSingleSelectionCommands =
-        std::to_array({Open, OpenInNewTab, OpenInSecondPane, Preview, Properties, Rename});
+        std::to_array({Open, OpenInNewTab, OpenInSecondPane, Preview, Properties, Rename, Hash});
     return std::ranges::find(kSingleSelectionCommands, id) != kSingleSelectionCommands.end();
 }
 
@@ -187,7 +187,7 @@ std::optional<FileExplorerCommandState> capabilityState(const FileExplorerComman
         if (!context.target.can_browse) {
             return disabledState(entry, browseBlocker(context.target));
         }
-    } else if (id == Preview && !context.target.can_read_files) {
+    } else if ((id == Preview || id == Hash) && !context.target.can_read_files) {
         return disabledState(entry, readBlocker(context.target));
     }
     return std::nullopt;
@@ -255,6 +255,11 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Properties"),
                     QStringLiteral("Show selected item properties."),
                     QStringLiteral("Alt+Enter"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::Hash,
+                    QStringLiteral("Hash"),
+                    QStringLiteral("Compute the SHA-256 of the selected file."),
+                    QStringLiteral("Ctrl+Shift+H"),
                     {.selection_required = true}),
         makeCommand(FileExplorerCommandId::SelectAll,
                     QStringLiteral("Select All"),
@@ -428,6 +433,7 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::ToggleDualPane, "toggle-dual-pane"},
         {Id::DuplicateTab, "duplicate-tab"},
         {Id::ReopenClosedTab, "reopen-closed-tab"},
+        {Id::Hash, "hash"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");
