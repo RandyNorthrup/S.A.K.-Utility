@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QStorageInfo>
+#include <QtEndian>
 
 #include <algorithm>
 #include <filesystem>
@@ -76,6 +77,39 @@ QString partitionAlias(uint32_t diskNumber, uint32_t partitionNumber) {
 bool isRawDevicePath(const QString& path) {
     return path.startsWith(QStringLiteral("\\\\.\\")) ||
            path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"));
+}
+
+// Derive an APFS container's byte size from its block-0 superblock (nx_block_size *
+// nx_block_count) when the caller could not supply one: a raw partition device reports
+// no file size, and without a size the certified write engine cannot be range-gated.
+// Returns 0 when the device does not present a valid NXSB superblock.
+uint64_t probeApfsContainerBytes(const QString& root_path) {
+    QString error;
+    const auto device = openFileOrRawDeviceReadOnly(root_path, &error);
+    if (!device) {
+        return 0;
+    }
+    const QByteArray block0 = device->read(4096);
+    constexpr int kMagicOffset = 0x20;       // obj_phys_t header is 32 bytes
+    constexpr int kBlockSizeOffset = 0x24;   // nx_block_size (u32)
+    constexpr int kBlockCountOffset = 0x28;  // nx_block_count (u64)
+    if (block0.size() < kBlockCountOffset + 8) {
+        return 0;
+    }
+    const auto u32 = [&block0](const int offset) {
+        return qFromLittleEndian<quint32>(block0.constData() + offset);
+    };
+    if (u32(kMagicOffset) != 0x42'53'58'4EU) {  // 'NXSB'
+        return 0;
+    }
+    const quint64 block_size = u32(kBlockSizeOffset);
+    const quint64 block_count = qFromLittleEndian<quint64>(block0.constData() + kBlockCountOffset);
+    const bool sane_block_size = block_size >= 4096 && block_size <= 65'536 &&
+                                 (block_size & (block_size - 1)) == 0;
+    if (!sane_block_size || block_count == 0) {
+        return 0;
+    }
+    return block_size * block_count;
 }
 
 bool isApfsPathSupported(const QString& path, bool /*directory*/) {
@@ -158,12 +192,18 @@ FileManagementMutationResult mutationBlocked(const QString& fileSystem,
 }
 
 bool computeWritableNonNative(const QString& fs, const FileManagementTarget& target) {
-    const bool apfsGeneratedWriteSizeSupported =
-        fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition &&
-        target.size_bytes >= kMinimumGeneratedApfsBytes &&
-        target.size_bytes <= kMaximumApfsGeneratedContainerBytes;
-    return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") ||
-           apfsGeneratedWriteSizeSupported;
+    // APFS writes route through the certified in-place COW engine, which supports both
+    // S.A.K.-generated and real Apple-created (foreign) containers on raw partitions and
+    // image files. The only bridge-level gate is a KNOWN container size inside the
+    // engine's certified range; everything the engine has not certified for a given
+    // container (snapshot-frozen deletes, Fusion/Tier2, locked encrypted volumes) fails
+    // closed inside the engine itself with an exact blocker.
+    const bool apfsWriteCapableKind = target.kind == FileManagementTargetKind::Partition ||
+                                      target.kind == FileManagementTargetKind::ImageFile;
+    const bool apfsWriteSupported = fs == QStringLiteral("apfs") && apfsWriteCapableKind &&
+                                    target.size_bytes >= kMinimumGeneratedApfsBytes &&
+                                    target.size_bytes <= kMaximumApfsGeneratedContainerBytes;
+    return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") || apfsWriteSupported;
 }
 
 void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
@@ -178,11 +218,18 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
                            "certified Partition Manager file actions for supported writes"));
     }
     if (!target.can_write_files) {
+        const bool apfs_kind_supported = fs == QStringLiteral("apfs") &&
+                                         (target.kind == FileManagementTargetKind::Partition ||
+                                          target.kind == FileManagementTargetKind::ImageFile);
         target.blockers.append(
-            fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition
-                ? QStringLiteral("APFS File Explorer writes are limited to APFS containers created "
-                                 "by this tool (%1)")
-                      .arg(apfsCapacityRangeText())
+            apfs_kind_supported
+                ? (target.size_bytes == 0
+                       ? QStringLiteral(
+                             "APFS writes need a known container size to range-gate the "
+                             "certified engine; rescan disks or re-add the target with its size")
+                       : QStringLiteral("APFS writes are certified for containers of %1; this "
+                                        "container is outside that range")
+                             .arg(apfsCapacityRangeText()))
                 : QStringLiteral("File Management opens this target read-only"));
     } else if (!target.local_file_system) {
         target.blockers.append(
@@ -588,6 +635,12 @@ FileManagementTarget FileManagementFileSystemBridge::manualTarget(const QString&
     } else if (!isRawDevicePath(target.root_path)) {
         target.size_bytes =
             static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
+    } else if (FileManagementFileSystemBridge::normalizedFileSystem(file_system) ==
+               QStringLiteral("apfs")) {
+        // A raw partition device has no file size; derive the APFS container size from
+        // its own superblock so the certified write engine can be range-gated instead
+        // of falling back to read-only for want of a size.
+        target.size_bytes = probeApfsContainerBytes(target.root_path);
     }
     target.kind = isRawDevicePath(target.root_path) ? FileManagementTargetKind::Partition
                                                     : FileManagementTargetKind::ImageFile;
@@ -670,15 +723,19 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
     const QString fs = target.file_system.toLower();
     QStringList notes;
     if (fs.contains(QStringLiteral("apfs"))) {
-        notes.append(target.can_write_files
-                         ? QStringLiteral("APFS writes commit through the Apple-certified in-place "
-                                          "COW engine on this S.A.K. generated-layout container.")
-                         : QStringLiteral(
-                               "APFS writes are limited to S.A.K. generated-layout containers "
-                               "within the certified size range (64 MiB through 32 TiB). Arbitrary "
-                               "Apple media, out-of-range containers, Fusion/Tier2 sets, and "
-                               "unprovided-credential encrypted volumes stay read-only at the "
-                               "Apply layer."));
+        notes.append(
+            target.can_write_files
+                ? QStringLiteral(
+                      "APFS writes commit through the Apple-certified in-place COW engine; "
+                      "S.A.K.-generated and real Apple-created (foreign) containers are both "
+                      "supported. Operations the engine has not certified for this container "
+                      "(snapshot-frozen deletes/renames, Fusion/Tier2 sets, locked encrypted "
+                      "volumes) fail closed with exact blockers.")
+                : QStringLiteral(
+                      "APFS writes need a known container size within the certified engine "
+                      "range (64 MiB through 32 TiB); this target is read-only because its "
+                      "size is unknown or out of range. Fusion/Tier2 sets and "
+                      "unprovided-credential encrypted volumes also stay read-only."));
     } else if (fs.contains(QStringLiteral("hfs"))) {
         notes.append(target.can_write_files
                          ? QStringLiteral("HFS+/HFSX writes commit through the Apple-certified "

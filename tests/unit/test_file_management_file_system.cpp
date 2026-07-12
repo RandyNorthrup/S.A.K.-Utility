@@ -279,23 +279,25 @@ private Q_SLOTS:
     void safetyNotesNameTheRealBlocker() {
         using Bridge = sak::FileManagementFileSystemBridge;
 
-        // A blocked (arbitrary) APFS target explains the generated-layout limit and cap.
+        // A size-unknown APFS target explains the real gate: the certified engine needs a
+        // known container size to be range-gated (a missing image reports size 0).
         const auto arbitraryApfs = Bridge::manualTarget(QStringLiteral("C:/fixtures/apfs.img"),
                                                         QStringLiteral("APFS"));
         QVERIFY(!arbitraryApfs.can_write_files);
         const QString apfsNote = Bridge::safetyNotes(arbitraryApfs).join(QStringLiteral(" "));
-        QVERIFY2(apfsNote.contains(QStringLiteral("generated-layout")), qPrintable(apfsNote));
+        QVERIFY2(apfsNote.contains(QStringLiteral("known container size")), qPrintable(apfsNote));
         QVERIFY2(apfsNote.contains(QStringLiteral("32 TiB")), qPrintable(apfsNote));
 
-        // A write-capable generated APFS slice states the certified-engine path.
+        // A write-capable APFS slice states the certified-engine path and that both
+        // S.A.K.-generated and real Apple-created (foreign) containers are supported.
         const auto writableApfs =
             Bridge::manualTarget(QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
                                  QStringLiteral("APFS"),
                                  128ULL * 1024ULL * 1024ULL);
         QVERIFY(writableApfs.can_write_files);
-        QVERIFY(Bridge::safetyNotes(writableApfs)
-                    .join(QStringLiteral(" "))
-                    .contains(QStringLiteral("COW engine")));
+        const QString writableNote = Bridge::safetyNotes(writableApfs).join(QStringLiteral(" "));
+        QVERIFY2(writableNote.contains(QStringLiteral("COW engine")), qPrintable(writableNote));
+        QVERIFY2(writableNote.contains(QStringLiteral("foreign")), qPrintable(writableNote));
 
         // XFS/Btrfs and ext each get their own specific note.
         QVERIFY(Bridge::safetyNotes(
@@ -306,6 +308,33 @@ private Q_SLOTS:
                     Bridge::manualTarget(QStringLiteral("C:/e.img"), QStringLiteral("ext4")))
                     .join(QStringLiteral(" "))
                     .contains(QStringLiteral("read-only browse/read/copy-out")));
+    }
+
+    void apfsImageTargetWithKnownSizeIsWriteCapable() {
+        // Foreign wiring: any APFS raw/image target whose container size is known and
+        // inside the certified engine range is write-capable through the bridge; the
+        // engine itself fails closed on anything it has not certified for the container.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString imagePath = QDir(temp.path()).filePath(QStringLiteral("container.img"));
+        {
+            QFile image(imagePath);
+            QVERIFY(image.open(QIODevice::WriteOnly));
+            QVERIFY(image.resize(64LL * 1024LL * 1024LL));  // sparse 64 MiB
+        }
+        const auto target =
+            sak::FileManagementFileSystemBridge::manualTarget(imagePath, QStringLiteral("APFS"));
+        QCOMPARE(target.size_bytes, 64ULL * 1024ULL * 1024ULL);
+        QVERIFY(target.can_write_files);
+
+        // An unknown-size raw APFS partition stays read-only with the size blocker.
+        const auto unknown = sak::FileManagementFileSystemBridge::manualTarget(
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk63\\Partition9"),
+            QStringLiteral("APFS"));
+        QVERIFY(!unknown.can_write_files);
+        QVERIFY2(unknown.blockers.join(QStringLiteral(" "))
+                     .contains(QStringLiteral("known container size")),
+                 qPrintable(unknown.blockers.join(QStringLiteral(" "))));
     }
 
     void inventoryPartitionBuildsRawAlias() {

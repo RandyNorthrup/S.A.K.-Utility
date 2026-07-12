@@ -332,11 +332,13 @@ Central action registry:
 | ext2/ext3/ext4 raw/image | Yes | Yes | Yes | No | No | No | No | Yes | No |
 | HFS+/HFSX raw/image | Yes | Yes | Yes | Yes[2] | Yes[2] | Yes[2] | Yes[2] | Yes | Yes[2] |
 | APFS raw/image generated (<=32 TiB) | Yes | Yes | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
-| APFS arbitrary Apple media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
+| APFS real Apple (foreign) media, known size <=32 TiB | Yes where readable | Yes where readable | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
+| APFS unknown-size / out-of-range / locked media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
 | XFS/Btrfs current | Metadata only | No | No | No | No | No | No | No | No |
 
-[1] Certified crash-safe in-place COW checkpoint engine (milestones A1-A8 - see the
-single capability-matrix owner [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
+[1] Certified crash-safe in-place COW checkpoint engine (milestones A1-A8 plus
+the foreign-volume campaign - see the single capability-matrix owner
+[APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
 driver matrix rows A-a..A-h). Certified scope on S.A.K. generated-layout
 containers, 64 MiB through a 32 TiB cap (the former ~2.9-7.8 TiB
 metadata-overflow dead zone is closed): in-place file + directory
@@ -345,13 +347,16 @@ snapshots (create/delete/revert), multi-volume containers, inline zlib
 compression, credential-gated FileVault encryption, file clones / sparse files /
 hard-links / xattr-ACL, and in-chunk container resize - validated by Apple
 `fsck_apfs` + macOS-kernel mount and the A8 physical-USB destructive + crash +
-rollback gate. Production writes carry an explicit generated-layout
-confirmation, so mutation of **arbitrary non-generated Apple media stays
-fail-closed at the Apply layer** (the COW engine is certified; the production
-exposure is intentionally generated-layout-only - hence the "APFS arbitrary
-Apple media" row stays No for writes). Also fail-closed by design: Fusion/Tier2
-multi-device (out of scope, no rig); encryption requires the user credential; a
-sealed/signed system volume needs a typed seal-invalidation confirmation;
+rollback gate. The foreign-volume campaign extended the SAME engine to real
+Apple-created containers: foreign file insert, delete, patch, rename, move,
+directory create/delete, clone and hard-link mutations are macOS-kernel
+certified (commits 8b1ac27, efaf07e, e851740, f63f066), so the File Explorer
+bridge now write-enables any APFS raw/image target whose container size is
+known and inside the certified range; raw imports additionally require a typed
+WRITE confirmation naming the target identity. Fail-closed by design inside the
+engine: delete/patch/rename on snapshot-frozen volumes, Fusion/Tier2
+multi-device (out of scope, no rig), encryption without the user credential,
+and sealed/signed system volumes (typed seal-invalidation confirmation);
 container shrink and chunk-adding grow are documented follow-ons.
 
 [2] HFS+/HFSX full-driver writes - the HFS+ track (H1-H8) is Apple-certified
@@ -653,7 +658,7 @@ Hard rules:
 - Read-only parser paths stay read-only.
 - Raw/non-native writes require explicit command, explicit confirmation, and capability proof.
 - No generic organizer moves on raw/non-native targets.
-- APFS writes run on the certified A1-A8 in-place COW engine (multi-CIB/CAB to a 32 TiB cap, Apple-validated through the A8 physical-USB gate), gated to S.A.K. generated-layout targets with explicit confirmation; arbitrary non-generated Apple media, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
+- APFS writes run on the certified A1-A8 + foreign-campaign in-place COW engine (multi-CIB/CAB to a 32 TiB cap, Apple-validated through the A8 physical-USB gate and the foreign-volume kernel certs). S.A.K.-generated and real Apple-created containers are both write-enabled when the container size is known and in range; raw imports take a typed WRITE confirmation. Unknown-size/out-of-range targets, snapshot-frozen deletes/renames, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
 - Every destructive command shows target identity, file system, operation, selected item count, and irreversibility.
 - Bulk destructive operations require typed confirmation for raw targets.
 - Operation results must include warnings/blockers and update status/log panes.
@@ -1307,7 +1312,7 @@ Tests:
 - [ ] ext4 raw copy-out smoke. (needs a live/local ext4 image)
 - [ ] HFS+ live import/write/read/delete certification through command route.
 - [x] APFS generated-layout live import/write/read/delete certification through command route. (2026-07-12 physical Disk 1 128 MiB S.A.K.-generated APFS: create/write/read/delete all Passed via `file_management_live_certifier --destructive`, EXIT 0)
-- [x] APFS large paste blocker test. (2026-07-11 physical: both real Apple APFS drives report `explorer_can_write=false` with the arbitrary-media blocker)
+- [x] APFS large paste blocker test. (2026-07-11 physical: both real Apple APFS drives report `explorer_can_write=false`; 2026-07-12 update: the gate is a known-size range gate, so this proof covers the unknown-size/out-of-range paste blocker while known-size in-range foreign media is now write-capable)
 
 Exit gate:
 
@@ -1431,8 +1436,9 @@ Certification checklist:
 - [x] Run APFS generated-layout destructive live File Explorer command-route certification. (2026-07-12, physical: wiped Disk 1 (28 GB USB flash), created a 128 MiB partition, generated a S.A.K. APFS container (raw-format Passed), then ran the destructive command-route cert -- create-directory / write-file (77 B) / read-after-write byte-exact (sha 931b0b41...) / duplicate-finder / advanced-search / delete-file / read-after-delete / delete-directory all Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-apfs-128mb-file-management-cert/)
 - [ ] Run ext4 read-only raw copy-out certification.
 - [ ] Run XFS/Btrfs blocker proof.
-- [x] Run large APFS write blocker proof. (physical read-only `file_management_live_certifier` run, 2026-07-11, against Disk 1 Part 2 = 28 GB "APFS Test Disk" and Disk 2 Part 2 = 7.45 TB Seagate: both report `explorer_can_write=false` with the exact "writes are limited to APFS containers created by this tool" blocker; status Passed, EXIT 0; evidence artifacts/file-management-live-certification/disk1-disk2-apfs-readonly-20260711/)
-- [x] Run APFS arbitrary/non-generated write blocker proof on real Apple media. (same 2026-07-11 run; both real Apple-created containers correctly fail closed at the capability gate)
+- [x] Run large APFS write blocker proof. (physical read-only `file_management_live_certifier` run, 2026-07-11, against Disk 1 Part 2 = 28 GB "APFS Test Disk" and Disk 2 Part 2 = 7.45 TB Seagate: both report `explorer_can_write=false` with the exact "writes are limited to APFS containers created by this tool" blocker; status Passed, EXIT 0; evidence artifacts/file-management-live-certification/disk1-disk2-apfs-readonly-20260711/. 2026-07-12 update: that gate fired on UNKNOWN SIZE, not on foreign identity; the bridge now derives the container size from the APFS superblock and write-enables known-size in-range foreign media through the certified engine, so this proof now covers the unknown-size/out-of-range blocker path.)
+- [x] Run APFS arbitrary/non-generated write blocker proof on real Apple media. (same 2026-07-11 run; superseded by the foreign write wiring - real Apple media with a known in-range size is now write-capable, and the remaining fail-closed set is unknown-size/out-of-range/snapshot-frozen/Fusion/locked-encrypted, enforced inside the engine)
+- [ ] Run foreign-APFS (real Apple-created) destructive write certification through the File Explorer command route.
 - [ ] Run local mounted copy/paste smoke.
 - [ ] Capture desktop screenshot.
 - [ ] Capture narrow screenshot.
