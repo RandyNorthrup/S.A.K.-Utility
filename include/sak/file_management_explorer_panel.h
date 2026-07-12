@@ -154,6 +154,8 @@ private:
     void updateActionButtons();
     void logMessage(const QString& message);
     void buildTabBar(QVBoxLayout* center_layout);
+    /// @brief Give the tab bar's auto-generated close buttons accessible names.
+    void nameTabCloseButtons();
     void ensureSecondPane();
     void activatePane(int index);
     void toggleDualPane();

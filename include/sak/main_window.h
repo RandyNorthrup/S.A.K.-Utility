@@ -12,7 +12,9 @@
 #include <QStringList>
 #include <QTabWidget>
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 class QFrame;
 class QHBoxLayout;
@@ -112,11 +114,6 @@ private:
      */
     void createPanels();
 
-    /// @brief Create all tool/feature panel tabs
-    void createToolPanels();
-
-    /// @brief Create simple standalone panel tabs
-    void createSimplePanels();
     void createBackupRestorePanel();
     void createFileManagementPanel();
     void createPartitionManagerPanel();
@@ -150,15 +147,38 @@ private:
     /// @brief Load splash screen icon into the About panel header
     void loadAboutPanelIcon(QLabel* iconLabel);
 
-    /// @brief Connect panel status and progress signals to the main window
-    void connectPanelSignals();
-    void connectPartitionManagerNavigation();
+    /// @brief Register all tool tabs as lazy placeholders (built on first activation).
+    void registerLazyToolTabs();
 
-    /// @brief Connect remaining panel status/progress signals
-    void connectRemainingPanelSignals();
-    void connectDiagnosticAndSearchSignals();
-    void connectManagementAndVulnerabilitySignals();
-    void connectNetworkAndEmailSignals();
+    /// @brief Add a lightweight placeholder tab for a not-yet-built tool panel.
+    void addLazyPlaceholder(const char* title, const char* tooltip, const char* iconPath);
+
+    /// @brief Build (if needed) the tool panel occupying a lazy tab slot.
+    void materializeTab(int slot);
+
+    /// @brief Connect the tab-change/log-window routing that must exist once.
+    void setupLogRouting();
+
+    /// @brief Connect one panel's log output and toggle to the shared log window.
+    ///        Must run after the panel's tab occupies its final slot.
+    template <typename PanelT>
+    void connectPanelLog(PanelT* panel);
+
+    // Per-tab signal + log wiring, invoked when each lazy tab is materialized.
+    void wireBackupPanel();
+    void wireFileManagementPanels();
+    void wirePartitionPanel();
+    void connectPartitionManagerNavigation();
+    void wireImageFlasherPanel();
+    void wireDiagnosticPanel();
+    void wireEmailPanels();
+    void wireAppManagementPanels();
+    void wireNetworkPanels();
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    /// @brief Construct the AI Assistant panel and add it as the last tab.
+    void createAiAssistantPanelTab();
+    void wireAiPanel();
+#endif
 
     /// @brief True when the Vulnerability Scanner sub-tab is selected.
     [[nodiscard]] bool isVulnerabilityPanelActive() const;
@@ -173,9 +193,6 @@ private:
     /// @brief Show AI token/run details only while the AI Assistant tab is active.
     void updateAiStatusBarVisibility();
 #endif
-
-    /// @brief Connect panel log signals to the shared log window
-    void connectPanelLogs();
 
     /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
     void attachThemeToggleToLogToggle(LogToggleSwitch* logToggle);
@@ -214,12 +231,26 @@ protected:
     void closeEvent(QCloseEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
+    /// @brief A tool tab that constructs its panel(s) lazily on first activation.
+    struct LazyTab {
+        std::function<void()> build;  ///< Constructs panel(s), appended as the last tab.
+        std::function<void()> wire;   ///< MainWindow-level wiring; runs after the tab is in place.
+        bool built{false};
+    };
+
     // Central widget - tab container
     QTabWidget* m_tab_widget{nullptr};
     QTabWidget* m_application_tabs{nullptr};
+
+    // Lazy tool-tab registry; index is aligned with the tab slot it occupies.
+    std::vector<LazyTab> m_lazyTabs;
+    bool m_lazyDefaultBuilt{false};
+    int m_slotImageFlasher{-1};
+    int m_slotDiagnostic{-1};
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;

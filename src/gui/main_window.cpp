@@ -52,6 +52,7 @@
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QShortcut>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSize>
 #include <QSizePolicy>
@@ -540,41 +541,120 @@ void MainWindow::createStatusBar() {
 }
 
 void MainWindow::createPanels() {
-    createToolPanels();
+    registerLazyToolTabs();
     createHelpPanel();
     createAboutPanel();
+    // Build each tool panel only when its tab is first activated. Connected
+    // before setupLogRouting so the panel exists before onTabChanged runs.
+    connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int index) {
+        materializeTab(index);
+    });
+    setupLogRouting();
     if (IsAccessibilityAuditMode()) {
-        return;
+        // Accessibility scan needs the full widget tree, so build every tab now.
+        for (int slot = 0; slot < static_cast<int>(m_lazyTabs.size()); ++slot) {
+            materializeTab(slot);
+        }
     }
-    connectPanelSignals();
-    connectPanelLogs();
 }
 
-void MainWindow::createToolPanels() {
+void MainWindow::registerLazyToolTabs() {
     Q_ASSERT(m_tab_widget);
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    // -- 1. AI Assistant -------------------------------------------------
+    addLazyPlaceholder("AI Assistant", kTooltipAiAssistant, ":/icons/icons/panel_ai.svg");
+    m_lazyTabs.push_back({[this] { createAiAssistantPanelTab(); }, [this] { wireAiPanel(); }});
+#endif
+    addLazyPlaceholder("Backup and Restore",
+                       kTooltipUserMigration,
+                       ":/icons/icons/panel_backup_restore.svg");
+    m_lazyTabs.push_back({[this] { createBackupRestorePanel(); }, [this] { wireBackupPanel(); }});
+
+    addLazyPlaceholder("File Management", kTooltipOrganizer, ":/icons/icons/panel_organizer.svg");
+    m_lazyTabs.push_back(
+        {[this] { createFileManagementPanel(); }, [this] { wireFileManagementPanels(); }});
+
+    addLazyPlaceholder("Partition Manager",
+                       "Manage disks, partitions, SMART status, cloning, migration, boot repair, "
+                       "SSD optimization, and wipe operations",
+                       ":/icons/icons/icons8-pm-disk.svg");
+    m_lazyTabs.push_back(
+        {[this] { createPartitionManagerPanel(); }, [this] { wirePartitionPanel(); }});
+
+    m_slotImageFlasher = static_cast<int>(m_lazyTabs.size());
+    addLazyPlaceholder("Image Flasher",
+                       kTooltipImageFlasher,
+                       ":/icons/icons/panel_image_flasher.svg");
+    m_lazyTabs.push_back(
+        {[this] { createImageFlasherPanel(); }, [this] { wireImageFlasherPanel(); }});
+
+    m_slotDiagnostic = static_cast<int>(m_lazyTabs.size());
+    addLazyPlaceholder("Benchmark and Diagnostics",
+                       kTooltipDiagnostics,
+                       ":/icons/icons/panel_diagnostic.svg");
+    m_lazyTabs.push_back({[this] { createDiagnosticPanel(); }, [this] { wireDiagnosticPanel(); }});
+
+    addLazyPlaceholder("Email Tools", kTooltipEmailTool, ":/icons/icons/panel_email.svg");
+    m_lazyTabs.push_back({[this] { createEmailToolsPanel(); }, [this] { wireEmailPanels(); }});
+
+    addLazyPlaceholder("Application Management",
+                       kTooltipAppManagement,
+                       ":/icons/icons/panel_app_install.svg");
+    m_lazyTabs.push_back(
+        {[this] { createAppManagementPanel(); }, [this] { wireAppManagementPanels(); }});
+
+    addLazyPlaceholder("Network Management",
+                       kTooltipNetworkManagement,
+                       ":/icons/icons/panel_network.svg");
+    m_lazyTabs.push_back(
+        {[this] { createNetworkManagementPanel(); }, [this] { wireNetworkPanels(); }});
+}
+
+void MainWindow::addLazyPlaceholder(const char* title, const char* tooltip, const char* iconPath) {
+    Q_ASSERT(m_tab_widget);
+    auto* placeholder = new QWidget(this);
+    AddTabWithTooltip(m_tab_widget, placeholder, title, tooltip, iconPath);
+}
+
+void MainWindow::materializeTab(int slot) {
+    if (slot < 0 || slot >= static_cast<int>(m_lazyTabs.size())) {
+        return;
+    }
+    auto& lazy = m_lazyTabs[slot];
+    if (lazy.built) {
+        return;
+    }
+    lazy.built = true;
+
+    QWidget* placeholder = m_tab_widget->widget(slot);
+    lazy.build();  // Constructs the real panel and appends its tab at the end.
+
+    // Move the freshly built tab into the placeholder's slot and drop the
+    // placeholder. Signals are blocked so the restructure does not emit a storm
+    // of currentChanged() while we are already inside one.
+    {
+        const QSignalBlocker blocker(m_tab_widget);
+        const int appended = m_tab_widget->count() - 1;
+        m_tab_widget->tabBar()->moveTab(appended, slot);  // real -> slot; placeholder -> slot + 1
+        m_tab_widget->removeTab(slot + 1);
+        m_tab_widget->setCurrentIndex(slot);
+    }
+    if (placeholder) {
+        placeholder->deleteLater();
+    }
+
+    lazy.wire();  // Panel now occupies its final slot; safe to wire status/logs.
+}
+
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+void MainWindow::createAiAssistantPanelTab() {
     m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(this);
     AddTabWithTooltip(m_tab_widget,
                       m_ai_assistant_panel.get(),
                       "AI Assistant",
                       kTooltipAiAssistant,
                       ":/icons/icons/panel_ai.svg");
+}
 #endif
-    createSimplePanels();
-    createAppManagementPanel();
-    createNetworkManagementPanel();
-}
-
-void MainWindow::createSimplePanels() {
-    Q_ASSERT(m_tab_widget);
-    createBackupRestorePanel();
-    createFileManagementPanel();
-    createPartitionManagerPanel();
-    createImageFlasherPanel();
-    createDiagnosticPanel();
-    createEmailToolsPanel();
-}
 
 void MainWindow::createBackupRestorePanel() {
     logInfo("MainWindow: creating Backup and Restore panel");
@@ -1071,14 +1151,17 @@ QFrame* MainWindow::createCommunityCard(QWidget* parent) {
         .card;
 }
 
-void MainWindow::connectPanelSignals() {
+void MainWindow::wireBackupPanel() {
     Q_ASSERT(m_user_migration_panel);
-    // Connect panel signals to main window status bar
     connect(m_user_migration_panel.get(),
             &UserMigrationPanel::statusMessage,
             this,
             [this](const QString& msg) { updateStatus(msg, kDefaultPanelStatusTimeoutMs); });
+    connectPanelLog(m_user_migration_panel.get());
+}
 
+void MainWindow::wireFileManagementPanels() {
+    Q_ASSERT(m_organizer_panel);
     connect(m_organizer_panel.get(),
             &OrganizerPanel::statusMessage,
             this,
@@ -1089,18 +1172,22 @@ void MainWindow::connectPanelSignals() {
             &OrganizerPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
-
-    connect(m_app_installation_panel.get(),
-            &AppInstallationPanel::statusMessage,
+    connect(m_advanced_search_panel.get(),
+            &AdvancedSearchPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
                 updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
-    connect(m_app_installation_panel.get(),
-            &AppInstallationPanel::progressUpdated,
+    connect(m_advanced_search_panel.get(),
+            &AdvancedSearchPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connectPanelLog(m_organizer_panel.get());
+    connectPanelLog(m_advanced_search_panel.get());
+}
 
+void MainWindow::wirePartitionPanel() {
+    Q_ASSERT(m_partition_manager_panel);
     connect(m_partition_manager_panel.get(),
             &PartitionManagerPanel::statusMessage,
             this,
@@ -1112,27 +1199,17 @@ void MainWindow::connectPanelSignals() {
             this,
             &MainWindow::updateProgress);
     connectPartitionManagerNavigation();
-
-    connect(m_image_flasher_panel.get(),
-            &ImageFlasherPanel::statusMessage,
-            this,
-            [this](const QString& msg) { updateStatus(msg, kDefaultPanelStatusTimeoutMs); });
-    connect(m_image_flasher_panel.get(),
-            &ImageFlasherPanel::progressUpdate,
-            this,
-            &MainWindow::updateProgress);
-
-    connectRemainingPanelSignals();
+    connectPanelLog(m_partition_manager_panel.get());
 }
 
 void MainWindow::connectPartitionManagerNavigation() {
+    // Navigate by fixed lazy-tab slot: setCurrentIndex materializes the target.
     connect(m_partition_manager_panel.get(),
             &PartitionManagerPanel::openBenchmarkRequested,
             this,
             [this]() {
-                const int tabIdx = findPanelTabIndex(m_diagnostic_benchmark_panel.get());
-                if (tabIdx >= 0) {
-                    m_tab_widget->setCurrentIndex(tabIdx);
+                if (m_slotDiagnostic >= 0) {
+                    m_tab_widget->setCurrentIndex(m_slotDiagnostic);
                     updateStatus(tr("Opened Benchmark and Diagnostics for disk benchmark"),
                                  kDefaultPanelStatusTimeoutMs);
                 }
@@ -1141,39 +1218,29 @@ void MainWindow::connectPartitionManagerNavigation() {
             &PartitionManagerPanel::openImageFlasherRequested,
             this,
             [this]() {
-                const int tabIdx = findPanelTabIndex(m_image_flasher_panel.get());
-                if (tabIdx >= 0) {
-                    m_tab_widget->setCurrentIndex(tabIdx);
+                if (m_slotImageFlasher >= 0) {
+                    m_tab_widget->setCurrentIndex(m_slotImageFlasher);
                     updateStatus(tr("Opened Image Flasher for bootable media"),
                                  kDefaultPanelStatusTimeoutMs);
                 }
             });
 }
 
-void MainWindow::connectRemainingPanelSignals() {
-    Q_ASSERT(m_network_diagnostic_panel);
-    Q_ASSERT(m_diagnostic_benchmark_panel);
-    connectDiagnosticAndSearchSignals();
-    connectManagementAndVulnerabilitySignals();
-    connectNetworkAndEmailSignals();
-#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    if (m_ai_assistant_panel) {
-        connect(m_ai_assistant_panel.get(),
-                &AiAssistantPanel::statusDetailsChanged,
-                this,
-                [this](const QString& details) {
-                    if (m_ai_status_label) {
-                        m_ai_status_label->setText(details);
-                        m_ai_status_label->setToolTip(details);
-                    }
-                    updateAiStatusBarVisibility();
-                });
-        updateAiStatusBarVisibility();
-    }
-#endif
+void MainWindow::wireImageFlasherPanel() {
+    Q_ASSERT(m_image_flasher_panel);
+    connect(m_image_flasher_panel.get(),
+            &ImageFlasherPanel::statusMessage,
+            this,
+            [this](const QString& msg) { updateStatus(msg, kDefaultPanelStatusTimeoutMs); });
+    connect(m_image_flasher_panel.get(),
+            &ImageFlasherPanel::progressUpdate,
+            this,
+            &MainWindow::updateProgress);
+    connectPanelLog(m_image_flasher_panel.get());
 }
 
-void MainWindow::connectDiagnosticAndSearchSignals() {
+void MainWindow::wireDiagnosticPanel() {
+    Q_ASSERT(m_diagnostic_benchmark_panel);
     connect(m_diagnostic_benchmark_panel.get(),
             &DiagnosticBenchmarkPanel::statusMessage,
             this,
@@ -1184,20 +1251,36 @@ void MainWindow::connectDiagnosticAndSearchSignals() {
             &DiagnosticBenchmarkPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connectPanelLog(m_diagnostic_benchmark_panel.get());
+}
 
-    connect(m_advanced_search_panel.get(),
-            &AdvancedSearchPanel::statusMessage,
+void MainWindow::wireEmailPanels() {
+    Q_ASSERT(m_email_inspector_panel);
+    connect(m_email_inspector_panel.get(),
+            &EmailInspectorPanel::statusMessage,
             this,
             [this](const QString& msg, int timeout_ms) {
                 updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
             });
-    connect(m_advanced_search_panel.get(),
-            &AdvancedSearchPanel::progressUpdate,
+    connect(m_email_inspector_panel.get(),
+            &EmailInspectorPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connectPanelLog(m_email_inspector_panel.get());
 }
 
-void MainWindow::connectManagementAndVulnerabilitySignals() {
+void MainWindow::wireAppManagementPanels() {
+    Q_ASSERT(m_app_installation_panel);
+    connect(m_app_installation_panel.get(),
+            &AppInstallationPanel::statusMessage,
+            this,
+            [this](const QString& msg, int timeout_ms) {
+                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
+            });
+    connect(m_app_installation_panel.get(),
+            &AppInstallationPanel::progressUpdated,
+            this,
+            &MainWindow::updateProgress);
     connect(m_advanced_uninstall_panel.get(),
             &AdvancedUninstallPanel::statusMessage,
             this,
@@ -1208,7 +1291,6 @@ void MainWindow::connectManagementAndVulnerabilitySignals() {
             &AdvancedUninstallPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
-
     connect(m_vulnerability_panel.get(),
             &VulnerabilityPanel::statusMessage,
             this,
@@ -1225,10 +1307,14 @@ void MainWindow::connectManagementAndVulnerabilitySignals() {
                 }
                 updateVulnerabilityStatusBarVisibility();
             });
+    connectPanelLog(m_app_installation_panel.get());
+    connectPanelLog(m_vulnerability_panel.get());
+    connectPanelLog(m_advanced_uninstall_panel.get());
     updateVulnerabilityStatusBarVisibility();
 }
 
-void MainWindow::connectNetworkAndEmailSignals() {
+void MainWindow::wireNetworkPanels() {
+    Q_ASSERT(m_network_diagnostic_panel);
     connect(m_network_diagnostic_panel.get(),
             &NetworkDiagnosticPanel::statusMessage,
             this,
@@ -1239,18 +1325,31 @@ void MainWindow::connectNetworkAndEmailSignals() {
             &NetworkDiagnosticPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
-
-    connect(m_email_inspector_panel.get(),
-            &EmailInspectorPanel::statusMessage,
-            this,
-            [this](const QString& msg, int timeout_ms) {
-                updateStatus(msg, timeout_ms > 0 ? timeout_ms : kDefaultPanelStatusTimeoutMs);
-            });
-    connect(m_email_inspector_panel.get(),
-            &EmailInspectorPanel::progressUpdate,
-            this,
-            &MainWindow::updateProgress);
+    connectPanelLog(m_network_diagnostic_panel.get());
+    if (m_wifi_manager_panel) {
+        connectPanelLog(m_wifi_manager_panel.get());
+    }
 }
+
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+void MainWindow::wireAiPanel() {
+    if (!m_ai_assistant_panel) {
+        return;
+    }
+    connect(m_ai_assistant_panel.get(),
+            &AiAssistantPanel::statusDetailsChanged,
+            this,
+            [this](const QString& details) {
+                if (m_ai_status_label) {
+                    m_ai_status_label->setText(details);
+                    m_ai_status_label->setToolTip(details);
+                }
+                updateAiStatusBarVisibility();
+            });
+    connectPanelLog(m_ai_assistant_panel.get());
+    updateAiStatusBarVisibility();
+}
+#endif
 
 bool MainWindow::isVulnerabilityPanelActive() const {
     return m_tab_widget && m_application_tabs && m_vulnerability_panel &&
@@ -1315,55 +1414,31 @@ int MainWindow::findPanelTabIndex(QWidget* panel) const {
     return -1;
 }
 
-void MainWindow::connectPanelLogs() {
+template <typename PanelT>
+void MainWindow::connectPanelLog(PanelT* panel) {
+    Q_ASSERT(panel);
+    Q_ASSERT(m_logWindow);
+    const int tabIdx = findPanelTabIndex(panel);
+    connect(panel, &PanelT::logOutput, this, [this, tabIdx](const QString& msg) {
+        const QString formatted = QDateTime::currentDateTime().toString("[HH:mm:ss] ") + msg;
+        appendLogIfActive(tabIdx, formatted);
+    });
+
+    auto* toggle = panel->logToggle();
+    if (toggle) {
+        connect(
+            toggle, &LogToggleSwitch::toggled, m_logWindow, &DetachableLogWindow::setLogVisible);
+        connect(m_logWindow,
+                &DetachableLogWindow::visibilityChanged,
+                toggle,
+                &LogToggleSwitch::setChecked);
+        attachThemeToggleToLogToggle(toggle);
+    }
+}
+
+void MainWindow::setupLogRouting() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(m_logWindow);
-
-    // Connect all panel log signals to the shared log window (panel-aware)
-    auto connectLog = [this](auto* panel) {
-        int tabIdx = findPanelTabIndex(panel);
-        connect(panel,
-                &std::remove_pointer_t<decltype(panel)>::logOutput,
-                this,
-                [this, tabIdx](const QString& msg) {
-                    QString formatted = QDateTime::currentDateTime().toString("[HH:mm:ss] ") + msg;
-                    appendLogIfActive(tabIdx, formatted);
-                });
-
-        auto* toggle = panel->logToggle();
-        if (toggle) {
-            connect(toggle,
-                    &LogToggleSwitch::toggled,
-                    m_logWindow,
-                    &DetachableLogWindow::setLogVisible);
-            connect(m_logWindow,
-                    &DetachableLogWindow::visibilityChanged,
-                    toggle,
-                    &LogToggleSwitch::setChecked);
-            attachThemeToggleToLogToggle(toggle);
-        }
-    };
-
-    connectLog(m_user_migration_panel.get());
-    connectLog(m_organizer_panel.get());
-    connectLog(m_app_installation_panel.get());
-    connectLog(m_vulnerability_panel.get());
-    connectLog(m_partition_manager_panel.get());
-    connectLog(m_image_flasher_panel.get());
-    connectLog(m_diagnostic_benchmark_panel.get());
-    connectLog(m_advanced_search_panel.get());
-    connectLog(m_advanced_uninstall_panel.get());
-    connectLog(m_network_diagnostic_panel.get());
-    connectLog(m_email_inspector_panel.get());
-#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    if (m_ai_assistant_panel) {
-        connectLog(m_ai_assistant_panel.get());
-    }
-#endif
-
-    if (m_wifi_manager_panel) {
-        connectLog(m_wifi_manager_panel.get());
-    }
 
     // Switch log content when tabs change
     connect(m_tab_widget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
@@ -1600,6 +1675,17 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     }
     // Scroll buttons may appear/disappear on resize
     QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (m_lazyDefaultBuilt) {
+        return;
+    }
+    m_lazyDefaultBuilt = true;
+    // Let the empty shell paint first, then build the initially-selected panel
+    // off the critical path so the window becomes visible immediately.
+    QTimer::singleShot(0, this, [this]() { materializeTab(m_tab_widget->currentIndex()); });
 }
 
 void MainWindow::applyTabBarChevrons() {

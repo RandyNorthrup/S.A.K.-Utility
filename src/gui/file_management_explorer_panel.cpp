@@ -439,6 +439,7 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
     m_tab_bar->setExpanding(false);
     m_tab_bar->setDrawBase(false);
     m_tab_bar->addTab(tr("New Tab"));
+    nameTabCloseButtons();
     row_layout->addWidget(m_tab_bar, 1);
 
     auto* new_tab = new QPushButton(tr("+"), row);
@@ -463,6 +464,23 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::openCurrentLocationInNewTab);
+}
+
+void FileManagementExplorerPanel::nameTabCloseButtons() {
+    if (!m_tab_bar) {
+        return;
+    }
+    // QTabBar creates its close buttons automatically once tabs are closable;
+    // give each an accessible name so screen readers and the audit can identify it.
+    for (int i = 0; i < m_tab_bar->count(); ++i) {
+        for (const auto side : {QTabBar::RightSide, QTabBar::LeftSide}) {
+            if (QWidget* button = m_tab_bar->tabButton(i, side)) {
+                button->setAccessibleName(tr("Close tab"));
+                button->setAccessibleDescription(
+                    tr("Close explorer tab: %1").arg(m_tab_bar->tabText(i)));
+            }
+        }
+    }
 }
 
 void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout* center_layout) {
@@ -2084,6 +2102,7 @@ void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
     fresh.title = tr("New Tab");
     m_tabs.append(fresh);
     m_tab_bar->addTab(fresh.title);
+    nameTabCloseButtons();
     m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
 }
 
