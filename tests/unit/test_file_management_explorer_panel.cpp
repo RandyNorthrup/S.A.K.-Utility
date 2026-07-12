@@ -1016,6 +1016,92 @@ private Q_SLOTS:
         QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
         QVERIFY(foundDisabledWithBlocker);
     }
+
+    void duplicateTabClonesCurrentTab() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* tabs = child<QTabBar>(&panel, "fileExplorerTabBar");
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(tabs);
+        QVERIFY(view);
+        QVERIFY(view->menu());
+        QCOMPARE(tabs->count(), 1);
+
+        QAction* duplicate = actionStartingWith(view->menu(), QStringLiteral("Duplicate Tab"));
+        QVERIFY(duplicate);
+        QVERIFY(duplicate->isEnabled());
+        duplicate->trigger();
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 2);
+    }
+
+    void reopenClosedTabRestoresLastClosedTab() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* tabs = child<QTabBar>(&panel, "fileExplorerTabBar");
+        auto* newTab = child<QPushButton>(&panel, "fileExplorerNewTabButton");
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(tabs);
+        QVERIFY(newTab);
+        QVERIFY(view);
+
+        // Reopen is disabled until a tab has actually been closed.
+        QVERIFY(
+            !actionStartingWith(view->menu(), QStringLiteral("Reopen Closed Tab"))->isEnabled());
+
+        newTab->click();
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 2);
+
+        QWidget* closeButton = tabs->tabButton(1, QTabBar::RightSide);
+        if (!closeButton) {
+            closeButton = tabs->tabButton(1, QTabBar::LeftSide);
+        }
+        QVERIFY(closeButton);
+        QTest::mouseClick(closeButton, Qt::LeftButton);
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 1);
+
+        // Run "Reopen Closed Tab" through the command palette (it now resolves to
+        // enabled from the live context) to restore the closed tab.
+        QTimer::singleShot(0, []() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* list =
+                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
+            auto* filter =
+                dialog->findChild<QLineEdit*>(QStringLiteral("fileExplorerCommandPaletteFilter"));
+            if (!list || !filter) {
+                dialog->reject();
+                return;
+            }
+            filter->setText(QStringLiteral("Reopen Closed Tab"));
+            QApplication::processEvents();
+            for (int i = 0; i < list->count(); ++i) {
+                QListWidgetItem* item = list->item(i);
+                if (item->text().startsWith(QStringLiteral("Reopen Closed Tab")) &&
+                    (item->flags() & Qt::ItemIsEnabled) != 0) {
+                    list->setCurrentItem(item);
+                    dialog->accept();
+                    return;
+                }
+            }
+            dialog->reject();
+        });
+
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 2);
+    }
 };
 
 QTEST_MAIN(FileManagementExplorerPanelTests)

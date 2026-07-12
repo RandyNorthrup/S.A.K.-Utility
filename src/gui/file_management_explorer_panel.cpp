@@ -674,6 +674,8 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::ViewColumns,
         FileExplorerCommandId::ViewAdaptive,
         FileExplorerCommandId::TogglePreviewPane,
+        FileExplorerCommandId::DuplicateTab,
+        FileExplorerCommandId::ReopenClosedTab,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -1270,6 +1272,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.pane.selection = currentSelection();
     context.can_create_tabs = true;
     context.can_use_dual_pane = true;
+    context.has_closed_tab = !m_closed_tabs.isEmpty();
     return context;
 }
 
@@ -1358,6 +1361,8 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
     addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::DuplicateTab, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::ReopenClosedTab, context);
 
     const FileExplorerCommandState detailsState =
         FileExplorerCommandRegistry::state(FileExplorerCommandId::ViewDetails, context);
@@ -1490,6 +1495,12 @@ bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
         return true;
     case FileExplorerCommandId::ToggleDualPane:
         toggleDualPane();
+        return true;
+    case FileExplorerCommandId::DuplicateTab:
+        duplicateCurrentTab();
+        return true;
+    case FileExplorerCommandId::ReopenClosedTab:
+        reopenClosedTab();
         return true;
     default:
         return false;
@@ -2106,10 +2117,29 @@ void FileManagementExplorerPanel::openCurrentLocationInNewTab() {
     m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
 }
 
+void FileManagementExplorerPanel::duplicateCurrentTab() {
+    if (!m_tab_bar || m_active_tab < 0 || m_active_tab >= m_tabs.size()) {
+        return;
+    }
+    // Sync the live pane into the active tab, then clone it verbatim (history + title).
+    m_tabs[m_active_tab] = captureCurrentTab();
+    const FileExplorerTabState copy = m_tabs.at(m_active_tab);
+    const int insert_at = m_active_tab + 1;
+    m_tabs.insert(insert_at, copy);
+    m_tab_bar->insertTab(insert_at, copy.title);
+    nameTabCloseButtons();
+    m_tab_bar->setCurrentIndex(insert_at);
+}
+
 void FileManagementExplorerPanel::onTabCloseRequested(int index) {
     if (!m_tab_bar || m_tabs.size() <= 1 || index < 0 || index >= m_tabs.size()) {
         return;
     }
+    // Capture the live pane if closing the active tab so a reopen is byte-accurate.
+    if (index == m_active_tab) {
+        m_tabs[index] = captureCurrentTab();
+    }
+    m_closed_tabs.append(m_tabs.at(index));
     const QSignalBlocker blocker(m_tab_bar);
     m_tabs.remove(index);
     m_tab_bar->removeTab(index);
@@ -2117,6 +2147,20 @@ void FileManagementExplorerPanel::onTabCloseRequested(int index) {
     if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
         restoreTab(m_tabs.at(m_active_tab));
     }
+}
+
+void FileManagementExplorerPanel::reopenClosedTab() {
+    if (!m_tab_bar || m_closed_tabs.isEmpty()) {
+        return;
+    }
+    if (m_active_tab >= 0 && m_active_tab < m_tabs.size()) {
+        m_tabs[m_active_tab] = captureCurrentTab();
+    }
+    const FileExplorerTabState tab = m_closed_tabs.takeLast();
+    m_tabs.append(tab);
+    m_tab_bar->addTab(tab.title);
+    nameTabCloseButtons();
+    m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
 }
 
 void FileManagementExplorerPanel::ensureSecondPane() {

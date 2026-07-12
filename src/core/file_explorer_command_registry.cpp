@@ -98,6 +98,30 @@ std::optional<FileExplorerCommandState> buildAvailabilityState(
     return std::nullopt;
 }
 
+// Tab-management commands act on the tab strip, independent of any target.
+std::optional<FileExplorerCommandState> tabManagementState(
+    const FileExplorerCommandId id,
+    const FileExplorerCommandContext& context,
+    const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id == DuplicateTab) {
+        return context.can_create_tabs
+                   ? enabledState(entry)
+                   : disabledState(entry,
+                                   QStringLiteral("Explorer tabs are unavailable in this build."));
+    }
+    if (id == ReopenClosedTab) {
+        if (!context.can_create_tabs) {
+            return disabledState(entry,
+                                 QStringLiteral("Explorer tabs are unavailable in this build."));
+        }
+        return context.has_closed_tab
+                   ? enabledState(entry)
+                   : disabledState(entry, QStringLiteral("No recently closed tab to reopen."));
+    }
+    return std::nullopt;
+}
+
 // Navigation commands resolve from pane history/location independent of selection.
 std::optional<FileExplorerCommandState> navigationOverrideState(
     const FileExplorerCommandId id,
@@ -314,6 +338,14 @@ QVector<FileExplorerCommand> viewCommands() {
                     QStringLiteral("Dual Pane"),
                     QStringLiteral("Toggle dual-pane explorer layout."),
                     QStringLiteral("Ctrl+Alt+D")),
+        makeCommand(FileExplorerCommandId::DuplicateTab,
+                    QStringLiteral("Duplicate Tab"),
+                    QStringLiteral("Open a copy of the current tab."),
+                    QStringLiteral("Ctrl+Shift+K")),
+        makeCommand(FileExplorerCommandId::ReopenClosedTab,
+                    QStringLiteral("Reopen Closed Tab"),
+                    QStringLiteral("Reopen the most recently closed tab."),
+                    QStringLiteral("Ctrl+Shift+T")),
     };
 }
 
@@ -343,6 +375,9 @@ FileExplorerCommandState FileExplorerCommandRegistry::state(
     const FileExplorerCommand entry = command(id);
     if (const auto availability = buildAvailabilityState(id, context, entry)) {
         return *availability;
+    }
+    if (const auto tabs = tabManagementState(id, context, entry)) {
+        return *tabs;
     }
     if (const auto navigation = navigationOverrideState(id, context, entry)) {
         return *navigation;
@@ -391,6 +426,8 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::ViewAdaptive, "view-adaptive"},
         {Id::TogglePreviewPane, "toggle-preview-pane"},
         {Id::ToggleDualPane, "toggle-dual-pane"},
+        {Id::DuplicateTab, "duplicate-tab"},
+        {Id::ReopenClosedTab, "reopen-closed-tab"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

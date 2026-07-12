@@ -166,6 +166,8 @@ private:
     void restoreTab(const FileExplorerTabState& tab);
     void updateActiveTabLabel();
     void openCurrentLocationInNewTab();
+    void duplicateCurrentTab();
+    void reopenClosedTab();
     void onTabSwitched(int index);
     void onTabCloseRequested(int index);
     [[nodiscard]] int findTargetIndexById(const QString& target_id) const;
@@ -231,6 +233,7 @@ private:
     // pane state. m_active_tab indexes the visible tab; m_restoring_tab suppresses the tab-switch
     // save/restore while a restore is already in flight.
     QVector<FileExplorerTabState> m_tabs;
+    QVector<FileExplorerTabState> m_closed_tabs;  ///< LIFO stack of closed tabs for reopen.
     int m_active_tab{0};
     bool m_restoring_tab{false};
 };

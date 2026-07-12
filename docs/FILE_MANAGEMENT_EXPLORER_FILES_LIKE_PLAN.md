@@ -371,6 +371,8 @@ Implemented command registry:
 - Open.
 - Open in new tab.
 - Open in second pane.
+- Duplicate tab.
+- Reopen closed tab.
 - Back / Forward / Up / Home.
 - Refresh.
 - Copy path.
@@ -1216,20 +1218,21 @@ Status: substantially implemented and now test-covered. The tab strip
 (new/close/switch with per-tab `FileExplorerTabState`) and dual pane (toggle,
 active-pane highlight, open-in-second-pane, independent per-pane
 target/path/history, command routing to the active pane) work and have unit/GUI
-tests. Remaining genuine gaps: duplicate tab, closed-tab restore, cross-restart
-tab persistence, horizontal split, per-pane view mode re-application, active-pane
-status summary, and the open-in-second-pane / active-pane-routing GUI test lanes.
+tests, and duplicate tab / closed-tab restore now ship as registry commands.
+Remaining genuine gaps: cross-restart tab persistence, horizontal split, per-pane
+view mode re-application, active-pane status summary, and the open-in-second-pane
+/ active-pane-routing GUI test lanes.
 
 Tabs checklist:
 
 - [x] Add explorer tab strip inside File Explorer tab. (`explorerTabsOpenAndSwitch`)
 - [x] Add new tab button. (`explorerTabsOpenAndSwitch`)
 - [x] Add close tab. (`explorerTabCloseRemovesTabKeepingLast`)
-- [ ] Add duplicate tab. (no dedicated duplicate action yet; the "+" button clones the current location)
+- [x] Add duplicate tab. (`DuplicateTab` command; `duplicateTabClonesCurrentTab`)
 - [x] Add open target in new tab. (`OpenInNewTab` command -> `openCurrentLocationInNewTab`)
 - [x] Add open folder in new tab. (same route when a directory is selected)
 - [ ] Add active tab state persistence. (per-tab state survives switching in memory; cross-restart persistence not implemented)
-- [ ] Add closed-tab restore; M8 remains open until the action is real or removed from visible UI.
+- [x] Add closed-tab restore. (`ReopenClosedTab` command; `reopenClosedTabRestoresLastClosedTab`)
 - [x] Ensure File Management outer tabs remain unaffected. (explorer uses its own inner `QTabBar`)
 
 Dual-pane checklist:
@@ -1248,7 +1251,7 @@ Tests:
 
 - [ ] Unit tab session serialization. (no tab-list serialization API exists yet)
 - [x] Unit pane state isolation. (`dualPaneStatesTrackIndependentHistories`)
-- [ ] GUI create/close/duplicate tab. (create + close covered by `explorerTabsOpenAndSwitch` / `explorerTabCloseRemovesTabKeepingLast`; duplicate pending)
+- [x] GUI create/close/duplicate tab. (`explorerTabsOpenAndSwitch`, `explorerTabCloseRemovesTabKeepingLast`, `duplicateTabClonesCurrentTab`)
 - [x] GUI dual-pane toggle. (`dualPaneToggleAddsSecondPane`)
 - [ ] GUI open folder in second pane. (needs a selected directory / live target)
 - [ ] GUI command affects active pane only.
