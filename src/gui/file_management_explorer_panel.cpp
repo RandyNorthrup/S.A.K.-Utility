@@ -490,7 +490,9 @@ void FileManagementExplorerPanel::setupUi() {
 
     buildCommandAndNavBars(center, centerLayout);
     buildContentArea(center, centerLayout);
-    buildStatusRow(layout);
+    // Files puts the status bar INSIDE the content column (MainPage.xaml
+    // InnerContent row 5), not across the sidebar.
+    buildStatusRow(centerLayout);
 
     connectUiSignals();
     installCommandShortcuts();
@@ -603,13 +605,65 @@ void FileManagementExplorerPanel::buildStatusRow(QVBoxLayout* root_layout) {
         ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     row_layout->setSpacing(ui::kSpacingSmall);
 
+    // Files StatusBar.xaml col0: item count | selected count | selection size.
+    m_items_count_label = new QLabel(row);
+    m_items_count_label->setObjectName(QStringLiteral("fileExplorerItemsCountLabel"));
+    m_items_count_label->setAccessibleName(tr("Folder item count"));
+    row_layout->addWidget(m_items_count_label, 0);
+
+    m_selection_count_label = new QLabel(row);
+    m_selection_count_label->setObjectName(QStringLiteral("fileExplorerSelectionCountLabel"));
+    m_selection_count_label->setAccessibleName(tr("Selected item count and size"));
+    m_selection_count_label->setVisible(false);
+    row_layout->addWidget(m_selection_count_label, 0);
+
     m_summary_label = new QLabel(tr("No target selected"), row);
     m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
     m_summary_label->setWordWrap(false);
     m_summary_label->setAccessibleName(tr("Explorer target summary"));
-    row_layout->addWidget(m_summary_label, 1);
+    row_layout->addStretch(1);
+    row_layout->addWidget(m_summary_label, 0);
 
     root_layout->addWidget(row, 0);
+}
+
+namespace {
+
+// Sums the byte sizes of the selected FILE rows (directories excluded),
+// mirroring the Files status-bar ItemSize readout.
+uint64_t selectedFileBytes(FileExplorerPane* pane, const QModelIndexList& rows) {
+    uint64_t bytes = 0;
+    for (const QModelIndex& row : rows) {
+        const FileManagementEntry entry = pane->entryAtViewRow(row.row());
+        if (!entry.directory) {
+            bytes += entry.size_bytes;
+        }
+    }
+    return bytes;
+}
+
+}  // namespace
+
+void FileManagementExplorerPanel::updateStatusCounts() {
+    if (!m_items_count_label || !m_selection_count_label) {
+        return;
+    }
+    const int item_count =
+        (m_pane && m_pane->sortFilterModel()) ? m_pane->sortFilterModel()->rowCount() : 0;
+    m_items_count_label->setText(tr("%n item(s)", nullptr, item_count));
+
+    const QModelIndexList rows = (m_pane && m_pane->sharedSelectionModel())
+                                     ? m_pane->sharedSelectionModel()->selectedRows()
+                                     : QModelIndexList{};
+    if (!rows.isEmpty()) {
+        QString text = tr("%n item(s) selected", nullptr, static_cast<int>(rows.size()));
+        const uint64_t selected_bytes = selectedFileBytes(m_pane, rows);
+        if (selected_bytes > 0) {
+            text += QStringLiteral("   %1").arg(FileExplorerItemModel::sizeText(selected_bytes));
+        }
+        m_selection_count_label->setText(text);
+    }
+    m_selection_count_label->setVisible(!rows.isEmpty());
 }
 
 void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
@@ -618,6 +672,23 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
     auto* row_layout = new QHBoxLayout(row);
     row_layout->setContentsMargins(0, 0, 0, 0);
     row_layout->setSpacing(ui::kSpacingTight);
+
+    // Files TabBar.xaml TabStripHeader: a 30x30 tab-actions button LEFT of
+    // the tabs (pane split/arrange/close menu), rebuilt on open.
+    auto* tab_actions = new QToolButton(row);
+    tab_actions->setObjectName(QStringLiteral("fileExplorerTabActionsButton"));
+    tab_actions->setIcon(FileExplorerIconRegistry::iconForKey(QStringLiteral("dual-pane")));
+    tab_actions->setPopupMode(QToolButton::InstantPopup);
+    tab_actions->setAccessibleName(tr("Tab actions menu"));
+    tab_actions->setToolTip(tr("Split, arrange, or close panes"));
+    tab_actions->setFixedSize(ui::kUiButtonHeightMini, ui::kUiButtonHeightMini);
+    auto* tab_actions_menu = new QMenu(tab_actions);
+    tab_actions_menu->setObjectName(QStringLiteral("fileExplorerTabActionsMenu"));
+    tab_actions->setMenu(tab_actions_menu);
+    connect(tab_actions_menu, &QMenu::aboutToShow, this, [this, tab_actions_menu]() {
+        rebuildTabActionsMenu(tab_actions_menu);
+    });
+    row_layout->addWidget(tab_actions, 0);
 
     m_tab_bar = new QTabBar(row);
     m_tab_bar->setObjectName(QStringLiteral("fileExplorerTabBar"));
@@ -654,6 +725,108 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::openCurrentLocationInNewTab);
+    // Files TabBar.xaml TabFlyout: right-click menu on a tab.
+    m_tab_bar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tab_bar, &QWidget::customContextMenuRequested, this, [this](const QPoint& point) {
+        showTabContextMenu(point);
+    });
+}
+
+void FileManagementExplorerPanel::rebuildTabActionsMenu(QMenu* menu) {
+    if (!menu) {
+        return;
+    }
+    menu->clear();
+    // Files tab-actions flyout: split pane V/H, arrange panes V/H, close pane.
+    menu->addAction(tr("Split pane vertically"), this, [this]() { splitPane(Qt::Horizontal); });
+    menu->addAction(tr("Split pane horizontally"), this, [this]() { splitPane(Qt::Vertical); });
+    menu->addSeparator();
+    const bool splitter_horizontal = m_pane_splitter &&
+                                     m_pane_splitter->orientation() == Qt::Horizontal;
+    QAction* arrange_vertical = menu->addAction(tr("Arrange panes vertically"));
+    arrange_vertical->setCheckable(true);
+    arrange_vertical->setChecked(m_dual_pane_enabled && splitter_horizontal);
+    arrange_vertical->setEnabled(m_dual_pane_enabled);
+    connect(arrange_vertical, &QAction::triggered, this, [this]() {
+        if (m_pane_splitter) {
+            m_pane_splitter->setOrientation(Qt::Horizontal);
+        }
+    });
+    QAction* arrange_horizontal = menu->addAction(tr("Arrange panes horizontally"));
+    arrange_horizontal->setCheckable(true);
+    arrange_horizontal->setChecked(m_dual_pane_enabled && !splitter_horizontal);
+    arrange_horizontal->setEnabled(m_dual_pane_enabled);
+    connect(arrange_horizontal, &QAction::triggered, this, [this]() {
+        if (m_pane_splitter) {
+            m_pane_splitter->setOrientation(Qt::Vertical);
+        }
+    });
+    menu->addSeparator();
+    QAction* close_pane = menu->addAction(tr("Close pane"));
+    close_pane->setEnabled(m_dual_pane_enabled);
+    connect(close_pane, &QAction::triggered, this, [this]() {
+        if (m_dual_pane_enabled) {
+            toggleDualPane();
+        }
+    });
+}
+
+void FileManagementExplorerPanel::splitPane(const Qt::Orientation orientation) {
+    if (!m_dual_pane_enabled) {
+        toggleDualPane();
+    }
+    if (m_pane_splitter) {
+        m_pane_splitter->setOrientation(orientation);
+    }
+}
+
+void FileManagementExplorerPanel::showTabContextMenu(const QPoint& point) {
+    if (!m_tab_bar) {
+        return;
+    }
+    const int index = m_tab_bar->tabAt(point);
+    QMenu menu(this);
+    menu.setObjectName(QStringLiteral("fileExplorerTabContextMenu"));
+    // Files TabFlyout order (TabBar.xaml 21-58); "Move tab to new window" is
+    // EXCLUDED (the explorer is a tab inside the S.A.K. shell).
+    menu.addAction(tr("New tab"), this, &FileManagementExplorerPanel::openCurrentLocationInNewTab);
+    QAction* duplicate = menu.addAction(tr("Duplicate tab"), this, [this]() {
+        executeCommand(FileExplorerCommandId::DuplicateTab);
+    });
+    duplicate->setEnabled(index >= 0);
+    menu.addSeparator();
+    QAction* close_left = menu.addAction(tr("Close tabs to the left"), this, [this, index]() {
+        closeTabsRelative(index, -1);
+    });
+    close_left->setEnabled(index > 0);
+    QAction* close_right = menu.addAction(tr("Close tabs to the right"), this, [this, index]() {
+        closeTabsRelative(index, 1);
+    });
+    close_right->setEnabled(index >= 0 && index < m_tab_bar->count() - 1);
+    QAction* close_others = menu.addAction(tr("Close other tabs"), this, [this, index]() {
+        closeTabsRelative(index, 0);
+    });
+    close_others->setEnabled(index >= 0 && m_tab_bar->count() > 1);
+    menu.addSeparator();
+    QAction* reopen = menu.addAction(tr("Reopen tab"), this, [this]() {
+        executeCommand(FileExplorerCommandId::ReopenClosedTab);
+    });
+    reopen->setEnabled(!m_closed_tabs.isEmpty());
+    menu.exec(m_tab_bar->mapToGlobal(point));
+}
+
+void FileManagementExplorerPanel::closeTabsRelative(const int index, const int direction) {
+    if (!m_tab_bar || index < 0) {
+        return;
+    }
+    // Close from the highest index down so remaining indices stay valid.
+    for (int i = m_tab_bar->count() - 1; i >= 0; --i) {
+        const bool close = (direction < 0 && i < index) || (direction > 0 && i > index) ||
+                           (direction == 0 && i != index);
+        if (close) {
+            onTabCloseRequested(i);
+        }
+    }
 }
 
 void FileManagementExplorerPanel::nameTabCloseButtons() {
@@ -3223,6 +3396,7 @@ void FileManagementExplorerPanel::updateActionButtons() {
                           context);
     }
     rebuildViewMenu(context);
+    updateStatusCounts();
     updateDetailsPane();
 }
 

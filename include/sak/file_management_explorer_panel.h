@@ -99,6 +99,15 @@ private:
     /// Sort flyout (Files ArrangementOptions): sort-by + direction.
     void rebuildSortMenu(QMenu* menu);
     void applySortOrder(int column, Qt::SortOrder order);
+    /// Tab-actions flyout (Files TabStripHeader): split/arrange/close pane.
+    void rebuildTabActionsMenu(QMenu* menu);
+    void splitPane(Qt::Orientation orientation);
+    /// Tab right-click menu (Files TabFlyout).
+    void showTabContextMenu(const QPoint& point);
+    /// direction: -1 close left of index, +1 close right, 0 close others.
+    void closeTabsRelative(int index, int direction);
+    /// Files status bar col0: "N items | N selected | size".
+    void updateStatusCounts();
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();
@@ -310,6 +319,8 @@ private:
     QPushButton* m_delete_button{nullptr};
     QToolButton* m_view_button{nullptr};
     QLabel* m_summary_label{nullptr};
+    QLabel* m_items_count_label{nullptr};
+    QLabel* m_selection_count_label{nullptr};
     QLabel* m_status_label{nullptr};
     QPlainTextEdit* m_preview_text{nullptr};
     QPlainTextEdit* m_properties_text{nullptr};
