@@ -154,6 +154,40 @@ private Q_SLOTS:
         QCOMPARE(pane.location.path, QStringLiteral("/Users"));
     }
 
+    void dualPaneStatesTrackIndependentHistories() {
+        // Each explorer pane owns a full FileExplorerPaneState; navigating one
+        // must never disturb the other (the basis for dual-pane isolation).
+        sak::FileExplorerPaneState left;
+        sak::FileExplorerPaneState right;
+
+        sak::FileExplorerLocation la;
+        la.target_id.value = QStringLiteral("raw:left");
+        la.path = QStringLiteral("/");
+        sak::FileExplorerLocation la2 = la;
+        la2.path = QStringLiteral("/one");
+
+        sak::FileExplorerLocation rb;
+        rb.target_id.value = QStringLiteral("raw:right");
+        rb.path = QStringLiteral("/");
+        sak::FileExplorerLocation rb2 = rb;
+        rb2.path = QStringLiteral("/two");
+
+        left.navigateTo(la, false);
+        left.navigateTo(la2, false);
+        right.navigateTo(rb, false);
+        right.navigateTo(rb2, false);
+
+        QCOMPARE(left.location.path, QStringLiteral("/one"));
+        QCOMPARE(right.location.path, QStringLiteral("/two"));
+
+        // Going back in the left pane leaves the right pane untouched.
+        QVERIFY(left.goBack());
+        QCOMPARE(left.location.path, QStringLiteral("/"));
+        QCOMPARE(right.location.path, QStringLiteral("/two"));
+        QCOMPARE(left.location.target_id.value, QStringLiteral("raw:left"));
+        QCOMPARE(right.location.target_id.value, QStringLiteral("raw:right"));
+    }
+
     void selectionSummariesExposeItemShape() {
         sak::FileExplorerSelection selection;
         selection.entries.append(selectedFile());
@@ -284,7 +318,10 @@ private Q_SLOTS:
         }
     }
 
-    void registryKeepsFutureTabsAndDualPaneFeatureGated() {
+    void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
+        // Tabs and dual pane are shipped features, but the registry still exposes
+        // a build-availability gate: when a host reports it cannot host tabs or a
+        // second pane, the commands must disable with a clear reason.
         auto context = contextFor(writableLocalTarget(), true);
 
         const auto new_tab = sak::FileExplorerCommandRegistry::state(

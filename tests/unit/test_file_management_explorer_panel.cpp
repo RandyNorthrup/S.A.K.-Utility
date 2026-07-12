@@ -887,6 +887,135 @@ private Q_SLOTS:
         QVERIFY(paletteSeen);
         QVERIFY(listSeen);
     }
+
+    void explorerTabCloseRemovesTabKeepingLast() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* tabs = child<QTabBar>(&panel, "fileExplorerTabBar");
+        auto* newTab = child<QPushButton>(&panel, "fileExplorerNewTabButton");
+        QVERIFY(tabs);
+        QVERIFY(newTab);
+
+        newTab->click();
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 2);
+
+        // Close the second tab through its auto-generated close button.
+        QWidget* closeButton = tabs->tabButton(1, QTabBar::RightSide);
+        if (!closeButton) {
+            closeButton = tabs->tabButton(1, QTabBar::LeftSide);
+        }
+        QVERIFY(closeButton);
+        QTest::mouseClick(closeButton, Qt::LeftButton);
+        QApplication::processEvents();
+        QCOMPARE(tabs->count(), 1);
+
+        // Closing the final tab is refused so the explorer always has one tab.
+        QWidget* lastClose = tabs->tabButton(0, QTabBar::RightSide);
+        if (!lastClose) {
+            lastClose = tabs->tabButton(0, QTabBar::LeftSide);
+        }
+        if (lastClose) {
+            QTest::mouseClick(lastClose, Qt::LeftButton);
+            QApplication::processEvents();
+        }
+        QCOMPARE(tabs->count(), 1);
+    }
+
+    void dualPaneToggleAddsSecondPane() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1200, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view);
+        QVERIFY(view->menu());
+
+        QAction* dualPane = actionStartingWith(view->menu(), QStringLiteral("Dual Pane"));
+        QVERIFY(dualPane);
+        QVERIFY(dualPane->isEnabled());
+
+        QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 1);
+        dualPane->trigger();
+        QApplication::processEvents();
+        QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+    }
+
+    void commandPaletteFilterNarrowsCommandList() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        int fullCount = -1;
+        int filteredCount = -1;
+        QTimer::singleShot(0, [&fullCount, &filteredCount]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* list =
+                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
+            auto* filter =
+                dialog->findChild<QLineEdit*>(QStringLiteral("fileExplorerCommandPaletteFilter"));
+            if (!list || !filter) {
+                dialog->reject();
+                return;
+            }
+            fullCount = list->count();
+            filter->setText(QStringLiteral("Delete"));
+            QApplication::processEvents();
+            filteredCount = list->count();
+            dialog->reject();
+        });
+
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(fullCount > 0);
+        QVERIFY(filteredCount > 0);
+        QVERIFY(filteredCount < fullCount);
+    }
+
+    void commandPaletteMarksDisabledCommandWithBlocker() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        // With no target selected, write/selection commands are disabled and must
+        // carry their blocker text inline and in the tooltip, never silently.
+        bool foundDisabledWithBlocker = false;
+        QTimer::singleShot(0, [&foundDisabledWithBlocker]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* list =
+                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
+            if (!list) {
+                dialog->reject();
+                return;
+            }
+            for (int i = 0; i < list->count(); ++i) {
+                const QListWidgetItem* item = list->item(i);
+                const bool enabled = (item->flags() & Qt::ItemIsEnabled) != 0;
+                if (!enabled && item->text().contains(QStringLiteral(" - ")) &&
+                    !item->toolTip().isEmpty()) {
+                    foundDisabledWithBlocker = true;
+                    break;
+                }
+            }
+            dialog->reject();
+        });
+
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(foundDisabledWithBlocker);
+    }
 };
 
 QTEST_MAIN(FileManagementExplorerPanelTests)

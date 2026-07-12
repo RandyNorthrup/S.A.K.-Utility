@@ -1153,42 +1153,53 @@ Exit gate:
 
 Goal: make the right pane useful and remove modal-only preview as primary flow.
 
+Status: substantially implemented. The persistent right pane has all four tabs
+and auto-populates on selection: text/hex/image preview with a 1 MiB read cap and
+an explicit blocker/hint, a Properties block, a Safety block (write/read/browse
+state, per-command availability, raw-target advisory), and an Evidence block
+(target id/source, last-mutation path/result/bytes/SHA-256/warnings). Genuine
+remaining gaps: hash-on-demand for the selected file, file-system-labelled
+properties (only a generic Identifier is surfaced today), HFS+ fork/resource and
+APFS extent summaries (the bridge entry struct has no such fields yet), evidence
+report file links, and file-system-specific "why blocked" wording in Safety.
+Preview reads currently run synchronously on the UI thread under the 1 MiB cap.
+
 Checklist:
 
-- [ ] Add Preview tab.
-- [ ] Add Properties tab.
-- [ ] Add Safety tab.
-- [ ] Add Evidence tab.
-- [ ] Add text preview with read cap.
-- [ ] Add hex preview for binary files.
-- [ ] Add local image preview.
-- [ ] Add raw-readable image preview if read cap and decoder are safe.
-- [ ] Add unsupported preview blocker.
+- [x] Add Preview tab. (`verifyShellDetailsAndPreviewPanes`)
+- [x] Add Properties tab. (`verifyShellDetailsAndPreviewPanes`)
+- [x] Add Safety tab. (`verifyShellDetailsAndPreviewPanes`)
+- [x] Add Evidence tab. (`verifyShellDetailsAndPreviewPanes`)
+- [x] Add text preview with read cap. (`renderPreviewDecodesTextAndDumpsBinary`; cap `kExplorerPreviewMaxBytes` = 1 MiB)
+- [x] Add hex preview for binary files. (`renderPreviewDecodesTextAndDumpsBinary`, `renderPreviewHexDumpCapsLargeBinary`)
+- [x] Add local image preview. (`detailsPanePreviewSwitchesBetweenTextAndImage`; `renderPreviewForEntry`)
+- [x] Add raw-readable image preview if read cap and decoder are safe. (same route through capped `readFile`)
+- [x] Add unsupported preview blocker. (`verifyShellDetailsAndPreviewPanes` asserts a non-empty hint)
 - [ ] Add hash-on-demand command.
-- [ ] Add file-system-specific metadata.
+- [ ] Add file-system-specific metadata. (only a generic Identifier field today)
 - [ ] Add HFS+ fork/resource/attribute summary where reader exposes it.
 - [ ] Add APFS object/extent summary where reader exposes it.
-- [ ] Add target write state.
-- [ ] Add allowed/blocked command list.
-- [ ] Add evidence report links/paths where known.
-- [ ] Add last operation result with hashes and warnings.
+- [x] Add target write state. (`targetSelectionFeedsOmnibarAndSafetyPane`)
+- [x] Add allowed/blocked command list. (`buildDetailsSafety` per-command availability)
+- [ ] Add evidence report links/paths where known. (only the last-operation path today)
+- [x] Add last operation result with hashes and warnings. (`buildDetailsEvidence`)
 
 Safety pane checklist:
 
-- [ ] Shows raw target identity.
-- [ ] Shows file system.
-- [ ] Shows write capability.
-- [ ] Shows why APFS large target is read-only.
-- [ ] Shows why arbitrary APFS is read-only.
-- [ ] Shows why XFS/Btrfs browse/write is blocked.
-- [ ] Shows destructive-operation confirmation requirements.
+- [ ] Shows raw target identity. (advisory shown; the id/root string lives in Properties/Evidence)
+- [ ] Shows file system. (shown in Properties/status label, not in the Safety block)
+- [x] Shows write capability.
+- [ ] Shows why APFS large target is read-only. (generic not-created-by-this-tool blocker, no size-specific wording)
+- [ ] Shows why arbitrary APFS is read-only. (same generic blocker)
+- [ ] Shows why XFS/Btrfs browse/write is blocked. (generic no-reader blocker, not XFS/Btrfs-specific)
+- [x] Shows destructive-operation confirmation requirements.
 
 Tests:
 
-- [ ] Unit preview cap test.
-- [ ] GUI preview text file.
-- [ ] GUI preview binary hex.
-- [ ] GUI properties for local file.
+- [x] Unit preview cap test. (`renderPreviewHexDumpCapsLargeBinary`)
+- [ ] GUI preview text file. (needs a live/local target)
+- [x] GUI preview binary hex. (`renderPreviewDecodesTextAndDumpsBinary`, bridge-level)
+- [ ] GUI properties for local file. (needs a live/local target)
 - [ ] GUI safety pane for ext4, HFS, APFS generated-layout, APFS large/arbitrary, XFS/Btrfs.
 - [ ] Evidence path rendering test.
 
@@ -1201,44 +1212,45 @@ Exit gate:
 
 Goal: add Files-style multitasking.
 
-Status: partially implemented in the shell. The tab strip (new/close/switch with
-per-tab `FileExplorerTabState`) and dual pane (toggle, active-pane highlight,
-open-in-second-pane, independent per-pane target/path/history, command routing to
-the active pane) already work. The boxes below stay unchecked until the remaining
-items (duplicate tab, closed-tab restore, cross-restart persistence, per-pane view
-mode, active-pane status summary) and the M8 unit/GUI test lanes land.
+Status: substantially implemented and now test-covered. The tab strip
+(new/close/switch with per-tab `FileExplorerTabState`) and dual pane (toggle,
+active-pane highlight, open-in-second-pane, independent per-pane
+target/path/history, command routing to the active pane) work and have unit/GUI
+tests. Remaining genuine gaps: duplicate tab, closed-tab restore, cross-restart
+tab persistence, horizontal split, per-pane view mode re-application, active-pane
+status summary, and the open-in-second-pane / active-pane-routing GUI test lanes.
 
 Tabs checklist:
 
-- [ ] Add explorer tab strip inside File Explorer tab.
-- [ ] Add new tab button.
-- [ ] Add close tab.
-- [ ] Add duplicate tab.
-- [ ] Add open target in new tab.
-- [ ] Add open folder in new tab.
-- [ ] Add active tab state persistence.
+- [x] Add explorer tab strip inside File Explorer tab. (`explorerTabsOpenAndSwitch`)
+- [x] Add new tab button. (`explorerTabsOpenAndSwitch`)
+- [x] Add close tab. (`explorerTabCloseRemovesTabKeepingLast`)
+- [ ] Add duplicate tab. (no dedicated duplicate action yet; the "+" button clones the current location)
+- [x] Add open target in new tab. (`OpenInNewTab` command -> `openCurrentLocationInNewTab`)
+- [x] Add open folder in new tab. (same route when a directory is selected)
+- [ ] Add active tab state persistence. (per-tab state survives switching in memory; cross-restart persistence not implemented)
 - [ ] Add closed-tab restore; M8 remains open until the action is real or removed from visible UI.
-- [ ] Ensure File Management outer tabs remain unaffected.
+- [x] Ensure File Management outer tabs remain unaffected. (explorer uses its own inner `QTabBar`)
 
 Dual-pane checklist:
 
-- [ ] Add second pane toggle.
-- [ ] Add vertical split.
-- [ ] Add horizontal split if practical.
-- [ ] Add active pane highlight.
-- [ ] Add open folder in second pane.
-- [ ] Add independent target/path/history per pane.
-- [ ] Add independent view mode per pane.
-- [ ] Add command routing to active pane.
-- [ ] Add status bar active pane summary.
+- [x] Add second pane toggle. (`dualPaneToggleAddsSecondPane`)
+- [x] Add vertical split. (`m_pane_splitter` side-by-side)
+- [ ] Add horizontal split if practical. (splitter orientation fixed; `FileExplorerPaneSplit` scaffolding unused)
+- [x] Add active pane highlight. (`highlightActivePane`)
+- [x] Add open folder in second pane. (`OpenInSecondPane` command -> `openSelectionInSecondPane`)
+- [x] Add independent target/path/history per pane. (`dualPaneStatesTrackIndependentHistories`)
+- [ ] Add independent view mode per pane. (view mode is per-widget/incidental, not re-applied on pane activation)
+- [x] Add command routing to active pane. (active pane repointed on `activatePane`)
+- [ ] Add status bar active pane summary. (status reflects the active pane only, no both-pane summary)
 
 Tests:
 
-- [ ] Unit tab session serialization.
-- [ ] Unit pane state isolation.
-- [ ] GUI create/close/duplicate tab.
-- [ ] GUI dual-pane toggle.
-- [ ] GUI open folder in second pane.
+- [ ] Unit tab session serialization. (no tab-list serialization API exists yet)
+- [x] Unit pane state isolation. (`dualPaneStatesTrackIndependentHistories`)
+- [ ] GUI create/close/duplicate tab. (create + close covered by `explorerTabsOpenAndSwitch` / `explorerTabCloseRemovesTabKeepingLast`; duplicate pending)
+- [x] GUI dual-pane toggle. (`dualPaneToggleAddsSecondPane`)
+- [ ] GUI open folder in second pane. (needs a selected directory / live target)
 - [ ] GUI command affects active pane only.
 
 Exit gate:
@@ -1324,11 +1336,11 @@ Command palette checklist:
 
 Tests:
 
-- [ ] Unit command palette filter.
-- [x] GUI `Ctrl+Shift+P` opens palette.
-- [ ] GUI disabled command shows blocker.
-- [x] GUI `Ctrl+F` filters current folder.
-- [ ] GUI raw search uses existing supported target path.
+- [x] Unit command palette filter. (`commandPaletteFilterNarrowsCommandList`)
+- [x] GUI `Ctrl+Shift+P` opens palette. (`commandPaletteShortcutOpensRegistryBackedDialog`)
+- [x] GUI disabled command shows blocker. (`commandPaletteMarksDisabledCommandWithBlocker`)
+- [x] GUI `Ctrl+F` filters current folder. (`searchShortcutAppliesCurrentFolderFilter`)
+- [ ] GUI raw search uses existing supported target path. (richer omnibar search not implemented)
 
 Exit gate:
 
