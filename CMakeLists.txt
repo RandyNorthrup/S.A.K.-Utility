@@ -346,6 +346,7 @@ set(CORE_SOURCES
     src/core/file_explorer_item_model.cpp
     src/core/file_explorer_sort_filter_model.cpp
     src/core/file_explorer_command_registry.cpp
+    src/core/file_explorer_session_store.cpp
     src/core/file_management_file_system.cpp
     src/core/apfs_crypto.cpp
     src/core/apfs_keybag.cpp
@@ -437,6 +438,7 @@ set(CORE_SOURCES
     include/sak/file_explorer_item_model.h
     include/sak/file_explorer_sort_filter_model.h
     include/sak/file_explorer_command_registry.h
+    include/sak/file_explorer_session_store.h
     include/sak/file_management_file_system.h
     include/sak/partition_apfs_file_system_reader.h
     include/sak/partition_apfs_writer.h

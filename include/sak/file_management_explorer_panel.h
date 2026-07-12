@@ -42,6 +42,12 @@ class FileManagementExplorerPanel : public QWidget {
 
 public:
     explicit FileManagementExplorerPanel(QWidget* parent = nullptr);
+    ~FileManagementExplorerPanel() override;
+
+    /// Turn on cross-restart tab persistence and immediately restore any saved
+    /// session. Off by default so headless/unit construction never reads or
+    /// writes the shared session store. The owning panel calls this once.
+    void enableTabSessionPersistence();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -175,6 +181,8 @@ private:
     void onTabSwitched(int index);
     void onTabCloseRequested(int index);
     [[nodiscard]] int findTargetIndexById(const QString& target_id) const;
+    void saveTabSession() const;
+    void restoreTabSession();
 
     FileExplorerSidebar* m_sidebar{nullptr};
     QTabBar* m_tab_bar{nullptr};
@@ -190,6 +198,7 @@ private:
     FileExplorerPaneState m_secondary_state;
     int m_active_pane_index{0};
     bool m_dual_pane_enabled{false};
+    bool m_tab_session_persistence{false};
     FileExplorerDetailsPane* m_details_pane{nullptr};
     QListWidget* m_target_list{nullptr};
     QSplitter* m_shell_splitter{nullptr};

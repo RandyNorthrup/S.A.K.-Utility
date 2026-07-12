@@ -152,7 +152,7 @@ Current `FileManagementExplorerPanel` has the M0-M4 Files-like foundation:
   tab switching, with each tab owning its own `FileExplorerTabState` (target,
   path, history, selection, view). Its auto-generated close buttons carry
   accessible names. Duplicate tab, closed-tab restore, and cross-restart tab
-  persistence are still M8/M11 work.
+  persistence (via `FileExplorerSessionStore`) now ship.
 - Dual-pane split: toggle, active-pane highlight, open-in-second-pane, and
   independent target/path/history per pane, with commands routed to the active
   pane. Per-pane view mode and a status-bar active-pane summary remain M8 work.
@@ -1222,9 +1222,10 @@ Status: substantially implemented and now test-covered. The tab strip
 active-pane highlight, open-in-second-pane, independent per-pane
 target/path/history, command routing to the active pane) work and have unit/GUI
 tests, and duplicate tab / closed-tab restore now ship as registry commands.
-Horizontal (stacked) split, per-pane view-mode re-application, and an active-pane
-status summary now ship too. Remaining genuine gaps: cross-restart tab
-persistence and the open-in-second-pane / active-pane-routing GUI test lanes.
+Horizontal (stacked) split, per-pane view-mode re-application, an active-pane
+status summary, and cross-restart tab persistence (`FileExplorerSessionStore`)
+now ship too. Remaining genuine gaps: the open-in-second-pane / active-pane-routing
+GUI test lanes.
 
 Tabs checklist:
 
@@ -1234,7 +1235,7 @@ Tabs checklist:
 - [x] Add duplicate tab. (`DuplicateTab` command; `duplicateTabClonesCurrentTab`)
 - [x] Add open target in new tab. (`OpenInNewTab` command -> `openCurrentLocationInNewTab`)
 - [x] Add open folder in new tab. (same route when a directory is selected)
-- [ ] Add active tab state persistence. (per-tab state survives switching in memory; cross-restart persistence not implemented)
+- [x] Add active tab state persistence. (`FileExplorerSessionStore` serializes the tab list + active index to `QSettings`; `enableTabSessionPersistence` saves on destruct / restores on construct, opt-in so headless tests never touch the shared store)
 - [x] Add closed-tab restore. (`ReopenClosedTab` command; `reopenClosedTabRestoresLastClosedTab`)
 - [x] Ensure File Management outer tabs remain unaffected. (explorer uses its own inner `QTabBar`)
 
@@ -1252,7 +1253,7 @@ Dual-pane checklist:
 
 Tests:
 
-- [ ] Unit tab session serialization. (no tab-list serialization API exists yet)
+- [x] Unit tab session serialization. (`test_file_explorer_session_store`: save/load round trip, empty-load, replace-and-clamp, clear)
 - [x] Unit pane state isolation. (`dualPaneStatesTrackIndependentHistories`)
 - [x] GUI create/close/duplicate tab. (`explorerTabsOpenAndSwitch`, `explorerTabCloseRemovesTabKeepingLast`, `duplicateTabClonesCurrentTab`)
 - [x] GUI dual-pane toggle. (`dualPaneToggleAddsSecondPane`)

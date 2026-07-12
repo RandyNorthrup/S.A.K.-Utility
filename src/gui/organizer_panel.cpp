@@ -219,6 +219,7 @@ void OrganizerPanel::setupUi() {
     m_tabs->addTab(createOrganizerTab(), tr("File Organizer"));
     m_tabs->addTab(createDuplicateFinderTab(), tr("Duplicate Finder"));
     m_file_explorer_panel = new FileManagementExplorerPanel(this);
+    m_file_explorer_panel->enableTabSessionPersistence();
     m_tabs->addTab(m_file_explorer_panel, tr("File Explorer"));
     setAccessible(
         m_tabs,

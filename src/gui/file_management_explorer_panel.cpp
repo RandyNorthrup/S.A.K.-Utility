@@ -7,6 +7,7 @@
 #include "sak/file_management_explorer_panel.h"
 
 #include "sak/file_explorer_icon_registry.h"
+#include "sak/file_explorer_session_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/storage_inventory_worker.h"
@@ -83,6 +84,7 @@ constexpr int kMaxRecentTargetIds = 10;
 constexpr int kSizeSliderSingleStep = 8;
 constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
+constexpr const char* kTabSessionGroup = "FileManagementExplorer/TabSession";
 constexpr const char* kFavoriteTargetIdsKey = "FavoriteTargetIds";
 constexpr const char* kRecentTargetIdsKey = "RecentTargetIds";
 constexpr const char* kLastTargetIdKey = "LastTargetId";
@@ -394,6 +396,15 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
     setupUi();
     loadSidebarState();
     setTargets(FileManagementFileSystemBridge::mountedTargets());
+}
+
+FileManagementExplorerPanel::~FileManagementExplorerPanel() {
+    saveTabSession();
+}
+
+void FileManagementExplorerPanel::enableTabSessionPersistence() {
+    m_tab_session_persistence = true;
+    restoreTabSession();
 }
 
 void FileManagementExplorerPanel::setupUi() {
@@ -2262,6 +2273,59 @@ void FileManagementExplorerPanel::reopenClosedTab() {
     m_tab_bar->addTab(tab.title);
     nameTabCloseButtons();
     m_tab_bar->setCurrentIndex(m_tab_bar->count() - 1);
+}
+
+void FileManagementExplorerPanel::saveTabSession() const {
+    if (!m_tab_session_persistence || !m_tab_bar) {
+        return;
+    }
+    FileExplorerTabSession session;
+    session.tabs = m_tabs;
+    // Fold the live active-pane state into the active tab so an unswitched tab
+    // still persists its current location.
+    if (m_active_tab >= 0 && m_active_tab < session.tabs.size()) {
+        session.tabs[m_active_tab] = captureCurrentTab();
+    }
+    session.active_index = m_active_tab;
+
+    QSettings settings;
+    const QString group = QString::fromLatin1(kTabSessionGroup);
+    // Only a genuinely-navigated session is worth persisting; a lone empty tab
+    // clears any stale saved session instead of pinning "New Tab" forever.
+    const bool worth_saving = session.tabs.size() > 1 ||
+                              (!session.tabs.isEmpty() &&
+                               !session.tabs.first().primary.location.isEmpty());
+    if (worth_saving) {
+        FileExplorerSessionStore::save(settings, group, session);
+    } else {
+        FileExplorerSessionStore::clear(settings, group);
+    }
+}
+
+void FileManagementExplorerPanel::restoreTabSession() {
+    if (!m_tab_session_persistence || !m_tab_bar) {
+        return;
+    }
+    QSettings settings;
+    const FileExplorerTabSession session =
+        FileExplorerSessionStore::load(settings, QString::fromLatin1(kTabSessionGroup));
+    if (session.tabs.isEmpty()) {
+        return;
+    }
+
+    const QSignalBlocker blocker(m_tab_bar);
+    while (m_tab_bar->count() > 0) {
+        m_tab_bar->removeTab(0);
+    }
+    m_tabs.clear();
+    for (const FileExplorerTabState& tab : session.tabs) {
+        m_tabs.append(tab);
+        m_tab_bar->addTab(tab.title.isEmpty() ? tr("New Tab") : tab.title);
+    }
+    nameTabCloseButtons();
+    m_active_tab = std::clamp(session.active_index, 0, static_cast<int>(m_tabs.size()) - 1);
+    m_tab_bar->setCurrentIndex(m_active_tab);
+    restoreTab(m_tabs.at(m_active_tab));
 }
 
 void FileManagementExplorerPanel::ensureSecondPane() {

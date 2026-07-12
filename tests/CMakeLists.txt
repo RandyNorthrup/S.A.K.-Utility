@@ -955,6 +955,31 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
     message(STATUS "Added unit test: test_file_explorer_types")
 endif()
 
+# test_file_explorer_session_store - tab session serialization round trip
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_session_store.cpp")
+    add_executable(test_file_explorer_session_store
+        unit/test_file_explorer_session_store.cpp
+        ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_session_store.cpp
+        ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_session_store.h
+        ../include/sak/file_management_file_system.h
+    )
+    set_target_properties(test_file_explorer_session_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_explorer_session_store PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_explorer_session_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_explorer_session_store COMMAND test_file_explorer_session_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_explorer_session_store")
+endif()
+
 # test_file_explorer_item_model - File Explorer model/view rows, roles, and sorting
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
     add_executable(test_file_explorer_item_model
@@ -996,6 +1021,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
+        ../src/core/file_explorer_session_store.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/apfs_crypto.cpp
