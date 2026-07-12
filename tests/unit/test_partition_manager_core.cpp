@@ -9943,14 +9943,32 @@ void PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp() {
     ApfsRawTargetPredicateGuard guard;
     PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
         [oracle](const QString& p) { return p == oracle; });
-    const auto ins =
-        PartitionApfsWriter::commitRawFileInsert({.target_path = oracle,
-                                                  .target_container_bytes = bytes,
-                                                  .file_name = QStringLiteral("ipbm_probe.dat"),
-                                                  .file_data = QByteArray(4096, 'Z'),
-                                                  .target_mutation_confirmed = true,
-                                                  .allow_raw_device_target = true,
-                                                  .options = rawOptions});
+    // SAK_IPBM_OP selects the raw in-place op (default insert). delete removes
+    // SAK_IPBM_NAME, exercising the freed-blocks -> main-free-queue path on the same
+    // rotation machinery (CAB tier: far runs stay validly deferred on the queue).
+    const QString op = qEnvironmentVariable("SAK_IPBM_OP", QStringLiteral("insert"));
+    const QString name = qEnvironmentVariable("SAK_IPBM_NAME", QStringLiteral("ipbm_probe.dat"));
+    if (op == QStringLiteral("delete")) {
+        const auto del =
+            PartitionApfsWriter::commitRawFileDelete({.target_path = oracle,
+                                                      .target_container_bytes = bytes,
+                                                      .file_name = name,
+                                                      .target_mutation_confirmed = true,
+                                                      .allow_raw_device_target = true,
+                                                      .options = rawOptions});
+        qWarning("IPBM raw-delete ok=%d blockers=[%s]",
+                 del.ok,
+                 qPrintable(del.blockers.join(QStringLiteral("; "))));
+        QVERIFY2(del.ok, qPrintable(del.blockers.join(QStringLiteral("; "))));
+        return;
+    }
+    const auto ins = PartitionApfsWriter::commitRawFileInsert({.target_path = oracle,
+                                                               .target_container_bytes = bytes,
+                                                               .file_name = name,
+                                                               .file_data = QByteArray(4096, 'Z'),
+                                                               .target_mutation_confirmed = true,
+                                                               .allow_raw_device_target = true,
+                                                               .options = rawOptions});
     qWarning("IPBM raw-insert ok=%d blockers=[%s]",
              ins.ok,
              qPrintable(ins.blockers.join(QStringLiteral("; "))));

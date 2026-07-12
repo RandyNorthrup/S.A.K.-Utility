@@ -6856,6 +6856,10 @@ struct ApfsIpRotation {
     uint64_t newBitmap{0};
     uint64_t freeCib{0};
     uint64_t freeBitmap{0};
+    // CAB tier on a FOREIGN (real scattered) internal pool: the rotated cab 0's real
+    // allocated slot. 0 everywhere else -- the generated CAB tier derives its cab slot
+    // from the fixed rotation-group offset (newCib + 2) instead.
+    uint64_t newCab0{0};
 };
 
 ApfsIpRotation computeIpRotation(uint64_t liveCib,
@@ -10295,11 +10299,19 @@ struct ApfsFinalizeFreeQueue {
 // branch is unreachable by construction - it exists only to fail safe (defer, never corrupt) if a
 // future layout change ever violated that invariant. A co-ordinated cib-0 reclaim would therefore
 // be untriggerable dead code on the certified overflow path and is deliberately not implemented.
-bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry, uint64_t allocChunk) {
+bool foreignEntryReclaimable(const ApfsFreeQueueEntry& entry,
+                             uint64_t allocChunk,
+                             uint64_t cabCount) {
     const uint64_t firstChunk = entry.paddr / kApfsSpacemanBlocksPerChunk;
     const uint64_t lastChunk = (entry.paddr + entry.length - 1) / kApfsSpacemanBlocksPerChunk;
     for (uint64_t c = firstChunk; c <= lastChunk; ++c) {
         if (c / kApfsSpacemanChunksPerCib == 0 && c != allocChunk) {
+            return false;
+        }
+        // CAB tier: a far-cib reclaim would re-point that cib's address INSIDE its cab
+        // (the device array holds cabs); that COW is not implemented, so far runs stay
+        // validly deferred on the queue instead -- same model as the cib-0 deferral.
+        if (cabCount > 0 && c != allocChunk) {
             return false;
         }
     }
@@ -10319,7 +10331,8 @@ ApfsMainFqAdvance advanceForeignAwareMainFq(const ApfsFsCommitContext& ctx,
     QVector<ApfsFreeQueueEntry> reclaimable;
     QVector<ApfsFreeQueueEntry> deferred;
     for (const ApfsFreeQueueEntry& entry : liveMainFq) {
-        if (!ctx.foreignOverflow || foreignEntryReclaimable(entry, ctx.layout.allocChunk)) {
+        if (!ctx.foreignOverflow ||
+            foreignEntryReclaimable(entry, ctx.layout.allocChunk, ctx.layout.cabCount)) {
             reclaimable.append(entry);
         } else {
             deferred.append(entry);
@@ -10371,7 +10384,9 @@ bool finalizeRotateCab0(const ApfsFsCommitFinalize& f,
                         uint64_t* newAddr0,
                         QStringList* blockers) {
     if (f.ctx.layout.cabCount > 0) {
-        const uint64_t newCab0 = rotation.newCib + 2;
+        // Foreign pools carry the cab 0 copy's real allocated slot in the rotation;
+        // the generated CAB tier keeps its fixed group-slot convention (offset 2).
+        const uint64_t newCab0 = rotation.newCab0 != 0 ? rotation.newCab0 : rotation.newCib + 2;
         if (!writeRotatedCab0({.image = f.ctx.image,
                                .geometry = f.ctx.geometry,
                                .liveCab0 = f.ctx.liveCab0,
@@ -10749,8 +10764,12 @@ bool computeForeignIpRotation(const ApfsFsCommitContext& ctx,
                               uint64_t chunk1BitmapBlock,
                               ApfsIpRotation* rotation,
                               QStringList* blockers) {
+    // The CAB tier rotates cab 0 alongside cib 0 and the chunk-0 bitmap, so its copy
+    // needs a REAL free IP block too -- the generated fixed group offset (newCib + 2)
+    // points at an arbitrary, possibly used, block on a real scattered pool.
+    const int count = ctx.layout.cabCount > 0 ? 3 : 2;
     QVector<uint64_t> slots;
-    if (!allocateForeignIpBlocks(ctx, {chunk1BitmapBlock}, 2, &slots, blockers)) {
+    if (!allocateForeignIpBlocks(ctx, {chunk1BitmapBlock}, count, &slots, blockers)) {
         return false;
     }
     rotation->liveCib = ctx.liveCib;
@@ -10759,6 +10778,7 @@ bool computeForeignIpRotation(const ApfsFsCommitContext& ctx,
     rotation->newBitmap = slots.at(1);
     rotation->freeCib = 0;
     rotation->freeBitmap = 0;
+    rotation->newCab0 = count == 3 ? slots.at(2) : 0;
     return true;
 }
 
@@ -10791,6 +10811,12 @@ bool buildForeignIpUsedSet(const ApfsFsCommitFinalize& f,
     for (uint64_t abs : reclaim.freedIpBlocks) {
         freedRel.insert(relOf(abs));
     }
+    // CAB tier: the rotated cab 0 swaps IP slots exactly like the cib -- the old copy
+    // releases, the new one marks -- or apfsck's computed pool usage disagrees with the
+    // written bitmap ("bad ip allocation bitmap").
+    if (rotation.newCab0 != 0) {
+        freedRel.insert(relOf(f.ctx.liveCab0));
+    }
     out->clear();
     for (uint64_t rel : used) {
         if (!freedRel.contains(rel)) {
@@ -10798,6 +10824,9 @@ bool buildForeignIpUsedSet(const ApfsFsCommitFinalize& f,
         }
     }
     QVector<uint64_t> marked = {rotation.newCib, rotation.newBitmap, f.chunk1BitmapBlock};
+    if (rotation.newCab0 != 0) {
+        marked.append(rotation.newCab0);
+    }
     marked += reclaim.newIpBlocks;
     for (uint64_t abs : marked) {
         const uint64_t rel = relOf(abs);
@@ -10844,6 +10873,16 @@ bool partitionForeignReclaim(const ApfsFsCommitFinalize& f,
             return false;
         }
         part->cibChunks[k].append(it.key());
+    }
+    // CAB tier: a far-cib COW would have to re-point cab k/507's entry (the spaceman
+    // device array holds CABs, not the flat cib list finalizeCibArrayRepoints writes).
+    // Fail closed before any write rather than stomp a cab address; the commit aborts
+    // pre-publish and the prior checkpoint stays live.
+    if (f.ctx.layout.cabCount > 0 && !part->cibChunks.isEmpty()) {
+        blockers->append(QStringLiteral(
+            "APFS foreign reclaim: far-chunk reclaim on a CAB-tier container would re-point a "
+            "cib inside a cab; not supported, commit aborted"));
+        return false;
     }
     return true;
 }
