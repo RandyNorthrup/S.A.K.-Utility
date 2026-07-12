@@ -7,6 +7,7 @@
 #include "sak/file_management_explorer_panel.h"
 
 #include "sak/advanced_search_worker.h"
+#include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_session_store.h"
 #include "sak/file_explorer_style.h"
@@ -646,6 +647,13 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
             &QLineEdit::returnPressed,
             this,
             &FileManagementExplorerPanel::onPathReturnPressed);
+    connect(m_omnibar->breadcrumb(),
+            &FileExplorerBreadcrumb::segmentActivated,
+            this,
+            [this](const QString& path) {
+                m_path_edit->setText(path);
+                onPathReturnPressed();
+            });
     connect(
         m_back_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onBackClicked);
     connect(m_forward_button,

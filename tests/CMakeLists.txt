@@ -1032,6 +1032,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
     add_executable(test_file_management_explorer_panel
         unit/test_file_management_explorer_panel.cpp
         ../src/gui/file_explorer_sidebar.cpp
+        ../src/gui/file_explorer_breadcrumb.cpp
         ../src/gui/file_explorer_icon_registry.cpp
         ../src/gui/file_explorer_command_bar.cpp
         ../src/gui/file_explorer_omnibar.cpp
@@ -1067,6 +1068,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/logger.cpp
         ../resources/icons.qrc
         ../include/sak/file_explorer_sidebar.h
+        ../include/sak/file_explorer_breadcrumb.h
         ../include/sak/file_explorer_icon_registry.h
         ../include/sak/file_explorer_command_bar.h
         ../include/sak/file_explorer_omnibar.h

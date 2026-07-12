@@ -3,11 +3,15 @@
 
 #include "sak/file_explorer_omnibar.h"
 
+#include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
+#include <QEvent>
 #include <QHBoxLayout>
+#include <QKeyEvent>
+#include <QStackedWidget>
 
 namespace sak {
 
@@ -79,11 +83,26 @@ void FileExplorerOmnibar::createNavigationButtons(QHBoxLayout* row) {
 }
 
 void FileExplorerOmnibar::createAddressAndSearch(QHBoxLayout* row) {
-    m_path_edit = new QLineEdit(this);
+    m_address_stack = new QStackedWidget(this);
+    m_address_stack->setObjectName(QStringLiteral("fileExplorerAddressStack"));
+
+    m_breadcrumb = new FileExplorerBreadcrumb(m_address_stack);
+    m_address_stack->addWidget(m_breadcrumb);
+
+    m_path_edit = new QLineEdit(m_address_stack);
     m_path_edit->setObjectName(QStringLiteral("fileExplorerPathEdit"));
     m_path_edit->setAccessibleName(tr("Explorer omnibar path"));
     m_path_edit->setToolTip(tr("Path inside the selected target. Press Enter to navigate."));
-    row->addWidget(m_path_edit, 1);
+    m_path_edit->installEventFilter(this);
+    m_address_stack->addWidget(m_path_edit);
+    row->addWidget(m_address_stack, 1);
+
+    // Breadcrumb follows whatever the path line holds, so the panel keeps a
+    // single source of truth for the current location.
+    connect(m_path_edit, &QLineEdit::textChanged, m_breadcrumb, &FileExplorerBreadcrumb::setPath);
+    connect(m_breadcrumb, &FileExplorerBreadcrumb::editRequested, this, [this]() {
+        setAddressEditMode(true);
+    });
 
     m_search_box = new QLineEdit(this);
     m_search_box->setObjectName(QStringLiteral("fileExplorerSearchBox"));
@@ -110,6 +129,39 @@ void FileExplorerOmnibar::createAddressAndSearch(QHBoxLayout* row) {
     row->addWidget(m_command_button);
 }
 
+void FileExplorerOmnibar::setAddressEditMode(const bool edit) {
+    if (!m_address_stack) {
+        return;
+    }
+    m_address_stack->setCurrentWidget(edit ? static_cast<QWidget*>(m_path_edit)
+                                           : static_cast<QWidget*>(m_breadcrumb));
+    if (edit) {
+        m_path_edit->setFocus(Qt::MouseFocusReason);
+        m_path_edit->selectAll();
+    }
+}
+
+bool FileExplorerOmnibar::addressEditMode() const {
+    return m_address_stack && m_address_stack->currentWidget() == m_path_edit;
+}
+
+bool FileExplorerOmnibar::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_path_edit && event) {
+        // Leave edit mode when the user commits (Enter navigates via the
+        // panel), cancels with Escape, or clicks elsewhere.
+        if (event->type() == QEvent::FocusOut) {
+            setAddressEditMode(false);
+        } else if (event->type() == QEvent::KeyPress) {
+            const auto* key_event = static_cast<QKeyEvent*>(event);
+            if (key_event->key() == Qt::Key_Escape) {
+                setAddressEditMode(false);
+                return true;
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 QPushButton* FileExplorerOmnibar::sidebarToggleButton() const {
     return m_sidebar_toggle_button;
 }
@@ -132,6 +184,10 @@ QPushButton* FileExplorerOmnibar::refreshButton() const {
 
 QLineEdit* FileExplorerOmnibar::pathEdit() const {
     return m_path_edit;
+}
+
+FileExplorerBreadcrumb* FileExplorerOmnibar::breadcrumb() const {
+    return m_breadcrumb;
 }
 
 QLineEdit* FileExplorerOmnibar::searchBox() const {

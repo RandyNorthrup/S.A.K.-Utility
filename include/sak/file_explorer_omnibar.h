@@ -11,11 +11,15 @@
 #include <QWidget>
 
 class QHBoxLayout;
+class QStackedWidget;
 
 namespace sak {
 
-/// Top navigation row: sidebar toggle, back/forward/up/refresh, address path,
-/// search box, and the command palette trigger.
+class FileExplorerBreadcrumb;
+
+/// Top navigation row: sidebar toggle, back/forward/up/refresh, breadcrumb
+/// address (with inline path-edit mode), search box, and the command palette
+/// trigger.
 class FileExplorerOmnibar : public QWidget {
     Q_OBJECT
 
@@ -28,9 +32,18 @@ public:
     [[nodiscard]] QPushButton* upButton() const;
     [[nodiscard]] QPushButton* refreshButton() const;
     [[nodiscard]] QLineEdit* pathEdit() const;
+    [[nodiscard]] FileExplorerBreadcrumb* breadcrumb() const;
     [[nodiscard]] QLineEdit* searchBox() const;
     [[nodiscard]] QPushButton* searchButton() const;
     [[nodiscard]] QPushButton* commandButton() const;
+
+    /// Switches the address slot between the breadcrumb (false) and the
+    /// editable path line (true, focused with the text selected).
+    void setAddressEditMode(bool edit);
+    [[nodiscard]] bool addressEditMode() const;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void createNavigationButtons(QHBoxLayout* row);
@@ -41,6 +54,8 @@ private:
     QPushButton* m_forward_button{nullptr};
     QPushButton* m_up_button{nullptr};
     QPushButton* m_refresh_button{nullptr};
+    QStackedWidget* m_address_stack{nullptr};
+    FileExplorerBreadcrumb* m_breadcrumb{nullptr};
     QLineEdit* m_path_edit{nullptr};
     QLineEdit* m_search_box{nullptr};
     QPushButton* m_search_button{nullptr};

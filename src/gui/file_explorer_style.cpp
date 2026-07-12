@@ -47,10 +47,21 @@ QString addressInputStyles() {
                "border: 1px solid palette(mid); border-radius: %1px; "
                "padding: 4px 10px; color: palette(text); "
                "selection-background-color: %2; }"
-               "#fileExplorerOmnibar QLineEdit:focus { border-color: %3; }")
+               "#fileExplorerOmnibar QLineEdit:focus { border-color: %3; }"
+               "#fileExplorerBreadcrumb { background: palette(base); "
+               "border: 1px solid palette(mid); border-radius: %1px; }"
+               "#fileExplorerBreadcrumb QPushButton { background: transparent; "
+               "border: none; border-radius: 4px; padding: 2px 7px; "
+               "color: palette(text); }"
+               "#fileExplorerBreadcrumb QPushButton:hover { background: %4; }"
+               "#fileExplorerBreadcrumb QPushButton[breadcrumbCurrent=\"true\"] { "
+               "font-weight: 600; color: palette(window-text); }"
+               "#fileExplorerBreadcrumbOverflow::menu-indicator { image: none; }"
+               "#fileExplorerBreadcrumbChevron { padding: 0 1px; }")
         .arg(kExplorerControlRadiusPx)
         .arg(colorWithAlpha(kColorAccentWindows, kExplorerSelectionAlpha),
-             QString::fromLatin1(kColorAccentWindows));
+             QString::fromLatin1(kColorAccentWindows),
+             colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha));
 }
 
 QString tabStripStyles() {

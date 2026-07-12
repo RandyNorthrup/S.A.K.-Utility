@@ -600,6 +600,7 @@ set(GUI_SOURCES
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/file_explorer_sidebar.cpp
+    src/gui/file_explorer_breadcrumb.cpp
     src/gui/file_explorer_icon_registry.cpp
     src/gui/file_explorer_command_bar.cpp
     src/gui/file_explorer_omnibar.cpp
@@ -613,6 +614,7 @@ set(GUI_SOURCES
     include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
     include/sak/file_explorer_sidebar.h
+    include/sak/file_explorer_breadcrumb.h
     include/sak/file_explorer_icon_registry.h
     include/sak/file_explorer_command_bar.h
     include/sak/file_explorer_omnibar.h
