@@ -240,7 +240,8 @@ private:
                                                "recent",
                                                "tag",
                                                "shield",
-                                               "scan-disks"};
+                                               "scan-disks",
+                                               "close"};
     items.reserve(static_cast<qsizetype>(kFluentKeys.size()));
     for (const char* key : kFluentKeys) {
         items.append(fluentDescriptor(key));

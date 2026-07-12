@@ -27,6 +27,13 @@ constexpr std::array kDefaultHiddenColumns = {
     static_cast<int>(sak::FileExplorerItemModel::PathColumn),
 };
 
+constexpr std::array<std::pair<int, int>, 4> kDefaultColumnWidths = {{
+    {static_cast<int>(sak::FileExplorerItemModel::NameColumn), 280},
+    {static_cast<int>(sak::FileExplorerItemModel::TypeColumn), 110},
+    {static_cast<int>(sak::FileExplorerItemModel::SizeColumn), 90},
+    {static_cast<int>(sak::FileExplorerItemModel::ModifiedColumn), 140},
+}};
+
 }  // namespace
 
 namespace sak {
@@ -142,6 +149,9 @@ void FileExplorerDetailsView::restoreColumnState() {
         // First run (no saved layout): apply the Files-style default set.
         for (const int column : kDefaultHiddenColumns) {
             setColumnHidden(column, true);
+        }
+        for (const auto& [column, width] : kDefaultColumnWidths) {
+            setColumnWidth(column, width);
         }
     } else {
         horizontalHeader()->restoreState(state);

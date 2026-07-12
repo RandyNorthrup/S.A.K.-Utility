@@ -138,5 +138,6 @@
         <file>icons/fluent/tag.svg</file>
         <file>icons/fluent/shield.svg</file>
         <file>icons/fluent/scan-disks.svg</file>
+        <file>icons/fluent/close.svg</file>
     </qresource>
 </RCC>

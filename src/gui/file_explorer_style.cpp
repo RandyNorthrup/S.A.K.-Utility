@@ -74,9 +74,24 @@ QString tabStripStyles() {
                "QTabBar#fileExplorerTabBar::tab:selected { background: palette(base); "
                "border-color: palette(mid); border-bottom-color: palette(base); "
                "color: palette(window-text); }"
-               "QTabBar#fileExplorerTabBar::tab:hover:!selected { background: %2; }")
+               "QTabBar#fileExplorerTabBar::tab:hover:!selected { background: %2; }"
+               "QTabBar#fileExplorerTabBar::close-button { "
+               "image: url(:/icons/icons/fluent/close.svg); border-radius: 4px; "
+               "margin: 2px; }"
+               "QTabBar#fileExplorerTabBar::close-button:hover { background: %2; }"
+               "#fileExplorerDetailsTabs::pane { border: none; "
+               "border-top: 1px solid palette(mid); }"
+               "#fileExplorerDetailsTabs QTabBar::tab { background: transparent; "
+               "border: none; border-radius: %1px; padding: 4px 10px; "
+               "margin-right: 2px; color: palette(text); }"
+               "#fileExplorerDetailsTabs QTabBar::tab:selected { background: %3; "
+               "color: palette(window-text); }"
+               "#fileExplorerDetailsTabs QTabBar::tab:hover:!selected { background: %2; }"
+               "#fileExplorerDetailsTabs QPlainTextEdit { border: none; "
+               "background: palette(base); }")
         .arg(kExplorerTabRadiusPx)
-        .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha));
+        .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha),
+             colorWithAlpha(kColorAccentWindows, kExplorerCheckedAlpha));
 }
 
 QString sidebarStyles() {
