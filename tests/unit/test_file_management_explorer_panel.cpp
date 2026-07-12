@@ -1305,7 +1305,10 @@ private Q_SLOTS:
             }
             menu->close();
         });
-        const QPoint center = targetList->viewport()->rect().center();
+        // Context-click the CURRENT target row (not blind viewport center:
+        // shell geometry changes must not silently retarget the test).
+        QVERIFY(targetList->currentItem());
+        const QPoint center = targetList->visualItemRect(targetList->currentItem()).center();
         QContextMenuEvent event(QContextMenuEvent::Mouse,
                                 center,
                                 targetList->viewport()->mapToGlobal(center));

@@ -95,6 +95,9 @@ constexpr int kViewIdDigestChars = 24;
 constexpr int kCenterPaneStretchIndex = 2;
 constexpr int kSidebarCollapseWidth = 720;
 constexpr int kDetailsTabsCollapseWidth = 920;
+// Files NavigationToolbar narrow breakpoint is a 540px window; the explorer
+// panel sits inside the app shell, so the effective threshold is higher.
+constexpr int kNavClusterCollapseWidth = 640;
 constexpr int kMaxRecentTargetIds = 10;
 constexpr int kSizeSliderSingleStep = 8;
 constexpr int kSizeSliderPageStep = 16;
@@ -451,10 +454,22 @@ void FileManagementExplorerPanel::setupUi() {
         ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
     layout->setSpacing(ui::kSpacingSmall);
 
-    // Files-style anatomy, top to bottom: tab strip, then the sidebar/content
-    // splitter (the nav and command rows live in the center column), then a
-    // full-width status row.
+    // Files anatomy (MainPage.xaml rows 0-2): tab strip, then the FULL-WIDTH
+    // address toolbar above the sidebar, then the sidebar/content splitter
+    // (command toolbar and status content live inside the content column).
     buildTabBar(layout);
+
+    m_omnibar = new FileExplorerOmnibar(this);
+    m_sidebar_toggle_button = m_omnibar->sidebarToggleButton();
+    m_back_button = m_omnibar->backButton();
+    m_forward_button = m_omnibar->forwardButton();
+    m_up_button = m_omnibar->upButton();
+    m_refresh_button = m_omnibar->refreshButton();
+    m_path_edit = m_omnibar->pathEdit();
+    m_search_box = m_omnibar->searchBox();
+    m_search_button = m_omnibar->searchButton();
+    m_command_button = m_omnibar->commandButton();
+    layout->addWidget(m_omnibar, 0);
 
     m_shell_splitter = new QSplitter(Qt::Horizontal, this);
     m_shell_splitter->setChildrenCollapsible(false);
@@ -484,18 +499,6 @@ void FileManagementExplorerPanel::setupUi() {
 
 void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
                                                          QVBoxLayout* center_layout) {
-    m_omnibar = new FileExplorerOmnibar(center);
-    m_sidebar_toggle_button = m_omnibar->sidebarToggleButton();
-    m_back_button = m_omnibar->backButton();
-    m_forward_button = m_omnibar->forwardButton();
-    m_up_button = m_omnibar->upButton();
-    m_refresh_button = m_omnibar->refreshButton();
-    m_path_edit = m_omnibar->pathEdit();
-    m_search_box = m_omnibar->searchBox();
-    m_search_button = m_omnibar->searchButton();
-    m_command_button = m_omnibar->commandButton();
-    center_layout->addWidget(m_omnibar);
-
     m_command_bar = new FileExplorerCommandBar(center);
     m_new_folder_button = m_command_bar->newFolderButton();
     m_write_file_button = m_command_bar->writeFileButton();
@@ -672,6 +675,13 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
             });
     connect(
         m_back_button, &QPushButton::clicked, this, &FileManagementExplorerPanel::onBackClicked);
+    connect(m_back_button, &QWidget::customContextMenuRequested, this, [this](const QPoint& point) {
+        showHistoryMenu(true, m_back_button->mapToGlobal(point));
+    });
+    connect(
+        m_forward_button, &QWidget::customContextMenuRequested, this, [this](const QPoint& point) {
+            showHistoryMenu(false, m_forward_button->mapToGlobal(point));
+        });
     connect(m_forward_button,
             &QPushButton::clicked,
             this,
@@ -755,6 +765,11 @@ void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
     }
     if (m_details_tabs && width < kDetailsTabsCollapseWidth) {
         m_details_tabs->setVisible(false);
+    }
+    if (m_omnibar) {
+        // Files NavigationToolbar collapses Forward/Up/Refresh into an
+        // overflow flyout below its narrow breakpoint.
+        m_omnibar->setNarrowMode(width < kNavClusterCollapseWidth);
     }
 }
 
@@ -3576,6 +3591,41 @@ void FileManagementExplorerPanel::onPathReturnPressed() {
 
 void FileManagementExplorerPanel::onBackClicked() {
     if (m_pane_state.goBack()) {
+        loadDirectory(m_pane_state.location.path, false);
+    }
+}
+
+void FileManagementExplorerPanel::showHistoryMenu(const bool back, const QPoint& global_pos) {
+    const QVector<FileExplorerLocation>& stack = back ? m_pane_state.back_stack
+                                                      : m_pane_state.forward_stack;
+    if (stack.isEmpty()) {
+        return;
+    }
+    QMenu menu(this);
+    menu.setObjectName(back ? QStringLiteral("fileExplorerBackHistoryMenu")
+                            : QStringLiteral("fileExplorerForwardHistoryMenu"));
+    // Most recent entry first, mirroring the Files history flyouts.
+    constexpr int kMaxHistoryEntries = 20;
+    int steps = 0;
+    for (auto it = stack.crbegin(); it != stack.crend() && steps < kMaxHistoryEntries; ++it) {
+        ++steps;
+        const QString label = it->path.trimmed().isEmpty() ? QStringLiteral("/") : it->path;
+        const int jump = steps;
+        menu.addAction(label, this, [this, jump, back]() { jumpHistory(jump, back); });
+    }
+    menu.exec(global_pos);
+}
+
+void FileManagementExplorerPanel::jumpHistory(const int steps, const bool back) {
+    bool moved = false;
+    for (int i = 0; i < steps; ++i) {
+        const bool stepped = back ? m_pane_state.goBack() : m_pane_state.goForward();
+        if (!stepped) {
+            break;
+        }
+        moved = true;
+    }
+    if (moved) {
         loadDirectory(m_pane_state.location.path, false);
     }
 }

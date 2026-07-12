@@ -3,6 +3,8 @@
 
 #include "sak/file_explorer_icon_registry.h"
 
+#include "sak/style_constants.h"
+
 #include <QApplication>
 #include <QHash>
 #include <QIconEngine>
@@ -24,7 +26,7 @@ using IconDescriptor = FileExplorerIconDescriptor;
                                         const char* upstream_key,
                                         const char* upstream_source) {
     return {QString::fromLatin1(key),
-            QStringLiteral(":/icons/icons/files/%1.svg").arg(QString::fromLatin1(file_name)),
+            ui::kIconExplorerFilesTemplate.arg(QString::fromLatin1(file_name)),
             QString::fromLatin1(upstream_key),
             QString::fromLatin1(upstream_source),
             QStringLiteral("MIT")};
@@ -32,7 +34,7 @@ using IconDescriptor = FileExplorerIconDescriptor;
 
 [[nodiscard]] IconDescriptor fluentDescriptor(const char* key) {
     return {QString::fromLatin1(key),
-            QStringLiteral(":/icons/icons/fluent/%1.svg").arg(QString::fromLatin1(key)),
+            ui::kIconExplorerFluentTemplate.arg(QString::fromLatin1(key)),
             QString(),
             QStringLiteral("S.A.K.-Utility original, Fluent-style outline glyph"),
             QStringLiteral("AGPL-3.0-or-later")};

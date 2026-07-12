@@ -92,6 +92,10 @@ private:
     void buildCommandAndNavBars(QWidget* center, QVBoxLayout* center_layout);
     void buildContentArea(QWidget* center, QVBoxLayout* center_layout);
     void buildStatusRow(QVBoxLayout* root_layout);
+    /// Right-click history flyout on Back/Forward (Files BackHistoryFlyout).
+    void showHistoryMenu(bool back, const QPoint& global_pos);
+    /// Steps the pane history several entries at once, then loads once.
+    void jumpHistory(int steps, bool back);
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();

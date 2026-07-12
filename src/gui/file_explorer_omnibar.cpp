@@ -11,6 +11,7 @@
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QStackedWidget>
 
 namespace sak {
@@ -19,6 +20,12 @@ namespace {
 
 constexpr int kSearchBoxMinWidth = 170;
 constexpr int kSearchBoxMaxWidth = 260;
+// Files NavigationToolbar.xaml metrics.
+constexpr int kAddressBarHeight = 48;
+constexpr int kAddressBarSidePadding = 4;
+constexpr int kAddressBarSpacing = 4;
+constexpr int kAddressButtonWidth = 36;
+constexpr int kAddressButtonHeight = 32;
 
 QPushButton* makeIconButton(QWidget* parent,
                             const char* object_name,
@@ -30,6 +37,7 @@ QPushButton* makeIconButton(QWidget* parent,
     button->setIcon(FileExplorerIconRegistry::iconForKey(QString::fromLatin1(icon_key)));
     button->setAccessibleName(accessible_name);
     button->setToolTip(tool_tip);
+    button->setFixedSize(kAddressButtonWidth, kAddressButtonHeight);
     return button;
 }
 
@@ -37,9 +45,12 @@ QPushButton* makeIconButton(QWidget* parent,
 
 FileExplorerOmnibar::FileExplorerOmnibar(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("fileExplorerOmnibar"));
+    // Files address bar: 48px row, 4px side padding, 4px spacing, 36x32
+    // buttons (NavigationToolbar.xaml root Grid + AddressToolbarButtonStyle).
+    setFixedHeight(kAddressBarHeight);
     auto* row = new QHBoxLayout(this);
-    row->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
-    row->setSpacing(ui::kSpacingTight);
+    row->setContentsMargins(kAddressBarSidePadding, 0, kAddressBarSidePadding, 0);
+    row->setSpacing(kAddressBarSpacing);
 
     createNavigationButtons(row);
     createAddressAndSearch(row);
@@ -58,13 +69,35 @@ void FileExplorerOmnibar::createNavigationButtons(QHBoxLayout* row) {
                                    "nav-back",
                                    tr("Go back"),
                                    tr("Go to previous explorer location"));
+    // Right-click shows the back-history flyout (Files NavigationToolbar.xaml
+    // BackHistoryFlyout); the panel populates the menu from the pane state.
+    m_back_button->setContextMenuPolicy(Qt::CustomContextMenu);
     row->addWidget(m_back_button);
+
+    // Narrow-window overflow ("see more", Files NavigationStates): holds
+    // Forward/Up/Refresh when the shell is too narrow for the full cluster.
+    m_nav_overflow_button = makeIconButton(this,
+                                           "fileExplorerNavOverflowButton",
+                                           "more",
+                                           tr("More navigation actions"),
+                                           tr("Forward, parent directory, and refresh"));
+    auto* overflow_menu = new QMenu(m_nav_overflow_button);
+    m_overflow_forward_action = overflow_menu->addAction(
+        FileExplorerIconRegistry::iconForKey(QStringLiteral("nav-forward")), tr("Forward"));
+    m_overflow_up_action = overflow_menu->addAction(
+        FileExplorerIconRegistry::iconForKey(QStringLiteral("nav-up")), tr("Up"));
+    m_overflow_refresh_action = overflow_menu->addAction(
+        FileExplorerIconRegistry::iconForKey(QStringLiteral("refresh")), tr("Refresh"));
+    m_nav_overflow_button->setMenu(overflow_menu);
+    m_nav_overflow_button->setVisible(false);
+    row->addWidget(m_nav_overflow_button);
 
     m_forward_button = makeIconButton(this,
                                       "fileExplorerForwardButton",
                                       "nav-forward",
                                       tr("Go forward"),
                                       tr("Go to next explorer location"));
+    m_forward_button->setContextMenuPolicy(Qt::CustomContextMenu);
     row->addWidget(m_forward_button);
 
     m_up_button = makeIconButton(this,
@@ -80,6 +113,26 @@ void FileExplorerOmnibar::createNavigationButtons(QHBoxLayout* row) {
                                       tr("Refresh mounted file targets"),
                                       tr("Reload targets and the current folder"));
     row->addWidget(m_refresh_button);
+
+    connect(overflow_menu, &QMenu::aboutToShow, this, [this]() {
+        m_overflow_forward_action->setEnabled(m_forward_button->isEnabled());
+        m_overflow_up_action->setEnabled(m_up_button->isEnabled());
+        m_overflow_refresh_action->setEnabled(m_refresh_button->isEnabled());
+    });
+    connect(m_overflow_forward_action, &QAction::triggered, m_forward_button, &QPushButton::click);
+    connect(m_overflow_up_action, &QAction::triggered, m_up_button, &QPushButton::click);
+    connect(m_overflow_refresh_action, &QAction::triggered, m_refresh_button, &QPushButton::click);
+}
+
+void FileExplorerOmnibar::setNarrowMode(const bool narrow) {
+    if (m_nav_overflow_button) {
+        m_nav_overflow_button->setVisible(narrow);
+    }
+    for (QPushButton* button : {m_forward_button, m_up_button, m_refresh_button}) {
+        if (button) {
+            button->setVisible(!narrow);
+        }
+    }
 }
 
 void FileExplorerOmnibar::createAddressAndSearch(QHBoxLayout* row) {

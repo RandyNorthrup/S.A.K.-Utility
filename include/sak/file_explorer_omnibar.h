@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QWidget>
 
+class QAction;
 class QHBoxLayout;
 class QStackedWidget;
 
@@ -42,6 +43,10 @@ public:
     void setAddressEditMode(bool edit);
     [[nodiscard]] bool addressEditMode() const;
 
+    /// Narrow shells collapse Forward/Up/Refresh into an overflow menu
+    /// (Files NavigationToolbar adaptive states).
+    void setNarrowMode(bool narrow);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -51,6 +56,10 @@ private:
 
     QPushButton* m_sidebar_toggle_button{nullptr};
     QPushButton* m_back_button{nullptr};
+    QPushButton* m_nav_overflow_button{nullptr};
+    QAction* m_overflow_forward_action{nullptr};
+    QAction* m_overflow_up_action{nullptr};
+    QAction* m_overflow_refresh_action{nullptr};
     QPushButton* m_forward_button{nullptr};
     QPushButton* m_up_button{nullptr};
     QPushButton* m_refresh_button{nullptr};

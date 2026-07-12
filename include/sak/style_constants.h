@@ -126,6 +126,10 @@ inline const QString kIconPasswordEyeOpenOnTone =
     QStringLiteral(":/icons/icons/eye_open_on_tone.svg");
 inline const QString kIconPasswordEyeClosedOnTone =
     QStringLiteral(":/icons/icons/eye_closed_on_tone.svg");
+// File Explorer icon resource templates (%1 = icon key). The registry in
+// file_explorer_icon_registry.cpp resolves every explorer icon through these.
+inline const QString kIconExplorerFilesTemplate = QStringLiteral(":/icons/icons/files/%1.svg");
+inline const QString kIconExplorerFluentTemplate = QStringLiteral(":/icons/icons/fluent/%1.svg");
 
 inline bool usingDarkUiTheme() {
     return qApp && qApp->property("sakThemeMode").toString() == QStringLiteral("dark");
