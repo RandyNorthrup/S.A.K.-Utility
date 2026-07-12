@@ -6,6 +6,7 @@
 
 #include "sak/file_management_explorer_panel.h"
 
+#include "sak/advanced_search_worker.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_session_store.h"
 #include "sak/file_explorer_tag_store.h"
@@ -103,6 +104,9 @@ constexpr const char* kViewModeKey = "ViewMode";
 constexpr const char* kShowHiddenKey = "ShowHiddenItems";
 constexpr const char* kShowExtensionsKey = "ShowFileExtensions";
 constexpr const char* kItemSizeKey = "ItemSizePx";
+constexpr const char* kSearchHistoryKey = "SearchHistory";
+constexpr int kMaxSearchHistoryEntries = 20;
+constexpr int kExplorerSearchMaxResults = 500;
 
 enum class SidebarEntryKind {
     Header = 0,
@@ -412,6 +416,7 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {
+    stopExplorerSearch();
     saveTabSession();
 }
 
@@ -595,7 +600,7 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
     connect(m_search_button,
             &QPushButton::clicked,
             this,
-            &FileManagementExplorerPanel::promptCurrentFolderFilter);
+            &FileManagementExplorerPanel::showExplorerSearchDialog);
     connect(m_command_button,
             &QPushButton::clicked,
             this,
@@ -1281,8 +1286,32 @@ void FileManagementExplorerPanel::populateTable(const FileManagementListResult& 
     m_summary_label->setText(summary);
     Q_EMIT statusMessage(tr("Explorer loaded %1 item(s)").arg(result.entries.size()),
                          sak::kTimerStatusDefaultMs);
+    selectPendingSearchResult();
     updateDetailsPane();
     updateActionButtons();
+}
+
+void FileManagementExplorerPanel::selectPendingSearchResult() {
+    // A search "Open Result" navigated to the file's parent folder; now that the (async)
+    // listing has arrived, select the target entry so the user lands on it.
+    if (m_pending_select_name.isEmpty() || !m_pane) {
+        return;
+    }
+    const QString name = m_pending_select_name;
+    m_pending_select_name.clear();
+    auto* view = currentItemView();
+    auto* proxy = m_pane->sortFilterModel();
+    if (!view || !proxy) {
+        return;
+    }
+    for (int row = 0; row < proxy->rowCount(); ++row) {
+        const QModelIndex index = proxy->index(row, 0);
+        if (index.data(Qt::DisplayRole).toString() == name) {
+            selectRowInView(view, row);
+            view->scrollTo(index);
+            return;
+        }
+    }
 }
 
 void FileManagementExplorerPanel::previewSelectedFile() {
@@ -2421,6 +2450,185 @@ void FileManagementExplorerPanel::promptCurrentFolderFilter() {
     }
     Q_EMIT statusMessage(message, sak::kTimerStatusDefaultMs);
     updateActionButtons();
+}
+
+QStringList FileManagementExplorerPanel::searchHistory() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    const QStringList history = settings.value(QLatin1String(kSearchHistoryKey)).toStringList();
+    settings.endGroup();
+    return history;
+}
+
+void FileManagementExplorerPanel::rememberSearchQuery(const QString& query) {
+    const QString clean = query.trimmed();
+    if (clean.isEmpty()) {
+        return;
+    }
+    QStringList history = searchHistory();
+    history.removeAll(clean);
+    history.prepend(clean);
+    while (history.size() > kMaxSearchHistoryEntries) {
+        history.removeLast();
+    }
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.setValue(QLatin1String(kSearchHistoryKey), history);
+    settings.endGroup();
+}
+
+void FileManagementExplorerPanel::stopExplorerSearch() {
+    if (!m_search_worker) {
+        return;
+    }
+    m_search_worker->requestStop();
+    m_search_worker->wait(5000);
+    m_search_worker->deleteLater();
+    m_search_worker = nullptr;
+}
+
+void FileManagementExplorerPanel::startExplorerSearch(const QString& query,
+                                                      QListWidget* results,
+                                                      QLabel* status) {
+    stopExplorerSearch();
+    results->clear();
+    SearchConfig config;
+    config.file_system_target = currentTarget();
+    config.use_file_system_target = true;
+    config.root_path = m_current_path;
+    config.pattern = query;
+    config.search_file_metadata = true;  // matches file NAME and path as well as content
+    config.max_results = kExplorerSearchMaxResults;
+    config.max_file_size = kExplorerPreviewMaxBytes;
+    m_search_worker = new AdvancedSearchWorker(config, this);
+    connect(m_search_worker,
+            &AdvancedSearchWorker::resultsReady,
+            results,
+            [results](const QVector<SearchMatch>& matches) {
+                for (const SearchMatch& match : matches) {
+                    if (results->findItems(match.file_path, Qt::MatchFixedString).isEmpty()) {
+                        results->addItem(match.file_path);
+                    }
+                }
+            });
+    connect(m_search_worker, &QThread::finished, status, [results, status]() {
+        status->setText(tr("Search finished: %1 result(s).").arg(results->count()));
+    });
+    status->setText(tr("Searching..."));
+    m_search_worker->start();
+}
+
+void FileManagementExplorerPanel::openSearchResult(const QString& path, const bool location_only) {
+    const FileManagementTarget target = currentTarget();
+    const QString parent = parentPathForEntry(path, target.local_file_system);
+    if (!location_only) {
+        // Selection happens once the (asynchronous) listing lands - see populateTable.
+        m_pending_select_name = nameForPath(path, target.local_file_system);
+    }
+    loadDirectory(parent);
+}
+
+FileManagementExplorerPanel::SearchDialogUi FileManagementExplorerPanel::buildSearchDialogUi(
+    QDialog* dialog, const FileManagementTarget& target) const {
+    SearchDialogUi ui;
+    dialog->setObjectName(QStringLiteral("fileExplorerSearchDialog"));
+    dialog->setWindowTitle(tr("Search"));
+    dialog->setMinimumWidth(sak::kDialogWidthLarge);
+    auto* layout = new QVBoxLayout(dialog);
+
+    auto* badge = new QLabel(
+        tr("Target: %1  |  %2  |  under %3").arg(target.label, target.file_system, m_current_path),
+        dialog);
+    badge->setObjectName(QStringLiteral("fileExplorerSearchTargetBadge"));
+    layout->addWidget(badge);
+
+    auto* query_row = new QHBoxLayout();
+    ui.query = new QComboBox(dialog);
+    ui.query->setEditable(true);
+    ui.query->setObjectName(QStringLiteral("fileExplorerSearchQuery"));
+    ui.query->setAccessibleName(tr("Search text"));
+    ui.query->addItems(searchHistory());
+    ui.query->setCurrentText(QString());
+    query_row->addWidget(ui.query, 1);
+    ui.search = new QPushButton(tr("Search"), dialog);
+    ui.search->setObjectName(QStringLiteral("fileExplorerSearchRunButton"));
+    query_row->addWidget(ui.search);
+    ui.clear = new QPushButton(tr("Clear"), dialog);
+    ui.clear->setObjectName(QStringLiteral("fileExplorerSearchClearButton"));
+    query_row->addWidget(ui.clear);
+    layout->addLayout(query_row);
+
+    ui.results = new QListWidget(dialog);
+    ui.results->setObjectName(QStringLiteral("fileExplorerSearchResults"));
+    ui.results->setAccessibleName(tr("Search results"));
+    layout->addWidget(ui.results, 1);
+
+    ui.status = new QLabel(tr("Names, paths, and text content match under the current folder."),
+                           dialog);
+    ui.status->setObjectName(QStringLiteral("fileExplorerSearchStatus"));
+    layout->addWidget(ui.status);
+
+    auto* action_row = new QHBoxLayout();
+    ui.open = new QPushButton(tr("Open Result"), dialog);
+    ui.open->setObjectName(QStringLiteral("fileExplorerSearchOpenButton"));
+    action_row->addWidget(ui.open);
+    ui.open_location = new QPushButton(tr("Open Location"), dialog);
+    ui.open_location->setObjectName(QStringLiteral("fileExplorerSearchOpenLocationButton"));
+    action_row->addWidget(ui.open_location);
+    action_row->addStretch(1);
+    auto* close = new QPushButton(tr("Close"), dialog);
+    connect(close, &QPushButton::clicked, dialog, &QDialog::reject);
+    action_row->addWidget(close);
+    layout->addLayout(action_row);
+    return ui;
+}
+
+void FileManagementExplorerPanel::showExplorerSearchDialog() {
+    const FileManagementTarget target = currentTarget();
+    if (FileExplorerTargetId::fromTarget(target).isEmpty()) {
+        Q_EMIT statusMessage(tr("Select a File Explorer target first."),
+                             sak::kTimerStatusMessageMs);
+        return;
+    }
+    QDialog dialog(this);
+    const SearchDialogUi ui = buildSearchDialogUi(&dialog, target);
+
+    const auto run_search = [this, ui]() {
+        const QString query = ui.query->currentText().trimmed();
+        if (query.isEmpty()) {
+            ui.status->setText(tr("Type a search text first."));
+            return;
+        }
+        rememberSearchQuery(query);
+        startExplorerSearch(query, ui.results, ui.status);
+    };
+    connect(ui.search, &QPushButton::clicked, &dialog, run_search);
+    connect(ui.query->lineEdit(), &QLineEdit::returnPressed, &dialog, run_search);
+    connect(ui.clear, &QPushButton::clicked, &dialog, [this, ui]() {
+        stopExplorerSearch();
+        ui.results->clear();
+        ui.status->setText(tr("Search cleared."));
+    });
+    const auto open_selected = [this, ui, &dialog](const bool location_only) {
+        auto* item = ui.results->currentItem();
+        if (!item) {
+            ui.status->setText(tr("Select a result first."));
+            return;
+        }
+        openSearchResult(item->text(), location_only);
+        dialog.accept();
+    };
+    connect(ui.open, &QPushButton::clicked, &dialog, [open_selected]() { open_selected(false); });
+    connect(ui.open_location, &QPushButton::clicked, &dialog, [open_selected]() {
+        open_selected(true);
+    });
+    connect(ui.results, &QListWidget::itemDoubleClicked, &dialog, [open_selected]() {
+        open_selected(false);
+    });
+
+    dialog.resize(sak::kDialogWidthLarge, 480);
+    dialog.exec();
+    stopExplorerSearch();
 }
 
 void FileManagementExplorerPanel::showCommandPalette() {

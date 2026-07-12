@@ -1324,17 +1324,17 @@ Goal: add Files-style discovery and quick search without replacing Advanced Sear
 
 Omnibar search checklist:
 
-- [x] Add current-folder filter on `Ctrl+F`.
-- [x] Filter current path by default.
-- [ ] Add current target badge in search field.
-- [ ] Add suggestions/flyout if cheap.
-- [ ] Route local search to existing worker.
-- [ ] Route raw/image search to File Management bridge and Advanced Search worker where supported.
-- [ ] Add search result list.
-- [ ] Add open result.
-- [ ] Add open result location.
-- [ ] Add clear search.
-- [ ] Preserve search history if existing settings support it.
+- [x] Add current-folder filter on `Ctrl+F`. (`promptCurrentFolderFilter`)
+- [x] Filter current path by default. (search dialog roots at `m_current_path`)
+- [x] Add current target badge in search field. (`fileExplorerSearchTargetBadge` = target/file-system/current-folder)
+- [x] Add suggestions/flyout if cheap. (editable query combo pre-seeded from persisted history)
+- [x] Route local search to existing worker. (`AdvancedSearchWorker` with `use_file_system_target` = local target)
+- [x] Route raw/image search to File Management bridge and Advanced Search worker where supported. (same worker path; raw targets read through the bridge)
+- [x] Add search result list. (`fileExplorerSearchResults`, deduplicated by path)
+- [x] Add open result. (`openSearchResult` navigates to the parent folder and selects the entry once the async listing lands via `selectPendingSearchResult`)
+- [x] Add open result location. (Open Location navigates to the parent folder without selecting)
+- [x] Add clear search. (`fileExplorerSearchClearButton` stops the worker and empties the list)
+- [x] Preserve search history if existing settings support it. (`SearchHistory` QSettings key, 20-entry MRU; `omnibarSearchDialogExposesResultRoutingAndHistory`)
 
 Command palette checklist:
 
@@ -1352,12 +1352,12 @@ Tests:
 - [x] GUI `Ctrl+Shift+P` opens palette. (`commandPaletteShortcutOpensRegistryBackedDialog`)
 - [x] GUI disabled command shows blocker. (`commandPaletteMarksDisabledCommandWithBlocker`)
 - [x] GUI `Ctrl+F` filters current folder. (`searchShortcutAppliesCurrentFolderFilter`)
-- [ ] GUI raw search uses existing supported target path. (richer omnibar search not implemented)
+- [x] GUI raw search uses existing supported target path. (`omnibarSearchDialogExposesResultRoutingAndHistory` opens the dialog on the selected target; the worker searches through the File Management bridge)
 
 Exit gate:
 
-- [ ] User can discover commands without toolbar.
-- [ ] Search is useful for current location and does not duplicate full Advanced Search UI.
+- [x] User can discover commands without toolbar. (command palette, Ctrl+Shift+P)
+- [x] Search is useful for current location and does not duplicate full Advanced Search UI. (scoped quick search under the current folder with result routing; the Advanced Search tab remains the full workspace)
 
 ### M11 - Tags, Favorites, Recent, And Polish
 

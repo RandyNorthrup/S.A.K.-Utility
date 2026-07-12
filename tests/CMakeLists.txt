@@ -1047,6 +1047,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_tag_store.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
+        ../src/core/advanced_search_worker.cpp
+        ../src/threading/worker_base.cpp
         ../src/core/apfs_crypto.cpp
         ../src/core/apfs_keybag.cpp
         ../src/core/partition_apfs_file_system_reader.cpp
@@ -1076,6 +1078,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../include/sak/file_explorer_sort_filter_model.h
         ../include/sak/file_explorer_command_registry.h
         ../include/sak/file_management_file_system.h
+        ../include/sak/advanced_search_worker.h
+        ../include/sak/worker_base.h
         ../include/sak/storage_inventory_worker.h
         ../include/sak/elevation_broker.h
     )

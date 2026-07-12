@@ -15,6 +15,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDialog>
@@ -1314,6 +1315,69 @@ private Q_SLOTS:
                  "paste did not create the destination file");
         QVERIFY(copied.open(QIODevice::ReadOnly));
         QCOMPARE(copied.readAll(), payload);
+    }
+
+    void omnibarSearchDialogExposesResultRoutingAndHistory() {
+        // The rich omnibar search dialog opens from the search button with a target badge,
+        // an editable query pre-seeded from history, a result list, and open/clear actions.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList previous = settings.value(QStringLiteral("SearchHistory")).toStringList();
+        settings.setValue(QStringLiteral("SearchHistory"),
+                          QStringList{QStringLiteral("prior-query")});
+        settings.endGroup();
+        settings.sync();
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* searchButton = child<QPushButton>(&panel, "fileExplorerSearchButton");
+        QVERIFY(targetList);
+        QVERIFY(searchButton);
+        const int targetRow = firstTargetRow(targetList);
+        if (targetRow < 0) {
+            settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+            settings.setValue(QStringLiteral("SearchHistory"), previous);
+            settings.endGroup();
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+        targetList->setCurrentRow(targetRow);
+        QApplication::processEvents();
+
+        bool verified = false;
+        QTimer::singleShot(0, [&verified]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* badge =
+                dialog->findChild<QLabel*>(QStringLiteral("fileExplorerSearchTargetBadge"));
+            auto* query = dialog->findChild<QComboBox*>(QStringLiteral("fileExplorerSearchQuery"));
+            auto* results =
+                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerSearchResults"));
+            auto* clear =
+                dialog->findChild<QPushButton*>(QStringLiteral("fileExplorerSearchClearButton"));
+            auto* open =
+                dialog->findChild<QPushButton*>(QStringLiteral("fileExplorerSearchOpenButton"));
+            auto* openLocation = dialog->findChild<QPushButton*>(
+                QStringLiteral("fileExplorerSearchOpenLocationButton"));
+            verified = badge && query && results && clear && open && openLocation &&
+                       !badge->text().trimmed().isEmpty() &&
+                       query->findText(QStringLiteral("prior-query")) >= 0;
+            dialog->reject();
+        });
+        searchButton->click();
+        QApplication::processEvents();
+
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.setValue(QStringLiteral("SearchHistory"), previous);
+        settings.endGroup();
+        settings.sync();
+
+        QVERIFY2(verified, "omnibar search dialog is missing expected controls or history seed");
     }
 
     void commandPaletteFilterNarrowsCommandList() {

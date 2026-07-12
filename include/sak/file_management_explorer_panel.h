@@ -28,6 +28,8 @@
 #include <QWidget>
 
 class QJsonArray;
+class QComboBox;
+class QDialog;
 class QMenu;
 class QMimeData;
 class QPoint;
@@ -38,6 +40,8 @@ class QImage;
 class QTabBar;
 
 namespace sak {
+
+class AdvancedSearchWorker;
 
 class FileManagementExplorerPanel : public QWidget {
     Q_OBJECT
@@ -110,6 +114,7 @@ private:
     void loadDirectory(const QString& path, bool add_history = true);
     void loadColumnsPreview(const QString& path);
     void populateTable(const FileManagementListResult& result);
+    void selectPendingSearchResult();
     void previewSelectedFile();
     void hashSelectedFile();
     void copySelectedFileOut();
@@ -188,6 +193,24 @@ private:
     void appendStaleFavoriteRow(const QString& target_id);
     bool showStaleFavoriteContextMenu(const QPoint& position);
     void promptCurrentFolderFilter();
+    /// Widgets of the omnibar search dialog, shared between builder and wiring.
+    struct SearchDialogUi {
+        QComboBox* query{nullptr};
+        QListWidget* results{nullptr};
+        QLabel* status{nullptr};
+        QPushButton* search{nullptr};
+        QPushButton* clear{nullptr};
+        QPushButton* open{nullptr};
+        QPushButton* open_location{nullptr};
+    };
+    void showExplorerSearchDialog();
+    [[nodiscard]] SearchDialogUi buildSearchDialogUi(QDialog* dialog,
+                                                     const FileManagementTarget& target) const;
+    void startExplorerSearch(const QString& query, QListWidget* results, QLabel* status);
+    void stopExplorerSearch();
+    void openSearchResult(const QString& path, bool location_only);
+    [[nodiscard]] QStringList searchHistory() const;
+    void rememberSearchQuery(const QString& query);
     void showCommandPalette();
     void updateDetailsPane();
     [[nodiscard]] QString composeStatusText(const FileManagementTarget& target,
@@ -288,6 +311,10 @@ private:
     QString m_last_hash_name;
     QString m_last_hash_sha256;
     bool m_last_hash_capped{false};
+    // Live omnibar search worker (one per search; stopped on re-search/dialog close).
+    AdvancedSearchWorker* m_search_worker{nullptr};
+    // Entry name to select once the next listing arrives (open-search-result flow).
+    QString m_pending_select_name;
     FileExplorerItemModel* m_item_model{nullptr};
     QVector<FileManagementTarget> m_targets;
     QString m_current_path{QStringLiteral("/")};
