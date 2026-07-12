@@ -9,6 +9,7 @@
 #include "sak/advanced_search_worker.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_session_store.h"
+#include "sak/file_explorer_style.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
@@ -427,10 +428,18 @@ void FileManagementExplorerPanel::enableTabSessionPersistence() {
 }
 
 void FileManagementExplorerPanel::setupUi() {
+    setObjectName(QStringLiteral("fileExplorerRoot"));
+    setStyleSheet(ui::fileExplorerShellStyleSheet());
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(
         ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
-    layout->setSpacing(ui::kSpacingDefault);
+    layout->setSpacing(ui::kSpacingSmall);
+
+    // Files-style anatomy, top to bottom: tab strip, then the sidebar/content
+    // splitter (the nav and command rows live in the center column), then a
+    // full-width status row.
+    buildTabBar(layout);
 
     m_shell_splitter = new QSplitter(Qt::Horizontal, this);
     m_shell_splitter->setChildrenCollapsible(false);
@@ -438,6 +447,8 @@ void FileManagementExplorerPanel::setupUi() {
 
     m_sidebar = new FileExplorerSidebar(m_shell_splitter);
     m_target_list = m_sidebar->targetList();
+    m_scan_disks_button = m_sidebar->scanDisksButton();
+    m_add_manual_button = m_sidebar->addManualButton();
     m_shell_splitter->addWidget(m_sidebar);
 
     auto* center = new QWidget(m_shell_splitter);
@@ -449,6 +460,7 @@ void FileManagementExplorerPanel::setupUi() {
 
     buildCommandAndNavBars(center, centerLayout);
     buildContentArea(center, centerLayout);
+    buildStatusRow(layout);
 
     connectUiSignals();
     installCommandShortcuts();
@@ -457,33 +469,50 @@ void FileManagementExplorerPanel::setupUi() {
 
 void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
                                                          QVBoxLayout* center_layout) {
+    m_omnibar = new FileExplorerOmnibar(center);
+    m_sidebar_toggle_button = m_omnibar->sidebarToggleButton();
+    m_back_button = m_omnibar->backButton();
+    m_forward_button = m_omnibar->forwardButton();
+    m_up_button = m_omnibar->upButton();
+    m_refresh_button = m_omnibar->refreshButton();
+    m_path_edit = m_omnibar->pathEdit();
+    m_search_box = m_omnibar->searchBox();
+    m_search_button = m_omnibar->searchButton();
+    m_command_button = m_omnibar->commandButton();
+    center_layout->addWidget(m_omnibar);
+
     m_command_bar = new FileExplorerCommandBar(center);
-    m_sidebar_toggle_button = m_command_bar->sidebarToggleButton();
-    m_refresh_button = m_command_bar->refreshButton();
-    m_scan_disks_button = m_command_bar->scanDisksButton();
-    m_add_manual_button = m_command_bar->addManualButton();
     m_new_folder_button = m_command_bar->newFolderButton();
     m_write_file_button = m_command_bar->writeFileButton();
+    m_open_button = m_command_bar->openButton();
+    m_copy_path_button = m_command_bar->copyPathButton();
     m_rename_button = m_command_bar->renameButton();
     m_delete_button = m_command_bar->deleteButton();
     m_view_button = m_command_bar->viewButton();
     m_details_toggle_button = m_command_bar->detailsToggleButton();
     center_layout->addWidget(m_command_bar);
+}
 
-    m_omnibar = new FileExplorerOmnibar(center);
-    m_back_button = m_omnibar->backButton();
-    m_forward_button = m_omnibar->forwardButton();
-    m_up_button = m_omnibar->upButton();
-    m_path_edit = m_omnibar->pathEdit();
-    m_search_button = m_omnibar->searchButton();
-    m_command_button = m_omnibar->commandButton();
-    m_open_button = m_omnibar->openButton();
-    m_copy_path_button = m_omnibar->copyPathButton();
-    center_layout->addWidget(m_omnibar);
+void FileManagementExplorerPanel::buildStatusRow(QVBoxLayout* root_layout) {
+    auto* row = new QWidget(this);
+    row->setObjectName(QStringLiteral("fileExplorerStatusRow"));
+    auto* row_layout = new QHBoxLayout(row);
+    row_layout->setContentsMargins(
+        ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    row_layout->setSpacing(ui::kSpacingSmall);
+
+    m_summary_label = new QLabel(tr("No target selected"), row);
+    m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
+    m_summary_label->setWordWrap(false);
+    m_summary_label->setAccessibleName(tr("Explorer target summary"));
+    row_layout->addWidget(m_summary_label, 1);
+
+    root_layout->addWidget(row, 0);
 }
 
 void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
     auto* row = new QWidget(this);
+    row->setObjectName(QStringLiteral("fileExplorerTabRow"));
     auto* row_layout = new QHBoxLayout(row);
     row_layout->setContentsMargins(0, 0, 0, 0);
     row_layout->setSpacing(ui::kSpacingTight);
@@ -497,14 +526,16 @@ void FileManagementExplorerPanel::buildTabBar(QVBoxLayout* center_layout) {
     m_tab_bar->setDrawBase(false);
     m_tab_bar->addTab(tr("New Tab"));
     nameTabCloseButtons();
-    row_layout->addWidget(m_tab_bar, 1);
+    row_layout->addWidget(m_tab_bar, 0);
 
-    auto* new_tab = new QPushButton(tr("+"), row);
+    auto* new_tab = new QPushButton(row);
     new_tab->setObjectName(QStringLiteral("fileExplorerNewTabButton"));
+    new_tab->setIcon(FileExplorerIconRegistry::iconForKey(QStringLiteral("plus")));
     new_tab->setAccessibleName(tr("Open a new explorer tab"));
     new_tab->setToolTip(tr("Open a new tab at the current location"));
     new_tab->setFixedWidth(ui::kUiButtonHeightMini);
     row_layout->addWidget(new_tab, 0);
+    row_layout->addStretch(1);
 
     center_layout->addWidget(row);
 
@@ -541,15 +572,6 @@ void FileManagementExplorerPanel::nameTabCloseButtons() {
 }
 
 void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout* center_layout) {
-    buildTabBar(center_layout);
-    m_summary_label = new QLabel(tr("No target selected"), this);
-    m_summary_label->setObjectName(QStringLiteral("fileExplorerSummaryLabel"));
-    m_summary_label->setWordWrap(true);
-    m_summary_label->setAccessibleName(tr("Explorer target summary"));
-    m_summary_label->setStyleSheet(
-        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
-    center_layout->addWidget(m_summary_label);
-
     m_pane_splitter = new QSplitter(Qt::Horizontal, center);
     m_pane_splitter->setObjectName(QStringLiteral("fileExplorerPaneSplitter"));
     m_pane_a = new FileExplorerPane(m_pane_splitter);
@@ -599,10 +621,12 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
     connect(m_details_toggle_button, &QPushButton::clicked, this, [this]() {
         m_details_tabs->setVisible(!m_details_tabs->isVisible());
     });
-    connect(m_search_button,
-            &QPushButton::clicked,
-            this,
-            &FileManagementExplorerPanel::showExplorerSearchDialog);
+    connect(m_search_button, &QPushButton::clicked, this, [this]() {
+        showExplorerSearchDialog(m_search_box ? m_search_box->text().trimmed() : QString());
+    });
+    connect(m_search_box, &QLineEdit::returnPressed, this, [this]() {
+        showExplorerSearchDialog(m_search_box->text().trimmed());
+    });
     connect(m_command_button,
             &QPushButton::clicked,
             this,
@@ -2605,7 +2629,7 @@ FileManagementExplorerPanel::SearchDialogUi FileManagementExplorerPanel::buildSe
     return ui;
 }
 
-void FileManagementExplorerPanel::showExplorerSearchDialog() {
+void FileManagementExplorerPanel::showExplorerSearchDialog(const QString& initial_query) {
     const FileManagementTarget target = currentTarget();
     if (FileExplorerTargetId::fromTarget(target).isEmpty()) {
         Q_EMIT statusMessage(tr("Select a File Explorer target first."),
@@ -2647,6 +2671,11 @@ void FileManagementExplorerPanel::showExplorerSearchDialog() {
     connect(ui.results, &QListWidget::itemDoubleClicked, &dialog, [open_selected]() {
         open_selected(false);
     });
+
+    if (!initial_query.isEmpty()) {
+        ui.query->setCurrentText(initial_query);
+        run_search();
+    }
 
     dialog.resize(sak::kDialogWidthLarge, 480);
     dialog.exec();

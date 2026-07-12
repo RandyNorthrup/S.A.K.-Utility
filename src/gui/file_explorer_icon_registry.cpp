@@ -3,6 +3,13 @@
 
 #include "sak/file_explorer_icon_registry.h"
 
+#include <QApplication>
+#include <QHash>
+#include <QIconEngine>
+#include <QPainter>
+#include <QPalette>
+#include <QPixmap>
+
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -22,6 +29,76 @@ using IconDescriptor = FileExplorerIconDescriptor;
             QString::fromLatin1(upstream_source),
             QStringLiteral("MIT")};
 }
+
+[[nodiscard]] IconDescriptor fluentDescriptor(const char* key) {
+    return {QString::fromLatin1(key),
+            QStringLiteral(":/icons/icons/fluent/%1.svg").arg(QString::fromLatin1(key)),
+            QString(),
+            QStringLiteral("S.A.K.-Utility original, Fluent-style outline glyph"),
+            QStringLiteral("AGPL-3.0-or-later")};
+}
+
+// The bundled SVGs carry a fixed dark fill, so a raw QIcon disappears on dark
+// backgrounds. This engine recolors every rendered pixel with the palette
+// foreground at paint time, which keeps icons legible in both theme modes
+// without regenerating buttons on a theme switch.
+class PaletteTintedIconEngine final : public QIconEngine {
+public:
+    explicit PaletteTintedIconEngine(QString resource_path)
+        : m_resource_path(std::move(resource_path)), m_source(m_resource_path) {}
+
+    void paint(QPainter* painter,
+               const QRect& rect,
+               const QIcon::Mode mode,
+               const QIcon::State state) override {
+        if (!painter) {
+            return;
+        }
+        painter->drawPixmap(rect, pixmap(rect.size(), mode, state));
+    }
+
+    QPixmap pixmap(const QSize& size, const QIcon::Mode mode, const QIcon::State state) override {
+        const QColor tint = tintColor(mode);
+        const quint64 cache_key = (static_cast<quint64>(size.width() & 0xFFF) << 44) |
+                                  (static_cast<quint64>(size.height() & 0xFFF) << 32) |
+                                  static_cast<quint64>(tint.rgba());
+        const auto it = m_cache.constFind(cache_key);
+        if (it != m_cache.constEnd()) {
+            return it.value();
+        }
+        QPixmap tinted = m_source.pixmap(size, QIcon::Normal, state);
+        if (!tinted.isNull()) {
+            QPainter overlay(&tinted);
+            overlay.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            overlay.fillRect(tinted.rect(), tint);
+        }
+        m_cache.insert(cache_key, tinted);
+        return tinted;
+    }
+
+    [[nodiscard]] QIconEngine* clone() const override {
+        return new PaletteTintedIconEngine(m_resource_path);
+    }
+
+private:
+    [[nodiscard]] static QColor tintColor(const QIcon::Mode mode) {
+        const QPalette palette = QApplication::palette();
+        switch (mode) {
+        case QIcon::Disabled:
+            return palette.color(QPalette::Disabled, QPalette::WindowText);
+        case QIcon::Selected:
+            return palette.color(QPalette::HighlightedText);
+        case QIcon::Active:
+        case QIcon::Normal:
+            break;
+        }
+        return palette.color(QPalette::WindowText);
+    }
+
+    QString m_resource_path;
+    QIcon m_source;
+    QHash<quint64, QPixmap> m_cache;
+};
 
 [[nodiscard]] QVector<IconDescriptor> fileActionDescriptors() {
     return {
@@ -147,12 +224,37 @@ using IconDescriptor = FileExplorerIconDescriptor;
     };
 }
 
+[[nodiscard]] QVector<IconDescriptor> fluentGlyphDescriptors() {
+    QVector<IconDescriptor> items;
+    static constexpr std::array kFluentKeys = {"nav-back",
+                                               "nav-forward",
+                                               "nav-up",
+                                               "search",
+                                               "plus",
+                                               "chevron-right",
+                                               "home",
+                                               "drive",
+                                               "folder",
+                                               "file",
+                                               "image-file",
+                                               "recent",
+                                               "tag",
+                                               "shield",
+                                               "scan-disks"};
+    items.reserve(static_cast<qsizetype>(kFluentKeys.size()));
+    for (const char* key : kFluentKeys) {
+        items.append(fluentDescriptor(key));
+    }
+    return items;
+}
+
 [[nodiscard]] QVector<IconDescriptor> buildIconDescriptors() {
     QVector<IconDescriptor> items;
     items += fileActionDescriptors();
     items += viewLayoutDescriptors();
     items += viewLayout28Descriptors();
     items += panelAndStatusDescriptors();
+    items += fluentGlyphDescriptors();
     return items;
 }
 
@@ -177,12 +279,15 @@ QIcon FileExplorerIconRegistry::iconForKey(const QString& key) {
     if (icon.resource_path.isEmpty()) {
         return {};
     }
-    return QIcon(icon.resource_path);
+    return QIcon(new PaletteTintedIconEngine(icon.resource_path));
 }
 
 QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId command) {
     using Id = FileExplorerCommandId;
     static constexpr auto kIconKeys = std::to_array<std::pair<Id, const char*>>({
+        {Id::Back, "nav-back"},
+        {Id::Forward, "nav-forward"},
+        {Id::Up, "nav-up"},
         {Id::Open, "open"},
         {Id::OpenInNewTab, "open-in-new-tab"},
         {Id::CopyPath, "copy-path"},

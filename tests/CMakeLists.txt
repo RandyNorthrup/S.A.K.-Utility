@@ -1038,6 +1038,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/gui/file_explorer_details_view.cpp
         ../src/gui/file_explorer_pane.cpp
         ../src/gui/file_explorer_details_pane.cpp
+        ../src/gui/file_explorer_style.cpp
         ../src/gui/file_management_explorer_panel.cpp
         ../src/core/file_explorer_types.cpp
         ../src/core/file_explorer_item_model.cpp

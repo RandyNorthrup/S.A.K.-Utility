@@ -123,5 +123,20 @@
         <file>icons/files/properties-security.svg</file>
         <file>icons/files/more.svg</file>
         <file>icons/files/manifest.json</file>
+        <file>icons/fluent/nav-back.svg</file>
+        <file>icons/fluent/nav-forward.svg</file>
+        <file>icons/fluent/nav-up.svg</file>
+        <file>icons/fluent/search.svg</file>
+        <file>icons/fluent/plus.svg</file>
+        <file>icons/fluent/chevron-right.svg</file>
+        <file>icons/fluent/home.svg</file>
+        <file>icons/fluent/drive.svg</file>
+        <file>icons/fluent/folder.svg</file>
+        <file>icons/fluent/file.svg</file>
+        <file>icons/fluent/image-file.svg</file>
+        <file>icons/fluent/recent.svg</file>
+        <file>icons/fluent/tag.svg</file>
+        <file>icons/fluent/shield.svg</file>
+        <file>icons/fluent/scan-disks.svg</file>
     </qresource>
 </RCC>

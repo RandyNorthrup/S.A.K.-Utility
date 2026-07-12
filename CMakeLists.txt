@@ -606,6 +606,7 @@ set(GUI_SOURCES
     src/gui/file_explorer_details_view.cpp
     src/gui/file_explorer_pane.cpp
     src/gui/file_explorer_details_pane.cpp
+    src/gui/file_explorer_style.cpp
     src/gui/file_management_explorer_panel.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
@@ -618,6 +619,7 @@ set(GUI_SOURCES
     include/sak/file_explorer_details_view.h
     include/sak/file_explorer_pane.h
     include/sak/file_explorer_details_pane.h
+    include/sak/file_explorer_style.h
     include/sak/file_management_explorer_panel.h
     include/sak/log_viewer.h
     include/sak/settings_dialog.h

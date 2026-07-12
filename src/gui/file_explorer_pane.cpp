@@ -35,7 +35,6 @@ void FileExplorerPane::buildStateLabel(QVBoxLayout* layout) {
     m_state_label->setAccessibleName(tr("Explorer loading, empty, and error state"));
     m_state_label->setWordWrap(true);
     m_state_label->setVisible(false);
-    m_state_label->setStyleSheet(ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     layout->addWidget(m_state_label);
 }
 
@@ -90,8 +89,6 @@ void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {
     m_status_label->setObjectName(QStringLiteral("fileExplorerStatusLabel"));
     m_status_label->setAccessibleName(tr("Explorer status"));
     m_status_label->setWordWrap(true);
-    m_status_label->setStyleSheet(
-        ui::paddedStatusTextStyle(ui::kColorTextMuted, ui::kFontSizeNote));
     layout->addWidget(m_status_label);
 }
 

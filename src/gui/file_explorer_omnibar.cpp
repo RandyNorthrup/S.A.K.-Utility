@@ -8,75 +8,110 @@
 #include "sak/style_constants.h"
 
 #include <QHBoxLayout>
-#include <QStyle>
 
 namespace sak {
 
+namespace {
+
+constexpr int kSearchBoxMinWidth = 170;
+constexpr int kSearchBoxMaxWidth = 260;
+
+QPushButton* makeIconButton(QWidget* parent,
+                            const char* object_name,
+                            const char* icon_key,
+                            const QString& accessible_name,
+                            const QString& tool_tip) {
+    auto* button = new QPushButton(parent);
+    button->setObjectName(QString::fromLatin1(object_name));
+    button->setIcon(FileExplorerIconRegistry::iconForKey(QString::fromLatin1(icon_key)));
+    button->setAccessibleName(accessible_name);
+    button->setToolTip(tool_tip);
+    return button;
+}
+
+}  // namespace
+
 FileExplorerOmnibar::FileExplorerOmnibar(QWidget* parent) : QWidget(parent) {
-    auto* pathRow = new QHBoxLayout(this);
-    pathRow->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
-    pathRow->setSpacing(ui::kSpacingSmall);
+    setObjectName(QStringLiteral("fileExplorerOmnibar"));
+    auto* row = new QHBoxLayout(this);
+    row->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    row->setSpacing(ui::kSpacingTight);
 
-    m_back_button = new QPushButton(this);
-    m_back_button->setObjectName(QStringLiteral("fileExplorerBackButton"));
-    m_back_button->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
-    m_back_button->setAccessibleName(tr("Go back"));
-    m_back_button->setToolTip(tr("Go to previous explorer location"));
-    m_back_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_back_button);
+    createNavigationButtons(row);
+    createAddressAndSearch(row);
+}
 
-    m_forward_button = new QPushButton(this);
-    m_forward_button->setObjectName(QStringLiteral("fileExplorerForwardButton"));
-    m_forward_button->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
-    m_forward_button->setAccessibleName(tr("Go forward"));
-    m_forward_button->setToolTip(tr("Go to next explorer location"));
-    m_forward_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_forward_button);
+void FileExplorerOmnibar::createNavigationButtons(QHBoxLayout* row) {
+    m_sidebar_toggle_button = makeIconButton(this,
+                                             "fileExplorerSidebarToggleButton",
+                                             "panel-left",
+                                             tr("Toggle File Explorer sidebar"),
+                                             tr("Show or hide target navigation"));
+    row->addWidget(m_sidebar_toggle_button);
 
-    m_up_button = new QPushButton(this);
-    m_up_button->setObjectName(QStringLiteral("fileExplorerUpButton"));
-    m_up_button->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
-    m_up_button->setAccessibleName(tr("Go to parent directory"));
-    m_up_button->setToolTip(tr("Go to parent directory"));
-    m_up_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_up_button);
+    m_back_button = makeIconButton(this,
+                                   "fileExplorerBackButton",
+                                   "nav-back",
+                                   tr("Go back"),
+                                   tr("Go to previous explorer location"));
+    row->addWidget(m_back_button);
 
+    m_forward_button = makeIconButton(this,
+                                      "fileExplorerForwardButton",
+                                      "nav-forward",
+                                      tr("Go forward"),
+                                      tr("Go to next explorer location"));
+    row->addWidget(m_forward_button);
+
+    m_up_button = makeIconButton(this,
+                                 "fileExplorerUpButton",
+                                 "nav-up",
+                                 tr("Go to parent directory"),
+                                 tr("Go to parent directory"));
+    row->addWidget(m_up_button);
+
+    m_refresh_button = makeIconButton(this,
+                                      "fileExplorerRefreshButton",
+                                      "refresh",
+                                      tr("Refresh mounted file targets"),
+                                      tr("Reload targets and the current folder"));
+    row->addWidget(m_refresh_button);
+}
+
+void FileExplorerOmnibar::createAddressAndSearch(QHBoxLayout* row) {
     m_path_edit = new QLineEdit(this);
     m_path_edit->setObjectName(QStringLiteral("fileExplorerPathEdit"));
     m_path_edit->setAccessibleName(tr("Explorer omnibar path"));
     m_path_edit->setToolTip(tr("Path inside the selected target. Press Enter to navigate."));
-    pathRow->addWidget(m_path_edit, 1);
+    row->addWidget(m_path_edit, 1);
 
-    m_search_button = new QPushButton(this);
-    m_search_button->setObjectName(QStringLiteral("fileExplorerSearchButton"));
-    m_search_button->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
-    m_search_button->setAccessibleName(tr("Search current File Explorer location"));
-    m_search_button->setToolTip(tr("Filter the current folder by name, type, or path"));
-    m_search_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_search_button);
+    m_search_box = new QLineEdit(this);
+    m_search_box->setObjectName(QStringLiteral("fileExplorerSearchBox"));
+    m_search_box->setAccessibleName(tr("Search current File Explorer location"));
+    m_search_box->setPlaceholderText(tr("Search"));
+    m_search_box->setToolTip(tr("Search the current target. Press Enter to run."));
+    m_search_box->setClearButtonEnabled(true);
+    m_search_box->setMinimumWidth(kSearchBoxMinWidth);
+    m_search_box->setMaximumWidth(kSearchBoxMaxWidth);
+    row->addWidget(m_search_box);
 
-    m_command_button = new QPushButton(this);
-    m_command_button->setObjectName(QStringLiteral("fileExplorerCommandButton"));
-    m_command_button->setIcon(FileExplorerIconRegistry::iconForKey(QStringLiteral("more")));
-    m_command_button->setAccessibleName(tr("Open File Explorer command palette"));
-    m_command_button->setToolTip(tr("Search and run File Explorer commands"));
-    m_command_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_command_button);
+    m_search_button = makeIconButton(this,
+                                     "fileExplorerSearchButton",
+                                     "search",
+                                     tr("Search current File Explorer location"),
+                                     tr("Search the current target by name, type, or path"));
+    row->addWidget(m_search_button);
 
-    m_open_button = new QPushButton(tr("Open"), this);
-    m_open_button->setObjectName(QStringLiteral("fileExplorerOpenButton"));
-    m_open_button->setIcon(FileExplorerIconRegistry::iconForCommand(FileExplorerCommandId::Open));
-    m_open_button->setAccessibleName(tr("Open selected explorer item"));
-    m_open_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    pathRow->addWidget(m_open_button);
+    m_command_button = makeIconButton(this,
+                                      "fileExplorerCommandButton",
+                                      "more",
+                                      tr("Open File Explorer command palette"),
+                                      tr("Search and run File Explorer commands"));
+    row->addWidget(m_command_button);
+}
 
-    m_copy_path_button = new QPushButton(tr("Copy Path"), this);
-    m_copy_path_button->setObjectName(QStringLiteral("fileExplorerCopyPathButton"));
-    m_copy_path_button->setIcon(
-        FileExplorerIconRegistry::iconForCommand(FileExplorerCommandId::CopyItemPath));
-    m_copy_path_button->setAccessibleName(tr("Copy selected explorer path"));
-    m_copy_path_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    pathRow->addWidget(m_copy_path_button);
+QPushButton* FileExplorerOmnibar::sidebarToggleButton() const {
+    return m_sidebar_toggle_button;
 }
 
 QPushButton* FileExplorerOmnibar::backButton() const {
@@ -91,8 +126,16 @@ QPushButton* FileExplorerOmnibar::upButton() const {
     return m_up_button;
 }
 
+QPushButton* FileExplorerOmnibar::refreshButton() const {
+    return m_refresh_button;
+}
+
 QLineEdit* FileExplorerOmnibar::pathEdit() const {
     return m_path_edit;
+}
+
+QLineEdit* FileExplorerOmnibar::searchBox() const {
+    return m_search_box;
 }
 
 QPushButton* FileExplorerOmnibar::searchButton() const {
@@ -101,14 +144,6 @@ QPushButton* FileExplorerOmnibar::searchButton() const {
 
 QPushButton* FileExplorerOmnibar::commandButton() const {
     return m_command_button;
-}
-
-QPushButton* FileExplorerOmnibar::openButton() const {
-    return m_open_button;
-}
-
-QPushButton* FileExplorerOmnibar::copyPathButton() const {
-    return m_copy_path_button;
 }
 
 }  // namespace sak

@@ -91,6 +91,7 @@ private:
     void setupUi();
     void buildCommandAndNavBars(QWidget* center, QVBoxLayout* center_layout);
     void buildContentArea(QWidget* center, QVBoxLayout* center_layout);
+    void buildStatusRow(QVBoxLayout* root_layout);
     void connectUiSignals();
     void connectToolbarSignals();
     void connectNavigationSignals();
@@ -209,7 +210,7 @@ private:
         QPushButton* open{nullptr};
         QPushButton* open_location{nullptr};
     };
-    void showExplorerSearchDialog();
+    void showExplorerSearchDialog(const QString& initial_query = {});
     [[nodiscard]] SearchDialogUi buildSearchDialogUi(QDialog* dialog,
                                                      const FileManagementTarget& target) const;
     void startExplorerSearch(const QString& query, QListWidget* results, QLabel* status);
@@ -294,6 +295,7 @@ private:
     QPushButton* m_back_button{nullptr};
     QPushButton* m_forward_button{nullptr};
     QPushButton* m_up_button{nullptr};
+    QLineEdit* m_search_box{nullptr};
     QPushButton* m_search_button{nullptr};
     QPushButton* m_command_button{nullptr};
     QPushButton* m_open_button{nullptr};

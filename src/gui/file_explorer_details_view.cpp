@@ -28,6 +28,8 @@ FileExplorerDetailsView::FileExplorerDetailsView(QWidget* parent) : QTableView(p
     setSortingEnabled(true);
     setAccessibleName(tr("File explorer directory listing"));
     setContextMenuPolicy(Qt::CustomContextMenu);
+    setShowGrid(false);
+    verticalHeader()->setVisible(false);
     horizontalHeader()->setSectionsMovable(true);
 }
 

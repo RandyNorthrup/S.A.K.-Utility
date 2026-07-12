@@ -3,9 +3,11 @@
 
 #include "sak/file_explorer_sidebar.h"
 
+#include "sak/file_explorer_icon_registry.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
+#include <QHBoxLayout>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -25,11 +27,45 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
         tr("Mounted volumes, scanned partitions, and manual raw/image targets"));
     m_target_list->setUniformItemSizes(true);
     m_target_list->setContextMenuPolicy(Qt::CustomContextMenu);
-    layout->addWidget(m_target_list);
+    layout->addWidget(m_target_list, 1);
+
+    auto* footer = new QWidget(this);
+    footer->setObjectName(QStringLiteral("fileExplorerSidebarFooter"));
+    auto* footer_layout = new QHBoxLayout(footer);
+    footer_layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+    footer_layout->setSpacing(ui::kSpacingTight);
+
+    m_scan_disks_button = new QPushButton(tr("Scan Disks"), footer);
+    m_scan_disks_button->setObjectName(QStringLiteral("fileExplorerScanDisksButton"));
+    m_scan_disks_button->setAccessibleName(tr("Scan disk and partition targets"));
+    m_scan_disks_button->setToolTip(tr("Discover disk and partition targets"));
+    m_scan_disks_button->setIcon(
+        FileExplorerIconRegistry::iconForKey(QStringLiteral("scan-disks")));
+    footer_layout->addWidget(m_scan_disks_button);
+
+    m_add_manual_button = new QPushButton(tr("Add Raw/Image"), footer);
+    m_add_manual_button->setObjectName(QStringLiteral("fileExplorerAddRawImageButton"));
+    m_add_manual_button->setAccessibleName(tr("Add manual raw or image target"));
+    m_add_manual_button->setToolTip(tr("Add a raw device or image file as a target"));
+    m_add_manual_button->setIcon(
+        FileExplorerIconRegistry::iconForKey(QStringLiteral("image-file")));
+    footer_layout->addWidget(m_add_manual_button);
+    footer_layout->addStretch(1);
+
+    layout->addWidget(footer, 0);
 }
 
 QListWidget* FileExplorerSidebar::targetList() const {
     return m_target_list;
+}
+
+QPushButton* FileExplorerSidebar::scanDisksButton() const {
+    return m_scan_disks_button;
+}
+
+QPushButton* FileExplorerSidebar::addManualButton() const {
+    return m_add_manual_button;
 }
 
 }  // namespace sak
