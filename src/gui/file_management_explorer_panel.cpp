@@ -26,6 +26,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -2683,6 +2684,27 @@ void FileManagementExplorerPanel::showCommandPalette() {
 
 namespace {
 
+// Reader-provided storage detail lines (resource fork, compression, sparseness).
+QStringList describeEntryStorage(const FileManagementEntry& entry) {
+    QStringList lines;
+    if (entry.resource_fork_bytes > 0) {
+        lines.append(FileManagementExplorerPanel::tr("Resource fork: %1 bytes")
+                         .arg(entry.resource_fork_bytes));
+    }
+    QStringList storage;
+    if (entry.compressed) {
+        storage.append(FileManagementExplorerPanel::tr("compressed"));
+    }
+    if (entry.sparse) {
+        storage.append(FileManagementExplorerPanel::tr("sparse (holes)"));
+    }
+    if (!storage.isEmpty()) {
+        lines.append(
+            FileManagementExplorerPanel::tr("Storage: %1").arg(storage.join(QStringLiteral(", "))));
+    }
+    return lines;
+}
+
 // One-entry metadata block for the Properties tab (name, kind, size, dates, identifier, link).
 QStringList describeEntry(const FileManagementEntry& entry, const QString& file_system) {
     QStringList lines;
@@ -2707,6 +2729,7 @@ QStringList describeEntry(const FileManagementEntry& entry, const QString& file_
         lines.append(FileManagementExplorerPanel::tr("%1: %2").arg(
             FileManagementFileSystemBridge::identifierLabel(file_system), entry.identifier));
     }
+    lines.append(describeEntryStorage(entry));
     if (!entry.link_target.isEmpty()) {
         lines.append(FileManagementExplorerPanel::tr("Link target: %1").arg(entry.link_target));
     }
@@ -2823,7 +2846,51 @@ QStringList FileManagementExplorerPanel::buildDetailsEvidence(
         evidence.append(
             tr("Warnings: %1").arg(m_last_mutation.warnings.join(QStringLiteral("; "))));
     }
+    appendEvidenceReportLinks(target, &evidence);
     return evidence;
+}
+
+void FileManagementExplorerPanel::appendEvidenceReportLinks(const FileManagementTarget& target,
+                                                            QStringList* evidence) {
+    const QStringList reports = evidenceReportsForTarget(
+        QStringLiteral("artifacts/file-management-live-certification"), target.root_path);
+    if (reports.isEmpty()) {
+        return;
+    }
+    evidence->append(QString());
+    evidence->append(tr("Live certification evidence:"));
+    for (const QString& report : reports) {
+        evidence->append(tr("- %1").arg(report));
+    }
+}
+
+QStringList FileManagementExplorerPanel::evidenceReportsForTarget(const QString& evidence_root,
+                                                                  const QString& target_root_path) {
+    QStringList matches;
+    const QString needle = target_root_path.trimmed();
+    if (needle.isEmpty()) {
+        return matches;
+    }
+    QDirIterator it(
+        evidence_root, {QStringLiteral("*.json")}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString report_path = it.next();
+        QFile file(report_path);
+        if (!file.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+        const QJsonArray targets = doc.object().value(QStringLiteral("targets")).toArray();
+        const bool hit =
+            std::any_of(targets.cbegin(), targets.cend(), [&needle](const auto& value) {
+                return value.toObject().value(QStringLiteral("target_path")).toString() == needle;
+            });
+        if (hit) {
+            matches.append(QDir::toNativeSeparators(report_path));
+        }
+    }
+    matches.sort();
+    return matches;
 }
 
 void FileManagementExplorerPanel::updateDetailsPane() {

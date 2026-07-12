@@ -29,6 +29,11 @@ struct PartitionApfsFileEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // Transparent decmpfs compression (inline or resource-fork), read from the inode's
+    // decmpfs attribute / uncompressed-size flag during listing.
+    bool compressed{false};
+    // APFS_INODE_IS_SPARSE: the file has trailing/embedded holes that read as zeros.
+    bool sparse{false};
     // The inode's full st_mode (type + permission bits), so a non-regular entry
     // (symlink, FIFO, socket, device) can be preserved verbatim across a mutation.
     uint16_t mode{0};

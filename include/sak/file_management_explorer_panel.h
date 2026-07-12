@@ -55,6 +55,11 @@ public:
     /// writes the shared session store. The owning panel calls this once.
     void enableTabSessionPersistence();
 
+    /// Scan @p evidence_root for live-certification report JSONs whose target path
+    /// matches @p target_root_path; returns the matching report file paths.
+    [[nodiscard]] static QStringList evidenceReportsForTarget(const QString& evidence_root,
+                                                              const QString& target_root_path);
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
@@ -225,6 +230,8 @@ private:
     [[nodiscard]] QStringList buildDetailsSafety(const FileManagementTarget& target) const;
     [[nodiscard]] QStringList commandAvailabilityLines() const;
     [[nodiscard]] QStringList buildDetailsEvidence(const FileManagementTarget& target) const;
+    static void appendEvidenceReportLinks(const FileManagementTarget& target,
+                                          QStringList* evidence);
     [[nodiscard]] int resolveContextMenuTargetIndex(const QPoint& position);
     [[nodiscard]] QString favoriteActionLabel(int target_index, bool has_target) const;
     void openTargetAtIndex(int target_index);

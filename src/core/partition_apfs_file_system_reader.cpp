@@ -1823,6 +1823,29 @@ private:
         return *match;
     }
 
+    // Fill an entry's size + storage flags from the inode and any decmpfs attribute.
+    // A compressed file has no data stream (inode size 0); its logical size comes from
+    // the decmpfs header, or from the inode's uncompressed-size field for a DSTREAM-backed
+    // decmpfs. Sparse is read from the inode's INODE_IS_SPARSE flag.
+    void resolveEntryStorage(const DirectoryRecord& record,
+                             QHash<uint64_t, InodeRecord>::const_iterator inode,
+                             PartitionApfsFileEntry* entry) const {
+        entry->size_bytes = inode == inodeById_.cend() ? 0 : inode->size;
+        const auto decmpfs = decmpfsByInode_.constFind(record.file_id);
+        if (decmpfs != decmpfsByInode_.cend()) {
+            entry->compressed = true;
+            const auto header = apfsParseDecmpfsHeader(*decmpfs);
+            if (header.has_value()) {
+                entry->size_bytes = header->uncompressed_size;
+            }
+        } else if (entry->size_bytes == 0 && inode != inodeById_.cend()) {
+            entry->size_bytes = inode->uncompressed_size;
+        }
+        if (inode != inodeById_.cend()) {
+            entry->sparse = inode->sparse;
+        }
+    }
+
     [[nodiscard]] PartitionApfsFileEntry entryFromRecord(const DirectoryRecord& record,
                                                          const QString& parentPath) const {
         const auto inode = inodeById_.constFind(record.file_id);
@@ -1831,19 +1854,7 @@ private:
         entry.name = record.name;
         entry.path = childPath(parentPath, record.name);
         entry.object_id = record.file_id;
-        entry.size_bytes = inode == inodeById_.cend() ? 0 : inode->size;
-        // A compressed file has no data stream (inode size 0); report its logical
-        // size from the decmpfs header so listings show the real size. A DSTREAM-backed
-        // decmpfs has no embedded header -- use the inode's uncompressed-size field.
-        const auto decmpfs = decmpfsByInode_.constFind(record.file_id);
-        if (decmpfs != decmpfsByInode_.cend()) {
-            const auto header = apfsParseDecmpfsHeader(*decmpfs);
-            if (header.has_value()) {
-                entry.size_bytes = header->uncompressed_size;
-            }
-        } else if (entry.size_bytes == 0 && inode != inodeById_.cend()) {
-            entry.size_bytes = inode->uncompressed_size;
-        }
+        resolveEntryStorage(record, inode, &entry);
         entry.directory = record.directory_type == kApfsDirTypeDirectory ||
                           (mode & kApfsModeTypeMask) == kApfsModeDirectory;
         entry.regular_file = record.directory_type == kApfsDirTypeRegularFile ||

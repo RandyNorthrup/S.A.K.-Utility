@@ -1380,6 +1380,44 @@ private Q_SLOTS:
         QVERIFY2(verified, "omnibar search dialog is missing expected controls or history seed");
     }
 
+    void evidenceReportsMatchTargetByPath() {
+        // The Evidence pane surfaces live-cert report paths whose target_path matches the
+        // current target; non-matching and malformed reports are ignored.
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString target_path =
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk9\\Partition2");
+        const QDir dir(root.path());
+        QVERIFY(dir.mkpath(QStringLiteral("run-a")));
+        QVERIFY(dir.mkpath(QStringLiteral("run-b")));
+        const auto writeReport = [](const QString& path, const QString& reportedTarget) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            const QString json =
+                QStringLiteral("{\"targets\":[{\"target_path\":\"%1\"}]}")
+                    .arg(QString(reportedTarget)
+                             .replace(QStringLiteral("\\"), QStringLiteral("\\\\")));
+            file.write(json.toUtf8());
+        };
+        writeReport(dir.filePath(QStringLiteral("run-a/report.json")), target_path);
+        writeReport(dir.filePath(QStringLiteral("run-b/report.json")),
+                    QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk1\\Partition1"));
+        {
+            QFile junk(dir.filePath(QStringLiteral("run-b/notes.json")));
+            QVERIFY(junk.open(QIODevice::WriteOnly));
+            junk.write("not json at all");
+        }
+
+        const QStringList matches =
+            sak::FileManagementExplorerPanel::evidenceReportsForTarget(root.path(), target_path);
+        QCOMPARE(matches.size(), 1);
+        QVERIFY(matches.first().contains(QStringLiteral("run-a")));
+
+        // No target path -> no matches.
+        QVERIFY(sak::FileManagementExplorerPanel::evidenceReportsForTarget(root.path(), QString())
+                    .isEmpty());
+    }
+
     void commandPaletteFilterNarrowsCommandList() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);

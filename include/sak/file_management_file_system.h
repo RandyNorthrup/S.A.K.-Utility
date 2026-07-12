@@ -60,6 +60,12 @@ struct FileManagementEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // File-system-specific storage detail, surfaced in the Properties pane where the
+    // reader provides it. resource_fork_bytes: HFS+ resource fork size (0 = none).
+    // compressed/sparse: APFS transparent compression / sparse (holes) flags.
+    uint64_t resource_fork_bytes{0};
+    bool compressed{false};
+    bool sparse{false};
 };
 
 struct FileManagementListResult {

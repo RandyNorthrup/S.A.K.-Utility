@@ -331,17 +331,18 @@ FileManagementListResult fromHfsResult(const PartitionHfsFileReadResult& input) 
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.catalog_id),
-                               {},
-                               item.directory,
-                               item.regular_file,
-                               false});
+        FileManagementEntry entry;
+        entry.name = item.name;
+        entry.path = item.path;
+        entry.type = item.type;
+        entry.size_bytes = item.size_bytes;
+        entry.identifier = QString::number(item.catalog_id);
+        entry.directory = item.directory;
+        entry.regular_file = item.regular_file;
+        entry.symlink = item.symbolic_link;
+        entry.link_target = item.symbolic_link ? item.name : QString();
+        entry.resource_fork_bytes = item.resource_fork_size_bytes;
+        result.entries.append(entry);
     }
     return result;
 }
@@ -355,17 +356,18 @@ FileManagementListResult fromApfsResult(const PartitionApfsFileReadResult& input
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.object_id),
-                               {},
-                               item.directory,
-                               item.regular_file,
-                               item.symlink});
+        FileManagementEntry entry;
+        entry.name = item.name;
+        entry.path = item.path;
+        entry.type = item.type;
+        entry.size_bytes = item.size_bytes;
+        entry.identifier = QString::number(item.object_id);
+        entry.directory = item.directory;
+        entry.regular_file = item.regular_file;
+        entry.symlink = item.symlink;
+        entry.compressed = item.compressed;
+        entry.sparse = item.sparse;
+        result.entries.append(entry);
     }
     return result;
 }
