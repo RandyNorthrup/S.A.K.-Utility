@@ -48,12 +48,24 @@ enum class FileExplorerCommandId {
     Hash,
 };
 
+/// Command-palette section a command belongs to. Palette rows render grouped
+/// under these headers, in declaration order.
+enum class FileExplorerCommandGroup {
+    Navigation,
+    File,
+    View,
+    Pane,
+    Target,
+    Safety,
+};
+
 struct FileExplorerCommand {
     FileExplorerCommandId id{FileExplorerCommandId::Open};
     QString text;
     QString accessible_name;
     QString status_text;
     QString shortcut;
+    FileExplorerCommandGroup group{FileExplorerCommandGroup::Navigation};
     bool destructive{false};
     bool selection_required{false};
     bool write_operation{false};
@@ -81,6 +93,9 @@ public:
     [[nodiscard]] static FileExplorerCommandState state(FileExplorerCommandId id,
                                                         const FileExplorerCommandContext& context);
     [[nodiscard]] static QString commandIdName(FileExplorerCommandId id);
+    [[nodiscard]] static FileExplorerCommandGroup group(FileExplorerCommandId id);
+    [[nodiscard]] static QString groupName(FileExplorerCommandGroup group);
+    [[nodiscard]] static QVector<FileExplorerCommandGroup> groupOrder();
 };
 
 }  // namespace sak

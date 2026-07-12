@@ -415,6 +415,35 @@ private Q_SLOTS:
         QVERIFY(delete_item.enabled);
         QVERIFY(copy_path.enabled);
     }
+
+    void registryAssignsEveryCommandToAnOrderedGroup() {
+        using Registry = sak::FileExplorerCommandRegistry;
+        const auto order = Registry::groupOrder();
+        QCOMPARE(order.size(), 6);
+
+        // Every registered command resolves to a group that appears in groupOrder,
+        // so the palette can never drop a command by leaving its section unrendered.
+        for (const auto& command : Registry::commands()) {
+            const auto group = Registry::group(command.id);
+            QCOMPARE(command.group, group);
+            QVERIFY2(order.contains(group), qPrintable(Registry::commandIdName(command.id)));
+            QVERIFY(!Registry::groupName(group).isEmpty());
+        }
+
+        // Representative anchors for the section split.
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Back),
+                 sak::FileExplorerCommandGroup::Navigation);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Delete),
+                 sak::FileExplorerCommandGroup::File);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::ViewGrid),
+                 sak::FileExplorerCommandGroup::View);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::ToggleDualPane),
+                 sak::FileExplorerCommandGroup::Pane);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Properties),
+                 sak::FileExplorerCommandGroup::Target);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Hash),
+                 sak::FileExplorerCommandGroup::Safety);
+    }
 };
 
 QTEST_MAIN(FileExplorerTypesTests)

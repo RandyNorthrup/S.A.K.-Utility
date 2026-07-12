@@ -17,6 +17,48 @@ struct MakeCommandFlags {
     bool write_operation = false;
 };
 
+// Single source of truth mapping each command to its palette section.
+FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
+    using Id = FileExplorerCommandId;
+    using Group = FileExplorerCommandGroup;
+    static constexpr auto kGroups = std::to_array<std::pair<Id, Group>>({
+        {Id::Open, Group::Navigation},
+        {Id::OpenInNewTab, Group::Navigation},
+        {Id::Back, Group::Navigation},
+        {Id::Forward, Group::Navigation},
+        {Id::Up, Group::Navigation},
+        {Id::Home, Group::Navigation},
+        {Id::Refresh, Group::Navigation},
+        {Id::NewFolder, Group::File},
+        {Id::WriteFile, Group::File},
+        {Id::Rename, Group::File},
+        {Id::Delete, Group::File},
+        {Id::SelectAll, Group::File},
+        {Id::ClearSelection, Group::File},
+        {Id::InvertSelection, Group::File},
+        {Id::ViewDetails, Group::View},
+        {Id::ViewList, Group::View},
+        {Id::ViewGrid, Group::View},
+        {Id::ViewCards, Group::View},
+        {Id::ViewColumns, Group::View},
+        {Id::ViewAdaptive, Group::View},
+        {Id::ToggleHiddenItems, Group::View},
+        {Id::ToggleFileExtensions, Group::View},
+        {Id::OpenInSecondPane, Group::Pane},
+        {Id::TogglePreviewPane, Group::Pane},
+        {Id::ToggleDualPane, Group::Pane},
+        {Id::DuplicateTab, Group::Pane},
+        {Id::ReopenClosedTab, Group::Pane},
+        {Id::Properties, Group::Target},
+        {Id::CopyPath, Group::Target},
+        {Id::CopyItemPath, Group::Target},
+        {Id::Preview, Group::Safety},
+        {Id::Hash, Group::Safety},
+    });
+    const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
+    return it != kGroups.end() ? it->second : Group::Navigation;
+}
+
 FileExplorerCommand makeCommand(const FileExplorerCommandId id,
                                 const QString& text,
                                 const QString& status_text,
@@ -27,6 +69,7 @@ FileExplorerCommand makeCommand(const FileExplorerCommandId id,
                                text,
                                status_text,
                                shortcut,
+                               groupFor(id),
                                flags.destructive,
                                flags.selection_required,
                                flags.write_operation};
@@ -437,6 +480,34 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");
+}
+
+FileExplorerCommandGroup FileExplorerCommandRegistry::group(const FileExplorerCommandId id) {
+    return groupFor(id);
+}
+
+QString FileExplorerCommandRegistry::groupName(const FileExplorerCommandGroup group) {
+    using Group = FileExplorerCommandGroup;
+    switch (group) {
+    case Group::Navigation:
+        return QStringLiteral("Navigation");
+    case Group::File:
+        return QStringLiteral("File");
+    case Group::View:
+        return QStringLiteral("View");
+    case Group::Pane:
+        return QStringLiteral("Pane");
+    case Group::Target:
+        return QStringLiteral("Target");
+    case Group::Safety:
+        return QStringLiteral("Safety");
+    }
+    return QStringLiteral("Other");
+}
+
+QVector<FileExplorerCommandGroup> FileExplorerCommandRegistry::groupOrder() {
+    using Group = FileExplorerCommandGroup;
+    return {Group::Navigation, Group::File, Group::View, Group::Pane, Group::Target, Group::Safety};
 }
 
 }  // namespace sak

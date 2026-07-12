@@ -980,6 +980,50 @@ private Q_SLOTS:
         QVERIFY(filteredCount < fullCount);
     }
 
+    void commandPaletteRendersGroupHeaders() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        // The palette groups commands under non-selectable section headers whose
+        // labels come from the registry group names, and a header always precedes
+        // its commands.
+        bool sawNavigationHeader = false;
+        bool headerPrecedesCommand = false;
+        QTimer::singleShot(0, [&sawNavigationHeader, &headerPrecedesCommand]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* list =
+                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
+            if (!list) {
+                dialog->reject();
+                return;
+            }
+            bool headerSeen = false;
+            for (int i = 0; i < list->count(); ++i) {
+                const QListWidgetItem* item = list->item(i);
+                const bool isHeader = (item->flags() == Qt::NoItemFlags);
+                if (isHeader) {
+                    headerSeen = true;
+                    if (item->text() == QStringLiteral("Navigation")) {
+                        sawNavigationHeader = true;
+                    }
+                } else if (headerSeen) {
+                    headerPrecedesCommand = true;
+                }
+            }
+            dialog->reject();
+        });
+
+        panel.setFocus();
+        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QVERIFY(sawNavigationHeader);
+        QVERIFY(headerPrecedesCommand);
+    }
+
     void commandPaletteMarksDisabledCommandWithBlocker() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);

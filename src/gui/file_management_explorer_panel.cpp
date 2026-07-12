@@ -72,6 +72,7 @@ constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kCommandIdRole = Qt::UserRole + 3;
 constexpr int kCommandEnabledRole = Qt::UserRole + 4;
 constexpr int kCommandBlockerRole = Qt::UserRole + 5;
+constexpr int kCommandHeaderRole = Qt::UserRole + 6;
 
 // Shell layout + control constants.
 constexpr int kViewIdDigestChars = 24;
@@ -313,22 +314,45 @@ int addPaletteCommandItem(QListWidget* commands,
     return commands->row(item);
 }
 
+// Adds a non-selectable bold section header row for a command group.
+QListWidgetItem* addPaletteGroupHeader(QListWidget* commands, const QString& name) {
+    auto* header = new QListWidgetItem(name, commands);
+    header->setFlags(Qt::NoItemFlags);
+    header->setData(kCommandEnabledRole, false);
+    header->setData(kCommandHeaderRole, true);
+    QFont font = header->font();
+    font.setBold(true);
+    header->setFont(font);
+    return header;
+}
+
 void populateCommandPalette(QListWidget* commands,
                             const QString& needle,
                             const FileExplorerCommandContext& context,
                             QDialogButtonBox* buttons) {
     commands->clear();
     int first_enabled_row = -1;
-    for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
-        const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
-                                                                                  context);
-        const int row = addPaletteCommandItem(commands, state, needle);
-        if (row >= 0 && first_enabled_row < 0) {
-            first_enabled_row = row;
+    for (const FileExplorerCommandGroup group : FileExplorerCommandRegistry::groupOrder()) {
+        QListWidgetItem* header =
+            addPaletteGroupHeader(commands, FileExplorerCommandRegistry::groupName(group));
+        const int rows_before = commands->count();
+        for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
+            if (command.group != group) {
+                continue;
+            }
+            const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
+                                                                                      context);
+            const int row = addPaletteCommandItem(commands, state, needle);
+            if (row >= 0 && first_enabled_row < 0) {
+                first_enabled_row = row;
+            }
+        }
+        if (commands->count() == rows_before) {
+            delete commands->takeItem(commands->row(header));  // no matching rows for this group
         }
     }
-    if (commands->count() > 0) {
-        commands->setCurrentRow(first_enabled_row >= 0 ? first_enabled_row : 0);
+    if (first_enabled_row >= 0) {
+        commands->setCurrentRow(first_enabled_row);
     }
     buttons->button(QDialogButtonBox::Ok)
         ->setEnabled(commands->currentItem() &&

@@ -1338,7 +1338,7 @@ Command palette checklist:
 - [x] Show shortcut and disabled reason.
 - [x] Execute enabled command.
 - [x] Block disabled command with exact reason, not silent close.
-- [ ] Add command groups: Navigation, File, View, Pane, Target, Safety.
+- [x] Add command groups: Navigation, File, View, Pane, Target, Safety. (`FileExplorerCommandRegistry::group`/`groupOrder`; palette renders non-selectable section headers; `registryAssignsEveryCommandToAnOrderedGroup`, `commandPaletteRendersGroupHeaders`)
 
 Tests:
 
