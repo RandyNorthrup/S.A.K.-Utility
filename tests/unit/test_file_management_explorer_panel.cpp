@@ -1108,6 +1108,75 @@ private Q_SLOTS:
         QCOMPARE(tabBar->count(), before);
     }
 
+    void inlineRenameCommitsThroughBridgeAndRevertsOnEscape() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString source_file = QDir(dir.path()).filePath(QStringLiteral("alpha.txt"));
+        {
+            QFile file(source_file);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("inline rename payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        const int row = navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha"));
+        QVERIFY2(row >= 0, "source file not listed after navigation");
+        table->selectRow(row);
+        QApplication::processEvents();
+
+        // F2 (Files RenameAction) opens the inline editor with the base name
+        // selected and the extension excluded.
+        QTest::keyClick(&panel, Qt::Key_F2);
+        auto* editor = table->findChild<QLineEdit*>(QStringLiteral("fileExplorerRenameEditor"));
+        QVERIFY2(editor, "inline rename editor did not open");
+        // Base-name selection is applied one event-loop tick after open.
+        QTRY_COMPARE(editor->selectedText(), QStringLiteral("alpha"));
+
+        // Restricted characters are stripped live (Files BeforeTextChanging).
+        QTest::keyClicks(editor, QStringLiteral("be?ta"));
+        QCOMPARE(editor->text(), QStringLiteral("beta.txt"));
+
+        // Enter commits through the bridge; the file is renamed on disk.
+        QTest::keyClick(editor, Qt::Key_Return);
+        QVERIFY2(QTest::qWaitFor(
+                     [&dir]() {
+                         return QFile::exists(
+                             QDir(dir.path()).filePath(QStringLiteral("beta.txt")));
+                     },
+                     5000),
+                 "rename did not land on disk");
+        QVERIFY(!QFile::exists(source_file));
+
+        // Escape reverts: the editor claims the key ahead of the panel's
+        // clear-selection shortcut and no rename is issued.
+        const int renamed_row =
+            navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("beta"));
+        QVERIFY(renamed_row >= 0);
+        table->selectRow(renamed_row);
+        QApplication::processEvents();
+        QTest::keyClick(&panel, Qt::Key_F2);
+        auto* second_editor =
+            table->findChild<QLineEdit*>(QStringLiteral("fileExplorerRenameEditor"));
+        QVERIFY(second_editor);
+        QTest::keyClicks(second_editor, QStringLiteral("gamma"));
+        QTest::keyClick(second_editor, Qt::Key_Escape);
+        QTest::qWait(200);
+        QVERIFY(QFile::exists(QDir(dir.path()).filePath(QStringLiteral("beta.txt"))));
+        QVERIFY(!QFile::exists(QDir(dir.path()).filePath(QStringLiteral("gamma.txt"))));
+    }
+
     void searchShortcutAppliesCurrentFolderFilter() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);

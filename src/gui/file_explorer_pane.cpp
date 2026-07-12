@@ -3,6 +3,7 @@
 
 #include "sak/file_explorer_pane.h"
 
+#include "sak/file_explorer_name_delegate.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
@@ -82,6 +83,15 @@ void FileExplorerPane::buildItemViews() {
     columnsLayout->addWidget(m_columns_view, 1);
     columnsLayout->addWidget(m_columns_preview_view, 1);
     m_view_stack->addWidget(m_columns_container);
+
+    // Inline rename (Files BaseLayoutPage): a name-column delegate per view
+    // (sharing one instance would cross-wire commitData between views); the
+    // columns preview stays read-only.
+    m_details_view->setItemDelegateForColumn(FileExplorerItemModel::NameColumn,
+                                             new FileExplorerNameDelegate(m_details_view));
+    for (QListView* view : {m_list_view, m_grid_view, m_cards_view, m_columns_view}) {
+        view->setItemDelegate(new FileExplorerNameDelegate(view));
+    }
 }
 
 void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {

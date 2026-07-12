@@ -1037,6 +1037,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/gui/file_explorer_command_bar.cpp
         ../src/gui/file_explorer_omnibar.cpp
         ../src/gui/file_explorer_details_view.cpp
+        ../src/gui/file_explorer_name_delegate.cpp
+        ../include/sak/file_explorer_name_delegate.h
         ../src/gui/file_explorer_pane.cpp
         ../src/gui/file_explorer_details_pane.cpp
         ../src/gui/file_explorer_style.cpp

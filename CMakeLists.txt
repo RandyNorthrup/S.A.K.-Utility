@@ -605,6 +605,7 @@ set(GUI_SOURCES
     src/gui/file_explorer_command_bar.cpp
     src/gui/file_explorer_omnibar.cpp
     src/gui/file_explorer_details_view.cpp
+    src/gui/file_explorer_name_delegate.cpp
     src/gui/file_explorer_pane.cpp
     src/gui/file_explorer_details_pane.cpp
     src/gui/file_explorer_style.cpp
@@ -619,6 +620,7 @@ set(GUI_SOURCES
     include/sak/file_explorer_command_bar.h
     include/sak/file_explorer_omnibar.h
     include/sak/file_explorer_details_view.h
+    include/sak/file_explorer_name_delegate.h
     include/sak/file_explorer_pane.h
     include/sak/file_explorer_details_pane.h
     include/sak/file_explorer_style.h

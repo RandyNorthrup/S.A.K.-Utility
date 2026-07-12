@@ -18,6 +18,7 @@
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -47,8 +48,11 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QPointer>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>
@@ -100,6 +104,9 @@ constexpr int kDetailsTabsCollapseWidth = 920;
 constexpr int kNavClusterCollapseWidth = 640;
 constexpr int kMaxRecentTargetIds = 10;
 constexpr int kSizeSliderSingleStep = 8;
+// Files BaseLayoutPage tapDebounceTimer: slow second click on the selected
+// item's name starts an inline rename after 1500 ms.
+constexpr int kRenameTapDebounceMs = 1500;
 constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
 constexpr const char* kTabSessionGroup = "FileManagementExplorer/TabSession";
@@ -221,6 +228,15 @@ bool isSafeChildName(const QString& name) {
     const QString clean = name.trimmed();
     return !clean.isEmpty() && !clean.contains(QLatin1Char('/')) &&
            !clean.contains(QLatin1Char('\\'));
+}
+
+// Files FilesystemHelpers.RestrictedFileNames: reserved DOS device names,
+// alone or followed by a dot/extension.
+bool isReservedWindowsName(const QString& name) {
+    static const QRegularExpression kReserved(QStringLiteral(
+                                                  "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\.|$)"),
+                                              QRegularExpression::CaseInsensitiveOption);
+    return kReserved.match(name.trimmed()).hasMatch();
 }
 
 QString viewModeName(const FileExplorerViewMode mode) {
@@ -871,6 +887,13 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
 }
 
 void FileManagementExplorerPanel::connectUiSignals() {
+    m_rename_tap_timer = new QTimer(this);
+    m_rename_tap_timer->setSingleShot(true);
+    m_rename_tap_timer->setInterval(kRenameTapDebounceMs);
+    connect(m_rename_tap_timer,
+            &QTimer::timeout,
+            this,
+            &FileManagementExplorerPanel::onRenameTapTimeout);
     connectToolbarSignals();
     connectNavigationSignals();
     connectPaneSignals(m_pane_a, 0);
@@ -984,7 +1007,20 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
                     activatePane(pane_index);
                     onTableContextMenuRequested(point);
                 });
+        // Mouse-level interactions (slow-double-click rename arm/cancel).
+        view->viewport()->installEventFilter(this);
     }
+    // Inline rename commits arrive from the model; queued so the editor is
+    // fully closed before the bridge mutation and listing reload run.
+    connect(
+        pane->itemModel(),
+        &FileExplorerItemModel::renameRequested,
+        this,
+        [this, pane_index](const int row, const QString& new_name) {
+            activatePane(pane_index);
+            performInlineRename(row, new_name);
+        },
+        Qt::QueuedConnection);
     connect(pane,
             &FileExplorerPane::columnsDirectoryPreviewRequested,
             this,
@@ -997,6 +1033,95 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
             activatePane(pane_index);
             loadDirectory(p);
         });
+}
+
+bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
+    auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
+    if (view && event) {
+        handleRenameTapEvent(view, event);
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void FileManagementExplorerPanel::handleRenameTapEvent(QAbstractItemView* view, QEvent* event) {
+    switch (event->type()) {
+    case QEvent::MouseButtonPress: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton) {
+            // Selection state is read BEFORE the view processes the press, so
+            // this observes whether the clicked item was already selected
+            // (Files preRenamingItem semantics).
+            armRenameTapCandidate(view, mouse);
+        }
+        return;
+    }
+    case QEvent::MouseButtonRelease:
+        handleRenameTapRelease(view, static_cast<QMouseEvent*>(event));
+        return;
+    case QEvent::MouseButtonDblClick:
+        // The double-click opened the item instead (Files ResetRenameDoubleClick).
+        cancelRenameTap();
+        return;
+    default:
+        return;
+    }
+}
+
+void FileManagementExplorerPanel::handleRenameTapRelease(QAbstractItemView* view,
+                                                         const QMouseEvent* mouse) {
+    if (mouse->button() != Qt::LeftButton ||
+        (mouse->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) != 0) {
+        cancelRenameTap();
+        return;
+    }
+    if (m_rename_tap_timer && m_rename_tap_view == view && m_rename_tap_candidate.isValid() &&
+        view->indexAt(mouse->pos()) == QModelIndex(m_rename_tap_candidate)) {
+        m_rename_tap_timer->start();
+    } else {
+        cancelRenameTap();
+    }
+}
+
+void FileManagementExplorerPanel::armRenameTapCandidate(QAbstractItemView* view,
+                                                        const QMouseEvent* mouse) {
+    cancelRenameTap();
+    const QModelIndex index = view->indexAt(mouse->pos());
+    // Files requires the tap to land on the item name; in the details view
+    // that is the name column, in the icon views the whole cell is the item.
+    if (!index.isValid() || index.column() != FileExplorerItemModel::NameColumn) {
+        return;
+    }
+    const auto* selection_model = view->selectionModel();
+    if (!selection_model || !selection_model->isSelected(index) ||
+        selection_model->selectedRows().size() != 1) {
+        return;
+    }
+    m_rename_tap_candidate = index;
+    m_rename_tap_view = view;
+}
+
+void FileManagementExplorerPanel::cancelRenameTap() {
+    if (m_rename_tap_timer) {
+        m_rename_tap_timer->stop();
+    }
+    m_rename_tap_candidate = QPersistentModelIndex();
+    m_rename_tap_view = nullptr;
+}
+
+void FileManagementExplorerPanel::onRenameTapTimeout() {
+    QAbstractItemView* view = m_rename_tap_view.data();
+    const QModelIndex index = m_rename_tap_candidate;
+    cancelRenameTap();
+    if (!view || !index.isValid() || !currentTarget().can_write_files) {
+        return;
+    }
+    const auto* selection_model = view->selectionModel();
+    if (!selection_model || !selection_model->isSelected(index) ||
+        selection_model->selectedRows().size() != 1) {
+        return;
+    }
+    view->setCurrentIndex(index);
+    view->edit(index);
 }
 
 void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
@@ -4247,9 +4372,33 @@ void FileManagementExplorerPanel::onWriteFileClicked() {
 }
 
 void FileManagementExplorerPanel::onRenameClicked() {
+    // Files RenameAction (F2): start an inline rename on the current item.
+    // The commit round-trips through the model's renameRequested signal into
+    // performInlineRename, on raw and mounted targets alike.
     const auto target = currentTarget();
-    const QString sourcePath = selectedPath();
-    if (!target.can_write_files || sourcePath.isEmpty()) {
+    if (!target.can_write_files || selectedPath().isEmpty()) {
+        return;
+    }
+    auto* view = currentItemView();
+    if (!view || !view->selectionModel()) {
+        return;
+    }
+    QModelIndex current = view->currentIndex();
+    if (!current.isValid()) {
+        const QModelIndexList rows = view->selectionModel()->selectedRows();
+        if (rows.isEmpty()) {
+            return;
+        }
+        current = rows.first();
+    }
+    const QModelIndex name_index = current.siblingAtColumn(FileExplorerItemModel::NameColumn);
+    view->setCurrentIndex(name_index);
+    view->edit(name_index);
+}
+
+void FileManagementExplorerPanel::performInlineRename(const int row, const QString& new_name) {
+    const auto target = currentTarget();
+    if (!target.can_write_files || !m_item_model || !m_item_model->hasEntry(row)) {
         return;
     }
     QString identity_blocker;
@@ -4257,23 +4406,22 @@ void FileManagementExplorerPanel::onRenameClicked() {
         sak::showWarningLogged(this, tr("Rename"), identity_blocker);
         return;
     }
-    bool ok = false;
-    const QString newName = QInputDialog::getText(this,
-                                                  tr("Rename"),
-                                                  tr("New name:"),
-                                                  QLineEdit::Normal,
-                                                  nameForPath(sourcePath, target.local_file_system),
-                                                  &ok);
-    if (!ok) {
-        return;
-    }
-    if (!isSafeChildName(newName)) {
+    if (!isSafeChildName(new_name)) {
         sak::showWarningLogged(this, tr("Rename"), tr("Enter a name without path separators."));
         return;
     }
+    // Files blocks reserved DOS device names; only meaningful on local
+    // Windows paths - raw APFS/HFS volumes legitimately allow such names.
+    if (target.local_file_system && isReservedWindowsName(new_name)) {
+        sak::showWarningLogged(this,
+                               tr("Rename"),
+                               tr("'%1' is a reserved name on Windows.").arg(new_name));
+        return;
+    }
+    const QString sourcePath = m_item_model->entryAt(row).path;
     const QString destinationPath =
         childPathFor(parentPathForEntry(sourcePath, target.local_file_system),
-                     newName,
+                     new_name,
                      target.local_file_system);
     const auto result =
         FileManagementFileSystemBridge::renameEntry(target, sourcePath, destinationPath);

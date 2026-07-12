@@ -136,6 +136,11 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
     return accessor != kAccessors.end() ? accessor.value()(entry) : QVariant();
 }
 
+QVariant alignmentForColumn(const int column) {
+    return column == FileExplorerItemModel::SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
+                                                       : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
+}
+
 }  // namespace
 
 FileExplorerItemModel::FileExplorerItemModel(QObject* parent) : QAbstractTableModel(parent) {}
@@ -177,18 +182,25 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     switch (role) {
     case Qt::DisplayRole:
         return displayForColumn(entry, index.column());
+    case Qt::EditRole:
+        return editForColumn(entry, index.column());
     case Qt::DecorationRole:
         return decorationForColumn(entry, index.column());
     case Qt::ToolTipRole:
         return entry.path;
     case Qt::TextAlignmentRole:
-        return index.column() == SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
-                                            : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
+        return alignmentForColumn(index.column());
     case EntryTagsRole:
         return tagsForEntry(entry);
     default:
         return entryRoleValue(entry, role);
     }
+}
+
+QVariant FileExplorerItemModel::editForColumn(const FileManagementEntry& entry,
+                                              const int column) const {
+    // Inline rename edits what the user sees (extension-hidden aware).
+    return column == NameColumn ? displayForColumn(entry, NameColumn) : QVariant();
 }
 
 QVariant FileExplorerItemModel::headerData(const int section,
@@ -216,7 +228,43 @@ Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
     if (!index.isValid()) {
         return Qt::NoItemFlags;
     }
+    // Only the name is editable (inline rename); every other column is data.
+    if (index.column() == NameColumn) {
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
+    }
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+}
+
+bool FileExplorerItemModel::setData(const QModelIndex& index,
+                                    const QVariant& value,
+                                    const int role) {
+    if (role != Qt::EditRole || index.column() != NameColumn || !hasEntry(index.row())) {
+        return false;
+    }
+    const FileManagementEntry entry = m_entries.at(index.row());
+    const QString name = completedRenameName(entry, value.toString());
+    if (name.isEmpty() || name == entry.name) {
+        return false;
+    }
+    Q_EMIT renameRequested(index.row(), name);
+    return false;
+}
+
+QString FileExplorerItemModel::completedRenameName(const FileManagementEntry& entry,
+                                                   const QString& edited) const {
+    // Files CommitRenameAsync: trim whitespace and trailing dots.
+    QString name = edited.trimmed();
+    while (name.endsWith(QLatin1Char('.'))) {
+        name.chop(1);
+    }
+    // With extensions hidden the editor shows the base name only; re-attach
+    // the real suffix before the rename (Files nameIsComplete=false path).
+    const QString displayed = displayForColumn(entry, NameColumn).toString();
+    if (!m_show_file_extensions && !entry.directory && entry.name.startsWith(displayed) &&
+        entry.name.length() > displayed.length() && !name.isEmpty()) {
+        name += entry.name.mid(displayed.length());
+    }
+    return name;
 }
 
 void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {

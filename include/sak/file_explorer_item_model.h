@@ -70,6 +70,7 @@ public:
                                       Qt::Orientation orientation,
                                       int role = Qt::DisplayRole) const override;
     [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
+    bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
 
     void setEntries(QVector<FileManagementEntry> entries);
@@ -90,10 +91,18 @@ public:
     [[nodiscard]] static QString sizeText(uint64_t bytes);
     [[nodiscard]] static QString timeText(const QDateTime& time);
 
+Q_SIGNALS:
+    /// Inline rename commit: the model performs no mutation itself; the panel
+    /// routes the request through the file-system bridge and reloads.
+    void renameRequested(int row, const QString& new_name);
+
 private:
     [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
     [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant editForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QVariant decorationForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QString completedRenameName(const FileManagementEntry& entry,
+                                              const QString& edited) const;
 
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};

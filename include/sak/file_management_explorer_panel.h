@@ -19,7 +19,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPersistentModelIndex>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSplitter>
@@ -38,6 +40,9 @@ class QVBoxLayout;
 class QImage;
 class QTabBar;
 class QShortcut;
+class QAbstractItemView;
+class QMouseEvent;
+class QTimer;
 
 namespace sak {
 
@@ -62,6 +67,7 @@ public:
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -208,6 +214,12 @@ private:
     void invertCurrentSelection();
     void toggleCurrentItemSelection();
     void stepItemSize(int direction);
+    void performInlineRename(int row, const QString& new_name);
+    void handleRenameTapEvent(QAbstractItemView* view, QEvent* event);
+    void handleRenameTapRelease(QAbstractItemView* view, const QMouseEvent* mouse);
+    void armRenameTapCandidate(QAbstractItemView* view, const QMouseEvent* mouse);
+    void cancelRenameTap();
+    void onRenameTapTimeout();
     void toggleHiddenItems();
     void toggleFileExtensions();
     void showSelectedItemProperties();
@@ -342,6 +354,12 @@ private:
     QPlainTextEdit* m_properties_text{nullptr};
     QPlainTextEdit* m_safety_text{nullptr};
     QPlainTextEdit* m_evidence_text{nullptr};
+    // Slow-double-click inline rename (Files tapDebounceTimer, 1500 ms): a
+    // second left-click on the already-selected item's name arms the timer;
+    // opening (double-click) or selection churn cancels it.
+    QTimer* m_rename_tap_timer{nullptr};
+    QPersistentModelIndex m_rename_tap_candidate;
+    QPointer<QAbstractItemView> m_rename_tap_view;
     // Path of the file currently rendered in the preview pane, so selection churn does not
     // re-read the same file; empty when no single readable file is selected.
     QString m_last_preview_path;
