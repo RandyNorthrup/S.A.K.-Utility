@@ -6646,30 +6646,42 @@ void PartitionManagerCoreTests::hfsWriter_streamedFileWriteMatchesInMemoryByteFo
     const QString memImg = dir.filePath(QStringLiteral("hfs-stream-mem.img"));
     const QString streamImg = dir.filePath(QStringLiteral("hfs-stream-file.img"));
     QVERIFY(writeBytes(payloadPath, payload));
-    QVERIFY(writeBytes(memImg, base));
-    QVERIFY(writeBytes(streamImg, base));
 
-    const auto memCreate = PartitionHfsFileSystemWriter::createFileWithDataFromImage(
-        memImg, QStringLiteral("/big.bin"), payload, options);
-    QVERIFY2(memCreate.ok, qPrintable(memCreate.blockers.join(QStringLiteral("; "))));
-    const auto streamCreate = PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
-        streamImg,
-        QStringLiteral("/big.bin"),
-        payloadPath,
-        static_cast<uint64_t>(payload.size()),
-        options);
-    QVERIFY2(streamCreate.ok, qPrintable(streamCreate.blockers.join(QStringLiteral("; "))));
-
+    // The catalog stamps wall-clock seconds (hfsCurrentTimestamp), so the two creates only
+    // compare byte-identical when they land in the SAME second; a boundary between them made
+    // this test flake in full-suite runs. Retry from fresh copies (bounded) on a mismatch.
+    QByteArray memBytes;
+    QByteArray streamBytes;
+    uint64_t memWritten = 0;
+    uint64_t streamWritten = 0;
+    for (int attempt = 0; attempt < 3 && (memBytes.isEmpty() || memBytes != streamBytes);
+         ++attempt) {
+        QVERIFY(writeBytes(memImg, base));
+        QVERIFY(writeBytes(streamImg, base));
+        const auto memCreate = PartitionHfsFileSystemWriter::createFileWithDataFromImage(
+            memImg, QStringLiteral("/big.bin"), payload, options);
+        QVERIFY2(memCreate.ok, qPrintable(memCreate.blockers.join(QStringLiteral("; "))));
+        const auto streamCreate =
+            PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+                streamImg,
+                QStringLiteral("/big.bin"),
+                payloadPath,
+                static_cast<uint64_t>(payload.size()),
+                options);
+        QVERIFY2(streamCreate.ok, qPrintable(streamCreate.blockers.join(QStringLiteral("; "))));
+        memWritten = memCreate.bytes_written;
+        streamWritten = streamCreate.bytes_written;
+        memBytes = readBytes(memImg);
+        streamBytes = readBytes(streamImg);
+    }
     // The cert: the streamed image is byte-for-byte identical to the in-memory image.
-    const QByteArray memBytes = readBytes(memImg);
-    const QByteArray streamBytes = readBytes(streamImg);
     if (memBytes != streamBytes) {
         reportFirstImageDifference(memBytes, streamBytes);
     }
     QVERIFY2(memBytes == streamBytes,
              "streamed HFS+ file write is not byte-identical to the in-memory write");
-    QCOMPARE(memCreate.bytes_written, static_cast<uint64_t>(payload.size()));
-    QCOMPARE(streamCreate.bytes_written, static_cast<uint64_t>(payload.size()));
+    QCOMPARE(memWritten, static_cast<uint64_t>(payload.size()));
+    QCOMPARE(streamWritten, static_cast<uint64_t>(payload.size()));
 
     // The file reads back byte-exact through the normal catalog/extent path.
     const auto readBack = PartitionHfsFileSystemReader::readFileFromImage(

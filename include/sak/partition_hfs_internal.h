@@ -7713,9 +7713,22 @@ private:
         return next;
     }
 
+    // Largest single circular read a well-formed journal ever needs (a block-list header or
+    // one journaled block); a malformed header/block-info length past this is rejected rather
+    // than driving an attacker-controlled allocation.
+    static constexpr uint64_t kHfsJournalMaxCircularReadBytes = 16ULL * 1024ULL * 1024ULL;
+
     [[nodiscard]] std::optional<QByteArray> readJournalCircular(const HfsJournalRegion& region,
                                                                 uint64_t position,
                                                                 uint64_t length) {
+        // Bound the read by the circular data region: past it the read could never terminate
+        // (a region whose size equals its header makes zero progress per pass), and the
+        // up-front reserve below would materialize a malformed length verbatim.
+        if (length > kHfsJournalMaxCircularReadBytes || region.size <= region.header_bytes ||
+            length > region.size - region.header_bytes) {
+            m_blockers.append(QStringLiteral("HFS+ journal read exceeds the journal data region"));
+            return std::nullopt;
+        }
         QByteArray output;
         output.reserve(static_cast<qsizetype>(length));
         uint64_t cursor = position;
@@ -9929,7 +9942,10 @@ private:
             const uint32_t start = be32(bytes, extentOffset + kHfsExtentStartBlockOffset);
             const uint32_t count = be32(bytes, extentOffset + kHfsExtentBlockCountOffset);
             if (count == 0) {
-                continue;
+                // The first zero-count entry TERMINATES the extent list; anything after it is
+                // garbage. Skipping-and-continuing would compact a malformed record and mismap
+                // every later extent onto the wrong logical blocks.
+                break;
             }
             fork.extents.append(HfsExtent{.start_block = start, .block_count = count});
         }
@@ -10276,6 +10292,14 @@ private:
 
     [[nodiscard]] std::optional<uint64_t> deviceOffsetForPhysicalBlock(uint64_t block,
                                                                        uint64_t withinBlock) {
+        // Bound the block to the volume: a malformed extent's start block would otherwise
+        // read PAST the volume into unrelated device regions (a raw-device mount reads other
+        // partitions' bytes as file content).
+        if (m_volume.total_blocks != 0 && block >= m_volume.total_blocks) {
+            m_blockers.append(
+                QStringLiteral("HFS+ extent block %1 lies outside the volume").arg(block));
+            return std::nullopt;
+        }
         uint64_t deviceOffset = 0;
         uint64_t blockOffset = 0;
         if (!checkedMul(block, m_volume.block_size, &blockOffset) ||
