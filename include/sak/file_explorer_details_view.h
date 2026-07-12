@@ -20,6 +20,8 @@ public:
     void configureExplorerColumns();
     void saveColumnState() const;
     void restoreColumnState();
+    /// Files AutoFitColumns: size every visible column to its content.
+    void autoFitAllColumns();
 
 protected:
     void showEvent(QShowEvent* event) override;

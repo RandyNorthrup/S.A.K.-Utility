@@ -1279,6 +1279,28 @@ private Q_SLOTS:
         QTRY_VERIFY(grid->iconSize() != size_before);
     }
 
+    void headerMenuOffersSizeAllColumnsToFit() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(table);
+
+        // Files DetailsLayoutPage header menu ends with the auto-fit entry.
+        // (Context-menu events on a scroll area land on its viewport.)
+        const QStringList headerActions =
+            collectContextMenuTexts(table->horizontalHeader()->viewport());
+        QVERIFY2(headerActions.contains(QStringLiteral("Size all columns to fit")),
+                 qPrintable(headerActions.join(QStringLiteral("; "))));
+
+        auto* details = qobject_cast<sak::FileExplorerDetailsView*>(table);
+        QVERIFY(details);
+        table->setColumnWidth(sak::FileExplorerItemModel::NameColumn, 555);
+        details->autoFitAllColumns();
+        QVERIFY(table->columnWidth(sak::FileExplorerItemModel::NameColumn) != 555);
+    }
+
     void searchShortcutAppliesCurrentFolderFilter() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);

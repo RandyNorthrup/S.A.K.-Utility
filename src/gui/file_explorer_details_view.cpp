@@ -75,7 +75,33 @@ void FileExplorerDetailsView::showColumnMenu(const QPoint& position) {
             saveColumnState();
         });
     }
+    // Files DetailsLayoutPage header menu ends with the auto-fit command
+    // (SizeAllColumnsToFit -> AutoFitColumnsAction).
+    menu.addSeparator();
+    QAction* fit = menu.addAction(tr("Size all columns to fit"));
+    fit->setObjectName(QStringLiteral("fileExplorerSizeColumnsToFitAction"));
+    connect(fit, &QAction::triggered, this, &FileExplorerDetailsView::autoFitAllColumns);
     menu.exec(horizontalHeader()->mapToGlobal(position));
+}
+
+void FileExplorerDetailsView::autoFitAllColumns() {
+    if (!model()) {
+        return;
+    }
+    // Files ResizeColumnToFit per column; the name column gets extra
+    // headroom for the sort indicator and padding (+20/+36 in Files).
+    constexpr int kNameHeadroomPx = 20;
+    for (int column = 0; column < model()->columnCount(); ++column) {
+        if (isColumnHidden(column) ||
+            horizontalHeader()->sectionResizeMode(column) == QHeaderView::Stretch) {
+            continue;
+        }
+        resizeColumnToContents(column);
+        if (column == FileExplorerItemModel::NameColumn) {
+            setColumnWidth(column, columnWidth(column) + kNameHeadroomPx);
+        }
+    }
+    saveColumnState();
 }
 
 void FileExplorerDetailsView::setModel(QAbstractItemModel* model) {
