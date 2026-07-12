@@ -27,7 +27,9 @@
 #include <QTabWidget>
 #include <QWidget>
 
+class QJsonArray;
 class QMenu;
+class QMimeData;
 class QPoint;
 class QAction;
 class QToolButton;
@@ -111,6 +113,30 @@ private:
     void previewSelectedFile();
     void hashSelectedFile();
     void copySelectedFileOut();
+    /// Clipboard file payload gathered for a paste: host (local) source files, or raw-target
+    /// source items (path + size) tagged with the source target identity.
+    struct PasteSources {
+        QStringList host_files;
+        QString source_target_id;
+        QList<QPair<QString, quint64>> raw_items;
+    };
+    void copySelectionToClipboard();
+    void pasteClipboardIntoCurrentFolder();
+    [[nodiscard]] bool clipboardHasPasteableFiles() const;
+    [[nodiscard]] PasteSources collectPasteSources(const QMimeData* mime) const;
+    static void appendPayloadItems(const QJsonArray& items,
+                                   bool source_is_local,
+                                   PasteSources& sources);
+    [[nodiscard]] bool preparePasteDestination(const PasteSources& sources);
+    void executePaste(const PasteSources& sources);
+    [[nodiscard]] bool confirmTypedRawImport(const FileManagementTarget& target, int file_count);
+    [[nodiscard]] bool confirmPasteOverwrite(const QString& name);
+    int pasteHostFiles(const FileManagementTarget& target,
+                       const QStringList& source_paths,
+                       QStringList* blockers);
+    int pasteRawItemsToLocalFolder(const FileManagementTarget& source_target,
+                                   const QList<QPair<QString, quint64>>& items,
+                                   QStringList* blockers);
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;
@@ -127,6 +153,7 @@ private:
     bool dispatchSelectionCommand(FileExplorerCommandId command);
     bool dispatchSelectionEditCommand(FileExplorerCommandId command);
     bool dispatchFileViewCommand(FileExplorerCommandId command);
+    bool dispatchWriteCommand(FileExplorerCommandId command);
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
     void toggleHiddenItems();

@@ -14,6 +14,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDialog>
@@ -25,6 +26,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -34,11 +36,14 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest/QtTest>
+#include <QUrl>
 
 #include <algorithm>
+#include <tuple>
 
 namespace {
 
@@ -131,6 +136,48 @@ void captureBaseline(QWidget* widget, const QString& name) {
     const QString path = dir.filePath(
         QStringLiteral("artifacts/file-management-explorer-baseline/%1.png").arg(name));
     QVERIFY2(widget->grab().save(path), qPrintable(path));
+}
+
+// Probe each selectable sidebar row until the omnibar shows a path on the wanted drive
+// (e.g. "C:"); returns the matching row or -1 when no mounted local target covers it.
+int selectLocalTargetRowForDrive(QListWidget* targetList,
+                                 QLineEdit* pathEdit,
+                                 const QString& drive_prefix) {
+    for (int row = 0; row < targetList->count(); ++row) {
+        const auto* item = targetList->item(row);
+        if (!item || !item->flags().testFlag(Qt::ItemIsSelectable)) {
+            continue;
+        }
+        targetList->setCurrentRow(row);
+        std::ignore =
+            QTest::qWaitFor([pathEdit]() { return !pathEdit->text().trimmed().isEmpty(); }, 2000);
+        if (pathEdit->text().left(2).toUpper() == drive_prefix) {
+            return row;
+        }
+    }
+    return -1;
+}
+
+// Navigate the omnibar to @p directory and wait for a listed row whose name contains
+// @p name_fragment (listing is asynchronous); returns the row or -1 on timeout.
+int navigateAndFindRow(QLineEdit* pathEdit,
+                       QTableView* table,
+                       const QString& directory,
+                       const QString& name_fragment) {
+    pathEdit->setText(directory);
+    QTest::keyClick(pathEdit, Qt::Key_Return);
+    int file_row = -1;
+    const auto findRow = [table, &file_row, &name_fragment]() {
+        for (int row = 0; row < table->model()->rowCount(); ++row) {
+            if (table->model()->index(row, 0).data().toString().contains(name_fragment)) {
+                file_row = row;
+                return true;
+            }
+        }
+        return false;
+    };
+    std::ignore = QTest::qWaitFor(findRow, 5000);
+    return file_row;
 }
 
 int firstTargetRow(QListWidget* list) {
@@ -1018,6 +1065,72 @@ private Q_SLOTS:
         stack->trigger();
         QApplication::processEvents();
         QCOMPARE(splitter->orientation(), Qt::Horizontal);
+    }
+
+    void copyPasteRoundTripsLocalFileThroughClipboard() {
+        // End-to-end M9 local paste: copy a file from one local folder through the explorer
+        // Copy command, navigate to another local folder, Paste, and verify a byte-exact copy.
+        QTemporaryDir source_dir;
+        QTemporaryDir destination_dir;
+        QVERIFY(source_dir.isValid());
+        QVERIFY(destination_dir.isValid());
+        const QByteArray payload = QByteArrayLiteral("sak paste round trip \x01\x02\x03 payload");
+        const QString source_file = QDir(source_dir.path()).filePath(QStringLiteral("note.bin"));
+        {
+            QFile file(source_file);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), payload.size());
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+
+        if (selectLocalTargetRowForDrive(
+                targetList, pathEdit, source_dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+
+        const int file_row =
+            navigateAndFindRow(pathEdit, table, source_dir.path(), QStringLiteral("note"));
+        QVERIFY2(file_row >= 0, "source file not listed after navigation");
+        table->selectRow(file_row);
+        QApplication::processEvents();
+
+        // Copy through the explorer command; the clipboard must carry the internal
+        // payload plus real file URLs for OS interop.
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QApplication::processEvents();
+        const QMimeData* mime = QApplication::clipboard()->mimeData();
+        QVERIFY(mime);
+        QVERIFY(mime->hasFormat(QStringLiteral("application/x-sak-file-explorer-items")));
+        QVERIFY(mime->hasUrls());
+
+        // Navigate to the destination folder and paste.
+        pathEdit->setText(destination_dir.path());
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QVERIFY(QTest::qWaitFor(
+            [pathEdit, &destination_dir]() {
+                return QDir::fromNativeSeparators(pathEdit->text())
+                    .contains(QDir(destination_dir.path()).dirName());
+            },
+            5000));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier);
+        QApplication::processEvents();
+
+        QFile copied(QDir(destination_dir.path()).filePath(QStringLiteral("note.bin")));
+        QVERIFY2(QTest::qWaitFor([&copied]() { return copied.exists(); }, 5000),
+                 "paste did not create the destination file");
+        QVERIFY(copied.open(QIODevice::ReadOnly));
+        QCOMPARE(copied.readAll(), payload);
     }
 
     void commandPaletteFilterNarrowsCommandList() {

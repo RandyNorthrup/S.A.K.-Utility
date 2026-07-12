@@ -3339,6 +3339,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_worker.cpp")
         ../src/core/partition_file_system_detector.cpp
         ../src/core/partition_file_system_registry.cpp
         ../src/core/advanced_search_worker.cpp
+        ../src/core/file_hash.cpp
         ../src/threading/worker_base.cpp
         ../src/core/logger.cpp
         ../include/sak/file_management_file_system.h
@@ -3384,6 +3385,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_search_controller.cpp"
         ../src/core/partition_file_system_registry.cpp
         ../src/core/advanced_search_controller.cpp
         ../src/core/advanced_search_worker.cpp
+        ../src/core/file_hash.cpp
         ../src/core/regex_pattern_library.cpp
         ../src/core/config_manager.cpp
         ${SAK_APP_PATHS_SOURCES}

@@ -47,6 +47,8 @@ enum class FileExplorerCommandId {
     ReopenClosedTab,
     Hash,
     CopyOut,
+    CopyItems,
+    Paste,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped
@@ -77,7 +79,8 @@ struct FileExplorerCommandContext {
     FileExplorerPaneState pane;
     bool can_create_tabs{false};
     bool can_use_dual_pane{false};
-    bool has_closed_tab{false};  ///< True when a recently closed tab can be reopened.
+    bool has_closed_tab{false};       ///< True when a recently closed tab can be reopened.
+    bool clipboard_has_files{false};  ///< True when the clipboard holds pasteable file items.
 };
 
 struct FileExplorerCommandState {

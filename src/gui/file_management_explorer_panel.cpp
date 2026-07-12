@@ -35,10 +35,14 @@
 #include <QInputDialog>
 #include <QItemSelection>
 #include <QItemSelectionModel>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QSettings>
@@ -51,6 +55,7 @@
 #include <QtConcurrent>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QWidgetAction>
@@ -69,6 +74,9 @@ constexpr int kExplorerListMaxEntries = 10'000;
 // Raw/non-native reads for on-demand hashing are bounded to keep peak RAM sane; a larger
 // raw file is hashed over its first window and reported as capped. Local files hash in full.
 constexpr uint64_t kExplorerHashMaxBytes = 512ULL * 1024 * 1024;
+// Clipboard payload for explorer Copy/Paste. Local targets also publish real file URLs for
+// OS interop; raw targets publish only this internal payload (target id + file paths/sizes).
+constexpr const char* kExplorerClipboardMime = "application/x-sak-file-explorer-items";
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kSidebarTagRole = Qt::UserRole + 7;
@@ -719,6 +727,9 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::DuplicateTab,
         FileExplorerCommandId::ReopenClosedTab,
         FileExplorerCommandId::Hash,
+        FileExplorerCommandId::CopyOut,
+        FileExplorerCommandId::CopyItems,
+        FileExplorerCommandId::Paste,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -1384,6 +1395,284 @@ void FileManagementExplorerPanel::copySelectedFileOut() {
     }));
 }
 
+void FileManagementExplorerPanel::copySelectionToClipboard() {
+    const FileExplorerSelection selection = currentSelection();
+    const FileManagementTarget target = currentTarget();
+    QJsonArray items;
+    QList<QUrl> urls;
+    QStringList lines;
+    int skipped = 0;
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (entry.directory || !entry.regular_file) {
+            ++skipped;
+            continue;
+        }
+        QJsonObject item;
+        item.insert(QStringLiteral("path"), entry.path);
+        item.insert(QStringLiteral("size"), QString::number(entry.size_bytes));
+        items.append(item);
+        lines.append(entry.path);
+        if (target.local_file_system) {
+            urls.append(QUrl::fromLocalFile(entry.path));
+        }
+    }
+    if (items.isEmpty()) {
+        Q_EMIT statusMessage(tr("Select files to copy (folders are not supported yet)."),
+                             sak::kTimerStatusMessageMs);
+        return;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("target"), FileExplorerTargetId::fromTarget(target).value);
+    payload.insert(QStringLiteral("items"), items);
+    auto* mime = new QMimeData;
+    mime->setData(QLatin1String(kExplorerClipboardMime),
+                  QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    mime->setText(lines.join(QLatin1Char('\n')));
+    if (!urls.isEmpty()) {
+        mime->setUrls(urls);
+    }
+    QApplication::clipboard()->setMimeData(mime);
+    Q_EMIT statusMessage(
+        skipped > 0 ? tr("Copied %1 file(s); %2 folder(s) skipped.").arg(items.size()).arg(skipped)
+                    : tr("Copied %1 file(s).").arg(items.size()),
+        sak::kTimerStatusMessageMs);
+    updateActionButtons();
+}
+
+bool FileManagementExplorerPanel::clipboardHasPasteableFiles() const {
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    if (!mime) {
+        return false;
+    }
+    if (mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+        return true;
+    }
+    if (!mime->hasUrls()) {
+        return false;
+    }
+    const QList<QUrl> urls = mime->urls();
+    return std::ranges::any_of(urls, [](const QUrl& url) {
+        return url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile();
+    });
+}
+
+// Split an internal clipboard payload's items into host files (local source target) or
+// raw items (path + size) for the paste routes.
+void FileManagementExplorerPanel::appendPayloadItems(const QJsonArray& items,
+                                                     const bool source_is_local,
+                                                     PasteSources& sources) {
+    for (const QJsonValue& value : items) {
+        const QJsonObject item = value.toObject();
+        const QString path = item.value(QStringLiteral("path")).toString();
+        if (path.trimmed().isEmpty()) {
+            continue;
+        }
+        if (source_is_local) {
+            sources.host_files.append(path);
+        } else {
+            sources.raw_items.append(
+                {path, item.value(QStringLiteral("size")).toString().toULongLong()});
+        }
+    }
+}
+
+FileManagementExplorerPanel::PasteSources FileManagementExplorerPanel::collectPasteSources(
+    const QMimeData* mime) const {
+    PasteSources sources;
+    if (!mime) {
+        return sources;
+    }
+    if (mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+        const QJsonObject payload =
+            QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
+        sources.source_target_id = payload.value(QStringLiteral("target")).toString();
+        const int source_index = targetIndexForId(sources.source_target_id);
+        const bool source_is_local = source_index >= 0 &&
+                                     m_targets.at(source_index).local_file_system;
+        appendPayloadItems(payload.value(QStringLiteral("items")).toArray(),
+                           source_is_local,
+                           sources);
+        return sources;
+    }
+    const QList<QUrl> urls = mime->hasUrls() ? mime->urls() : QList<QUrl>{};
+    for (const QUrl& url : urls) {
+        if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) {
+            sources.host_files.append(url.toLocalFile());
+        }
+    }
+    return sources;
+}
+
+bool FileManagementExplorerPanel::confirmTypedRawImport(const FileManagementTarget& target,
+                                                        const int file_count) {
+    // Typed confirmation before any raw-media import: the write is irreversible and runs
+    // through the certified writer, so the user must acknowledge the exact destination.
+    bool accepted = false;
+    const QString typed = QInputDialog::getText(
+        this,
+        tr("Confirm Raw Import"),
+        tr("This imports %1 file(s) into raw media through the certified writer.\n"
+           "Target: %2\nFile system: %3\nIdentity: %4\n\n"
+           "Raw writes are irreversible. Type WRITE to continue:")
+            .arg(QString::number(file_count),
+                 target.label,
+                 target.file_system,
+                 FileExplorerTargetId::fromTarget(target).value),
+        QLineEdit::Normal,
+        {},
+        &accepted);
+    return accepted && typed.trimmed() == QStringLiteral("WRITE");
+}
+
+bool FileManagementExplorerPanel::confirmPasteOverwrite(const QString& name) {
+    return sak::showQuestionLogged(
+               this,
+               tr("Paste"),
+               tr("'%1' already exists in this folder. Overwrite it?").arg(name),
+               QMessageBox::Yes | QMessageBox::No,
+               QMessageBox::No) == QMessageBox::Yes;
+}
+
+bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& sources) {
+    const FileManagementTarget target = currentTarget();
+    if (!sources.raw_items.isEmpty()) {
+        if (!target.local_file_system) {
+            sak::showWarningLogged(this,
+                                   tr("Paste"),
+                                   tr("Raw-to-raw paste is not supported. Paste the files "
+                                      "into a local folder first, then import them."));
+            return false;
+        }
+        if (targetIndexForId(sources.source_target_id) < 0) {
+            sak::showWarningLogged(this,
+                                   tr("Paste"),
+                                   tr("The copied files' source target is no longer available."));
+            return false;
+        }
+    }
+    if (!sources.host_files.isEmpty() && !target.local_file_system &&
+        !confirmTypedRawImport(target, static_cast<int>(sources.host_files.size()))) {
+        return false;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Paste"), identity_blocker);
+        return false;
+    }
+    return true;
+}
+
+void FileManagementExplorerPanel::executePaste(const PasteSources& sources) {
+    const FileManagementTarget target = currentTarget();
+    QStringList blockers;
+    int written = 0;
+    int total = 0;
+    if (!sources.host_files.isEmpty()) {
+        total = static_cast<int>(sources.host_files.size());
+        written = pasteHostFiles(target, sources.host_files, &blockers);
+    } else {
+        total = static_cast<int>(sources.raw_items.size());
+        const int source_index = targetIndexForId(sources.source_target_id);
+        written =
+            pasteRawItemsToLocalFolder(m_targets.at(source_index), sources.raw_items, &blockers);
+    }
+    if (written > 0) {
+        loadDirectory(m_current_path);
+    }
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Paste"), blockers.join(QStringLiteral("\n")));
+    }
+    Q_EMIT statusMessage(tr("Pasted %1 of %2 file(s).").arg(written).arg(total),
+                         sak::kTimerStatusDefaultMs);
+}
+
+void FileManagementExplorerPanel::pasteClipboardIntoCurrentFolder() {
+    const FileExplorerCommandState state =
+        FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Paste"), state.blocker);
+        return;
+    }
+    const PasteSources sources = collectPasteSources(QApplication::clipboard()->mimeData());
+    if (sources.host_files.isEmpty() && sources.raw_items.isEmpty()) {
+        sak::showWarningLogged(this, tr("Paste"), tr("Clipboard has no files to paste."));
+        return;
+    }
+    if (!preparePasteDestination(sources)) {
+        return;
+    }
+    executePaste(sources);
+}
+
+int FileManagementExplorerPanel::pasteHostFiles(const FileManagementTarget& target,
+                                                const QStringList& source_paths,
+                                                QStringList* blockers) {
+    const QVector<FileManagementEntry> entries = m_item_model ? m_item_model->entries()
+                                                              : QVector<FileManagementEntry>{};
+    int written = 0;
+    for (const QString& source : source_paths) {
+        const QFileInfo info(source);
+        const QString destination = targetPathForName(info.fileName());
+        if (destination.isEmpty()) {
+            blockers->append(tr("Invalid destination name for %1.").arg(source));
+            continue;
+        }
+        const bool occupied = target.local_file_system
+                                  ? QFile::exists(destination)
+                                  : std::ranges::any_of(entries,
+                                                        [&info](const FileManagementEntry& entry) {
+                                                            return entry.name == info.fileName();
+                                                        });
+        if (occupied && !confirmPasteOverwrite(info.fileName())) {
+            continue;
+        }
+        const auto result =
+            FileManagementFileSystemBridge::writeFileFromHostPath(target, destination, source);
+        if (result.ok) {
+            ++written;
+            m_last_mutation = result;
+        } else {
+            blockers->append(result.blockers);
+        }
+    }
+    return written;
+}
+
+int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
+    const FileManagementTarget& source_target,
+    const QList<QPair<QString, quint64>>& items,
+    QStringList* blockers) {
+    int written = 0;
+    for (const auto& [path, size] : items) {
+        const QString name = nameForPath(path, source_target.local_file_system);
+        if (size > kExplorerHashMaxBytes) {
+            blockers->append(tr("%1 exceeds the raw read window; a complete paste is not "
+                                "possible (use Copy Out for an explicitly capped copy).")
+                                 .arg(name));
+            continue;
+        }
+        const QString destination = targetPathForName(name);
+        if (destination.isEmpty()) {
+            blockers->append(tr("Invalid destination name for %1.").arg(name));
+            continue;
+        }
+        if (QFile::exists(destination) && !confirmPasteOverwrite(name)) {
+            continue;
+        }
+        const auto result = FileManagementFileSystemBridge::copyFileToHost(
+            source_target, path, destination, kExplorerHashMaxBytes);
+        if (!result.ok) {
+            blockers->append(result.blockers);
+            continue;
+        }
+        ++written;
+        m_last_hash_name = name;
+        m_last_hash_sha256 = result.sha256;
+        m_last_hash_capped = result.capped;
+    }
+    return written;
+}
+
 void FileManagementExplorerPanel::logMessage(const QString& message) {
     if (!message.trimmed().isEmpty()) {
         Q_EMIT logOutput(message);
@@ -1433,6 +1722,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.can_create_tabs = true;
     context.can_use_dual_pane = true;
     context.has_closed_tab = !m_closed_tabs.isEmpty();
+    context.clipboard_has_files = clipboardHasPasteableFiles();
     return context;
 }
 
@@ -1665,6 +1955,9 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
     case FileExplorerCommandId::CopyOut:
         copySelectedFileOut();
         return true;
+    case FileExplorerCommandId::CopyItems:
+        copySelectionToClipboard();
+        return true;
     default:
         return dispatchSelectionEditCommand(command);
     }
@@ -1693,6 +1986,28 @@ bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
     }
 }
 
+bool FileManagementExplorerPanel::dispatchWriteCommand(const FileExplorerCommandId command) {
+    switch (command) {
+    case FileExplorerCommandId::NewFolder:
+        onNewFolderClicked();
+        return true;
+    case FileExplorerCommandId::WriteFile:
+        onWriteFileClicked();
+        return true;
+    case FileExplorerCommandId::Paste:
+        pasteClipboardIntoCurrentFolder();
+        return true;
+    case FileExplorerCommandId::Rename:
+        onRenameClicked();
+        return true;
+    case FileExplorerCommandId::Delete:
+        onDeleteClicked();
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerCommandId command) {
     if (isViewModeCommand(command)) {
         setExplorerViewMode(modeForCommand(command));
@@ -1701,19 +2016,10 @@ bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerComm
     if (dispatchOpenElsewhereCommand(command)) {
         return true;
     }
+    if (dispatchWriteCommand(command)) {
+        return true;
+    }
     switch (command) {
-    case FileExplorerCommandId::NewFolder:
-        onNewFolderClicked();
-        return true;
-    case FileExplorerCommandId::WriteFile:
-        onWriteFileClicked();
-        return true;
-    case FileExplorerCommandId::Rename:
-        onRenameClicked();
-        return true;
-    case FileExplorerCommandId::Delete:
-        onDeleteClicked();
-        return true;
     case FileExplorerCommandId::TogglePreviewPane:
         togglePreviewPane();
         return true;
@@ -2858,6 +3164,8 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyOut, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::CopyItems, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::Paste, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
     auto* editTags = menu.addAction(tr("Edit Tags..."));

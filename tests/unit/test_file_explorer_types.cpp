@@ -356,6 +356,49 @@ private Q_SLOTS:
         QVERIFY(!blocked.blocker.isEmpty());
     }
 
+    void registryCopyItemsNeedsReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: nothing to copy.
+        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems,
+                                                         contextFor(writableLocalTarget(), false))
+                     .enabled);
+        // Multi-select is allowed: two readable files can go to the clipboard together.
+        auto multi = contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true);
+        auto second = selectedFile();
+        second.name = QStringLiteral("other.txt");
+        second.path = QStringLiteral("/other.txt");
+        multi.pane.selection.entries.append(second);
+        QVERIFY(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems, multi)
+                    .enabled);
+        // A target with no read capability blocks copy with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyItems,
+            contextFor(rawTarget(QStringLiteral("btrfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        QVERIFY(!blocked.blocker.isEmpty());
+    }
+
+    void registryPasteNeedsClipboardFilesAndWritableTarget() {
+        using sak::FileExplorerCommandId;
+        // Writable target but empty clipboard: paste stays disabled with the clipboard reason.
+        auto context = contextFor(writableLocalTarget(), false);
+        const auto no_clipboard =
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, context);
+        QVERIFY(!no_clipboard.enabled);
+        QVERIFY(no_clipboard.blocker.contains(QStringLiteral("clipboard"), Qt::CaseInsensitive));
+        // Clipboard files + writable target: paste enables.
+        context.clipboard_has_files = true;
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, context).enabled);
+        // Read-only raw target reports its real write blocker even with clipboard files.
+        auto read_only = contextFor(readOnlyRawTarget(QStringLiteral("ext4 is read-only")), false);
+        read_only.clipboard_has_files = true;
+        const auto blocked = sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste,
+                                                                     read_only);
+        QVERIFY(!blocked.enabled);
+        QCOMPARE(blocked.blocker, QStringLiteral("ext4 is read-only"));
+    }
+
     void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
         // Tabs and dual pane are shipped features, but the registry still exposes
         // a build-availability gate: when a host reports it cannot host tabs or a

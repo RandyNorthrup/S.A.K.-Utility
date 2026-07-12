@@ -55,6 +55,8 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::Preview, Group::Safety},
         {Id::Hash, Group::Safety},
         {Id::CopyOut, Group::File},
+        {Id::CopyItems, Group::File},
+        {Id::Paste, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -227,7 +229,19 @@ bool isBrowseCommand(const FileExplorerCommandId id) {
 
 bool isReadCommand(const FileExplorerCommandId id) {
     using enum FileExplorerCommandId;
-    return id == Preview || id == Hash || id == CopyOut;
+    return id == Preview || id == Hash || id == CopyOut || id == CopyItems;
+}
+
+// Paste additionally needs pasteable file items on the clipboard. Checked after the
+// write-capability gate so a read-only target reports its real write blocker first.
+std::optional<FileExplorerCommandState> pasteClipboardState(
+    const FileExplorerCommandId id,
+    const FileExplorerCommandContext& context,
+    const FileExplorerCommand& entry) {
+    if (id == FileExplorerCommandId::Paste && !context.clipboard_has_files) {
+        return disabledState(entry, QStringLiteral("Copy files to the clipboard first."));
+    }
+    return std::nullopt;
 }
 
 std::optional<FileExplorerCommandState> capabilityState(const FileExplorerCommandId id,
@@ -318,6 +332,11 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Copy the selected file out to a local destination."),
                     QStringLiteral("Ctrl+Shift+O"),
                     {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::CopyItems,
+                    QStringLiteral("Copy"),
+                    QStringLiteral("Copy selected files for pasting into a writable folder."),
+                    QStringLiteral("Ctrl+C"),
+                    {.selection_required = true}),
         makeCommand(FileExplorerCommandId::SelectAll,
                     QStringLiteral("Select All"),
                     QStringLiteral("Select every item in the current folder."),
@@ -343,6 +362,11 @@ QVector<FileExplorerCommand> writeCommands() {
         makeCommand(FileExplorerCommandId::WriteFile,
                     QStringLiteral("Write File"),
                     QStringLiteral("Import or write a file into the current location."),
+                    QStringLiteral("Ctrl+Shift+V"),
+                    {.write_operation = true}),
+        makeCommand(FileExplorerCommandId::Paste,
+                    QStringLiteral("Paste"),
+                    QStringLiteral("Paste copied files into the current folder."),
                     QStringLiteral("Ctrl+V"),
                     {.write_operation = true}),
         makeCommand(FileExplorerCommandId::Rename,
@@ -453,6 +477,9 @@ FileExplorerCommandState FileExplorerCommandRegistry::state(
     if (const auto capability = capabilityState(id, context, entry)) {
         return *capability;
     }
+    if (const auto paste = pasteClipboardState(id, context, entry)) {
+        return *paste;
+    }
     return enabledState(entry);
 }
 
@@ -492,6 +519,8 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::ReopenClosedTab, "reopen-closed-tab"},
         {Id::Hash, "hash"},
         {Id::CopyOut, "copy-out"},
+        {Id::CopyItems, "copy-items"},
+        {Id::Paste, "paste"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");
