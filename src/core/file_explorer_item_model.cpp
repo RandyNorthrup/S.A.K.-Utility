@@ -148,6 +148,18 @@ int FileExplorerItemModel::columnCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : ColumnCount;
 }
 
+QStringList FileExplorerItemModel::tagsForEntry(const FileManagementEntry& entry) const {
+    return m_tag_provider ? m_tag_provider(entry.path) : QStringList{};
+}
+
+QVariant FileExplorerItemModel::displayForColumn(const FileManagementEntry& entry,
+                                                 const int column) const {
+    if (column == TagsColumn) {
+        return tagsForEntry(entry).join(QStringLiteral(", "));
+    }
+    return displayText(entry, column, m_show_file_extensions);
+}
+
 QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) const {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_entries.size()) {
         return {};
@@ -156,12 +168,14 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     const FileManagementEntry& entry = m_entries.at(index.row());
     switch (role) {
     case Qt::DisplayRole:
-        return displayText(entry, index.column(), m_show_file_extensions);
+        return displayForColumn(entry, index.column());
     case Qt::ToolTipRole:
         return entry.path;
     case Qt::TextAlignmentRole:
         return index.column() == SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
                                             : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
+    case EntryTagsRole:
+        return tagsForEntry(entry);
     default:
         return entryRoleValue(entry, role);
     }
@@ -181,6 +195,7 @@ QVariant FileExplorerItemModel::headerData(const int section,
         {CreatedColumn, QT_TR_NOOP("Created")},
         {IdentifierColumn, QT_TR_NOOP("ID")},
         {AttributesColumn, QT_TR_NOOP("Attributes")},
+        {TagsColumn, QT_TR_NOOP("Tags")},
         {PathColumn, QT_TR_NOOP("Path")},
     });
     const auto it = std::ranges::find(kHeaders, section, &std::pair<int, const char*>::first);
@@ -221,6 +236,20 @@ void FileExplorerItemModel::setEntries(QVector<FileManagementEntry> entries) {
 
 void FileExplorerItemModel::clear() {
     setEntries({});
+}
+
+void FileExplorerItemModel::setTagProvider(TagProvider provider) {
+    m_tag_provider = std::move(provider);
+    refreshTags();
+}
+
+void FileExplorerItemModel::refreshTags() {
+    if (m_entries.isEmpty()) {
+        return;
+    }
+    Q_EMIT dataChanged(index(0, TagsColumn),
+                       index(m_entries.size() - 1, TagsColumn),
+                       {Qt::DisplayRole, EntryTagsRole});
 }
 
 void FileExplorerItemModel::setShowFileExtensions(const bool show) {

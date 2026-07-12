@@ -1384,8 +1384,8 @@ Tags checklist:
 - [x] Define app-level tag storage. (`FileExplorerTagStore`, keyed by target id + item path; `test_file_explorer_tag_store`)
 - [x] Tag selected item. (table context-menu "Edit Tags..." -> `editSelectedItemTags`)
 - [x] Remove tag. (empty tag entry removes the record via `FileExplorerTagStore::setTags`)
-- [x] Show tag badges. (Properties pane shows a "Tags: ..." line for the selected item; an in-row details chip column remains a follow-on)
-- [ ] Add tag column in details view. (would couple the item model to the tag store; deferred)
+- [x] Show tag badges. (Properties pane shows a "Tags: ..." line for the selected item, plus an in-row Tags column)
+- [x] Add tag column in details view. (`FileExplorerItemModel` gained a Tags column + `EntryTagsRole` backed by an injected `TagProvider` callback, so the model stays decoupled from the tag store; the panel installs a provider that reads `FileExplorerTagStore` and calls `refreshTags` after an edit. `tagsColumnReflectsInjectedProvider`, `tagColumnShowsProviderTagsInDetailsView`)
 - [x] Add tag group in sidebar. (sidebar "Tags" group lists all known tags)
 - [x] Filter by tag. (`FileExplorerSortFilterModel::setTagFilter` + sidebar tag click -> `applyTagFilter`; `proxyTagFilterRestrictsToTaggedPaths`)
 - [x] Do not write tags into raw HFS/APFS metadata. (tags live only in app QSettings, never in the file system)
@@ -1396,21 +1396,21 @@ Polish checklist:
 - [ ] Ensure command bar icons and labels are consistent.
 - [ ] Ensure imported Files icons are used for generic commands before custom S.A.K. icons are considered.
 - [ ] Ensure Files brand/app logos and excluded integration icons are absent from S.A.K. resources.
-- [ ] Ensure all icon-only commands have tooltips and accessible names.
-- [ ] Add empty states.
-- [ ] Add loading states.
-- [ ] Add blocked states.
+- [x] Ensure all icon-only commands have tooltips and accessible names. (`verifyShellAccessibilityAndIcons`; command buttons carry status text + blocker tooltips)
+- [x] Add empty states. (`FileExplorerPane::showEmptyState`; "This folder is empty." / "No items match current view settings.")
+- [x] Add loading states. (`paneStateLabelTracksLoadingEmptyAndError`)
+- [x] Add blocked states. (Safety pane blockers + disabled-command tooltips; `showErrorState`)
 - [ ] Add final dark/light theme pass if supported.
 - [ ] Add desktop/narrow screenshots to artifacts.
 
 Tests:
 
-- [ ] Favorites persistence tests.
-- [ ] Recent persistence tests.
-- [ ] Tags persistence tests.
-- [ ] GUI tag add/remove/filter.
-- [ ] Visual QA screenshots.
-- [ ] Accessibility checks.
+- [x] Favorites persistence tests. (`favoritesAndRecentPersistAcrossConstruction`: a seeded favorite id survives reconstruction and renders; `staleFavoriteRendersOfflineSidebarRow`)
+- [x] Recent persistence tests. (same round-trip test seeds `RecentTargetIds`; `clearRecentTargets` covered by the target context menu)
+- [x] Tags persistence tests. (`test_file_explorer_tag_store`: normalize, key-by-target+path, empty-removes, aggregate)
+- [x] GUI tag add/remove/filter. (`proxyTagFilterRestrictsToTaggedPaths`, `tagColumnShowsProviderTagsInDetailsView`; add/remove through `editSelectedItemTags` context action)
+- [~] Visual QA screenshots. (baseline capture wired behind `SAK_CAPTURE_FILE_EXPLORER_BASELINE`; a manual capture pass remains an M12 item)
+- [x] Accessibility checks. (`verifyShellAccessibilityAndIcons` asserts accessible names on the shell controls)
 
 Exit gate:
 

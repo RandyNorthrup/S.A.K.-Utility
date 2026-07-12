@@ -183,6 +183,7 @@ private:
     void clearCurrentTagFilter();
     [[nodiscard]] QStringList tagsForSelectedItem() const;
     [[nodiscard]] QStringList allKnownTags() const;
+    void installTagProvider(FileExplorerItemModel* model);
     void togglePreviewPane();
     void resetListingForUnavailableTarget(const QString& message, bool is_error);
     int deleteSelectedEntries(const FileManagementTarget& target,

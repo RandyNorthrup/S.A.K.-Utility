@@ -556,6 +556,7 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
     m_pane_splitter->addWidget(m_pane_a);
     m_pane = m_pane_a;
     m_item_model = m_pane->itemModel();
+    installTagProvider(m_item_model);
     m_status_label = m_pane->statusLabel();
     center_layout->addWidget(m_pane_splitter, 1);
 
@@ -2305,6 +2306,23 @@ QStringList FileManagementExplorerPanel::allKnownTags() const {
     return FileExplorerTagStore::allTags(settings, QString::fromLatin1(kTagStoreGroup));
 }
 
+void FileManagementExplorerPanel::installTagProvider(FileExplorerItemModel* model) {
+    if (!model) {
+        return;
+    }
+    // The model stays decoupled from the tag store: it calls this lookup, which resolves
+    // the current target id and reads the app-level tags for the entry path.
+    model->setTagProvider([this](const QString& path) -> QStringList {
+        const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+        if (target_id.isEmpty() || path.trimmed().isEmpty()) {
+            return {};
+        }
+        QSettings settings;
+        return FileExplorerTagStore::tagsFor(
+            settings, QString::fromLatin1(kTagStoreGroup), target_id, path);
+    });
+}
+
 void FileManagementExplorerPanel::clearCurrentTagFilter() {
     if (m_pane && m_pane->sortFilterModel()) {
         m_pane->sortFilterModel()->clearTagFilter();
@@ -2363,6 +2381,9 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
     FileExplorerTagStore::setTags(
         settings, QString::fromLatin1(kTagStoreGroup), target_id, path, tags);
     updateDetailsPane();
+    if (m_item_model) {
+        m_item_model->refreshTags();
+    }
     rebuildTargetList();
     Q_EMIT statusMessage(tr("Tags updated for %1").arg(selection.entries.first().name),
                          sak::kTimerStatusMessageMs);
@@ -3376,6 +3397,7 @@ void FileManagementExplorerPanel::ensureSecondPane() {
     }
     m_pane_b = new FileExplorerPane(m_pane_splitter);
     m_pane_splitter->addWidget(m_pane_b);
+    installTagProvider(m_pane_b->itemModel());
     connectPaneSignals(m_pane_b, 1);
 }
 
@@ -3390,6 +3412,7 @@ void FileManagementExplorerPanel::activatePane(int index) {
     m_active_pane_index = index;
     m_pane = (index == 0) ? m_pane_a : m_pane_b;
     m_item_model = m_pane->itemModel();
+    installTagProvider(m_item_model);
     m_status_label = m_pane->statusLabel();
     m_current_path = m_pane_state.location.path;
     if (m_path_edit) {

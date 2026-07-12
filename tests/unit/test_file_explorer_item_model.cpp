@@ -234,6 +234,38 @@ private Q_SLOTS:
         QCOMPARE(proxy.rowCount(), 3);
     }
 
+    void tagsColumnReflectsInjectedProvider() {
+        sak::FileExplorerItemModel model;
+        model.setEntries(
+            {fileEntry(QStringLiteral("a.txt"), 1), fileEntry(QStringLiteral("b.txt"), 2)});
+
+        // No provider: the Tags column is empty.
+        QCOMPARE(model.index(0, sak::FileExplorerItemModel::TagsColumn).data().toString(),
+                 QString());
+        QCOMPARE(
+            model
+                .headerData(sak::FileExplorerItemModel::TagsColumn, Qt::Horizontal, Qt::DisplayRole)
+                .toString(),
+            QStringLiteral("Tags"));
+
+        // Injected provider: the column and the tags role both reflect it, decoupled
+        // from any tag store.
+        model.setTagProvider([](const QString& path) -> QStringList {
+            if (path == QStringLiteral("/a.txt")) {
+                return {QStringLiteral("red"), QStringLiteral("keep")};
+            }
+            return {};
+        });
+        QCOMPARE(model.index(0, sak::FileExplorerItemModel::TagsColumn).data().toString(),
+                 QStringLiteral("red, keep"));
+        QCOMPARE(model.index(0, sak::FileExplorerItemModel::NameColumn)
+                     .data(sak::FileExplorerItemModel::EntryTagsRole)
+                     .toStringList(),
+                 (QStringList{QStringLiteral("red"), QStringLiteral("keep")}));
+        QCOMPARE(model.index(1, sak::FileExplorerItemModel::TagsColumn).data().toString(),
+                 QString());
+    }
+
     void proxySortKeepsDirectoriesFirst() {
         sak::FileExplorerItemModel model;
         model.setEntries({fileEntry(QStringLiteral("z.bin"), 400),

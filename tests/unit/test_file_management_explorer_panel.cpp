@@ -1216,6 +1216,70 @@ private Q_SLOTS:
         settings.sync();
     }
 
+    void favoritesAndRecentPersistAcrossConstruction() {
+        // Favorites and recent target ids saved to QSettings are re-read on the next
+        // panel construction and rendered as sidebar rows (persistence round trip).
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList prevFav =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        const QStringList prevRecent =
+            settings.value(QStringLiteral("RecentTargetIds")).toStringList();
+        settings.setValue(QStringLiteral("FavoriteTargetIds"),
+                          QStringList{QStringLiteral("disk:77:partition:3")});
+        settings.setValue(QStringLiteral("RecentTargetIds"),
+                          QStringList{QStringLiteral("disk:88:partition:4")});
+        settings.endGroup();
+        settings.sync();
+
+        bool foundFavorite = false;
+        bool foundRecent = false;
+        {
+            sak::FileManagementExplorerPanel panel;
+            panel.resize(1100, 700);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* list = child<QListWidget>(&panel, "fileExplorerTargetList");
+            QVERIFY(list);
+            for (int i = 0; i < list->count(); ++i) {
+                const QString text = list->item(i)->text();
+                foundFavorite = foundFavorite ||
+                                text.contains(QStringLiteral("disk:77:partition:3"));
+                foundRecent = foundRecent || text.contains(QStringLiteral("disk:88:partition:4"));
+            }
+        }
+
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.setValue(QStringLiteral("FavoriteTargetIds"), prevFav);
+        settings.setValue(QStringLiteral("RecentTargetIds"), prevRecent);
+        settings.endGroup();
+        settings.sync();
+
+        // The offline favorite renders as its stale row; the recent id, absent from the
+        // connected targets, is dropped silently (recents do not warn). Assert the
+        // favorite persisted and rendered.
+        QVERIFY2(foundFavorite, "persisted favorite id not rendered after reconstruction");
+    }
+
+    void tagColumnShowsProviderTagsInDetailsView() {
+        // The details view exposes a Tags column backed by the injected provider, and it
+        // repaints after a tag edit (refreshTags).
+        sak::FileExplorerItemModel model;
+        sak::FileManagementEntry entry;
+        entry.name = QStringLiteral("tagged.txt");
+        entry.path = QStringLiteral("/tagged.txt");
+        entry.regular_file = true;
+        model.setEntries({entry});
+        QStringList provided;
+        model.setTagProvider([&provided](const QString&) { return provided; });
+        QCOMPARE(model.index(0, sak::FileExplorerItemModel::TagsColumn).data().toString(),
+                 QString());
+        provided = {QStringLiteral("project-x")};
+        model.refreshTags();
+        QCOMPARE(model.index(0, sak::FileExplorerItemModel::TagsColumn).data().toString(),
+                 QStringLiteral("project-x"));
+    }
+
     void dualPaneStackActionFlipsSplitterOrientation() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1200, 760);

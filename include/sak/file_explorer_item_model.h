@@ -11,8 +11,11 @@
 #include <QAbstractTableModel>
 #include <QDateTime>
 #include <QModelIndex>
+#include <QStringList>
 #include <QVariant>
 #include <QVector>
+
+#include <functional>
 
 namespace sak {
 
@@ -28,6 +31,7 @@ public:
         CreatedColumn,
         IdentifierColumn,
         AttributesColumn,
+        TagsColumn,
         PathColumn,
         ColumnCount,
     };
@@ -45,7 +49,12 @@ public:
         EntryAttributeSummaryRole,
         EntryModifiedTimeRole,
         EntryCreatedTimeRole,
+        EntryTagsRole,
     };
+
+    /// Callback that returns the app-level tags for an entry path. Injected by the
+    /// panel so the model stays decoupled from the tag store; unset = no Tags column data.
+    using TagProvider = std::function<QStringList(const QString& path)>;
 
     explicit FileExplorerItemModel(QObject* parent = nullptr);
 
@@ -62,6 +71,10 @@ public:
     void setEntries(QVector<FileManagementEntry> entries);
     void clear();
     void setShowFileExtensions(bool show);
+    /// Set the tag lookup used by the Tags column; pass a null function to disable it.
+    void setTagProvider(TagProvider provider);
+    /// Notify views that tag data changed (e.g. after editing tags) so the column repaints.
+    void refreshTags();
 
     [[nodiscard]] QVector<FileManagementEntry> entries() const;
     [[nodiscard]] FileManagementEntry entryAt(int row) const;
@@ -72,8 +85,12 @@ public:
     [[nodiscard]] static QString timeText(const QDateTime& time);
 
 private:
+    [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
+    [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
+
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};
+    TagProvider m_tag_provider;
 };
 
 }  // namespace sak
