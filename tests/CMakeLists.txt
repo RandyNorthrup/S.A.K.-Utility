@@ -980,6 +980,28 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_session_store.cpp
     message(STATUS "Added unit test: test_file_explorer_session_store")
 endif()
 
+# test_file_explorer_tag_store - app-level item tag persistence
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_tag_store.cpp")
+    add_executable(test_file_explorer_tag_store
+        unit/test_file_explorer_tag_store.cpp
+        ../src/core/file_explorer_tag_store.cpp
+        ../include/sak/file_explorer_tag_store.h
+    )
+    set_target_properties(test_file_explorer_tag_store PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_file_explorer_tag_store PRIVATE
+        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_file_explorer_tag_store PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_file_explorer_tag_store COMMAND test_file_explorer_tag_store
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_file_explorer_tag_store")
+endif()
+
 # test_file_explorer_item_model - File Explorer model/view rows, roles, and sorting
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
     add_executable(test_file_explorer_item_model
