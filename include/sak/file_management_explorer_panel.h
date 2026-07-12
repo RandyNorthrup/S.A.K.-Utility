@@ -24,7 +24,6 @@
 #include <QResizeEvent>
 #include <QSplitter>
 #include <QStringList>
-#include <QTabWidget>
 #include <QWidget>
 
 class QJsonArray;
@@ -333,7 +332,6 @@ private:
     QPlainTextEdit* m_properties_text{nullptr};
     QPlainTextEdit* m_safety_text{nullptr};
     QPlainTextEdit* m_evidence_text{nullptr};
-    QTabWidget* m_details_tabs{nullptr};
     // Path of the file currently rendered in the preview pane, so selection churn does not
     // re-read the same file; empty when no single readable file is selected.
     QString m_last_preview_path;

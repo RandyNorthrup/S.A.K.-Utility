@@ -79,19 +79,29 @@ QString tabStripStyles() {
                "image: url(:/icons/icons/fluent/close.svg); border-radius: 4px; "
                "margin: 2px; }"
                "QTabBar#fileExplorerTabBar::close-button:hover { background: %2; }"
-               "#fileExplorerDetailsTabs::pane { border: none; "
+               // Files InfoPane.xaml segmented pill: 4px-radius bordered
+               // container, transparent radio buttons with 16px side padding;
+               // the checked state gets a filled card and an accent selection
+               // pill (approximated as a bottom border in QSS).
+               "#fileExplorerInfoPanePill { background: transparent; "
+               "border: 1px solid palette(mid); border-radius: 4px; }"
+               "#fileExplorerInfoPanePill QPushButton { background: transparent; "
+               "border: 1px solid transparent; border-radius: 4px; "
+               "padding: 0 16px; color: palette(text); }"
+               "#fileExplorerInfoPanePill QPushButton:checked { "
+               "background: palette(base); border-color: palette(mid); "
+               "border-bottom: 2px solid %3; color: palette(window-text); }"
+               "#fileExplorerInfoPanePill QPushButton:hover:!checked { "
+               "background: %2; }"
+               "#fileExplorerInfoPaneDetailsScroll { border: none; "
                "border-top: 1px solid palette(mid); }"
-               "#fileExplorerDetailsTabs QTabBar::tab { background: transparent; "
-               "border: none; border-radius: %1px; padding: 4px 10px; "
-               "margin-right: 2px; color: palette(text); }"
-               "#fileExplorerDetailsTabs QTabBar::tab:selected { background: %3; "
-               "color: palette(window-text); }"
-               "#fileExplorerDetailsTabs QTabBar::tab:hover:!selected { background: %2; }"
-               "#fileExplorerDetailsTabs QPlainTextEdit { border: none; "
+               "#fileExplorerInfoPane QLabel[infoPaneSectionHeader=\"true\"] { "
+               "font-weight: 600; color: palette(dark); padding: 4px 2px 0 2px; }"
+               "#fileExplorerInfoPane QPlainTextEdit { border: none; "
                "background: palette(base); }")
         .arg(kExplorerTabRadiusPx)
         .arg(colorWithAlpha(kColorAccentWindows, kExplorerHoverAlpha),
-             colorWithAlpha(kColorAccentWindows, kExplorerCheckedAlpha));
+             QString::fromLatin1(kColorAccentWindows));
 }
 
 QString sidebarStyles() {

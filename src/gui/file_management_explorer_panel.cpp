@@ -860,12 +860,11 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
     center_layout->addWidget(m_pane_splitter, 1);
 
     m_details_pane = new FileExplorerDetailsPane(m_shell_splitter);
-    m_details_tabs = m_details_pane;
     m_preview_text = m_details_pane->previewText();
     m_properties_text = m_details_pane->propertiesText();
     m_safety_text = m_details_pane->safetyText();
     m_evidence_text = m_details_pane->evidenceText();
-    m_shell_splitter->addWidget(m_details_tabs);
+    m_shell_splitter->addWidget(m_details_pane);
     m_shell_splitter->setStretchFactor(0, 0);
     m_shell_splitter->setStretchFactor(1, 1);
     m_shell_splitter->setStretchFactor(kCenterPaneStretchIndex, 0);
@@ -896,7 +895,7 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
         }
     });
     connect(m_details_toggle_button, &QPushButton::clicked, this, [this]() {
-        m_details_tabs->setVisible(!m_details_tabs->isVisible());
+        m_details_pane->setVisible(!m_details_pane->isVisible());
     });
     connect(m_search_button, &QPushButton::clicked, this, [this]() {
         showExplorerSearchDialog(m_search_box ? m_search_box->text().trimmed() : QString());
@@ -1006,8 +1005,8 @@ void FileManagementExplorerPanel::resizeEvent(QResizeEvent* event) {
     if (m_sidebar && width < kSidebarCollapseWidth) {
         m_sidebar->setVisible(false);
     }
-    if (m_details_tabs && width < kDetailsTabsCollapseWidth) {
-        m_details_tabs->setVisible(false);
+    if (m_details_pane && width < kDetailsTabsCollapseWidth) {
+        m_details_pane->setVisible(false);
     }
     if (m_omnibar) {
         // Files NavigationToolbar collapses Forward/Up/Refresh into an
@@ -1732,10 +1731,9 @@ void FileManagementExplorerPanel::previewSelectedFile() {
     }
 
     if (m_preview_text) {
+        // The info pane preview region is visible on both the Details and
+        // Preview tabs (Files InfoPane.xaml), so no tab switch is needed.
         m_preview_text->setPlainText(QString::fromUtf8(read.data));
-    }
-    if (m_details_tabs && m_preview_text) {
-        m_details_tabs->setCurrentWidget(m_preview_text);
     }
 
     QDialog dialog(this);
@@ -2684,8 +2682,8 @@ bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerComm
 
 void FileManagementExplorerPanel::showSelectedItemProperties() {
     updateDetailsPane();
-    if (m_details_tabs && m_properties_text) {
-        m_details_tabs->setCurrentWidget(m_properties_text);
+    if (m_details_pane) {
+        m_details_pane->showDetailsTab();
     }
 }
 
@@ -2821,8 +2819,8 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
 }
 
 void FileManagementExplorerPanel::togglePreviewPane() {
-    if (m_details_tabs) {
-        m_details_tabs->setVisible(!m_details_tabs->isVisible());
+    if (m_details_pane) {
+        m_details_pane->setVisible(!m_details_pane->isVisible());
     }
 }
 

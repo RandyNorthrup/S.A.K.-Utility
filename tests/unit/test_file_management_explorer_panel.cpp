@@ -5,6 +5,7 @@
 /// @brief GUI tests for the File Management Explorer shell.
 
 #include "sak/file_explorer_breadcrumb.h"
+#include "sak/file_explorer_details_pane.h"
 #include "sak/file_explorer_details_view.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
@@ -32,13 +33,13 @@
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSettings>
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QTableView>
-#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -215,7 +216,7 @@ void verifyShellCoreWidgetsExist(sak::FileManagementExplorerPanel& panel) {
     QVERIFY(child<QListView>(&panel, "fileExplorerCardsView"));
     QVERIFY(child<QListView>(&panel, "fileExplorerColumnsView"));
     QVERIFY(child<QListView>(&panel, "fileExplorerColumnsPreviewView"));
-    QVERIFY(child<QTabWidget>(&panel, "fileExplorerDetailsTabs"));
+    QVERIFY(child<sak::FileExplorerDetailsPane>(&panel, "fileExplorerInfoPane"));
     QVERIFY(child<QPushButton>(&panel, "fileExplorerSidebarToggleButton"));
     QVERIFY(child<QPushButton>(&panel, "fileExplorerDetailsToggleButton"));
     QVERIFY(child<QPushButton>(&panel, "fileExplorerSearchButton"));
@@ -235,10 +236,23 @@ void verifyShellCoreWidgetsExist(sak::FileManagementExplorerPanel& panel) {
 }
 
 void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) {
-    auto* details = child<QTabWidget>(&panel, "fileExplorerDetailsTabs");
+    auto* info = child<sak::FileExplorerDetailsPane>(&panel, "fileExplorerInfoPane");
     auto* table = child<QTableView>(&panel, "fileExplorerTable");
-    QCOMPARE(details->count(), 4);
+    QVERIFY(info);
     QCOMPARE(table->selectionMode(), QAbstractItemView::ExtendedSelection);
+
+    // Files InfoPane: a Details|Preview segmented pill where Details is the
+    // default tab and shows the stacked details scroller below the preview.
+    auto* detailsTab = child<QPushButton>(&panel, "fileExplorerInfoPaneDetailsTab");
+    auto* previewTab = child<QPushButton>(&panel, "fileExplorerInfoPanePreviewTab");
+    auto* scroller = child<QScrollArea>(&panel, "fileExplorerInfoPaneDetailsScroll");
+    QVERIFY(detailsTab);
+    QVERIFY(previewTab);
+    QVERIFY(scroller);
+    QVERIFY(detailsTab->isChecked());
+    QVERIFY(!previewTab->isChecked());
+    QVERIFY(scroller->isVisibleTo(info));
+
     auto* preview = child<QPlainTextEdit>(&panel, "fileExplorerPreviewText");
     QVERIFY(preview);
     // The persistent preview pane is always populated by the auto-preview wiring (a hint when
@@ -247,6 +261,15 @@ void verifyShellDetailsAndPreviewPanes(sak::FileManagementExplorerPanel& panel) 
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerPropertiesText"));
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerSafetyText"));
     QVERIFY(child<QPlainTextEdit>(&panel, "fileExplorerEvidenceText"));
+
+    // The preview region stays visible on both tabs; only the details
+    // scroller toggles (InfoPane.xaml SelectedTab visual states).
+    previewTab->click();
+    QVERIFY(previewTab->isChecked());
+    QVERIFY(!scroller->isVisibleTo(info));
+    QVERIFY(preview->isVisibleTo(info));
+    detailsTab->click();
+    QVERIFY(scroller->isVisibleTo(info));
 }
 
 struct ViewModeWidgets {
@@ -436,6 +459,10 @@ private Q_SLOTS:
     void initTestCase() {
         QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
         QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        // The info pane persists its selected tab; a stale Preview choice from
+        // an earlier run would hide the details scroller mid-suite.
+        QSettings settings;
+        settings.remove(QStringLiteral("FileManagementExplorer/InfoPane"));
     }
 
     void init() { resetExplorerPanelSettings(); }
@@ -887,7 +914,7 @@ private Q_SLOTS:
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
-        auto* details = child<QTabWidget>(&panel, "fileExplorerDetailsTabs");
+        auto* details = child<QWidget>(&panel, "fileExplorerInfoPane");
         auto* table = child<QTableView>(&panel, "fileExplorerTable");
         QVERIFY(targetList);
         QVERIFY(details);
@@ -1023,7 +1050,7 @@ private Q_SLOTS:
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
         auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
-        auto* details = child<QTabWidget>(&panel, "fileExplorerDetailsTabs");
+        auto* details = child<QWidget>(&panel, "fileExplorerInfoPane");
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(details);
