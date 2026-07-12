@@ -19,6 +19,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QStorageInfo>
 
 #include <algorithm>
@@ -772,17 +773,24 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
     }
 
     // Raw/non-native targets are read through their reader up to the cap, then hashed.
-    const FileManagementReadResult read = readFile(target, path, max_bytes);
+    // Request one extra byte so a file of exactly max_bytes is provably complete and is
+    // not falsely reported as capped.
+    const FileManagementReadResult read =
+        readFile(target, path, max_bytes == 0 ? 0 : max_bytes + 1);
     if (!read.ok) {
         result.blockers = read.blockers;
         return result;
     }
+    QByteArray data = read.data;
+    result.capped = max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes;
+    if (result.capped) {
+        data.truncate(static_cast<qsizetype>(max_bytes));
+    }
     QCryptographicHash hash(QCryptographicHash::Sha256);
-    hash.addData(read.data);
+    hash.addData(data);
     result.ok = true;
     result.sha256 = QString::fromLatin1(hash.result().toHex());
-    result.hashed_bytes = static_cast<uint64_t>(read.data.size());
-    result.capped = max_bytes != 0 && static_cast<uint64_t>(read.data.size()) >= max_bytes;
+    result.hashed_bytes = static_cast<uint64_t>(data.size());
     return result;
 }
 
@@ -791,7 +799,7 @@ namespace {
 // Stream a local source file into an already-open destination, hashing as it goes.
 // Returns false and appends a blocker on any read/write error.
 bool streamLocalSourceOut(const QString& local,
-                          QFile& dest,
+                          QFileDevice& dest,
                           QCryptographicHash& hash,
                           FileManagementExportResult& result) {
     QFile src(local);
@@ -821,8 +829,10 @@ bool streamLocalSourceOut(const QString& local,
 }
 
 // Read a raw/non-native source through its reader (capped) into an open destination.
+// The caller reads one byte past the cap, so a source exactly at the cap is complete;
+// only a genuinely longer source is truncated back to the cap and flagged.
 bool writeRawSourceOut(const FileManagementReadResult& read,
-                       QFile& dest,
+                       QFileDevice& dest,
                        QCryptographicHash& hash,
                        uint64_t max_bytes,
                        FileManagementExportResult& result) {
@@ -830,13 +840,17 @@ bool writeRawSourceOut(const FileManagementReadResult& read,
         result.blockers = read.blockers;
         return false;
     }
-    if (dest.write(read.data) != read.data.size()) {
+    QByteArray data = read.data;
+    result.capped = max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes;
+    if (result.capped) {
+        data.truncate(static_cast<qsizetype>(max_bytes));
+    }
+    if (dest.write(data) != data.size()) {
         result.blockers.append(QStringLiteral("Write error: %1").arg(dest.errorString()));
         return false;
     }
-    hash.addData(read.data);
-    result.bytes_written = static_cast<uint64_t>(read.data.size());
-    result.capped = max_bytes != 0 && static_cast<uint64_t>(read.data.size()) >= max_bytes;
+    hash.addData(data);
+    result.bytes_written = static_cast<uint64_t>(data.size());
     return true;
 }
 
@@ -850,8 +864,11 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
     FileManagementExportResult result;
     result.destination = destination_path;
 
-    QFile dest(destination_path);
-    if (!dest.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // QSaveFile writes to a temporary and renames on commit, so a failed copy never
+    // truncates or destroys a pre-existing destination file, and commit() surfaces
+    // flush errors (disk full) instead of silently reporting a short file as ok.
+    QSaveFile dest(destination_path);
+    if (!dest.open(QIODevice::WriteOnly)) {
         result.blockers.append(
             QStringLiteral("Could not open destination %1 for writing.").arg(destination_path));
         return result;
@@ -862,14 +879,21 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
     const bool ok =
         target.local_file_system
             ? streamLocalSourceOut(local, dest, hash, result)
-            : writeRawSourceOut(
-                  readFile(target, source_path, max_bytes), dest, hash, max_bytes, result);
+            : writeRawSourceOut(readFile(target, source_path, max_bytes == 0 ? 0 : max_bytes + 1),
+                                dest,
+                                hash,
+                                max_bytes,
+                                result);
 
     if (!ok) {
-        dest.remove();
+        dest.cancelWriting();
         return result;
     }
-    dest.close();
+    if (!dest.commit()) {
+        result.blockers.append(QStringLiteral("Could not finalize destination %1: %2")
+                                   .arg(destination_path, dest.errorString()));
+        return result;
+    }
     result.ok = true;
     result.sha256 = QString::fromLatin1(hash.result().toHex());
     return result;

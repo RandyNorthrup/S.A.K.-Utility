@@ -244,6 +244,29 @@ private Q_SLOTS:
         QVERIFY(!QFile::exists(destPath));
     }
 
+    void copyFileToHostPreservesExistingDestinationOnFailure() {
+        // Overwriting an existing file must be atomic: when the copy fails (missing
+        // source), the pre-existing destination bytes stay untouched instead of being
+        // truncated or deleted.
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QDir dir(temp.path());
+        const QString destPath = dir.filePath(QStringLiteral("keep.bin"));
+        const QByteArray original = QByteArrayLiteral("precious original bytes");
+        {
+            QFile dest(destPath);
+            QVERIFY(dest.open(QIODevice::WriteOnly));
+            QCOMPARE(dest.write(original), original.size());
+        }
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const auto result = sak::FileManagementFileSystemBridge::copyFileToHost(
+            target, dir.filePath(QStringLiteral("nope.bin")), destPath, 1024);
+        QVERIFY(!result.ok);
+        QFile dest(destPath);
+        QVERIFY(dest.open(QIODevice::ReadOnly));
+        QCOMPARE(dest.readAll(), original);
+    }
+
     void identifierLabelIsFileSystemSpecific() {
         using Bridge = sak::FileManagementFileSystemBridge;
         QCOMPARE(Bridge::identifierLabel(QStringLiteral("APFS")), QStringLiteral("Object ID"));

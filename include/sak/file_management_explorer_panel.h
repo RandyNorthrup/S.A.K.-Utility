@@ -177,6 +177,7 @@ private:
                                   const QStringList& target_ids,
                                   bool warn_when_missing = false);
     void appendStaleFavoriteRow(const QString& target_id);
+    bool showStaleFavoriteContextMenu(const QPoint& position);
     void promptCurrentFolderFilter();
     void showCommandPalette();
     void updateDetailsPane();
@@ -215,6 +216,7 @@ private:
     [[nodiscard]] FileExplorerTabState captureCurrentTab() const;
     [[nodiscard]] QString tabTitleForCurrentLocation() const;
     void restoreTab(const FileExplorerTabState& tab);
+    void restoreSecondaryPane(const FileExplorerTabState& tab);
     void updateActiveTabLabel();
     void openCurrentLocationInNewTab();
     void duplicateCurrentTab();

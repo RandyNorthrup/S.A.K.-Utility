@@ -109,6 +109,7 @@ enum class SidebarEntryKind {
     Target = 1,
     Home = 2,
     Tag = 3,
+    StaleFavorite = 4,
 };
 
 QString fileSystemBadge(const FileManagementTarget& target) {
@@ -848,9 +849,12 @@ void FileManagementExplorerPanel::appendStaleFavoriteRow(const QString& target_i
     auto* item = new QListWidgetItem(style()->standardIcon(QStyle::SP_MessageBoxWarning),
                                      tr("%1  [offline]").arg(target_id),
                                      m_target_list);
-    item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Header));
+    item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::StaleFavorite));
+    item->setData(kSidebarTagRole, target_id);
     item->setFlags(Qt::NoItemFlags);
-    item->setToolTip(tr("Saved favorite is not currently connected: %1").arg(target_id));
+    item->setToolTip(tr("Saved favorite is not currently connected: %1. Right-click to "
+                        "remove the pin.")
+                         .arg(target_id));
 }
 
 void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_target_id) {
@@ -915,7 +919,15 @@ void FileManagementExplorerPanel::selectTargetById(const QString& target_id) {
         const int index = item->data(kTargetIndexRole).toInt();
         if (index >= 0 && index < m_targets.size() &&
             FileExplorerTargetId::fromTarget(m_targets.at(index)).value == target_id) {
-            m_target_list->setCurrentRow(row);
+            if (index == m_current_target_index) {
+                // Re-selecting the already-active target (e.g. after a sidebar rebuild for a
+                // tag edit or favorite reorder) must only restore the visual selection; a
+                // live signal would reset navigation history and yank the pane to the root.
+                const QSignalBlocker blocker(m_target_list);
+                m_target_list->setCurrentRow(row);
+            } else {
+                m_target_list->setCurrentRow(row);
+            }
             return;
         }
     }
@@ -2081,8 +2093,11 @@ void FileManagementExplorerPanel::applyTagFilter(const QString& tag) {
         }
     }
     m_pane->sortFilterModel()->setTagFilter(paths);
-    Q_EMIT statusMessage(tr("Filtered current folder to %1 item(s) tagged '%2'")
-                             .arg(QString::number(paths.size()), tag),
+    // Report what the user actually sees: matching rows in THIS folder (the tag may also
+    // mark items elsewhere on the target, which the filter cannot show from here).
+    const int visible = m_pane->sortFilterModel()->rowCount();
+    Q_EMIT statusMessage(tr("Tag '%1': showing %2 matching item(s) in this folder")
+                             .arg(tag, QString::number(visible)),
                          sak::kTimerStatusMessageMs);
 }
 
@@ -2667,8 +2682,20 @@ QString FileManagementExplorerPanel::tabTitleForCurrentLocation() const {
 
 FileExplorerTabState FileManagementExplorerPanel::captureCurrentTab() const {
     FileExplorerTabState tab;
-    tab.primary = m_pane_state;
     tab.title = tabTitleForCurrentLocation();
+    if (!m_dual_pane_enabled) {
+        tab.primary = m_pane_state;
+        return tab;
+    }
+    // m_pane_state always tracks the ACTIVE pane (states swap on activation), so un-swap
+    // here: the tab's primary slot is physical pane A, secondary is pane B.
+    tab.primary = m_active_pane_index == 0 ? m_pane_state : m_secondary_state;
+    tab.secondary = m_active_pane_index == 0 ? m_secondary_state : m_pane_state;
+    tab.secondary_pane_enabled = true;
+    tab.active_pane_index = m_active_pane_index;
+    tab.split = (m_pane_splitter && m_pane_splitter->orientation() == Qt::Vertical)
+                    ? FileExplorerPaneSplit::Horizontal
+                    : FileExplorerPaneSplit::Vertical;
     return tab;
 }
 
@@ -2686,6 +2713,17 @@ void FileManagementExplorerPanel::updateActiveTabLabel() {
 
 void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
     m_restoring_tab = true;
+    if (m_dual_pane_enabled && !tab.secondary_pane_enabled) {
+        // The incoming tab is single-pane: collapse the split left over from the prior tab.
+        if (m_active_pane_index == 1) {
+            activatePane(0);
+        }
+        m_dual_pane_enabled = false;
+        if (m_pane_b) {
+            m_pane_b->hide();
+        }
+        highlightActivePane();
+    }
     const int target_index = findTargetIndexById(tab.primary.location.target_id.value);
     m_current_target_index = target_index;
     m_pane_state = tab.primary;
@@ -2694,7 +2732,34 @@ void FileManagementExplorerPanel::restoreTab(const FileExplorerTabState& tab) {
         selectTargetById(tab.primary.location.target_id.value);
     }
     loadDirectory(tab.primary.location.path, false);
+    if (tab.secondary_pane_enabled) {
+        restoreSecondaryPane(tab);
+    }
     m_restoring_tab = false;
+}
+
+void FileManagementExplorerPanel::restoreSecondaryPane(const FileExplorerTabState& tab) {
+    // Re-open the split, restore pane B's own location/history/view, load its listing,
+    // then hand focus back to whichever pane the tab recorded as active.
+    ensureSecondPane();
+    m_dual_pane_enabled = true;
+    m_pane_b->show();
+    if (m_pane_splitter) {
+        m_pane_splitter->setOrientation(
+            tab.split == FileExplorerPaneSplit::Horizontal ? Qt::Vertical : Qt::Horizontal);
+    }
+    m_secondary_state = tab.secondary;
+    activatePane(1);
+    const int secondary_target = findTargetIndexById(tab.secondary.location.target_id.value);
+    if (secondary_target >= 0) {
+        m_current_target_index = secondary_target;
+        loadDirectory(m_pane_state.location.path, false);
+    }
+    if (tab.active_pane_index == 0) {
+        activatePane(0);
+        m_current_target_index = findTargetIndexById(m_pane_state.location.target_id.value);
+    }
+    highlightActivePane();
 }
 
 void FileManagementExplorerPanel::onTabSwitched(int index) {
@@ -3299,8 +3364,39 @@ void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_i
     sak::showInformationLogged(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
 }
 
+// A stale "[offline]" favorite has no connected target index, but the pin itself must
+// stay removable; show its dedicated menu and return true when the row was a stale pin.
+bool FileManagementExplorerPanel::showStaleFavoriteContextMenu(const QPoint& position) {
+    const QModelIndex index = m_target_list->indexAt(position);
+    if (!index.isValid()) {
+        return false;
+    }
+    auto* item = m_target_list->item(index.row());
+    if (!item || static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt()) !=
+                     SidebarEntryKind::StaleFavorite) {
+        return false;
+    }
+    const QString stale_id = item->data(kSidebarTagRole).toString();
+    QMenu stale_menu(this);
+    stale_menu.setObjectName(QStringLiteral("fileExplorerStaleFavoriteContextMenu"));
+    auto* remove = stale_menu.addAction(tr("Remove from Favorites"));
+    remove->setObjectName(QStringLiteral("fileExplorerRemoveStaleFavorite"));
+    connect(remove, &QAction::triggered, this, [this, stale_id]() {
+        m_favorite_target_ids.removeAll(stale_id);
+        saveSidebarState();
+        rebuildTargetList();
+        Q_EMIT statusMessage(tr("Removed offline favorite %1").arg(stale_id),
+                             sak::kTimerStatusMessageMs);
+    });
+    stale_menu.exec(m_target_list->viewport()->mapToGlobal(position));
+    return true;
+}
+
 void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& position) {
     if (!m_target_list) {
+        return;
+    }
+    if (showStaleFavoriteContextMenu(position)) {
         return;
     }
     const int menu_target_index = resolveContextMenuTargetIndex(position);

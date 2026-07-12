@@ -1032,6 +1032,189 @@ private Q_SLOTS:
         QVERIFY(foundOffline);
     }
 
+    void staleFavoriteContextMenuRemovesThePin() {
+        // An offline favorite has no connected target, but the pin itself must stay
+        // removable through its own context menu (the only defect-free removal path).
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList previous =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        settings.setValue(QStringLiteral("FavoriteTargetIds"),
+                          QStringList{QStringLiteral("disk:99:partition:9")});
+        settings.endGroup();
+        settings.sync();
+
+        {
+            sak::FileManagementExplorerPanel panel;
+            panel.resize(1100, 700);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* list = child<QListWidget>(&panel, "fileExplorerTargetList");
+            QVERIFY(list);
+            int staleRow = -1;
+            for (int i = 0; i < list->count(); ++i) {
+                if (list->item(i)->text().contains(QStringLiteral("[offline]"))) {
+                    staleRow = i;
+                    break;
+                }
+            }
+            QVERIFY2(staleRow >= 0, "offline favorite row not rendered");
+
+            QTimer::singleShot(0, [&panel]() {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (!menu) {
+                    return;
+                }
+                for (auto* action : menu->actions()) {
+                    if (action->objectName() == QStringLiteral("fileExplorerRemoveStaleFavorite")) {
+                        action->trigger();
+                        break;
+                    }
+                }
+                menu->close();
+            });
+            const QRect rect = list->visualItemRect(list->item(staleRow));
+            QContextMenuEvent event(QContextMenuEvent::Mouse,
+                                    rect.center(),
+                                    list->viewport()->mapToGlobal(rect.center()));
+            QApplication::sendEvent(list->viewport(), &event);
+            QApplication::processEvents();
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList after =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        settings.setValue(QStringLiteral("FavoriteTargetIds"), previous);
+        settings.endGroup();
+        settings.sync();
+
+        QVERIFY2(!after.contains(QStringLiteral("disk:99:partition:9")),
+                 "stale favorite id still pinned after Remove from Favorites");
+    }
+
+    void sidebarRebuildKeepsCurrentFolder() {
+        // Sidebar rebuilds (tag edits, favorite reorder, clear-recent) re-select the
+        // active target; that reselect must not reset navigation back to the root.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList previous_favorites =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        settings.endGroup();
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("inner")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        const QString inner = QDir(dir.path()).filePath(QStringLiteral("inner"));
+        pathEdit->setText(inner);
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QVERIFY(QTest::qWaitFor(
+            [pathEdit]() {
+                return QDir::fromNativeSeparators(pathEdit->text())
+                    .contains(QStringLiteral("inner"));
+            },
+            5000));
+
+        // Pin the current target as a favorite: this saves state and rebuilds the sidebar.
+        QTimer::singleShot(0, []() {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (!menu) {
+                return;
+            }
+            for (auto* action : menu->actions()) {
+                if (action->text().startsWith(QStringLiteral("Pin Favorite")) ||
+                    action->text().startsWith(QStringLiteral("Unpin Favorite"))) {
+                    action->trigger();
+                    break;
+                }
+            }
+            menu->close();
+        });
+        const QPoint center = targetList->viewport()->rect().center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse,
+                                center,
+                                targetList->viewport()->mapToGlobal(center));
+        QApplication::sendEvent(targetList->viewport(), &event);
+        QApplication::processEvents();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        // Navigation must be exactly where it was.
+        const QString path_after_rebuild = pathEdit->text();
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.setValue(QStringLiteral("FavoriteTargetIds"), previous_favorites);
+        settings.endGroup();
+        settings.sync();
+        QVERIFY2(QDir::fromNativeSeparators(path_after_rebuild).contains(QStringLiteral("inner")),
+                 qPrintable(QStringLiteral("pane jumped to: ") + path_after_rebuild));
+    }
+
+    void dualPaneSurvivesTabSessionRoundTrip() {
+        // Dual-pane arrangement is part of the tab session: enabling the split, saving
+        // the session (panel destruction), and restoring must bring the split back.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer/TabSession"));
+        settings.remove(QString());
+        settings.endGroup();
+        settings.sync();
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            sak::FileManagementExplorerPanel panel;
+            panel.enableTabSessionPersistence();
+            panel.resize(1200, 760);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+            auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+            QVERIFY(targetList);
+            QVERIFY(pathEdit);
+            if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) <
+                0) {
+                QSKIP("No mounted local target for the temp drive on this test host.");
+            }
+            auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
+            QVERIFY(view && view->menu());
+            actionStartingWith(view->menu(), QStringLiteral("Dual Pane"))->trigger();
+            QApplication::processEvents();
+        }
+
+        {
+            sak::FileManagementExplorerPanel panel;
+            panel.enableTabSessionPersistence();
+            panel.resize(1200, 760);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            QApplication::processEvents();
+            auto* splitter = child<QSplitter>(&panel, "fileExplorerPaneSplitter");
+            QVERIFY(splitter);
+            int visible_panes = 0;
+            for (int i = 0; i < splitter->count(); ++i) {
+                if (splitter->widget(i)->isVisible()) {
+                    ++visible_panes;
+                }
+            }
+            QCOMPARE(visible_panes, 2);
+        }
+
+        settings.beginGroup(QStringLiteral("FileManagementExplorer/TabSession"));
+        settings.remove(QString());
+        settings.endGroup();
+        settings.sync();
+    }
+
     void dualPaneStackActionFlipsSplitterOrientation() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1200, 760);
