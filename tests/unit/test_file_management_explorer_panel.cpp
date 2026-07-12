@@ -946,6 +946,45 @@ private Q_SLOTS:
         QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
     }
 
+    void staleFavoriteRendersOfflineSidebarRow() {
+        // Seed a favorite id that cannot resolve to any connected target, then verify
+        // the sidebar keeps it as a disabled, warning-marked "offline" row instead of
+        // dropping it silently.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList previous =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        settings.setValue(QStringLiteral("FavoriteTargetIds"),
+                          QStringList{QStringLiteral("disk:99:partition:9")});
+        settings.endGroup();
+        settings.sync();
+
+        bool foundOffline = false;
+        {
+            sak::FileManagementExplorerPanel panel;
+            panel.resize(1100, 700);
+            panel.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&panel));
+            auto* list = child<QListWidget>(&panel, "fileExplorerTargetList");
+            QVERIFY(list);
+            for (int i = 0; i < list->count(); ++i) {
+                const QListWidgetItem* item = list->item(i);
+                if (item->text().contains(QStringLiteral("[offline]")) &&
+                    item->flags() == Qt::NoItemFlags) {
+                    foundOffline = true;
+                    break;
+                }
+            }
+        }
+
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.setValue(QStringLiteral("FavoriteTargetIds"), previous);
+        settings.endGroup();
+        settings.sync();
+
+        QVERIFY(foundOffline);
+    }
+
     void dualPaneStackActionFlipsSplitterOrientation() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1200, 760);

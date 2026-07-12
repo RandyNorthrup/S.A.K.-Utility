@@ -139,7 +139,10 @@ private:
     [[nodiscard]] int resolveSidebarTargetIndex(QListWidgetItem* item) const;
     void appendSidebarTargetsWhere(const QString& title,
                                    bool (*predicate)(const FileManagementTarget&));
-    void appendSidebarTargetsById(const QString& title, const QStringList& target_ids);
+    void appendSidebarTargetsById(const QString& title,
+                                  const QStringList& target_ids,
+                                  bool warn_when_missing = false);
+    void appendStaleFavoriteRow(const QString& target_id);
     void promptCurrentFolderFilter();
     void showCommandPalette();
     void updateDetailsPane();
@@ -160,6 +163,9 @@ private:
     void openTargetAtIndex(int target_index);
     void copyTargetRootAtIndex(int target_index);
     void toggleFavoriteAtIndex(int target_index);
+    void moveFavoriteAtIndex(int target_index, int delta);
+    void clearRecentTargets();
+    [[nodiscard]] bool isFavoriteTargetIndex(int target_index) const;
     void showTargetPropertiesAtIndex(int target_index);
     void updateActionButtons();
     void logMessage(const QString& message);

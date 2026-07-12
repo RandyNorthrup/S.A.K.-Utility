@@ -813,14 +813,29 @@ void FileManagementExplorerPanel::appendSidebarTargetsWhere(
 }
 
 void FileManagementExplorerPanel::appendSidebarTargetsById(const QString& title,
-                                                           const QStringList& target_ids) {
+                                                           const QStringList& target_ids,
+                                                           const bool warn_when_missing) {
     appendSidebarHeader(title);
     for (const QString& target_id : target_ids) {
         const int index = targetIndexForId(target_id);
         if (index >= 0) {
             appendSidebarTarget(m_targets.at(index), index);
+        } else if (warn_when_missing) {
+            appendStaleFavoriteRow(target_id);
         }
     }
+}
+
+void FileManagementExplorerPanel::appendStaleFavoriteRow(const QString& target_id) {
+    // A saved favorite whose target is not currently connected stays visible as a
+    // disabled, warning-marked row so the user knows the pin still exists and will
+    // resolve again when the device returns, rather than silently vanishing.
+    auto* item = new QListWidgetItem(style()->standardIcon(QStyle::SP_MessageBoxWarning),
+                                     tr("%1  [offline]").arg(target_id),
+                                     m_target_list);
+    item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Header));
+    item->setFlags(Qt::NoItemFlags);
+    item->setToolTip(tr("Saved favorite is not currently connected: %1").arg(target_id));
 }
 
 void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_target_id) {
@@ -845,7 +860,7 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     home->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Home));
     home->setToolTip(tr("Open the first mounted local target."));
 
-    appendSidebarTargetsById(tr("Favorites"), m_favorite_target_ids);
+    appendSidebarTargetsById(tr("Favorites"), m_favorite_target_ids, /*warn_when_missing=*/true);
     appendSidebarTargetsWhere(tr("This PC"), &isLocalFsTarget);
     appendSidebarTargetsWhere(tr("Mounted Volumes"), &isMountedVolumeTarget);
     appendSidebarTargetsWhere(tr("Disks and Partitions"), &isPartitionTarget);
@@ -2749,6 +2764,39 @@ void FileManagementExplorerPanel::toggleFavoriteAtIndex(const int target_index) 
     rebuildTargetList(target_id);
 }
 
+bool FileManagementExplorerPanel::isFavoriteTargetIndex(const int target_index) const {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return false;
+    }
+    return m_favorite_target_ids.contains(
+        FileExplorerTargetId::fromTarget(m_targets.at(target_index)).value);
+}
+
+void FileManagementExplorerPanel::moveFavoriteAtIndex(const int target_index, const int delta) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    const QString target_id = FileExplorerTargetId::fromTarget(m_targets.at(target_index)).value;
+    const int position = m_favorite_target_ids.indexOf(target_id);
+    const int destination = position + delta;
+    if (position < 0 || destination < 0 || destination >= m_favorite_target_ids.size()) {
+        return;
+    }
+    m_favorite_target_ids.move(position, destination);
+    saveSidebarState();
+    rebuildTargetList(target_id);
+}
+
+void FileManagementExplorerPanel::clearRecentTargets() {
+    if (m_recent_target_ids.isEmpty()) {
+        return;
+    }
+    m_recent_target_ids.clear();
+    saveSidebarState();
+    rebuildTargetList();
+    Q_EMIT statusMessage(tr("Recent target list cleared"), sak::kTimerStatusMessageMs);
+}
+
 void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_index) {
     if (target_index < 0 || target_index >= m_targets.size()) {
         return;
@@ -2793,6 +2841,19 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     connect(favorite, &QAction::triggered, this, [this, menu_target_index]() {
         toggleFavoriteAtIndex(menu_target_index);
     });
+    const bool is_favorite = has_menu_target && isFavoriteTargetIndex(menu_target_index);
+    auto* moveUp = menu.addAction(tr("Move Favorite Up"));
+    moveUp->setObjectName(QStringLiteral("fileExplorerMoveFavoriteUp"));
+    moveUp->setEnabled(is_favorite);
+    connect(moveUp, &QAction::triggered, this, [this, menu_target_index]() {
+        moveFavoriteAtIndex(menu_target_index, -1);
+    });
+    auto* moveDown = menu.addAction(tr("Move Favorite Down"));
+    moveDown->setObjectName(QStringLiteral("fileExplorerMoveFavoriteDown"));
+    moveDown->setEnabled(is_favorite);
+    connect(moveDown, &QAction::triggered, this, [this, menu_target_index]() {
+        moveFavoriteAtIndex(menu_target_index, 1);
+    });
     auto* properties = menu.addAction(tr("Target Properties"));
     properties->setEnabled(has_menu_target);
     connect(properties, &QAction::triggered, this, [this, menu_target_index]() {
@@ -2806,6 +2867,11 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     connect(scan, &QAction::triggered, this, &FileManagementExplorerPanel::onScanDiskTargets);
     auto* addManual = menu.addAction(tr("Add Raw/Image"));
     connect(addManual, &QAction::triggered, this, &FileManagementExplorerPanel::onAddManualTarget);
+    auto* clearRecent = menu.addAction(tr("Clear Recent"));
+    clearRecent->setObjectName(QStringLiteral("fileExplorerClearRecent"));
+    clearRecent->setEnabled(!m_recent_target_ids.isEmpty());
+    connect(
+        clearRecent, &QAction::triggered, this, &FileManagementExplorerPanel::clearRecentTargets);
     menu.exec(m_target_list->viewport()->mapToGlobal(position));
 }
 

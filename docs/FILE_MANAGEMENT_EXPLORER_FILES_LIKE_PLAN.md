@@ -1361,19 +1361,19 @@ Goal: close Files-like daily-use gaps that do not require cloud/FTP/Git/integrat
 
 Favorites checklist:
 
-- [ ] Pin folder/target to sidebar.
-- [ ] Unpin folder/target.
-- [ ] Reorder favorites if simple.
-- [ ] Persist favorites.
-- [ ] Show stale favorite warning if target identity no longer matches.
+- [x] Pin folder/target to sidebar. (`toggleFavoriteAtIndex`, sidebar Favorites group)
+- [x] Unpin folder/target. (`toggleFavoriteAtIndex` toggles off)
+- [x] Reorder favorites if simple. (target context menu "Move Favorite Up/Down" -> `moveFavoriteAtIndex`)
+- [x] Persist favorites. (`saveSidebarState`/`loadSidebarState` -> `FavoriteTargetIds`)
+- [x] Show stale favorite warning if target identity no longer matches. (`appendStaleFavoriteRow` renders a disabled "[offline]" row; `staleFavoriteRendersOfflineSidebarRow`)
 
 Recent checklist:
 
-- [ ] Track recent local paths.
-- [ ] Track recent raw image paths.
-- [ ] Track recent scanned partition targets by identity.
-- [ ] Clear recent list command.
-- [ ] Do not persist sensitive transient evidence paths unless user opens them.
+- [x] Track recent local paths. (`rememberRecentTarget` by target id on navigation)
+- [x] Track recent raw image paths. (same recent-id path; image targets carry stable ids)
+- [x] Track recent scanned partition targets by identity. (partition targets tracked by `disk:N:partition:M` id)
+- [x] Clear recent list command. (target context menu "Clear Recent" -> `clearRecentTargets`)
+- [x] Do not persist sensitive transient evidence paths unless user opens them. (only target ids are persisted; evidence/mutation paths stay in-session)
 
 Tags checklist:
 
