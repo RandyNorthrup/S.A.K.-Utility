@@ -3568,6 +3568,27 @@ struct ApfsOmapSnapshotEntry {
     uint64_t oid{0};    // oms_oid (0 on a real macOS sealed-system snapshot)
 };
 
+// Fail closed when the fixed-kv omap-snapshot entries overflow ONE node (the fixed
+// 576-byte TOC caps the entry count anyway; ~140 snapshots at 4 KiB): writing past
+// the key/value areas would corrupt the block. The blocker aborts the commit before
+// it publishes.
+bool omapSnapshotEntriesFitNode(uint32_t blockSize, qsizetype entryCount, QStringList* blockers) {
+    const qsizetype capacity =
+        std::min<qsizetype>(kApfsOmapSnapshotTreeTocBytes / kApfsBtreeFixedTocEntryBytes,
+                            (static_cast<qsizetype>(blockSize) - kApfsBtreeNodeHeaderBytes -
+                             kApfsOmapSnapshotTreeTocBytes - kApfsBtreeInfoBytes) /
+                                (kApfsOmapSnapshotKeyBytes + kApfsOmapSnapshotValueBytes));
+    if (entryCount <= capacity) {
+        return true;
+    }
+    blockers->append(QStringLiteral("APFS omap-snapshot tree: %1 snapshots overflow a single node "
+                                    "(capacity %2); a multi-node omap-snapshot tree is not "
+                                    "supported")
+                         .arg(entryCount)
+                         .arg(capacity));
+    return false;
+}
+
 // Build the volume omap-snapshot tree root/leaf. Byte-matched against a real macOS
 // sealed-system snapshot: subtype 0x13, ROOT|LEAF|FIXED_KV node flags, 576-byte TOC,
 // info flags 0x10, 8-byte xid keys and 16-byte omap_snapshot values.
@@ -3577,6 +3598,9 @@ QByteArray buildOmapSnapshotTreeBlock(uint32_t blockSize,
                                       const QVector<ApfsOmapSnapshotEntry>& entries,
                                       QStringList* blockers) {
     QByteArray block = newApfsObjectBlock(blockSize, paddrOid, xid, kApfsObjectTypeBtreePhysical);
+    if (!omapSnapshotEntriesFitNode(blockSize, entries.size(), blockers)) {
+        return block;  // header-only; never published
+    }
     writeLe32(&block, kApfsObjectSubtypeOffset, kApfsObjectSubtypeOmapSnapshot);
     writeLe16(&block,
               kApfsBtreeNodeFlagsOffset,
@@ -3639,11 +3663,6 @@ QByteArray buildOmapSnapshotTreeBlock(uint32_t blockSize,
     return block;
 }
 
-struct ApfsVariableKvRecord {
-    QByteArray key;
-    QByteArray value;
-};
-
 // Build a variable-kv physical B-tree root/leaf (info flags 0x52, kvloc_t TOC)
 // holding the given {key, value} records in their given order. Generalises
 // buildExtentRefTreeBlock for the snapshot-metadata tree (subtype 0x10), whose keys
@@ -3653,22 +3672,23 @@ struct ApfsVariableKvTree {
     uint64_t paddrOid{0};
     uint64_t xid{0};
     uint32_t subtype{0};
-    QVector<ApfsVariableKvRecord> records;
+    QVector<ApfsBtreeKeyValue> records;
 };
 
 // True when the variable-kv records fit one node: the TOC + all key bytes grow forward from
 // keyAreaStart and all value bytes grow backward from valueAreaEnd, so they fit iff the forward and
 // backward regions do not cross. Appends a blocker and returns false otherwise (buildVariableKv-
-// LeafBlock then fails closed rather than copying past the block buffer). A multi-node split (the
-// sibling extent-ref tree has one) is a scoped follow-on; reachable by ~40+ snapshots in one leaf.
-bool variableKvRecordsFitNode(const QVector<ApfsVariableKvRecord>& records,
+// LeafBlock then fails closed rather than copying past the block buffer). A record set that
+// overflows one node is routed to buildVariableKvTreeNodes by the commit paths, so reaching
+// this blocker means the caller under-reserved -- an internal invariant, still fail-closed.
+bool variableKvRecordsFitNode(const QVector<ApfsBtreeKeyValue>& records,
                               qsizetype keyAreaStart,
                               qsizetype valueAreaEnd,
                               uint32_t blockSize,
                               QStringList* blockers) {
     qsizetype totalKeyBytes = 0;
     qsizetype totalValueBytes = 0;
-    for (const ApfsVariableKvRecord& record : records) {
+    for (const ApfsBtreeKeyValue& record : records) {
         totalKeyBytes += record.key.size();
         totalValueBytes += record.value.size();
     }
@@ -3677,7 +3697,7 @@ bool variableKvRecordsFitNode(const QVector<ApfsVariableKvRecord>& records,
     }
     blockers->append(
         QStringLiteral("APFS variable-kv node: %1 records (%2 key + %3 value bytes) overflow a "
-                       "single %4-byte node; a multi-node split is not yet supported")
+                       "single %4-byte node; the commit under-reserved its multi-node run")
             .arg(records.size())
             .arg(totalKeyBytes)
             .arg(totalValueBytes)
@@ -3687,7 +3707,7 @@ bool variableKvRecordsFitNode(const QVector<ApfsVariableKvRecord>& records,
 
 QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList* blockers) {
     const uint32_t blockSize = tree.blockSize;
-    const QVector<ApfsVariableKvRecord>& records = tree.records;
+    const QVector<ApfsBtreeKeyValue>& records = tree.records;
     QByteArray block =
         newApfsObjectBlock(blockSize, tree.paddrOid, tree.xid, kApfsObjectTypeBtreePhysical);
     writeLe32(&block, kApfsObjectSubtypeOffset, tree.subtype);
@@ -3754,6 +3774,223 @@ QByteArray buildVariableKvLeafBlock(const ApfsVariableKvTree& tree, QStringList*
     return block;
 }
 
+// One planned node of a multi-node variable-kv PHYSICAL tree (mirrors
+// ApfsExtentRefNodePlan): a level-0 node carries leaf records, an interior node the
+// flat indices of its children; firstKey is the node's smallest key, copied up
+// verbatim as the parent's separator (variable length, unlike the extent-ref tree's
+// fixed 8-byte keys).
+struct ApfsVarKvNodePlan {
+    uint16_t level{0};
+    QVector<ApfsBtreeKeyValue> leafRecords;
+    QVector<qsizetype> childIndices;
+    QByteArray firstKey;
+};
+
+// True when the records fit one node BODY under writeFsTreeNodeBody's budget: the
+// 64-rounded TOC plus all key and value bytes within valueAreaEnd. The root reserves
+// the 40-byte btree_info trailer, so it holds less than a same-size interior/leaf.
+bool variableKvRecordsFitBody(const QVector<ApfsBtreeKeyValue>& records,
+                              uint32_t blockSize,
+                              bool isRoot) {
+    const qsizetype tocLength =
+        ((static_cast<qsizetype>(records.size()) * kApfsBtreeVariableTocEntryBytes + 63) / 64) * 64;
+    const qsizetype keyAreaStart = kApfsBtreeNodeHeaderBytes + std::max<qsizetype>(64, tocLength);
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    return btreeRecordsByteSize(records) <= valueAreaEnd - keyAreaStart;
+}
+
+// Split one over-root-capacity group in two so the root index never carries a single
+// child (the degenerate one-child-root shape apfsck rejects).
+QVector<QVector<ApfsBtreeKeyValue>> splitDegenerateSingleGroup(
+    const QVector<QVector<ApfsBtreeKeyValue>>& groups) {
+    if (groups.size() != 1 || groups.first().size() < 2) {
+        return groups;
+    }
+    const QVector<ApfsBtreeKeyValue>& all = groups.first();
+    return {all.mid(0, all.size() / 2), all.mid(all.size() / 2)};
+}
+
+// Add index levels over the planned leaves until the child pointers fit one ROOT node,
+// then append the root plan (always LAST, mirroring the extent-ref planner). Interior
+// pointer records are sized with a placeholder 8-byte child paddr -- the real paddr is
+// assigned at emit and does not change the packing.
+void planVariableKvIndexLevels(uint32_t blockSize, QVector<ApfsVarKvNodePlan>* plans) {
+    qsizetype levelStart = 0;
+    qsizetype levelCount = plans->size();
+    uint16_t level = 1;
+    while (true) {
+        QVector<ApfsBtreeKeyValue> pointers;
+        for (qsizetype i = levelStart; i < levelStart + levelCount; ++i) {
+            pointers.append(indexRecordForChild(plans->at(i).firstKey, 0));
+        }
+        if (variableKvRecordsFitBody(pointers, blockSize, true)) {
+            ApfsVarKvNodePlan root;
+            root.level = level;
+            for (qsizetype i = levelStart; i < levelStart + levelCount; ++i) {
+                root.childIndices.append(i);
+            }
+            root.firstKey = plans->at(levelStart).firstKey;
+            plans->append(root);
+            return;
+        }
+        const auto groups =
+            splitDegenerateSingleGroup(distributeIndexRecordsIntoNodes(pointers, blockSize));
+        qsizetype childCursor = levelStart;
+        for (const auto& group : groups) {
+            ApfsVarKvNodePlan node;
+            node.level = level;
+            for (qsizetype j = 0; j < group.size(); ++j) {
+                node.childIndices.append(childCursor++);
+            }
+            node.firstKey = plans->at(node.childIndices.first()).firstKey;
+            plans->append(node);
+        }
+        levelStart += levelCount;
+        levelCount = groups.size();
+        ++level;
+    }
+}
+
+// Plan a variable-kv physical B-tree bottom-up: a record set that fits one ROOT|LEAF
+// stays a single plan (the certified single-node shape); otherwise greedy-packed
+// non-root leaves under index levels up to a root, root plan LAST.
+QVector<ApfsVarKvNodePlan> planVariableKvTree(const QVector<ApfsBtreeKeyValue>& records,
+                                              uint32_t blockSize) {
+    QVector<ApfsVarKvNodePlan> plans;
+    if (variableKvRecordsFitBody(records, blockSize, true)) {
+        ApfsVarKvNodePlan single;
+        single.leafRecords = records;
+        single.firstKey = records.isEmpty() ? QByteArray() : records.first().key;
+        plans.append(single);
+        return plans;
+    }
+    const auto groups =
+        splitDegenerateSingleGroup(distributeFsTreeRecordsIntoLeaves(records, blockSize));
+    for (const auto& group : groups) {
+        ApfsVarKvNodePlan leaf;
+        leaf.leafRecords = group;
+        leaf.firstKey = group.first().key;
+        plans.append(leaf);
+    }
+    planVariableKvIndexLevels(blockSize, &plans);
+    return plans;
+}
+
+// Node blocks a variable-kv record set needs (1 = the certified single root|leaf).
+// The snapshot commit paths call this BEFORE allocateFsCommitBlocks so the reserve
+// matches buildVariableKvTreeNodes exactly.
+qsizetype variableKvTreeNodeCount(const QVector<ApfsBtreeKeyValue>& records, uint32_t blockSize) {
+    return planVariableKvTree(records, blockSize).size();
+}
+
+// Emit context shared by every node of one multi-node variable-kv tree emit.
+struct ApfsVarKvEmit {
+    uint32_t blockSize{0};
+    uint64_t xid{0};
+    uint32_t subtype{0};
+    uint64_t recordCount{0};
+    qsizetype rootIndex{0};
+    const QVector<ApfsVarKvNodePlan>* plans{nullptr};
+    const QVector<uint64_t>* paddrOfPlan{nullptr};
+    uint32_t longestKey{0};
+    uint32_t longestValue{0};
+};
+
+// The root's btree_info trailer (info flags 0x52, variable key/value sizes): longest
+// key/value describe the LEAF records of the whole tree, not the interior 8-byte
+// child-paddr pointers, mirroring writeFsTreeInfoTrailer.
+void writeVariableKvRootTrailer(QByteArray* block, const ApfsVarKvEmit& ctx) {
+    const qsizetype infoOffset = static_cast<qsizetype>(ctx.blockSize) - kApfsBtreeInfoBytes;
+    writeLe32(block, infoOffset + kApfsBtreeInfoFlagsOffset, 0x00'00'00'52);
+    writeLe32(block, infoOffset + kApfsBtreeInfoNodeSizeOffset, ctx.blockSize);
+    if (ctx.recordCount != 0) {
+        writeLe32(block, infoOffset + 16, ctx.longestKey);
+        writeLe32(block, infoOffset + 20, ctx.longestValue);
+    }
+    writeLe64(block, infoOffset + kApfsBtreeInfoKeyCountOffset, ctx.recordCount);
+    writeLe64(block,
+              infoOffset + kApfsBtreeInfoNodeCountOffset,
+              static_cast<uint64_t>(ctx.plans->size()));
+}
+
+// Serialize one planned variable-kv node to a stamped physical block: the root is
+// object type BTREE (PHYSICAL|0x02) and carries the trailer, non-root nodes are
+// BTREE_NODE (PHYSICAL|0x03); every node's stored OID equals its own paddr.
+QByteArray emitVariableKvNode(const ApfsVarKvNodePlan& plan,
+                              qsizetype planIndex,
+                              const ApfsVarKvEmit& ctx,
+                              QStringList* blockers) {
+    const bool isRoot = planIndex == ctx.rootIndex;
+    const uint64_t nodePaddr = ctx.paddrOfPlan->at(planIndex);
+    const uint32_t objectType = isRoot ? kApfsObjectTypeBtreePhysical
+                                       : (kApfsObjStoragePhysical | kApfsObjectTypeBtreeNode);
+    QByteArray block = newApfsObjectBlock(ctx.blockSize, nodePaddr, ctx.xid, objectType);
+    writeLe32(&block, kApfsObjectSubtypeOffset, ctx.subtype);
+    const uint16_t leafFlag = plan.level == 0 ? kApfsBtreeNodeLeaf : 0;
+    writeLe16(&block, kApfsBtreeNodeFlagsOffset, (isRoot ? kApfsBtreeNodeRoot : 0) | leafFlag);
+    writeLe16(&block, kApfsBtreeNodeLevelOffset, plan.level);
+    QVector<ApfsBtreeKeyValue> records = plan.leafRecords;
+    for (const qsizetype child : plan.childIndices) {
+        records.append(
+            indexRecordForChild(ctx.plans->at(child).firstKey, ctx.paddrOfPlan->at(child)));
+    }
+    const qsizetype valueAreaEnd = static_cast<qsizetype>(ctx.blockSize) -
+                                   (isRoot ? kApfsBtreeInfoBytes : 0);
+    if (!writeFsTreeNodeBody(&block, records, valueAreaEnd, blockers)) {
+        return block;  // blocker appended; never published
+    }
+    if (isRoot) {
+        writeVariableKvRootTrailer(&block, ctx);
+    }
+    stampApfsObjectBlock(&block, blockers);
+    return block;
+}
+
+// Bulk-load a variable-kv physical tree into the reserved node run: block[i] is
+// written at nodeBlocks[i], root FIRST (what the volume superblock points at). A
+// record set that fits one node delegates to buildVariableKvLeafBlock, byte-identical
+// to the certified single-node emit. Returns {} (blocker appended) when the reserve
+// does not match the plan -- the commit fails closed before publishing.
+QVector<QByteArray> buildVariableKvTreeNodes(const ApfsVariableKvTree& tree,
+                                             const QVector<uint64_t>& nodeBlocks,
+                                             QStringList* blockers) {
+    const QVector<ApfsVarKvNodePlan> plans = planVariableKvTree(tree.records, tree.blockSize);
+    if (plans.size() == 1) {
+        ApfsVariableKvTree single = tree;
+        single.paddrOid = nodeBlocks.value(0, tree.paddrOid);
+        return {buildVariableKvLeafBlock(single, blockers)};
+    }
+    if (nodeBlocks.size() != plans.size()) {
+        blockers->append(
+            QStringLiteral("APFS variable-kv tree needs %1 node blocks but %2 were reserved")
+                .arg(plans.size())
+                .arg(nodeBlocks.size()));
+        return {};
+    }
+    ApfsVarKvEmit ctx{
+        tree.blockSize, tree.xid, tree.subtype, 0, plans.size() - 1, &plans, nullptr, 0, 0};
+    for (const ApfsVarKvNodePlan& plan : plans) {
+        for (const ApfsBtreeKeyValue& record : plan.leafRecords) {
+            ++ctx.recordCount;
+            ctx.longestKey = std::max<uint32_t>(ctx.longestKey,
+                                                static_cast<uint32_t>(record.key.size()));
+            ctx.longestValue = std::max<uint32_t>(ctx.longestValue,
+                                                  static_cast<uint32_t>(record.value.size()));
+        }
+    }
+    QVector<uint64_t> paddrOfPlan(plans.size(), 0);
+    const QVector<qsizetype> emitOrder =
+        omapEmitOrder(plans.size(), ctx.rootIndex, nodeBlocks, &paddrOfPlan);
+    ctx.paddrOfPlan = &paddrOfPlan;
+    QVector<QByteArray> blocks;
+    blocks.reserve(plans.size());
+    for (const qsizetype planIndex : emitOrder) {
+        blocks.append(emitVariableKvNode(plans.at(planIndex), planIndex, ctx, blockers));
+    }
+    return blocks;
+}
+
 // A3: the metadata describing one snapshot, used to emit its snap-meta tree records.
 struct ApfsSnapshotMetadata {
     uint64_t snapXid{0};
@@ -3769,7 +4006,7 @@ struct ApfsSnapshotMetadata {
 // (SNAP_METADATA<<60)|xid) and j_snap_name (keyed by (SNAP_NAME<<60)|OBJ_ID_MASK +
 // the name). Returned in ascending key-header order (metadata before name), the
 // order the snapshot-metadata tree stores them.
-QVector<ApfsVariableKvRecord> buildSnapMetaRecords(const ApfsSnapshotMetadata& snap) {
+QVector<ApfsBtreeKeyValue> buildSnapMetaRecords(const ApfsSnapshotMetadata& snap) {
     const QByteArray nameZ = snap.name + QByteArray(1, '\0');  // NUL-terminated
     const uint16_t nameLen = static_cast<uint16_t>(nameZ.size());
 
@@ -3793,7 +4030,7 @@ QVector<ApfsVariableKvRecord> buildSnapMetaRecords(const ApfsSnapshotMetadata& s
     QByteArray nameVal(8, '\0');
     writeLe64(&nameVal, 0, snap.snapXid);
 
-    QVector<ApfsVariableKvRecord> records;
+    QVector<ApfsBtreeKeyValue> records;
     records.append({metaKey, metaVal});
     records.append({nameKey, nameVal});
     return records;
@@ -11612,23 +11849,97 @@ struct ApfsSnapshotCreateRequest {
     uint64_t createTimeNs{0};  // APFS time (ns since 1970-01-01 UTC); 0 = caller fills it in
 };
 
-// Read every j_snap_metadata record from a snapshot-metadata tree back into
-// ApfsSnapshotMetadata (the inverse of buildSnapMetaRecords), so a multi-snapshot create
-// can preserve the existing snapshots while appending the new one. The name comes from the
-// record value; each snapshot's j_snap_name record is re-derived on emit.
-QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
-                                                      const ApfsRepairGeometry& geometry,
-                                                      uint64_t snapMetaTree,
-                                                      QStringList* blockers) {
-    QVector<ApfsSnapshotMetadata> snapshots;
-    QByteArray node(geometry.blockSize, '\0');
-    if (snapMetaTree == 0 || !readApfsRepairBlock(image, geometry, snapMetaTree, &node, blockers)) {
-        return snapshots;
-    }
+// Outputs of a snap-meta tree walk: every node paddr (root first) and every level-0
+// node buffer, in key order.
+struct ApfsSnapMetaWalk {
+    QVector<uint64_t> nodes;
+    QVector<QByteArray> leaves;
+};
+
+// Push an index node's children (8-byte paddr values; the value area ends before the
+// btree_info trailer only on the ROOT) onto the walk stack in REVERSE so the stack
+// pops them in key order. Fails closed on an implausible per-node key count.
+bool pushSnapMetaChildren(const QByteArray& node,
+                          uint32_t blockSize,
+                          int depth,
+                          QVector<QPair<uint64_t, int>>* pending,
+                          QStringList* blockers) {
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
+    const qsizetype valArea = static_cast<qsizetype>(blockSize) -
+                              (isRoot ? kApfsBtreeInfoBytes : 0);
     const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    if (nkeys > blockSize / kApfsBtreeVariableTocEntryBytes) {
+        blockers->append(
+            QStringLiteral("APFS snap-meta tree walk: implausible index-node key count"));
+        return false;
+    }
+    for (qsizetype index = static_cast<qsizetype>(nkeys) - 1; index >= 0; --index) {
+        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
+        const uint64_t child = le64(node,
+                                    valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset));
+        pending->append({child, depth + 1});
+    }
+    return true;
+}
+
+// Walk a (possibly multi-node) snap-meta PHYSICAL tree from its root into @out.
+// Fails closed on an unreadable block, an implausible per-node key count, depth
+// (> 8), or total node count (> 4096), so a corrupt tree can neither recurse
+// unbounded nor loop.
+bool walkSnapMetaTree(QIODevice* image,
+                      const ApfsRepairGeometry& geometry,
+                      uint64_t root,
+                      ApfsSnapMetaWalk* out,
+                      QStringList* blockers) {
+    QVector<QPair<uint64_t, int>> pending{{root, 0}};
+    while (!pending.isEmpty()) {
+        const QPair<uint64_t, int> at = pending.takeLast();
+        if (at.second > 8 || out->nodes.size() > 4096) {
+            blockers->append(QStringLiteral(
+                "APFS snap-meta tree walk: implausible depth or node count (corrupt tree)"));
+            return false;
+        }
+        QByteArray node(geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(image, geometry, at.first, &node, blockers)) {
+            return false;
+        }
+        out->nodes.append(at.first);
+        if (le16(node, kApfsBtreeNodeLevelOffset) == 0) {
+            out->leaves.append(node);
+            continue;
+        }
+        if (!pushSnapMetaChildren(node, geometry.blockSize, at.second, &pending, blockers)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Every node block of a snap-meta tree (root + interiors + leaves), for the freed
+// list when a commit rebuilds the tree. A single root|leaf returns just {root}.
+QVector<uint64_t> collectSnapMetaTreeNodes(QIODevice* image,
+                                           const ApfsRepairGeometry& geometry,
+                                           uint64_t root,
+                                           QStringList* blockers) {
+    ApfsSnapMetaWalk walk;
+    if (root != 0) {
+        walkSnapMetaTree(image, geometry, root, &walk, blockers);
+    }
+    return walk.nodes;
+}
+
+// Parse one snap-meta LEAF node's j_snap_metadata records into @snapshots (the
+// per-leaf half of readAllSnapshotMetadata). The value area ends before the trailer
+// only when the leaf is also the ROOT (the certified single-node tree).
+void appendSnapMetadataFromLeaf(const QByteArray& node,
+                                uint32_t blockSize,
+                                QVector<ApfsSnapshotMetadata>* snapshots) {
+    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
+    const bool isRoot = (le16(node, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
     const qsizetype keyArea = kApfsBtreeNodeHeaderBytes +
                               le16(node, kApfsBtreeNodeTableLengthOffset);
-    const qsizetype valArea = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
+    const qsizetype valArea = static_cast<qsizetype>(blockSize) -
+                              (isRoot ? kApfsBtreeInfoBytes : 0);
     for (uint32_t index = 0; index < nkeys; ++index) {
         const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
         const uint64_t keyHdr = le64(node, keyArea + le16(node, toc));
@@ -11646,7 +11957,26 @@ QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
         snap.inum = le64(node, val + kApfsSnapMetaInumOffset);
         snap.name = node.mid(val + kApfsSnapMetaNameOffset,
                              nameLen > 0 ? nameLen - 1 : 0);  // drop the trailing NUL
-        snapshots.append(snap);
+        snapshots->append(snap);
+    }
+}
+
+// Read every j_snap_metadata record from a snapshot-metadata tree back into
+// ApfsSnapshotMetadata (the inverse of buildSnapMetaRecords), so a multi-snapshot create
+// can preserve the existing snapshots while appending the new one. The name comes from the
+// record value; each snapshot's j_snap_name record is re-derived on emit. Walks a
+// multi-node tree (leaves under index nodes) as well as the single root|leaf shape.
+QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
+                                                      const ApfsRepairGeometry& geometry,
+                                                      uint64_t snapMetaTree,
+                                                      QStringList* blockers) {
+    QVector<ApfsSnapshotMetadata> snapshots;
+    ApfsSnapMetaWalk walk;
+    if (snapMetaTree == 0 || !walkSnapMetaTree(image, geometry, snapMetaTree, &walk, blockers)) {
+        return snapshots;
+    }
+    for (const QByteArray& node : walk.leaves) {
+        appendSnapMetadataFromLeaf(node, geometry.blockSize, &snapshots);
     }
     return snapshots;
 }
@@ -11654,36 +11984,35 @@ QVector<ApfsSnapshotMetadata> readAllSnapshotMetadata(QIODevice* image,
 // Build the snap-meta tree records for every snapshot (existing preserved + the new one),
 // sorted into APFS key order: by object id (the xid for j_snap_metadata, the OBJ_ID_MASK for
 // j_snap_name) then type, so the metadata records (ascending xid) precede the name records.
-QVector<ApfsVariableKvRecord> buildAllSnapMetaRecords(
-    const QVector<ApfsSnapshotMetadata>& snapshots) {
-    QVector<ApfsVariableKvRecord> records;
+QVector<ApfsBtreeKeyValue> buildAllSnapMetaRecords(const QVector<ApfsSnapshotMetadata>& snapshots) {
+    QVector<ApfsBtreeKeyValue> records;
     for (const ApfsSnapshotMetadata& snap : snapshots) {
         records.append(buildSnapMetaRecords(snap));
     }
-    std::sort(records.begin(),
-              records.end(),
-              [](const ApfsVariableKvRecord& a, const ApfsVariableKvRecord& b) {
-                  // APFS keycmp order: object id, then type, then the name string. For a
-                  // j_snap_name key the name follows the 8-byte header + 2-byte length, so
-                  // key.mid(10) is exactly the NUL-terminated name and its byte compare equals
-                  // strcmp (j_snap_metadata keys have no name and never tie on id).
-                  const uint64_t ha = le64(a.key, 0);
-                  const uint64_t hb = le64(b.key, 0);
-                  if ((ha & kApfsJObjIdMask) != (hb & kApfsJObjIdMask)) {
-                      return (ha & kApfsJObjIdMask) < (hb & kApfsJObjIdMask);
-                  }
-                  if ((ha >> kApfsObjTypeShift) != (hb >> kApfsObjTypeShift)) {
-                      return (ha >> kApfsObjTypeShift) < (hb >> kApfsObjTypeShift);
-                  }
-                  return a.key.mid(kApfsSnapNameKeyNameOffset) <
-                         b.key.mid(kApfsSnapNameKeyNameOffset);
-              });
+    std::sort(
+        records.begin(), records.end(), [](const ApfsBtreeKeyValue& a, const ApfsBtreeKeyValue& b) {
+            // APFS keycmp order: object id, then type, then the name string. For a
+            // j_snap_name key the name follows the 8-byte header + 2-byte length, so
+            // key.mid(10) is exactly the NUL-terminated name and its byte compare equals
+            // strcmp (j_snap_metadata keys have no name and never tie on id).
+            const uint64_t ha = le64(a.key, 0);
+            const uint64_t hb = le64(b.key, 0);
+            if ((ha & kApfsJObjIdMask) != (hb & kApfsJObjIdMask)) {
+                return (ha & kApfsJObjIdMask) < (hb & kApfsJObjIdMask);
+            }
+            if ((ha >> kApfsObjTypeShift) != (hb >> kApfsObjTypeShift)) {
+                return (ha >> kApfsObjTypeShift) < (hb >> kApfsObjTypeShift);
+            }
+            return a.key.mid(kApfsSnapNameKeyNameOffset) < b.key.mid(kApfsSnapNameKeyNameOffset);
+        });
     return records;
 }
 
-// COW inputs for a snapshot create. newBlocks layout (8 freshly allocated blocks):
-//   [0]=frozenExtentRef [1]=frozenSblock  [2]=omapSnapTree [3]=snapMetaTree
+// COW inputs for a snapshot create. newBlocks layout (8 + N freshly allocated blocks):
+//   [0]=frozenExtentRef [1]=frozenSblock  [2]=omapSnapTree [3]=snapMetaTree root
 //   [4]=volOmapHdr      [5]=volSb          [6]=ctrOmapTree  [7]=ctrOmapHdr
+//   [8..]=extra snap-meta tree nodes when the record set overflows one node (N = 0
+//   for the certified single-node shape).
 // existingSnapshots: the snapshots already on the volume (empty for the first), preserved
 // in the rebuilt omap-snapshot + snap-meta trees alongside the new one.
 struct ApfsSnapshotCreateCow {
@@ -11694,6 +12023,9 @@ struct ApfsSnapshotCreateCow {
     QVector<uint64_t> newBlocks;
     ApfsSnapshotCreateRequest request;
     QVector<ApfsSnapshotMetadata> existingSnapshots;
+    // apfs_fs_alloc_count adjustment for the snap-meta tree's node-count change (new
+    // run size minus old tree's node count; 0 when both are the single-node shape).
+    qint64 snapMetaNodeDelta{0};
 };
 
 // Per-commit snapshot-create scalars derived from the live volume superblock.
@@ -11703,6 +12035,29 @@ struct ApfsSnapshotCowState {
     uint64_t snapInum{0};
     uint64_t newAllocCount{0};
 };
+
+// Write a rebuilt snap-meta tree into its reserved run (root FIRST): a record set
+// that fits one node emits the certified single root|leaf, larger sets the
+// multi-node split. Fails closed when the built plan and the reserve disagree, so
+// an under-reservation can never publish a truncated tree.
+bool writeSnapMetaTreeRun(QIODevice* image,
+                          const ApfsRepairGeometry& geometry,
+                          const ApfsVariableKvTree& tree,
+                          const QVector<uint64_t>& run,
+                          QStringList* blockers) {
+    const QVector<QByteArray> nodes = buildVariableKvTreeNodes(tree, run, blockers);
+    if (nodes.size() != run.size()) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot commit: snap-meta tree node count differs from the reserve"));
+        return false;
+    }
+    for (qsizetype i = 0; i < nodes.size(); ++i) {
+        if (!writeApfsRepairBlock(image, geometry, run.at(i), nodes.at(i), blockers)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // Write the four snapshot structures (newBlocks[0..3]): the frozen extent-ref tree
 // copy, the frozen physical superblock copy, the omap-snapshot tree, and the
@@ -11760,10 +12115,13 @@ bool writeSnapshotFrozenBlocks(const ApfsSnapshotCreateCow& cow,
                                        .name = cow.request.snapshotName.toUtf8()};
     QVector<ApfsSnapshotMetadata> allSnaps = cow.existingSnapshots;
     allSnaps.append(newMeta);
-    QByteArray snapMeta = buildVariableKvLeafBlock(
+    // The snap-meta run is the reserved root ([3]) plus the extra nodes ([8..]).
+    return writeSnapMetaTreeRun(
+        cow.image,
+        cow.geometry,
         {bs, snapMetaTree, snapXid, kApfsObjectSubtypeSnapMeta, buildAllSnapMetaRecords(allSnaps)},
+        QVector<uint64_t>{snapMetaTree} + cow.newBlocks.mid(8),
         blockers);
-    return writeApfsRepairBlock(cow.image, cow.geometry, snapMetaTree, snapMeta, blockers);
 }
 
 // Write the volume + container chain (newBlocks[4..7]): the volume omap header (with
@@ -11854,8 +12212,13 @@ bool writeSnapshotCreateCowChain(const ApfsSnapshotCreateCow& cow, QStringList* 
             QStringLiteral("APFS snapshot-create: implausible volume allocated-block count"));
         return false;
     }
-    st.newAllocCount = beforeAlloc + (st.newSnapCount == 1 ? kApfsSnapshotAllocDelta
-                                                           : kApfsSnapshotSubsequentAllocDelta);
+    // The snap-meta tree's node-count change (a multi-node split or collapse) moves
+    // v_block_count one-for-one on top of the quiescent per-snapshot delta.
+    st.newAllocCount = static_cast<uint64_t>(
+        static_cast<int64_t>(beforeAlloc) +
+        static_cast<int64_t>(st.newSnapCount == 1 ? kApfsSnapshotAllocDelta
+                                                  : kApfsSnapshotSubsequentAllocDelta) +
+        cow.snapMetaNodeDelta);
     return writeSnapshotFrozenBlocks(cow, st, blockers) &&
            writeSnapshotVolumeChain(cow, st, blockers);
 }
@@ -13937,21 +14300,27 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                             QStringList* blockers) {
     const ApfsFsCommitContext& ctx = f.ctx;
     const uint64_t newXid = ctx.live.xid + 1;
+    // The whole old snap-meta tree is rebuilt, so EVERY old node frees (a multi-node
+    // tree leaks its leaves if only the root is freed); the node-count change moves
+    // apfs_fs_alloc_count one-for-one.
+    const QVector<uint64_t> oldSnapMetaNodes =
+        collectSnapMetaTreeNodes(ctx.image, ctx.geometry, f.oldSnapMetaTree, blockers);
+    const qint64 snapMetaNodeDelta = static_cast<qint64>(1 + f.newBlocks.size() - 8) -
+                                     static_cast<qint64>(oldSnapMetaNodes.size());
     if (!writeSnapshotCreateCowChain({.image = ctx.image,
                                       .geometry = ctx.geometry,
                                       .newXid = newXid,
                                       .live = ctx.chain,
                                       .newBlocks = f.newBlocks,
                                       .request = f.request,
-                                      .existingSnapshots = f.existingSnapshots},
+                                      .existingSnapshots = f.existingSnapshots,
+                                      .snapMetaNodeDelta = snapMetaNodeDelta},
                                      blockers)) {
         return false;
     }
-    QVector<uint64_t> freed = {ctx.chain.volSb,
-                               ctx.chain.volOmapHdr,
-                               f.oldSnapMetaTree,
-                               ctx.chain.ctrOmapTree,
-                               ctx.chain.ctrOmapHdr};
+    QVector<uint64_t> freed = {
+        ctx.chain.volSb, ctx.chain.volOmapHdr, ctx.chain.ctrOmapTree, ctx.chain.ctrOmapHdr};
+    freed += oldSnapMetaNodes;
     // A second-or-later snapshot rebuilds the omap-snapshot tree, so the old one is freed
     // too (the first snapshot has none: oldOmapSnapTree is 0).
     if (f.oldOmapSnapTree != 0) {
@@ -13965,6 +14334,21 @@ bool finalizeSnapshotCreate(const ApfsSnapshotCreateFinalize& f,
                                          .chunk1BitmapBlock = f.chunk1BitmapBlock},
                                         result,
                                         blockers);
+}
+
+// Size the snap-meta tree reserve for a create up front: the record set (existing
+// snapshots + the new one) is known before allocation, and packing depends only on
+// key order and name lengths, so placeholder oids/times size identically to the
+// final emit. The extra nodes ride as the allocation's data tail (newBlocks[8..]).
+qsizetype snapshotCreateSnapMetaReserve(const ApfsFsCommitContext& ctx,
+                                        const QVector<ApfsSnapshotMetadata>& existing,
+                                        const QByteArray& newName) {
+    ApfsSnapshotMetadata pendingMeta;
+    pendingMeta.snapXid = ctx.live.xid + 1;
+    pendingMeta.name = newName;
+    QVector<ApfsSnapshotMetadata> allSnaps = existing;
+    allSnaps.append(pendingMeta);
+    return variableKvTreeNodeCount(buildAllSnapMetaRecords(allSnaps), ctx.geometry.blockSize);
 }
 
 // A3: create one snapshot of a generated APFS volume with a true in-place
@@ -13995,6 +14379,13 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
     const uint64_t oldSnapMetaTree = le64(liveVol, kApfsVolumeSnapMetaTreeOidOffset);
     const QVector<ApfsSnapshotMetadata> existing =
         readAllSnapshotMetadata(image, ctx.geometry, oldSnapMetaTree, blockers);
+    // An unreadable snap-meta tree returns an empty set; rebuilding from it would
+    // silently DROP every existing snapshot, so cross-check the superblock's count.
+    if (static_cast<uint64_t>(existing.size()) != le64(liveVol, kApfsVolumeNumSnapshotsOffset)) {
+        blockers->append(QStringLiteral(
+            "APFS snapshot-create: the snap-meta tree does not match apfs_num_snapshots"));
+        return false;
+    }
     const QByteArray wantName = request.snapshotName.trimmed().toUtf8();
     for (const ApfsSnapshotMetadata& snap : existing) {
         if (snap.name == wantName) {
@@ -14013,9 +14404,14 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
         }
         oldOmapSnapTree = le64(volOmap, kApfsOmapSnapshotTreeOidOffset);
     }
+    const qsizetype snapMetaNodes = snapshotCreateSnapMetaReserve(ctx, existing, wantName);
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
-    if (!allocateFsCommitBlocks(ctx, {3, 0, 0}, &newBlocks, &chunk1BitmapBlock, blockers)) {
+    if (!allocateFsCommitBlocks(ctx,
+                                {3, 0, static_cast<uint64_t>(snapMetaNodes - 1)},
+                                &newBlocks,
+                                &chunk1BitmapBlock,
+                                blockers)) {
         return false;
     }
     ApfsSnapshotCreateRequest clean = request;
@@ -14031,43 +14427,13 @@ bool commitInPlaceSnapshotCreate(QIODevice* image,
                                   blockers);
 }
 
-// A snapshot's frozen block addresses, recovered from the snap-meta tree so a delete
-// can free them.
+// A snapshot's frozen block addresses, recovered from its snap-meta record
+// (resolveSnapshotDeleteTarget) so a delete can free them.
 struct ApfsSnapshotFrozenRefs {
     uint64_t sblockOid{0};
     uint64_t extentRefOid{0};
     bool found{false};
 };
-
-// Read the j_snap_metadata record from the snap-meta tree and recover the snapshot's
-// frozen superblock + extent-ref tree block addresses.
-ApfsSnapshotFrozenRefs readSnapshotFrozenRefs(QIODevice* image,
-                                              const ApfsRepairGeometry& geometry,
-                                              uint64_t snapMetaTree,
-                                              QStringList* blockers) {
-    ApfsSnapshotFrozenRefs refs;
-    QByteArray node(geometry.blockSize, '\0');
-    if (snapMetaTree == 0 || !readApfsRepairBlock(image, geometry, snapMetaTree, &node, blockers)) {
-        return refs;
-    }
-    const uint32_t nkeys = le32(node, kApfsBtreeNodeCountOffset);
-    const qsizetype keyArea = kApfsBtreeNodeHeaderBytes +
-                              le16(node, kApfsBtreeNodeTableLengthOffset);
-    const qsizetype valArea = static_cast<qsizetype>(geometry.blockSize) - kApfsBtreeInfoBytes;
-    for (uint32_t index = 0; index < nkeys; ++index) {
-        const qsizetype toc = kApfsBtreeNodeHeaderBytes + index * kApfsBtreeVariableTocEntryBytes;
-        const uint64_t keyHdr = le64(node, keyArea + le16(node, toc));
-        if ((keyHdr >> kApfsObjTypeShift) != kApfsJObjTypeSnapMetadata) {
-            continue;
-        }
-        const qsizetype val = valArea - le16(node, toc + kApfsBtreeVariableTocValueOffset);
-        refs.extentRefOid = le64(node, val + kApfsSnapMetaExtentRefOidOffset);
-        refs.sblockOid = le64(node, val + kApfsSnapMetaSblockOidOffset);
-        refs.found = true;
-        return refs;
-    }
-    return refs;
-}
 
 // COW inputs for a snapshot delete. newBlocks layout (5 freshly allocated blocks):
 //   [0]=snapMetaTree(empty) [1]=volOmapHdr [2]=volSb [3]=ctrOmapTree [4]=ctrOmapHdr
@@ -14101,6 +14467,13 @@ struct ApfsSnapshotDeleteCow {
     // Cross-snapshot merge absorbed into the LIVE tree (deleted snapshot was the newest): the
     // volume superblock re-points at rebuiltExtentRefRoot even while snapshots remain.
     bool liveAbsorbsMergedTree{false};
+    // Extra snap-meta tree nodes (the allocation's tail) when the kept snapshots'
+    // record set overflows one node; empty for the certified single-node shape.
+    QVector<uint64_t> snapMetaExtra;
+    // apfs_fs_alloc_count adjustment for the snap-meta tree's node-count change (new
+    // run size minus old tree's node count), applied on top of every delete path's
+    // own alloc formula.
+    qint64 snapMetaNodeDelta{0};
 };
 
 // Whether the live volume's extent-ref tree already carries records (a populated, authoritative
@@ -14146,14 +14519,17 @@ bool writeSnapshotDeleteSnapTrees(const ApfsSnapshotDeleteCow& cow,
                                   QStringList* blockers) {
     const uint32_t bs = cow.geometry.blockSize;
     const bool keepsSnapshots = !cow.remaining.isEmpty();
-    QByteArray meta = buildVariableKvLeafBlock(
-        {bs,
-         snapMetaTree,
-         cow.newXid,
-         kApfsObjectSubtypeSnapMeta,
-         keepsSnapshots ? buildAllSnapMetaRecords(cow.remaining) : QVector<ApfsVariableKvRecord>{}},
-        blockers);
-    if (!writeApfsRepairBlock(cow.image, cow.geometry, snapMetaTree, meta, blockers)) {
+    // Root at the reserved chain slot plus the extra tail nodes (delete-last is empty).
+    if (!writeSnapMetaTreeRun(cow.image,
+                              cow.geometry,
+                              {bs,
+                               snapMetaTree,
+                               cow.newXid,
+                               kApfsObjectSubtypeSnapMeta,
+                               keepsSnapshots ? buildAllSnapMetaRecords(cow.remaining)
+                                              : QVector<ApfsBtreeKeyValue>{}},
+                              QVector<uint64_t>{snapMetaTree} + cow.snapMetaExtra,
+                              blockers)) {
         return false;
     }
     *mostRecentXid = 0;
@@ -14249,11 +14625,15 @@ bool writeSnapshotDeleteCowChain(const ApfsSnapshotDeleteCow& cow, QStringList* 
     }
     const uint64_t curAlloc = le64(liveVol, kApfsVolumeAllocatedBlockCountOffset);
     // A delete-last rebuild recomputes apfs_fs_alloc_count exactly (it changed the metadata +
-    // extent KINDs); every other path uses the create-mirroring alloc-delta.
-    const uint64_t newAlloc = cow.rebuiltAllocCount != 0
-                                  ? cow.rebuiltAllocCount
-                                  : curAlloc - (keepsSnapshots ? kApfsSnapshotSubsequentAllocDelta
-                                                               : kApfsSnapshotAllocDelta);
+    // extent KINDs); every other path uses the create-mirroring alloc-delta. The snap-meta
+    // tree's node-count change (split growth or collapse back to one node) applies on top of
+    // either base, one block per node.
+    const uint64_t baseAlloc = cow.rebuiltAllocCount != 0
+                                   ? cow.rebuiltAllocCount
+                                   : curAlloc - (keepsSnapshots ? kApfsSnapshotSubsequentAllocDelta
+                                                                : kApfsSnapshotAllocDelta);
+    const uint64_t newAlloc =
+        static_cast<uint64_t>(static_cast<int64_t>(baseAlloc) + cow.snapMetaNodeDelta);
     uint64_t mostRecentXid = 0;
     if (!writeSnapshotDeleteSnapTrees(cow, snapMetaTree, &mostRecentXid, blockers) ||
         !writeSnapshotDeleteVolume(
@@ -14273,7 +14653,12 @@ bool writeSnapshotDeleteCowChain(const ApfsSnapshotDeleteCow& cow, QStringList* 
 // Inputs to the snapshot-delete commit tail.
 struct ApfsSnapshotDeleteFinalize {
     ApfsFsCommitContext ctx;
-    uint64_t oldSnapMetaTree{0};
+    // Every node of the old snap-meta tree (root + leaves); the rebuild frees them all.
+    QVector<uint64_t> oldSnapMetaNodes;
+    // Extra snap-meta nodes reserved at the allocation tail (empty = single-node) and
+    // the alloc-count adjustment for the tree's node-count change.
+    QVector<uint64_t> snapMetaExtra;
+    qint64 snapMetaNodeDelta{0};
     uint64_t omapSnapTree{0};       // live om_snapshot_tree_oid (freed)
     ApfsSnapshotFrozenRefs frozen;  // deleted snapshot's frozen superblock + extent-ref tree
     QVector<uint64_t> newBlocks;
@@ -14321,11 +14706,11 @@ QVector<uint64_t> snapshotDeleteFreedBlocks(const ApfsSnapshotDeleteFinalize& f,
     const ApfsFsCommitContext& ctx = f.ctx;
     QVector<uint64_t> freed = {ctx.chain.volSb,
                                ctx.chain.volOmapHdr,
-                               f.oldSnapMetaTree,
                                ctx.chain.ctrOmapTree,
                                ctx.chain.ctrOmapHdr,
                                f.omapSnapTree,
                                f.frozen.sblockOid};
+    freed += f.oldSnapMetaNodes;
     if (keepsSnapshots) {
         if (!f.keptTreeMerged) {
             freed.append(f.reHomedFreedExtentRef != 0 ? f.reHomedFreedExtentRef
@@ -14366,7 +14751,9 @@ bool finalizeSnapshotDelete(const ApfsSnapshotDeleteFinalize& f,
                                       .rebuiltExtentRefRoot = f.rebuiltExtentRefRoot,
                                       .newOmapTreeRoot = f.newOmapTreeRoot,
                                       .rebuiltAllocCount = f.rebuiltAllocCount,
-                                      .liveAbsorbsMergedTree = f.liveAbsorbsMergedTree},
+                                      .liveAbsorbsMergedTree = f.liveAbsorbsMergedTree,
+                                      .snapMetaExtra = f.snapMetaExtra,
+                                      .snapMetaNodeDelta = f.snapMetaNodeDelta},
                                      blockers)) {
         return false;
     }
@@ -15148,6 +15535,22 @@ void applyMergeAbsorberRoot(const ApfsSnapshotDeleteRebuildPlan& plan,
     }
 }
 
+// Size a delete's rebuilt snap-meta tree run (1 = the reserved chain slot; extra
+// nodes ride at the allocation's very tail, after the omap-tree blocks) and collect
+// the old tree's nodes for the freed list. reHome/merge only swap 8-byte oid values
+// in `remaining`, so the packing computed here matches the final emit exactly.
+qsizetype snapshotDeleteSnapMetaReserve(const ApfsFsCommitContext& ctx,
+                                        const ApfsSnapshotDeleteSelection& sel,
+                                        QVector<uint64_t>* oldSnapMetaNodes,
+                                        QStringList* blockers) {
+    *oldSnapMetaNodes =
+        collectSnapMetaTreeNodes(ctx.image, ctx.geometry, sel.oldSnapMetaTree, blockers);
+    if (sel.remaining.isEmpty()) {
+        return 1;  // delete-last rewrites the tree empty: always one node
+    }
+    return variableKvTreeNodeCount(buildAllSnapMetaRecords(sel.remaining), ctx.geometry.blockSize);
+}
+
 bool commitInPlaceSnapshotDelete(QIODevice* image,
                                  const QString& snapshotName,
                                  ApfsInPlaceCheckpointResult* result,
@@ -15168,21 +15571,27 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
     const uint64_t reHomedFreed =
         plan.keepsMerge ? 0 : reHomeSnapshotExtentRef(sel.target, &sel.remaining);
     const bool keepsSnapshots = !sel.remaining.isEmpty();
+    QVector<uint64_t> oldSnapMetaNodes;
+    const qsizetype snapMetaNodes =
+        snapshotDeleteSnapMetaReserve(ctx, sel, &oldSnapMetaNodes, blockers);
     QVector<uint64_t> newBlocks;
     uint64_t chunk1BitmapBlock = 0;
     // Keeping snapshots needs one extra fsNode block for the rebuilt omap-snapshot tree; a
     // delete-last rebuild reserves plan.extentRefSlots blocks (past the 5 chain blocks) for the
     // new extent-ref tree, then plan.omapTreeBlocks blocks (as the "data" tail) for the rebuilt
-    // single-version omap tree. Layout: [0..4]=chain, [5..]=extent-ref, then omap tree.
+    // single-version omap tree, then the extra snap-meta nodes. Layout: [0..4]=chain,
+    // [5..]=extent-ref, omap tree, snap-meta extras last.
     if (!allocateFsCommitBlocks(ctx,
                                 {keepsSnapshots ? 1 : 0,
                                  plan.extentRefSlots,
-                                 static_cast<uint64_t>(plan.omapTreeBlocks)},
+                                 static_cast<uint64_t>(plan.omapTreeBlocks) +
+                                     static_cast<uint64_t>(snapMetaNodes - 1)},
                                 &newBlocks,
                                 &chunk1BitmapBlock,
                                 blockers)) {
         return false;
     }
+    const QVector<uint64_t> snapMetaExtra = newBlocks.mid(newBlocks.size() - (snapMetaNodes - 1));
     // Build + write the rebuilt trees and compute the exact alloc count (a no-op on the certified
     // quiescent re-adopt path). Dispatched by the rebuild kind below.
     ApfsSnapshotDeleteRebuildOutput rebuilt;
@@ -15191,23 +15600,25 @@ bool commitInPlaceSnapshotDelete(QIODevice* image,
         return false;
     }
     applyMergeAbsorberRoot(plan, rebuilt.rebuiltRoot, &sel.remaining);
-    return finalizeSnapshotDelete({.ctx = ctx,
-                                   .oldSnapMetaTree = sel.oldSnapMetaTree,
-                                   .omapSnapTree = sel.omapSnapTree,
-                                   .frozen = sel.frozen,
-                                   .newBlocks = newBlocks,
-                                   .chunk1BitmapBlock = chunk1BitmapBlock,
-                                   .remaining = sel.remaining,
-                                   .reHomedFreedExtentRef = reHomedFreed,
-                                   .rebuiltExtentRefRoot = rebuilt.rebuiltRoot,
-                                   .freedExtentRefNodes = rebuilt.freedNodes,
-                                   .newOmapTreeRoot = rebuilt.newOmapTreeRoot,
-                                   .rebuiltAllocCount = rebuilt.rebuiltAllocCount,
-                                   .keptTreeMerged = plan.keepsMerge,
-                                   .liveAbsorbsMergedTree = plan.keepsMerge &&
-                                                            plan.absorberIndex < 0},
-                                  result,
-                                  blockers);
+    return finalizeSnapshotDelete(
+        {.ctx = ctx,
+         .oldSnapMetaNodes = oldSnapMetaNodes,
+         .snapMetaExtra = snapMetaExtra,
+         .snapMetaNodeDelta = snapMetaNodes - static_cast<qint64>(oldSnapMetaNodes.size()),
+         .omapSnapTree = sel.omapSnapTree,
+         .frozen = sel.frozen,
+         .newBlocks = newBlocks,
+         .chunk1BitmapBlock = chunk1BitmapBlock,
+         .remaining = sel.remaining,
+         .reHomedFreedExtentRef = reHomedFreed,
+         .rebuiltExtentRefRoot = rebuilt.rebuiltRoot,
+         .freedExtentRefNodes = rebuilt.freedNodes,
+         .newOmapTreeRoot = rebuilt.newOmapTreeRoot,
+         .rebuiltAllocCount = rebuilt.rebuiltAllocCount,
+         .keptTreeMerged = plan.keepsMerge,
+         .liveAbsorbsMergedTree = plan.keepsMerge && plan.absorberIndex < 0},
+        result,
+        blockers);
 }
 
 // COW inputs for a snapshot revert. newBlocks layout (5 freshly allocated blocks):

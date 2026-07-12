@@ -1928,7 +1928,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceFilePatchPreservesObjectId();
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
-    void apfsWriter_snapshotMetaLeafCapacityFailsClosed();
+    void apfsWriter_snapshotMetaMultiNodeSplit();
     void apfsWriter_inPlaceMultiSnapshotDelete();
     void apfsWriter_multiSnapshotDeleteOwnerWithFile();
     void apfsWriter_inPlaceDivergeBetweenSnapshots();
@@ -10631,17 +10631,78 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotCreate() {
     QCOMPARE(listing.volume_name, QStringLiteral("MULTISNAP"));
 }
 
-void PartitionManagerCoreTests::apfsWriter_snapshotMetaLeafCapacityFailsClosed() {
-    // Pass-5 bug #5: the snap-meta tree is a single variable-kv leaf. Accumulating enough snapshots
-    // eventually overflows one node; before the capacity guard, buildVariableKvLeafBlock copied
-    // keys and values past the block buffer (a host-side heap overflow) and emitted an invalid
-    // node. Create snapshots in a loop: every commit must either succeed or fail closed with the
-    // capacity blocker -- never crash, and the last good image must stay readable (no corruption
-    // published).
+namespace {
+// Long names make each snap-meta record big so one node overflows quickly.
+QString snapcapSnapshotName(int i) {
+    return QStringLiteral("snapshot_number_%1_%2")
+        .arg(i, 4, 10, QLatin1Char('0'))
+        .arg(QString(80, QLatin1Char('s')));
+}
+
+// Chain snapshot creates 0..count-1 from @src; the last image is @finalName.
+// Returns the final image path, or empty with @error set on the first failure.
+QString snapcapChainCreates(
+    const QDir& dir, const QString& src, int count, const QString& finalName, QString* error) {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QString from = src;
+    for (int i = 0; i < count; ++i) {
+        const QString dst = dir.filePath(i == count - 1 ? finalName
+                                                        : QStringLiteral("snapcap-%1.apfs").arg(i));
+        const auto c = PartitionApfsWriter::commitImageOnlySnapshotCreate(
+            {.source_image_path = from,
+             .written_image_path = dst,
+             .snapshot_name = snapcapSnapshotName(i),
+             .create_time_ns = static_cast<quint64>(i + 1),
+             .options = options});
+        if (!c.ok) {
+            *error = QStringLiteral("snapshot %1 failed: %2")
+                         .arg(i)
+                         .arg(c.blockers.join(QStringLiteral("; ")));
+            return QString();
+        }
+        from = dst;
+    }
+    return from;
+}
+
+// Chain snapshot deletes by name from index @highest down to @kept (the collapsed
+// image is named snapcap-collapsed.img). Returns the final image path, or empty with
+// @error set on the first failure.
+QString snapcapChainDeletes(
+    const QDir& dir, const QString& src, int highest, int kept, QString* error) {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QString from = src;
+    for (int i = highest; i >= kept; --i) {
+        const QString dst = dir.filePath(i == kept ? QStringLiteral("snapcap-collapsed.img")
+                                                   : QStringLiteral("snapcap-del-%1.apfs").arg(i));
+        const auto d = PartitionApfsWriter::commitImageOnlySnapshotDelete(
+            {.source_image_path = from,
+             .written_image_path = dst,
+             .snapshot_name = snapcapSnapshotName(i),
+             .options = options});
+        if (!d.ok) {
+            *error = QStringLiteral("delete %1 failed: %2")
+                         .arg(i)
+                         .arg(d.blockers.join(QStringLiteral("; ")));
+            return QString();
+        }
+        from = dst;
+    }
+    return from;
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_snapshotMetaMultiNodeSplit() {
+    // Pass-5 #5 lift: the snap-meta tree splits into a multi-node physical B-tree
+    // (leaves under an index root) once the record set overflows one node, instead of
+    // failing closed. Create far past the old single-leaf capacity (~13 long-named
+    // snapshots per 4 KiB node), then delete by name back below the split threshold
+    // (the tree collapses to the certified single-node shape) and revert to a named
+    // snapshot on the multi-node image. SAK_SNAPCAP_CERT_DIR persists the split image,
+    // the collapsed image, and the revert-tagged image for host apfsck + macOS cert.
     const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    // SAK_SNAPCAP_CERT_DIR persists the last-good (near-capacity) image for host apfsck.
     const QString envDir = qEnvironmentVariable("SAK_SNAPCAP_CERT_DIR");
     const QDir dir(envDir.isEmpty() ? temp.path() : envDir);
     const QString base = dir.filePath(QStringLiteral("snapcap-base.apfs"));
@@ -10652,44 +10713,37 @@ void PartitionManagerCoreTests::apfsWriter_snapshotMetaLeafCapacityFailsClosed()
                  .volume_name = QStringLiteral("SNAPCAP"),
                  .options = options})
                 .ok);
-    QString src = base;
-    QString lastGood = base;
-    int created = 0;
-    bool sawCapacityBlocker = false;
-    for (int i = 0; i < 200; ++i) {
-        const QString dst = dir.filePath(QStringLiteral("snapcap-%1.apfs").arg(i));
-        // Long names make each snap-meta record big so the single-leaf capacity is reached quickly.
-        const auto c = PartitionApfsWriter::commitImageOnlySnapshotCreate(
-            {.source_image_path = src,
-             .written_image_path = dst,
-             .snapshot_name = QStringLiteral("snapshot_number_%1_%2")
-                                  .arg(i, 4, 10, QLatin1Char('0'))
-                                  .arg(QString(80, QLatin1Char('s'))),
-             .create_time_ns = static_cast<quint64>(i + 1),
-             .options = options});
-        if (c.ok) {
-            lastGood = dst;
-            src = dst;
-            ++created;
-            continue;
-        }
-        // Fail closed: the capacity blocker (not a crash, not a different error).
-        QVERIFY2(
-            c.blockers.join(QStringLiteral("; ")).contains(QStringLiteral("overflow a single")),
-            qPrintable(QStringLiteral("snapshot %1 failed for an unexpected reason: %2")
-                           .arg(i)
-                           .arg(c.blockers.join(QStringLiteral("; ")))));
-        sawCapacityBlocker = true;
-        break;
-    }
-    QVERIFY2(sawCapacityBlocker, "expected the single-leaf snap-meta capacity guard to fire");
-    QVERIFY2(created > 5, "expected many snapshots to succeed before the guard fires");
-    // The last image accepted before the guard fired is intact and lists its snapshots.
+    constexpr int kSnapshots = 30;  // >= 3 leaves at ~13 long-named records per node
+    QString error;
+    const QString split =
+        snapcapChainCreates(dir, base, kSnapshots, QStringLiteral("snapcap-split.img"), &error);
+    QVERIFY2(!split.isEmpty(), qPrintable(error));
+    // All 30 snapshots recorded (apfs_num_snapshots @ 0xD8) and the volume still lists.
+    QCOMPARE(apfsLe64(readApfsImageBlock(split, apfsApsbBlockOf(split)), 0xD8),
+             static_cast<quint64>(kSnapshots));
     const auto listing =
-        PartitionApfsFileSystemReader::listDirectoryFromImage(lastGood, QStringLiteral("/"), 20);
+        PartitionApfsFileSystemReader::listDirectoryFromImage(split, QStringLiteral("/"), 20);
     QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(apfsLe64(readApfsImageBlock(lastGood, apfsApsbBlockOf(lastGood)), 0xD8),
-             static_cast<quint64>(created));
+
+    // Revert to a named early snapshot on the multi-node image: the deferred tag lands
+    // and the (multi-node) snap-meta tree is re-emitted intact.
+    const auto revert = PartitionApfsWriter::commitImageOnlySnapshotRevert(
+        {.source_image_path = split,
+         .written_image_path = dir.filePath(QStringLiteral("snapcap-revert.img")),
+         .snapshot_name = snapcapSnapshotName(2),
+         .options = options});
+    QVERIFY2(revert.ok, qPrintable(revert.blockers.join(QStringLiteral("; "))));
+
+    // Delete by name from the multi-node set down below the split threshold: the tree
+    // must collapse back to the certified single-node shape and stay consistent.
+    constexpr int kKept = 8;
+    const QString collapsed = snapcapChainDeletes(dir, split, kSnapshots - 1, kKept, &error);
+    QVERIFY2(!collapsed.isEmpty(), qPrintable(error));
+    QCOMPARE(apfsLe64(readApfsImageBlock(collapsed, apfsApsbBlockOf(collapsed)), 0xD8),
+             static_cast<quint64>(kKept));
+    const auto after =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(collapsed, QStringLiteral("/"), 20);
+    QVERIFY2(after.ok, qPrintable(after.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {
