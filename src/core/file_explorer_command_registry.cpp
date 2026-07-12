@@ -57,6 +57,8 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::CopyOut, Group::File},
         {Id::CopyItems, Group::File},
         {Id::Paste, Group::File},
+        {Id::CopyToOtherPane, Group::Pane},
+        {Id::ComparePanes, Group::Pane},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -230,6 +232,38 @@ bool isBrowseCommand(const FileExplorerCommandId id) {
 bool isReadCommand(const FileExplorerCommandId id) {
     using enum FileExplorerCommandId;
     return id == Preview || id == Hash || id == CopyOut || id == CopyItems;
+}
+
+// Cross-pane commands need an active split with a target in the inactive pane; the
+// copy additionally needs a readable source and a writable destination.
+std::optional<FileExplorerCommandState> crossPaneState(const FileExplorerCommandId id,
+                                                       const FileExplorerCommandContext& context,
+                                                       const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id != CopyToOtherPane && id != ComparePanes) {
+        return std::nullopt;
+    }
+    if (!context.dual_pane_active) {
+        return disabledState(entry, QStringLiteral("Enable dual pane first."));
+    }
+    if (FileExplorerTargetId::fromTarget(context.other_pane_target).isEmpty()) {
+        return disabledState(entry, QStringLiteral("Open a target in the other pane first."));
+    }
+    if (id == ComparePanes) {
+        return enabledState(entry);
+    }
+    if (!context.target.can_read_files) {
+        return disabledState(entry, readBlocker(context.target));
+    }
+    if (!context.other_pane_target.can_write_files) {
+        return disabledState(entry, writeBlocker(context.other_pane_target));
+    }
+    if (!context.target.local_file_system && !context.other_pane_target.local_file_system) {
+        return disabledState(entry,
+                             QStringLiteral("Raw-to-raw cross-pane copy is not supported; copy "
+                                            "into a local folder first."));
+    }
+    return enabledState(entry);
 }
 
 // Paste additionally needs pasteable file items on the clipboard. Checked after the
@@ -432,6 +466,14 @@ QVector<FileExplorerCommand> viewCommands() {
                     QStringLiteral("Reopen Closed Tab"),
                     QStringLiteral("Reopen the most recently closed tab."),
                     QStringLiteral("Ctrl+Shift+T")),
+        makeCommand(FileExplorerCommandId::CopyToOtherPane,
+                    QStringLiteral("Copy to Other Pane"),
+                    QStringLiteral("Copy the selected files into the other pane's folder."),
+                    QStringLiteral("F6"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::ComparePanes,
+                    QStringLiteral("Compare Panes"),
+                    QStringLiteral("Compare the two pane folders by name and size.")),
     };
 }
 
@@ -480,6 +522,9 @@ FileExplorerCommandState FileExplorerCommandRegistry::state(
     if (const auto paste = pasteClipboardState(id, context, entry)) {
         return *paste;
     }
+    if (const auto cross_pane = crossPaneState(id, context, entry)) {
+        return *cross_pane;
+    }
     return enabledState(entry);
 }
 
@@ -521,6 +566,8 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::CopyOut, "copy-out"},
         {Id::CopyItems, "copy-items"},
         {Id::Paste, "paste"},
+        {Id::CopyToOtherPane, "copy-to-other-pane"},
+        {Id::ComparePanes, "compare-panes"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

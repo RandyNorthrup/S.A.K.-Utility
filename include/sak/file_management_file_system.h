@@ -119,6 +119,19 @@ struct FileManagementExportResult {
     QStringList blockers;
 };
 
+/// Result of recursively exporting a directory tree to a local host destination.
+struct FileManagementDirectoryExportResult {
+    bool ok{false};       ///< True when every reachable file exported completely.
+    QString destination;  ///< Host directory the tree was written under.
+    int files_exported{0};
+    int directories_created{0};
+    int symlinks_skipped{0};
+    int capped_files{0};  ///< Raw files truncated at the per-file read window.
+    uint64_t bytes_written{0};
+    QStringList blockers;
+    QStringList warnings;
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -179,6 +192,16 @@ public:
         const QString& source_path,
         const QString& destination_path,
         uint64_t max_bytes);
+    /// Recursively export the directory tree at @p source_path into the local host
+    /// directory @p destination_dir (created if missing). Regular files copy through
+    /// @ref copyFileToHost (raw sources bounded per file by @p max_file_bytes and
+    /// counted in @ref FileManagementDirectoryExportResult::capped_files); symlinks are
+    /// skipped with a warning. Depth and per-directory entry counts are bounded.
+    [[nodiscard]] static FileManagementDirectoryExportResult exportDirectoryToHost(
+        const FileManagementTarget& target,
+        const QString& source_path,
+        const QString& destination_dir,
+        uint64_t max_file_bytes);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
     [[nodiscard]] static FileManagementMutationResult renameEntry(

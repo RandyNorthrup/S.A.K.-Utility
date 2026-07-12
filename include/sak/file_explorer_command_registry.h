@@ -49,6 +49,8 @@ enum class FileExplorerCommandId {
     CopyOut,
     CopyItems,
     Paste,
+    CopyToOtherPane,
+    ComparePanes,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped
@@ -81,6 +83,9 @@ struct FileExplorerCommandContext {
     bool can_use_dual_pane{false};
     bool has_closed_tab{false};       ///< True when a recently closed tab can be reopened.
     bool clipboard_has_files{false};  ///< True when the clipboard holds pasteable file items.
+    bool dual_pane_active{false};     ///< True when a second pane is currently shown.
+    /// Target shown in the INACTIVE pane while dual pane is active (cross-pane destination).
+    FileManagementTarget other_pane_target;
 };
 
 struct FileExplorerCommandState {

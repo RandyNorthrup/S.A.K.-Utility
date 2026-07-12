@@ -731,6 +731,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::CopyOut,
         FileExplorerCommandId::CopyItems,
         FileExplorerCommandId::Paste,
+        FileExplorerCommandId::CopyToOtherPane,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -1361,12 +1362,18 @@ void FileManagementExplorerPanel::hashSelectedFile() {
 void FileManagementExplorerPanel::copySelectedFileOut() {
     const FileExplorerSelection selection = currentSelection();
     if (!selection.hasSingleEntry()) {
-        Q_EMIT statusMessage(tr("Select a single file to copy out."), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Select a single file or folder to copy out."),
+                             sak::kTimerStatusMessageMs);
         return;
     }
     const FileManagementEntry entry = selection.entries.first();
-    if (entry.directory || !entry.regular_file) {
-        Q_EMIT statusMessage(tr("Select a single file to copy out."), sak::kTimerStatusMessageMs);
+    if (entry.directory) {
+        exportSelectedDirectoryOut(entry);
+        return;
+    }
+    if (!entry.regular_file) {
+        Q_EMIT statusMessage(tr("Select a single file or folder to copy out."),
+                             sak::kTimerStatusMessageMs);
         return;
     }
     const QString destination = QFileDialog::getSaveFileName(
@@ -1685,6 +1692,194 @@ int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
     return written;
 }
 
+void FileManagementExplorerPanel::exportSelectedDirectoryOut(const FileManagementEntry& entry) {
+    const QString destination_root =
+        QFileDialog::getExistingDirectory(this, tr("Export Folder To"), QDir::homePath());
+    if (destination_root.isEmpty()) {
+        return;
+    }
+    const QString destination = QDir(destination_root).filePath(entry.name);
+    const FileManagementTarget target = currentTarget();
+    const QString source_path = entry.path;
+    Q_EMIT statusMessage(tr("Exporting folder %1...").arg(entry.name), sak::kTimerStatusMessageMs);
+
+    auto* watcher = new QFutureWatcher<FileManagementDirectoryExportResult>(this);
+    connect(watcher,
+            &QFutureWatcher<FileManagementDirectoryExportResult>::finished,
+            this,
+            [this, watcher]() {
+                watcher->deleteLater();
+                const FileManagementDirectoryExportResult result = watcher->result();
+                QStringList details;
+                details.append(result.blockers);
+                details.append(result.warnings);
+                if (!details.isEmpty()) {
+                    logMessage(details.join(QLatin1Char('\n')));
+                }
+                if (!result.ok) {
+                    sak::showWarningLogged(this,
+                                           tr("Export Folder"),
+                                           details.isEmpty() ? tr("Folder export failed.")
+                                                             : details.join(QLatin1Char('\n')));
+                    return;
+                }
+                Q_EMIT statusMessage(
+                    tr("Exported %1 file(s), %2 folder(s), %3 byte(s) to %4%5")
+                        .arg(QString::number(result.files_exported),
+                             QString::number(result.directories_created),
+                             QString::number(result.bytes_written),
+                             result.destination,
+                             result.capped_files > 0
+                                 ? tr(" (%1 file(s) capped)").arg(result.capped_files)
+                                 : QString()),
+                    sak::kTimerStatusDefaultMs);
+            });
+    watcher->setFuture(QtConcurrent::run([target, source_path, destination]() {
+        return FileManagementFileSystemBridge::exportDirectoryToHost(
+            target, source_path, destination, kExplorerHashMaxBytes);
+    }));
+}
+
+FileManagementTarget FileManagementExplorerPanel::otherPaneTarget() const {
+    if (!m_dual_pane_enabled) {
+        return {};
+    }
+    const int index = targetIndexForId(m_secondary_state.location.target_id.value);
+    return index >= 0 ? m_targets.at(index) : FileManagementTarget{};
+}
+
+void FileManagementExplorerPanel::refreshOtherPane() {
+    // Reload the inactive pane's listing (its folder just changed) without disturbing
+    // the user's active pane: hop over, reload, hop back.
+    if (!m_dual_pane_enabled) {
+        return;
+    }
+    const int active = m_active_pane_index;
+    activatePane(active == 0 ? 1 : 0);
+    const int target_index = targetIndexForId(m_pane_state.location.target_id.value);
+    if (target_index >= 0) {
+        m_current_target_index = target_index;
+        loadDirectory(m_pane_state.location.path, false);
+    }
+    activatePane(active);
+    m_current_target_index = targetIndexForId(m_pane_state.location.target_id.value);
+}
+
+int FileManagementExplorerPanel::crossPaneCopyEntries(const FileManagementTarget& source,
+                                                      const FileManagementTarget& destination,
+                                                      const QString& destination_dir,
+                                                      QStringList* blockers) {
+    int written = 0;
+    const FileExplorerSelection selection = currentSelection();
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (entry.directory || !entry.regular_file) {
+            blockers->append(tr("Skipped %1: only files copy across panes today.").arg(entry.name));
+            continue;
+        }
+        const QString destination_path =
+            childPathFor(destination_dir, entry.name, destination.local_file_system);
+        if (source.local_file_system) {
+            const auto result = FileManagementFileSystemBridge::writeFileFromHostPath(
+                destination, destination_path, entry.path);
+            if (result.ok) {
+                ++written;
+                m_last_mutation = result;
+            } else {
+                blockers->append(result.blockers);
+            }
+            continue;
+        }
+        if (entry.size_bytes > kExplorerHashMaxBytes) {
+            blockers->append(tr("%1 exceeds the raw read window; a complete cross-pane copy "
+                                "is not possible.")
+                                 .arg(entry.name));
+            continue;
+        }
+        const auto exported = FileManagementFileSystemBridge::copyFileToHost(
+            source, entry.path, destination_path, kExplorerHashMaxBytes);
+        if (exported.ok) {
+            ++written;
+        } else {
+            blockers->append(exported.blockers);
+        }
+    }
+    return written;
+}
+
+void FileManagementExplorerPanel::crossPaneCopySelection() {
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(
+        FileExplorerCommandId::CopyToOtherPane, commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Copy to Other Pane"), state.blocker);
+        return;
+    }
+    const FileManagementTarget source = currentTarget();
+    const FileManagementTarget destination = otherPaneTarget();
+    const QString destination_dir = m_secondary_state.location.path;
+    const int file_count = static_cast<int>(currentSelection().entries.size());
+    if (!destination.local_file_system && !confirmTypedRawImport(destination, file_count)) {
+        return;
+    }
+    QStringList blockers;
+    const int written = crossPaneCopyEntries(source, destination, destination_dir, &blockers);
+    if (written > 0) {
+        refreshOtherPane();
+    }
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Copy to Other Pane"), blockers.join(QLatin1Char('\n')));
+    }
+    Q_EMIT statusMessage(
+        tr("Copied %1 of %2 file(s) to the other pane.").arg(written).arg(file_count),
+        sak::kTimerStatusDefaultMs);
+}
+
+void FileManagementExplorerPanel::comparePanes() {
+    const FileExplorerCommandState state =
+        FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Compare Panes"), state.blocker);
+        return;
+    }
+    const auto listing_a = FileManagementFileSystemBridge::listDirectory(currentTarget(),
+                                                                         m_current_path,
+                                                                         kExplorerListMaxEntries);
+    const auto listing_b = FileManagementFileSystemBridge::listDirectory(
+        otherPaneTarget(), m_secondary_state.location.path, kExplorerListMaxEntries);
+    if (!listing_a.ok || !listing_b.ok) {
+        sak::showWarningLogged(this,
+                               tr("Compare Panes"),
+                               (listing_a.blockers + listing_b.blockers).join(QLatin1Char('\n')));
+        return;
+    }
+    QHash<QString, quint64> sizes_b;
+    for (const FileManagementEntry& entry : listing_b.entries) {
+        sizes_b.insert(entry.name, entry.size_bytes);
+    }
+    QStringList only_a;
+    QStringList mismatched;
+    for (const FileManagementEntry& entry : listing_a.entries) {
+        const auto it = sizes_b.constFind(entry.name);
+        if (it == sizes_b.constEnd()) {
+            only_a.append(entry.name);
+        } else if (!entry.directory && *it != entry.size_bytes) {
+            mismatched.append(entry.name);
+        }
+        sizes_b.remove(entry.name);
+    }
+    QStringList only_b = sizes_b.keys();
+    only_b.sort(Qt::CaseInsensitive);
+    const QString summary = tr("Only in this pane (%1): %2\nOnly in other pane (%3): %4\n"
+                               "Size differs (%5): %6")
+                                .arg(QString::number(only_a.size()),
+                                     only_a.join(QStringLiteral(", ")),
+                                     QString::number(only_b.size()),
+                                     only_b.join(QStringLiteral(", ")),
+                                     QString::number(mismatched.size()),
+                                     mismatched.join(QStringLiteral(", ")));
+    logMessage(summary);
+    sak::showInformationLogged(this, tr("Compare Panes"), summary);
+}
+
 void FileManagementExplorerPanel::logMessage(const QString& message) {
     if (!message.trimmed().isEmpty()) {
         Q_EMIT logOutput(message);
@@ -1735,6 +1930,8 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.can_use_dual_pane = true;
     context.has_closed_tab = !m_closed_tabs.isEmpty();
     context.clipboard_has_files = clipboardHasPasteableFiles();
+    context.dual_pane_active = m_dual_pane_enabled;
+    context.other_pane_target = otherPaneTarget();
     return context;
 }
 
@@ -1970,6 +2167,9 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
     case FileExplorerCommandId::CopyItems:
         copySelectionToClipboard();
         return true;
+    case FileExplorerCommandId::CopyToOtherPane:
+        crossPaneCopySelection();
+        return true;
     default:
         return dispatchSelectionEditCommand(command);
     }
@@ -1992,6 +2192,9 @@ bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
         return true;
     case FileExplorerCommandId::ReopenClosedTab:
         reopenClosedTab();
+        return true;
+    case FileExplorerCommandId::ComparePanes:
+        comparePanes();
         return true;
     default:
         return false;
@@ -3224,6 +3427,8 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     addCommandMenuAction(&menu, FileExplorerCommandId::Open, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::OpenInNewTab, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::OpenInSecondPane, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::CopyToOtherPane, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::ComparePanes, context);
     menu.addSeparator();
     addCommandMenuAction(&menu, FileExplorerCommandId::Preview, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);

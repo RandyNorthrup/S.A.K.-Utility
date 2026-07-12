@@ -122,6 +122,15 @@ private:
     };
     void copySelectionToClipboard();
     void pasteClipboardIntoCurrentFolder();
+    void exportSelectedDirectoryOut(const FileManagementEntry& entry);
+    void crossPaneCopySelection();
+    int crossPaneCopyEntries(const FileManagementTarget& source,
+                             const FileManagementTarget& destination,
+                             const QString& destination_dir,
+                             QStringList* blockers);
+    void comparePanes();
+    void refreshOtherPane();
+    [[nodiscard]] FileManagementTarget otherPaneTarget() const;
     [[nodiscard]] bool clipboardHasPasteableFiles() const;
     [[nodiscard]] PasteSources collectPasteSources(const QMimeData* mime) const;
     static void appendPayloadItems(const QJsonArray& items,

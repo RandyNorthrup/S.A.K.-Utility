@@ -959,6 +959,108 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
 
 namespace {
 
+// Bounds for a recursive directory export: deep-enough for real trees, still finite
+// so a cyclic or hostile directory graph cannot run away.
+constexpr int kDirectoryExportMaxDepth = 32;
+constexpr int kDirectoryExportMaxEntriesPerDirectory = 10'000;
+
+struct DirectoryExportContext {
+    const FileManagementTarget& target;
+    uint64_t max_file_bytes;
+    FileManagementDirectoryExportResult& result;
+};
+
+void exportEntryToHost(const DirectoryExportContext& ctx,
+                       const FileManagementEntry& entry,
+                       const QDir& host_dir,
+                       int depth);
+
+void exportDirectoryLevel(const DirectoryExportContext& ctx,
+                          const QString& source_path,
+                          const QDir& host_dir,
+                          const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped %1: exceeds the export depth bound.").arg(source_path));
+        return;
+    }
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        ctx.target, source_path, kDirectoryExportMaxEntriesPerDirectory);
+    if (!listing.ok) {
+        ctx.result.blockers.append(listing.blockers.isEmpty()
+                                       ? QStringLiteral("Could not list %1.").arg(source_path)
+                                       : listing.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ctx.result.warnings.append(listing.warnings);
+    for (const FileManagementEntry& entry : listing.entries) {
+        exportEntryToHost(ctx, entry, host_dir, depth);
+    }
+}
+
+void exportEntryToHost(const DirectoryExportContext& ctx,
+                       const FileManagementEntry& entry,
+                       const QDir& host_dir,
+                       const int depth) {
+    if (entry.symlink) {
+        ++ctx.result.symlinks_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped symlink %1 (links are not exported).").arg(entry.path));
+        return;
+    }
+    if (entry.directory) {
+        if (!host_dir.mkpath(entry.name)) {
+            ctx.result.blockers.append(QStringLiteral("Could not create host directory %1.")
+                                           .arg(host_dir.filePath(entry.name)));
+            return;
+        }
+        ++ctx.result.directories_created;
+        exportDirectoryLevel(ctx, entry.path, QDir(host_dir.filePath(entry.name)), depth + 1);
+        return;
+    }
+    if (!entry.regular_file) {
+        ctx.result.warnings.append(QStringLiteral("Skipped special entry %1.").arg(entry.path));
+        return;
+    }
+    const FileManagementExportResult exported = FileManagementFileSystemBridge::copyFileToHost(
+        ctx.target, entry.path, host_dir.filePath(entry.name), ctx.max_file_bytes);
+    if (!exported.ok) {
+        ctx.result.blockers.append(exported.blockers.isEmpty()
+                                       ? QStringLiteral("Could not export %1.").arg(entry.path)
+                                       : exported.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ++ctx.result.files_exported;
+    ctx.result.bytes_written += exported.bytes_written;
+    if (exported.capped) {
+        ++ctx.result.capped_files;
+        ctx.result.warnings.append(
+            QStringLiteral("%1 was truncated at the per-file read window.").arg(entry.path));
+    }
+}
+
+}  // namespace
+
+FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirectoryToHost(
+    const FileManagementTarget& target,
+    const QString& source_path,
+    const QString& destination_dir,
+    const uint64_t max_file_bytes) {
+    FileManagementDirectoryExportResult result;
+    result.destination = destination_dir;
+    if (!QDir().mkpath(destination_dir)) {
+        result.blockers.append(
+            QStringLiteral("Could not create destination directory %1.").arg(destination_dir));
+        return result;
+    }
+    const DirectoryExportContext ctx{target, max_file_bytes, result};
+    exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+namespace {
+
 constexpr int kPreviewHexDumpBytes = 4096;
 constexpr int kPreviewHexBytesPerRow = 16;
 

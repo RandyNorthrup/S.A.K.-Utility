@@ -399,6 +399,51 @@ private Q_SLOTS:
         QCOMPARE(blocked.blocker, QStringLiteral("ext4 is read-only"));
     }
 
+    void registryCrossPaneCommandsNeedSplitAndWritableDestination() {
+        using sak::FileExplorerCommandId;
+        // No active split: both cross-pane commands explain the dual-pane requirement.
+        auto context = contextFor(writableLocalTarget(), true);
+        context.can_use_dual_pane = true;
+        const auto no_split = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, context);
+        QVERIFY(!no_split.enabled);
+        QVERIFY(no_split.blocker.contains(QStringLiteral("dual pane"), Qt::CaseInsensitive));
+        QVERIFY(
+            !sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
+                 .enabled);
+
+        // Split active + writable other pane: copy and compare both enable.
+        context.dual_pane_active = true;
+        context.other_pane_target = writableLocalTarget();
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyToOtherPane, context)
+                .enabled);
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
+                .enabled);
+
+        // Read-only other pane blocks the copy with the destination's real write blocker,
+        // while compare stays available.
+        context.other_pane_target = readOnlyRawTarget(QStringLiteral("ext4 is read-only"));
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, context);
+        QVERIFY(!blocked.enabled);
+        QCOMPARE(blocked.blocker, QStringLiteral("ext4 is read-only"));
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
+                .enabled);
+
+        // Raw source + raw destination fails closed with the exact reason.
+        auto raw_source = contextFor(rawTarget(QStringLiteral("apfs"), true, true, true), true);
+        raw_source.can_use_dual_pane = true;
+        raw_source.dual_pane_active = true;
+        raw_source.other_pane_target = rawTarget(QStringLiteral("hfsplus"), true, true, true);
+        const auto raw_raw = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, raw_source);
+        QVERIFY(!raw_raw.enabled);
+        QVERIFY(raw_raw.blocker.contains(QStringLiteral("Raw-to-raw")));
+    }
+
     void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
         // Tabs and dual pane are shipped features, but the registry still exposes
         // a build-availability gate: when a host reports it cannot host tabs or a

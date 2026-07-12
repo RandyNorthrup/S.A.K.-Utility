@@ -1279,31 +1279,30 @@ Copy-out checklist:
 
 - [x] Copy selected local files to clipboard/reference. (`CopyItemPath` / `CopyPath` commands)
 - [x] Copy selected raw readable file out to local destination. (`CopyOut` command -> `FileManagementFileSystemBridge::copyFileToHost`; local sources copied in full, raw sources up to the read cap; runs on a worker thread)
-- [ ] Copy selected raw folder out recursively where reader supports export. (single-file only today)
-- [~] Add progress and cancel. (copy-out is offloaded to a worker thread with a status update; a progress bar / cancel button remains a follow-on)
+- [x] Copy selected raw folder out recursively where reader supports export. (`FileManagementFileSystemBridge::exportDirectoryToHost` walks the tree with depth/entry bounds, re-creates directories, copies files through `copyFileToHost`, skips symlinks with a warning, and counts capped raw files; Copy Out on a selected folder runs it on a worker thread. `exportDirectoryToHostRecursesLocalTree`)
+- [~] Add progress and cancel. (copy-out and folder export run on worker threads with status updates; a progress bar / cancel button remains a follow-on)
 - [x] Add overwrite/collision policy. (the save-file dialog prompts before overwriting an existing destination)
 - [x] Add read-back/hash proof for raw copy-out where useful. (`copyFileToHost` returns the SHA-256 of the written bytes, surfaced in the Evidence pane)
 
 Copy-in/import checklist:
 
-- [ ] Paste/import local file into local folder.
-- [ ] Paste/import local file into certified HFS+/HFSX target.
-- [ ] Paste/import local file into a certified generated-layout APFS target (up to the 32 TiB cap).
-- [ ] Block paste/import into ext raw/image.
-- [ ] Block paste/import into APFS large target.
-- [ ] Block paste/import into arbitrary APFS.
-- [ ] Block paste/import into XFS/Btrfs.
-- [ ] Add typed confirmation for raw destination writes.
-- [ ] Add target identity validation immediately before write.
-- [ ] Add operation result with hash/read-back.
+- [x] Paste/import local file into local folder. (Copy Ctrl+C / Paste Ctrl+V through the command registry; GUI round trip `copyPasteRoundTripsLocalFileThroughClipboard` verifies a byte-exact copy)
+- [x] Paste/import local file into certified HFS+/HFSX target. (same Paste route via streaming `writeFileFromHostPath`; enablement from the capability matrix; live HFS+ command-route cert remains the M12 item)
+- [x] Paste/import local file into a certified APFS target. (generated and known-size foreign containers; the bridge write route is live-certified on real Apple media by the 2026-07-12 foreign destructive run)
+- [x] Block paste/import into ext raw/image. (write-capability gate; `registryPasteNeedsClipboardFilesAndWritableTarget` asserts the real ext4 blocker wins over the clipboard reason)
+- [x] Block paste/import into unknown-size / out-of-range APFS. (size range gate + exact blocker)
+- [x] Block paste/import into XFS/Btrfs. (no write capability; blocker text names the metadata-only state)
+- [x] Add typed confirmation for raw destination writes. (`confirmTypedRawImport` requires typing WRITE and names target identity, file system, and file count)
+- [x] Add target identity validation immediately before write. (`validateCurrentTargetIdentity` runs after confirmation, immediately before the write loop)
+- [x] Add operation result with hash/read-back. (mutation results carry before/after SHA-256 into the Evidence pane; raw-source pastes record the exported SHA-256)
 
 Cross-pane checklist:
 
-- [ ] Copy from pane A to pane B when B is writable.
-- [ ] Copy from raw pane to local pane.
-- [ ] Copy from local pane to certified HFS/APFS pane.
-- [ ] Compare folder contents between panes.
-- [ ] Show blocked transfer reasons in command tooltip and Safety pane.
+- [x] Copy from pane A to pane B when B is writable. (Copy to Other Pane, F6; refreshes the inactive pane after the copy)
+- [x] Copy from raw pane to local pane. (`copyFileToHost` per file with a fail-closed size check against the raw read window)
+- [x] Copy from local pane to certified HFS/APFS pane. (streaming `writeFileFromHostPath` with typed WRITE confirmation for the raw destination)
+- [x] Compare folder contents between panes. (Compare Panes: only-in-A / only-in-B / size-differs summary in a dialog and the log)
+- [x] Show blocked transfer reasons in command tooltip and Safety pane. (`crossPaneState` returns exact blockers - no split, no other-pane target, unreadable source, unwritable destination, raw-to-raw; `registryCrossPaneCommandsNeedSplitAndWritableDestination`)
 
 Tests:
 

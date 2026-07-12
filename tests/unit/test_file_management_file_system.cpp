@@ -310,6 +310,50 @@ private Q_SLOTS:
                     .contains(QStringLiteral("read-only browse/read/copy-out")));
     }
 
+    void exportDirectoryToHostRecursesLocalTree() {
+        // Recursive copy-out: a nested source tree exports byte-complete into the host
+        // destination, with directories re-created and counts reported.
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        const QDir src(source.path());
+        QVERIFY(src.mkpath(QStringLiteral("inner/deeper")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        writeFile(src.filePath(QStringLiteral("top.txt")), QByteArrayLiteral("top-level"));
+        writeFile(src.filePath(QStringLiteral("inner/mid.bin")),
+                  QByteArrayLiteral("mid \x00\x01 bytes"));
+        writeFile(src.filePath(QStringLiteral("inner/deeper/leaf.txt")),
+                  QByteArrayLiteral("leaf content"));
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(source.path());
+        const QString destRoot = QDir(destination.path()).filePath(QStringLiteral("exported"));
+        const auto result = sak::FileManagementFileSystemBridge::exportDirectoryToHost(
+            target, source.path(), destRoot, 0);
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(result.files_exported, 3);
+        QCOMPARE(result.directories_created, 2);
+        QCOMPARE(result.capped_files, 0);
+
+        const auto readAll = [](const QString& path) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) {
+                return QByteArray();
+            }
+            return file.readAll();
+        };
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("top.txt"))),
+                 QByteArrayLiteral("top-level"));
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("inner/mid.bin"))),
+                 QByteArrayLiteral("mid \x00\x01 bytes"));
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("inner/deeper/leaf.txt"))),
+                 QByteArrayLiteral("leaf content"));
+    }
+
     void apfsImageTargetWithKnownSizeIsWriteCapable() {
         // Foreign wiring: any APFS raw/image target whose container size is known and
         // inside the certified engine range is write-capable through the bridge; the
