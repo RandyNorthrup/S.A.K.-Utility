@@ -1309,7 +1309,7 @@ Tests:
 - [x] Unit transfer command enablement matrix. (`registryCopyOutNeedsSingleReadableSelection`; import gated by `capabilityState` write branch)
 - [x] Local copy/paste smoke. (`copyFileToHostCopiesLocalFileByteExactWithHash`, `writeFileFromHostPathStreamsLocalCopyWithNoCap`)
 - [ ] ext4 raw copy-out smoke. (needs a live/local ext4 image)
-- [ ] HFS+ live import/write/read/delete certification through command route.
+- [x] HFS+ live import/write/read/delete certification through command route. (2026-07-12, physical Disk 1 = 28 GB USB flash: wiped, created a 256 MiB Apple-HFS partition, formatted with bundled newfs_hfs, copied onto the raw partition (fsck_hfs "appears to be OK"), then ran the destructive command-route cert: create-directory / write-file / read-after-write byte-exact / duplicate-finder / advanced-search / rename-entry / read-after-rename / delete-file / read-after-delete / delete-directory ALL Passed; post-mutation probe `--hfs-check` Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-hfs-file-management-cert/)
 - [x] APFS generated-layout live import/write/read/delete certification through command route. (2026-07-12 physical Disk 1 128 MiB S.A.K.-generated APFS: create/write/read/delete all Passed via `file_management_live_certifier --destructive`, EXIT 0)
 - [x] APFS large paste blocker test. (2026-07-11 physical: both real Apple APFS drives report `explorer_can_write=false`; 2026-07-12 update: the gate is a known-size range gate, so this proof covers the unknown-size/out-of-range paste blocker while known-size in-range foreign media is now write-capable)
 
@@ -1431,7 +1431,7 @@ Certification checklist:
 - [ ] Run filesystem manifest check.
 - [ ] Run `git diff --check`.
 - [ ] Run release readiness or document unrelated blocker.
-- [ ] Run HFS+ destructive live File Explorer command-route certification.
+- [x] Run HFS+ destructive live File Explorer command-route certification. (2026-07-12, physical Disk 1 256 MiB Apple-HFS partition formatted by bundled newfs_hfs: create-directory / write-file / read-after-write byte-exact / duplicate-finder / advanced-search / rename / read-after-rename / delete-file / read-after-delete / delete-directory all Passed via `file_management_live_certifier --destructive`; pre + post `fsck_hfs`/probe `--hfs-check` Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-hfs-file-management-cert/)
 - [x] Run APFS generated-layout destructive live File Explorer command-route certification. (2026-07-12, physical: wiped Disk 1 (28 GB USB flash), created a 128 MiB partition, generated a S.A.K. APFS container (raw-format Passed), then ran the destructive command-route cert -- create-directory / write-file (77 B) / read-after-write byte-exact (sha 931b0b41...) / duplicate-finder / advanced-search / delete-file / read-after-delete / delete-directory all Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-apfs-128mb-file-management-cert/)
 - [ ] Run ext4 read-only raw copy-out certification.
 - [ ] Run XFS/Btrfs blocker proof.
