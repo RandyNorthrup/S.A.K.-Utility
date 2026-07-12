@@ -112,6 +112,10 @@ FileExplorerItemModel* FileExplorerPane::itemModel() const {
     return m_item_model;
 }
 
+FileExplorerItemModel* FileExplorerPane::columnsPreviewModel() const {
+    return m_columns_preview_model;
+}
+
 FileExplorerSortFilterModel* FileExplorerPane::sortFilterModel() const {
     return m_sort_filter_model;
 }

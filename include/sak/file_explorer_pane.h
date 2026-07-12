@@ -30,6 +30,7 @@ public:
     explicit FileExplorerPane(QWidget* parent = nullptr);
 
     [[nodiscard]] FileExplorerItemModel* itemModel() const;
+    [[nodiscard]] FileExplorerItemModel* columnsPreviewModel() const;
     [[nodiscard]] FileExplorerSortFilterModel* sortFilterModel() const;
     [[nodiscard]] QTableView* tableView() const;
     [[nodiscard]] QListView* listView() const;

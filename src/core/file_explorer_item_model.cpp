@@ -152,6 +152,14 @@ QStringList FileExplorerItemModel::tagsForEntry(const FileManagementEntry& entry
     return m_tag_provider ? m_tag_provider(entry.path) : QStringList{};
 }
 
+QVariant FileExplorerItemModel::decorationForColumn(const FileManagementEntry& entry,
+                                                    const int column) const {
+    if (column != NameColumn || !m_icon_provider) {
+        return {};
+    }
+    return m_icon_provider(entry);
+}
+
 QVariant FileExplorerItemModel::displayForColumn(const FileManagementEntry& entry,
                                                  const int column) const {
     if (column == TagsColumn) {
@@ -169,6 +177,8 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     switch (role) {
     case Qt::DisplayRole:
         return displayForColumn(entry, index.column());
+    case Qt::DecorationRole:
+        return decorationForColumn(entry, index.column());
     case Qt::ToolTipRole:
         return entry.path;
     case Qt::TextAlignmentRole:
@@ -241,6 +251,15 @@ void FileExplorerItemModel::clear() {
 void FileExplorerItemModel::setTagProvider(TagProvider provider) {
     m_tag_provider = std::move(provider);
     refreshTags();
+}
+
+void FileExplorerItemModel::setIconProvider(IconProvider provider) {
+    m_icon_provider = std::move(provider);
+    if (!m_entries.isEmpty()) {
+        Q_EMIT dataChanged(index(0, NameColumn),
+                           index(m_entries.size() - 1, NameColumn),
+                           {Qt::DecorationRole});
+    }
 }
 
 void FileExplorerItemModel::refreshTags() {

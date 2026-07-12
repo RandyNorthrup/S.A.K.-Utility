@@ -7,13 +7,25 @@
 
 #include <QAbstractItemView>
 #include <QHeaderView>
+#include <QMenu>
 #include <QSettings>
+
+#include <array>
 
 namespace {
 
 constexpr const char* kExplorerDetailsViewGroup = "FileExplorerDetailsView";
 constexpr const char* kHeaderStateKey = "HeaderState";
 constexpr const char* kColumnWidthsKey = "ColumnWidths";
+
+// Files-style default column set: Name/Type/Size/Modified/Tags visible, the
+// power columns opt-in through the header context menu.
+constexpr std::array kDefaultHiddenColumns = {
+    static_cast<int>(sak::FileExplorerItemModel::CreatedColumn),
+    static_cast<int>(sak::FileExplorerItemModel::IdentifierColumn),
+    static_cast<int>(sak::FileExplorerItemModel::AttributesColumn),
+    static_cast<int>(sak::FileExplorerItemModel::PathColumn),
+};
 
 }  // namespace
 
@@ -31,6 +43,32 @@ FileExplorerDetailsView::FileExplorerDetailsView(QWidget* parent) : QTableView(p
     setShowGrid(false);
     verticalHeader()->setVisible(false);
     horizontalHeader()->setSectionsMovable(true);
+    horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(horizontalHeader(),
+            &QWidget::customContextMenuRequested,
+            this,
+            &FileExplorerDetailsView::showColumnMenu);
+}
+
+void FileExplorerDetailsView::showColumnMenu(const QPoint& position) {
+    if (!model()) {
+        return;
+    }
+    QMenu menu(this);
+    for (int column = 0; column < model()->columnCount(); ++column) {
+        if (column == FileExplorerItemModel::NameColumn) {
+            continue;  // Name always stays visible.
+        }
+        const QString title = model()->headerData(column, Qt::Horizontal).toString();
+        QAction* action = menu.addAction(title);
+        action->setCheckable(true);
+        action->setChecked(!isColumnHidden(column));
+        connect(action, &QAction::toggled, this, [this, column](const bool visible) {
+            setColumnHidden(column, !visible);
+            saveColumnState();
+        });
+    }
+    menu.exec(horizontalHeader()->mapToGlobal(position));
 }
 
 void FileExplorerDetailsView::setModel(QAbstractItemModel* model) {
@@ -100,7 +138,12 @@ void FileExplorerDetailsView::restoreColumnState() {
     const QByteArray state = settings.value(QString::fromLatin1(kHeaderStateKey)).toByteArray();
     const QVariantList widths = settings.value(QString::fromLatin1(kColumnWidthsKey)).toList();
     settings.endGroup();
-    if (!state.isEmpty()) {
+    if (state.isEmpty()) {
+        // First run (no saved layout): apply the Files-style default set.
+        for (const int column : kDefaultHiddenColumns) {
+            setColumnHidden(column, true);
+        }
+    } else {
         horizontalHeader()->restoreState(state);
     }
     for (int column = 0; column < widths.size() && column < model()->columnCount(); ++column) {

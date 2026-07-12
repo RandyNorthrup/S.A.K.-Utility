@@ -49,6 +49,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QSet>
 #include <QSettings>
 #include <QShortcut>
 #include <QSlider>
@@ -303,6 +304,19 @@ bool isCertificationTarget(const FileManagementTarget& target) {
     return !target.local_file_system && target.can_write_files &&
            targetMatchesFileSystem(
                target, {QStringLiteral("apfs"), QStringLiteral("hfs+"), QStringLiteral("hfsx")});
+}
+
+QString sidebarIconKeyForTarget(const FileManagementTarget& target) {
+    if (target.kind == FileManagementTargetKind::ImageFile) {
+        return QStringLiteral("image-file");
+    }
+    if (isCertificationTarget(target)) {
+        return QStringLiteral("shield");
+    }
+    if (isLocalFsTarget(target) || isMountedVolumeTarget(target) || isPartitionTarget(target)) {
+        return QStringLiteral("drive");
+    }
+    return QStringLiteral("file");
 }
 
 // Adds one command-palette row; returns its row index when enabled, else -1.
@@ -580,6 +594,8 @@ void FileManagementExplorerPanel::buildContentArea(QWidget* center, QVBoxLayout*
     m_pane = m_pane_a;
     m_item_model = m_pane->itemModel();
     installTagProvider(m_item_model);
+    installIconProvider(m_item_model);
+    installIconProvider(m_pane->columnsPreviewModel());
     m_status_label = m_pane->statusLabel();
     center_layout->addWidget(m_pane_splitter, 1);
 
@@ -841,14 +857,18 @@ void FileManagementExplorerPanel::appendSidebarHeader(const QString& text) {
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Header));
     item->setFlags(Qt::NoItemFlags);
     item->setToolTip(text);
+    QFont header_font = m_target_list->font();
+    header_font.setPointSize(ui::kFontSizeNote);
+    header_font.setWeight(QFont::DemiBold);
+    item->setFont(header_font);
 }
 
 void FileManagementExplorerPanel::appendSidebarTarget(const FileManagementTarget& target,
                                                       const int target_index) {
-    const auto icon = target.local_file_system ? QStyle::SP_DriveHDIcon : QStyle::SP_FileIcon;
+    const QIcon icon = FileExplorerIconRegistry::iconForKey(sidebarIconKeyForTarget(target));
     const QString label = QStringLiteral("%1  [%2]\n%3")
                               .arg(target.label, targetBadge(target), targetSubtitle(target));
-    auto* item = new QListWidgetItem(style()->standardIcon(icon), label, m_target_list);
+    auto* item = new QListWidgetItem(icon, label, m_target_list);
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Target));
     item->setData(kTargetIndexRole, target_index);
     item->setToolTip(QStringLiteral("%1\n%2").arg(
@@ -886,9 +906,10 @@ void FileManagementExplorerPanel::appendStaleFavoriteRow(const QString& target_i
     // A saved favorite whose target is not currently connected stays visible as a
     // disabled, warning-marked row so the user knows the pin still exists and will
     // resolve again when the device returns, rather than silently vanishing.
-    auto* item = new QListWidgetItem(style()->standardIcon(QStyle::SP_MessageBoxWarning),
-                                     tr("%1  [offline]").arg(target_id),
-                                     m_target_list);
+    auto* item =
+        new QListWidgetItem(FileExplorerIconRegistry::iconForKey(QStringLiteral("status-warning")),
+                            tr("%1  [offline]").arg(target_id),
+                            m_target_list);
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::StaleFavorite));
     item->setData(kSidebarTagRole, target_id);
     item->setFlags(Qt::NoItemFlags);
@@ -913,7 +934,7 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     m_target_list->clear();
 
     appendSidebarHeader(tr("Home"));
-    auto* home = new QListWidgetItem(style()->standardIcon(QStyle::SP_DirHomeIcon),
+    auto* home = new QListWidgetItem(FileExplorerIconRegistry::iconForKey(QStringLiteral("home")),
                                      tr("Home"),
                                      m_target_list);
     home->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Home));
@@ -931,9 +952,8 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     if (!tags.isEmpty()) {
         appendSidebarHeader(tr("Tags"));
         for (const QString& tag : tags) {
-            auto* item = new QListWidgetItem(style()->standardIcon(QStyle::SP_FileDialogListView),
-                                             tag,
-                                             m_target_list);
+            auto* item = new QListWidgetItem(
+                FileExplorerIconRegistry::iconForKey(QStringLiteral("tag")), tag, m_target_list);
             item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Tag));
             item->setData(kSidebarTagRole, tag);
             item->setToolTip(tr("Filter the current folder to items tagged '%1'").arg(tag));
@@ -2355,6 +2375,35 @@ void FileManagementExplorerPanel::installTagProvider(FileExplorerItemModel* mode
     });
 }
 
+void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* model) {
+    if (!model) {
+        return;
+    }
+    // Row icons come from the shared explorer registry (palette-tinted, so they
+    // stay legible in dark mode); the model itself stays GUI-free.
+    model->setIconProvider([](const FileManagementEntry& entry) -> QVariant {
+        static const QIcon folder_icon =
+            FileExplorerIconRegistry::iconForKey(QStringLiteral("folder"));
+        static const QIcon file_icon = FileExplorerIconRegistry::iconForKey(QStringLiteral("file"));
+        static const QIcon image_icon =
+            FileExplorerIconRegistry::iconForKey(QStringLiteral("image-file"));
+        if (entry.directory) {
+            return folder_icon;
+        }
+        static const QSet<QString> kImageSuffixes = {QStringLiteral("png"),
+                                                     QStringLiteral("jpg"),
+                                                     QStringLiteral("jpeg"),
+                                                     QStringLiteral("gif"),
+                                                     QStringLiteral("bmp"),
+                                                     QStringLiteral("webp"),
+                                                     QStringLiteral("svg"),
+                                                     QStringLiteral("ico"),
+                                                     QStringLiteral("heic")};
+        const QString suffix = QFileInfo(entry.name).suffix().toLower();
+        return kImageSuffixes.contains(suffix) ? image_icon : file_icon;
+    });
+}
+
 void FileManagementExplorerPanel::clearCurrentTagFilter() {
     if (m_pane && m_pane->sortFilterModel()) {
         m_pane->sortFilterModel()->clearTagFilter();
@@ -3435,6 +3484,8 @@ void FileManagementExplorerPanel::ensureSecondPane() {
     m_pane_b = new FileExplorerPane(m_pane_splitter);
     m_pane_splitter->addWidget(m_pane_b);
     installTagProvider(m_pane_b->itemModel());
+    installIconProvider(m_pane_b->itemModel());
+    installIconProvider(m_pane_b->columnsPreviewModel());
     connectPaneSignals(m_pane_b, 1);
 }
 
@@ -3450,6 +3501,7 @@ void FileManagementExplorerPanel::activatePane(int index) {
     m_pane = (index == 0) ? m_pane_a : m_pane_b;
     m_item_model = m_pane->itemModel();
     installTagProvider(m_item_model);
+    installIconProvider(m_item_model);
     m_status_label = m_pane->statusLabel();
     m_current_path = m_pane_state.location.path;
     if (m_path_edit) {

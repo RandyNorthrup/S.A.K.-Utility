@@ -56,6 +56,10 @@ public:
     /// panel so the model stays decoupled from the tag store; unset = no Tags column data.
     using TagProvider = std::function<QStringList(const QString& path)>;
 
+    /// Callback that returns the row icon for an entry. Injected by the panel so
+    /// the model stays decoupled from the GUI icon registry; unset = no row icons.
+    using IconProvider = std::function<QVariant(const FileManagementEntry& entry)>;
+
     explicit FileExplorerItemModel(QObject* parent = nullptr);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -73,6 +77,8 @@ public:
     void setShowFileExtensions(bool show);
     /// Set the tag lookup used by the Tags column; pass a null function to disable it.
     void setTagProvider(TagProvider provider);
+    /// Set the icon lookup used for the Name column; pass a null function to disable it.
+    void setIconProvider(IconProvider provider);
     /// Notify views that tag data changed (e.g. after editing tags) so the column repaints.
     void refreshTags();
 
@@ -87,10 +93,12 @@ public:
 private:
     [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
     [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant decorationForColumn(const FileManagementEntry& entry, int column) const;
 
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};
     TagProvider m_tag_provider;
+    IconProvider m_icon_provider;
 };
 
 }  // namespace sak

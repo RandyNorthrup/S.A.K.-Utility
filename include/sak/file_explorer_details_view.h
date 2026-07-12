@@ -25,6 +25,9 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
+    /// Header context menu with one checkable action per optional column.
+    void showColumnMenu(const QPoint& position);
+
     bool m_save_connections_installed{false};
 };
 
