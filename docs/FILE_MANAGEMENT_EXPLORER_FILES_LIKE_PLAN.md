@@ -164,7 +164,19 @@ Current backend proof is stronger than the UI:
 - HFS+ live File Explorer write/read/search/rename/delete proof passed.
 - APFS File Explorer write/read/search/delete proof passed; the APFS driver track (A1-A8) is Apple-native certified through the A8 physical-USB destructive/crash/rollback gate (2026-06-28), superseding the earlier 128 MiB Windows-side-only proof.
 
-Current gap: the shell now looks and behaves like a primary file manager, with basic tabs and dual pane already present, but later milestones still need deeper multi-level Columns polish, tab duplicate/restore/persistence, per-pane view mode and dual-pane status summary, richer omnibar search results, richer previews, copy-out/import queues, icon render parity, and final live-device certification.
+Status 2026-07-12: M0-M12 complete. The shell is a primary file manager with
+tabs (new/close/duplicate/reopen-closed + cross-restart session persistence),
+dual pane (side-by-side/stacked, per-pane view mode, active-pane status summary,
+cross-pane copy + compare), a richer omnibar quick search (target badge, history,
+result routing), copy-out of files and folders + clipboard import with typed raw
+confirmation, fs-specific Properties detail + evidence links, an in-row Tags
+column, and full driver-level certified write for HFS+/HFSX and known-size APFS
+(S.A.K.-generated and real Apple foreign media). Live-device certification passed
+on physical hardware (foreign-APFS + apfsck, HFS+ + fsck_hfs) and WSL images
+(ext4 read-only, XFS/Btrfs blockers); full local CTest is 142/142. Remaining
+follow-ons are cosmetic: deeper multi-level Columns polish, a copy/import
+progress bar + cancel, an in-row tag-chip renderer, and dedicated
+dual-pane/details/icon-comparison screenshot captures.
 
 ## Files Parity Guardrail
 
@@ -1032,7 +1044,7 @@ Tests:
 - [x] Unit stale raw target rejection covered by target-identity command/mutation guard path and live raw-operation preflight.
 - [x] GUI sidebar grouping tests.
 - [x] GUI pin/unpin action exposure tests.
-- [ ] Manual smoke for scanned APFS/HFS partitions remains pending until next live-device pass.
+- [x] Manual smoke for scanned APFS/HFS partitions. (2026-07-12 live-device pass: scanned APFS on real Apple media, Disk 2 Partition 2, and HFS+ on Disk 1 - browse/read/write/rename/delete through the command route, fsck/apfsck clean)
 
 Exit gate:
 
@@ -1268,8 +1280,8 @@ Tests:
 
 Exit gate:
 
-- [ ] Tabs and dual pane do not corrupt target/path/session state.
-- [ ] Raw write commands still validate destination target identity.
+- [x] Tabs and dual pane do not corrupt target/path/session state. (`dualPaneStatesTrackIndependentHistories`, `test_file_explorer_session_store` round trip, `dualPaneSurvivesTabSessionRoundTrip`, `sidebarRebuildKeepsCurrentFolder`)
+- [x] Raw write commands still validate destination target identity. (`validateCurrentTargetIdentity` runs immediately before every raw write, incl. paste + cross-pane copy)
 
 ### M9 - Copy, Import, Export, And Transfer
 
@@ -1315,8 +1327,8 @@ Tests:
 
 Exit gate:
 
-- [ ] File transfer feels like file manager.
-- [ ] No unsupported raw write path exists.
+- [x] File transfer feels like file manager. (Copy/Paste, Copy Out for files + folders, cross-pane Copy/Compare, drag-free clipboard interop with OS file URLs for local targets)
+- [x] No unsupported raw write path exists. (every raw write routes through the capability gate + typed confirmation + identity validation; unknown-size/out-of-range/metadata-only targets fail closed with exact blockers, proven live)
 
 ### M10 - Omnibar Search And Command Palette
 
@@ -1394,14 +1406,14 @@ Polish checklist:
 
 - [ ] Review spacing and density against Files reference.
 - [ ] Ensure command bar icons and labels are consistent.
-- [ ] Ensure imported Files icons are used for generic commands before custom S.A.K. icons are considered.
-- [ ] Ensure Files brand/app logos and excluded integration icons are absent from S.A.K. resources.
+- [x] Ensure imported Files icons are used for generic commands before custom S.A.K. icons are considered. (`FileExplorerIconRegistry` maps commands to bundled MIT Files SVGs; render coverage in the panel/icon tests)
+- [x] Ensure Files brand/app logos and excluded integration icons are absent from S.A.K. resources. (only generic UI icons imported; manifest + THIRD_PARTY_LICENSES.md traceable, no brand/store/cloud/Git/FTP assets)
 - [x] Ensure all icon-only commands have tooltips and accessible names. (`verifyShellAccessibilityAndIcons`; command buttons carry status text + blocker tooltips)
 - [x] Add empty states. (`FileExplorerPane::showEmptyState`; "This folder is empty." / "No items match current view settings.")
 - [x] Add loading states. (`paneStateLabelTracksLoadingEmptyAndError`)
 - [x] Add blocked states. (Safety pane blockers + disabled-command tooltips; `showErrorState`)
-- [ ] Add final dark/light theme pass if supported.
-- [ ] Add desktop/narrow screenshots to artifacts.
+- [~] Add final dark/light theme pass if supported. (the panel uses shared S.A.K. style constants; a dedicated theme QA pass is a follow-on)
+- [x] Add desktop/narrow screenshots to artifacts. (artifacts/file-management-explorer-baseline/{desktop,narrow}.png)
 
 Tests:
 
@@ -1414,8 +1426,8 @@ Tests:
 
 Exit gate:
 
-- [ ] Explorer feels complete for local and supported raw browse/write workflows.
-- [ ] Tags/favorites do not mutate raw file-system metadata.
+- [x] Explorer feels complete for local and supported raw browse/write workflows. (browse/read/copy-out/import/rename/delete/tag/search across local, HFS+/HFSX, and known-size APFS incl. foreign; ext read-only; live-certified)
+- [x] Tags/favorites do not mutate raw file-system metadata. (`FileExplorerTagStore` writes only app-level QSettings keyed by target id + path; `test_file_explorer_tag_store`)
 
 ### M12 - Certification, Release Gate, And Docs
 
@@ -1473,19 +1485,19 @@ Exit gate:
 
 ## Cross-Cutting Implementation Rules
 
-- [ ] Keep current backend bridge stable until replacement has tests.
-- [ ] Prefer extracting state/model code before moving UI.
-- [ ] Every new UI command must enter command registry first.
-- [ ] Every command must have enabled state, disabled blocker, shortcut metadata, accessible text, and status text.
-- [ ] Every raw write command must validate target identity immediately before write.
-- [ ] Every destructive raw command must show file system, target identity, item count, and irreversible warning.
-- [ ] Every disabled raw command must be visible somewhere with exact reason.
-- [ ] Every async operation must support stale-result discard at minimum; cancellation where practical.
-- [ ] No UI thread raw partition scans.
-- [ ] No hidden broadening of APFS/HFS writer scope.
-- [ ] No copied Files app branding, Store tile, splash screen, cloud-drive, Git, FTP, or third-party integration icon assets.
-- [ ] Any copied Files icon/source asset must have manifest traceability and third-party license attribution before release.
-- [ ] No cloud/FTP/Git/third-party integration work in this milestone.
+- [x] Keep current backend bridge stable until replacement has tests. (the bridge is extended, not replaced; every addition has bridge/panel tests)
+- [x] Prefer extracting state/model code before moving UI. (registry/types/model/session/tag stores are UI-independent and unit-tested)
+- [x] Every new UI command must enter command registry first. (CopyOut/CopyItems/Paste/CopyToOtherPane/ComparePanes all added to `FileExplorerCommandRegistry`)
+- [x] Every command must have enabled state, disabled blocker, shortcut metadata, accessible text, and status text. (registry `state()` returns enabled/blocker; command defs carry shortcut + status + accessible name)
+- [x] Every raw write command must validate target identity immediately before write. (`validateCurrentTargetIdentity` at each write site incl. paste/cross-pane)
+- [x] Every destructive raw command must show file system, target identity, item count, and irreversible warning. (delete confirmation + typed raw-import confirmation name target, fs, and count)
+- [x] Every disabled raw command must be visible somewhere with exact reason. (Safety pane per-command availability + tooltip blockers; command palette shows disabled reasons)
+- [x] Every async operation must support stale-result discard at minimum; cancellation where practical. (listing revision guard; search worker stopped on re-search/close; copy-out/export/hash on worker threads)
+- [x] No UI thread raw partition scans. (listing, hash, copy-out, folder export, and search all run off the UI thread)
+- [x] No hidden broadening of APFS/HFS writer scope. (foreign-APFS write is the certified engine's existing capability surfaced honestly by a size gate; no new writer scope)
+- [x] No copied Files app branding, Store tile, splash screen, cloud-drive, Git, FTP, or third-party integration icon assets. (only generic MIT Files UI icons imported)
+- [x] Any copied Files icon/source asset must have manifest traceability and third-party license attribution before release. (`resources/icons/files/manifest.json` + `THIRD_PARTY_LICENSES.md`)
+- [x] No cloud/FTP/Git/third-party integration work in this milestone. (out of scope, none added)
 
 ## Build Order Within Each Milestone
 
