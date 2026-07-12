@@ -206,6 +206,34 @@ private Q_SLOTS:
         QCOMPARE(proxy.rowCount(), 0);
     }
 
+    void proxyTagFilterRestrictsToTaggedPaths() {
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("a.txt"), 1),
+                          fileEntry(QStringLiteral("b.txt"), 2),
+                          fileEntry(QStringLiteral("c.txt"), 3)});
+
+        sak::FileExplorerSortFilterModel proxy;
+        proxy.setSourceModel(&model);
+        QVERIFY(!proxy.tagFilterActive());
+        QCOMPARE(proxy.rowCount(), 3);
+
+        proxy.setTagFilter({QStringLiteral("/a.txt"), QStringLiteral("/c.txt")});
+        QVERIFY(proxy.tagFilterActive());
+        QCOMPARE(proxy.rowCount(), 2);
+        QCOMPARE(proxy.index(0, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("a.txt"));
+        QCOMPARE(proxy.index(1, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("c.txt"));
+
+        // An empty active set hides everything.
+        proxy.setTagFilter({});
+        QCOMPARE(proxy.rowCount(), 0);
+
+        proxy.clearTagFilter();
+        QVERIFY(!proxy.tagFilterActive());
+        QCOMPARE(proxy.rowCount(), 3);
+    }
+
     void proxySortKeepsDirectoriesFirst() {
         sak::FileExplorerItemModel model;
         model.setEntries({fileEntry(QStringLiteral("z.bin"), 400),

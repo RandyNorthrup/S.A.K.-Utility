@@ -8,6 +8,7 @@
 
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_session_store.h"
+#include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/storage_inventory_worker.h"
@@ -70,6 +71,7 @@ constexpr int kExplorerListMaxEntries = 10'000;
 constexpr uint64_t kExplorerHashMaxBytes = 512ULL * 1024 * 1024;
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
+constexpr int kSidebarTagRole = Qt::UserRole + 7;
 constexpr int kCommandIdRole = Qt::UserRole + 3;
 constexpr int kCommandEnabledRole = Qt::UserRole + 4;
 constexpr int kCommandBlockerRole = Qt::UserRole + 5;
@@ -85,6 +87,7 @@ constexpr int kSizeSliderSingleStep = 8;
 constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
 constexpr const char* kTabSessionGroup = "FileManagementExplorer/TabSession";
+constexpr const char* kTagStoreGroup = "FileManagementExplorer/Tags";
 constexpr const char* kFavoriteTargetIdsKey = "FavoriteTargetIds";
 constexpr const char* kRecentTargetIdsKey = "RecentTargetIds";
 constexpr const char* kLastTargetIdKey = "LastTargetId";
@@ -97,6 +100,7 @@ enum class SidebarEntryKind {
     Header = 0,
     Target = 1,
     Home = 2,
+    Tag = 3,
 };
 
 QString fileSystemBadge(const FileManagementTarget& target) {
@@ -868,6 +872,19 @@ void FileManagementExplorerPanel::rebuildTargetList(const QString& preferred_tar
     appendSidebarTargetsById(tr("Recent"), m_recent_target_ids);
     appendSidebarTargetsWhere(tr("Certification Targets"), &isCertificationTarget);
 
+    const QStringList tags = allKnownTags();
+    if (!tags.isEmpty()) {
+        appendSidebarHeader(tr("Tags"));
+        for (const QString& tag : tags) {
+            auto* item = new QListWidgetItem(style()->standardIcon(QStyle::SP_FileDialogListView),
+                                             tag,
+                                             m_target_list);
+            item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Tag));
+            item->setData(kSidebarTagRole, tag);
+            item->setToolTip(tr("Filter the current folder to items tagged '%1'").arg(tag));
+        }
+    }
+
     m_target_list->blockSignals(false);
     if (!current_id.isEmpty()) {
         selectTargetById(current_id);
@@ -1130,6 +1147,7 @@ void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool 
         m_pane_state.selection.clear();
     }
     m_current_path = m_pane_state.location.path;
+    clearCurrentTagFilter();  // tag filter is scoped to one folder view
     loadViewSettingsForCurrentLocation();
     m_path_edit->setText(m_current_path);
     if (m_preview_text) {
@@ -1657,6 +1675,85 @@ void FileManagementExplorerPanel::showSelectedItemProperties() {
     }
 }
 
+QStringList FileManagementExplorerPanel::tagsForSelectedItem() const {
+    const FileExplorerSelection selection = currentSelection();
+    if (!selection.hasSingleEntry()) {
+        return {};
+    }
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    if (target_id.isEmpty()) {
+        return {};
+    }
+    QSettings settings;
+    return FileExplorerTagStore::tagsFor(
+        settings, QString::fromLatin1(kTagStoreGroup), target_id, selection.entries.first().path);
+}
+
+QStringList FileManagementExplorerPanel::allKnownTags() const {
+    QSettings settings;
+    return FileExplorerTagStore::allTags(settings, QString::fromLatin1(kTagStoreGroup));
+}
+
+void FileManagementExplorerPanel::clearCurrentTagFilter() {
+    if (m_pane && m_pane->sortFilterModel()) {
+        m_pane->sortFilterModel()->clearTagFilter();
+    }
+}
+
+void FileManagementExplorerPanel::applyTagFilter(const QString& tag) {
+    if (!m_pane || !m_pane->sortFilterModel()) {
+        return;
+    }
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    QSettings settings;
+    const auto items =
+        FileExplorerTagStore::itemsWithTag(settings, QString::fromLatin1(kTagStoreGroup), tag);
+    QSet<QString> paths;
+    for (const FileExplorerTaggedItem& item : items) {
+        if (item.target_id == target_id) {
+            paths.insert(item.path);
+        }
+    }
+    m_pane->sortFilterModel()->setTagFilter(paths);
+    Q_EMIT statusMessage(tr("Filtered current folder to %1 item(s) tagged '%2'")
+                             .arg(QString::number(paths.size()), tag),
+                         sak::kTimerStatusMessageMs);
+}
+
+void FileManagementExplorerPanel::editSelectedItemTags() {
+    const FileExplorerSelection selection = currentSelection();
+    if (!selection.hasSingleEntry()) {
+        Q_EMIT statusMessage(tr("Select a single item to tag."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    if (target_id.isEmpty()) {
+        return;
+    }
+    const QString path = selection.entries.first().path;
+    const QString current = tagsForSelectedItem().join(QStringLiteral(", "));
+    bool accepted = false;
+    const QString entered = QInputDialog::getText(this,
+                                                  tr("Edit Tags"),
+                                                  tr("Comma-separated tags for %1 (S.A.K. metadata "
+                                                     "only, never written to the file system):")
+                                                      .arg(selection.entries.first().name),
+                                                  QLineEdit::Normal,
+                                                  current,
+                                                  &accepted);
+    if (!accepted) {
+        return;
+    }
+    const QStringList tags = entered.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    QSettings settings;
+    FileExplorerTagStore::setTags(
+        settings, QString::fromLatin1(kTagStoreGroup), target_id, path, tags);
+    updateDetailsPane();
+    rebuildTargetList();
+    Q_EMIT statusMessage(tr("Tags updated for %1").arg(selection.entries.first().name),
+                         sak::kTimerStatusMessageMs);
+}
+
 void FileManagementExplorerPanel::togglePreviewPane() {
     if (m_details_tabs) {
         m_details_tabs->setVisible(!m_details_tabs->isVisible());
@@ -1842,6 +1939,9 @@ QStringList FileManagementExplorerPanel::buildDetailsProperties(
     if (selection.count() == 1) {
         properties.append(QString());
         properties.append(describeEntry(selection.entries.first(), target.file_system));
+        const QStringList tags = tagsForSelectedItem();
+        properties.append(tags.isEmpty() ? tr("Tags: (none)")
+                                         : tr("Tags: %1").arg(tags.join(QStringLiteral(", "))));
     } else if (!selection.isEmpty()) {
         properties.append(tr("Selected: %1 item(s)").arg(selection.count()));
         properties.append(selection.paths().join(QStringLiteral("\n")));
@@ -2161,6 +2261,11 @@ void FileManagementExplorerPanel::onTargetChanged(int index) {
 
     auto* item = m_target_list->item(index);
     if (!item) {
+        return;
+    }
+    if (static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt()) ==
+        SidebarEntryKind::Tag) {
+        applyTagFilter(item->data(kSidebarTagRole).toString());
         return;
     }
     const int target_index = resolveSidebarTargetIndex(item);
@@ -2694,6 +2799,14 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
+    auto* editTags = menu.addAction(tr("Edit Tags..."));
+    editTags->setObjectName(QStringLiteral("fileExplorerEditTagsAction"));
+    editTags->setEnabled(context.pane.selection.hasSingleEntry());
+    editTags->setToolTip(
+        tr("Tag this item with S.A.K. metadata (never written to the file "
+           "system)."));
+    connect(
+        editTags, &QAction::triggered, this, &FileManagementExplorerPanel::editSelectedItemTags);
     menu.addSeparator();
     addCommandMenuAction(&menu, FileExplorerCommandId::NewFolder, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::WriteFile, context);

@@ -96,6 +96,25 @@ bool FileExplorerSortFilterModel::showHiddenItems() const {
     return m_show_hidden_items;
 }
 
+void FileExplorerSortFilterModel::setTagFilter(const QSet<QString>& paths) {
+    m_tag_filter_paths = paths;
+    m_tag_filter_active = true;
+    invalidate();
+}
+
+void FileExplorerSortFilterModel::clearTagFilter() {
+    if (!m_tag_filter_active) {
+        return;
+    }
+    m_tag_filter_active = false;
+    m_tag_filter_paths.clear();
+    invalidate();
+}
+
+bool FileExplorerSortFilterModel::tagFilterActive() const {
+    return m_tag_filter_active;
+}
+
 bool FileExplorerSortFilterModel::lessThan(const QModelIndex& source_left,
                                            const QModelIndex& source_right) const {
     const bool left_directory = directoryAt(source_left);
@@ -122,6 +141,12 @@ bool FileExplorerSortFilterModel::filterAcceptsRow(const int source_row,
         sourceModel()->index(source_row, FileExplorerItemModel::NameColumn, source_parent);
     const QString entry_name = name_index.data(FileExplorerItemModel::EntryNameRole).toString();
     if (!m_show_hidden_items && entry_name.startsWith(QLatin1Char('.'))) {
+        return false;
+    }
+
+    if (m_tag_filter_active &&
+        !m_tag_filter_paths.contains(
+            name_index.data(FileExplorerItemModel::EntryPathRole).toString())) {
         return false;
     }
 

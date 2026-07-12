@@ -130,6 +130,11 @@ private:
     void toggleHiddenItems();
     void toggleFileExtensions();
     void showSelectedItemProperties();
+    void editSelectedItemTags();
+    void applyTagFilter(const QString& tag);
+    void clearCurrentTagFilter();
+    [[nodiscard]] QStringList tagsForSelectedItem() const;
+    [[nodiscard]] QStringList allKnownTags() const;
     void togglePreviewPane();
     void resetListingForUnavailableTarget(const QString& message, bool is_error);
     int deleteSelectedEntries(const FileManagementTarget& target,

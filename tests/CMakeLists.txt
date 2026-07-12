@@ -1044,6 +1044,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
         ../src/core/file_explorer_session_store.cpp
+        ../src/core/file_explorer_tag_store.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/apfs_crypto.cpp

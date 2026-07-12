@@ -1377,14 +1377,14 @@ Recent checklist:
 
 Tags checklist:
 
-- [ ] Define app-level tag storage.
-- [ ] Tag selected item.
-- [ ] Remove tag.
-- [ ] Show tag badges.
-- [ ] Add tag column in details view.
-- [ ] Add tag group in sidebar.
-- [ ] Filter by tag.
-- [ ] Do not write tags into raw HFS/APFS metadata.
+- [x] Define app-level tag storage. (`FileExplorerTagStore`, keyed by target id + item path; `test_file_explorer_tag_store`)
+- [x] Tag selected item. (table context-menu "Edit Tags..." -> `editSelectedItemTags`)
+- [x] Remove tag. (empty tag entry removes the record via `FileExplorerTagStore::setTags`)
+- [x] Show tag badges. (Properties pane shows a "Tags: ..." line for the selected item; an in-row details chip column remains a follow-on)
+- [ ] Add tag column in details view. (would couple the item model to the tag store; deferred)
+- [x] Add tag group in sidebar. (sidebar "Tags" group lists all known tags)
+- [x] Filter by tag. (`FileExplorerSortFilterModel::setTagFilter` + sidebar tag click -> `applyTagFilter`; `proxyTagFilterRestrictsToTaggedPaths`)
+- [x] Do not write tags into raw HFS/APFS metadata. (tags live only in app QSettings, never in the file system)
 
 Polish checklist:
 
