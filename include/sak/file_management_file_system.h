@@ -109,6 +109,16 @@ struct FileManagementHashResult {
     QStringList blockers;
 };
 
+/// Result of copying a source file out to a local host destination.
+struct FileManagementExportResult {
+    bool ok{false};
+    QString destination;        ///< Host path written.
+    QString sha256;             ///< Lowercase hex SHA-256 of the bytes written.
+    uint64_t bytes_written{0};  ///< Number of bytes copied to the destination.
+    bool capped{false};         ///< True when a raw source was truncated at the read cap.
+    QStringList blockers;
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -160,6 +170,15 @@ public:
     /// writeFile for copies whose size is not known-small.
     [[nodiscard]] static FileManagementMutationResult writeFileFromHostPath(
         const FileManagementTarget& target, const QString& path, const QString& host_file_path);
+    /// Copy @p source_path from @p target out to a local host file @p destination_path.
+    /// Local sources are copied in full (streamed, no cap) and hashed; raw/non-native
+    /// sources are read through the file-system reader up to @p max_bytes and marked
+    /// @ref FileManagementExportResult::capped when that limit is hit.
+    [[nodiscard]] static FileManagementExportResult copyFileToHost(
+        const FileManagementTarget& target,
+        const QString& source_path,
+        const QString& destination_path,
+        uint64_t max_bytes);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
     [[nodiscard]] static FileManagementMutationResult renameEntry(

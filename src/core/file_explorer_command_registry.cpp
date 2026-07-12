@@ -54,6 +54,7 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::CopyItemPath, Group::Target},
         {Id::Preview, Group::Safety},
         {Id::Hash, Group::Safety},
+        {Id::CopyOut, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -198,8 +199,8 @@ std::optional<FileExplorerCommandState> navigationOverrideState(
 
 bool requiresSingleSelection(const FileExplorerCommandId id) {
     using enum FileExplorerCommandId;
-    static constexpr auto kSingleSelectionCommands =
-        std::to_array({Open, OpenInNewTab, OpenInSecondPane, Preview, Properties, Rename, Hash});
+    static constexpr auto kSingleSelectionCommands = std::to_array(
+        {Open, OpenInNewTab, OpenInSecondPane, Preview, Properties, Rename, Hash, CopyOut});
     return std::ranges::find(kSingleSelectionCommands, id) != kSingleSelectionCommands.end();
 }
 
@@ -219,18 +220,26 @@ std::optional<FileExplorerCommandState> selectionRequirementState(
 }
 
 // Target capability requirements (write / browse / read).
+bool isBrowseCommand(const FileExplorerCommandId id) {
+    using enum FileExplorerCommandId;
+    return id == Open || id == OpenInNewTab || id == OpenInSecondPane;
+}
+
+bool isReadCommand(const FileExplorerCommandId id) {
+    using enum FileExplorerCommandId;
+    return id == Preview || id == Hash || id == CopyOut;
+}
+
 std::optional<FileExplorerCommandState> capabilityState(const FileExplorerCommandId id,
                                                         const FileExplorerCommandContext& context,
                                                         const FileExplorerCommand& entry) {
-    using enum FileExplorerCommandId;
     if (entry.write_operation && !context.target.can_write_files) {
         return disabledState(entry, writeBlocker(context.target));
     }
-    if (id == Open || id == OpenInNewTab || id == OpenInSecondPane) {
-        if (!context.target.can_browse) {
-            return disabledState(entry, browseBlocker(context.target));
-        }
-    } else if ((id == Preview || id == Hash) && !context.target.can_read_files) {
+    if (isBrowseCommand(id) && !context.target.can_browse) {
+        return disabledState(entry, browseBlocker(context.target));
+    }
+    if (isReadCommand(id) && !context.target.can_read_files) {
         return disabledState(entry, readBlocker(context.target));
     }
     return std::nullopt;
@@ -303,6 +312,11 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Hash"),
                     QStringLiteral("Compute the SHA-256 of the selected file."),
                     QStringLiteral("Ctrl+Shift+H"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::CopyOut,
+                    QStringLiteral("Copy Out..."),
+                    QStringLiteral("Copy the selected file out to a local destination."),
+                    QStringLiteral("Ctrl+Shift+O"),
                     {.selection_required = true}),
         makeCommand(FileExplorerCommandId::SelectAll,
                     QStringLiteral("Select All"),
@@ -477,6 +491,7 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::DuplicateTab, "duplicate-tab"},
         {Id::ReopenClosedTab, "reopen-closed-tab"},
         {Id::Hash, "hash"},
+        {Id::CopyOut, "copy-out"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

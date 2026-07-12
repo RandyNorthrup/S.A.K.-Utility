@@ -196,6 +196,54 @@ private Q_SLOTS:
         QCOMPARE(result.sha256, expected);
     }
 
+    void copyFileToHostCopiesLocalFileByteExactWithHash() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QDir dir(temp.path());
+        const QString srcPath = dir.filePath(QStringLiteral("source.bin"));
+        // Payload spans several copy windows and is not window-aligned.
+        QByteArray payload(3'000'003, Qt::Uninitialized);
+        for (qsizetype i = 0; i < payload.size(); ++i) {
+            payload[i] = static_cast<char>((i * 37 + 5) & 0xFF);
+        }
+        {
+            QFile sf(srcPath);
+            QVERIFY(sf.open(QIODevice::WriteOnly));
+            QCOMPARE(sf.write(payload), static_cast<qint64>(payload.size()));
+        }
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const QString destPath = dir.filePath(QStringLiteral("exported.bin"));
+        const auto result = sak::FileManagementFileSystemBridge::copyFileToHost(
+            target, srcPath, destPath, 512ULL * 1024 * 1024);
+
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QVERIFY(!result.capped);
+        QCOMPARE(result.bytes_written, static_cast<uint64_t>(payload.size()));
+
+        QFile df(destPath);
+        QVERIFY(df.open(QIODevice::ReadOnly));
+        QCOMPARE(df.readAll(), payload);
+
+        const QString expected = QString::fromLatin1(
+            QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+        QCOMPARE(result.sha256, expected);
+    }
+
+    void copyFileToHostFailsClosedWhenSourceMissing() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QDir dir(temp.path());
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
+        const QString destPath = dir.filePath(QStringLiteral("out.bin"));
+        const auto result = sak::FileManagementFileSystemBridge::copyFileToHost(
+            target, dir.filePath(QStringLiteral("nope.bin")), destPath, 1024);
+        QVERIFY(!result.ok);
+        QVERIFY(!result.blockers.isEmpty());
+        // The destination is not left behind on failure.
+        QVERIFY(!QFile::exists(destPath));
+    }
+
     void identifierLabelIsFileSystemSpecific() {
         using Bridge = sak::FileManagementFileSystemBridge;
         QCOMPARE(Bridge::identifierLabel(QStringLiteral("APFS")), QStringLiteral("Object ID"));

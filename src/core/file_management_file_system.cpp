@@ -788,6 +788,95 @@ FileManagementHashResult FileManagementFileSystemBridge::hashFile(
 
 namespace {
 
+// Stream a local source file into an already-open destination, hashing as it goes.
+// Returns false and appends a blocker on any read/write error.
+bool streamLocalSourceOut(const QString& local,
+                          QFile& dest,
+                          QCryptographicHash& hash,
+                          FileManagementExportResult& result) {
+    QFile src(local);
+    if (!src.open(QIODevice::ReadOnly)) {
+        result.blockers.append(QStringLiteral("Could not open source %1.").arg(local));
+        return false;
+    }
+    constexpr qint64 kWindowBytes = 1 << 20;
+    while (!src.atEnd()) {
+        const QByteArray chunk = src.read(kWindowBytes);
+        if (chunk.isEmpty()) {
+            if (src.error() != QFileDevice::NoError) {
+                result.blockers.append(
+                    QStringLiteral("Read error on %1: %2").arg(local, src.errorString()));
+                return false;
+            }
+            break;
+        }
+        if (dest.write(chunk) != chunk.size()) {
+            result.blockers.append(QStringLiteral("Write error: %1").arg(dest.errorString()));
+            return false;
+        }
+        hash.addData(chunk);
+        result.bytes_written += static_cast<uint64_t>(chunk.size());
+    }
+    return true;
+}
+
+// Read a raw/non-native source through its reader (capped) into an open destination.
+bool writeRawSourceOut(const FileManagementReadResult& read,
+                       QFile& dest,
+                       QCryptographicHash& hash,
+                       uint64_t max_bytes,
+                       FileManagementExportResult& result) {
+    if (!read.ok) {
+        result.blockers = read.blockers;
+        return false;
+    }
+    if (dest.write(read.data) != read.data.size()) {
+        result.blockers.append(QStringLiteral("Write error: %1").arg(dest.errorString()));
+        return false;
+    }
+    hash.addData(read.data);
+    result.bytes_written = static_cast<uint64_t>(read.data.size());
+    result.capped = max_bytes != 0 && static_cast<uint64_t>(read.data.size()) >= max_bytes;
+    return true;
+}
+
+}  // namespace
+
+FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
+    const FileManagementTarget& target,
+    const QString& source_path,
+    const QString& destination_path,
+    uint64_t max_bytes) {
+    FileManagementExportResult result;
+    result.destination = destination_path;
+
+    QFile dest(destination_path);
+    if (!dest.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        result.blockers.append(
+            QStringLiteral("Could not open destination %1 for writing.").arg(destination_path));
+        return result;
+    }
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const QString local = source_path.trimmed().isEmpty() ? target.root_path : source_path;
+    const bool ok =
+        target.local_file_system
+            ? streamLocalSourceOut(local, dest, hash, result)
+            : writeRawSourceOut(
+                  readFile(target, source_path, max_bytes), dest, hash, max_bytes, result);
+
+    if (!ok) {
+        dest.remove();
+        return result;
+    }
+    dest.close();
+    result.ok = true;
+    result.sha256 = QString::fromLatin1(hash.result().toHex());
+    return result;
+}
+
+namespace {
+
 constexpr int kPreviewHexDumpBytes = 4096;
 constexpr int kPreviewHexBytesPerRow = 16;
 

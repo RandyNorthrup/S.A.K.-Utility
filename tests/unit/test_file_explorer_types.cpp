@@ -337,6 +337,25 @@ private Q_SLOTS:
         QVERIFY(!blocked.blocker.isEmpty());
     }
 
+    void registryCopyOutNeedsSingleReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: nothing to copy out.
+        QVERIFY(!sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyOut,
+                                                         contextFor(writableLocalTarget(), false))
+                     .enabled);
+        // A single readable file, even on a read-only raw target, can be copied out.
+        QVERIFY(sak::FileExplorerCommandRegistry::state(
+                    FileExplorerCommandId::CopyOut,
+                    contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true))
+                    .enabled);
+        // A target with no read capability blocks copy-out with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyOut,
+            contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        QVERIFY(!blocked.blocker.isEmpty());
+    }
+
     void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
         // Tabs and dual pane are shipped features, but the registry still exposes
         // a build-availability gate: when a host reports it cannot host tabs or a

@@ -110,6 +110,7 @@ private:
     void populateTable(const FileManagementListResult& result);
     void previewSelectedFile();
     void hashSelectedFile();
+    void copySelectedFileOut();
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;
@@ -124,6 +125,7 @@ private:
     void executeCommand(FileExplorerCommandId command);
     bool dispatchNavigationCommand(FileExplorerCommandId command);
     bool dispatchSelectionCommand(FileExplorerCommandId command);
+    bool dispatchSelectionEditCommand(FileExplorerCommandId command);
     bool dispatchFileViewCommand(FileExplorerCommandId command);
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();

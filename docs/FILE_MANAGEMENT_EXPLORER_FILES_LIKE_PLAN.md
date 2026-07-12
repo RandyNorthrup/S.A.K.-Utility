@@ -1272,12 +1272,12 @@ Goal: implement actual file-manager transfer workflows while preserving raw safe
 
 Copy-out checklist:
 
-- [ ] Copy selected local files to clipboard/reference.
-- [ ] Copy selected raw readable file out to local destination.
-- [ ] Copy selected raw folder out recursively where reader supports export.
-- [ ] Add progress and cancel.
-- [ ] Add overwrite/collision policy.
-- [ ] Add read-back/hash proof for raw copy-out where useful.
+- [x] Copy selected local files to clipboard/reference. (`CopyItemPath` / `CopyPath` commands)
+- [x] Copy selected raw readable file out to local destination. (`CopyOut` command -> `FileManagementFileSystemBridge::copyFileToHost`; local sources copied in full, raw sources up to the read cap; runs on a worker thread)
+- [ ] Copy selected raw folder out recursively where reader supports export. (single-file only today)
+- [~] Add progress and cancel. (copy-out is offloaded to a worker thread with a status update; a progress bar / cancel button remains a follow-on)
+- [x] Add overwrite/collision policy. (the save-file dialog prompts before overwriting an existing destination)
+- [x] Add read-back/hash proof for raw copy-out where useful. (`copyFileToHost` returns the SHA-256 of the written bytes, surfaced in the Evidence pane)
 
 Copy-in/import checklist:
 
@@ -1302,9 +1302,9 @@ Cross-pane checklist:
 
 Tests:
 
-- [ ] Unit transfer command enablement matrix.
-- [ ] Local copy/paste smoke.
-- [ ] ext4 raw copy-out smoke.
+- [x] Unit transfer command enablement matrix. (`registryCopyOutNeedsSingleReadableSelection`; import gated by `capabilityState` write branch)
+- [x] Local copy/paste smoke. (`copyFileToHostCopiesLocalFileByteExactWithHash`, `writeFileFromHostPathStreamsLocalCopyWithNoCap`)
+- [ ] ext4 raw copy-out smoke. (needs a live/local ext4 image)
 - [ ] HFS+ live import/write/read/delete certification through command route.
 - [ ] APFS generated-layout live import/write/read/delete certification through command route.
 - [ ] APFS large paste blocker test.

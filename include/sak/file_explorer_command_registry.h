@@ -46,6 +46,7 @@ enum class FileExplorerCommandId {
     DuplicateTab,
     ReopenClosedTab,
     Hash,
+    CopyOut,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

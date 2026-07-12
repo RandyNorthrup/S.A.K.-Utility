@@ -1335,6 +1335,55 @@ void FileManagementExplorerPanel::hashSelectedFile() {
     }));
 }
 
+void FileManagementExplorerPanel::copySelectedFileOut() {
+    const FileExplorerSelection selection = currentSelection();
+    if (!selection.hasSingleEntry()) {
+        Q_EMIT statusMessage(tr("Select a single file to copy out."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    const FileManagementEntry entry = selection.entries.first();
+    if (entry.directory || !entry.regular_file) {
+        Q_EMIT statusMessage(tr("Select a single file to copy out."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    const QString destination = QFileDialog::getSaveFileName(
+        this, tr("Copy File Out"), QDir(QDir::homePath()).filePath(entry.name));
+    if (destination.isEmpty()) {
+        return;
+    }
+    const FileManagementTarget target = currentTarget();
+    const QString path = entry.path;
+    Q_EMIT statusMessage(tr("Copying %1 out...").arg(entry.name), sak::kTimerStatusMessageMs);
+
+    auto* watcher = new QFutureWatcher<FileManagementExportResult>(this);
+    connect(watcher,
+            &QFutureWatcher<FileManagementExportResult>::finished,
+            this,
+            [this, watcher, name = entry.name]() {
+                watcher->deleteLater();
+                const FileManagementExportResult result = watcher->result();
+                if (!result.ok) {
+                    Q_EMIT statusMessage(
+                        tr("Copy out failed: %1").arg(result.blockers.join(QStringLiteral("; "))),
+                        sak::kTimerStatusMessageMs);
+                    return;
+                }
+                m_last_hash_name = name;
+                m_last_hash_sha256 = result.sha256;
+                m_last_hash_capped = result.capped;
+                updateDetailsPane();
+                Q_EMIT statusMessage(result.capped
+                                         ? tr("Copied %1 out (capped at read window); SHA-256 %2")
+                                               .arg(name, result.sha256)
+                                         : tr("Copied %1 out; SHA-256 %2").arg(name, result.sha256),
+                                     sak::kTimerStatusDefaultMs);
+            });
+    watcher->setFuture(QtConcurrent::run([target, path, destination]() {
+        return FileManagementFileSystemBridge::copyFileToHost(
+            target, path, destination, kExplorerHashMaxBytes);
+    }));
+}
+
 void FileManagementExplorerPanel::logMessage(const QString& message) {
     if (!message.trimmed().isEmpty()) {
         Q_EMIT logOutput(message);
@@ -1581,17 +1630,9 @@ bool FileManagementExplorerPanel::dispatchNavigationCommand(const FileExplorerCo
     }
 }
 
-bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCommandId command) {
+bool FileManagementExplorerPanel::dispatchSelectionEditCommand(
+    const FileExplorerCommandId command) {
     switch (command) {
-    case FileExplorerCommandId::Preview:
-        previewSelectedFile();
-        return true;
-    case FileExplorerCommandId::Properties:
-        showSelectedItemProperties();
-        return true;
-    case FileExplorerCommandId::Hash:
-        hashSelectedFile();
-        return true;
     case FileExplorerCommandId::SelectAll:
         if (auto* view = currentItemView()) {
             view->selectAll();
@@ -1607,6 +1648,25 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
         return true;
     default:
         return false;
+    }
+}
+
+bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCommandId command) {
+    switch (command) {
+    case FileExplorerCommandId::Preview:
+        previewSelectedFile();
+        return true;
+    case FileExplorerCommandId::Properties:
+        showSelectedItemProperties();
+        return true;
+    case FileExplorerCommandId::Hash:
+        hashSelectedFile();
+        return true;
+    case FileExplorerCommandId::CopyOut:
+        copySelectedFileOut();
+        return true;
+    default:
+        return dispatchSelectionEditCommand(command);
     }
 }
 
@@ -2797,6 +2857,7 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     addCommandMenuAction(&menu, FileExplorerCommandId::Preview, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::CopyOut, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
     auto* editTags = menu.addAction(tr("Edit Tags..."));
