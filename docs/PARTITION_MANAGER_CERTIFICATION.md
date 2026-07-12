@@ -348,8 +348,27 @@ HFS+ passed on Best Buy serial `DD564198838A8`, Disk 3 Partition 3, with File
 Explorer create/write/read, duplicate-finder, advanced-search, rename,
 delete-file, negative-read, and delete-directory proof at
 `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
-APFS still needs macOS Recovery validation of the small generated slice before
-it can be called Apple-native certified.
+
+2026-07-12 File Explorer command-route certification (foreign media + HFS+,
+Apple-validated). The bridge now derives an APFS container size from its block-0
+superblock and write-enables any known-size in-range APFS raw/image target,
+S.A.K.-generated and real Apple-created (foreign) alike. Foreign-APFS: the full
+destructive command route (create-directory, write-file, byte-exact
+read-after-write, duplicate-finder, advanced-search, delete-file,
+read-after-delete, delete-directory) passed on a 7.45 TB real Apple-created
+newfs_apfs container (Seagate Disk 2 Partition 2) via
+`file_management_live_certifier --destructive --allow-foreign-apfs-destructive`,
+then Apple-derived `apfsck -cw` on the 7.45 TB partition returned EXIT 0 clean;
+evidence
+`artifacts\file-management-live-certification\disk2-foreign-apfs-destructive\`.
+HFS+: the destructive command route (add rename and read-after-rename) passed on
+a 256 MiB Apple-HFS partition (Disk 1) formatted by the bundled `newfs_hfs`, with
+bundled `fsck_hfs` and the probe certifier `--hfs-check` clean before and after;
+evidence
+`artifacts\file-management-live-certification\disk1-hfs-file-management-cert\`.
+ext4 read-only browse and byte-exact sample read, plus XFS/Btrfs metadata-only
+read-only blockers, passed on WSL-built images at
+`artifacts\file-management-live-certification\ro-ext-xfs-btrfs-20260712\`.
 
 Linux compatibility validation for the ext bundle passed on 2026-06-07 UTC
 through Arch WSL for ext2, ext3, and ext4. The harness created each image with

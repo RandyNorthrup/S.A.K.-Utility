@@ -272,10 +272,10 @@ cmake --build build --target run_integration_tests
 |---|---|---|
 | test_organizer_worker | `organizer_worker` | File organization by category, collision handling |
 | test_duplicate_finder_worker | `duplicate_finder_worker` | MD5 hashing, duplicate detection, parallel scan |
-| test_file_management_file_system | `FileManagementFileSystemBridge` | Mounted/raw/image target capability mapping, non-native organizer blockers, ext/HFS+/APFS reader routing, explicit HFS+ mutation blockers/options, and APFS write gating to 64-128 MiB one-spaceman-chunk generated targets |
+| test_file_management_file_system | `FileManagementFileSystemBridge` | Mounted/raw/image target capability mapping, non-native organizer blockers, ext/HFS+/APFS reader routing, explicit HFS+ mutation blockers/options, APFS write gating by known container size (superblock-derived for raw partitions; S.A.K.-generated and real Apple foreign media both write-enabled in range, unknown-size/out-of-range read-only with exact blockers), file-system-specific safety notes, `copyFileToHost` byte-exact local copy with SHA-256 and atomic fail-closed destination handling, and recursive `exportDirectoryToHost` folder copy-out |
 | test_file_explorer_types | `FileExplorer*` types and `FileExplorerCommandRegistry` | Files-like explorer target IDs, explicit-ID enforcement, item capability mapping, local/raw path normalization, pane history, selection summaries, command metadata, feature gates, layout-picker blocker gates, target-type command-state coverage, and raw write blockers |
-| test_file_explorer_item_model | `FileExplorerItemModel`, `FileExplorerSortFilterModel` | Model/view row/column roles, entry paths and item metadata roles, attribute summary roles, folder-first source/proxy sorting, proxy filtering, size sorting, and clear/reset behavior |
-| test_file_management_explorer_panel | `FileManagementExplorerPanel`, `FileExplorerPane`, `FileExplorerDetailsView` | Files-like shell creation, grouped sidebar target selection, command-bar disabled blockers, functional View/layout picker without milestone labels, details/list/grid/cards/adaptive switching, Columns current/child-preview surfaces, shared selection survival, per-target/path view persistence, hidden-items and file-extension toggles, current-folder filter, command palette entry points, omnibar path load, status strip, persistent detail panes, loading/empty/error pane states, responsive collapse, extended selection, details column persistence, directory activation route, table/sidebar context menu actions, baseline screenshot capture, and shortcut smoke coverage |
+| test_file_explorer_item_model | `FileExplorerItemModel`, `FileExplorerSortFilterModel` | Model/view row/column roles, entry paths and item metadata roles, attribute summary roles, folder-first source/proxy sorting, proxy filtering, size sorting, clear/reset behavior, tag-filter proxy restriction, and the injected-provider Tags column/role |
+| test_file_management_explorer_panel | `FileManagementExplorerPanel`, `FileExplorerPane`, `FileExplorerDetailsView` | Files-like shell creation, grouped sidebar target selection, command-bar disabled blockers, functional View/layout picker without milestone labels, details/list/grid/cards/adaptive switching, Columns current/child-preview surfaces, shared selection survival, per-target/path view persistence, hidden-items and file-extension toggles, current-folder filter, command palette entry points + grouped headers, omnibar path load, richer omnibar search dialog (target badge, history seed, result list, routing buttons), status strip, persistent detail panes, loading/empty/error pane states, responsive collapse, extended selection, details column persistence, directory activation route, table/sidebar context menu actions, clipboard Copy/Paste local round trip, dual-pane stack orientation + tab-session round trip, stale-favorite removal, sidebar-rebuild navigation preservation, favorites/recent persistence, Tags-column repaint, evidence-report target matching, baseline screenshot capture, and shortcut smoke coverage |
 
 ### Partition Manager
 | Test | Module Under Test | Coverage |
@@ -336,8 +336,15 @@ advanced-search/delete/delete-folder on JMicron Disk 2 Partition 2 at
 and HFS+ File Explorer create/write/read/duplicate-search/advanced-search/
 rename/delete/delete-folder on Best Buy Disk 3 Partition 3 at
 `artifacts/file-management-live-certification/disk3-hfs-script-after-fix/file-management-live-certification.json`.
-Larger APFS targets remain read-only for File Management until multi-CIB
-spaceman support is implemented and Apple-validated.
+2026-07-12 command-route certification extended this to foreign media and HFS+:
+the destructive command route passed on a 7.45 TB real Apple-created APFS
+container (apfsck -cw EXIT 0 clean) and a 256 MiB Apple-HFS partition (fsck_hfs
+clean), and ext4 read-only copy-out plus XFS/Btrfs metadata-only blockers passed
+on WSL-built images. Evidence under
+`artifacts/file-management-live-certification/{disk2-foreign-apfs-destructive,disk1-hfs-file-management-cert,ro-ext-xfs-btrfs-20260712}/`.
+APFS writes are gated by a known container size in the certified engine range
+(superblock-derived for raw partitions); unknown-size or out-of-range targets
+stay read-only with exact blockers.
 
 ### Email Inspector
 | Test | Module Under Test | Coverage |

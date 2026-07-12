@@ -438,16 +438,17 @@ Detect duplicate files via content-based hashing.
 
 #### File Explorer
 
-- Sidebar target navigation for mounted volumes, scanned disk/partition targets, and manual raw/image targets
-- Native Qt shell inspired by Files-style explorer workflows: grouped sidebar navigation, command bar, functional View/layout picker, back/forward/up navigation, editable path omnibar, current-folder filter, command palette, details/list/grid/cards/adaptive view modes, context menus, keyboard shortcuts, bottom status strip, copy path, text preview, and persistent preview/properties/safety/evidence pane
-- Dedicated shell widgets for sidebar, command bar, omnibar, main pane, and details pane keep the File Explorer layout modular for deeper multi-level Columns polish, tabs, dual-pane, and transfer work
-- View/layout picker switches Details/List/Grid/Cards/Adaptive views, exposes the current Columns surface, controls item size, hidden items, and file-extension display, and persists view settings per target/path through the new File Explorer settings path only; unsupported future commands such as tabs and dual pane remain visible with product-grade blocker text
-- Details view uses a sort/filter proxy, folder-first sorting, persisted column widths/order, loading/empty/error state text, stale-result discard, and asynchronous directory listing so large folders do not block the UI thread
-- Favorites, recent targets, last target restore, target properties, sidebar collapse, details-pane collapse, narrow-width collapse behavior, and shared command-registry blockers for toolbar/context/shortcut routes
-- Read-only browsing for supported ext2/ext3/ext4, HFS+/HFSX, and APFS targets through the shared File Management bridge
-- Explicit create folder, write file, rename, and single/multi-item delete actions for supported HFS+/HFSX targets and generated-layout APFS targets (full driver-level write, multi-CIB/CAB to a 32 TiB cap), with raw/non-native safety blockers surfaced in the panel
-- Clear blockers for file systems without directory browsing support, such as current XFS/Btrfs metadata-only coverage
-- Files-like UI/UX parity is tracked in [docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md); release wording stays "Files-inspired" until deeper multi-level Columns polish, tabs, dual pane, richer search, and live raw-device certification are implemented and tested. Cloud drives, FTP, Git integration, and third-party integrations are explicitly out of scope for the current milestone.
+- Sidebar target navigation for mounted volumes, scanned disk/partition targets, and manual raw/image targets, with favorites (pin/reorder/offline-warning), recent targets, and an app-level Tags group
+- Native Qt shell inspired by Files-style explorer workflows: grouped sidebar navigation, command bar, functional View/layout picker, back/forward/up navigation, editable path omnibar, command palette, details/list/grid/cards/columns/adaptive view modes, context menus, keyboard shortcuts, bottom status strip, and a persistent preview/properties/safety/evidence pane
+- Explorer tabs (new/close/duplicate/reopen-closed) and a dual-pane split (side-by-side or stacked, active-pane highlight, per-pane view mode, cross-pane copy and folder compare) with cross-restart tab-session persistence
+- Omnibar quick search under the current folder with a target badge, persisted query history, a result list, and open-result / open-location routing, plus a `Ctrl+F` current-folder filter; the Advanced Search tab remains the full search workspace
+- View/layout picker switches Details/List/Grid/Cards/Columns/Adaptive views, controls item size, hidden items, and file-extension display, and persists view settings per target/path
+- Details view uses a sort/filter proxy with folder-first sorting, persisted column widths/order, an in-row Tags column, loading/empty/error states, stale-result discard, and asynchronous listing so large folders never block the UI thread
+- Properties pane shows file-system-specific detail where the reader provides it (APFS Object ID + compressed/sparse flags, HFS+ Catalog ID + resource-fork size, ext Inode); the Evidence pane links live-certification reports whose target matches
+- Read/browse for supported ext2/ext3/ext4, HFS+/HFSX, and APFS targets; copy-out of files and whole folders to a local destination with SHA-256 read-back, and clipboard Copy/Paste import into writable targets with a typed WRITE confirmation for raw destinations
+- Full driver-level certified write (create folder, write/import file, rename, cross-directory move, single/multi delete) for HFS+/HFSX and for APFS containers of a known size in the certified engine range - S.A.K.-generated **and** real Apple-created (foreign) media alike; unknown-size/out-of-range/snapshot-frozen/Fusion/locked-encrypted targets stay read-only with exact blockers
+- Live-certified end to end on physical media (2026-07-12): APFS foreign destructive command route on a 7.45 TB real Apple container (apfsck clean) and HFS+ destructive command route on a 256 MiB Apple-HFS partition (fsck_hfs clean); ext4 read-only copy-out and XFS/Btrfs metadata-only blockers proven on WSL-built images
+- Files-like UI/UX parity is tracked in [docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md). Cloud drives, FTP, Git integration, and third-party integrations are explicitly out of scope for the current milestone.
 
 #### Advanced Search
 

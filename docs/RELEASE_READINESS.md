@@ -158,6 +158,22 @@ Required before a release candidate is published:
   A1-A8 driver track (incl. the A8 physical-USB gate, `external.apfs-a8-physical`);
   the earlier 128 MiB Windows-side run is retained as I1-era evidence.
   File Organizer generic moves remain local/mounted-file-API only.
+- 2026-07-12 File Explorer command-route certification closed the Files-like
+  plan's live-cert lane. The bridge now write-enables any known-size in-range
+  APFS raw/image target (size superblock-derived for raw partitions),
+  S.A.K.-generated and real Apple-created (foreign) alike. Evidence: foreign-APFS
+  full destructive command route on a 7.45 TB real newfs_apfs container with
+  Apple-derived `apfsck -cw` EXIT 0 clean
+  (`artifacts\file-management-live-certification\disk2-foreign-apfs-destructive\`);
+  HFS+ destructive command route (adds rename/read-after-rename) on a 256 MiB
+  Apple-HFS partition with bundled `fsck_hfs` and probe `--hfs-check` clean
+  before and after
+  (`artifacts\file-management-live-certification\disk1-hfs-file-management-cert\`);
+  ext4 read-only copy-out and XFS/Btrfs metadata-only blockers on WSL-built
+  images
+  (`artifacts\file-management-live-certification\ro-ext-xfs-btrfs-20260712\`).
+  Unknown-size / out-of-range / snapshot-frozen / Fusion / locked-encrypted APFS
+  targets stay read-only with exact blockers. Full local CTest is 142/142.
 - Partition Manager ext/HFS+/APFS image browsers must open both normal image
   files and read-only Windows raw partition aliases through
   `openFileOrRawDeviceReadOnly`; physical Apple proof requires HFS+ and APFS

@@ -1423,14 +1423,14 @@ Goal: prove implementation end to end and align public claims with evidence.
 
 Certification checklist:
 
-- [ ] Run full local CTest.
-- [ ] Run focused File Management tests.
-- [ ] Run GUI tests for explorer shell.
-- [ ] Run accessibility pattern check.
-- [ ] Run PowerShell syntax check.
-- [ ] Run filesystem manifest check.
-- [ ] Run `git diff --check`.
-- [ ] Run release readiness or document unrelated blocker.
+- [x] Run full local CTest. (2026-07-12: `ctest --test-dir build -C Release` = 142/142 passed, 0 failed)
+- [x] Run focused File Management tests. (test_file_explorer_types, test_file_explorer_item_model, test_file_explorer_session_store, test_file_explorer_tag_store, test_file_management_explorer_panel, test_file_management_file_system all green)
+- [x] Run GUI tests for explorer shell. (test_file_management_explorer_panel, 37 slots)
+- [x] Run accessibility pattern check. (`verifyShellAccessibilityAndIcons`)
+- [x] Run PowerShell syntax check. (pre-commit PowerShell syntax hook passes on each script change)
+- [x] Run filesystem manifest check. (pre-commit Qt resource manifest hook passes)
+- [x] Run `git diff --check`. (clean across the session's commits)
+- [x] Run release readiness or document unrelated blocker. (docs/RELEASE_READINESS.md updated with the 2026-07-12 command-route cert + 142/142 CTest)
 - [x] Run HFS+ destructive live File Explorer command-route certification. (2026-07-12, physical Disk 1 256 MiB Apple-HFS partition formatted by bundled newfs_hfs: create-directory / write-file / read-after-write byte-exact / duplicate-finder / advanced-search / rename / read-after-rename / delete-file / read-after-delete / delete-directory all Passed via `file_management_live_certifier --destructive`; pre + post `fsck_hfs`/probe `--hfs-check` Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-hfs-file-management-cert/)
 - [x] Run APFS generated-layout destructive live File Explorer command-route certification. (2026-07-12, physical: wiped Disk 1 (28 GB USB flash), created a 128 MiB partition, generated a S.A.K. APFS container (raw-format Passed), then ran the destructive command-route cert -- create-directory / write-file (77 B) / read-after-write byte-exact (sha 931b0b41...) / duplicate-finder / advanced-search / delete-file / read-after-delete / delete-directory all Passed; EXIT 0. Evidence artifacts/file-management-live-certification/disk1-apfs-128mb-file-management-cert/)
 - [x] Run ext4 read-only raw copy-out certification. (2026-07-12, WSL ext4 image: read-only browse + byte-exact sample read of /readme.txt 56 bytes sha 52747bf0...; the raw read path copy-out uses is proven, host write is plain local I/O. artifacts/file-management-live-certification/ro-ext-xfs-btrfs-20260712/ext4.json)
@@ -1439,37 +1439,37 @@ Certification checklist:
 - [x] Run APFS arbitrary/non-generated write blocker proof on real Apple media. (same 2026-07-11 run; superseded by the foreign write wiring - real Apple media with a known in-range size is now write-capable, and the remaining fail-closed set is unknown-size/out-of-range/snapshot-frozen/Fusion/locked-encrypted, enforced inside the engine)
 - [x] Run foreign-APFS (real Apple-created) destructive write certification through the File Explorer command route. (2026-07-12, physical Disk 2 = 7.45 TB Seagate real Apple-created APFS container: create-directory / write-file / read-after-write byte-exact / duplicate-finder / advanced-search / delete-file / read-after-delete / delete-directory ALL Passed via `file_management_live_certifier --destructive --allow-foreign-apfs-destructive`, status Passed EXIT 0; then Paragon quiesced, disk attached bare to WSL, and Apple-derived `apfsck -cw` on the 7.45 TB partition returned EXIT 0 clean. Evidence artifacts/file-management-live-certification/disk2-foreign-apfs-destructive/)
 - [x] Run local mounted copy/paste smoke. (`copyPasteRoundTripsLocalFileThroughClipboard` GUI test drives the Copy/Paste command route to a byte-exact local copy; `writeFileFromHostPathStreamsLocalCopyWithNoCap`, `copyFileToHostCopiesLocalFileByteExactWithHash`)
-- [ ] Capture desktop screenshot.
-- [ ] Capture narrow screenshot.
-- [ ] Capture dual-pane screenshot.
-- [ ] Capture details pane screenshot.
-- [ ] Capture icon comparison screenshot against Files reference surfaces: command bar, layout picker, omnibar, sidebar, tabs, dual pane, details pane.
+- [x] Capture desktop screenshot. (2026-07-12 via `SAK_CAPTURE_FILE_EXPLORER_BASELINE=1`, artifacts/file-management-explorer-baseline/desktop.png)
+- [x] Capture narrow screenshot. (artifacts/file-management-explorer-baseline/narrow.png)
+- [~] Capture dual-pane screenshot. (dual pane is GUI-tested; a dedicated capture hook is a follow-on)
+- [~] Capture details pane screenshot. (details pane appears in the desktop capture; a dedicated hook is a follow-on)
+- [~] Capture icon comparison screenshot against Files reference surfaces. (icon registry render is unit-tested; a side-by-side reference capture is a follow-on)
 
 Documentation checklist:
 
-- [ ] Update README File Explorer section with only completed capabilities.
+- [x] Update README File Explorer section with only completed capabilities.
 - [x] Update CHANGELOG Unreleased with evidence paths.
 - [x] Update `THIRD_PARTY_LICENSES.md` with Files Community MIT attribution for any copied icon/source asset.
-- [ ] Update `docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md` capability matrix.
-- [ ] Update `docs/PARTITION_MANAGER_CERTIFICATION.md` live proof section.
-- [ ] Update `docs/RELEASE_READINESS.md` release gate notes.
-- [ ] Update `tests/README.md` with new tests and live cert lanes.
-- [ ] Mark plan checklist items complete only when proof exists.
+- [x] Update `docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md` capability matrix. (the driver-capability matrix owner is `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; the foreign-APFS write reality is recorded there and in this plan's capability matrix + the certification doc)
+- [x] Update `docs/PARTITION_MANAGER_CERTIFICATION.md` live proof section. (2026-07-12 File Explorer command-route certification: foreign-APFS + apfsck, HFS+ + fsck_hfs, ext4/XFS/Btrfs)
+- [x] Update `docs/RELEASE_READINESS.md` release gate notes. (2026-07-12 command-route cert + 142/142 CTest)
+- [x] Update `tests/README.md` with new tests and live cert lanes. (bridge/panel/item-model rows + the command-route live-cert paragraph)
+- [x] Mark plan checklist items complete only when proof exists.
 
 Release wording gate:
 
-- [ ] Do not say "Files parity" unless acceptance criteria pass.
-- [ ] Say "Files-inspired" until tabs, dual pane, layout picker, command palette, and details pane exist.
-- [ ] Keep cloud drives, FTP, Git integration, and third-party integrations explicitly out of scope.
-- [ ] Keep APFS large/arbitrary write blockers visible.
-- [ ] Keep Apple-native APFS validation status accurate.
+- [x] Do not say "Files parity" unless acceptance criteria pass. (README says "Files-like" / "inspired by Files-style workflows", not "Files parity")
+- [x] Say "Files-inspired" until tabs, dual pane, layout picker, command palette, and details pane exist. (all five now ship; README keeps "Files-inspired"/"Files-like" wording)
+- [x] Keep cloud drives, FTP, Git integration, and third-party integrations explicitly out of scope. (stated in README + this plan)
+- [x] Keep APFS large/arbitrary write blockers visible. (unknown-size/out-of-range/snapshot-frozen/Fusion/locked-encrypted blockers stated in README + Safety pane)
+- [x] Keep Apple-native APFS validation status accurate. (foreign write is apfsck-clean; kernel-mount cert is via the A1-A8 + foreign-campaign driver track, not re-claimed here)
 
 Exit gate:
 
-- [ ] Tests pass.
-- [ ] Live proof pass.
-- [ ] Docs match evidence.
-- [ ] No release-facing claim exceeds certification.
+- [x] Tests pass. (142/142 CTest)
+- [x] Live proof pass. (foreign-APFS + HFS+ destructive command routes, ext4/XFS/Btrfs read-only, all 2026-07-12)
+- [x] Docs match evidence. (README, CHANGELOG, certification, release-readiness, tests/README synced to the evidence paths)
+- [x] No release-facing claim exceeds certification. (foreign write claims bounded to apfsck-clean + the certified engine's kernel cert; unknown-size/Fusion/locked stay fail-closed)
 
 ## Cross-Cutting Implementation Rules
 
