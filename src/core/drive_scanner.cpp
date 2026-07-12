@@ -7,6 +7,7 @@
 #include "sak/logger.h"
 
 #include <QDir>
+#include <QtConcurrentRun>
 #include <QtGlobal>
 #include <QVector>
 
@@ -93,6 +94,10 @@ DriveScanner::DriveScanner(QObject* parent)
     // Refresh every 5 seconds as fallback
     m_refreshTimer->setInterval(sak::kTimerRefreshMs);
     connect(m_refreshTimer, &QTimer::timeout, this, &DriveScanner::onRefreshTimer);
+    connect(&m_scanWatcher,
+            &QFutureWatcher<QList<sak::DriveInfo>>::finished,
+            this,
+            &DriveScanner::onScanFinished);
 }
 
 DriveScanner::~DriveScanner() {
@@ -118,6 +123,11 @@ void DriveScanner::stop() {
     sak::logInfo("Stopping drive scanner");
 
     m_refreshTimer->stop();
+    // Block until any in-flight worker scan finishes so its lambda does not
+    // touch this object after destruction.
+    if (m_scanWatcher.isRunning()) {
+        m_scanWatcher.waitForFinished();
+    }
     unregisterDeviceNotification();
     m_drives.clear();
 }
@@ -157,13 +167,17 @@ void DriveScanner::onRefreshTimer() {
 }
 
 void DriveScanner::scanDrives() {
-    if (m_isScanning) {
-        return;
+    bool expected = false;
+    if (!m_isScanning.compare_exchange_strong(expected, true)) {
+        return;  // A scan is already in flight.
     }
+    // Enumerate/query drives off the UI thread; each drive query issues blocking
+    // Win32 IOCTLs, so doing this inline would freeze the interface.
+    m_scanWatcher.setFuture(QtConcurrent::run([this]() { return collectDrives(); }));
+}
 
-    m_isScanning = true;
+QList<sak::DriveInfo> DriveScanner::collectDrives() {
     QList<sak::DriveInfo> newDrives;
-
     const QVector<int> drive_numbers = enumeratePhysicalDriveNumbers();
     for (const int driveNumber : drive_numbers) {
         sak::DriveInfo info = queryDriveInfo(driveNumber);
@@ -171,8 +185,15 @@ void DriveScanner::scanDrives() {
             newDrives.append(info);
         }
     }
+    return newDrives;
+}
 
-    // Check for changes
+void DriveScanner::onScanFinished() {
+    applyDriveScan(m_scanWatcher.result());
+    m_isScanning = false;
+}
+
+void DriveScanner::applyDriveScan(const QList<sak::DriveInfo>& newDrives) {
     bool hasChanges = false;
 
     // Find removed drives
@@ -202,8 +223,6 @@ void DriveScanner::scanDrives() {
     if (hasChanges) {
         Q_EMIT drivesUpdated(m_drives);
     }
-
-    m_isScanning = false;
 }
 
 sak::DriveInfo DriveScanner::queryDriveInfo(int driveNumber) {

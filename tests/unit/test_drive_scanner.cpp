@@ -71,14 +71,14 @@ void DriveScannerTests::getDrives_returnsNonEmpty() {
     DriveScanner scanner;
     scanner.refresh();
 
-    auto drives = scanner.getDrives();
-    // A system always has at least one drive
-    QVERIFY(!drives.isEmpty());
+    // The scan runs on a worker thread; spin the event loop until it lands.
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
 }
 
 void DriveScannerTests::getRemovableDrives_subset() {
     DriveScanner scanner;
     scanner.refresh();
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
 
     auto all = scanner.getDrives();
     auto removable = scanner.getRemovableDrives();
@@ -90,6 +90,7 @@ void DriveScannerTests::getRemovableDrives_subset() {
 void DriveScannerTests::isSystemDrive_systemDriveDetected() {
     DriveScanner scanner;
     scanner.refresh();
+    QTRY_VERIFY(!scanner.getDrives().isEmpty());
 
     auto drives = scanner.getDrives();
     bool foundSystem = false;

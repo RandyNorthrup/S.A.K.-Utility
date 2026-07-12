@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QFutureWatcher>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -148,9 +149,14 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onRefreshTimer();
+    void onScanFinished();
 
 private:
     void scanDrives();
+    /// @brief Enumerate and query all physical drives (runs on a worker thread).
+    QList<sak::DriveInfo> collectDrives();
+    /// @brief Diff a fresh scan against the cached list and emit changes (UI thread).
+    void applyDriveScan(const QList<sak::DriveInfo>& newDrives);
     void registerDeviceNotification();
     void unregisterDeviceNotification();
 
@@ -177,6 +183,7 @@ private:
     HWND m_notificationWindow;
     HDEVNOTIFY m_deviceNotify;
     std::atomic<bool> m_isScanning;
+    QFutureWatcher<QList<sak::DriveInfo>> m_scanWatcher;
 
     static DriveScanner* s_instance;  // For static callback
 };

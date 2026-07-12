@@ -2106,7 +2106,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_drive_scanner.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_drive_scanner PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_drive_scanner PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -3083,7 +3083,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_flash_coordinator.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_flash_coordinator PRIVATE
-        Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
     )
     target_compile_definitions(test_flash_coordinator PRIVATE
         QT_DISABLE_DEPRECATED_BEFORE=0x060000
