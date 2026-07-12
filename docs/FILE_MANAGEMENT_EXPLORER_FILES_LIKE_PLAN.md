@@ -178,6 +178,54 @@ follow-ons are cosmetic: deeper multi-level Columns polish, a copy/import
 progress bar + cancel, an in-row tag-chip renderer, and dedicated
 dual-pane/details/icon-comparison screenshot captures.
 
+Status 2026-07-12 (UI refactor addendum, R-track): after user review flagged
+the shell as visually unlike Files, a dedicated Files-anatomy UI refactor
+landed as R1-R6 (see "UI Refactor R-Track" section below). The shell now
+renders with the Files-community layout order (tab strip on top, nav/address
+row with a clickable breadcrumb and search box, subtle icon command bar,
+sectioned sidebar with icons and a discovery footer, bottom status row),
+palette-driven light/dark styling, tinted Fluent-style glyphs everywhere
+(nav, sidebar rows, file rows), and a Files-style default details column set.
+
+## UI Refactor R-Track (2026-07-12)
+
+- [x] R1 Shell anatomy + explorer style sheet (commit df4c025): tab strip on
+  top, omnibar nav row (sidebar toggle, back/forward/up/refresh, address,
+  search box), Files-style subtle command bar (labeled New Folder/Write File,
+  icon-only Open/Copy Path/Rename/Delete, right-aligned View + details
+  toggle), Scan Disks/Add Raw-Image moved to a sidebar footer, full-width
+  bottom status row (fixes invisible summary text), file_explorer_style.cpp
+  palette-driven QSS (one sheet, light + dark), hand-drawn Fluent-style
+  glyphs in resources/icons/fluent/ plus a palette-tinting QIconEngine so
+  fixed-fill SVGs stay legible in dark mode, grid/vertical-header removed
+  from the details view.
+- [x] R2 Breadcrumb address bar (commit 5e1f80c): segment-per-folder buttons
+  with chevron separators, overflow menu for deep paths, click-segment
+  navigation, click-empty-area inline edit mode over the existing
+  fileExplorerPathEdit (single source of truth; Escape/focus-out returns to
+  the breadcrumb).
+- [x] R3+R4 Sidebar + view icons and default columns (commit fead8e2):
+  sidebar rows use registry icons (home/drive/image-file/shield/tag/
+  status-warning) with demibold section headers; FileExplorerItemModel gains
+  an injected IconProvider (folder/file/image row glyphs, GUI-free core);
+  details view first run shows Name/Type/Size/Modified/Tags with
+  Created/ID/Attributes/Path opt-in via a header context menu.
+- [x] R5 Polish (commit ea827fe): subtle tab close glyph, details-pane chip
+  tabs + borderless text areas, first-run column widths.
+- [x] R6 Tests + docs (this commit): new GUI tests (shell region audit
+  extended to breadcrumb/search box/footer/status row, breadcrumb mirror +
+  ancestor navigation + overflow, edit-mode swap, first-run column set,
+  icon-provider decoration, search-box Enter prefill), full CTest, refreshed
+  desktop/narrow baseline screenshots, this plan addendum + CHANGELOG.
+
+R-track honest notes: Escape-to-leave-edit-mode is implemented and works
+interactively but is asserted via the focus-out path in tests (synthesized
+Escape key events are consumed by the application shortcut map before widget
+event filters in headless runs). Dark mode is palette-driven by construction
+(palette() QSS references + paint-time icon tinting); a dedicated dark-mode
+screenshot capture remains a follow-on alongside the existing screenshot
+follow-ons.
+
 ## Files Parity Guardrail
 
 2026-06-13 course correction: do not let backend/model hardening drift into a generic table explorer. Files parity work must stay anchored to the public Files UX contract:

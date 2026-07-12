@@ -4,6 +4,7 @@
 /// @file test_file_management_explorer_panel.cpp
 /// @brief GUI tests for the File Management Explorer shell.
 
+#include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_details_view.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
@@ -22,6 +23,7 @@
 #include <QDir>
 #include <QHeaderView>
 #include <QImage>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -198,6 +200,15 @@ int firstTargetRow(QListWidget* list) {
 void verifyShellCoreWidgetsExist(sak::FileManagementExplorerPanel& panel) {
     QVERIFY(child<QListWidget>(&panel, "fileExplorerTargetList"));
     QVERIFY(child<QLineEdit>(&panel, "fileExplorerPathEdit"));
+    QVERIFY(child<QLineEdit>(&panel, "fileExplorerSearchBox"));
+    QVERIFY(child<QStackedWidget>(&panel, "fileExplorerAddressStack"));
+    QVERIFY(child<sak::FileExplorerBreadcrumb>(&panel, "fileExplorerBreadcrumb"));
+    QVERIFY(child<QWidget>(&panel, "fileExplorerTabRow"));
+    QVERIFY(child<QWidget>(&panel, "fileExplorerStatusRow"));
+    QVERIFY(child<QWidget>(&panel, "fileExplorerSidebarFooter"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerScanDisksButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerAddRawImageButton"));
+    QVERIFY(child<QPushButton>(&panel, "fileExplorerNewTabButton"));
     QVERIFY(child<QTableView>(&panel, "fileExplorerTable"));
     QVERIFY(child<QListView>(&panel, "fileExplorerListView"));
     QVERIFY(child<QListView>(&panel, "fileExplorerGridView"));
@@ -474,6 +485,157 @@ private Q_SLOTS:
         verifyShellDetailsAndPreviewPanes(panel);
         verifyShellAccessibilityAndIcons(panel);
         captureBaseline(&panel, QStringLiteral("desktop"));
+    }
+
+    void breadcrumbMirrorsPathAndEmitsAncestorNavigation() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* breadcrumb = child<sak::FileExplorerBreadcrumb>(&panel, "fileExplorerBreadcrumb");
+        QVERIFY(pathEdit);
+        QVERIFY(breadcrumb);
+
+        // The breadcrumb mirrors the path line and renders one button per segment.
+        pathEdit->setText(QStringLiteral("C:/Users/Username"));
+        QApplication::processEvents();
+        QCOMPARE(breadcrumb->path(), QStringLiteral("C:/Users/Username"));
+        const auto segments =
+            breadcrumb->findChildren<QPushButton*>(QStringLiteral("fileExplorerBreadcrumbSegment"));
+        QCOMPARE(segments.size(), 3);
+        QCOMPARE(segments.at(0)->text(), QStringLiteral("C:"));
+        QCOMPARE(segments.at(2)->text(), QStringLiteral("Username"));
+
+        // Clicking an ancestor segment emits that ancestor's path.
+        QSignalSpy activated(breadcrumb, &sak::FileExplorerBreadcrumb::segmentActivated);
+        segments.at(1)->click();
+        QCOMPARE(activated.count(), 1);
+        QCOMPARE(activated.first().first().toString(), QStringLiteral("C:/Users"));
+
+        // Deep paths collapse the leading segments into an overflow menu.
+        pathEdit->setText(QStringLiteral("C:/a/b/c/d/e/f/g"));
+        QApplication::processEvents();
+        QVERIFY(
+            breadcrumb->findChild<QPushButton*>(QStringLiteral("fileExplorerBreadcrumbOverflow")));
+    }
+
+    void breadcrumbEditModeSwapsToPathEditAndBack() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* stack = child<QStackedWidget>(&panel, "fileExplorerAddressStack");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* breadcrumb = child<sak::FileExplorerBreadcrumb>(&panel, "fileExplorerBreadcrumb");
+        QVERIFY(stack);
+        QVERIFY(pathEdit);
+        QVERIFY(breadcrumb);
+
+        // Default: breadcrumb showing. Clicking its empty area enters edit mode.
+        QCOMPARE(stack->currentWidget(), breadcrumb);
+        QTest::mouseClick(breadcrumb, Qt::LeftButton, {}, breadcrumb->rect().center());
+        QApplication::processEvents();
+        QCOMPARE(stack->currentWidget(), pathEdit);
+
+        // Clicking elsewhere (focus loss) leaves edit mode without navigating.
+        // Simulated as a direct FocusOut: synthesized Escape key events are
+        // consumed by the application shortcut map before widget filters in
+        // test runs, so the Escape path cannot be driven reliably headless.
+        QFocusEvent focus_out(QEvent::FocusOut, Qt::MouseFocusReason);
+        QApplication::sendEvent(pathEdit, &focus_out);
+        QApplication::processEvents();
+        QCOMPARE(stack->currentWidget(), breadcrumb);
+    }
+
+    void detailsViewFirstRunShowsFilesStyleColumnSet() {
+        // No saved header state: the details view hides the power columns and
+        // keeps the Files-style default set visible.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
+        settings.remove(QString());
+        settings.endGroup();
+        settings.sync();
+
+        sak::FileExplorerItemModel model;
+        model.setEntries({testEntry(QStringLiteral("docs"), true)});
+        sak::FileExplorerDetailsView view;
+        view.setModel(&model);
+        view.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&view));
+
+        using Model = sak::FileExplorerItemModel;
+        QVERIFY(!view.isColumnHidden(Model::NameColumn));
+        QVERIFY(!view.isColumnHidden(Model::TypeColumn));
+        QVERIFY(!view.isColumnHidden(Model::SizeColumn));
+        QVERIFY(!view.isColumnHidden(Model::ModifiedColumn));
+        QVERIFY(!view.isColumnHidden(Model::TagsColumn));
+        QVERIFY(view.isColumnHidden(Model::CreatedColumn));
+        QVERIFY(view.isColumnHidden(Model::IdentifierColumn));
+        QVERIFY(view.isColumnHidden(Model::AttributesColumn));
+        QVERIFY(view.isColumnHidden(Model::PathColumn));
+    }
+
+    void itemModelIconProviderDecoratesNameColumnOnly() {
+        sak::FileExplorerItemModel model;
+        model.setEntries(
+            {testEntry(QStringLiteral("docs"), true), testEntry(QStringLiteral("a.txt"), false)});
+
+        // Without a provider, no decoration is exposed.
+        QVERIFY(
+            model.data(model.index(0, sak::FileExplorerItemModel::NameColumn), Qt::DecorationRole)
+                .isNull());
+
+        model.setIconProvider([](const sak::FileManagementEntry& entry) -> QVariant {
+            return entry.directory ? QStringLiteral("folder-icon") : QStringLiteral("file-icon");
+        });
+        QCOMPARE(
+            model.data(model.index(0, sak::FileExplorerItemModel::NameColumn), Qt::DecorationRole)
+                .toString(),
+            QStringLiteral("folder-icon"));
+        QCOMPARE(
+            model.data(model.index(1, sak::FileExplorerItemModel::NameColumn), Qt::DecorationRole)
+                .toString(),
+            QStringLiteral("file-icon"));
+        QVERIFY(
+            model.data(model.index(0, sak::FileExplorerItemModel::TypeColumn), Qt::DecorationRole)
+                .isNull());
+    }
+
+    void searchBoxEnterOpensDialogPrefilled() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* searchBox = child<QLineEdit>(&panel, "fileExplorerSearchBox");
+        QVERIFY(targetList);
+        QVERIFY(searchBox);
+        const int targetRow = firstTargetRow(targetList);
+        if (targetRow < 0) {
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+        targetList->setCurrentRow(targetRow);
+        QApplication::processEvents();
+
+        bool verified = false;
+        QTimer::singleShot(0, [&verified]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            auto* query = dialog->findChild<QComboBox*>(QStringLiteral("fileExplorerSearchQuery"));
+            verified = query && query->currentText() == QStringLiteral("sak-search-box-probe");
+            dialog->reject();
+        });
+        searchBox->setText(QStringLiteral("sak-search-box-probe"));
+        QTest::keyClick(searchBox, Qt::Key_Return);
+        QApplication::processEvents();
+
+        QVERIFY2(verified, "search box Enter did not open the search dialog prefilled");
     }
 
     void filesCommunityIconRegistryMapsBundledAssets() {
