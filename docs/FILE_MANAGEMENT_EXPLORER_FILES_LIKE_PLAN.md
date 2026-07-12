@@ -1431,7 +1431,8 @@ Certification checklist:
 - [ ] Run APFS generated-layout destructive live File Explorer command-route certification.
 - [ ] Run ext4 read-only raw copy-out certification.
 - [ ] Run XFS/Btrfs blocker proof.
-- [ ] Run large APFS write blocker proof.
+- [x] Run large APFS write blocker proof. (physical read-only `file_management_live_certifier` run, 2026-07-11, against Disk 1 Part 2 = 28 GB "APFS Test Disk" and Disk 2 Part 2 = 7.45 TB Seagate: both report `explorer_can_write=false` with the exact "writes are limited to APFS containers created by this tool" blocker; status Passed, EXIT 0; evidence artifacts/file-management-live-certification/disk1-disk2-apfs-readonly-20260711/)
+- [x] Run APFS arbitrary/non-generated write blocker proof on real Apple media. (same 2026-07-11 run; both real Apple-created containers correctly fail closed at the capability gate)
 - [ ] Run local mounted copy/paste smoke.
 - [ ] Capture desktop screenshot.
 - [ ] Capture narrow screenshot.
