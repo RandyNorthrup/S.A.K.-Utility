@@ -9407,6 +9407,63 @@ void verifyApfsNestedTreePreserved(const QString& image) {
     QCOMPARE(sub.entries.size(), 0);
 }
 
+// Names of the entries the reader lists directly under `path`.
+QStringList apfsReaderEntryNames(const QString& image, const QString& path) {
+    const auto listing = PartitionApfsFileSystemReader::listDirectoryFromImage(image, path, 40);
+    QStringList names;
+    for (const auto& entry : listing.entries) {
+        names << entry.name;
+    }
+    return names;
+}
+
+// Nested directory delete: from a container carrying /box/inner + /docs/{a.txt,sub}, delete the
+// empty leaf /box/inner via its parent path (leaving /box empty and the rest intact), then prove
+// the match is PARENT-SCOPED -- deleting /box/inner leaves a same-named /docs/inner untouched.
+void verifyApfsNestedDirectoryDelete(const QDir& dir,
+                                     const QString& boxInner,
+                                     const PartitionApfsWriteOptions& options) {
+    const QString afterNested = dir.filePath(QStringLiteral("a2nd-nested-del.apfs"));
+    const auto nestedDelete = PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+        {.source_image_path = boxInner,
+         .written_image_path = afterNested,
+         .directory_name = QStringLiteral("inner"),
+         .parent_directory_path = QStringLiteral("/box"),
+         .options = options});
+    QVERIFY2(nestedDelete.ok, qPrintable(nestedDelete.blockers.join(QStringLiteral("; "))));
+    // Optional cert emit: persist the nested-delete image for the host apfsck + macOS-kernel run.
+    const QString nestedCertOut = qEnvironmentVariable("SAK_NESTED_DEL_OUT");
+    if (!nestedCertOut.isEmpty()) {
+        QFile::remove(nestedCertOut);
+        QVERIFY(QFile::copy(afterNested, nestedCertOut));
+    }
+    QVERIFY(apfsReaderEntryNames(afterNested, QStringLiteral("/box")).isEmpty());
+    QVERIFY2(
+        apfsReaderEntryNames(afterNested, QStringLiteral("/docs")).contains(QStringLiteral("sub")),
+        "the rest of the nested tree must survive");
+    verifyApfsContainerSuperblockChecksum(afterNested);
+
+    const QString withDocsInner = dir.filePath(QStringLiteral("a2nd-docs-inner.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+                {.source_image_path = boxInner,
+                 .written_image_path = withDocsInner,
+                 .directory_name = QStringLiteral("inner"),
+                 .parent_directory_path = QStringLiteral("/docs"),
+                 .options = options})
+                .ok);
+    const QString afterScoped = dir.filePath(QStringLiteral("a2nd-scoped-del.apfs"));
+    QVERIFY(PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+                {.source_image_path = withDocsInner,
+                 .written_image_path = afterScoped,
+                 .directory_name = QStringLiteral("inner"),
+                 .parent_directory_path = QStringLiteral("/box"),
+                 .options = options})
+                .ok);
+    QVERIFY(apfsReaderEntryNames(afterScoped, QStringLiteral("/box")).isEmpty());
+    QVERIFY(apfsReaderEntryNames(afterScoped, QStringLiteral("/docs"))
+                .contains(QStringLiteral("inner")));
+}
+
 }  // namespace
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceNestedDirectoryRoundTrip() {
@@ -9448,6 +9505,7 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceNestedDirectoryRoundTrip() {
          .options = options});
     QVERIFY2(!deleteNonEmpty.ok,
              "deleting a directory that contains only a subdirectory must fail closed");
+    verifyApfsNestedDirectoryDelete(dir, boxInner, options);
 }
 
 namespace {

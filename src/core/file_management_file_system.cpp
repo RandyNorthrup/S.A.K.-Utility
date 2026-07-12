@@ -846,25 +846,20 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                                                   "limited to root directories"));
         }
         const auto parts = apfsParts(cleanPath);
-        // The COW engine's directory-delete resolves only ROOT directories (it ignores a parent
-        // path), so a nested target must fail closed instead of silently deleting the wrong
-        // directory: parts.value(0) would send the FIRST path component (the root ancestor) rather
-        // than the leaf. Nested directory delete is a scoped follow-on (mirror createDirectory's
-        // parent_directory_path once the engine's delete resolves a parent).
-        if (parts.size() != 1) {
-            return mutationBlocked(fs,
-                                   cleanPath,
-                                   QStringLiteral("APFS directory delete is limited to root "
-                                                  "directories; nested directory delete is not yet "
-                                                  "supported"));
-        }
-        // Root directories use the certified crash-safe in-place COW engine
-        // (fails closed on a non-empty directory; empty children first).
+        // The directory's own name is the last path component; everything before it is the parent
+        // path the COW engine resolves the target directory under (empty = container root). The
+        // engine matches the directory by name within that resolved parent, so a nested target
+        // deletes the leaf -- not the root ancestor -- and fails closed on a non-empty directory.
+        const QString parentPath = parts.size() > 1
+                                       ? QLatin1Char('/') +
+                                             parts.mid(0, parts.size() - 1).join(QLatin1Char('/'))
+                                       : QString();
         return fromApfsCommitResult(
             PartitionApfsWriter::commitRawDirectoryDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
                  .directory_name = parts.last(),
+                 .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
                  .allow_raw_device_target = isRawDevicePath(target.root_path),
                  .options = apfsRawWriteOptions()}),

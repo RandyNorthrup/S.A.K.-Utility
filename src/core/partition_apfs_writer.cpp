@@ -15852,18 +15852,20 @@ bool commitInPlaceDirectoryCreate(QIODevice* image,
                             blockers);
 }
 
-// Resolve the root-level directory a delete targets (a nested directory sharing the name is
-// preserved) and gather the directories that remain. Fails closed if the named directory is
-// absent or still holds any child - a child file OR a child subdirectory - because deleting
-// a non-empty directory would orphan its subtree. Callers empty it via the child paths first.
+// Resolve the directory a delete targets (matched by name UNDER its resolved parent, so a
+// same-named directory in another parent is preserved) and gather the directories that remain.
+// Fails closed if the named directory is absent or still holds any child - a child file OR a
+// child subdirectory - because deleting a non-empty directory would orphan its subtree.
+// Callers empty it via the child paths first. request.parentDirectoryId is the resolved
+// parent (root by default; a nested parent when the caller supplied a parent path).
 bool resolveDeletableRootDirectory(const ApfsDirectoryCreateRequest& request,
                                    QVector<ApfsRootDirectoryPayload>* remainingDirectories,
                                    QStringList* blockers) {
     const QString name = request.directoryName.trimmed();
     uint64_t targetDirId = 0;
     for (const auto& directory : request.existingDirectories) {
-        if (directory.parentDirectoryId == kApfsRootDirectoryId &&
-            directory.directoryName == name) {
+        if (directory.parentDirectoryId == request.parentDirectoryId &&
+            directory.directoryName == name && targetDirId == 0) {
             targetDirId = directory.directoryId;
         } else {
             remainingDirectories->append(directory);
@@ -20786,7 +20788,15 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     QVector<ApfsRootFilePayload> existingFiles;
     QVector<ApfsRootDirectoryPayload> directories;
     if (!collectFullFsTree(
-            result.source_image_path, &existingFiles, &directories, &result.blockers) ||
+            result.source_image_path, &existingFiles, &directories, &result.blockers)) {
+        return result;
+    }
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!resolveParentPath(directories,
+                           request.parent_directory_path,
+                           purpose,
+                           &parentDirectoryId,
+                           &result.blockers) ||
         !copyToScratchImage(
             result.source_image_path, result.written_image_path, purpose, &result.blockers)) {
         return result;
@@ -20798,7 +20808,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceDirectoryDelete(
-            &image, {existingFiles, directories, cleanDirectoryName}, &commit, &commitBlockers)) {
+            &image,
+            {existingFiles, directories, cleanDirectoryName, parentDirectoryId},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -21841,6 +21854,14 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
             result.written_image_path, &existingFiles, &directories, &result.blockers)) {
         return result;
     }
+    uint64_t parentDirectoryId = kApfsRootDirectoryId;
+    if (!resolveParentPath(directories,
+                           request.parent_directory_path,
+                           QLatin1StringView("raw directory-delete-commit"),
+                           &parentDirectoryId,
+                           &result.blockers)) {
+        return result;
+    }
     auto target =
         openRawInPlaceCommitTarget({.targetPath = result.written_image_path,
                                     .targetBytes = request.target_container_bytes,
@@ -21854,10 +21875,11 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceDirectoryDelete(target.get(),
-                                     {existingFiles, directories, cleanDirectoryName},
-                                     &commit,
-                                     &commitBlockers)) {
+    if (commitInPlaceDirectoryDelete(
+            target.get(),
+            {existingFiles, directories, cleanDirectoryName, parentDirectoryId},
+            &commit,
+            &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;

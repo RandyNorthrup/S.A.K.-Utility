@@ -116,10 +116,12 @@ private Q_SLOTS:
         QVERIFY(oversized.blockers.join(' ').contains(QStringLiteral("24 TiB")));
     }
 
-    void apfsNestedDirectoryDeleteFailsClosed() {
-        // The COW engine's directory-delete resolves only ROOT directories, so a nested target must
-        // fail closed rather than send the first path component (the root ancestor) as the delete
-        // name. The guard fires before any device access, so a manual (unopened) target is enough.
+    void apfsNestedDirectoryDeletePassesParentPath() {
+        // The bridge now sends a nested directory delete to the COW engine with the leaf name
+        // ("sub") plus the parent path ("/docs") -- not the root ancestor as the delete name.
+        // A manual (unopened) target reaches the engine, which fails closed at the device layer
+        // (this fixture points at a non-existent device), NOT with the old "nested ... not yet
+        // supported" bridge guard. Absence of that guard blocker proves the path is threaded.
         const auto target = sak::FileManagementFileSystemBridge::manualTarget(
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"),
             QStringLiteral("APFS"),
@@ -127,8 +129,9 @@ private Q_SLOTS:
         QVERIFY(target.can_write_files);
         const auto result = sak::FileManagementFileSystemBridge::deleteDirectory(
             target, QStringLiteral("/docs/sub"));
-        QVERIFY2(!result.ok, "nested APFS directory delete must fail closed");
-        QVERIFY2(result.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("nested")),
+        QVERIFY(!result.ok);  // the fixture device cannot be opened
+        QVERIFY2(!result.blockers.join(QStringLiteral(" "))
+                      .contains(QStringLiteral("nested directory delete is not yet supported")),
                  qPrintable(result.blockers.join(QStringLiteral("; "))));
     }
 
