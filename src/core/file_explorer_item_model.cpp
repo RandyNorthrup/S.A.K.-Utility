@@ -241,11 +241,31 @@ Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
     if (!index.isValid()) {
         return Qt::NoItemFlags;
     }
+    const Qt::ItemFlags drag = m_drag_payload_provider ? Qt::ItemIsDragEnabled : Qt::NoItemFlags;
     // Only the name is editable (inline rename); every other column is data.
     if (index.column() == NameColumn) {
-        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | drag;
     }
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | drag;
+}
+
+QMimeData* FileExplorerItemModel::mimeData(const QModelIndexList& indexes) const {
+    if (!m_drag_payload_provider) {
+        return nullptr;
+    }
+    // Collapse the per-column index list into unique, ordered rows.
+    QList<int> rows;
+    for (const QModelIndex& index : indexes) {
+        if (index.isValid() && !rows.contains(index.row())) {
+            rows.append(index.row());
+        }
+    }
+    std::sort(rows.begin(), rows.end());
+    return rows.isEmpty() ? nullptr : m_drag_payload_provider(rows);
+}
+
+Qt::DropActions FileExplorerItemModel::supportedDragActions() const {
+    return Qt::CopyAction | Qt::MoveAction;
 }
 
 bool FileExplorerItemModel::setData(const QModelIndex& index,
@@ -337,6 +357,10 @@ void FileExplorerItemModel::setIconProvider(IconProvider provider) {
                            index(m_entries.size() - 1, NameColumn),
                            {Qt::DecorationRole});
     }
+}
+
+void FileExplorerItemModel::setDragPayloadProvider(DragPayloadProvider provider) {
+    m_drag_payload_provider = std::move(provider);
 }
 
 void FileExplorerItemModel::refreshTags() {

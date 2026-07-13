@@ -92,6 +92,19 @@ void FileExplorerPane::buildItemViews() {
     for (QListView* view : {m_list_view, m_grid_view, m_cards_view, m_columns_view}) {
         view->setItemDelegate(new FileExplorerNameDelegate(view));
     }
+
+    // Drag and drop (Files BaseItemsLayoutPage): rows drag out through the
+    // model's payload provider; drops are filtered at the viewport by the
+    // panel, which routes them through the transfer kernel. The view supplies
+    // only Qt's drag plumbing and the drop indicator.
+    for (QAbstractItemView* view : itemViews()) {
+        view->setDragEnabled(true);
+        view->setAcceptDrops(true);
+        view->viewport()->setAcceptDrops(true);
+        view->setDropIndicatorShown(true);
+        view->setDragDropMode(QAbstractItemView::DragDrop);
+        view->setDefaultDropAction(Qt::MoveAction);
+    }
 }
 
 void FileExplorerPane::buildStatusLabel(QVBoxLayout* layout) {

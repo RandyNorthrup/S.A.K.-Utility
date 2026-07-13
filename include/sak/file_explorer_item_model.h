@@ -18,6 +18,8 @@
 
 #include <functional>
 
+class QMimeData;
+
 namespace sak {
 
 class FileExplorerItemModel : public QAbstractTableModel {
@@ -61,6 +63,11 @@ public:
     /// the model stays decoupled from the GUI icon registry; unset = no row icons.
     using IconProvider = std::function<QVariant(const FileManagementEntry& entry)>;
 
+    /// Callback that builds the drag payload for a set of entry rows. Injected by
+    /// the panel so the model stays decoupled from the clipboard/transfer plumbing;
+    /// unset = rows are not draggable.
+    using DragPayloadProvider = std::function<QMimeData*(const QList<int>& rows)>;
+
     explicit FileExplorerItemModel(QObject* parent = nullptr);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -73,6 +80,8 @@ public:
     [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
     bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
+    [[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    [[nodiscard]] Qt::DropActions supportedDragActions() const override;
 
     void setEntries(QVector<FileManagementEntry> entries);
     void clear();
@@ -85,6 +94,8 @@ public:
     void setTagProvider(TagProvider provider);
     /// Set the icon lookup used for the Name column; pass a null function to disable it.
     void setIconProvider(IconProvider provider);
+    /// Set the drag payload builder; pass a null function to disable dragging.
+    void setDragPayloadProvider(DragPayloadProvider provider);
     /// Notify views that tag data changed (e.g. after editing tags) so the column repaints.
     void refreshTags();
 
@@ -115,6 +126,7 @@ private:
     QSet<QString> m_cut_paths;
     TagProvider m_tag_provider;
     IconProvider m_icon_provider;
+    DragPayloadProvider m_drag_payload_provider;
 };
 
 }  // namespace sak

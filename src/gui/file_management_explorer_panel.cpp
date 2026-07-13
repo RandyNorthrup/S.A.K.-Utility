@@ -31,6 +31,8 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -109,6 +111,8 @@ constexpr int kSizeSliderSingleStep = 8;
 // Files BaseLayoutPage tapDebounceTimer: slow second click on the selected
 // item's name starts an inline rename after 1500 ms.
 constexpr int kRenameTapDebounceMs = 1500;
+// Files SpringLoaded timer: hovering a folder for 1300 ms during a drag opens it.
+constexpr int kSpringOpenMs = 1300;
 constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
 constexpr const char* kTabSessionGroup = "FileManagementExplorer/TabSession";
@@ -232,6 +236,69 @@ bool pathContains(const QString& ancestor, const QString& path, bool local) {
     // Local Windows paths compare case-insensitively; raw APFS/HFSX paths are case-sensitive.
     return candidate.startsWith(base, local ? Qt::CaseInsensitive : Qt::CaseSensitive);
 }
+
+// Lazy drag-out materialization for raw (non-mounted) sources, mirroring the Files
+// VirtualStorageItem deferred DataTransfer: the exports through the certified readers
+// run only when an external drop target actually requests the file URLs; an in-app
+// drop reads the internal payload and never touches this path. The staged copies
+// live as long as the drag's mime object.
+class RawExportMimeData : public QMimeData {
+public:
+    RawExportMimeData(FileManagementTarget target, QVector<FileManagementEntry> items)
+        : m_target(std::move(target)), m_items(std::move(items)) {}
+
+    [[nodiscard]] QStringList formats() const override {
+        QStringList formats = QMimeData::formats();
+        if (!formats.contains(QStringLiteral("text/uri-list"))) {
+            formats.append(QStringLiteral("text/uri-list"));
+        }
+        return formats;
+    }
+
+    [[nodiscard]] bool hasFormat(const QString& mimetype) const override {
+        return mimetype == QStringLiteral("text/uri-list") || QMimeData::hasFormat(mimetype);
+    }
+
+protected:
+    QVariant retrieveData(const QString& mimetype, QMetaType type) const override {
+        if (mimetype == QStringLiteral("text/uri-list")) {
+            materialize();
+        }
+        return QMimeData::retrieveData(mimetype, type);
+    }
+
+private:
+    void materialize() const {
+        if (m_materialized) {
+            return;
+        }
+        m_materialized = true;
+        if (!m_staging.isValid()) {
+            return;
+        }
+        QList<QUrl> urls;
+        for (const FileManagementEntry& item : m_items) {
+            const QString staged = QDir(m_staging.path()).filePath(item.name);
+            const bool ok = item.directory ? FileManagementFileSystemBridge::exportDirectoryToHost(
+                                                 m_target, item.path, staged, kExplorerHashMaxBytes)
+                                                 .ok
+                                           : FileManagementFileSystemBridge::copyFileToHost(
+                                                 m_target, item.path, staged, kExplorerHashMaxBytes)
+                                                 .ok;
+            if (ok) {
+                urls.append(QUrl::fromLocalFile(staged));
+            }
+        }
+        if (!urls.isEmpty()) {
+            const_cast<RawExportMimeData*>(this)->setUrls(urls);
+        }
+    }
+
+    FileManagementTarget m_target;
+    QVector<FileManagementEntry> m_items;
+    QTemporaryDir m_staging;
+    mutable bool m_materialized{false};
+};
 
 QString nameForPath(const QString& path, bool local) {
     if (local) {
@@ -1033,10 +1100,15 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
                     onTableContextMenuRequested(point);
                 });
         // Mouse-level interactions (rename tap, mouse4/5, middle-click,
-        // empty double-click, Ctrl+wheel) and the Enter activation matrix.
+        // empty double-click, Ctrl+wheel), drag/drop, and the Enter
+        // activation matrix.
         view->viewport()->installEventFilter(this);
         view->installEventFilter(this);
     }
+    // Drag payloads reuse the clipboard batch builder; the transfer direction
+    // is decided at drop time by the modifier cascade.
+    pane->itemModel()->setDragPayloadProvider(
+        [this, pane_index](const QList<int>& rows) { return buildDragMimeData(pane_index, rows); });
     // Inline rename commits arrive from the model; queued so the editor is
     // fully closed before the bridge mutation and listing reload run.
     connect(
@@ -1072,6 +1144,9 @@ bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
     }
     auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
     if (view && event) {
+        if (handleViewportDragEvent(view, event)) {
+            return true;
+        }
         if (handleViewportMouseEvent(view, event)) {
             return true;
         }
@@ -2283,7 +2358,10 @@ void FileManagementExplorerPanel::finishMovePaste() {
 }
 
 bool FileManagementExplorerPanel::clipboardHasPasteableFiles() const {
-    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    return mimeHasPasteableItems(QApplication::clipboard()->mimeData());
+}
+
+bool FileManagementExplorerPanel::mimeHasPasteableItems(const QMimeData* mime) {
     if (!mime) {
         return false;
     }
@@ -2301,6 +2379,182 @@ bool FileManagementExplorerPanel::clipboardHasPasteableFiles() const {
         const QFileInfo info(url.toLocalFile());
         return info.isFile() || info.isDir();
     });
+}
+
+QMimeData* FileManagementExplorerPanel::buildDragMimeData(const int pane_index,
+                                                          const QList<int>& rows) {
+    // The drag starts in this pane's view; make it the active pane so the
+    // payload target identity and any drop-time dialogs match the source.
+    activatePane(pane_index);
+    if (!m_item_model) {
+        return nullptr;
+    }
+    FileExplorerSelection selection;
+    for (const int row : rows) {
+        if (m_item_model->hasEntry(row)) {
+            selection.entries.append(m_item_model->entryAt(row));
+        }
+    }
+    const FileManagementTarget target = currentTarget();
+    const ClipboardBatch batch = collectClipboardBatch(selection, target);
+    if (batch.items.isEmpty()) {
+        return nullptr;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("target"), FileExplorerTargetId::fromTarget(target).value);
+    // The transfer direction is decided at drop time by the modifier cascade;
+    // the payload advertises copy so an external consumer treats it as one.
+    payload.insert(QStringLiteral("operation"), QStringLiteral("copy"));
+    payload.insert(QStringLiteral("items"), batch.items);
+    QMimeData* mime = target.local_file_system ? new QMimeData
+                                               : new RawExportMimeData(target, selection.entries);
+    mime->setData(QLatin1String(kExplorerClipboardMime),
+                  QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    mime->setText(batch.lines.join(QLatin1Char('\n')));
+    if (!batch.urls.isEmpty()) {
+        mime->setUrls(batch.urls);
+    }
+    return mime;
+}
+
+Qt::DropAction FileManagementExplorerPanel::dropActionFor(const Qt::KeyboardModifiers modifiers,
+                                                          const QMimeData* mime) const {
+    // Files DragDropHelpers modifier cascade: Ctrl forces Copy and Shift forces
+    // Move (the Link leg is excluded - shortcuts are meaningless on raw
+    // volumes); an unmodified drop moves within the same target and copies
+    // across targets or from external sources.
+    if (modifiers.testFlag(Qt::ControlModifier)) {
+        return Qt::CopyAction;
+    }
+    if (modifiers.testFlag(Qt::ShiftModifier)) {
+        return Qt::MoveAction;
+    }
+    if (mime && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+        const QJsonObject payload =
+            QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
+        if (payload.value(QStringLiteral("target")).toString() ==
+            FileExplorerTargetId::fromTarget(currentTarget()).value) {
+            return Qt::MoveAction;
+        }
+    }
+    return Qt::CopyAction;
+}
+
+bool FileManagementExplorerPanel::handleViewportDragEvent(QAbstractItemView* view, QEvent* event) {
+    switch (event->type()) {
+    case QEvent::DragEnter: {
+        auto* drag = static_cast<QDragEnterEvent*>(event);
+        if (!mimeHasPasteableItems(drag->mimeData())) {
+            return false;
+        }
+        activatePane(paneIndexForView(view));
+        drag->setDropAction(dropActionFor(drag->modifiers(), drag->mimeData()));
+        drag->accept();
+        return true;
+    }
+    case QEvent::DragMove: {
+        auto* drag = static_cast<QDragMoveEvent*>(event);
+        if (!mimeHasPasteableItems(drag->mimeData())) {
+            return false;
+        }
+        const QModelIndex index = view->indexAt(drag->position().toPoint());
+        if (index.isValid() && index.data(FileExplorerItemModel::EntryDirectoryRole).toBool()) {
+            armSpringOpen(index.data(FileExplorerItemModel::EntryPathRole).toString());
+        } else {
+            cancelSpringOpen();
+        }
+        drag->setDropAction(dropActionFor(drag->modifiers(), drag->mimeData()));
+        drag->accept();
+        return true;
+    }
+    case QEvent::DragLeave:
+        cancelSpringOpen();
+        return false;
+    case QEvent::Drop:
+        handleDropOnView(view, event);
+        return true;
+    default:
+        return false;
+    }
+}
+
+void FileManagementExplorerPanel::handleDropOnView(QAbstractItemView* view, QEvent* event) {
+    auto* drop = static_cast<QDropEvent*>(event);
+    cancelSpringOpen();
+    if (!mimeHasPasteableItems(drop->mimeData())) {
+        drop->ignore();
+        return;
+    }
+    // A drop onto a folder row lands inside that folder; anywhere else lands
+    // in the current directory (Files ItemsLayout drop resolution).
+    const QModelIndex index = view->indexAt(drop->position().toPoint());
+    const bool onto_directory = index.isValid() &&
+                                index.data(FileExplorerItemModel::EntryDirectoryRole).toBool();
+    const QString destination = onto_directory
+                                    ? index.data(FileExplorerItemModel::EntryPathRole).toString()
+                                    : m_current_path;
+    const Qt::DropAction action = dropActionFor(drop->modifiers(), drop->mimeData());
+    PasteSources sources = collectPasteSources(drop->mimeData());
+    sources.move = action == Qt::MoveAction;
+    sources.clipboard = false;
+    drop->setDropAction(action);
+    drop->accept();
+    // Deferred so dialogs (typed raw confirm, conflict resolution) never run
+    // inside the native drag loop; the mime object dies with the drag, so the
+    // sources were copied out above.
+    QMetaObject::invokeMethod(
+        this,
+        [this, sources, destination]() { performDrop(sources, destination); },
+        Qt::QueuedConnection);
+}
+
+void FileManagementExplorerPanel::performDrop(const PasteSources& sources,
+                                              const QString& destination_dir) {
+    if (sources.host_files.isEmpty() && sources.raw_items.isEmpty()) {
+        return;
+    }
+    if (sources.move && pasteSameTargetMove(currentTarget(), sources, destination_dir)) {
+        return;
+    }
+    if (!preparePasteDestination(sources)) {
+        return;
+    }
+    executePaste(sources, destination_dir);
+}
+
+void FileManagementExplorerPanel::armSpringOpen(const QString& directory_path) {
+    if (!m_spring_open_timer) {
+        m_spring_open_timer = new QTimer(this);
+        m_spring_open_timer->setSingleShot(true);
+        m_spring_open_timer->setInterval(kSpringOpenMs);
+        connect(m_spring_open_timer, &QTimer::timeout, this, [this]() {
+            if (!m_spring_open_path.isEmpty()) {
+                loadDirectory(m_spring_open_path);
+            }
+        });
+    }
+    if (m_spring_open_path == directory_path && m_spring_open_timer->isActive()) {
+        return;
+    }
+    m_spring_open_path = directory_path;
+    m_spring_open_timer->start();
+}
+
+void FileManagementExplorerPanel::cancelSpringOpen() {
+    if (m_spring_open_timer) {
+        m_spring_open_timer->stop();
+    }
+    m_spring_open_path.clear();
+}
+
+int FileManagementExplorerPanel::paneIndexForView(const QAbstractItemView* view) const {
+    for (int index = 0; index < 2; ++index) {
+        FileExplorerPane* pane = index == 0 ? m_pane_a : m_pane_b;
+        if (pane && pane->itemViews().contains(const_cast<QAbstractItemView*>(view))) {
+            return index;
+        }
+    }
+    return m_active_pane_index;
 }
 
 // Split an internal clipboard payload's items into host paths (local source target) or
@@ -2555,7 +2809,9 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
     QStringList blockers;
     PasteCollisionPolicy policy;
     const int written = pasteItemsToFolder(batch, items, &policy, &blockers);
-    if (sources.move && written > 0) {
+    // Only a clipboard-originated move consumes the clipboard; a drag-drop
+    // move must leave the user's clipboard untouched.
+    if (sources.move && sources.clipboard && written > 0) {
         finishMovePaste();
     }
     if (written > 0) {
@@ -2630,7 +2886,9 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     QStringList blockers;
     const int moved = moveEntriesWithinTarget(target, items, destination_dir, &policy, &blockers);
     if (moved > 0) {
-        finishMovePaste();
+        if (sources.clipboard) {
+            finishMovePaste();
+        }
         loadDirectory(m_current_path);
     }
     if (!blockers.isEmpty()) {

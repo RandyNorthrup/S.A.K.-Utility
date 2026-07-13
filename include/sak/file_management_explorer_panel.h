@@ -177,12 +177,15 @@ private:
     };
     /// Clipboard payload gathered for a paste: host (local) source paths, or raw-target
     /// source items tagged with the source target identity. `move` mirrors the
-    /// Files DataPackage RequestedOperation (cut = Move, copy = Copy).
+    /// Files DataPackage RequestedOperation (cut = Move, copy = Copy). `clipboard`
+    /// is false for drag-drop payloads, whose completed move must not consume the
+    /// user's clipboard.
     struct PasteSources {
         QStringList host_files;
         QString source_target_id;
         QList<PasteItem> raw_items;
         bool move{false};
+        bool clipboard{true};
     };
     /// Files FileNameConflictResolveOptionType (GenerateNewName default).
     enum class PasteCollisionChoice {
@@ -245,7 +248,17 @@ private:
     void refreshOtherPane();
     [[nodiscard]] FileManagementTarget otherPaneTarget() const;
     [[nodiscard]] bool clipboardHasPasteableFiles() const;
+    [[nodiscard]] static bool mimeHasPasteableItems(const QMimeData* mime);
     [[nodiscard]] PasteSources collectPasteSources(const QMimeData* mime) const;
+    QMimeData* buildDragMimeData(int pane_index, const QList<int>& rows);
+    bool handleViewportDragEvent(QAbstractItemView* view, QEvent* event);
+    void handleDropOnView(QAbstractItemView* view, QEvent* event);
+    [[nodiscard]] Qt::DropAction dropActionFor(Qt::KeyboardModifiers modifiers,
+                                               const QMimeData* mime) const;
+    void performDrop(const PasteSources& sources, const QString& destination_dir);
+    void armSpringOpen(const QString& directory_path);
+    void cancelSpringOpen();
+    [[nodiscard]] int paneIndexForView(const QAbstractItemView* view) const;
     static void appendPayloadItems(const QJsonArray& items,
                                    bool source_is_local,
                                    PasteSources& sources);
@@ -474,6 +487,10 @@ private:
     QTimer* m_rename_tap_timer{nullptr};
     QPersistentModelIndex m_rename_tap_candidate;
     QPointer<QAbstractItemView> m_rename_tap_view;
+    // Drag spring-open (Files SpringLoaded timer, 1300 ms): hovering a folder
+    // during a drag navigates into it; leaving or dropping cancels the timer.
+    QTimer* m_spring_open_timer{nullptr};
+    QString m_spring_open_path;
     // Path of the file currently rendered in the preview pane, so selection churn does not
     // re-read the same file; empty when no single readable file is selected.
     QString m_last_preview_path;

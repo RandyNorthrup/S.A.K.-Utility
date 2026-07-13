@@ -8,8 +8,11 @@
 #include "sak/file_explorer_sort_filter_model.h"
 
 #include <QDateTime>
+#include <QMimeData>
 #include <QTimeZone>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 namespace {
 
@@ -53,6 +56,33 @@ class FileExplorerItemModelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void dragProviderEnablesDraggingAndBuildsPayload() {
+        sak::FileExplorerItemModel model;
+        model.setEntries(
+            {directoryEntry(QStringLiteral("Docs")), fileEntry(QStringLiteral("notes.txt"), 42)});
+
+        // Without a provider the rows are not draggable and mimeData yields nothing.
+        QVERIFY(!model.flags(model.index(0, 0)).testFlag(Qt::ItemIsDragEnabled));
+        QVERIFY(!model.mimeData({model.index(0, 0)}));
+
+        // With a provider the rows advertise dragging, and mimeData collapses the
+        // per-column index list into unique ordered rows before delegating.
+        QList<int> captured;
+        model.setDragPayloadProvider([&captured](const QList<int>& rows) -> QMimeData* {
+            captured = rows;
+            auto* mime = new QMimeData;
+            mime->setText(QStringLiteral("payload"));
+            return mime;
+        });
+        QVERIFY(model.flags(model.index(0, 0)).testFlag(Qt::ItemIsDragEnabled));
+        QVERIFY(model.supportedDragActions().testFlag(Qt::MoveAction));
+        std::unique_ptr<QMimeData> mime(
+            model.mimeData({model.index(1, 0), model.index(1, 2), model.index(0, 0)}));
+        QVERIFY(mime);
+        QCOMPARE(mime->text(), QStringLiteral("payload"));
+        QCOMPARE(captured, (QList<int>{0, 1}));
+    }
+
     void exposesRowsColumnsAndRoles() {
         sak::FileExplorerItemModel model;
         model.setEntries(

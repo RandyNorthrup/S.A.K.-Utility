@@ -22,6 +22,8 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QHeaderView>
 #include <QImage>
 #include <QKeyEvent>
@@ -1413,6 +1415,87 @@ private Q_SLOTS:
         QVERIFY2(QTest::qWaitFor([&moved_leaf]() { return QFile::exists(moved_leaf); }, 5000),
                  "folder cut-paste did not move the tree");
         QVERIFY(!QDir(root.filePath(QStringLiteral("bundle"))).exists());
+    }
+
+    // Deliver a synthetic drag-enter + drop at @p pos on the view's viewport.
+    // Takes parameters so QtTest does not run it as a test slot.
+    void sendDrop(QAbstractItemView* view,
+                  const QPointF& pos,
+                  const QMimeData* mime,
+                  Qt::KeyboardModifiers modifiers) {
+        QDragEnterEvent enter(
+            pos.toPoint(), Qt::CopyAction | Qt::MoveAction, mime, Qt::LeftButton, modifiers);
+        QApplication::sendEvent(view->viewport(), &enter);
+        QDropEvent drop(pos, Qt::CopyAction | Qt::MoveAction, mime, Qt::LeftButton, modifiers);
+        QApplication::sendEvent(view->viewport(), &drop);
+        QApplication::processEvents();
+    }
+
+    void dropMovesWithinTargetAndCopiesExternalUrls() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkdir(QStringLiteral("drop_zone")));
+        {
+            QFile file(root.filePath(QStringLiteral("dragme.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("drag payload") > 0);
+        }
+        QTemporaryDir outside_dir;
+        QVERIFY(outside_dir.isValid());
+        const QString outside = QDir(outside_dir.path()).filePath(QStringLiteral("outside.txt"));
+        {
+            QFile file(outside);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("external payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        const int zone_row =
+            navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("drop_zone"));
+        QVERIFY(zone_row >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Same-target drop with no modifiers is a MOVE (Files DragDropHelpers
+        // cascade): reuse the copy payload shape via Ctrl+C, drop onto the folder row.
+        QVERIFY(selectRowStable(table, QStringLiteral("dragme")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        const QMimeData* clip = QApplication::clipboard()->mimeData();
+        QVERIFY(clip && clip->hasFormat(QStringLiteral("application/x-sak-file-explorer-items")));
+        QMimeData drag_mime;
+        drag_mime.setData(QStringLiteral("application/x-sak-file-explorer-items"),
+                          clip->data(QStringLiteral("application/x-sak-file-explorer-items")));
+        const QPointF zone_center = table->visualRect(table->model()->index(zone_row, 0)).center();
+        sendDrop(table, zone_center, &drag_mime, Qt::NoModifier);
+        const QString moved = root.filePath(QStringLiteral("drop_zone/dragme.txt"));
+        QVERIFY2(QTest::qWaitFor([&moved]() { return QFile::exists(moved); }, 5000),
+                 "drop did not move the file into the folder");
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("dragme.txt"))));
+
+        // External URL drop onto empty space copies into the current folder.
+        QMimeData url_mime;
+        url_mime.setUrls({QUrl::fromLocalFile(outside)});
+        const QPointF empty_spot(table->viewport()->rect().bottomRight() - QPoint(4, 4));
+        sendDrop(table, empty_spot, &url_mime, Qt::NoModifier);
+        const QString copied = root.filePath(QStringLiteral("outside.txt"));
+        QVERIFY2(QTest::qWaitFor([&copied]() { return QFile::exists(copied); }, 5000),
+                 "external drop did not copy the file");
+        QVERIFY(QFile::exists(outside));
     }
 
     // Auto-accept the next modal question box (clicks Yes) and capture its text,
