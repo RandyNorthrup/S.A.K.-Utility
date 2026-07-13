@@ -224,9 +224,11 @@ endif()
 # Dependencies
 # ============================================================================
 
-# Qt6 - Required
+# Qt6 - Required. CorePrivate provides QZipReader/QZipWriter for the explorer
+# zip compress/extract (no third-party archive library is vendored).
 find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
+    CorePrivate
     Widgets
     Concurrent
     Network
@@ -348,6 +350,8 @@ set(CORE_SOURCES
     src/core/file_explorer_command_registry.cpp
     src/core/file_explorer_session_store.cpp
     src/core/file_explorer_tag_store.cpp
+    src/core/file_explorer_archive_service.cpp
+    include/sak/file_explorer_archive_service.h
     src/core/file_management_file_system.cpp
     src/core/apfs_crypto.cpp
     src/core/apfs_keybag.cpp
@@ -904,6 +908,9 @@ target_compile_definitions(sak_utility PRIVATE
 # Link libraries
 target_link_libraries(sak_utility PRIVATE
     Qt6::Core
+    # QZipReader/QZipWriter (explorer zip compress/extract) live in QtCore's
+    # private headers; no third-party archive library is vendored for this.
+    Qt6::CorePrivate
     Qt6::Widgets
     Qt6::Concurrent
     Qt6::Network

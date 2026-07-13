@@ -63,6 +63,11 @@ enum class FileExplorerCommandId {
     RemoveTags,
     OpenInTerminal,
     EditInNotepad,
+    CompressIntoZip,
+    ExtractFiles,
+    ExtractHere,
+    ExtractHereSmart,
+    ExtractToChildFolder,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

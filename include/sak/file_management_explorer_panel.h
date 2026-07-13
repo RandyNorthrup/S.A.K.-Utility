@@ -42,6 +42,7 @@ class QVBoxLayout;
 class QImage;
 class QTabBar;
 class QShortcut;
+class QTemporaryDir;
 class QAbstractItemView;
 class QKeyEvent;
 class QMouseEvent;
@@ -230,6 +231,9 @@ private:
     [[nodiscard]] QString uniqueChildName(const FileManagementTarget& target,
                                           const QString& directory,
                                           const QString& name) const;
+    [[nodiscard]] QString availableChildName(const FileManagementTarget& target,
+                                             const QString& directory,
+                                             const QString& name) const;
     [[nodiscard]] PasteEntryKind destinationEntryKind(const FileManagementTarget& target,
                                                       const QString& directory,
                                                       const QString& name) const;
@@ -319,6 +323,38 @@ private:
     void createFolderWithSelection();
     void openTerminalHere();
     void editSelectionInNotepad();
+    /// Files decompress legs: the Ctrl+E dialog, extract-here, smart (skip a
+    /// redundant single top-level folder), and always-wrap subfolder.
+    enum class ExtractMode {
+        Dialog,
+        Here,
+        Smart,
+        ChildFolder
+    };
+    [[nodiscard]] QString selectionArchiveBaseName() const;
+    void compressSelectionToZip();
+    QStringList compressSourcePaths(const FileManagementTarget& target,
+                                    const QTemporaryDir& staging,
+                                    QStringList* blockers);
+    void extractSelection(ExtractMode mode);
+    bool extractOneArchive(ExtractMode mode,
+                           const FileManagementEntry& entry,
+                           const QString& staging_dir,
+                           QStringList* blockers);
+    bool extractArchiveViaDialog(const FileManagementTarget& target,
+                                 const FileManagementEntry& entry,
+                                 const QString& host_zip,
+                                 QStringList* blockers);
+    [[nodiscard]] static bool extractionNeedsWrapFolder(ExtractMode mode, const QString& host_zip);
+    QString stageEntryToHost(const FileManagementTarget& target,
+                             const FileManagementEntry& entry,
+                             const QString& staging_dir,
+                             QStringList* blockers);
+    bool deliverExtractedTree(const FileManagementTarget& target,
+                              const QString& host_out_dir,
+                              const QString& wrap_name,
+                              QStringList* blockers);
+    void addArchiveSubmenus(QMenu* menu, const FileExplorerCommandContext& context);
     void applyCommandState(QPushButton* button,
                            FileExplorerCommandId command,
                            const FileExplorerCommandContext& context);

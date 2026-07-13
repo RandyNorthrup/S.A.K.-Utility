@@ -1062,6 +1062,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_command_registry.cpp
         ../src/core/file_explorer_session_store.cpp
         ../src/core/file_explorer_tag_store.cpp
+        ../src/core/file_explorer_archive_service.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/recycle_bin.cpp
@@ -1108,7 +1109,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_file_management_explorer_panel PRIVATE
-        Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+        Qt6::Core Qt6::CorePrivate Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse
+        ${PLATFORM_LIBS}
     )
     target_include_directories(test_file_management_explorer_panel PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include

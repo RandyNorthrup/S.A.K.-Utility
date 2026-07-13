@@ -4,6 +4,7 @@
 /// @file test_file_management_explorer_panel.cpp
 /// @brief GUI tests for the File Management Explorer shell.
 
+#include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_details_pane.h"
 #include "sak/file_explorer_details_view.h"
@@ -977,6 +978,107 @@ private Q_SLOTS:
         QVERIFY(targetActions.contains(QStringLiteral("Refresh Mounted Targets")));
         QVERIFY(targetActions.contains(QStringLiteral("Scan Disks")));
         QVERIFY(targetActions.contains(QStringLiteral("Add Raw/Image")));
+    }
+
+    void archiveServiceRoundTripsAndDetectsSingleRoot() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("bundle/deep")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        writeFile(root.filePath(QStringLiteral("bundle/inner.txt")),
+                  QByteArrayLiteral("zip inner payload"));
+        writeFile(root.filePath(QStringLiteral("bundle/deep/leaf.bin")),
+                  QByteArrayLiteral("zip leaf \x00\x01 payload"));
+        writeFile(root.filePath(QStringLiteral("loose.txt")), QByteArrayLiteral("loose payload"));
+
+        // Files naming: one item -> its own name; several -> the parent folder.
+        QCOMPARE(sak::FileExplorerArchiveService::archiveBaseName({QStringLiteral("bundle")},
+                                                                  QStringLiteral("parent")),
+                 QStringLiteral("bundle"));
+        QCOMPARE(sak::FileExplorerArchiveService::archiveBaseName(
+                     {QStringLiteral("a"), QStringLiteral("b")}, QStringLiteral("parent")),
+                 QStringLiteral("parent"));
+
+        // Round trip: folder + loose file -> zip -> extract -> byte compare.
+        const QString zip = root.filePath(QStringLiteral("out.zip"));
+        const auto compressed = sak::FileExplorerArchiveService::compressToZip(
+            zip,
+            {root.filePath(QStringLiteral("bundle")), root.filePath(QStringLiteral("loose.txt"))});
+        QVERIFY2(compressed.ok, qPrintable(compressed.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(compressed.entries, 3);
+        // Two top-level roots ("bundle", "loose.txt") -> not a single root.
+        QVERIFY(!sak::FileExplorerArchiveService::hasSingleTopLevelRoot(zip, nullptr));
+
+        const QString out = root.filePath(QStringLiteral("out"));
+        const auto extracted = sak::FileExplorerArchiveService::extractZip(zip, out);
+        QVERIFY2(extracted.ok, qPrintable(extracted.blockers.join(QStringLiteral("; "))));
+        QFile leaf(QDir(out).filePath(QStringLiteral("bundle/deep/leaf.bin")));
+        QVERIFY(leaf.open(QIODevice::ReadOnly));
+        QCOMPARE(leaf.readAll(), QByteArrayLiteral("zip leaf \x00\x01 payload"));
+        QFile loose(QDir(out).filePath(QStringLiteral("loose.txt")));
+        QVERIFY(loose.open(QIODevice::ReadOnly));
+        QCOMPARE(loose.readAll(), QByteArrayLiteral("loose payload"));
+
+        // A zip holding only the folder IS single-rooted (smart extract flattens).
+        const QString single = root.filePath(QStringLiteral("single.zip"));
+        QVERIFY(sak::FileExplorerArchiveService::compressToZip(
+                    single, {root.filePath(QStringLiteral("bundle"))})
+                    .ok);
+        QString detected_root;
+        QVERIFY(sak::FileExplorerArchiveService::hasSingleTopLevelRoot(single, &detected_root));
+        QCOMPARE(detected_root, QStringLiteral("bundle"));
+    }
+
+    void smartExtractHotkeyFlattensSingleRootArchive() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("payload/deep")));
+        {
+            QFile file(root.filePath(QStringLiteral("payload/deep/leaf.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("smart extract payload") > 0);
+        }
+        // Single-root archive named differently from its root folder, so the
+        // smart flatten is observable ("payload" appears, no "wrapped" folder).
+        const QString zip = root.filePath(QStringLiteral("wrapped.zip"));
+        QVERIFY(sak::FileExplorerArchiveService::compressToZip(
+                    zip, {root.filePath(QStringLiteral("payload"))})
+                    .ok);
+        QVERIFY(QDir(root.filePath(QStringLiteral("payload"))).removeRecursively());
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("wrapped")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Ctrl+Shift+E (Files DecompressArchiveHereSmart): the single-root
+        // archive flattens - its root folder lands directly in the current dir.
+        QVERIFY(selectRowStable(table, QStringLiteral("wrapped")));
+        QTest::keyClick(table, Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString flattened = root.filePath(QStringLiteral("payload/deep/leaf.txt"));
+        QVERIFY2(QTest::qWaitFor([&flattened]() { return QFile::exists(flattened); }, 5000),
+                 "smart extract did not flatten the single-root archive");
+        QVERIFY(!QDir(root.filePath(QStringLiteral("wrapped"))).exists());
     }
 
     void itemContextMenuFollowsFilesOrder() {

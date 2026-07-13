@@ -7,6 +7,7 @@
 #include "sak/file_management_explorer_panel.h"
 
 #include "sak/advanced_search_worker.h"
+#include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_session_store.h"
@@ -1390,6 +1391,8 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::IncreaseSize,
         FileExplorerCommandId::DecreaseSize,
         FileExplorerCommandId::OpenInTerminal,
+        FileExplorerCommandId::ExtractFiles,
+        FileExplorerCommandId::ExtractHereSmart,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -2707,6 +2710,14 @@ bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTa
     return true;
 }
 
+QString FileManagementExplorerPanel::availableChildName(const FileManagementTarget& target,
+                                                        const QString& directory,
+                                                        const QString& name) const {
+    // The name itself when free; otherwise the Files incremental "{name} (n)".
+    return destinationOccupied(target, directory, name) ? uniqueChildName(target, directory, name)
+                                                        : name;
+}
+
 QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget& target,
                                                      const QString& directory,
                                                      const QString& name) const {
@@ -3677,6 +3688,21 @@ bool FileManagementExplorerPanel::dispatchSelectionToolCommand(
     case FileExplorerCommandId::EditInNotepad:
         editSelectionInNotepad();
         return true;
+    case FileExplorerCommandId::CompressIntoZip:
+        compressSelectionToZip();
+        return true;
+    case FileExplorerCommandId::ExtractFiles:
+        extractSelection(ExtractMode::Dialog);
+        return true;
+    case FileExplorerCommandId::ExtractHere:
+        extractSelection(ExtractMode::Here);
+        return true;
+    case FileExplorerCommandId::ExtractHereSmart:
+        extractSelection(ExtractMode::Smart);
+        return true;
+    case FileExplorerCommandId::ExtractToChildFolder:
+        extractSelection(ExtractMode::ChildFolder);
+        return true;
     default:
         return false;
     }
@@ -3963,6 +3989,227 @@ void FileManagementExplorerPanel::editSelectionInNotepad() {
                                     {QDir::toNativeSeparators(entry.path)});
         }
     }
+}
+
+QString FileManagementExplorerPanel::selectionArchiveBaseName() const {
+    const FileExplorerSelection selection = currentSelection();
+    QStringList names;
+    names.reserve(selection.entries.size());
+    for (const FileManagementEntry& entry : selection.entries) {
+        names.append(entry.name);
+    }
+    return FileExplorerArchiveService::archiveBaseName(
+        names, nameForPath(m_current_path, currentTarget().local_file_system));
+}
+
+QString FileManagementExplorerPanel::stageEntryToHost(const FileManagementTarget& target,
+                                                      const FileManagementEntry& entry,
+                                                      const QString& staging_dir,
+                                                      QStringList* blockers) {
+    const QString staged = QDir(staging_dir).filePath(entry.name);
+    const PasteItem item{entry.path, entry.size_bytes, entry.directory};
+    return transferRawEntryToLocal(target, item, staged, blockers) ? staged : QString();
+}
+
+void FileManagementExplorerPanel::compressSelectionToZip() {
+    // Files CompressIntoZipAction: "{selection name}.zip" beside the selection.
+    // Raw targets stage the sources out through the certified readers, build
+    // the zip on the host, then import it through the certified writer.
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(
+        FileExplorerCommandId::CompressIntoZip, commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Compress"), state.blocker);
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Compress"), identity_blocker);
+        return;
+    }
+    const FileManagementTarget target = currentTarget();
+    const QString zip_name = availableChildName(
+        target, m_current_path, selectionArchiveBaseName() + QStringLiteral(".zip"));
+    QStringList blockers;
+    QTemporaryDir staging;
+    const QStringList host_sources = compressSourcePaths(target, staging, &blockers);
+    const QString zip_host = target.local_file_system ? childPathFor(m_current_path, zip_name, true)
+                                                      : QDir(staging.path()).filePath(zip_name);
+    int entries = 0;
+    if (!host_sources.isEmpty()) {
+        const auto result = FileExplorerArchiveService::compressToZip(zip_host, host_sources);
+        blockers.append(result.blockers);
+        if (!result.warnings.isEmpty()) {
+            logMessage(result.warnings.join(QLatin1Char('\n')));
+        }
+        entries = result.entries;
+        if (result.ok && !target.local_file_system &&
+            !FileManagementFileSystemBridge::writeFileFromHostPath(
+                 target, childPathFor(m_current_path, zip_name, false), zip_host)
+                 .ok) {
+            blockers.append(tr("Could not write %1 to the target.").arg(zip_name));
+        }
+    }
+    loadDirectory(m_current_path);
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Compress"), blockers.join(QStringLiteral("\n")));
+        return;
+    }
+    Q_EMIT statusMessage(tr("Created %1 (%2 file(s)).").arg(zip_name).arg(entries),
+                         sak::kTimerStatusDefaultMs);
+}
+
+// Files smart rule: a single top-level folder extracts in place (no redundant
+// wrapper); anything else wraps in "{archive name}". ChildFolder always wraps.
+bool FileManagementExplorerPanel::extractionNeedsWrapFolder(const ExtractMode mode,
+                                                            const QString& host_zip) {
+    return mode == ExtractMode::ChildFolder ||
+           (mode == ExtractMode::Smart &&
+            !FileExplorerArchiveService::hasSingleTopLevelRoot(host_zip, nullptr));
+}
+
+// Host-side source list for a compress: local selections pass through, raw
+// selections stage out through the certified readers first.
+QStringList FileManagementExplorerPanel::compressSourcePaths(const FileManagementTarget& target,
+                                                             const QTemporaryDir& staging,
+                                                             QStringList* blockers) {
+    const FileExplorerSelection selection = currentSelection();
+    if (target.local_file_system) {
+        return selection.paths();
+    }
+    if (!staging.isValid()) {
+        blockers->append(tr("Could not create a staging folder for the archive."));
+        return {};
+    }
+    QStringList host_sources;
+    for (const FileManagementEntry& entry : selection.entries) {
+        const QString staged = stageEntryToHost(target, entry, staging.path(), blockers);
+        if (!staged.isEmpty()) {
+            host_sources.append(staged);
+        }
+    }
+    return host_sources;
+}
+
+void FileManagementExplorerPanel::extractSelection(const ExtractMode mode) {
+    const FileExplorerCommandId command = mode == ExtractMode::Dialog
+                                              ? FileExplorerCommandId::ExtractFiles
+                                              : FileExplorerCommandId::ExtractHere;
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command,
+                                                                              commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Extract"), state.blocker);
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Extract"), identity_blocker);
+        return;
+    }
+    const FileExplorerSelection selection = currentSelection();
+    QTemporaryDir staging;
+    QStringList blockers;
+    int extracted = 0;
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (extractOneArchive(mode, entry, staging.path(), &blockers)) {
+            ++extracted;
+        }
+    }
+    loadDirectory(m_current_path);
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Extract"), blockers.join(QStringLiteral("\n")));
+    }
+    Q_EMIT statusMessage(
+        tr("Extracted %1 of %2 archive(s).").arg(extracted).arg(selection.entries.size()),
+        sak::kTimerStatusDefaultMs);
+}
+
+bool FileManagementExplorerPanel::extractOneArchive(const ExtractMode mode,
+                                                    const FileManagementEntry& entry,
+                                                    const QString& staging_dir,
+                                                    QStringList* blockers) {
+    const FileManagementTarget target = currentTarget();
+    const QString host_zip = target.local_file_system
+                                 ? entry.path
+                                 : stageEntryToHost(target, entry, staging_dir, blockers);
+    if (host_zip.isEmpty()) {
+        return false;
+    }
+    const QString stem = QFileInfo(entry.name).completeBaseName();
+    if (mode == ExtractMode::Dialog) {
+        return extractArchiveViaDialog(target, entry, host_zip, blockers);
+    }
+    const bool wrap = extractionNeedsWrapFolder(mode, host_zip);
+    if (target.local_file_system) {
+        const QString destination =
+            wrap ? childPathFor(m_current_path,
+                                availableChildName(target, m_current_path, stem),
+                                true)
+                 : m_current_path;
+        const auto result = FileExplorerArchiveService::extractZip(host_zip, destination);
+        blockers->append(result.blockers);
+        return result.ok;
+    }
+    // Raw destination: extract to a scratch folder, then import through the
+    // certified writers.
+    QTemporaryDir out;
+    if (!out.isValid()) {
+        blockers->append(tr("Could not create a staging folder for the extraction."));
+        return false;
+    }
+    const auto result = FileExplorerArchiveService::extractZip(host_zip, out.path());
+    blockers->append(result.blockers);
+    if (!result.ok) {
+        return false;
+    }
+    return deliverExtractedTree(target, out.path(), wrap ? stem : QString(), blockers);
+}
+
+// Files DecompressArchiveDialog leg: the chooser starts beside a local archive
+// and extracts into the chosen host folder.
+bool FileManagementExplorerPanel::extractArchiveViaDialog(const FileManagementTarget& target,
+                                                          const FileManagementEntry& entry,
+                                                          const QString& host_zip,
+                                                          QStringList* blockers) {
+    const QString start = target.local_file_system ? QFileInfo(entry.path).absolutePath()
+                                                   : QDir::homePath();
+    const QString destination =
+        QFileDialog::getExistingDirectory(this, tr("Extract Files To"), start);
+    if (destination.isEmpty()) {
+        return false;
+    }
+    const auto result = FileExplorerArchiveService::extractZip(host_zip, destination);
+    blockers->append(result.blockers);
+    return result.ok;
+}
+
+bool FileManagementExplorerPanel::deliverExtractedTree(const FileManagementTarget& target,
+                                                       const QString& host_out_dir,
+                                                       const QString& wrap_name,
+                                                       QStringList* blockers) {
+    if (!wrap_name.isEmpty()) {
+        const QString destination = childPathFor(
+            m_current_path, availableChildName(target, m_current_path, wrap_name), false);
+        const auto result = FileManagementFileSystemBridge::importDirectoryFromHost(target,
+                                                                                    host_out_dir,
+                                                                                    destination);
+        blockers->append(result.blockers);
+        return result.ok;
+    }
+    // Flatten: import each extracted top-level entry into the current folder.
+    bool all_ok = true;
+    const QFileInfoList infos =
+        QDir(host_out_dir).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
+    for (const QFileInfo& info : infos) {
+        const QString name = availableChildName(target, m_current_path, info.fileName());
+        const PasteItem item{info.absoluteFilePath(),
+                             static_cast<quint64>(std::max<qint64>(info.size(), 0)),
+                             info.isDir()};
+        if (!transferEntryFromHost(
+                item, target, childPathFor(m_current_path, name, false), blockers)) {
+            all_ok = false;
+        }
+    }
+    return all_ok;
 }
 
 void FileManagementExplorerPanel::togglePreviewPane() {
@@ -5474,6 +5721,7 @@ void FileManagementExplorerPanel::buildItemContextMenu(QMenu* menu,
     addCommandMenuAction(menu, FileExplorerCommandId::Delete, context);
     addCommandMenuAction(menu, FileExplorerCommandId::Properties, context);
     menu->addSeparator();
+    addArchiveSubmenus(menu, context);
     addTagsSubmenu(menu, context);
     addCommandMenuAction(menu, FileExplorerCommandId::EditInNotepad, context);
     menu->addSeparator();
@@ -5522,6 +5770,34 @@ void FileManagementExplorerPanel::buildBackgroundContextMenu(
     addCommandMenuAction(menu, FileExplorerCommandId::InvertSelection, context);
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::OpenInTerminal, context);
+}
+
+// Files Compress/Extract submenus (ContentPageContextFlyoutFactory rows 43-44):
+// Compress carries the dynamic "Create {name}.zip" label; Extract offers the
+// dialog, smart, here, and subfolder legs in the factory order.
+void FileManagementExplorerPanel::addArchiveSubmenus(QMenu* menu,
+                                                     const FileExplorerCommandContext& context) {
+    auto* compress_menu = menu->addMenu(tr("Compress"));
+    compress_menu->setObjectName(QStringLiteral("fileExplorerCompressMenu"));
+    if (auto* zip_action =
+            addCommandMenuAction(compress_menu, FileExplorerCommandId::CompressIntoZip, context);
+        zip_action && zip_action->isEnabled()) {
+        zip_action->setText(tr("Create %1.zip").arg(selectionArchiveBaseName()));
+    }
+    auto* extract_menu = menu->addMenu(tr("Extract"));
+    extract_menu->setObjectName(QStringLiteral("fileExplorerExtractMenu"));
+    addCommandMenuAction(extract_menu, FileExplorerCommandId::ExtractFiles, context);
+    addCommandMenuAction(extract_menu, FileExplorerCommandId::ExtractHereSmart, context);
+    addCommandMenuAction(extract_menu, FileExplorerCommandId::ExtractHere, context);
+    auto* child_action =
+        addCommandMenuAction(extract_menu, FileExplorerCommandId::ExtractToChildFolder, context);
+    const FileExplorerSelection& selection = context.pane.selection;
+    if (child_action && child_action->isEnabled() && selection.hasSingleEntry()) {
+        // Files "Extract to {name}\" label from the archive's own stem.
+        child_action->setText(
+            tr("Extract to %1\\")
+                .arg(QFileInfo(selection.entries.first().name).completeBaseName()));
+    }
 }
 
 // Files FileTagsContextMenu: one checkable row per known tag (checked when

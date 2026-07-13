@@ -71,6 +71,11 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::RemoveTags, Group::File},
         {Id::OpenInTerminal, Group::Navigation},
         {Id::EditInNotepad, Group::File},
+        {Id::CompressIntoZip, Group::File},
+        {Id::ExtractFiles, Group::File},
+        {Id::ExtractHere, Group::File},
+        {Id::ExtractHereSmart, Group::File},
+        {Id::ExtractToChildFolder, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -310,6 +315,47 @@ FileExplorerCommandState editInNotepadState(const FileExplorerCommandContext& co
         });
     if (!all_scripts) {
         return disabledState(entry, QStringLiteral("Select .bat, .cmd, or .ahk script files."));
+    }
+    return enabledState(entry);
+}
+
+// True when every selected item is a .zip archive (Files CanDecompress).
+bool selectionAllZip(const FileExplorerCommandContext& context) {
+    const auto& entries = context.pane.selection.entries;
+    return !entries.isEmpty() && std::ranges::all_of(entries, [](const FileManagementEntry& item) {
+        return item.regular_file && item.name.endsWith(QStringLiteral(".zip"), Qt::CaseInsensitive);
+    });
+}
+
+bool isExtractCommand(const FileExplorerCommandId id) {
+    using enum FileExplorerCommandId;
+    return id == ExtractFiles || id == ExtractHere || id == ExtractHereSmart ||
+           id == ExtractToChildFolder;
+}
+
+// Files StorageArchiveService gating: Compress needs a selection that is not a
+// single archive; Extract needs an all-zip selection, and the Ctrl+E dialog leg
+// exactly one archive.
+std::optional<FileExplorerCommandState> archiveState(const FileExplorerCommandId id,
+                                                     const FileExplorerCommandContext& context,
+                                                     const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id != CompressIntoZip && !isExtractCommand(id)) {
+        return std::nullopt;
+    }
+    const bool all_zip = selectionAllZip(context);
+    const qsizetype count = context.pane.selection.entries.size();
+    if (id == CompressIntoZip) {
+        // Files CanCompress: !CanDecompress || more than one item.
+        return (all_zip && count == 1)
+                   ? disabledState(entry, QStringLiteral("Selection is already an archive."))
+                   : enabledState(entry);
+    }
+    if (!all_zip) {
+        return disabledState(entry, QStringLiteral("Select .zip archives to extract."));
+    }
+    if (id == ExtractFiles && count != 1) {
+        return disabledState(entry, QStringLiteral("Select one archive to extract."));
     }
     return enabledState(entry);
 }
@@ -557,6 +603,41 @@ QVector<FileExplorerCommand> writeCommands() {
     };
 }
 
+// Files Actions/Content/Archives: the zip compress leg and the four extract legs.
+QVector<FileExplorerCommand> archiveCommands() {
+    return {
+        // Files CompressIntoZipAction: the menu overrides the label with the
+        // computed "Create {name}.zip".
+        makeCommand(FileExplorerCommandId::CompressIntoZip,
+                    QStringLiteral("Create zip archive"),
+                    QStringLiteral("Compress the selection into a zip archive."),
+                    {},
+                    {.selection_required = true, .write_operation = true}),
+        // Files DecompressArchive: Ctrl+E opens the extract dialog (one archive).
+        makeCommand(FileExplorerCommandId::ExtractFiles,
+                    QStringLiteral("Extract files"),
+                    QStringLiteral("Extract the selected archive to a chosen local folder."),
+                    QStringLiteral("Ctrl+E"),
+                    {.selection_required = true}),
+        makeCommand(FileExplorerCommandId::ExtractHere,
+                    QStringLiteral("Extract here"),
+                    QStringLiteral("Extract the selected archives into the current folder."),
+                    {},
+                    {.selection_required = true, .write_operation = true}),
+        // Files DecompressArchiveHereSmart: flattens a single-root archive.
+        makeCommand(FileExplorerCommandId::ExtractHereSmart,
+                    QStringLiteral("Extract here (Smart)"),
+                    QStringLiteral("Extract here, skipping a redundant top-level folder."),
+                    QStringLiteral("Ctrl+Shift+E"),
+                    {.selection_required = true, .write_operation = true}),
+        makeCommand(FileExplorerCommandId::ExtractToChildFolder,
+                    QStringLiteral("Extract to subfolder"),
+                    QStringLiteral("Extract each archive into a folder named after it."),
+                    {},
+                    {.selection_required = true, .write_operation = true}),
+    };
+}
+
 // View / display toggle commands.
 QVector<FileExplorerCommand> viewCommands() {
     return {
@@ -647,6 +728,7 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
     registry.append(openAndNavigationCommands());
     registry.append(clipboardAndSelectionCommands());
     registry.append(writeCommands());
+    registry.append(archiveCommands());
     registry.append(viewCommands());
     registry.append(paneAndTabCommands());
     return registry;
@@ -661,6 +743,33 @@ FileExplorerCommand FileExplorerCommandRegistry::command(const FileExplorerComma
     }
     return makeCommand(id, commandIdName(id), QStringLiteral("Unknown File Explorer command."));
 }
+
+namespace {
+
+// Second half of the enablement chain: capability and feature gates evaluated
+// after the target/selection preconditions passed.
+FileExplorerCommandState featureGateState(const FileExplorerCommandId id,
+                                          const FileExplorerCommandContext& context,
+                                          const FileExplorerCommand& entry) {
+    if (const auto capability = capabilityState(id, context, entry)) {
+        return *capability;
+    }
+    if (const auto paste = pasteClipboardState(id, context, entry)) {
+        return *paste;
+    }
+    if (const auto cross_pane = crossPaneState(id, context, entry)) {
+        return *cross_pane;
+    }
+    if (const auto local_tool = localToolState(id, context, entry)) {
+        return *local_tool;
+    }
+    if (const auto archive = archiveState(id, context, entry)) {
+        return *archive;
+    }
+    return enabledState(entry);
+}
+
+}  // namespace
 
 FileExplorerCommandState FileExplorerCommandRegistry::state(
     const FileExplorerCommandId id, const FileExplorerCommandContext& context) {
@@ -680,19 +789,7 @@ FileExplorerCommandState FileExplorerCommandRegistry::state(
     if (const auto selection = selectionRequirementState(id, context, entry)) {
         return *selection;
     }
-    if (const auto capability = capabilityState(id, context, entry)) {
-        return *capability;
-    }
-    if (const auto paste = pasteClipboardState(id, context, entry)) {
-        return *paste;
-    }
-    if (const auto cross_pane = crossPaneState(id, context, entry)) {
-        return *cross_pane;
-    }
-    if (const auto local_tool = localToolState(id, context, entry)) {
-        return *local_tool;
-    }
-    return enabledState(entry);
+    return featureGateState(id, context, entry);
 }
 
 QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId id) {
@@ -722,6 +819,11 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::RemoveTags, "remove-tags"},
         {Id::OpenInTerminal, "open-in-terminal"},
         {Id::EditInNotepad, "edit-in-notepad"},
+        {Id::CompressIntoZip, "compress-into-zip"},
+        {Id::ExtractFiles, "extract-files"},
+        {Id::ExtractHere, "extract-here"},
+        {Id::ExtractHereSmart, "extract-here-smart"},
+        {Id::ExtractToChildFolder, "extract-to-child-folder"},
         {Id::ToggleHiddenItems, "toggle-hidden-items"},
         {Id::ToggleFileExtensions, "toggle-file-extensions"},
         {Id::ViewDetails, "view-details"},
