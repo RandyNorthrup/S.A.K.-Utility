@@ -30,6 +30,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -1304,6 +1305,114 @@ private Q_SLOTS:
         QVERIFY2(QTest::qWaitFor([&duplicate]() { return QFile::exists(duplicate); }, 5000),
                  "same-folder paste did not duplicate");
         QVERIFY(QFile::exists(source_file));
+    }
+
+    void folderCopyPasteRecursesGuardsSubtreeAndMoves() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        // Folder names must not contain each other: selectRowStable matches by
+        // fragment, and the listing order depends on the persisted sort.
+        QVERIFY(root.mkpath(QStringLiteral("bundle/deep")));
+        QVERIFY(root.mkdir(QStringLiteral("copy_pocket")));
+        QVERIFY(root.mkdir(QStringLiteral("move_pocket")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        writeFile(root.filePath(QStringLiteral("bundle/inner.txt")),
+                  QByteArrayLiteral("inner payload"));
+        writeFile(root.filePath(QStringLiteral("bundle/deep/leaf.txt")),
+                  QByteArrayLiteral("leaf payload"));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("bundle")) >= 0);
+        // A late listing reset would wipe the selection and reroute the paste
+        // to the current folder; settle before selecting. The panel shortcuts
+        // are focus-scoped, so pin the focus before the first key sequence.
+        QVERIFY(waitForListingQuiescence(table));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Copying a folder and pasting it into another folder lands the whole
+        // tree (importDirectoryFromHost), source left intact.
+        QVERIFY(selectRowStable(table, QStringLiteral("bundle")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QVERIFY(selectRowStable(table, QStringLiteral("copy_pocket")));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString copied_leaf =
+            root.filePath(QStringLiteral("copy_pocket/bundle/deep/leaf.txt"));
+        QVERIFY2(QTest::qWaitFor([&copied_leaf]() { return QFile::exists(copied_leaf); }, 5000),
+                 "folder paste did not recurse");
+        QFile copied(root.filePath(QStringLiteral("copy_pocket/bundle/inner.txt")));
+        QVERIFY(copied.open(QIODevice::ReadOnly));
+        QCOMPARE(copied.readAll(), QByteArrayLiteral("inner payload"));
+        QVERIFY(QFile::exists(root.filePath(QStringLiteral("bundle/inner.txt"))));
+
+        verifyFolderSubtreeGuardAndCutMove(panel, pathEdit, table, dir.path());
+    }
+
+    void verifyFolderSubtreeGuardAndCutMove(sak::FileManagementExplorerPanel& panel,
+                                            QLineEdit* pathEdit,
+                                            QTableView* table,
+                                            const QString& root_path) {
+        const QDir root(root_path);
+
+        // Pasting a folder into its own subtree fails closed (Files
+        // ShellFilesystemOperations subtree guard); the warning box is captured
+        // and dismissed by a timer so the run stays non-interactive.
+        QVERIFY(navigateAndFindRow(pathEdit, table, root_path, QStringLiteral("bundle")) >= 0);
+        // The copy-paste reload above resets the model; settle before selecting.
+        QVERIFY(waitForListingQuiescence(table));
+        QVERIFY(selectRowStable(table, QStringLiteral("bundle")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QString warning_text;
+        QTimer dismiss;
+        dismiss.setInterval(50);
+        connect(&dismiss, &QTimer::timeout, this, [&warning_text, &dismiss]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                warning_text = box->text();
+                dismiss.stop();
+                box->close();
+            }
+        });
+        dismiss.start();
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        dismiss.stop();
+        QVERIFY2(warning_text.contains(QStringLiteral("own subfolder")), qPrintable(warning_text));
+        QVERIFY(!QDir(root.filePath(QStringLiteral("bundle/bundle"))).exists());
+
+        // The dismissed modal cleared the focus; the panel shortcuts are
+        // focus-scoped, so restore it before the next key sequence.
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Cut + paste into another folder is a real same-target folder move
+        // (renameEntry): the tree relocates and the source disappears.
+        QVERIFY(selectRowStable(table, QStringLiteral("bundle")));
+        QTest::keyClick(table, Qt::Key_X, Qt::ControlModifier);
+        QVERIFY(selectRowStable(table, QStringLiteral("move_pocket")));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString moved_leaf =
+            root.filePath(QStringLiteral("move_pocket/bundle/deep/leaf.txt"));
+        QVERIFY2(QTest::qWaitFor([&moved_leaf]() { return QFile::exists(moved_leaf); }, 5000),
+                 "folder cut-paste did not move the tree");
+        QVERIFY(!QDir(root.filePath(QStringLiteral("bundle"))).exists());
     }
 
     void activationMatrixAndMouseNavigation() {

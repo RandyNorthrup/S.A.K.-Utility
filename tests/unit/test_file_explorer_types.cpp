@@ -433,15 +433,15 @@ private Q_SLOTS:
             sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
                 .enabled);
 
-        // Raw source + raw destination fails closed with the exact reason.
+        // Raw source + raw destination is allowed: the transfer stages through a
+        // scratch host folder between the certified reader and writer.
         auto raw_source = contextFor(rawTarget(QStringLiteral("apfs"), true, true, true), true);
         raw_source.can_use_dual_pane = true;
         raw_source.dual_pane_active = true;
         raw_source.other_pane_target = rawTarget(QStringLiteral("hfsplus"), true, true, true);
         const auto raw_raw = sak::FileExplorerCommandRegistry::state(
             FileExplorerCommandId::CopyToOtherPane, raw_source);
-        QVERIFY(!raw_raw.enabled);
-        QVERIFY(raw_raw.blocker.contains(QStringLiteral("Raw-to-raw")));
+        QVERIFY(raw_raw.enabled);
     }
 
     void registryGatesTabAndDualPaneCommandsByBuildAvailability() {

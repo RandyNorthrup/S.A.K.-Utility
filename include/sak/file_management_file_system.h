@@ -138,6 +138,18 @@ struct FileManagementDirectoryExportResult {
     QStringList warnings;
 };
 
+/// Result of recursively importing a local host directory tree into a target.
+struct FileManagementDirectoryImportResult {
+    bool ok{false};              ///< True when every reachable file imported completely.
+    QString destination;         ///< Target path the tree was written under.
+    int files_imported{0};
+    int directories_created{0};  ///< Child directories created (the root is not counted).
+    int symlinks_skipped{0};
+    uint64_t bytes_written{0};
+    QStringList blockers;
+    QStringList warnings;
+};
+
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
@@ -208,6 +220,21 @@ public:
         const QString& source_path,
         const QString& destination_dir,
         uint64_t max_file_bytes);
+    /// Recursively import the local host directory tree at @p host_source_dir into
+    /// @p destination_path on @p target. The destination directory itself is created
+    /// through @ref createDirectory (callers resolve a name collision first); regular
+    /// files stream through @ref writeFileFromHostPath; symlinks are skipped with a
+    /// warning. Depth and per-directory entry counts are bounded like the export walk.
+    [[nodiscard]] static FileManagementDirectoryImportResult importDirectoryFromHost(
+        const FileManagementTarget& target,
+        const QString& host_source_dir,
+        const QString& destination_path);
+    /// Delete the whole directory tree at @p path. Local and HFS+ targets remove the
+    /// tree in one native recursive operation; other raw targets (APFS) keep their
+    /// fail-closed guard against deleting a non-empty directory, so the tree is
+    /// emptied depth-first through the same certified per-entry commits first.
+    [[nodiscard]] static FileManagementMutationResult deleteDirectoryTree(
+        const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
     [[nodiscard]] static FileManagementMutationResult renameEntry(

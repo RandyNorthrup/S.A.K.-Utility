@@ -241,7 +241,9 @@ bool isReadCommand(const FileExplorerCommandId id) {
     return id == Preview || id == Hash || id == CopyOut || id == CopyItems;
 }
 
-// Cross-pane copy needs a readable source and a writable destination.
+// Cross-pane copy needs a readable source and a writable destination. A raw source
+// with a raw destination is allowed: the transfer stages through a scratch host
+// folder between the certified reader and writer.
 FileExplorerCommandState crossPaneCopyState(const FileExplorerCommandContext& context,
                                             const FileExplorerCommand& entry) {
     if (!context.target.can_read_files) {
@@ -249,11 +251,6 @@ FileExplorerCommandState crossPaneCopyState(const FileExplorerCommandContext& co
     }
     if (!context.other_pane_target.can_write_files) {
         return disabledState(entry, writeBlocker(context.other_pane_target));
-    }
-    if (!context.target.local_file_system && !context.other_pane_target.local_file_system) {
-        return disabledState(entry,
-                             QStringLiteral("Raw-to-raw cross-pane copy is not supported; copy "
-                                            "into a local folder first."));
     }
     return enabledState(entry);
 }

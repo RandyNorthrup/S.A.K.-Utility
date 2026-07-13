@@ -62,6 +62,7 @@
 #include <QTabBar>
 #include <QTableView>
 #include <QtConcurrent>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
@@ -209,6 +210,26 @@ QString childPathFor(QString base, QString name, bool local) {
 
 QString parentPathForEntry(const QString& path, bool local) {
     return local ? QFileInfo(path).absolutePath() : parentPathFor(path, false);
+}
+
+// True when @p path equals @p ancestor or sits anywhere under it. Files
+// ShellFilesystemOperations refuses transferring a folder into its own subtree,
+// which would otherwise recurse into the growing copy.
+bool pathContains(const QString& ancestor, const QString& path, bool local) {
+    QString base = ancestor;
+    QString candidate = path;
+    base.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    candidate.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    if (local) {
+        base = QDir::cleanPath(base);
+        candidate = QDir::cleanPath(candidate);
+    }
+    if (!base.endsWith(QLatin1Char('/'))) {
+        base.append(QLatin1Char('/'));
+    }
+    candidate.append(QLatin1Char('/'));
+    // Local Windows paths compare case-insensitively; raw APFS/HFSX paths are case-sensitive.
+    return candidate.startsWith(base, local ? Qt::CaseInsensitive : Qt::CaseSensitive);
 }
 
 QString nameForPath(const QString& path, bool local) {
@@ -2189,13 +2210,14 @@ FileManagementExplorerPanel::ClipboardBatch FileManagementExplorerPanel::collect
     const FileExplorerSelection& selection, const FileManagementTarget& target) {
     ClipboardBatch batch;
     for (const FileManagementEntry& entry : selection.entries) {
-        if (entry.directory || !entry.regular_file) {
+        if (!entry.directory && !entry.regular_file) {
             ++batch.skipped;
             continue;
         }
         QJsonObject item;
         item.insert(QStringLiteral("path"), entry.path);
         item.insert(QStringLiteral("size"), QString::number(entry.size_bytes));
+        item.insert(QStringLiteral("dir"), entry.directory);
         batch.items.append(item);
         batch.lines.append(entry.path);
         if (target.local_file_system) {
@@ -2211,8 +2233,7 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
     clearCutMarks();
     const ClipboardBatch batch = collectClipboardBatch(currentSelection(), target);
     if (batch.items.isEmpty()) {
-        Q_EMIT statusMessage(tr("Select files to copy (folders are not supported yet)."),
-                             sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Select files or folders to copy."), sak::kTimerStatusMessageMs);
         return;
     }
     QJsonObject payload;
@@ -2234,11 +2255,11 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
         m_item_model->setCutPaths(QSet<QString>(batch.lines.cbegin(), batch.lines.cend()));
     }
     const QString verb = move ? tr("Cut") : tr("Copied");
-    Q_EMIT statusMessage(batch.skipped > 0 ? tr("%1 %2 file(s); %3 folder(s) skipped.")
+    Q_EMIT statusMessage(batch.skipped > 0 ? tr("%1 %2 item(s); %3 special item(s) skipped.")
                                                  .arg(verb)
                                                  .arg(batch.items.size())
                                                  .arg(batch.skipped)
-                                           : tr("%1 %2 file(s).").arg(verb).arg(batch.items.size()),
+                                           : tr("%1 %2 item(s).").arg(verb).arg(batch.items.size()),
                          sak::kTimerStatusMessageMs);
     updateActionButtons();
 }
@@ -2272,12 +2293,16 @@ bool FileManagementExplorerPanel::clipboardHasPasteableFiles() const {
     }
     const QList<QUrl> urls = mime->urls();
     return std::ranges::any_of(urls, [](const QUrl& url) {
-        return url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile();
+        if (!url.isLocalFile()) {
+            return false;
+        }
+        const QFileInfo info(url.toLocalFile());
+        return info.isFile() || info.isDir();
     });
 }
 
-// Split an internal clipboard payload's items into host files (local source target) or
-// raw items (path + size) for the paste routes.
+// Split an internal clipboard payload's items into host paths (local source target) or
+// raw items (path + size + directory flag) for the paste routes.
 void FileManagementExplorerPanel::appendPayloadItems(const QJsonArray& items,
                                                      const bool source_is_local,
                                                      PasteSources& sources) {
@@ -2290,8 +2315,9 @@ void FileManagementExplorerPanel::appendPayloadItems(const QJsonArray& items,
         if (source_is_local) {
             sources.host_files.append(path);
         } else {
-            sources.raw_items.append(
-                {path, item.value(QStringLiteral("size")).toString().toULongLong()});
+            sources.raw_items.append({path,
+                                      item.value(QStringLiteral("size")).toString().toULongLong(),
+                                      item.value(QStringLiteral("dir")).toBool()});
         }
     }
 }
@@ -2318,7 +2344,11 @@ FileManagementExplorerPanel::PasteSources FileManagementExplorerPanel::collectPa
     }
     const QList<QUrl> urls = mime->hasUrls() ? mime->urls() : QList<QUrl>{};
     for (const QUrl& url : urls) {
-        if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+        const QFileInfo info(url.toLocalFile());
+        if (info.isFile() || info.isDir()) {
             sources.host_files.append(url.toLocalFile());
         }
     }
@@ -2382,6 +2412,43 @@ FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
     return choice;
 }
 
+// Resolve a destination-name collision for one item at *destination. Returns false
+// when the item should be skipped; Generate rewrites *destination with the Files
+// incremental name; Replace removes the occupying entry first (trees included) so
+// every backend - raw writers cannot overwrite in place - lands with identical
+// semantics.
+bool FileManagementExplorerPanel::resolvePasteDestination(const FileManagementTarget& target,
+                                                          const bool multiple,
+                                                          PasteCollisionPolicy* policy,
+                                                          QString* destination,
+                                                          QStringList* blockers) {
+    const QString name = nameForPath(*destination, target.local_file_system);
+    const QString destination_dir = parentPathForEntry(*destination, target.local_file_system);
+    const PasteEntryKind kind = destinationEntryKind(target, destination_dir, name);
+    if (kind == PasteEntryKind::None) {
+        return true;
+    }
+    const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
+    if (choice == PasteCollisionChoice::Skip) {
+        return false;
+    }
+    if (choice == PasteCollisionChoice::GenerateNew) {
+        *destination = childPathFor(destination_dir,
+                                    uniqueChildName(target, destination_dir, name),
+                                    target.local_file_system);
+        return true;
+    }
+    const auto removed = kind == PasteEntryKind::Directory
+                             ? FileManagementFileSystemBridge::deleteDirectoryTree(target,
+                                                                                   *destination)
+                             : FileManagementFileSystemBridge::deleteFile(target, *destination);
+    if (!removed.ok) {
+        blockers->append(tr("Could not replace %1.").arg(name));
+        return false;
+    }
+    return true;
+}
+
 QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget& target,
                                                      const QString& directory,
                                                      const QString& name) const {
@@ -2400,11 +2467,14 @@ QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget&
     return candidate;
 }
 
-bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
-                                                      const QString& directory,
-                                                      const QString& name) const {
+FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destinationEntryKind(
+    const FileManagementTarget& target, const QString& directory, const QString& name) const {
     if (target.local_file_system) {
-        return QFile::exists(childPathFor(directory, name, true));
+        const QFileInfo info(childPathFor(directory, name, true));
+        if (!info.exists()) {
+            return PasteEntryKind::None;
+        }
+        return info.isDir() ? PasteEntryKind::Directory : PasteEntryKind::File;
     }
     // Raw target: reuse the live listing for the current folder; anything
     // else is listed once through the bridge.
@@ -2415,30 +2485,30 @@ bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget
                                                             directory,
                                                             kExplorerListMaxEntries)
                   .entries;
-    return std::ranges::any_of(entries, [&name](const FileManagementEntry& entry) {
-        return entry.name == name;
-    });
+    for (const FileManagementEntry& entry : entries) {
+        if (entry.name == name) {
+            return entry.directory ? PasteEntryKind::Directory : PasteEntryKind::File;
+        }
+    }
+    return PasteEntryKind::None;
+}
+
+bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
+                                                      const QString& directory,
+                                                      const QString& name) const {
+    return destinationEntryKind(target, directory, name) != PasteEntryKind::None;
 }
 
 bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& sources) {
     const FileManagementTarget target = currentTarget();
-    if (!sources.raw_items.isEmpty()) {
-        if (!target.local_file_system) {
-            sak::showWarningLogged(this,
-                                   tr("Paste"),
-                                   tr("Raw-to-raw paste is not supported. Paste the files "
-                                      "into a local folder first, then import them."));
-            return false;
-        }
-        if (targetIndexForId(sources.source_target_id) < 0) {
-            sak::showWarningLogged(this,
-                                   tr("Paste"),
-                                   tr("The copied files' source target is no longer available."));
-            return false;
-        }
+    if (!sources.raw_items.isEmpty() && targetIndexForId(sources.source_target_id) < 0) {
+        sak::showWarningLogged(this,
+                               tr("Paste"),
+                               tr("The copied items' source target is no longer available."));
+        return false;
     }
-    if (!sources.host_files.isEmpty() && !target.local_file_system &&
-        !confirmTypedRawImport(target, static_cast<int>(sources.host_files.size()))) {
+    const int count = static_cast<int>(sources.host_files.size() + sources.raw_items.size());
+    if (!target.local_file_system && !confirmTypedRawImport(target, count)) {
         return false;
     }
     QString identity_blocker;
@@ -2449,22 +2519,40 @@ bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& so
     return true;
 }
 
+// Flatten a paste payload into transfer items: host paths gain their directory flag
+// from the host file system; raw items already carry theirs from the source listing.
+QList<FileManagementExplorerPanel::PasteItem> FileManagementExplorerPanel::pasteItemsFor(
+    const PasteSources& sources) {
+    QList<PasteItem> items;
+    items.reserve(sources.host_files.size() + sources.raw_items.size());
+    for (const QString& path : sources.host_files) {
+        const QFileInfo info(path);
+        items.append({path, static_cast<quint64>(std::max<qint64>(info.size(), 0)), info.isDir()});
+    }
+    items.append(sources.raw_items);
+    return items;
+}
+
 void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
                                                const QString& destination_dir) {
     const FileManagementTarget target = currentTarget();
+    const int source_index = targetIndexForId(sources.source_target_id);
+    // External URL drops have no tracked source target; they are host paths, so a
+    // plain local target routes them (moves never originate from external payloads).
+    const FileManagementTarget source_target =
+        source_index >= 0 ? m_targets.at(source_index)
+                          : FileManagementFileSystemBridge::localTarget(QString());
+    const QList<PasteItem> items = pasteItemsFor(sources);
+    // Source and destination paths share a namespace only when both are host paths or
+    // both live on the same raw target; only then can a folder contain its destination.
+    const bool same_namespace = (source_target.local_file_system && target.local_file_system) ||
+                                FileExplorerTargetId::fromTarget(source_target).value ==
+                                    FileExplorerTargetId::fromTarget(target).value;
+    const PasteBatch batch{
+        source_target, target, destination_dir, sources.move, items.size() > 1, same_namespace};
     QStringList blockers;
     PasteCollisionPolicy policy;
-    int written = 0;
-    int total = 0;
-    if (!sources.host_files.isEmpty()) {
-        total = static_cast<int>(sources.host_files.size());
-        written = pasteHostFiles(target, destination_dir, sources, &policy, &blockers);
-    } else {
-        total = static_cast<int>(sources.raw_items.size());
-        const int source_index = targetIndexForId(sources.source_target_id);
-        written = pasteRawItemsToLocalFolder(
-            m_targets.at(source_index), destination_dir, sources, &policy, &blockers);
-    }
+    const int written = pasteItemsToFolder(batch, items, &policy, &blockers);
     if (sources.move && written > 0) {
         finishMovePaste();
     }
@@ -2474,10 +2562,10 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Paste"), blockers.join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage((sources.move ? tr("Moved %1 of %2 file(s).")
-                                       : tr("Pasted %1 of %2 file(s)."))
+    Q_EMIT statusMessage((sources.move ? tr("Moved %1 of %2 item(s).")
+                                       : tr("Pasted %1 of %2 item(s)."))
                              .arg(written)
-                             .arg(total),
+                             .arg(items.size()),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -2535,15 +2623,10 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
         sak::showWarningLogged(this, tr("Paste"), identity_blocker);
         return true;
     }
-    QStringList source_paths = sources.host_files;
-    for (const auto& [path, size] : sources.raw_items) {
-        Q_UNUSED(size)
-        source_paths.append(path);
-    }
+    const QList<PasteItem> items = pasteItemsFor(sources);
     PasteCollisionPolicy policy;
     QStringList blockers;
-    const int moved =
-        moveEntriesWithinTarget(target, source_paths, destination_dir, &policy, &blockers);
+    const int moved = moveEntriesWithinTarget(target, items, destination_dir, &policy, &blockers);
     if (moved > 0) {
         finishMovePaste();
         loadDirectory(m_current_path);
@@ -2551,42 +2634,37 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Paste"), blockers.join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage(tr("Moved %1 of %2 item(s).").arg(moved).arg(source_paths.size()),
+    Q_EMIT statusMessage(tr("Moved %1 of %2 item(s).").arg(moved).arg(items.size()),
                          sak::kTimerStatusDefaultMs);
     return true;
 }
 
 int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTarget& target,
-                                                         const QStringList& source_paths,
+                                                         const QList<PasteItem>& items,
                                                          const QString& destination_dir,
                                                          PasteCollisionPolicy* policy,
                                                          QStringList* blockers) {
-    const bool multiple = source_paths.size() > 1;
+    const bool multiple = items.size() > 1;
     int moved = 0;
-    for (const QString& source : source_paths) {
-        const QString name = nameForPath(source, target.local_file_system);
+    for (const PasteItem& item : items) {
+        const QString name = nameForPath(item.path, target.local_file_system);
         QString destination = childPathFor(destination_dir, name, target.local_file_system);
-        if (destination == source) {
+        if (destination == item.path) {
             // Files FilesystemOperations.MoveAsync: same path is a no-op success.
             ++moved;
             continue;
         }
-        if (destinationOccupied(target, destination_dir, name)) {
-            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
-            if (choice == PasteCollisionChoice::Skip) {
-                continue;
-            }
-            if (choice == PasteCollisionChoice::GenerateNew) {
-                destination = childPathFor(destination_dir,
-                                           uniqueChildName(target, destination_dir, name),
-                                           target.local_file_system);
-            } else if (!FileManagementFileSystemBridge::deleteFile(target, destination).ok) {
-                blockers->append(tr("Could not replace %1.").arg(name));
-                continue;
-            }
+        if (item.directory && pathContains(item.path, destination_dir, target.local_file_system)) {
+            blockers->append(tr("Cannot move %1 into its own subfolder.").arg(name));
+            continue;
         }
+        if (!resolvePasteDestination(target, multiple, policy, &destination, blockers)) {
+            continue;
+        }
+        // renameEntry reparents through the certified writers on raw volumes
+        // (directories included) and QFile::rename locally, no data copy.
         const auto result =
-            FileManagementFileSystemBridge::renameEntry(target, source, destination);
+            FileManagementFileSystemBridge::renameEntry(target, item.path, destination);
         if (result.ok) {
             ++moved;
             m_last_mutation = result;
@@ -2597,103 +2675,161 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
     return moved;
 }
 
-int FileManagementExplorerPanel::pasteHostFiles(const FileManagementTarget& target,
-                                                const QString& destination_dir,
-                                                const PasteSources& sources,
-                                                PasteCollisionPolicy* policy,
-                                                QStringList* blockers) {
-    const bool multiple = sources.host_files.size() > 1;
-    const int source_index = targetIndexForId(sources.source_target_id);
+int FileManagementExplorerPanel::pasteItemsToFolder(const PasteBatch& batch,
+                                                    const QList<PasteItem>& items,
+                                                    PasteCollisionPolicy* policy,
+                                                    QStringList* blockers) {
     int written = 0;
-    for (const QString& source : sources.host_files) {
-        const QString name = QFileInfo(source).fileName();
-        QString destination = childPathFor(destination_dir, name, target.local_file_system);
-        if (destination == source) {
-            // Same-folder copy-paste duplicates with the Files incremental
-            // name; no conflict dialog fires (GetCollisions skips src==dest).
-            destination = childPathFor(destination_dir,
-                                       uniqueChildName(target, destination_dir, name),
-                                       target.local_file_system);
-        } else if (destinationOccupied(target, destination_dir, name)) {
-            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
-            if (choice == PasteCollisionChoice::Skip) {
-                continue;
-            }
-            if (choice == PasteCollisionChoice::GenerateNew) {
-                destination = childPathFor(destination_dir,
-                                           uniqueChildName(target, destination_dir, name),
-                                           target.local_file_system);
-            }
-            // Replace falls through: the write overwrites in place.
-        }
-        const auto result =
-            FileManagementFileSystemBridge::writeFileFromHostPath(target, destination, source);
-        if (!result.ok) {
-            blockers->append(result.blockers);
-            continue;
-        }
-        ++written;
-        m_last_mutation = result;
-        if (sources.move && source_index >= 0) {
-            deleteMoveSource(m_targets.at(source_index), source, blockers);
+    for (const PasteItem& item : items) {
+        if (pasteOneItem(batch, item, policy, blockers)) {
+            ++written;
         }
     }
     return written;
 }
 
-int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
-    const FileManagementTarget& source_target,
-    const QString& destination_dir,
-    const PasteSources& sources,
-    PasteCollisionPolicy* policy,
-    QStringList* blockers) {
-    const FileManagementTarget target = currentTarget();
-    const bool multiple = sources.raw_items.size() > 1;
-    int written = 0;
-    for (const auto& [path, size] : sources.raw_items) {
-        const QString name = nameForPath(path, source_target.local_file_system);
-        if (size > kExplorerHashMaxBytes) {
-            blockers->append(tr("%1 exceeds the raw read window; a complete paste is not "
-                                "possible (use Copy Out for an explicitly capped copy).")
-                                 .arg(name));
-            continue;
-        }
-        QString destination = childPathFor(destination_dir, name, true);
-        if (destinationOccupied(target, destination_dir, name)) {
-            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
-            if (choice == PasteCollisionChoice::Skip) {
-                continue;
-            }
-            if (choice == PasteCollisionChoice::GenerateNew) {
-                destination = childPathFor(destination_dir,
-                                           uniqueChildName(target, destination_dir, name),
-                                           true);
-            }
-        }
-        const auto result = FileManagementFileSystemBridge::copyFileToHost(
-            source_target, path, destination, kExplorerHashMaxBytes);
-        if (!result.ok) {
-            blockers->append(result.blockers);
-            continue;
-        }
-        ++written;
-        m_last_hash_name = name;
-        m_last_hash_sha256 = result.sha256;
-        m_last_hash_capped = result.capped;
-        if (sources.move) {
-            deleteMoveSource(source_target, path, blockers);
-        }
+bool FileManagementExplorerPanel::pasteOneItem(const PasteBatch& batch,
+                                               const PasteItem& item,
+                                               PasteCollisionPolicy* policy,
+                                               QStringList* blockers) {
+    const QString name = nameForPath(item.path, batch.source_target.local_file_system);
+    if (item.directory && batch.same_namespace &&
+        pathContains(item.path, batch.destination_dir, batch.target.local_file_system)) {
+        blockers->append(tr("Cannot paste %1 into its own subfolder.").arg(name));
+        return false;
     }
-    return written;
+    QString destination = childPathFor(batch.destination_dir, name, batch.target.local_file_system);
+    if (batch.same_namespace && destination == item.path) {
+        // Same-folder copy-paste duplicates with the Files incremental
+        // name; no conflict dialog fires (GetCollisions skips src==dest).
+        destination = childPathFor(batch.destination_dir,
+                                   uniqueChildName(batch.target, batch.destination_dir, name),
+                                   batch.target.local_file_system);
+    } else if (!resolvePasteDestination(
+                   batch.target, batch.multiple, policy, &destination, blockers)) {
+        return false;
+    }
+    if (!transferEntry(batch.source_target, item, batch.target, destination, blockers)) {
+        return false;
+    }
+    if (batch.move) {
+        deleteMoveSource(batch.source_target, item, blockers);
+    }
+    return true;
+}
+
+// Move one item between source and destination through the leg that fits the pair:
+// host source streams in through the bridge writers; raw source exports through the
+// certified readers; raw source with a raw destination stages through a scratch host
+// folder between the two. Returns false (with blockers) when the copy is incomplete,
+// so a move never deletes a source that did not land whole.
+bool FileManagementExplorerPanel::transferEntry(const FileManagementTarget& source_target,
+                                                const PasteItem& item,
+                                                const FileManagementTarget& target,
+                                                const QString& destination,
+                                                QStringList* blockers) {
+    if (source_target.local_file_system) {
+        return transferEntryFromHost(item, target, destination, blockers);
+    }
+    if (target.local_file_system) {
+        return transferRawEntryToLocal(source_target, item, destination, blockers);
+    }
+    return transferRawEntryStaged(source_target, item, target, destination, blockers);
+}
+
+bool FileManagementExplorerPanel::transferEntryFromHost(const PasteItem& item,
+                                                        const FileManagementTarget& target,
+                                                        const QString& destination,
+                                                        QStringList* blockers) {
+    if (item.directory) {
+        const auto result =
+            FileManagementFileSystemBridge::importDirectoryFromHost(target, item.path, destination);
+        if (!result.warnings.isEmpty()) {
+            logMessage(result.warnings.join(QLatin1Char('\n')));
+        }
+        blockers->append(result.blockers);
+        return result.ok;
+    }
+    const auto result =
+        FileManagementFileSystemBridge::writeFileFromHostPath(target, destination, item.path);
+    if (!result.ok) {
+        blockers->append(result.blockers);
+        return false;
+    }
+    m_last_mutation = result;
+    return true;
+}
+
+bool FileManagementExplorerPanel::transferRawEntryToLocal(const FileManagementTarget& source_target,
+                                                          const PasteItem& item,
+                                                          const QString& destination,
+                                                          QStringList* blockers) {
+    const QString name = nameForPath(item.path, false);
+    if (item.directory) {
+        const auto result = FileManagementFileSystemBridge::exportDirectoryToHost(
+            source_target, item.path, destination, kExplorerHashMaxBytes);
+        if (!result.warnings.isEmpty()) {
+            logMessage(result.warnings.join(QLatin1Char('\n')));
+        }
+        blockers->append(result.blockers);
+        if (result.ok && result.capped_files > 0) {
+            // A truncated file means the tree did not land whole: report it and fail
+            // the item so a move never deletes the intact source.
+            blockers->append(tr("%1 file(s) inside %2 exceed the raw read window; the "
+                                "pasted copy is incomplete.")
+                                 .arg(result.capped_files)
+                                 .arg(name));
+            return false;
+        }
+        return result.ok;
+    }
+    if (item.size_bytes > kExplorerHashMaxBytes) {
+        blockers->append(tr("%1 exceeds the raw read window; a complete paste is not "
+                            "possible (use Copy Out for an explicitly capped copy).")
+                             .arg(name));
+        return false;
+    }
+    const auto result = FileManagementFileSystemBridge::copyFileToHost(
+        source_target, item.path, destination, kExplorerHashMaxBytes);
+    if (!result.ok) {
+        blockers->append(result.blockers);
+        return false;
+    }
+    m_last_hash_name = name;
+    m_last_hash_sha256 = result.sha256;
+    m_last_hash_capped = result.capped;
+    return true;
+}
+
+bool FileManagementExplorerPanel::transferRawEntryStaged(const FileManagementTarget& source_target,
+                                                         const PasteItem& item,
+                                                         const FileManagementTarget& target,
+                                                         const QString& destination,
+                                                         QStringList* blockers) {
+    QTemporaryDir staging;
+    if (!staging.isValid()) {
+        blockers->append(tr("Could not create a staging folder for the raw-to-raw transfer."));
+        return false;
+    }
+    const QString name = nameForPath(item.path, false);
+    const QString staged = QDir(staging.path()).filePath(name);
+    if (!transferRawEntryToLocal(source_target, item, staged, blockers)) {
+        return false;
+    }
+    return transferEntryFromHost(
+        {staged, item.size_bytes, item.directory}, target, destination, blockers);
 }
 
 bool FileManagementExplorerPanel::deleteMoveSource(const FileManagementTarget& source_target,
-                                                   const QString& path,
+                                                   const PasteItem& item,
                                                    QStringList* blockers) {
-    const auto result = FileManagementFileSystemBridge::deleteFile(source_target, path);
+    const auto result = item.directory
+                            ? FileManagementFileSystemBridge::deleteDirectoryTree(source_target,
+                                                                                  item.path)
+                            : FileManagementFileSystemBridge::deleteFile(source_target, item.path);
     if (!result.ok) {
         blockers->append(tr("Copied but could not remove the moved source %1: %2")
-                             .arg(path, result.blockers.join(QStringLiteral("; "))));
+                             .arg(item.path, result.blockers.join(QStringLiteral("; "))));
         return false;
     }
     return true;
@@ -2777,37 +2913,25 @@ int FileManagementExplorerPanel::crossPaneCopyEntries(const FileManagementTarget
                                                       const QString& destination_dir,
                                                       QStringList* blockers) {
     int written = 0;
+    const bool same_namespace = (source.local_file_system && destination.local_file_system) ||
+                                FileExplorerTargetId::fromTarget(source).value ==
+                                    FileExplorerTargetId::fromTarget(destination).value;
     const FileExplorerSelection selection = currentSelection();
     for (const FileManagementEntry& entry : selection.entries) {
-        if (entry.directory || !entry.regular_file) {
-            blockers->append(tr("Skipped %1: only files copy across panes today.").arg(entry.name));
+        if (!entry.directory && !entry.regular_file) {
+            blockers->append(tr("Skipped special entry %1.").arg(entry.name));
             continue;
         }
+        const PasteItem item{entry.path, entry.size_bytes, entry.directory};
         const QString destination_path =
             childPathFor(destination_dir, entry.name, destination.local_file_system);
-        if (source.local_file_system) {
-            const auto result = FileManagementFileSystemBridge::writeFileFromHostPath(
-                destination, destination_path, entry.path);
-            if (result.ok) {
-                ++written;
-                m_last_mutation = result;
-            } else {
-                blockers->append(result.blockers);
-            }
+        if (entry.directory && same_namespace &&
+            pathContains(entry.path, destination_dir, destination.local_file_system)) {
+            blockers->append(tr("Cannot copy %1 into its own subfolder.").arg(entry.name));
             continue;
         }
-        if (entry.size_bytes > kExplorerHashMaxBytes) {
-            blockers->append(tr("%1 exceeds the raw read window; a complete cross-pane copy "
-                                "is not possible.")
-                                 .arg(entry.name));
-            continue;
-        }
-        const auto exported = FileManagementFileSystemBridge::copyFileToHost(
-            source, entry.path, destination_path, kExplorerHashMaxBytes);
-        if (exported.ok) {
+        if (transferEntry(source, item, destination, destination_path, blockers)) {
             ++written;
-        } else {
-            blockers->append(exported.blockers);
         }
     }
     return written;
@@ -2836,7 +2960,7 @@ void FileManagementExplorerPanel::crossPaneCopySelection() {
         sak::showWarningLogged(this, tr("Copy to Other Pane"), blockers.join(QLatin1Char('\n')));
     }
     Q_EMIT statusMessage(
-        tr("Copied %1 of %2 file(s) to the other pane.").arg(written).arg(file_count),
+        tr("Copied %1 of %2 item(s) to the other pane.").arg(written).arg(file_count),
         sak::kTimerStatusDefaultMs);
 }
 

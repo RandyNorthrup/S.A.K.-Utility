@@ -961,8 +961,9 @@ FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
 
 namespace {
 
-// Bounds for a recursive directory export: deep-enough for real trees, still finite
-// so a cyclic or hostile directory graph cannot run away.
+// Bounds shared by the recursive directory walks (export, import, and tree delete):
+// deep-enough for real trees, still finite so a cyclic or hostile directory graph
+// cannot run away.
 constexpr int kDirectoryExportMaxDepth = 32;
 constexpr int kDirectoryExportMaxEntriesPerDirectory = 10'000;
 
@@ -1057,6 +1058,134 @@ FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirect
     }
     const DirectoryExportContext ctx{target, max_file_bytes, result};
     exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
+    result.ok = result.blockers.isEmpty();
+    return result;
+}
+
+namespace {
+
+// Join a child name onto a target-side base path in the target's own path style:
+// host-native for local targets, "/"-separated for raw file-system paths.
+QString targetChildPath(const FileManagementTarget& target,
+                        const QString& base,
+                        const QString& name) {
+    if (target.local_file_system) {
+        return QDir(base).filePath(name);
+    }
+    QString clean = base;
+    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    if (!clean.startsWith(QLatin1Char('/'))) {
+        clean.prepend(QLatin1Char('/'));
+    }
+    if (!clean.endsWith(QLatin1Char('/'))) {
+        clean.append(QLatin1Char('/'));
+    }
+    return clean + name;
+}
+
+struct DirectoryImportContext {
+    const FileManagementTarget& target;
+    FileManagementDirectoryImportResult& result;
+};
+
+void importEntryFromHost(const DirectoryImportContext& ctx,
+                         const QFileInfo& info,
+                         const QString& destination_dir,
+                         int depth);
+
+void importDirectoryLevel(const DirectoryImportContext& ctx,
+                          const QString& host_dir,
+                          const QString& destination_dir,
+                          const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped %1: exceeds the import depth bound.").arg(host_dir));
+        return;
+    }
+    const QFileInfoList infos = QDir(host_dir).entryInfoList(
+        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
+    if (infos.size() > kDirectoryExportMaxEntriesPerDirectory) {
+        ctx.result.warnings.append(
+            QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
+                .arg(host_dir)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
+    }
+    const qsizetype count = std::min<qsizetype>(infos.size(),
+                                                kDirectoryExportMaxEntriesPerDirectory);
+    for (qsizetype index = 0; index < count; ++index) {
+        importEntryFromHost(ctx, infos.at(index), destination_dir, depth);
+    }
+}
+
+void importEntryFromHost(const DirectoryImportContext& ctx,
+                         const QFileInfo& info,
+                         const QString& destination_dir,
+                         const int depth) {
+    if (info.isSymLink()) {
+        ++ctx.result.symlinks_skipped;
+        ctx.result.warnings.append(QStringLiteral("Skipped symlink %1 (links are not imported.)")
+                                       .arg(info.absoluteFilePath()));
+        return;
+    }
+    const QString destination = targetChildPath(ctx.target, destination_dir, info.fileName());
+    if (info.isDir()) {
+        const FileManagementMutationResult created =
+            FileManagementFileSystemBridge::createDirectory(ctx.target, destination);
+        if (!created.ok) {
+            ctx.result.blockers.append(
+                created.blockers.isEmpty()
+                    ? QStringLiteral("Could not create directory %1.").arg(destination)
+                    : created.blockers.join(QStringLiteral("; ")));
+            return;
+        }
+        ++ctx.result.directories_created;
+        importDirectoryLevel(ctx, info.absoluteFilePath(), destination, depth + 1);
+        return;
+    }
+    if (!info.isFile()) {
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped special entry %1.").arg(info.absoluteFilePath()));
+        return;
+    }
+    const FileManagementMutationResult written =
+        FileManagementFileSystemBridge::writeFileFromHostPath(ctx.target,
+                                                              destination,
+                                                              info.absoluteFilePath());
+    if (!written.ok) {
+        ctx.result.blockers.append(
+            written.blockers.isEmpty()
+                ? QStringLiteral("Could not import %1.").arg(info.absoluteFilePath())
+                : written.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ++ctx.result.files_imported;
+    ctx.result.bytes_written += written.bytes_written;
+}
+
+}  // namespace
+
+FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirectoryFromHost(
+    const FileManagementTarget& target,
+    const QString& host_source_dir,
+    const QString& destination_path) {
+    FileManagementDirectoryImportResult result;
+    result.destination = destination_path;
+    const QFileInfo source(host_source_dir);
+    if (!source.isDir() || source.isSymLink()) {
+        result.blockers.append(
+            QStringLiteral("Source is not a readable directory: %1").arg(host_source_dir));
+        return result;
+    }
+    const FileManagementMutationResult created = createDirectory(target, destination_path);
+    if (!created.ok) {
+        result.blockers.append(
+            created.blockers.isEmpty()
+                ? QStringLiteral("Could not create destination directory %1.").arg(destination_path)
+                : created.blockers.join(QStringLiteral("; ")));
+        return result;
+    }
+    const DirectoryImportContext ctx{target, result};
+    importDirectoryLevel(ctx, source.absoluteFilePath(), destination_path, 0);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -1229,6 +1358,59 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
         fs,
         cleanPath,
         QStringLiteral("Directory delete is not supported for %1").arg(displayFileSystem(fs)));
+}
+
+namespace {
+
+// Depth-first tree delete for backends whose directory delete fails closed on a
+// non-empty directory (the APFS guard stays): every child file and subdirectory is
+// removed through the same certified per-entry commits, then the emptied directory
+// itself is deleted.
+FileManagementMutationResult deleteDirectoryTreeDepthFirst(const FileManagementTarget& target,
+                                                           const QString& path,
+                                                           const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(
+            QStringLiteral("Skipped %1: exceeds the delete depth bound.").arg(path));
+        return result;
+    }
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        target, path, kDirectoryExportMaxEntriesPerDirectory);
+    if (!listing.ok) {
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(listing.blockers.isEmpty()
+                                   ? QStringLiteral("Could not list %1.").arg(path)
+                                   : listing.blockers.join(QStringLiteral("; ")));
+        return result;
+    }
+    for (const FileManagementEntry& entry : listing.entries) {
+        const FileManagementMutationResult removed =
+            entry.directory ? deleteDirectoryTreeDepthFirst(target, entry.path, depth + 1)
+                            : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+        if (!removed.ok) {
+            return removed;
+        }
+    }
+    return FileManagementFileSystemBridge::deleteDirectory(target, path);
+}
+
+}  // namespace
+
+FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectoryTree(
+    const FileManagementTarget& target, const QString& path) {
+    const QString fs = normalizedFileSystem(target.file_system);
+    // Local (QDir::removeRecursively) and HFS+ (deleteFolderTree) already remove a
+    // whole tree in one operation; everything else empties depth-first first.
+    if (target.local_file_system || fs == QStringLiteral("hfsplus") ||
+        fs == QStringLiteral("hfsx")) {
+        return deleteDirectory(target, path);
+    }
+    return deleteDirectoryTreeDepthFirst(target, path, 0);
 }
 
 FileManagementMutationResult FileManagementFileSystemBridge::writeFile(

@@ -354,6 +354,79 @@ private Q_SLOTS:
                  QByteArrayLiteral("leaf content"));
     }
 
+    void importDirectoryFromHostRecursesLocalTree() {
+        // Recursive import (paste-in direction): a nested host tree lands byte-complete
+        // under the destination, directories re-created, counts reported, and a
+        // non-directory source fails closed.
+        QTemporaryDir source;
+        QTemporaryDir destination;
+        QVERIFY(source.isValid());
+        QVERIFY(destination.isValid());
+        const QDir src(source.path());
+        QVERIFY(src.mkpath(QStringLiteral("inner/deeper")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        writeFile(src.filePath(QStringLiteral("top.txt")), QByteArrayLiteral("top-level"));
+        writeFile(src.filePath(QStringLiteral("inner/mid.bin")),
+                  QByteArrayLiteral("mid \x00\x01 bytes"));
+        writeFile(src.filePath(QStringLiteral("inner/deeper/leaf.txt")),
+                  QByteArrayLiteral("leaf content"));
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(destination.path());
+        const QString destRoot = QDir(destination.path()).filePath(QStringLiteral("imported"));
+        const auto result = sak::FileManagementFileSystemBridge::importDirectoryFromHost(
+            target, source.path(), destRoot);
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(result.files_imported, 3);
+        QCOMPARE(result.directories_created, 2);
+        QCOMPARE(result.symlinks_skipped, 0);
+
+        const auto readAll = [](const QString& path) {
+            QFile file(path);
+            if (!file.open(QIODevice::ReadOnly)) {
+                return QByteArray();
+            }
+            return file.readAll();
+        };
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("top.txt"))),
+                 QByteArrayLiteral("top-level"));
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("inner/mid.bin"))),
+                 QByteArrayLiteral("mid \x00\x01 bytes"));
+        QCOMPARE(readAll(QDir(destRoot).filePath(QStringLiteral("inner/deeper/leaf.txt"))),
+                 QByteArrayLiteral("leaf content"));
+
+        const auto notDir = sak::FileManagementFileSystemBridge::importDirectoryFromHost(
+            target,
+            src.filePath(QStringLiteral("top.txt")),
+            QDir(destination.path()).filePath(QStringLiteral("bad")));
+        QVERIFY(!notDir.ok);
+        QVERIFY2(notDir.blockers.join(QStringLiteral(" "))
+                     .contains(QStringLiteral("not a readable directory")),
+                 qPrintable(notDir.blockers.join(QStringLiteral("; "))));
+    }
+
+    void deleteDirectoryTreeRemovesNestedLocalTree() {
+        // The move-source cleanup used by folder cut-paste: a populated local tree is
+        // removed whole.
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QDir dir(root.path());
+        QVERIFY(dir.mkpath(QStringLiteral("gone/deep")));
+        QFile file(dir.filePath(QStringLiteral("gone/deep/leaf.txt")));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QVERIFY(file.write(QByteArrayLiteral("x")) == 1);
+        file.close();
+
+        const auto target = sak::FileManagementFileSystemBridge::localTarget(root.path());
+        const auto result = sak::FileManagementFileSystemBridge::deleteDirectoryTree(
+            target, dir.filePath(QStringLiteral("gone")));
+        QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+        QVERIFY(!QDir(dir.filePath(QStringLiteral("gone"))).exists());
+    }
+
     void apfsImageTargetWithKnownSizeIsWriteCapable() {
         // Foreign wiring: any APFS raw/image target whose container size is known and
         // inside the certified engine range is write-capable through the bridge; the
