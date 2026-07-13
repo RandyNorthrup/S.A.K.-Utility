@@ -67,6 +67,10 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::FocusOtherPane, Group::Pane},
         {Id::CutItems, Group::File},
         {Id::PasteIntoSelection, Group::File},
+        {Id::CreateFolderWithSelection, Group::File},
+        {Id::RemoveTags, Group::File},
+        {Id::OpenInTerminal, Group::Navigation},
+        {Id::EditInNotepad, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -280,6 +284,59 @@ std::optional<FileExplorerCommandState> crossPaneState(const FileExplorerCommand
     return crossPaneCopyState(context, entry);
 }
 
+// Files OpenTerminalAction: unmodified folder selections (or none) only.
+FileExplorerCommandState openTerminalState(const FileExplorerCommandContext& context,
+                                           const FileExplorerCommand& entry) {
+    const auto& entries = context.pane.selection.entries;
+    const bool all_folders = std::ranges::all_of(entries, [](const FileManagementEntry& item) {
+        return item.directory;
+    });
+    if (!entries.isEmpty() && !all_folders) {
+        return disabledState(entry,
+                             QStringLiteral("Select folders (or nothing) to open a terminal."));
+    }
+    return enabledState(entry);
+}
+
+// Files EditInNotepadAction: script extensions (.bat/.cmd/.ahk) only.
+FileExplorerCommandState editInNotepadState(const FileExplorerCommandContext& context,
+                                            const FileExplorerCommand& entry) {
+    const bool all_scripts =
+        std::ranges::all_of(context.pane.selection.entries, [](const FileManagementEntry& item) {
+            return item.regular_file &&
+                   (item.name.endsWith(QStringLiteral(".bat"), Qt::CaseInsensitive) ||
+                    item.name.endsWith(QStringLiteral(".cmd"), Qt::CaseInsensitive) ||
+                    item.name.endsWith(QStringLiteral(".ahk"), Qt::CaseInsensitive));
+        });
+    if (!all_scripts) {
+        return disabledState(entry, QStringLiteral("Select .bat, .cmd, or .ahk script files."));
+    }
+    return enabledState(entry);
+}
+
+// Local-tool commands (Files OpenTerminalAction / EditInNotepadAction) launch host
+// programs against host paths, so they exist on mounted local volumes only - a raw
+// APFS/HFS path has no host representation to hand the tool. RemoveTags additionally
+// needs a selection that actually carries tags (Files RemoveTagsAction.IsExecutable).
+std::optional<FileExplorerCommandState> localToolState(const FileExplorerCommandId id,
+                                                       const FileExplorerCommandContext& context,
+                                                       const FileExplorerCommand& entry) {
+    using enum FileExplorerCommandId;
+    if (id == RemoveTags) {
+        return context.selection_has_tags
+                   ? enabledState(entry)
+                   : disabledState(entry, QStringLiteral("Selected items have no tags."));
+    }
+    if (id != OpenInTerminal && id != EditInNotepad) {
+        return std::nullopt;
+    }
+    if (!context.target.local_file_system) {
+        return disabledState(entry, QStringLiteral("Available on mounted local volumes only."));
+    }
+    return id == OpenInTerminal ? openTerminalState(context, entry)
+                                : editInNotepadState(context, entry);
+}
+
 // Paste additionally needs pasteable file items on the clipboard. Checked after the
 // write-capability gate so a read-only target reports its real write blocker first.
 std::optional<FileExplorerCommandState> pasteClipboardState(
@@ -473,6 +530,30 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Delete selected item permanently (skips the Recycle Bin)."),
                     QStringLiteral("Shift+Del"),
                     {.destructive = true, .selection_required = true, .write_operation = true}),
+        // Files CreateFolderWithSelectionAction: new folder that swallows the selection.
+        makeCommand(FileExplorerCommandId::CreateFolderWithSelection,
+                    QStringLiteral("Create folder with selection"),
+                    QStringLiteral("Create a new folder and move the selected items into it."),
+                    {},
+                    {.selection_required = true, .write_operation = true}),
+        // Files RemoveTagsAction: clears app-level tags; never touches the file system.
+        makeCommand(FileExplorerCommandId::RemoveTags,
+                    QStringLiteral("Remove tags"),
+                    QStringLiteral("Remove all S.A.K. tags from the selected items."),
+                    {},
+                    {.selection_required = true}),
+        // Files OpenTerminalAction: Ctrl+` opens a terminal in the current or
+        // selected folder (mounted local volumes only).
+        makeCommand(FileExplorerCommandId::OpenInTerminal,
+                    QStringLiteral("Open in Windows Terminal"),
+                    QStringLiteral("Open a terminal in the current or selected folder."),
+                    QStringLiteral("Ctrl+`")),
+        // Files EditInNotepadAction: script files (.bat/.cmd/.ahk) only.
+        makeCommand(FileExplorerCommandId::EditInNotepad,
+                    QStringLiteral("Edit in Notepad"),
+                    QStringLiteral("Open the selected script files in Notepad."),
+                    {},
+                    {.selection_required = true}),
     };
 }
 
@@ -608,6 +689,9 @@ FileExplorerCommandState FileExplorerCommandRegistry::state(
     if (const auto cross_pane = crossPaneState(id, context, entry)) {
         return *cross_pane;
     }
+    if (const auto local_tool = localToolState(id, context, entry)) {
+        return *local_tool;
+    }
     return enabledState(entry);
 }
 
@@ -634,6 +718,10 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::Rename, "rename"},
         {Id::Delete, "delete"},
         {Id::DeletePermanently, "delete-permanently"},
+        {Id::CreateFolderWithSelection, "create-folder-with-selection"},
+        {Id::RemoveTags, "remove-tags"},
+        {Id::OpenInTerminal, "open-in-terminal"},
+        {Id::EditInNotepad, "edit-in-notepad"},
         {Id::ToggleHiddenItems, "toggle-hidden-items"},
         {Id::ToggleFileExtensions, "toggle-file-extensions"},
         {Id::ViewDetails, "view-details"},

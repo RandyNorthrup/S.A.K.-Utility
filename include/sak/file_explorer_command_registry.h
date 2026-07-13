@@ -59,6 +59,10 @@ enum class FileExplorerCommandId {
     CutItems,
     PasteIntoSelection,
     DeletePermanently,
+    CreateFolderWithSelection,
+    RemoveTags,
+    OpenInTerminal,
+    EditInNotepad,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped
@@ -91,6 +95,7 @@ struct FileExplorerCommandContext {
     bool can_use_dual_pane{false};
     bool has_closed_tab{false};       ///< True when a recently closed tab can be reopened.
     bool clipboard_has_files{false};  ///< True when the clipboard holds pasteable file items.
+    bool selection_has_tags{false};   ///< True when any selected item carries app-level tags.
     bool dual_pane_active{false};     ///< True when a second pane is currently shown.
     /// Target shown in the INACTIVE pane while dual pane is active (cross-pane destination).
     FileManagementTarget other_pane_target;

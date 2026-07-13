@@ -59,7 +59,7 @@ Widget* child(QWidget* parent, const char* name) {
     return parent->findChild<Widget*>(QString::fromLatin1(name));
 }
 
-QStringList collectContextMenuTexts(QWidget* target) {
+QStringList collectContextMenuTextsAt(QWidget* target, const QPoint& point) {
     QStringList texts;
     QTimer::singleShot(0, [&texts]() {
         auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
@@ -75,12 +75,15 @@ QStringList collectContextMenuTexts(QWidget* target) {
         menu->close();
     });
 
-    const QPoint point = target->rect().center();
     QContextMenuEvent event(QContextMenuEvent::Mouse, point, target->mapToGlobal(point));
     QApplication::sendEvent(target, &event);
     QApplication::processEvents();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     return texts;
+}
+
+QStringList collectContextMenuTexts(QWidget* target) {
+    return collectContextMenuTextsAt(target, target->rect().center());
 }
 
 bool containsTextStartingWith(const QStringList& texts, const QString& prefix) {
@@ -929,6 +932,8 @@ private Q_SLOTS:
     }
 
     void contextMenusExposeRegistryActionsAndTargetActions() {
+        QTemporaryDir empty_dir;
+        QVERIFY(empty_dir.isValid());
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
@@ -936,14 +941,32 @@ private Q_SLOTS:
 
         auto* table = child<QTableView>(&panel, "fileExplorerTable");
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
         QVERIFY(table);
         QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, empty_dir.path().left(2).toUpper()) <
+            0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        // An empty folder guarantees the click hits background, not a row.
+        pathEdit->setText(empty_dir.path());
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QVERIFY(waitForListingQuiescence(table));
+        QTRY_COMPARE(table->model()->rowCount(), 0);
 
+        // No selection -> the Files background menu: Layout / Sort by / Refresh,
+        // the New group, Paste, selection helpers, then terminal.
         const QStringList tableActions = collectContextMenuTexts(table->viewport());
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Open")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Open in New Tab")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("New Folder")));
-        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Delete")));
+        QVERIFY2(tableActions.size() >= 8, qPrintable(tableActions.join(QStringLiteral(" | "))));
+        QVERIFY(tableActions.at(0).startsWith(QStringLiteral("Layout")));
+        QVERIFY(tableActions.at(1).startsWith(QStringLiteral("Sort by")));
+        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Refresh")));
+        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("New")));
+        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Paste")));
+        QVERIFY(containsTextStartingWith(tableActions, QStringLiteral("Open in Windows Terminal")));
+        QVERIFY(!containsTextStartingWith(tableActions, QStringLiteral("Rename")));
+        QVERIFY(!containsTextStartingWith(tableActions, QStringLiteral("Delete")));
 
         const QStringList targetActions = collectContextMenuTexts(targetList->viewport());
         QVERIFY(targetActions.contains(QStringLiteral("Open Target")));
@@ -954,6 +977,63 @@ private Q_SLOTS:
         QVERIFY(targetActions.contains(QStringLiteral("Refresh Mounted Targets")));
         QVERIFY(targetActions.contains(QStringLiteral("Scan Disks")));
         QVERIFY(targetActions.contains(QStringLiteral("Add Raw/Image")));
+    }
+
+    void itemContextMenuFollowsFilesOrder() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("menu_probe.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("menu probe") > 0);
+        }
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("menu_probe")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        QVERIFY(selectRowStable(table, QStringLiteral("menu_probe")));
+
+        // Files ContentPageContextFlyoutFactory order for a selection: these
+        // anchors must appear in this exact relative order.
+        const QStringList actions = collectContextMenuTexts(table->viewport());
+        const QStringList anchors = {QStringLiteral("Open"),
+                                     QStringLiteral("Cut"),
+                                     QStringLiteral("Copy"),
+                                     QStringLiteral("Rename"),
+                                     QStringLiteral("Delete"),
+                                     QStringLiteral("Properties"),
+                                     QStringLiteral("Tags"),
+                                     QStringLiteral("Edit in Notepad"),
+                                     QStringLiteral("Open in Windows Terminal"),
+                                     QStringLiteral("Preview")};
+        int cursor = -1;
+        for (const QString& anchor : anchors) {
+            int found = -1;
+            for (int index = cursor + 1; index < actions.size(); ++index) {
+                if (actions.at(index).startsWith(anchor)) {
+                    found = index;
+                    break;
+                }
+            }
+            QVERIFY2(found > cursor,
+                     qPrintable(QStringLiteral("anchor '%1' out of order in: %2")
+                                    .arg(anchor, actions.join(QStringLiteral(" | ")))));
+            cursor = found;
+        }
+        // Background-only groups never leak into the selection menu.
+        QVERIFY(!containsTextStartingWith(actions, QStringLiteral("Layout")));
+        QVERIFY(!containsTextStartingWith(actions, QStringLiteral("Sort by")));
     }
 
     void responsiveLayoutCollapsesAtNarrowWidth() {

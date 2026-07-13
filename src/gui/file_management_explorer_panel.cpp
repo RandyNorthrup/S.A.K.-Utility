@@ -55,6 +55,7 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
@@ -1388,6 +1389,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::FocusOtherPane,
         FileExplorerCommandId::IncreaseSize,
         FileExplorerCommandId::DecreaseSize,
+        FileExplorerCommandId::OpenInTerminal,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -3321,9 +3323,20 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.can_use_dual_pane = true;
     context.has_closed_tab = !m_closed_tabs.isEmpty();
     context.clipboard_has_files = clipboardHasPasteableFiles();
+    context.selection_has_tags = selectionHasTags(context.pane.selection);
     context.dual_pane_active = m_dual_pane_enabled;
     context.other_pane_target = otherPaneTarget();
     return context;
+}
+
+bool FileManagementExplorerPanel::selectionHasTags(const FileExplorerSelection& selection) const {
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    QSettings settings;
+    return std::ranges::any_of(selection.entries, [&](const FileManagementEntry& entry) {
+        return !FileExplorerTagStore::tagsFor(
+                    settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path)
+                    .isEmpty();
+    });
 }
 
 void FileManagementExplorerPanel::applyCommandState(QPushButton* button,
@@ -3615,6 +3628,9 @@ bool FileManagementExplorerPanel::dispatchOpenElsewhereCommand(
             activatePane(1 - m_active_pane_index);
         }
         return true;
+    case FileExplorerCommandId::OpenInTerminal:
+        openTerminalHere();
+        return true;
     default:
         return false;
     }
@@ -3642,6 +3658,24 @@ bool FileManagementExplorerPanel::dispatchWriteCommand(const FileExplorerCommand
         return true;
     case FileExplorerCommandId::DeletePermanently:
         deleteSelectionWithConfirmation(true);
+        return true;
+    default:
+        return dispatchSelectionToolCommand(command);
+    }
+}
+
+// C4 selection tools: folder-with-selection, tag clearing, and script editing.
+bool FileManagementExplorerPanel::dispatchSelectionToolCommand(
+    const FileExplorerCommandId command) {
+    switch (command) {
+    case FileExplorerCommandId::CreateFolderWithSelection:
+        createFolderWithSelection();
+        return true;
+    case FileExplorerCommandId::RemoveTags:
+        removeTagsFromSelection();
+        return true;
+    case FileExplorerCommandId::EditInNotepad:
+        editSelectionInNotepad();
         return true;
     default:
         return false;
@@ -3816,6 +3850,119 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
     rebuildTargetList();
     Q_EMIT statusMessage(tr("Tags updated for %1").arg(selection.entries.first().name),
                          sak::kTimerStatusMessageMs);
+}
+
+void FileManagementExplorerPanel::removeTagsFromSelection() {
+    // Files RemoveTagsAction: clear every selected item's tags; app-level
+    // metadata only, so it works on read-only raw targets too.
+    const FileExplorerSelection selection = currentSelection();
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    if (selection.isEmpty() || target_id.isEmpty()) {
+        return;
+    }
+    QSettings settings;
+    for (const FileManagementEntry& entry : selection.entries) {
+        FileExplorerTagStore::setTags(
+            settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path, {});
+    }
+    updateDetailsPane();
+    if (m_item_model) {
+        m_item_model->refreshTags();
+    }
+    rebuildTargetList();
+    Q_EMIT statusMessage(tr("Removed tags from %1 item(s).").arg(selection.count()),
+                         sak::kTimerStatusMessageMs);
+}
+
+void FileManagementExplorerPanel::createFolderWithSelection() {
+    // Files CreateFolderWithSelectionAction: make a folder and move the
+    // selection into it - the move runs through the same-target kernel, so
+    // raw APFS/HFS selections reparent through the certified writers.
+    const FileExplorerSelection selection = currentSelection();
+    const FileManagementTarget target = currentTarget();
+    if (selection.isEmpty() || !target.can_write_files) {
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Create Folder"), identity_blocker);
+        return;
+    }
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this,
+                                               tr("Create Folder with Selection"),
+                                               tr("Folder name:"),
+                                               QLineEdit::Normal,
+                                               tr("New folder"),
+                                               &accepted);
+    if (!accepted || !isSafeChildName(name)) {
+        return;
+    }
+    const QString folder_path = childPathFor(m_current_path, name, target.local_file_system);
+    const auto created = FileManagementFileSystemBridge::createDirectory(target, folder_path);
+    if (!created.ok) {
+        sak::showWarningLogged(this,
+                               tr("Create Folder"),
+                               created.blockers.join(QStringLiteral("\n")));
+        return;
+    }
+    QList<PasteItem> items;
+    items.reserve(selection.entries.size());
+    for (const FileManagementEntry& entry : selection.entries) {
+        items.append({entry.path, entry.size_bytes, entry.directory});
+    }
+    PasteCollisionPolicy policy;
+    QStringList blockers;
+    const int moved = moveEntriesWithinTarget(target, items, folder_path, &policy, &blockers);
+    loadDirectory(m_current_path);
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Create Folder"), blockers.join(QStringLiteral("\n")));
+    }
+    Q_EMIT statusMessage(
+        tr("Moved %1 of %2 item(s) into %3.").arg(moved).arg(items.size()).arg(name),
+        sak::kTimerStatusDefaultMs);
+}
+
+void FileManagementExplorerPanel::openTerminalHere() {
+    // Files OpenTerminalAction: Windows Terminal when available, cmd.exe
+    // fallback; one window per selected folder, else the current folder.
+    // Local volumes only (registry-gated) - raw paths have no host cwd.
+    const FileManagementTarget target = currentTarget();
+    if (!target.local_file_system) {
+        return;
+    }
+    QStringList directories;
+    const FileExplorerSelection selection = currentSelection();
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (entry.directory) {
+            directories.append(entry.path);
+        }
+    }
+    if (directories.isEmpty()) {
+        directories.append(m_current_path);
+    }
+    for (const QString& directory : directories) {
+        const QString native = QDir::toNativeSeparators(directory);
+        if (!QProcess::startDetached(QStringLiteral("wt.exe"), {QStringLiteral("-d"), native})) {
+            QProcess::startDetached(QStringLiteral("cmd.exe"), {}, native);
+        }
+        logMessage(tr("Open in Terminal: %1").arg(native));
+    }
+}
+
+void FileManagementExplorerPanel::editSelectionInNotepad() {
+    // Files EditInNotepadAction: notepad per selected script file (LOCAL only).
+    const FileManagementTarget target = currentTarget();
+    if (!target.local_file_system) {
+        return;
+    }
+    const FileExplorerSelection selection = currentSelection();
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (entry.regular_file) {
+            QProcess::startDetached(QStringLiteral("notepad.exe"),
+                                    {QDir::toNativeSeparators(entry.path)});
+        }
+    }
 }
 
 void FileManagementExplorerPanel::togglePreviewPane() {
@@ -5299,41 +5446,154 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     const auto context = commandContext();
     QMenu menu(this);
     menu.setObjectName(QStringLiteral("fileExplorerTableContextMenu"));
-    addCommandMenuAction(&menu, FileExplorerCommandId::Open, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::OpenInNewTab, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::OpenInSecondPane, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CopyToOtherPane, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::ComparePanes, context);
-    menu.addSeparator();
-    addCommandMenuAction(&menu, FileExplorerCommandId::Preview, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CopyOut, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CutItems, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CopyItems, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Paste, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::PasteIntoSelection, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
-    auto* editTags = menu.addAction(tr("Edit Tags..."));
+    if (context.pane.selection.isEmpty()) {
+        buildBackgroundContextMenu(&menu, context);
+    } else {
+        buildItemContextMenu(&menu, context);
+    }
+    menu.exec(view->viewport()->mapToGlobal(position));
+}
+
+// Item context menu in the Files ContentPageContextFlyoutFactory order for a
+// selection: open group, clipboard group, file group, tags/tools, terminal,
+// then the S.A.K.-specific raw-evidence commands behind the last separator.
+// (Share/Send to/shortcuts/BitLocker/shell extensions are EXCLUDED by plan.)
+void FileManagementExplorerPanel::buildItemContextMenu(QMenu* menu,
+                                                       const FileExplorerCommandContext& context) {
+    addCommandMenuAction(menu, FileExplorerCommandId::Open, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::OpenInNewTab, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::OpenInSecondPane, context);
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::CutItems, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CopyItems, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::PasteIntoSelection, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CopyItemPath, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CopyItemPathQuoted, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CreateFolderWithSelection, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::Rename, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::Delete, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::Properties, context);
+    menu->addSeparator();
+    addTagsSubmenu(menu, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::EditInNotepad, context);
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::OpenInTerminal, context);
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::Preview, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::Hash, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CopyOut, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::CopyToOtherPane, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::ComparePanes, context);
+}
+
+// Background (empty-space) menu in the Files factory order: Layout / Sort by /
+// Refresh, the New group, Paste, then terminal. Group by lands with the C5
+// layout-fidelity wave.
+void FileManagementExplorerPanel::buildBackgroundContextMenu(
+    QMenu* menu, const FileExplorerCommandContext& context) {
+    auto* layout_menu = menu->addMenu(tr("Layout"));
+    layout_menu->setObjectName(QStringLiteral("fileExplorerContextLayoutMenu"));
+    auto* layout_group = new QActionGroup(layout_menu);
+    layout_group->setExclusive(true);
+    for (const FileExplorerCommandId command : {FileExplorerCommandId::ViewDetails,
+                                                FileExplorerCommandId::ViewList,
+                                                FileExplorerCommandId::ViewGrid,
+                                                FileExplorerCommandId::ViewCards,
+                                                FileExplorerCommandId::ViewColumns,
+                                                FileExplorerCommandId::ViewAdaptive}) {
+        if (auto* action = addCommandMenuAction(layout_menu, command, context)) {
+            action->setCheckable(true);
+            action->setChecked(modeForCommand(command) == m_pane_state.view.mode);
+            layout_group->addAction(action);
+        }
+    }
+    auto* sort_menu = menu->addMenu(tr("Sort by"));
+    sort_menu->setObjectName(QStringLiteral("fileExplorerContextSortMenu"));
+    rebuildSortMenu(sort_menu);
+    addCommandMenuAction(menu, FileExplorerCommandId::Refresh, context);
+    menu->addSeparator();
+    auto* new_menu = menu->addMenu(tr("New"));
+    new_menu->setObjectName(QStringLiteral("fileExplorerContextNewMenu"));
+    addCommandMenuAction(new_menu, FileExplorerCommandId::NewFolder, context);
+    addCommandMenuAction(new_menu, FileExplorerCommandId::WriteFile, context);
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::Paste, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::SelectAll, context);
+    addCommandMenuAction(menu, FileExplorerCommandId::InvertSelection, context);
+    menu->addSeparator();
+    addCommandMenuAction(menu, FileExplorerCommandId::OpenInTerminal, context);
+}
+
+// Files FileTagsContextMenu: one checkable row per known tag (checked when
+// every selected item carries it), then Remove tags and the S.A.K. free-text
+// editor. Tags are app-level metadata, so this works on raw targets too.
+void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
+                                                 const FileExplorerCommandContext& context) {
+    auto* tags_menu = menu->addMenu(tr("Tags"));
+    tags_menu->setObjectName(QStringLiteral("fileExplorerTagsSubmenu"));
+    const FileExplorerSelection selection = context.pane.selection;
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    QSettings settings;
+    const QStringList known_tags = allKnownTags();
+    for (const QString& tag : known_tags) {
+        const bool on_all =
+            !selection.entries.isEmpty() &&
+            std::ranges::all_of(selection.entries, [&](const FileManagementEntry& entry) {
+                return FileExplorerTagStore::tagsFor(
+                           settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path)
+                    .contains(tag, Qt::CaseInsensitive);
+            });
+        QAction* action = tags_menu->addAction(tag);
+        action->setCheckable(true);
+        action->setChecked(on_all);
+        connect(action, &QAction::triggered, this, [this, tag](const bool checked) {
+            toggleTagOnSelection(tag, checked);
+        });
+    }
+    if (!known_tags.isEmpty()) {
+        tags_menu->addSeparator();
+    }
+    addCommandMenuAction(tags_menu, FileExplorerCommandId::RemoveTags, context);
+    auto* editTags = tags_menu->addAction(tr("Edit Tags..."));
     editTags->setObjectName(QStringLiteral("fileExplorerEditTagsAction"));
-    editTags->setEnabled(context.pane.selection.hasSingleEntry());
+    editTags->setEnabled(selection.hasSingleEntry());
     editTags->setToolTip(
-        tr("Tag this item with S.A.K. metadata (never written to the file "
-           "system)."));
+        tr("Tag this item with S.A.K. metadata (never written to the file system)."));
     connect(
         editTags, &QAction::triggered, this, &FileManagementExplorerPanel::editSelectedItemTags);
-    menu.addSeparator();
-    addCommandMenuAction(&menu, FileExplorerCommandId::NewFolder, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::WriteFile, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Rename, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Delete, context);
-    menu.addSeparator();
-    addCommandMenuAction(&menu, FileExplorerCommandId::SelectAll, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::ClearSelection, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::InvertSelection, context);
-    addCommandMenuAction(&menu, FileExplorerCommandId::Refresh, context);
-    menu.exec(view->viewport()->mapToGlobal(position));
+}
+
+void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const bool add) {
+    const FileExplorerSelection selection = currentSelection();
+    const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
+    if (selection.isEmpty() || target_id.isEmpty()) {
+        return;
+    }
+    QSettings settings;
+    for (const FileManagementEntry& entry : selection.entries) {
+        QStringList tags = FileExplorerTagStore::tagsFor(
+            settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path);
+        const bool present = tags.contains(tag, Qt::CaseInsensitive);
+        if (add && !present) {
+            tags.append(tag);
+        } else if (!add && present) {
+            tags.erase(std::remove_if(tags.begin(),
+                                      tags.end(),
+                                      [&tag](const QString& existing) {
+                                          return existing.compare(tag, Qt::CaseInsensitive) == 0;
+                                      }),
+                       tags.end());
+        } else {
+            continue;
+        }
+        FileExplorerTagStore::setTags(
+            settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path, tags);
+    }
+    updateDetailsPane();
+    if (m_item_model) {
+        m_item_model->refreshTags();
+    }
+    rebuildTargetList();
 }
 
 int FileManagementExplorerPanel::resolveContextMenuTargetIndex(const QPoint& position) {

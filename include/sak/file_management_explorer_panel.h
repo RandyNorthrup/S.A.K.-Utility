@@ -310,6 +310,15 @@ private:
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;
+    [[nodiscard]] bool selectionHasTags(const FileExplorerSelection& selection) const;
+    void buildItemContextMenu(QMenu* menu, const FileExplorerCommandContext& context);
+    void buildBackgroundContextMenu(QMenu* menu, const FileExplorerCommandContext& context);
+    void addTagsSubmenu(QMenu* menu, const FileExplorerCommandContext& context);
+    void toggleTagOnSelection(const QString& tag, bool add);
+    void removeTagsFromSelection();
+    void createFolderWithSelection();
+    void openTerminalHere();
+    void editSelectionInNotepad();
     void applyCommandState(QPushButton* button,
                            FileExplorerCommandId command,
                            const FileExplorerCommandContext& context);
@@ -325,6 +334,7 @@ private:
     bool dispatchSelectionEditCommand(FileExplorerCommandId command);
     bool dispatchFileViewCommand(FileExplorerCommandId command);
     bool dispatchWriteCommand(FileExplorerCommandId command);
+    bool dispatchSelectionToolCommand(FileExplorerCommandId command);
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
     void toggleCurrentItemSelection();
