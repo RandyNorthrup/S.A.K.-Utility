@@ -5,9 +5,12 @@
 
 #include "sak/layout_constants.h"
 
+#include <QBrush>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHash>
+#include <QPalette>
 #include <QStringList>
 
 #include <algorithm>
@@ -108,6 +111,7 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
     using Model = FileExplorerItemModel;
     using Accessor = QVariant (*)(const FileManagementEntry&);
     static const QHash<int, Accessor> kAccessors{
+        {Qt::ToolTipRole, [](const FileManagementEntry& e) -> QVariant { return e.path; }},
         {Model::EntryPathRole, [](const FileManagementEntry& e) -> QVariant { return e.path; }},
         {Model::EntryNameRole, [](const FileManagementEntry& e) -> QVariant { return e.name; }},
         {Model::EntryTypeRole, [](const FileManagementEntry& e) -> QVariant { return e.type; }},
@@ -186,15 +190,24 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
         return editForColumn(entry, index.column());
     case Qt::DecorationRole:
         return decorationForColumn(entry, index.column());
-    case Qt::ToolTipRole:
-        return entry.path;
     case Qt::TextAlignmentRole:
         return alignmentForColumn(index.column());
+    case Qt::ForegroundRole:
+        return foregroundForEntry(entry);
     case EntryTagsRole:
         return tagsForEntry(entry);
     default:
         return entryRoleValue(entry, role);
     }
+}
+
+QVariant FileExplorerItemModel::foregroundForEntry(const FileManagementEntry& entry) const {
+    // Files dims cut items (ListedItem.Opacity 0.4); approximated with the
+    // disabled text color until the move-paste lands.
+    if (!m_cut_paths.contains(entry.path)) {
+        return {};
+    }
+    return QBrush(QGuiApplication::palette().color(QPalette::Disabled, QPalette::Text));
 }
 
 QVariant FileExplorerItemModel::editForColumn(const FileManagementEntry& entry,
@@ -294,6 +307,22 @@ void FileExplorerItemModel::setEntries(QVector<FileManagementEntry> entries) {
 
 void FileExplorerItemModel::clear() {
     setEntries({});
+}
+
+void FileExplorerItemModel::setCutPaths(const QSet<QString>& paths) {
+    if (m_cut_paths == paths) {
+        return;
+    }
+    m_cut_paths = paths;
+    if (!m_entries.isEmpty()) {
+        Q_EMIT dataChanged(index(0, NameColumn),
+                           index(m_entries.size() - 1, ColumnCount - 1),
+                           {Qt::ForegroundRole});
+    }
+}
+
+QSet<QString> FileExplorerItemModel::cutPaths() const {
+    return m_cut_paths;
 }
 
 void FileExplorerItemModel::setTagProvider(TagProvider provider) {

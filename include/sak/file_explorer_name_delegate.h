@@ -24,6 +24,7 @@ public:
 
 protected:
     bool event(QEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
 };
 
 /// Name-column delegate: rename editor with Files semantics -- base name

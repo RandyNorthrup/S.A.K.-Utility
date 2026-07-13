@@ -6,6 +6,7 @@
 #include "sak/file_explorer_item_model.h"
 
 #include <QEvent>
+#include <QKeyEvent>
 #include <QToolTip>
 
 namespace sak {
@@ -55,6 +56,23 @@ bool FileExplorerRenameLineEdit::event(QEvent* event) {
         return true;
     }
     return QLineEdit::event(event);
+}
+
+void FileExplorerRenameLineEdit::keyPressEvent(QKeyEvent* event) {
+    QLineEdit::keyPressEvent(event);
+    // QLineEdit deliberately ignores Return/Enter/Escape so dialog default
+    // buttons can fire; here that would bubble the key to the item view,
+    // whose Enter activation matrix would open the item mid-rename. The
+    // delegate has already scheduled commit/revert - consume the key.
+    switch (event->key()) {
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+    case Qt::Key_Escape:
+        event->accept();
+        break;
+    default:
+        break;
+    }
 }
 
 FileExplorerNameDelegate::FileExplorerNameDelegate(QObject* parent) : QStyledItemDelegate(parent) {}

@@ -229,10 +229,10 @@ private:
 [[nodiscard]] QVector<IconDescriptor> fluentGlyphDescriptors() {
     QVector<IconDescriptor> items;
     static constexpr std::array kFluentKeys = {
-        "nav-back",      "nav-forward", "nav-up", "search", "plus",
-        "chevron-right", "home",        "drive",  "folder", "file",
-        "image-file",    "recent",      "tag",    "shield", "scan-disks",
-        "close",         "select-mode", "sort",   "copy",   "paste"};
+        "nav-back", "nav-forward", "nav-up",     "search", "plus",        "chevron-right",
+        "home",     "drive",       "folder",     "file",   "image-file",  "recent",
+        "tag",      "shield",      "scan-disks", "close",  "select-mode", "sort",
+        "copy",     "paste",       "cut"};
     items.reserve(static_cast<qsizetype>(kFluentKeys.size()));
     for (const char* key : kFluentKeys) {
         items.append(fluentDescriptor(key));
@@ -299,7 +299,9 @@ QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId 
         {Id::ToggleDualPane, "dual-pane"},
         {Id::OpenInSecondPane, "dual-pane"},
         {Id::CopyItems, "copy"},
+        {Id::CutItems, "cut"},
         {Id::Paste, "paste"},
+        {Id::PasteIntoSelection, "paste"},
         {Id::Properties, "properties-general"},
         {Id::SelectAll, "select-mode"},
         {Id::Home, "home"},

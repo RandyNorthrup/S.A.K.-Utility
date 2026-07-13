@@ -11,6 +11,7 @@
 #include <QAbstractTableModel>
 #include <QDateTime>
 #include <QModelIndex>
+#include <QSet>
 #include <QStringList>
 #include <QVariant>
 #include <QVector>
@@ -76,6 +77,10 @@ public:
     void setEntries(QVector<FileManagementEntry> entries);
     void clear();
     void setShowFileExtensions(bool show);
+    /// Mark clipboard-cut items (Files dims them at 0.4 opacity until the
+    /// move-paste lands or a new transfer replaces the clipboard).
+    void setCutPaths(const QSet<QString>& paths);
+    [[nodiscard]] QSet<QString> cutPaths() const;
     /// Set the tag lookup used by the Tags column; pass a null function to disable it.
     void setTagProvider(TagProvider provider);
     /// Set the icon lookup used for the Name column; pass a null function to disable it.
@@ -100,12 +105,14 @@ private:
     [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
     [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QVariant editForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant foregroundForEntry(const FileManagementEntry& entry) const;
     [[nodiscard]] QVariant decorationForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QString completedRenameName(const FileManagementEntry& entry,
                                               const QString& edited) const;
 
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};
+    QSet<QString> m_cut_paths;
     TagProvider m_tag_provider;
     IconProvider m_icon_provider;
 };

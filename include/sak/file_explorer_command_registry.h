@@ -56,6 +56,8 @@ enum class FileExplorerCommandId {
     IncreaseSize,
     DecreaseSize,
     FocusOtherPane,
+    CutItems,
+    PasteIntoSelection,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

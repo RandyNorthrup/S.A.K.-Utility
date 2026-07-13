@@ -16,6 +16,7 @@
 #include "sak/file_management_file_system.h"
 
 #include <QAbstractItemView>
+#include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -26,6 +27,7 @@
 #include <QResizeEvent>
 #include <QSplitter>
 #include <QStringList>
+#include <QUrl>
 #include <QWidget>
 
 class QJsonArray;
@@ -161,14 +163,57 @@ private:
     void hashSelectedFile();
     void copySelectedFileOut();
     /// Clipboard file payload gathered for a paste: host (local) source files, or raw-target
-    /// source items (path + size) tagged with the source target identity.
+    /// source items (path + size) tagged with the source target identity. `move` mirrors the
+    /// Files DataPackage RequestedOperation (cut = Move, copy = Copy).
     struct PasteSources {
         QStringList host_files;
         QString source_target_id;
         QList<QPair<QString, quint64>> raw_items;
+        bool move{false};
     };
-    void copySelectionToClipboard();
+    /// Files FileNameConflictResolveOptionType (GenerateNewName default).
+    enum class PasteCollisionChoice {
+        GenerateNew,
+        Replace,
+        Skip
+    };
+    struct PasteCollisionPolicy {
+        PasteCollisionChoice choice{PasteCollisionChoice::GenerateNew};
+        bool apply_to_all{false};
+        bool cancelled{false};
+    };
+    /// Selection snapshot serialized for the clipboard payload.
+    struct ClipboardBatch {
+        QJsonArray items;
+        QList<QUrl> urls;
+        QStringList lines;
+        int skipped{0};
+    };
+    static ClipboardBatch collectClipboardBatch(const FileExplorerSelection& selection,
+                                                const FileManagementTarget& target);
+    void copySelectionToClipboard(bool move = false);
     void pasteClipboardIntoCurrentFolder();
+    void pasteClipboardIntoSelection();
+    void pasteClipboardTo(const QString& destination_dir);
+    bool pasteSameTargetMove(const FileManagementTarget& target,
+                             const PasteSources& sources,
+                             const QString& destination_dir);
+    int moveEntriesWithinTarget(const FileManagementTarget& target,
+                                const QStringList& source_paths,
+                                const QString& destination_dir,
+                                PasteCollisionPolicy* policy,
+                                QStringList* blockers);
+    PasteCollisionChoice resolvePasteCollision(const QString& name,
+                                               bool multiple,
+                                               PasteCollisionPolicy* policy);
+    [[nodiscard]] QString uniqueChildName(const FileManagementTarget& target,
+                                          const QString& directory,
+                                          const QString& name) const;
+    [[nodiscard]] bool destinationOccupied(const FileManagementTarget& target,
+                                           const QString& directory,
+                                           const QString& name) const;
+    void clearCutMarks();
+    void finishMovePaste();
     void exportSelectedDirectoryOut(const FileManagementEntry& entry);
     void crossPaneCopySelection();
     int crossPaneCopyEntries(const FileManagementTarget& source,
@@ -184,15 +229,21 @@ private:
                                    bool source_is_local,
                                    PasteSources& sources);
     [[nodiscard]] bool preparePasteDestination(const PasteSources& sources);
-    void executePaste(const PasteSources& sources);
+    void executePaste(const PasteSources& sources, const QString& destination_dir);
     [[nodiscard]] bool confirmTypedRawImport(const FileManagementTarget& target, int file_count);
-    [[nodiscard]] bool confirmPasteOverwrite(const QString& name);
     int pasteHostFiles(const FileManagementTarget& target,
-                       const QStringList& source_paths,
+                       const QString& destination_dir,
+                       const PasteSources& sources,
+                       PasteCollisionPolicy* policy,
                        QStringList* blockers);
     int pasteRawItemsToLocalFolder(const FileManagementTarget& source_target,
-                                   const QList<QPair<QString, quint64>>& items,
+                                   const QString& destination_dir,
+                                   const PasteSources& sources,
+                                   PasteCollisionPolicy* policy,
                                    QStringList* blockers);
+    bool deleteMoveSource(const FileManagementTarget& source_target,
+                          const QString& path,
+                          QStringList* blockers);
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;

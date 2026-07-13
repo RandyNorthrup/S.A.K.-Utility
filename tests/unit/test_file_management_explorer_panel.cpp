@@ -200,9 +200,30 @@ bool selectRowStable(QTableView* table, const QString& name_fragment) {
             if (found < 0) {
                 return false;
             }
-            table->selectRow(found);
+            // Explicit ClearAndSelect: QTableView::selectRow consults the
+            // GLOBAL keyboard-modifier state, and QTest::keyClick with a
+            // modifier leaves that state sticky, turning selectRow into a
+            // toggle.
+            const QModelIndex index = table->model()->index(found, 0);
+            table->selectionModel()->setCurrentIndex(index, QItemSelectionModel::NoUpdate);
+            table->selectionModel()->select(
+                index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
             QApplication::processEvents();
-            return table->selectionModel()->selectedRows().size() == 1;
+            const QModelIndexList rows = table->selectionModel()->selectedRows();
+            return rows.size() == 1 && rows.first().data().toString().contains(name_fragment);
+        },
+        5000);
+}
+
+// Let the panel's async listings settle: a late model reset would clear
+// selections and race whatever the test does next.
+bool waitForListingQuiescence(QTableView* table) {
+    return QTest::qWaitFor(
+        [table]() {
+            const int before = table->model() ? table->model()->rowCount() : 0;
+            QTest::qWait(200);
+            const int after = table->model() ? table->model()->rowCount() : 0;
+            return before == after;
         },
         5000);
 }
@@ -798,6 +819,8 @@ private Q_SLOTS:
             QSKIP("No mounted File Explorer target available for view mode switching.");
         }
 
+        QVERIFY(waitForListingQuiescence(table));
+
         if (table->model() && table->model()->rowCount() > 0) {
             table->selectRow(0);
             QCOMPARE(pane->sharedSelectionModel()->selectedRows().size(), 1);
@@ -1195,6 +1218,92 @@ private Q_SLOTS:
         QTest::qWait(200);
         QVERIFY(QFile::exists(QDir(dir.path()).filePath(QStringLiteral("beta.txt"))));
         QVERIFY(!QFile::exists(QDir(dir.path()).filePath(QStringLiteral("gamma.txt"))));
+    }
+
+    void cutPasteIntoSelectedFolderMovesFile() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("dest")));
+        const QString source_file = QDir(dir.path()).filePath(QStringLiteral("mover.txt"));
+        {
+            QFile file(source_file);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("move payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("mover")) >= 0);
+
+        // Files CutItemAction: Ctrl+X publishes a move operation and dims
+        // the cut row.
+        QVERIFY(selectRowStable(table, QStringLiteral("mover")));
+        QTest::keyClick(table, Qt::Key_X, Qt::ControlModifier);
+        const QMimeData* mime = QApplication::clipboard()->mimeData();
+        QVERIFY(mime && mime->hasFormat(QStringLiteral("application/x-sak-file-explorer-items")));
+        QVERIFY(
+            QString::fromUtf8(mime->data(QStringLiteral("application/x-sak-file-explorer-items")))
+                .contains(QStringLiteral("\"operation\":\"move\"")));
+
+        // Files PasteItemToSelectionAction (Ctrl+Shift+V): pasting a cut
+        // file into the selected folder moves it (same-target renameEntry).
+        QVERIFY(selectRowStable(table, QStringLiteral("dest")));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString moved = QDir(dir.path()).filePath(QStringLiteral("dest/mover.txt"));
+        QVERIFY2(QTest::qWaitFor([&moved]() { return QFile::exists(moved); }, 5000),
+                 "cut-paste did not move the file");
+        QVERIFY(!QFile::exists(source_file));
+        // A completed move consumes the clipboard (ReportOperationCompleted).
+        QTRY_VERIFY(!QApplication::clipboard()->mimeData() ||
+                    !QApplication::clipboard()->mimeData()->hasFormat(
+                        QStringLiteral("application/x-sak-file-explorer-items")));
+    }
+
+    void copyPasteInSameFolderDuplicatesWithIncrementalName() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString source_file = QDir(dir.path()).filePath(QStringLiteral("dup.txt"));
+        {
+            QFile file(source_file);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("duplicate payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("dup")) >= 0);
+
+        // Files same-folder paste: no dialog, the copy lands as
+        // "dup (2).txt" (GetIncrementalName starts at 2).
+        QVERIFY(selectRowStable(table, QStringLiteral("dup")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier);
+        const QString duplicate = QDir(dir.path()).filePath(QStringLiteral("dup (2).txt"));
+        QVERIFY2(QTest::qWaitFor([&duplicate]() { return QFile::exists(duplicate); }, 5000),
+                 "same-folder paste did not duplicate");
+        QVERIFY(QFile::exists(source_file));
     }
 
     void activationMatrixAndMouseNavigation() {

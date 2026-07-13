@@ -143,5 +143,6 @@
         <file>icons/fluent/sort.svg</file>
         <file>icons/fluent/copy.svg</file>
         <file>icons/fluent/paste.svg</file>
+        <file>icons/fluent/cut.svg</file>
     </qresource>
 </RCC>

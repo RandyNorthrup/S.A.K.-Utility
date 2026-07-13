@@ -68,8 +68,7 @@ FileExplorerCommandBar::FileExplorerCommandBar(QWidget* parent) : QWidget(parent
 void FileExplorerCommandBar::createLeftCommands(QHBoxLayout* commandRow) {
     // Files ToolbarSections.cs AlwaysVisible order: New (labeled group
     // flyout), separator, then icon-only Cut/Copy/Paste/Rename/Share/
-    // Delete/Properties. Cut and Share are documented C-track deviations
-    // (Cut lands with the C3 transfer engine; Share is EXCLUDED).
+    // Delete/Properties. Share is a documented EXCLUDED deviation.
     m_new_button = makeFlyoutButton(this,
                                     "fileExplorerNewButton",
                                     FileExplorerIconRegistry::iconForKey(QStringLiteral("plus")),
@@ -83,6 +82,13 @@ void FileExplorerCommandBar::createLeftCommands(QHBoxLayout* commandRow) {
     commandRow->addWidget(m_new_button);
 
     commandRow->addWidget(makeSeparator(this));
+
+    m_cut_button = makeItemCommandButton(this,
+                                         "fileExplorerCutButton",
+                                         FileExplorerCommandId::CutItems,
+                                         tr("Cut selected items"),
+                                         tr("Cut the selected items; pasting moves them"));
+    commandRow->addWidget(m_cut_button);
 
     m_copy_button = makeItemCommandButton(this,
                                           "fileExplorerCopyButton",
@@ -170,6 +176,10 @@ QToolButton* FileExplorerCommandBar::newButton() const {
 
 QMenu* FileExplorerCommandBar::newMenu() const {
     return m_new_menu;
+}
+
+QPushButton* FileExplorerCommandBar::cutButton() const {
+    return m_cut_button;
 }
 
 QPushButton* FileExplorerCommandBar::copyButton() const {

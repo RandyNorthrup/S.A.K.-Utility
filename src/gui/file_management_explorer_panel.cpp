@@ -544,6 +544,9 @@ void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
     connect(m_command_bar->sortMenu(), &QMenu::aboutToShow, this, [this]() {
         rebuildSortMenu(m_command_bar->sortMenu());
     });
+    connect(m_command_bar->cutButton(), &QPushButton::clicked, this, [this]() {
+        executeCommand(FileExplorerCommandId::CutItems);
+    });
     connect(m_command_bar->copyButton(), &QPushButton::clicked, this, [this]() {
         executeCommand(FileExplorerCommandId::CopyItems);
     });
@@ -1280,7 +1283,9 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::Hash,
         FileExplorerCommandId::CopyOut,
         FileExplorerCommandId::CopyItems,
+        FileExplorerCommandId::CutItems,
         FileExplorerCommandId::Paste,
+        FileExplorerCommandId::PasteIntoSelection,
         FileExplorerCommandId::CopyToOtherPane,
         FileExplorerCommandId::FocusOtherPane,
         FileExplorerCommandId::IncreaseSize,
@@ -2180,47 +2185,77 @@ void FileManagementExplorerPanel::copySelectedFileOut() {
     }));
 }
 
-void FileManagementExplorerPanel::copySelectionToClipboard() {
-    const FileExplorerSelection selection = currentSelection();
-    const FileManagementTarget target = currentTarget();
-    QJsonArray items;
-    QList<QUrl> urls;
-    QStringList lines;
-    int skipped = 0;
+FileManagementExplorerPanel::ClipboardBatch FileManagementExplorerPanel::collectClipboardBatch(
+    const FileExplorerSelection& selection, const FileManagementTarget& target) {
+    ClipboardBatch batch;
     for (const FileManagementEntry& entry : selection.entries) {
         if (entry.directory || !entry.regular_file) {
-            ++skipped;
+            ++batch.skipped;
             continue;
         }
         QJsonObject item;
         item.insert(QStringLiteral("path"), entry.path);
         item.insert(QStringLiteral("size"), QString::number(entry.size_bytes));
-        items.append(item);
-        lines.append(entry.path);
+        batch.items.append(item);
+        batch.lines.append(entry.path);
         if (target.local_file_system) {
-            urls.append(QUrl::fromLocalFile(entry.path));
+            batch.urls.append(QUrl::fromLocalFile(entry.path));
         }
     }
-    if (items.isEmpty()) {
+    return batch;
+}
+
+void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
+    const FileManagementTarget target = currentTarget();
+    // Files TransferHelpers: every new transfer un-dims the prior cut first.
+    clearCutMarks();
+    const ClipboardBatch batch = collectClipboardBatch(currentSelection(), target);
+    if (batch.items.isEmpty()) {
         Q_EMIT statusMessage(tr("Select files to copy (folders are not supported yet)."),
                              sak::kTimerStatusMessageMs);
         return;
     }
     QJsonObject payload;
     payload.insert(QStringLiteral("target"), FileExplorerTargetId::fromTarget(target).value);
-    payload.insert(QStringLiteral("items"), items);
+    // Files DataPackage RequestedOperation: cut publishes Move, copy Copy.
+    payload.insert(QStringLiteral("operation"),
+                   move ? QStringLiteral("move") : QStringLiteral("copy"));
+    payload.insert(QStringLiteral("items"), batch.items);
     auto* mime = new QMimeData;
     mime->setData(QLatin1String(kExplorerClipboardMime),
                   QJsonDocument(payload).toJson(QJsonDocument::Compact));
-    mime->setText(lines.join(QLatin1Char('\n')));
-    if (!urls.isEmpty()) {
-        mime->setUrls(urls);
+    mime->setText(batch.lines.join(QLatin1Char('\n')));
+    if (!batch.urls.isEmpty()) {
+        mime->setUrls(batch.urls);
     }
     QApplication::clipboard()->setMimeData(mime);
-    Q_EMIT statusMessage(
-        skipped > 0 ? tr("Copied %1 file(s); %2 folder(s) skipped.").arg(items.size()).arg(skipped)
-                    : tr("Copied %1 file(s).").arg(items.size()),
-        sak::kTimerStatusMessageMs);
+    if (move && m_item_model) {
+        // Files dims cut items at 0.4 opacity until the move-paste lands.
+        m_item_model->setCutPaths(QSet<QString>(batch.lines.cbegin(), batch.lines.cend()));
+    }
+    const QString verb = move ? tr("Cut") : tr("Copied");
+    Q_EMIT statusMessage(batch.skipped > 0 ? tr("%1 %2 file(s); %3 folder(s) skipped.")
+                                                 .arg(verb)
+                                                 .arg(batch.items.size())
+                                                 .arg(batch.skipped)
+                                           : tr("%1 %2 file(s).").arg(verb).arg(batch.items.size()),
+                         sak::kTimerStatusMessageMs);
+    updateActionButtons();
+}
+
+void FileManagementExplorerPanel::clearCutMarks() {
+    for (FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
+        if (pane && pane->itemModel()) {
+            pane->itemModel()->setCutPaths({});
+        }
+    }
+}
+
+void FileManagementExplorerPanel::finishMovePaste() {
+    // Files packageView.ReportOperationCompleted: a completed move consumes
+    // the clipboard and clears the cut dimming.
+    clearCutMarks();
+    QApplication::clipboard()->clear();
     updateActionButtons();
 }
 
@@ -2271,6 +2306,8 @@ FileManagementExplorerPanel::PasteSources FileManagementExplorerPanel::collectPa
         const QJsonObject payload =
             QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
         sources.source_target_id = payload.value(QStringLiteral("target")).toString();
+        sources.move = payload.value(QStringLiteral("operation")).toString() ==
+                       QStringLiteral("move");
         const int source_index = targetIndexForId(sources.source_target_id);
         const bool source_is_local = source_index >= 0 &&
                                      m_targets.at(source_index).local_file_system;
@@ -2309,13 +2346,78 @@ bool FileManagementExplorerPanel::confirmTypedRawImport(const FileManagementTarg
     return accepted && typed.trimmed() == QStringLiteral("WRITE");
 }
 
-bool FileManagementExplorerPanel::confirmPasteOverwrite(const QString& name) {
-    return sak::showQuestionLogged(
-               this,
-               tr("Paste"),
-               tr("'%1' already exists in this folder. Overwrite it?").arg(name),
-               QMessageBox::Yes | QMessageBox::No,
-               QMessageBox::No) == QMessageBox::Yes;
+FileManagementExplorerPanel::PasteCollisionChoice
+FileManagementExplorerPanel::resolvePasteCollision(const QString& name,
+                                                   const bool multiple,
+                                                   PasteCollisionPolicy* policy) {
+    if (policy->apply_to_all) {
+        return policy->choice;
+    }
+    // Files conflict dialog (FileSystemDialogViewModel): Generate new name is
+    // the default resolve option, with Replace and Skip alternatives and an
+    // apply-to-all aggregation when several items collide.
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Replace or Skip Files"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(tr("'%1' already exists in this folder.").arg(name));
+    auto* generate = box.addButton(tr("Generate new name"), QMessageBox::AcceptRole);
+    auto* replace = box.addButton(tr("Replace"), QMessageBox::DestructiveRole);
+    box.addButton(tr("Skip"), QMessageBox::RejectRole);
+    box.setDefaultButton(generate);
+    QCheckBox* apply_all = nullptr;
+    if (multiple) {
+        apply_all = new QCheckBox(tr("Do this for all conflicts"), &box);
+        box.setCheckBox(apply_all);
+    }
+    logMessage(tr("Paste conflict for %1").arg(name));
+    box.exec();
+    PasteCollisionChoice choice = PasteCollisionChoice::GenerateNew;
+    if (box.clickedButton() == replace) {
+        choice = PasteCollisionChoice::Replace;
+    } else if (box.clickedButton() != generate) {
+        choice = PasteCollisionChoice::Skip;
+    }
+    policy->choice = choice;
+    policy->apply_to_all = apply_all && apply_all->isChecked();
+    return choice;
+}
+
+QString FileManagementExplorerPanel::uniqueChildName(const FileManagementTarget& target,
+                                                     const QString& directory,
+                                                     const QString& name) const {
+    // Files FileOperationsHelpers.GetIncrementalName: "{name} ({n}){ext}"
+    // starting at 2.
+    const int last_dot = name.lastIndexOf(QLatin1Char('.'));
+    const QString base = last_dot > 0 ? name.left(last_dot) : name;
+    const QString extension = last_dot > 0 ? name.mid(last_dot) : QString();
+    QString candidate = name;
+    for (int index = 2; index < 10'000; ++index) {
+        candidate = QStringLiteral("%1 (%2)%3").arg(base).arg(index).arg(extension);
+        if (!destinationOccupied(target, directory, candidate)) {
+            break;
+        }
+    }
+    return candidate;
+}
+
+bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
+                                                      const QString& directory,
+                                                      const QString& name) const {
+    if (target.local_file_system) {
+        return QFile::exists(childPathFor(directory, name, true));
+    }
+    // Raw target: reuse the live listing for the current folder; anything
+    // else is listed once through the bridge.
+    const QVector<FileManagementEntry> entries =
+        (m_item_model && directory == m_current_path)
+            ? m_item_model->entries()
+            : FileManagementFileSystemBridge::listDirectory(target,
+                                                            directory,
+                                                            kExplorerListMaxEntries)
+                  .entries;
+    return std::ranges::any_of(entries, [&name](const FileManagementEntry& entry) {
+        return entry.name == name;
+    });
 }
 
 bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& sources) {
@@ -2347,19 +2449,24 @@ bool FileManagementExplorerPanel::preparePasteDestination(const PasteSources& so
     return true;
 }
 
-void FileManagementExplorerPanel::executePaste(const PasteSources& sources) {
+void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
+                                               const QString& destination_dir) {
     const FileManagementTarget target = currentTarget();
     QStringList blockers;
+    PasteCollisionPolicy policy;
     int written = 0;
     int total = 0;
     if (!sources.host_files.isEmpty()) {
         total = static_cast<int>(sources.host_files.size());
-        written = pasteHostFiles(target, sources.host_files, &blockers);
+        written = pasteHostFiles(target, destination_dir, sources, &policy, &blockers);
     } else {
         total = static_cast<int>(sources.raw_items.size());
         const int source_index = targetIndexForId(sources.source_target_id);
-        written =
-            pasteRawItemsToLocalFolder(m_targets.at(source_index), sources.raw_items, &blockers);
+        written = pasteRawItemsToLocalFolder(
+            m_targets.at(source_index), destination_dir, sources, &policy, &blockers);
+    }
+    if (sources.move && written > 0) {
+        finishMovePaste();
     }
     if (written > 0) {
         loadDirectory(m_current_path);
@@ -2367,7 +2474,10 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources) {
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Paste"), blockers.join(QStringLiteral("\n")));
     }
-    Q_EMIT statusMessage(tr("Pasted %1 of %2 file(s).").arg(written).arg(total),
+    Q_EMIT statusMessage((sources.move ? tr("Moved %1 of %2 file(s).")
+                                       : tr("Pasted %1 of %2 file(s)."))
+                             .arg(written)
+                             .arg(total),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -2378,46 +2488,154 @@ void FileManagementExplorerPanel::pasteClipboardIntoCurrentFolder() {
         sak::showWarningLogged(this, tr("Paste"), state.blocker);
         return;
     }
+    pasteClipboardTo(m_current_path);
+}
+
+void FileManagementExplorerPanel::pasteClipboardIntoSelection() {
+    // Files PasteItemToSelectionAction: paste into the selected folder, or
+    // the current folder when nothing is selected.
+    const FileExplorerCommandState state = FileExplorerCommandRegistry::state(
+        FileExplorerCommandId::PasteIntoSelection, commandContext());
+    if (!state.enabled) {
+        sak::showWarningLogged(this, tr("Paste"), state.blocker);
+        return;
+    }
+    const FileExplorerSelection selection = currentSelection();
+    const bool into_selected_folder = selection.hasSingleEntry() &&
+                                      selection.entries.first().directory;
+    pasteClipboardTo(into_selected_folder ? selection.entries.first().path : m_current_path);
+}
+
+void FileManagementExplorerPanel::pasteClipboardTo(const QString& destination_dir) {
     const PasteSources sources = collectPasteSources(QApplication::clipboard()->mimeData());
     if (sources.host_files.isEmpty() && sources.raw_items.isEmpty()) {
         sak::showWarningLogged(this, tr("Paste"), tr("Clipboard has no files to paste."));
         return;
     }
+    if (sources.move && pasteSameTargetMove(currentTarget(), sources, destination_dir)) {
+        return;
+    }
     if (!preparePasteDestination(sources)) {
         return;
     }
-    executePaste(sources);
+    executePaste(sources, destination_dir);
 }
 
-int FileManagementExplorerPanel::pasteHostFiles(const FileManagementTarget& target,
-                                                const QStringList& source_paths,
-                                                QStringList* blockers) {
-    const QVector<FileManagementEntry> entries = m_item_model ? m_item_model->entries()
-                                                              : QVector<FileManagementEntry>{};
-    int written = 0;
+bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget& target,
+                                                      const PasteSources& sources,
+                                                      const QString& destination_dir) {
+    // Files MoveItemsFromClipboard on the same target is a real move:
+    // renameEntry reparents through the certified writers on raw volumes and
+    // QFile::rename locally, no data copy.
+    if (sources.source_target_id != FileExplorerTargetId::fromTarget(target).value) {
+        return false;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Paste"), identity_blocker);
+        return true;
+    }
+    QStringList source_paths = sources.host_files;
+    for (const auto& [path, size] : sources.raw_items) {
+        Q_UNUSED(size)
+        source_paths.append(path);
+    }
+    PasteCollisionPolicy policy;
+    QStringList blockers;
+    const int moved =
+        moveEntriesWithinTarget(target, source_paths, destination_dir, &policy, &blockers);
+    if (moved > 0) {
+        finishMovePaste();
+        loadDirectory(m_current_path);
+    }
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Paste"), blockers.join(QStringLiteral("\n")));
+    }
+    Q_EMIT statusMessage(tr("Moved %1 of %2 item(s).").arg(moved).arg(source_paths.size()),
+                         sak::kTimerStatusDefaultMs);
+    return true;
+}
+
+int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTarget& target,
+                                                         const QStringList& source_paths,
+                                                         const QString& destination_dir,
+                                                         PasteCollisionPolicy* policy,
+                                                         QStringList* blockers) {
+    const bool multiple = source_paths.size() > 1;
+    int moved = 0;
     for (const QString& source : source_paths) {
-        const QFileInfo info(source);
-        const QString destination = targetPathForName(info.fileName());
-        if (destination.isEmpty()) {
-            blockers->append(tr("Invalid destination name for %1.").arg(source));
+        const QString name = nameForPath(source, target.local_file_system);
+        QString destination = childPathFor(destination_dir, name, target.local_file_system);
+        if (destination == source) {
+            // Files FilesystemOperations.MoveAsync: same path is a no-op success.
+            ++moved;
             continue;
         }
-        const bool occupied = target.local_file_system
-                                  ? QFile::exists(destination)
-                                  : std::ranges::any_of(entries,
-                                                        [&info](const FileManagementEntry& entry) {
-                                                            return entry.name == info.fileName();
-                                                        });
-        if (occupied && !confirmPasteOverwrite(info.fileName())) {
-            continue;
+        if (destinationOccupied(target, destination_dir, name)) {
+            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
+            if (choice == PasteCollisionChoice::Skip) {
+                continue;
+            }
+            if (choice == PasteCollisionChoice::GenerateNew) {
+                destination = childPathFor(destination_dir,
+                                           uniqueChildName(target, destination_dir, name),
+                                           target.local_file_system);
+            } else if (!FileManagementFileSystemBridge::deleteFile(target, destination).ok) {
+                blockers->append(tr("Could not replace %1.").arg(name));
+                continue;
+            }
         }
         const auto result =
-            FileManagementFileSystemBridge::writeFileFromHostPath(target, destination, source);
+            FileManagementFileSystemBridge::renameEntry(target, source, destination);
         if (result.ok) {
-            ++written;
+            ++moved;
             m_last_mutation = result;
         } else {
             blockers->append(result.blockers);
+        }
+    }
+    return moved;
+}
+
+int FileManagementExplorerPanel::pasteHostFiles(const FileManagementTarget& target,
+                                                const QString& destination_dir,
+                                                const PasteSources& sources,
+                                                PasteCollisionPolicy* policy,
+                                                QStringList* blockers) {
+    const bool multiple = sources.host_files.size() > 1;
+    const int source_index = targetIndexForId(sources.source_target_id);
+    int written = 0;
+    for (const QString& source : sources.host_files) {
+        const QString name = QFileInfo(source).fileName();
+        QString destination = childPathFor(destination_dir, name, target.local_file_system);
+        if (destination == source) {
+            // Same-folder copy-paste duplicates with the Files incremental
+            // name; no conflict dialog fires (GetCollisions skips src==dest).
+            destination = childPathFor(destination_dir,
+                                       uniqueChildName(target, destination_dir, name),
+                                       target.local_file_system);
+        } else if (destinationOccupied(target, destination_dir, name)) {
+            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
+            if (choice == PasteCollisionChoice::Skip) {
+                continue;
+            }
+            if (choice == PasteCollisionChoice::GenerateNew) {
+                destination = childPathFor(destination_dir,
+                                           uniqueChildName(target, destination_dir, name),
+                                           target.local_file_system);
+            }
+            // Replace falls through: the write overwrites in place.
+        }
+        const auto result =
+            FileManagementFileSystemBridge::writeFileFromHostPath(target, destination, source);
+        if (!result.ok) {
+            blockers->append(result.blockers);
+            continue;
+        }
+        ++written;
+        m_last_mutation = result;
+        if (sources.move && source_index >= 0) {
+            deleteMoveSource(m_targets.at(source_index), source, blockers);
         }
     }
     return written;
@@ -2425,10 +2643,14 @@ int FileManagementExplorerPanel::pasteHostFiles(const FileManagementTarget& targ
 
 int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
     const FileManagementTarget& source_target,
-    const QList<QPair<QString, quint64>>& items,
+    const QString& destination_dir,
+    const PasteSources& sources,
+    PasteCollisionPolicy* policy,
     QStringList* blockers) {
+    const FileManagementTarget target = currentTarget();
+    const bool multiple = sources.raw_items.size() > 1;
     int written = 0;
-    for (const auto& [path, size] : items) {
+    for (const auto& [path, size] : sources.raw_items) {
         const QString name = nameForPath(path, source_target.local_file_system);
         if (size > kExplorerHashMaxBytes) {
             blockers->append(tr("%1 exceeds the raw read window; a complete paste is not "
@@ -2436,13 +2658,17 @@ int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
                                  .arg(name));
             continue;
         }
-        const QString destination = targetPathForName(name);
-        if (destination.isEmpty()) {
-            blockers->append(tr("Invalid destination name for %1.").arg(name));
-            continue;
-        }
-        if (QFile::exists(destination) && !confirmPasteOverwrite(name)) {
-            continue;
+        QString destination = childPathFor(destination_dir, name, true);
+        if (destinationOccupied(target, destination_dir, name)) {
+            const PasteCollisionChoice choice = resolvePasteCollision(name, multiple, policy);
+            if (choice == PasteCollisionChoice::Skip) {
+                continue;
+            }
+            if (choice == PasteCollisionChoice::GenerateNew) {
+                destination = childPathFor(destination_dir,
+                                           uniqueChildName(target, destination_dir, name),
+                                           true);
+            }
         }
         const auto result = FileManagementFileSystemBridge::copyFileToHost(
             source_target, path, destination, kExplorerHashMaxBytes);
@@ -2454,8 +2680,23 @@ int FileManagementExplorerPanel::pasteRawItemsToLocalFolder(
         m_last_hash_name = name;
         m_last_hash_sha256 = result.sha256;
         m_last_hash_capped = result.capped;
+        if (sources.move) {
+            deleteMoveSource(source_target, path, blockers);
+        }
     }
     return written;
+}
+
+bool FileManagementExplorerPanel::deleteMoveSource(const FileManagementTarget& source_target,
+                                                   const QString& path,
+                                                   QStringList* blockers) {
+    const auto result = FileManagementFileSystemBridge::deleteFile(source_target, path);
+    if (!result.ok) {
+        blockers->append(tr("Copied but could not remove the moved source %1: %2")
+                             .arg(path, result.blockers.join(QStringLiteral("; "))));
+        return false;
+    }
+    return true;
 }
 
 void FileManagementExplorerPanel::exportSelectedDirectoryOut(const FileManagementEntry& entry) {
@@ -2953,6 +3194,9 @@ bool FileManagementExplorerPanel::dispatchSelectionCommand(const FileExplorerCom
     case FileExplorerCommandId::CopyItems:
         copySelectionToClipboard();
         return true;
+    case FileExplorerCommandId::CutItems:
+        copySelectionToClipboard(true);
+        return true;
     case FileExplorerCommandId::CopyToOtherPane:
         crossPaneCopySelection();
         return true;
@@ -3002,6 +3246,9 @@ bool FileManagementExplorerPanel::dispatchWriteCommand(const FileExplorerCommand
         return true;
     case FileExplorerCommandId::Paste:
         pasteClipboardIntoCurrentFolder();
+        return true;
+    case FileExplorerCommandId::PasteIntoSelection:
+        pasteClipboardIntoSelection();
         return true;
     case FileExplorerCommandId::Rename:
         onRenameClicked();
@@ -3873,6 +4120,7 @@ void FileManagementExplorerPanel::updateActionButtons() {
     applyCommandState(m_rename_button, FileExplorerCommandId::Rename, context);
     applyCommandState(m_delete_button, FileExplorerCommandId::Delete, context);
     if (m_command_bar) {
+        applyCommandState(m_command_bar->cutButton(), FileExplorerCommandId::CutItems, context);
         applyCommandState(m_command_bar->copyButton(), FileExplorerCommandId::CopyItems, context);
         applyCommandState(m_command_bar->pasteButton(), FileExplorerCommandId::Paste, context);
         applyCommandState(m_command_bar->propertiesButton(),
@@ -4642,8 +4890,10 @@ void FileManagementExplorerPanel::onTableContextMenuRequested(const QPoint& posi
     addCommandMenuAction(&menu, FileExplorerCommandId::Properties, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Hash, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyOut, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::CutItems, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItems, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::Paste, context);
+    addCommandMenuAction(&menu, FileExplorerCommandId::PasteIntoSelection, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyItemPath, context);
     addCommandMenuAction(&menu, FileExplorerCommandId::CopyPath, context);
     auto* editTags = menu.addAction(tr("Edit Tags..."));

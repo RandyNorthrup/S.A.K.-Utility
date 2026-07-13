@@ -46,6 +46,19 @@ if(WIN32)
     else()
         message(FATAL_ERROR "Qt6Test.dll not found ??? tests cannot run without it")
     endif()
+    # windeployqt deploys only qwindows.dll; the GUI suites run on the
+    # offscreen platform (QT_QPA_PLATFORM=offscreen) so no test window ever
+    # appears on the developer desktop. Deploy that plugin too.
+    get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
+    if(_qt_core_dll)
+        get_filename_component(_qt_bin_dir "${_qt_core_dll}" DIRECTORY)
+        set(_qt_offscreen "${_qt_bin_dir}/../plugins/platforms/qoffscreen.dll")
+        if(EXISTS "${_qt_offscreen}")
+            file(COPY "${_qt_offscreen}"
+                 DESTINATION "${SAK_MAIN_OUTPUT_DIR}/platforms")
+            message(STATUS "Deployed qoffscreen.dll for headless GUI tests")
+        endif()
+    endif()
 endif()
 
 # ============================================================================
@@ -1017,7 +1030,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
     )
     target_link_libraries(test_file_explorer_item_model PRIVATE
-        Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
     )
     target_include_directories(test_file_explorer_item_model PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -1101,6 +1114,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
     )
     add_test(NAME test_file_management_explorer_panel COMMAND test_file_management_explorer_panel
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    # GUI suite runs on the offscreen platform: no windows appear on the
+    # developer desktop and stray focus changes cannot disturb the tests.
+    set_tests_properties(test_file_management_explorer_panel PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     message(STATUS "Added unit test: test_file_management_explorer_panel")
 endif()
 

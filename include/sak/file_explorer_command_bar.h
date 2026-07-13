@@ -29,6 +29,7 @@ public:
 
     [[nodiscard]] QToolButton* newButton() const;
     [[nodiscard]] QMenu* newMenu() const;
+    [[nodiscard]] QPushButton* cutButton() const;
     [[nodiscard]] QPushButton* copyButton() const;
     [[nodiscard]] QPushButton* pasteButton() const;
     [[nodiscard]] QPushButton* renameButton() const;
@@ -47,6 +48,7 @@ private:
 
     QToolButton* m_new_button{nullptr};
     QMenu* m_new_menu{nullptr};
+    QPushButton* m_cut_button{nullptr};
     QPushButton* m_copy_button{nullptr};
     QPushButton* m_paste_button{nullptr};
     QPushButton* m_rename_button{nullptr};

@@ -64,6 +64,8 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::IncreaseSize, Group::View},
         {Id::DecreaseSize, Group::View},
         {Id::FocusOtherPane, Group::Pane},
+        {Id::CutItems, Group::File},
+        {Id::PasteIntoSelection, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -286,8 +288,19 @@ std::optional<FileExplorerCommandState> pasteClipboardState(
     const FileExplorerCommandId id,
     const FileExplorerCommandContext& context,
     const FileExplorerCommand& entry) {
-    if (id == FileExplorerCommandId::Paste && !context.clipboard_has_files) {
+    using enum FileExplorerCommandId;
+    if (id != Paste && id != PasteIntoSelection) {
+        return std::nullopt;
+    }
+    if (!context.clipboard_has_files) {
         return disabledState(entry, QStringLiteral("Copy files to the clipboard first."));
+    }
+    // Files PasteItemToSelectionAction: with a selection present it must be
+    // exactly one folder; no selection falls back to the current folder.
+    if (id == PasteIntoSelection && !context.pane.selection.isEmpty() &&
+        (!context.pane.selection.hasSingleEntry() ||
+         !context.pane.selection.entries.first().directory)) {
+        return disabledState(entry, QStringLiteral("Select one folder to paste into."));
     }
     return std::nullopt;
 }
@@ -392,6 +405,14 @@ QVector<FileExplorerCommand> clipboardAndSelectionCommands() {
                     QStringLiteral("Copy selected files for pasting into a writable folder."),
                     QStringLiteral("Ctrl+C"),
                     {.selection_required = true}),
+        // Files CutItemAction: same clipboard package with a move operation;
+        // the eventual paste deletes the source, so the source target must
+        // be writable.
+        makeCommand(FileExplorerCommandId::CutItems,
+                    QStringLiteral("Cut"),
+                    QStringLiteral("Cut selected files; pasting moves them."),
+                    QStringLiteral("Ctrl+X"),
+                    {.selection_required = true, .write_operation = true}),
         makeCommand(FileExplorerCommandId::SelectAll,
                     QStringLiteral("Select All"),
                     QStringLiteral("Select every item in the current folder."),
@@ -430,6 +451,13 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Paste"),
                     QStringLiteral("Paste copied files into the current folder."),
                     QStringLiteral("Ctrl+V"),
+                    {.write_operation = true}),
+        // Files PasteItemToSelectionAction (Ctrl+Shift+V): paste into the
+        // selected folder, or the current folder when nothing is selected.
+        makeCommand(FileExplorerCommandId::PasteIntoSelection,
+                    QStringLiteral("Paste Into Folder"),
+                    QStringLiteral("Paste copied files into the selected folder."),
+                    QStringLiteral("Ctrl+Shift+V"),
                     {.write_operation = true}),
         makeCommand(FileExplorerCommandId::Rename,
                     QStringLiteral("Rename"),
@@ -624,6 +652,8 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::IncreaseSize, "increase-size"},
         {Id::DecreaseSize, "decrease-size"},
         {Id::FocusOtherPane, "focus-other-pane"},
+        {Id::CutItems, "cut-items"},
+        {Id::PasteIntoSelection, "paste-into-selection"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");
