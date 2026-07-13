@@ -5,10 +5,12 @@
 /// @brief Unit tests for File Management file-system target bridge.
 
 #include "sak/file_management_file_system.h"
+#include "sak/partition_apfs_writer.h"
 
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -425,6 +427,126 @@ private Q_SLOTS:
             target, dir.filePath(QStringLiteral("gone")));
         QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
         QVERIFY(!QDir(dir.filePath(QStringLiteral("gone"))).exists());
+    }
+
+    // Read a raw file back through the bridge for byte comparison. Takes
+    // parameters so QtTest does not run it as a test slot.
+    QByteArray rawReadAll(const sak::FileManagementTarget& target, const QString& path) {
+        const auto read =
+            sak::FileManagementFileSystemBridge::readFile(target, path, 16ULL * 1024 * 1024);
+        return read.ok ? read.data : QByteArray();
+    }
+
+    void rawApfsTransferMatrixEndToEnd() {
+        // C3e raw proof: every File Explorer transfer leg against a REAL (foreign,
+        // mkapfs-created) APFS image through the same bridge calls the panel kernel
+        // makes. Gated on SAK_APFS_RAW_IMAGE (+ optional SAK_APFS_RAW_IMAGE_B for the
+        // staged raw-to-raw leg); the cert flow creates the images in WSL and runs
+        // apfsck on them afterwards - this test leaves them mutated on purpose.
+        const QString imagePath = qEnvironmentVariable("SAK_APFS_RAW_IMAGE");
+        if (imagePath.isEmpty()) {
+            QSKIP("SAK_APFS_RAW_IMAGE not set; the raw transfer matrix runs in the C3e cert flow.");
+        }
+        // The engine's raw-target gate accepts only Windows device paths in
+        // production; the image fixture opts in through the same test seam the
+        // certified commit tests use (test_partition_manager_core precedent).
+        sak::PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
+            [](const QString&) { return true; });
+        const auto reset_predicate = qScopeGuard(
+            []() { sak::PartitionApfsWriter::setRawDeviceTargetPredicateForTesting({}); });
+        using Bridge = sak::FileManagementFileSystemBridge;
+        const auto target = Bridge::manualTarget(imagePath, QStringLiteral("APFS"));
+        QVERIFY2(target.can_write_files, qPrintable(target.blockers.join(QStringLiteral("; "))));
+
+        // Host fixture tree.
+        QTemporaryDir host;
+        QVERIFY(host.isValid());
+        const QDir hostDir(host.path());
+        QVERIFY(hostDir.mkpath(QStringLiteral("bundle/deep")));
+        const auto writeFile = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(data), data.size());
+        };
+        const QByteArray innerBytes = QByteArrayLiteral("inner raw payload");
+        const QByteArray leafBytes = QByteArrayLiteral("leaf raw payload \x00\x7f bytes");
+        const QByteArray soloBytes = QByteArrayLiteral("solo raw payload");
+        writeFile(hostDir.filePath(QStringLiteral("bundle/inner.txt")), innerBytes);
+        writeFile(hostDir.filePath(QStringLiteral("bundle/deep/leaf.txt")), leafBytes);
+        writeFile(hostDir.filePath(QStringLiteral("solo.txt")), soloBytes);
+
+        // Leg 1 - local -> raw: streamed file import + recursive directory import.
+        const auto soloWrite = Bridge::writeFileFromHostPath(
+            target, QStringLiteral("/solo.txt"), hostDir.filePath(QStringLiteral("solo.txt")));
+        QVERIFY2(soloWrite.ok, qPrintable(soloWrite.blockers.join(QStringLiteral("; "))));
+        const auto imported = Bridge::importDirectoryFromHost(
+            target, hostDir.filePath(QStringLiteral("bundle")), QStringLiteral("/bundle"));
+        QVERIFY2(imported.ok, qPrintable(imported.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(imported.files_imported, 2);
+        QCOMPARE(imported.directories_created, 1);
+        QCOMPARE(rawReadAll(target, QStringLiteral("/bundle/deep/leaf.txt")), leafBytes);
+
+        // Leg 2 - raw -> local: file copy-out + recursive directory export, byte-exact.
+        QTemporaryDir out;
+        QVERIFY(out.isValid());
+        const QString outSolo = QDir(out.path()).filePath(QStringLiteral("solo.txt"));
+        QVERIFY(Bridge::copyFileToHost(target, QStringLiteral("/solo.txt"), outSolo, 0).ok);
+        QFile outSoloFile(outSolo);
+        QVERIFY(outSoloFile.open(QIODevice::ReadOnly));
+        QCOMPARE(outSoloFile.readAll(), soloBytes);
+        const QString outBundle = QDir(out.path()).filePath(QStringLiteral("bundle"));
+        const auto exported =
+            Bridge::exportDirectoryToHost(target, QStringLiteral("/bundle"), outBundle, 0);
+        QVERIFY2(exported.ok, qPrintable(exported.blockers.join(QStringLiteral("; "))));
+        QFile outLeaf(QDir(outBundle).filePath(QStringLiteral("deep/leaf.txt")));
+        QVERIFY(outLeaf.open(QIODevice::ReadOnly));
+        QCOMPARE(outLeaf.readAll(), leafBytes);
+
+        verifyRawMoveDeleteAndCrossImage(target, soloBytes, leafBytes, outBundle);
+    }
+
+    // Same-target raw moves, staged raw-to-raw, and the depth-first raw tree
+    // delete. Takes parameters so QtTest does not run it as a test slot.
+    void verifyRawMoveDeleteAndCrossImage(const sak::FileManagementTarget& target,
+                                          const QByteArray& soloBytes,
+                                          const QByteArray& leafBytes,
+                                          const QString& stagedBundle) {
+        using Bridge = sak::FileManagementFileSystemBridge;
+
+        // Leg 3 - same-target move: file reparent + whole-directory reparent via
+        // renameEntry (the COW engine dispatches directories to the directory commit).
+        QVERIFY(Bridge::createDirectory(target, QStringLiteral("/dest")).ok);
+        QVERIFY(Bridge::renameEntry(
+                    target, QStringLiteral("/solo.txt"), QStringLiteral("/dest/solo.txt"))
+                    .ok);
+        QCOMPARE(rawReadAll(target, QStringLiteral("/dest/solo.txt")), soloBytes);
+        const auto dirMove =
+            Bridge::renameEntry(target, QStringLiteral("/bundle"), QStringLiteral("/dest/bundle"));
+        QVERIFY2(dirMove.ok, qPrintable(dirMove.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(rawReadAll(target, QStringLiteral("/dest/bundle/deep/leaf.txt")), leafBytes);
+
+        // Leg 4 - raw -> raw across containers, staged through the host (what
+        // transferRawEntryStaged does): the tree exported in leg 2 imports into image B.
+        const QString imageBPath = qEnvironmentVariable("SAK_APFS_RAW_IMAGE_B");
+        if (!imageBPath.isEmpty()) {
+            const auto targetB = Bridge::manualTarget(imageBPath, QStringLiteral("APFS"));
+            QVERIFY2(targetB.can_write_files,
+                     qPrintable(targetB.blockers.join(QStringLiteral("; "))));
+            const auto crossImport =
+                Bridge::importDirectoryFromHost(targetB, stagedBundle, QStringLiteral("/bundle"));
+            QVERIFY2(crossImport.ok, qPrintable(crossImport.blockers.join(QStringLiteral("; "))));
+            QCOMPARE(rawReadAll(targetB, QStringLiteral("/bundle/deep/leaf.txt")), leafBytes);
+        }
+
+        // Leg 5 - raw tree delete: APFS refuses non-empty directory deletes by design,
+        // so deleteDirectoryTree empties depth-first through certified per-entry commits.
+        const auto treeDelete = Bridge::deleteDirectoryTree(target, QStringLiteral("/dest/bundle"));
+        QVERIFY2(treeDelete.ok, qPrintable(treeDelete.blockers.join(QStringLiteral("; "))));
+        const auto listing = Bridge::listDirectory(target, QStringLiteral("/dest"), 100);
+        QVERIFY(listing.ok);
+        for (const auto& entry : listing.entries) {
+            QVERIFY2(entry.name != QStringLiteral("bundle"), "tree delete left the directory");
+        }
     }
 
     void apfsImageTargetWithKnownSizeIsWriteCapable() {

@@ -1018,6 +1018,12 @@ public:
     ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
     static void setRawDeviceTargetPredicateForTesting(
         std::function<bool(const QString&)> predicate);
+    /// @brief True when @p path is currently accepted as a raw-device commit target:
+    ///        the production Windows raw-device rule, or whatever the test seam
+    ///        predicate accepts while installed. Callers building @c commitRaw*
+    ///        requests derive @c allow_raw_device_target from this so their opt-in
+    ///        stays consistent with the engine's own classification.
+    [[nodiscard]] static bool acceptsRawDeviceTargetPath(const QString& path);
     [[nodiscard]] static PartitionApfsImageVolumeLabelResult changeImageOnlyVolumeLabel(
         const PartitionApfsImageVolumeLabelRequest& request);
     [[nodiscard]] static PartitionApfsRawVolumeLabelResult changeRawVolumeLabel(

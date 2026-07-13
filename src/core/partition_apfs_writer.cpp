@@ -22013,6 +22013,10 @@ void PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
     rawDeviceTargetPredicate() = std::move(predicate);
 }
 
+bool PartitionApfsWriter::acceptsRawDeviceTargetPath(const QString& path) {
+    return rawTargetPathAccepted(path);
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite(
     const PartitionApfsRawFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;

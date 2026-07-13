@@ -449,17 +449,19 @@ FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
     // The certified crash-safe in-place COW engine create-or-replaces the file under its parent
     // path at any depth (empty parent = container root).
     const auto [parent, name] = apfsParentAndName(cleanPath);
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileWrite(
-                                    {.target_path = target.root_path,
-                                     .target_container_bytes = target.size_bytes,
-                                     .file_name = name,
-                                     .file_data = data,
-                                     .parent_directory_path = parent,
-                                     .target_mutation_confirmed = true,
-                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                                     .options = apfsRawWriteOptions()}),
-                                cleanPath,
-                                static_cast<uint64_t>(data.size()));
+    return fromApfsCommitResult(
+        PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = target.root_path,
+             .target_container_bytes = target.size_bytes,
+             .file_name = name,
+             .file_data = data,
+             .parent_directory_path = parent,
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions()}),
+        cleanPath,
+        static_cast<uint64_t>(data.size()));
 }
 
 // Streaming APFS write: the payload is pulled from @p hostPath block-by-block by the
@@ -478,18 +480,20 @@ FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& t
     }
     // One streaming create-or-replace under the file's parent path at any depth (empty = root).
     const auto [parent, name] = apfsParentAndName(cleanPath);
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileWrite(
-                                    {.target_path = target.root_path,
-                                     .target_container_bytes = target.size_bytes,
-                                     .file_name = name,
-                                     .file_data_path = hostPath,
-                                     .file_data_stream_size = size,
-                                     .parent_directory_path = parent,
-                                     .target_mutation_confirmed = true,
-                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                                     .options = apfsRawWriteOptions()}),
-                                cleanPath,
-                                size);
+    return fromApfsCommitResult(
+        PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = target.root_path,
+             .target_container_bytes = target.size_bytes,
+             .file_name = name,
+             .file_data_path = hostPath,
+             .file_data_stream_size = size,
+             .parent_directory_path = parent,
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions()}),
+        cleanPath,
+        size);
 }
 
 // Streaming HFS+ write: the payload is pulled from @p hostPath one allocation block at a
@@ -1295,7 +1299,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
                  .directory_name = parts.last(),
                  .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
                  .options = apfsRawWriteOptions()}),
             cleanPath,
             0);
@@ -1349,7 +1354,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                  .directory_name = parts.last(),
                  .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
                  .options = apfsRawWriteOptions()}),
             cleanPath,
             0);
@@ -1524,7 +1530,8 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
                  .file_name = name,
                  .parent_directory_path = parent,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
                  .options = apfsRawWriteOptions()}),
             cleanPath,
             0);
@@ -1553,18 +1560,20 @@ FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
     }
     // commitRawFileMove resolves both parents by full path, so a same-parent move is a plain
     // rename and a cross-parent move reparents the file, each at arbitrary directory depth.
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawFileMove(
-                                    {.target_path = target.root_path,
-                                     .target_container_bytes = target.size_bytes,
-                                     .source_directory_name = sourceParent,
-                                     .file_name = sourceName,
-                                     .destination_directory_name = destParent,
-                                     .new_file_name = destName,
-                                     .target_mutation_confirmed = true,
-                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                                     .options = apfsRawWriteOptions()}),
-                                cleanDestination,
-                                0);
+    return fromApfsCommitResult(
+        PartitionApfsWriter::commitRawFileMove(
+            {.target_path = target.root_path,
+             .target_container_bytes = target.size_bytes,
+             .source_directory_name = sourceParent,
+             .file_name = sourceName,
+             .destination_directory_name = destParent,
+             .new_file_name = destName,
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions()}),
+        cleanDestination,
+        0);
 }
 
 }  // namespace
