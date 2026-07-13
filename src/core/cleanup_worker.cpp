@@ -9,6 +9,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
+#include "sak/recycle_bin.h"
 
 #include <QDir>
 #include <QFile>
@@ -115,7 +116,7 @@ bool CleanupWorker::deleteFile(const QString& path) {
 
     // If recycle bin mode is enabled, try that first
     if (m_useRecycleBin) {
-        if (sendToRecycleBin(path)) {
+        if (sendPathToRecycleBin(path)) {
             return true;
         }
         // Fall through to direct deletion if recycle bin fails
@@ -148,7 +149,7 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         return true;
     }
 
-    if (m_useRecycleBin && sendToRecycleBin(path)) {
+    if (m_useRecycleBin && sendPathToRecycleBin(path)) {
         return true;
     }
 
@@ -196,24 +197,6 @@ bool CleanupWorker::tryScheduleReboot(const QString& path) {
         return true;
     }
     return false;
-}
-
-bool CleanupWorker::sendToRecycleBin(const QString& path) {
-#ifdef Q_OS_WIN
-    // SHFileOperationW requires double-null terminated string
-    std::wstring widePath = path.toStdWString();
-    widePath.push_back(L'\0');  // Extra null terminator
-
-    SHFILEOPSTRUCTW op{};
-    op.wFunc = FO_DELETE;
-    op.pFrom = widePath.c_str();
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
-
-    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
-#else
-    Q_UNUSED(path)
-    return false;
-#endif
 }
 
 bool CleanupWorker::scheduleRebootRemoval(const QString& path) {

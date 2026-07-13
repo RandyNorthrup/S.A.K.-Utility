@@ -58,6 +58,7 @@ enum class FileExplorerCommandId {
     FocusOtherPane,
     CutItems,
     PasteIntoSelection,
+    DeletePermanently,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

@@ -14,6 +14,7 @@
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
+#include "sak/recycle_bin.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -1289,6 +1290,7 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::WriteFile,
         FileExplorerCommandId::Rename,
         FileExplorerCommandId::Delete,
+        FileExplorerCommandId::DeletePermanently,
         FileExplorerCommandId::ToggleHiddenItems,
         FileExplorerCommandId::ToggleFileExtensions,
         FileExplorerCommandId::ViewDetails,
@@ -3380,6 +3382,9 @@ bool FileManagementExplorerPanel::dispatchWriteCommand(const FileExplorerCommand
     case FileExplorerCommandId::Delete:
         onDeleteClicked();
         return true;
+    case FileExplorerCommandId::DeletePermanently:
+        deleteSelectionWithConfirmation(true);
+        return true;
     default:
         return false;
     }
@@ -4941,6 +4946,38 @@ int FileManagementExplorerPanel::deleteSelectedEntries(const FileManagementTarge
 }
 
 void FileManagementExplorerPanel::onDeleteClicked() {
+    deleteSelectionWithConfirmation(false);
+}
+
+int FileManagementExplorerPanel::recycleSelectedEntries(const FileExplorerSelection& selection,
+                                                        QStringList* blockers) {
+    int deleted = 0;
+    for (const FileManagementEntry& entry : selection.entries) {
+        if (sak::sendPathToRecycleBin(entry.path)) {
+            ++deleted;
+            logMessage(tr("Recycle Entry: %1").arg(entry.path));
+        } else {
+            blockers->append(tr("Could not move %1 to the Recycle Bin.").arg(entry.path));
+        }
+    }
+    return deleted;
+}
+
+QString FileManagementExplorerPanel::deleteConfirmationText(
+    const bool recycle,
+    const FileManagementTarget& target,
+    const FileExplorerSelection& selection) const {
+    const QString paths = selection.paths().join(QStringLiteral("\n"));
+    if (recycle) {
+        return tr("Move %1 item(s) to the Recycle Bin?\n\n%2")
+            .arg(QString::number(selection.count()), paths);
+    }
+    return tr("Delete %1 item(s) from '%2'? This permanently removes data "
+              "from the selected target.\n\n%3")
+        .arg(QString::number(selection.count()), target.label, paths);
+}
+
+void FileManagementExplorerPanel::deleteSelectionWithConfirmation(const bool permanent) {
     const auto target = currentTarget();
     const auto selection = currentSelection();
     if (!target.can_write_files || selection.isEmpty()) {
@@ -4951,15 +4988,14 @@ void FileManagementExplorerPanel::onDeleteClicked() {
         sak::showWarningLogged(this, tr("Delete Entry"), identity_blocker);
         return;
     }
-    const QStringList paths = selection.paths();
+    // Files DeleteItemAction: plain Delete recycles on local volumes; Shift+Delete -
+    // and every raw-target delete - is permanent. The confirmation always fires
+    // (DeleteConfirmationPolicies.Always is the Files default).
+    const bool recycle = !permanent && target.local_file_system;
     const auto response =
         sak::showQuestionLogged(this,
                                 tr("Delete Entry"),
-                                tr("Delete %1 item(s) from '%2'? This permanently removes data "
-                                   "from the selected target.\n\n%3")
-                                    .arg(QString::number(selection.count()),
-                                         target.label,
-                                         paths.join(QStringLiteral("\n"))),
+                                deleteConfirmationText(recycle, target, selection),
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
     if (response != QMessageBox::Yes) {
@@ -4967,7 +5003,8 @@ void FileManagementExplorerPanel::onDeleteClicked() {
     }
     QStringList blockers;
     QStringList warnings;
-    const int deleted = deleteSelectedEntries(target, selection, &blockers, &warnings);
+    const int deleted = recycle ? recycleSelectedEntries(selection, &blockers)
+                                : deleteSelectedEntries(target, selection, &blockers, &warnings);
 
     if (deleted == selection.count()) {
         Q_EMIT statusMessage(tr("Delete Entry complete"), sak::kTimerStatusDefaultMs);

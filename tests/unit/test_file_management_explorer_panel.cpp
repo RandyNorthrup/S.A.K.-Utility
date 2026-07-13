@@ -1415,6 +1415,86 @@ private Q_SLOTS:
         QVERIFY(!QDir(root.filePath(QStringLiteral("bundle"))).exists());
     }
 
+    // Auto-accept the next modal question box (clicks Yes) and capture its text,
+    // keeping offscreen runs non-interactive. Takes a parameter so QtTest does
+    // not run it as a test slot.
+    void armAutoAcceptQuestion(QString* captured) {
+        auto* accept = new QTimer(this);
+        accept->setInterval(50);
+        connect(accept, &QTimer::timeout, this, [accept, captured]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                *captured = box->text();
+                accept->stop();
+                accept->deleteLater();
+                box->button(QMessageBox::Yes)->click();
+            }
+        });
+        accept->start();
+    }
+
+    void deleteRecyclesLocallyAndShiftDeleteIsPermanent() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        const auto makeFile = [&root](const QString& name) {
+            QFile file(root.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("delete payload") > 0);
+        };
+        makeFile(QStringLiteral("bin_me.txt"));
+        makeFile(QStringLiteral("perma.txt"));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("bin_me")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Files DeleteItemAction: plain Delete on a local volume recycles after
+        // the always-on confirmation. The dialog is auto-accepted by a timer so
+        // the run stays non-interactive.
+        QString question_text;
+        QVERIFY(selectRowStable(table, QStringLiteral("bin_me")));
+        armAutoAcceptQuestion(&question_text);
+        QTest::keyClick(table, Qt::Key_Delete);
+        QVERIFY2(QTest::qWaitFor(
+                     [&root]() {
+                         return !QFile::exists(root.filePath(QStringLiteral("bin_me.txt")));
+                     },
+                     5000),
+                 "delete did not recycle the file");
+        QVERIFY2(question_text.contains(QStringLiteral("Recycle Bin")), qPrintable(question_text));
+
+        // Shift+Delete is the permanent path (DeleteItemPermanentlyAction).
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QVERIFY(selectRowStable(table, QStringLiteral("perma")));
+        question_text.clear();
+        armAutoAcceptQuestion(&question_text);
+        QTest::keyClick(table, Qt::Key_Delete, Qt::ShiftModifier);
+        QVERIFY2(QTest::qWaitFor(
+                     [&root]() {
+                         return !QFile::exists(root.filePath(QStringLiteral("perma.txt")));
+                     },
+                     5000),
+                 "shift-delete did not remove the file");
+        QVERIFY2(question_text.contains(QStringLiteral("permanently")), qPrintable(question_text));
+    }
+
     void activationMatrixAndMouseNavigation() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());

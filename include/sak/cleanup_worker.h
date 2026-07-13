@@ -71,9 +71,6 @@ private:
     /// @brief Schedule reboot removal and record the path
     [[nodiscard]] bool tryScheduleReboot(const QString& path);
 
-    /// @brief Send a file to the Windows Recycle Bin
-    [[nodiscard]] bool sendToRecycleBin(const QString& path);
-
     /// @brief Schedule a locked file for removal on next Windows reboot
     [[nodiscard]] bool scheduleRebootRemoval(const QString& path);
 

@@ -521,6 +521,18 @@ private Q_SLOTS:
         QCOMPARE(open.blocker, QStringLiteral("Select one item."));
         QVERIFY(delete_item.enabled);
         QVERIFY(copy_path.enabled);
+
+        // Files DeleteItemPermanentlyAction: Shift+Delete, gated like Delete
+        // (multi-select allowed, selection + write capability required).
+        const auto permanent = sak::FileExplorerCommandRegistry::state(
+            sak::FileExplorerCommandId::DeletePermanently, context);
+        QVERIFY(permanent.enabled);
+        QCOMPARE(permanent.command.shortcut, QStringLiteral("Shift+Del"));
+        QVERIFY(permanent.command.destructive);
+        auto empty_selection = contextFor(writableLocalTarget(), false);
+        QVERIFY(!sak::FileExplorerCommandRegistry::state(
+                     sak::FileExplorerCommandId::DeletePermanently, empty_selection)
+                     .enabled);
     }
 
     void registryAssignsEveryCommandToAnOrderedGroup() {

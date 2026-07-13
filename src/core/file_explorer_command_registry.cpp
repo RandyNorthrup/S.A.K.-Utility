@@ -33,6 +33,7 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::WriteFile, Group::File},
         {Id::Rename, Group::File},
         {Id::Delete, Group::File},
+        {Id::DeletePermanently, Group::File},
         {Id::SelectAll, Group::File},
         {Id::ClearSelection, Group::File},
         {Id::InvertSelection, Group::File},
@@ -466,6 +467,12 @@ QVector<FileExplorerCommand> writeCommands() {
                     QStringLiteral("Delete selected item."),
                     QStringLiteral("Delete"),
                     {.destructive = true, .selection_required = true, .write_operation = true}),
+        // Files DeleteItemPermanentlyAction: Shift+Delete skips the Recycle Bin.
+        makeCommand(FileExplorerCommandId::DeletePermanently,
+                    QStringLiteral("Delete permanently"),
+                    QStringLiteral("Delete selected item permanently (skips the Recycle Bin)."),
+                    QStringLiteral("Shift+Del"),
+                    {.destructive = true, .selection_required = true, .write_operation = true}),
     };
 }
 
@@ -626,6 +633,7 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::WriteFile, "write-file"},
         {Id::Rename, "rename"},
         {Id::Delete, "delete"},
+        {Id::DeletePermanently, "delete-permanently"},
         {Id::ToggleHiddenItems, "toggle-hidden-items"},
         {Id::ToggleFileExtensions, "toggle-file-extensions"},
         {Id::ViewDetails, "view-details"},

@@ -1064,6 +1064,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_tag_store.cpp
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
+        ../src/core/recycle_bin.cpp
         ../src/core/advanced_search_worker.cpp
         ../src/threading/worker_base.cpp
         ../src/core/apfs_crypto.cpp
@@ -3479,6 +3480,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_advanced_uninstall_controller.c
         ../src/core/uninstall_worker.cpp
         ../src/core/leftover_scanner.cpp
         ../src/core/cleanup_worker.cpp
+        ../src/core/recycle_bin.cpp
         ../src/core/registry_snapshot_engine.cpp
         ../src/core/restore_point_manager.cpp
         ../src/core/elevation_manager.cpp

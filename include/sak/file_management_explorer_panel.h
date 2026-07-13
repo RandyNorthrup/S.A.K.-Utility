@@ -345,6 +345,11 @@ private:
                               const FileExplorerSelection& selection,
                               QStringList* blockers,
                               QStringList* warnings);
+    int recycleSelectedEntries(const FileExplorerSelection& selection, QStringList* blockers);
+    [[nodiscard]] QString deleteConfirmationText(bool recycle,
+                                                 const FileManagementTarget& target,
+                                                 const FileExplorerSelection& selection) const;
+    void deleteSelectionWithConfirmation(bool permanent);
     [[nodiscard]] int resolveSidebarTargetIndex(QListWidgetItem* item) const;
     void appendSidebarTargetsWhere(const QString& title,
                                    bool (*predicate)(const FileManagementTarget&));

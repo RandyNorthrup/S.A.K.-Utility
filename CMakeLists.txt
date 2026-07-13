@@ -473,6 +473,8 @@ set(CORE_SOURCES
     src/core/uninstall_worker.cpp
     src/core/leftover_scanner.cpp
     src/core/cleanup_worker.cpp
+    src/core/recycle_bin.cpp
+    include/sak/recycle_bin.h
     src/core/restore_point_manager.cpp
     src/core/registry_snapshot_engine.cpp
     src/core/advanced_uninstall_controller.cpp
