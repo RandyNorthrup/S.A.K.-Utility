@@ -28,6 +28,7 @@
 #include <QDropEvent>
 #include <QHeaderView>
 #include <QImage>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -1029,6 +1030,183 @@ private Q_SLOTS:
         triggerGroupActionInSortFlyout(panel, QStringLiteral("None"));
         QTRY_COMPARE(table->model()->rowCount(), 3);
         QVERIFY(pane->groupProxyModel()->headerRows().isEmpty());
+    }
+
+    void undoRedoRevertsRenameAndSameTargetMove() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile file(root.filePath(QStringLiteral("undo_src.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("undo payload") > 0);
+        }
+        QVERIFY(root.mkdir(QStringLiteral("pocket")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("undo_src")) >= 0);
+
+        // Rename through the inline editor, then Ctrl+Z / Ctrl+Y walk the
+        // journal (Files UndoAction/RedoAction over the Rename inverse).
+        QVERIFY(selectRowStable(table, QStringLiteral("undo_src")));
+        QTest::keyClick(&panel, Qt::Key_F2);
+        auto* editor = table->findChild<QLineEdit*>(QStringLiteral("fileExplorerRenameEditor"));
+        QVERIFY(editor);
+        QTRY_COMPARE(editor->selectedText(), QStringLiteral("undo_src"));
+        QTest::keyClicks(editor, QStringLiteral("renamed"));
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTRY_VERIFY(QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("undo_src.txt"))));
+
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_VERIFY(QFile::exists(root.filePath(QStringLiteral("undo_src.txt"))));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+        QTest::keyClick(table, Qt::Key_Y, Qt::ControlModifier);
+        QTRY_VERIFY(QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+
+        verifyUndoRedoOfSameTargetMove(panel, table, root);
+    }
+
+    void verifyUndoRedoOfSameTargetMove(sak::FileManagementExplorerPanel& panel,
+                                        QTableView* table,
+                                        const QDir& root) {
+        // Cut + paste-into-selection moves into the subfolder; Ctrl+Z moves
+        // it back through the same-target rename inverse, Ctrl+Y replays it.
+        QTRY_VERIFY(selectRowStable(table, QStringLiteral("renamed")));
+        QTest::keyClick(table, Qt::Key_X, Qt::ControlModifier);
+        QVERIFY(selectRowStable(table, QStringLiteral("pocket")));
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString moved = root.filePath(QStringLiteral("pocket/renamed.txt"));
+        QTRY_VERIFY(QFile::exists(moved));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_VERIFY(QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+        QVERIFY(!QFile::exists(moved));
+        QTest::keyClick(table, Qt::Key_Y, Qt::ControlModifier);
+        QTRY_VERIFY(QFile::exists(moved));
+        QVERIFY(!QFile::exists(root.filePath(QStringLiteral("renamed.txt"))));
+    }
+
+    void undoDeletesCopiesAndCreatedFoldersWithConfirmation() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        {
+            QFile file(root.filePath(QStringLiteral("seed.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("copy payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("seed")) >= 0);
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Same-folder copy-paste duplicates; undoing the copy deletes the
+        // duplicate after the Files forced-confirmation dialog, and redo
+        // copies it again from the original source.
+        QVERIFY(selectRowStable(table, QStringLiteral("seed")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        QTest::keyClick(table, Qt::Key_V, Qt::ControlModifier);
+        const QString copy_path = root.filePath(QStringLiteral("seed (2).txt"));
+        QTRY_VERIFY(QFile::exists(copy_path));
+
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QString question_text;
+        armAutoAcceptQuestion(&question_text);
+        QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_VERIFY(!QFile::exists(copy_path));
+        QVERIFY2(question_text.contains(QStringLiteral("delete")), qPrintable(question_text));
+        // The dismissed confirmation cleared focus; the focus-scoped Ctrl+Y
+        // shortcut needs it back.
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Y, Qt::ControlModifier);
+        QTRY_VERIFY(QFile::exists(copy_path));
+
+        verifyUndoRedoOfNewFolder(panel, table, root);
+    }
+
+    void verifyUndoRedoOfNewFolder(sak::FileManagementExplorerPanel& panel,
+                                   QTableView* table,
+                                   const QDir& root) {
+        // Ctrl+Shift+N creates "New Folder" (the input dialog auto-accepts
+        // its default text); Ctrl+Z deletes the created folder after the
+        // confirmation, Ctrl+Y recreates it through the bridge.
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QString input_label;
+        armAutoAcceptInputDialog(&input_label);
+        QTest::keyClick(table, Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
+        const QString folder_path = root.filePath(QStringLiteral("New Folder"));
+        QTRY_VERIFY(QFileInfo(folder_path).isDir());
+
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QString question_text;
+        armAutoAcceptQuestion(&question_text);
+        QTest::keyClick(table, Qt::Key_Z, Qt::ControlModifier);
+        QTRY_VERIFY(!QFileInfo::exists(folder_path));
+        QVERIFY2(question_text.contains(QStringLiteral("create")), qPrintable(question_text));
+        // Re-focus after the dismissed confirmation before the redo shortcut.
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Y, Qt::ControlModifier);
+        QTRY_VERIFY(QFileInfo(folder_path).isDir());
+    }
+
+    // The parameter keeps this helper out of QtTest's parameterless-slot
+    // test discovery (same pattern as armAutoAcceptQuestion).
+    void armAutoAcceptInputDialog(QString* captured_label) {
+        auto* accept = new QTimer(this);
+        accept->setInterval(50);
+        connect(accept, &QTimer::timeout, this, [accept, captured_label]() {
+            if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
+                *captured_label = dialog->labelText();
+                accept->stop();
+                accept->deleteLater();
+                dialog->accept();
+            }
+        });
+        accept->start();
     }
 
     void sidebarGroupsExposeFilesLikeTargets() {

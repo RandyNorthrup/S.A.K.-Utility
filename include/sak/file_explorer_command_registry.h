@@ -68,6 +68,8 @@ enum class FileExplorerCommandId {
     ExtractHere,
     ExtractHereSmart,
     ExtractToChildFolder,
+    Undo,
+    Redo,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped

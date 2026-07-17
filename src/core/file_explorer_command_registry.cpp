@@ -76,6 +76,8 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::ExtractHere, Group::File},
         {Id::ExtractHereSmart, Group::File},
         {Id::ExtractToChildFolder, Group::File},
+        {Id::Undo, Group::File},
+        {Id::Redo, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -603,6 +605,21 @@ QVector<FileExplorerCommand> writeCommands() {
     };
 }
 
+// Files global history actions (UndoAction/RedoAction, Ctrl+Z / Ctrl+Y): the
+// empty-journal case is reported at execution time, matching TryUndo/TryRedo.
+QVector<FileExplorerCommand> historyCommands() {
+    return {
+        makeCommand(FileExplorerCommandId::Undo,
+                    QStringLiteral("Undo"),
+                    QStringLiteral("Undo the last file operation."),
+                    QStringLiteral("Ctrl+Z")),
+        makeCommand(FileExplorerCommandId::Redo,
+                    QStringLiteral("Redo"),
+                    QStringLiteral("Redo the last undone file operation."),
+                    QStringLiteral("Ctrl+Y")),
+    };
+}
+
 // Files Actions/Content/Archives: the zip compress leg and the four extract legs.
 QVector<FileExplorerCommand> archiveCommands() {
     return {
@@ -728,6 +745,7 @@ QVector<FileExplorerCommand> FileExplorerCommandRegistry::commands() {
     registry.append(openAndNavigationCommands());
     registry.append(clipboardAndSelectionCommands());
     registry.append(writeCommands());
+    registry.append(historyCommands());
     registry.append(archiveCommands());
     registry.append(viewCommands());
     registry.append(paneAndTabCommands());
@@ -849,6 +867,8 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::FocusOtherPane, "focus-other-pane"},
         {Id::CutItems, "cut-items"},
         {Id::PasteIntoSelection, "paste-into-selection"},
+        {Id::Undo, "undo"},
+        {Id::Redo, "redo"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

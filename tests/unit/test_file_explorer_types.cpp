@@ -6,6 +6,7 @@
 
 #include "sak/file_explorer_command_registry.h"
 #include "sak/file_explorer_layout_metrics.h"
+#include "sak/file_explorer_storage_history.h"
 
 #include <QtTest/QtTest>
 
@@ -635,6 +636,52 @@ private Q_SLOTS:
                  FileExplorerViewMode::Columns);
         QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Adaptive, false),
                  FileExplorerViewMode::Cards);
+    }
+
+    void storageHistoryWrapperWalksAndTruncatesRedoBranch() {
+        using Operation = sak::FileExplorerHistoryOperation;
+        sak::FileExplorerStorageHistoryWrapper wrapper;
+        QVERIFY(!wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
+        QVERIFY(wrapper.undoTarget() == nullptr);
+        QVERIFY(wrapper.redoTarget() == nullptr);
+
+        const auto entry = [](const Operation operation, const QString& destination) {
+            sak::FileExplorerStorageHistory history;
+            history.operation = operation;
+            history.items = {
+                sak::FileExplorerHistoryItem{QStringLiteral("/src"), destination, false}};
+            return history;
+        };
+        wrapper.add(entry(Operation::Rename, QStringLiteral("/renamed")));
+        wrapper.add(entry(Operation::Copy, QStringLiteral("/copied")));
+        QCOMPARE(wrapper.count(), 2);
+        QVERIFY(wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Copy);
+
+        // Undo walks backward; the undone entry becomes the redo target.
+        wrapper.markUndone();
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Rename);
+        QCOMPARE(wrapper.redoTarget()->operation, Operation::Copy);
+        wrapper.markUndone();
+        QVERIFY(!wrapper.canUndo());
+        QCOMPARE(wrapper.redoTarget()->operation, Operation::Rename);
+        wrapper.markRedone();
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Rename);
+
+        // Files AddHistory: a new operation after undos drops the stale redo
+        // branch (the Copy entry disappears).
+        wrapper.add(entry(Operation::Move, QStringLiteral("/moved")));
+        QCOMPARE(wrapper.count(), 2);
+        QVERIFY(!wrapper.canRedo());
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Move);
+        QCOMPARE(wrapper.undoTarget()->items.first().destination_path, QStringLiteral("/moved"));
+
+        wrapper.clear();
+        QCOMPARE(wrapper.count(), 0);
+        QVERIFY(!wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
     }
 };
 

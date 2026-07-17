@@ -1513,6 +1513,8 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
         FileExplorerCommandId::OpenInTerminal,
         FileExplorerCommandId::ExtractFiles,
         FileExplorerCommandId::ExtractHereSmart,
+        FileExplorerCommandId::Undo,
+        FileExplorerCommandId::Redo,
     };
 
     for (const FileExplorerCommandId command_id : panelShortcuts) {
@@ -2975,7 +2977,21 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
         source_target, target, destination_dir, sources.move, items.size() > 1, same_namespace};
     QStringList blockers;
     PasteCollisionPolicy policy;
+    m_transfer_journal.clear();
     const int written = pasteItemsToFolder(batch, items, &policy, &blockers);
+    recordHistory(sources.move ? FileExplorerHistoryOperation::Move
+                               : FileExplorerHistoryOperation::Copy,
+                  source_target,
+                  target,
+                  std::move(m_transfer_journal));
+    m_transfer_journal = {};
+    finishExecutedPaste(sources, written, static_cast<int>(items.size()), blockers);
+}
+
+void FileManagementExplorerPanel::finishExecutedPaste(const PasteSources& sources,
+                                                      const int written,
+                                                      const int item_count,
+                                                      const QStringList& blockers) {
     // Only a clipboard-originated move consumes the clipboard; a drag-drop
     // move must leave the user's clipboard untouched.
     if (sources.move && sources.clipboard && written > 0) {
@@ -2990,7 +3006,7 @@ void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
     Q_EMIT statusMessage((sources.move ? tr("Moved %1 of %2 item(s).")
                                        : tr("Pasted %1 of %2 item(s)."))
                              .arg(written)
-                             .arg(items.size()),
+                             .arg(item_count),
                          sak::kTimerStatusDefaultMs);
 }
 
@@ -3051,7 +3067,11 @@ bool FileManagementExplorerPanel::pasteSameTargetMove(const FileManagementTarget
     const QList<PasteItem> items = pasteItemsFor(sources);
     PasteCollisionPolicy policy;
     QStringList blockers;
+    m_transfer_journal.clear();
     const int moved = moveEntriesWithinTarget(target, items, destination_dir, &policy, &blockers);
+    recordHistory(
+        FileExplorerHistoryOperation::Move, target, target, std::move(m_transfer_journal));
+    m_transfer_journal = {};
     if (moved > 0) {
         if (sources.clipboard) {
             finishMovePaste();
@@ -3095,6 +3115,7 @@ int FileManagementExplorerPanel::moveEntriesWithinTarget(const FileManagementTar
         if (result.ok) {
             ++moved;
             m_last_mutation = result;
+            m_transfer_journal.append({item.path, destination, item.directory});
         } else {
             blockers->append(result.blockers);
         }
@@ -3142,6 +3163,7 @@ bool FileManagementExplorerPanel::pasteOneItem(const PasteBatch& batch,
     if (batch.move) {
         deleteMoveSource(batch.source_target, item, blockers);
     }
+    m_transfer_journal.append({item.path, destination, item.directory});
     return true;
 }
 
@@ -3260,6 +3282,245 @@ bool FileManagementExplorerPanel::deleteMoveSource(const FileManagementTarget& s
         return false;
     }
     return true;
+}
+
+void FileManagementExplorerPanel::recordHistory(const FileExplorerHistoryOperation operation,
+                                                const FileManagementTarget& source_target,
+                                                const FileManagementTarget& destination_target,
+                                                QVector<FileExplorerHistoryItem> items) {
+    // Files records history inside the operation implementations; while an
+    // undo/redo replays through the same kernel this stays silent, and empty
+    // batches (everything blocked) record nothing.
+    if (m_history_busy || items.isEmpty()) {
+        return;
+    }
+    FileExplorerStorageHistory history;
+    history.operation = operation;
+    history.source_target_id = FileExplorerTargetId::fromTarget(source_target).value;
+    history.destination_target_id = FileExplorerTargetId::fromTarget(destination_target).value;
+    history.items = std::move(items);
+    m_storage_history.add(std::move(history));
+}
+
+void FileManagementExplorerPanel::undoLastOperation() {
+    // Files UndoAction -> StorageHistoryHelpers.TryUndo: single-flight, and
+    // an empty journal reports instead of failing.
+    if (m_history_busy) {
+        return;
+    }
+    const FileExplorerStorageHistory* history = m_storage_history.undoTarget();
+    if (!history) {
+        Q_EMIT statusMessage(tr("Nothing to undo."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    m_history_busy = true;
+    const bool applied = executeHistory(*history, true);
+    m_history_busy = false;
+    if (applied) {
+        m_storage_history.markUndone();
+        loadDirectory(m_current_path);
+        Q_EMIT statusMessage(tr("Undid the last file operation."), sak::kTimerStatusDefaultMs);
+    }
+}
+
+void FileManagementExplorerPanel::redoLastOperation() {
+    if (m_history_busy) {
+        return;
+    }
+    const FileExplorerStorageHistory* history = m_storage_history.redoTarget();
+    if (!history) {
+        Q_EMIT statusMessage(tr("Nothing to redo."), sak::kTimerStatusMessageMs);
+        return;
+    }
+    m_history_busy = true;
+    const bool applied = executeHistory(*history, false);
+    m_history_busy = false;
+    if (applied) {
+        m_storage_history.markRedone();
+        loadDirectory(m_current_path);
+        Q_EMIT statusMessage(tr("Redid the last file operation."), sak::kTimerStatusDefaultMs);
+    }
+}
+
+// Applies a journal entry (undo replays the inverse; redo replays it again),
+// cloning Files StorageHistoryOperations.Undo/Redo. Returns false only when
+// the user cancels or a required target is gone, so the journal index stays
+// put for a retry; partial failures surface blockers but still advance,
+// matching Files (only Cancelled skips the index move).
+bool FileManagementExplorerPanel::executeHistory(const FileExplorerStorageHistory& history,
+                                                 const bool undo) {
+    using Operation = FileExplorerHistoryOperation;
+    switch (history.operation) {
+    case Operation::Rename:
+    case Operation::Move:
+        return executeHistoryTransfer(history, undo);
+    case Operation::Copy:
+        // Undo of a copy deletes the created copies; redo copies again.
+        return undo ? undoByDeletingCreatedEntries(history, false)
+                    : executeHistoryTransfer(history, false);
+    case Operation::CreateNew:
+        return undo ? undoByDeletingCreatedEntries(history, true) : redoCreateEntries(history);
+    }
+    return false;
+}
+
+// Undo of Copy/CreateNew: delete what the operation produced, behind the
+// Files forced-confirmation dialog.
+bool FileManagementExplorerPanel::undoByDeletingCreatedEntries(
+    const FileExplorerStorageHistory& history, const bool undo_of_create) {
+    if (!confirmHistoryDelete(static_cast<int>(history.items.size()), undo_of_create)) {
+        return false;
+    }
+    QStringList blockers;
+    const bool resolved = executeHistoryDelete(history, undo_of_create, &blockers);
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Undo"), blockers.join(QStringLiteral("\n")));
+    }
+    return resolved;
+}
+
+// Redo of a create recreates the entries (folders, or empty files).
+bool FileManagementExplorerPanel::redoCreateEntries(const FileExplorerStorageHistory& history) {
+    const int target_index = targetIndexForId(history.destination_target_id);
+    if (target_index < 0) {
+        Q_EMIT statusMessage(tr("Redo target is no longer available."), sak::kTimerStatusMessageMs);
+        return false;
+    }
+    const FileManagementTarget target = m_targets.at(target_index);
+    QStringList blockers;
+    for (const FileExplorerHistoryItem& item : history.items) {
+        const auto result =
+            item.directory
+                ? FileManagementFileSystemBridge::createDirectory(target, item.destination_path)
+                : FileManagementFileSystemBridge::writeFile(target,
+                                                            item.destination_path,
+                                                            QByteArray());
+        if (!result.ok) {
+            blockers.append(result.blockers);
+        }
+    }
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Redo"), blockers.join(QStringLiteral("\n")));
+    }
+    return true;
+}
+
+// Rename/Move inverse: rename back on the same target, or reverse the
+// transfer (copy back, then delete the landed side) across targets - the
+// same certified kernel legs the forward operation used.
+bool FileManagementExplorerPanel::resolveHistoryEndpoints(const FileExplorerStorageHistory& history,
+                                                          const bool undo,
+                                                          FileManagementTarget* from_target,
+                                                          FileManagementTarget* to_target,
+                                                          bool* same_target) {
+    const QString from_id = undo ? history.destination_target_id : history.source_target_id;
+    const QString to_id = undo ? history.source_target_id : history.destination_target_id;
+    const int from_index = targetIndexForId(from_id);
+    const int to_index = targetIndexForId(to_id);
+    if (from_index < 0 || to_index < 0) {
+        Q_EMIT statusMessage(
+            tr("%1 target is no longer available.").arg(undo ? tr("Undo") : tr("Redo")),
+            sak::kTimerStatusMessageMs);
+        return false;
+    }
+    *from_target = m_targets.at(from_index);
+    *to_target = m_targets.at(to_index);
+    *same_target = from_id == to_id;
+    return true;
+}
+
+bool FileManagementExplorerPanel::executeHistoryTransfer(const FileExplorerStorageHistory& history,
+                                                         const bool undo) {
+    FileManagementTarget from_target;
+    FileManagementTarget to_target;
+    bool same_target = false;
+    if (!resolveHistoryEndpoints(history, undo, &from_target, &to_target, &same_target)) {
+        return false;
+    }
+    const bool move = history.operation != FileExplorerHistoryOperation::Copy;
+    QStringList blockers;
+    for (const FileExplorerHistoryItem& item : history.items) {
+        const QString from_path = undo ? item.destination_path : item.source_path;
+        const QString to_path = undo ? item.source_path : item.destination_path;
+        applyHistoryTransferItem(HistoryTransferLeg{from_target, to_target, move, same_target},
+                                 item.directory,
+                                 from_path,
+                                 to_path,
+                                 &blockers);
+    }
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this,
+                               undo ? tr("Undo") : tr("Redo"),
+                               blockers.join(QStringLiteral("\n")));
+    }
+    return true;
+}
+
+void FileManagementExplorerPanel::applyHistoryTransferItem(const HistoryTransferLeg& leg,
+                                                           const bool directory,
+                                                           const QString& from_path,
+                                                           const QString& to_path,
+                                                           QStringList* blockers) {
+    if (leg.move && leg.same_target) {
+        const auto result =
+            FileManagementFileSystemBridge::renameEntry(leg.from_target, from_path, to_path);
+        if (!result.ok) {
+            blockers->append(result.blockers);
+        }
+        return;
+    }
+    const PasteItem paste_item{from_path, 0, directory};
+    if (transferEntry(leg.from_target, paste_item, leg.to_target, to_path, blockers) && leg.move) {
+        deleteMoveSource(leg.from_target, paste_item, blockers);
+    }
+}
+
+// Deletes the entries a Copy or CreateNew produced: local paths recycle
+// (Files undoes these with permanently:false), raw paths delete through the
+// certified writers.
+bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorageHistory& history,
+                                                       const bool created_entries,
+                                                       QStringList* blockers) {
+    Q_UNUSED(created_entries);
+    const int target_index = targetIndexForId(history.destination_target_id);
+    if (target_index < 0) {
+        Q_EMIT statusMessage(tr("Undo target is no longer available."), sak::kTimerStatusMessageMs);
+        return false;
+    }
+    const FileManagementTarget target = m_targets.at(target_index);
+    for (const FileExplorerHistoryItem& item : history.items) {
+        if (target.local_file_system) {
+            if (!sak::sendPathToRecycleBin(item.destination_path)) {
+                blockers->append(
+                    tr("Could not move %1 to the Recycle Bin.").arg(item.destination_path));
+            }
+            continue;
+        }
+        const auto result =
+            item.directory
+                ? FileManagementFileSystemBridge::deleteDirectoryTree(target, item.destination_path)
+                : FileManagementFileSystemBridge::deleteFile(target, item.destination_path);
+        if (!result.ok) {
+            blockers->append(result.blockers);
+        }
+    }
+    return true;
+}
+
+bool FileManagementExplorerPanel::confirmHistoryDelete(const int item_count,
+                                                       const bool undo_of_create) {
+    // Files ShowConfirmationAsync before deleting what an undo removes.
+    const auto response = sak::showQuestionLogged(
+        this,
+        tr("Undo"),
+        (undo_of_create
+             ? tr("Undoing this create will delete %n item(s). Continue?", nullptr, item_count)
+             : tr("Undoing this copy will delete %n copied item(s). Continue?",
+                  nullptr,
+                  item_count)),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    return response == QMessageBox::Yes;
 }
 
 void FileManagementExplorerPanel::exportSelectedDirectoryOut(const FileManagementEntry& entry) {
@@ -3855,6 +4116,19 @@ bool FileManagementExplorerPanel::dispatchSelectionToolCommand(
     case FileExplorerCommandId::EditInNotepad:
         editSelectionInNotepad();
         return true;
+    case FileExplorerCommandId::Undo:
+        undoLastOperation();
+        return true;
+    case FileExplorerCommandId::Redo:
+        redoLastOperation();
+        return true;
+    default:
+        return dispatchArchiveCommand(command);
+    }
+}
+
+bool FileManagementExplorerPanel::dispatchArchiveCommand(const FileExplorerCommandId command) {
+    switch (command) {
     case FileExplorerCommandId::CompressIntoZip:
         compressSelectionToZip();
         return true;
@@ -3948,12 +4222,16 @@ void FileManagementExplorerPanel::commitPropertiesRename(const QString& original
         sak::showWarningLogged(this, tr("Rename"), identity_blocker);
         return;
     }
-    const auto result = FileManagementFileSystemBridge::renameEntry(
-        target,
-        childPathFor(m_current_path, original, target.local_file_system),
-        childPathFor(m_current_path, edited, target.local_file_system));
+    const QString source_path = childPathFor(m_current_path, original, target.local_file_system);
+    const QString destination_path = childPathFor(m_current_path, edited, target.local_file_system);
+    const auto result =
+        FileManagementFileSystemBridge::renameEntry(target, source_path, destination_path);
     showMutationResult(tr("Rename"), result);
     if (result.ok) {
+        recordHistory(FileExplorerHistoryOperation::Rename,
+                      target,
+                      target,
+                      {FileExplorerHistoryItem{source_path, destination_path, false}});
         loadDirectory(m_current_path);
     }
 }
@@ -4143,6 +4421,10 @@ void FileManagementExplorerPanel::createFolderWithSelection() {
                                created.blockers.join(QStringLiteral("\n")));
         return;
     }
+    recordHistory(FileExplorerHistoryOperation::CreateNew,
+                  target,
+                  target,
+                  {FileExplorerHistoryItem{QString(), folder_path, true}});
     QList<PasteItem> items;
     items.reserve(selection.entries.size());
     for (const FileManagementEntry& entry : selection.entries) {
@@ -4150,7 +4432,11 @@ void FileManagementExplorerPanel::createFolderWithSelection() {
     }
     PasteCollisionPolicy policy;
     QStringList blockers;
+    m_transfer_journal.clear();
     const int moved = moveEntriesWithinTarget(target, items, folder_path, &policy, &blockers);
+    recordHistory(
+        FileExplorerHistoryOperation::Move, target, target, std::move(m_transfer_journal));
+    m_transfer_journal = {};
     loadDirectory(m_current_path);
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Create Folder"), blockers.join(QStringLiteral("\n")));
@@ -5693,6 +5979,10 @@ void FileManagementExplorerPanel::onNewFolderClicked() {
     const auto result = FileManagementFileSystemBridge::createDirectory(target, path);
     showMutationResult(tr("New Folder"), result);
     if (result.ok) {
+        recordHistory(FileExplorerHistoryOperation::CreateNew,
+                      target,
+                      target,
+                      {FileExplorerHistoryItem{QString(), path, true}});
         loadDirectory(m_current_path);
     }
 }
@@ -5796,10 +6086,15 @@ void FileManagementExplorerPanel::performInlineRename(const int row, const QStri
         childPathFor(parentPathForEntry(sourcePath, target.local_file_system),
                      new_name,
                      target.local_file_system);
+    const bool is_directory = m_item_model->entryAt(row).directory;
     const auto result =
         FileManagementFileSystemBridge::renameEntry(target, sourcePath, destinationPath);
     showMutationResult(tr("Rename"), result);
     if (result.ok) {
+        recordHistory(FileExplorerHistoryOperation::Rename,
+                      target,
+                      target,
+                      {FileExplorerHistoryItem{sourcePath, destinationPath, is_directory}});
         loadDirectory(m_current_path);
     }
 }

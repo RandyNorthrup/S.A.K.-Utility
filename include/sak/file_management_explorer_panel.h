@@ -13,6 +13,7 @@
 #include "sak/file_explorer_omnibar.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_sidebar.h"
+#include "sak/file_explorer_storage_history.h"
 #include "sak/file_management_file_system.h"
 
 #include <QAbstractItemView>
@@ -317,6 +318,44 @@ private:
     bool deleteMoveSource(const FileManagementTarget& source_target,
                           const PasteItem& item,
                           QStringList* blockers);
+    /// Undo/redo journal (Files StorageHistoryWrapper + StorageHistoryOperations).
+    void recordHistory(FileExplorerHistoryOperation operation,
+                       const FileManagementTarget& source_target,
+                       const FileManagementTarget& destination_target,
+                       QVector<FileExplorerHistoryItem> items);
+    void undoLastOperation();
+    void redoLastOperation();
+    bool executeHistory(const FileExplorerStorageHistory& history, bool undo);
+    bool executeHistoryTransfer(const FileExplorerStorageHistory& history, bool undo);
+    bool resolveHistoryEndpoints(const FileExplorerStorageHistory& history,
+                                 bool undo,
+                                 FileManagementTarget* from_target,
+                                 FileManagementTarget* to_target,
+                                 bool* same_target);
+    /// One reverse/replay leg: same-target moves rename, everything else runs
+    /// the transfer kernel (with the moved source deleted afterwards).
+    struct HistoryTransferLeg {
+        const FileManagementTarget& from_target;
+        const FileManagementTarget& to_target;
+        bool move{false};
+        bool same_target{false};
+    };
+    void applyHistoryTransferItem(const HistoryTransferLeg& leg,
+                                  bool directory,
+                                  const QString& from_path,
+                                  const QString& to_path,
+                                  QStringList* blockers);
+    bool undoByDeletingCreatedEntries(const FileExplorerStorageHistory& history,
+                                      bool undo_of_create);
+    bool redoCreateEntries(const FileExplorerStorageHistory& history);
+    bool executeHistoryDelete(const FileExplorerStorageHistory& history,
+                              bool created_entries,
+                              QStringList* blockers);
+    bool confirmHistoryDelete(int item_count, bool undo_of_create);
+    void finishExecutedPaste(const PasteSources& sources,
+                             int written,
+                             int item_count,
+                             const QStringList& blockers);
     void showMutationResult(const QString& title, const FileManagementMutationResult& result);
     [[nodiscard]] FileExplorerSelection currentSelection() const;
     [[nodiscard]] FileExplorerCommandContext commandContext() const;
@@ -378,6 +417,7 @@ private:
     bool dispatchFileViewCommand(FileExplorerCommandId command);
     bool dispatchWriteCommand(FileExplorerCommandId command);
     bool dispatchSelectionToolCommand(FileExplorerCommandId command);
+    bool dispatchArchiveCommand(FileExplorerCommandId command);
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
     void toggleCurrentItemSelection();
@@ -549,6 +589,14 @@ private:
     QString m_last_preview_path;
     // Result of the most recent mutation, surfaced in the Evidence tab (path + hashes).
     FileManagementMutationResult m_last_mutation;
+    // Undo/redo journal (Files StorageHistoryWrapper): per-panel, in-memory.
+    FileExplorerStorageHistoryWrapper m_storage_history;
+    // Per-batch capture of the paths the transfer kernel actually wrote
+    // (collision-resolved), committed into one history entry per batch.
+    QVector<FileExplorerHistoryItem> m_transfer_journal;
+    // Single-flight guard (Files StorageHistoryHelpers semaphore): suppresses
+    // recording while an undo/redo replays operations through the kernel.
+    bool m_history_busy{false};
     // Most recent on-demand hash of a selected file, surfaced in the Evidence tab.
     QString m_last_hash_name;
     QString m_last_hash_sha256;
