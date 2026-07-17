@@ -132,6 +132,11 @@ constexpr const char* kListSizeKey = "ListViewSize";
 constexpr const char* kCardsSizeKey = "CardsViewSize";
 constexpr const char* kGridSizeKey = "GridViewSize";
 constexpr const char* kColumnsSizeKey = "ColumnsViewSize";
+// Files per-folder grouping preferences (GroupOption/GroupDirection/
+// GroupByDateUnit setting names).
+constexpr const char* kGroupOptionKey = "GroupOption";
+constexpr const char* kGroupDirectionKey = "GroupDirection";
+constexpr const char* kGroupDateUnitKey = "GroupByDateUnit";
 constexpr const char* kSearchHistoryKey = "SearchHistory";
 constexpr int kMaxSearchHistoryEntries = 20;
 constexpr int kExplorerSearchMaxResults = 500;
@@ -655,7 +660,7 @@ void FileManagementExplorerPanel::buildCommandAndNavBars(QWidget* center,
     });
 }
 
-void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu) {
+void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu, const bool include_grouping) {
     if (!menu) {
         return;
     }
@@ -701,6 +706,114 @@ void FileManagementExplorerPanel::rebuildSortMenu(QMenu* menu) {
     connect(descending, &QAction::triggered, this, [this, current_column]() {
         applySortOrder(current_column, Qt::DescendingOrder);
     });
+    // The Files toolbar exposes grouping as its own flyout beside sorting;
+    // the S.A.K. command bar reuses the sort flyout for both, while the
+    // background context menu adds Group by as a sibling submenu instead.
+    if (include_grouping) {
+        menu->addSeparator();
+        auto* group_menu = menu->addMenu(tr("Group by"));
+        group_menu->setObjectName(QStringLiteral("fileExplorerGroupBySubmenu"));
+        rebuildGroupMenu(group_menu);
+    }
+}
+
+void FileManagementExplorerPanel::rebuildGroupMenu(QMenu* menu) {
+    if (!menu) {
+        return;
+    }
+    menu->clear();
+    // Files GroupAction set: the folder-general group options, direction, and
+    // the date unit for date groupings (GroupBy*Action, GroupAscendingAction/
+    // GroupDescendingAction, GroupByYear/Month + ToggleGroupByDateUnitAction).
+    const FileExplorerGroupOption current = m_pane_state.view.group_option;
+    static constexpr std::array kGroupOptions = {
+        std::pair{FileExplorerGroupOption::None, QT_TR_NOOP("None")},
+        std::pair{FileExplorerGroupOption::Name, QT_TR_NOOP("Name")},
+        std::pair{FileExplorerGroupOption::DateModified, QT_TR_NOOP("Date modified")},
+        std::pair{FileExplorerGroupOption::DateCreated, QT_TR_NOOP("Date created")},
+        std::pair{FileExplorerGroupOption::Size, QT_TR_NOOP("Size")},
+        std::pair{FileExplorerGroupOption::FileType, QT_TR_NOOP("Type")},
+        std::pair{FileExplorerGroupOption::FileTag, QT_TR_NOOP("Tag")},
+    };
+    auto* option_group = new QActionGroup(menu);
+    option_group->setExclusive(true);
+    for (const auto& [option, label] : kGroupOptions) {
+        QAction* action = menu->addAction(tr(label));
+        action->setCheckable(true);
+        action->setChecked(option == current);
+        option_group->addAction(action);
+        const FileExplorerGroupOption value = option;
+        connect(action, &QAction::triggered, this, [this, value]() {
+            applyGrouping(value, m_pane_state.view.group_date_unit, m_pane_state.view.group_order);
+        });
+    }
+    menu->addSeparator();
+    addGroupDirectionActions(menu);
+    menu->addSeparator();
+    addGroupDateUnitActions(menu);
+}
+
+void FileManagementExplorerPanel::addGroupDirectionActions(QMenu* menu) {
+    // Files GroupAscendingAction/GroupDescendingAction: enabled only while a
+    // group option is active.
+    const bool grouped = m_pane_state.view.group_option != FileExplorerGroupOption::None;
+    QAction* ascending = menu->addAction(tr("Ascending"));
+    ascending->setCheckable(true);
+    ascending->setChecked(m_pane_state.view.group_order == Qt::AscendingOrder);
+    ascending->setEnabled(grouped);
+    connect(ascending, &QAction::triggered, this, [this]() {
+        applyGrouping(m_pane_state.view.group_option,
+                      m_pane_state.view.group_date_unit,
+                      Qt::AscendingOrder);
+    });
+    QAction* descending = menu->addAction(tr("Descending"));
+    descending->setCheckable(true);
+    descending->setChecked(m_pane_state.view.group_order == Qt::DescendingOrder);
+    descending->setEnabled(grouped);
+    connect(descending, &QAction::triggered, this, [this]() {
+        applyGrouping(m_pane_state.view.group_option,
+                      m_pane_state.view.group_date_unit,
+                      Qt::DescendingOrder);
+    });
+}
+
+void FileManagementExplorerPanel::addGroupDateUnitActions(QMenu* menu) {
+    // Files GroupByYear/Month/Day actions: only date groupings use the unit.
+    const bool date_grouping =
+        m_pane_state.view.group_option == FileExplorerGroupOption::DateModified ||
+        m_pane_state.view.group_option == FileExplorerGroupOption::DateCreated;
+    static constexpr std::array kDateUnits = {
+        std::pair{FileExplorerGroupDateUnit::Year, QT_TR_NOOP("Year")},
+        std::pair{FileExplorerGroupDateUnit::Month, QT_TR_NOOP("Month")},
+        std::pair{FileExplorerGroupDateUnit::Day, QT_TR_NOOP("Day")},
+    };
+    auto* unit_group = new QActionGroup(menu);
+    unit_group->setExclusive(true);
+    for (const auto& [unit, label] : kDateUnits) {
+        QAction* action = menu->addAction(tr(label));
+        action->setCheckable(true);
+        action->setChecked(unit == m_pane_state.view.group_date_unit);
+        action->setEnabled(date_grouping);
+        unit_group->addAction(action);
+        const FileExplorerGroupDateUnit value = unit;
+        connect(action, &QAction::triggered, this, [this, value]() {
+            applyGrouping(m_pane_state.view.group_option, value, m_pane_state.view.group_order);
+        });
+    }
+}
+
+void FileManagementExplorerPanel::applyGrouping(const FileExplorerGroupOption option,
+                                                const FileExplorerGroupDateUnit date_unit,
+                                                const Qt::SortOrder order) {
+    m_pane_state.view.group_option = option;
+    m_pane_state.view.group_date_unit = date_unit;
+    m_pane_state.view.group_order = order;
+    applyViewSettings();
+    saveViewSettings();
+    Q_EMIT statusMessage(option == FileExplorerGroupOption::None
+                             ? tr("Grouping cleared")
+                             : tr("Grouped by %1").arg(fileExplorerGroupOptionName(option)),
+                         sak::kTimerStatusMessageMs);
 }
 
 void FileManagementExplorerPanel::applySortOrder(const int column, const Qt::SortOrder order) {
@@ -768,9 +881,10 @@ void FileManagementExplorerPanel::updateStatusCounts() {
         (m_pane && m_pane->sortFilterModel()) ? m_pane->sortFilterModel()->rowCount() : 0;
     m_items_count_label->setText(tr("%n item(s)", nullptr, item_count));
 
-    const QModelIndexList rows = (m_pane && m_pane->sharedSelectionModel())
-                                     ? m_pane->sharedSelectionModel()->selectedRows()
-                                     : QModelIndexList{};
+    QModelIndexList rows = (m_pane && m_pane->sharedSelectionModel())
+                               ? m_pane->sharedSelectionModel()->selectedRows()
+                               : QModelIndexList{};
+    rows.removeIf([this](const QModelIndex& index) { return !m_pane->hasViewEntry(index.row()); });
     if (!rows.isEmpty()) {
         QString text = tr("%n item(s) selected", nullptr, static_cast<int>(rows.size()));
         const uint64_t selected_bytes = selectedFileBytes(m_pane, rows);
@@ -1834,6 +1948,9 @@ void FileManagementExplorerPanel::applyViewSettings() {
     m_pane->setLayoutSizes(m_pane_state.view.sizes);
     m_pane->setShowHiddenItems(m_pane_state.view.show_hidden);
     m_pane->setShowFileExtensions(m_pane_state.view.show_extensions);
+    m_pane->setGrouping(m_pane_state.view.group_option,
+                        m_pane_state.view.group_date_unit,
+                        m_pane_state.view.group_order);
     if (m_view_button) {
         FileExplorerCommandId iconCommand = FileExplorerCommandId::ViewDetails;
         switch (m_pane_state.view.mode) {
@@ -1886,6 +2003,18 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
     readSizeKind(kCardsSizeKey, m_pane_state.view.sizes.cards);
     readSizeKind(kGridSizeKey, m_pane_state.view.sizes.grid);
     readSizeKind(kColumnsSizeKey, m_pane_state.view.sizes.columns);
+    if (settings.contains(QString::fromLatin1(kGroupOptionKey))) {
+        m_pane_state.view.group_option = fileExplorerGroupOptionFromName(
+            settings.value(QString::fromLatin1(kGroupOptionKey)).toString());
+    }
+    if (settings.contains(QString::fromLatin1(kGroupDirectionKey))) {
+        m_pane_state.view.group_order = static_cast<Qt::SortOrder>(
+            settings.value(QString::fromLatin1(kGroupDirectionKey)).toInt());
+    }
+    if (settings.contains(QString::fromLatin1(kGroupDateUnitKey))) {
+        m_pane_state.view.group_date_unit = static_cast<FileExplorerGroupDateUnit>(
+            settings.value(QString::fromLatin1(kGroupDateUnitKey)).toInt());
+    }
     settings.endGroup();
     settings.endGroup();
     applyViewSettings();
@@ -1906,6 +2035,12 @@ void FileManagementExplorerPanel::saveViewSettings() const {
     settings.setValue(QString::fromLatin1(kCardsSizeKey), m_pane_state.view.sizes.cards);
     settings.setValue(QString::fromLatin1(kGridSizeKey), m_pane_state.view.sizes.grid);
     settings.setValue(QString::fromLatin1(kColumnsSizeKey), m_pane_state.view.sizes.columns);
+    settings.setValue(QString::fromLatin1(kGroupOptionKey),
+                      fileExplorerGroupOptionName(m_pane_state.view.group_option));
+    settings.setValue(QString::fromLatin1(kGroupDirectionKey),
+                      static_cast<int>(m_pane_state.view.group_order));
+    settings.setValue(QString::fromLatin1(kGroupDateUnitKey),
+                      static_cast<int>(m_pane_state.view.group_date_unit));
     settings.endGroup();
     settings.endGroup();
 }
@@ -2161,12 +2296,16 @@ void FileManagementExplorerPanel::selectPendingSearchResult() {
     const QString name = m_pending_select_name;
     m_pending_select_name.clear();
     auto* view = currentItemView();
-    auto* proxy = m_pane->sortFilterModel();
-    if (!view || !proxy) {
+    if (!view || !view->model()) {
         return;
     }
-    for (int row = 0; row < proxy->rowCount(); ++row) {
-        const QModelIndex index = proxy->index(row, 0);
+    // Iterate the view's own model (the group proxy) so the row selected
+    // matches the visible row even when group headers are injected.
+    for (int row = 0; row < view->model()->rowCount(); ++row) {
+        if (!m_pane->hasViewEntry(row)) {
+            continue;
+        }
+        const QModelIndex index = view->model()->index(row, 0);
         if (index.data(Qt::DisplayRole).toString() == name) {
             selectRowInView(view, row);
             view->scrollTo(index);
@@ -3334,6 +3473,11 @@ FileExplorerSelection FileManagementExplorerPanel::currentSelection() const {
 
     const QModelIndexList rows = selection_model->selectedRows();
     for (const QModelIndex& model_index : rows) {
+        // Injected group-header rows carry no entry; skip them so bulk
+        // selections (Ctrl+A under grouping) only collect real items.
+        if (!m_pane->hasViewEntry(model_index.row())) {
+            continue;
+        }
         selection.entries.append(m_pane->entryAtViewRow(model_index.row()));
     }
 
@@ -4293,6 +4437,11 @@ void FileManagementExplorerPanel::invertCurrentSelection() {
     auto* selection_model = view->selectionModel();
     for (int row = 0; row < view->model()->rowCount(); ++row) {
         const QModelIndex left = view->model()->index(row, 0);
+        // Group-header rows are not selectable items; inverting must not
+        // toggle them into the selection.
+        if (!(view->model()->flags(left) & Qt::ItemIsSelectable)) {
+            continue;
+        }
         const QModelIndex right = view->model()->index(row, view->model()->columnCount() - 1);
         const QItemSelection row_selection(left, right);
         const bool selected = selection_model->isRowSelected(row, QModelIndex());
@@ -5812,8 +5961,7 @@ void FileManagementExplorerPanel::buildItemContextMenu(QMenu* menu,
 }
 
 // Background (empty-space) menu in the Files factory order: Layout / Sort by /
-// Refresh, the New group, Paste, then terminal. Group by lands with the C5
-// layout-fidelity wave.
+// Group by / Refresh, the New group, Paste, then terminal.
 void FileManagementExplorerPanel::buildBackgroundContextMenu(
     QMenu* menu, const FileExplorerCommandContext& context) {
     auto* layout_menu = menu->addMenu(tr("Layout"));
@@ -5834,7 +5982,10 @@ void FileManagementExplorerPanel::buildBackgroundContextMenu(
     }
     auto* sort_menu = menu->addMenu(tr("Sort by"));
     sort_menu->setObjectName(QStringLiteral("fileExplorerContextSortMenu"));
-    rebuildSortMenu(sort_menu);
+    rebuildSortMenu(sort_menu, false);
+    auto* group_menu = menu->addMenu(tr("Group by"));
+    group_menu->setObjectName(QStringLiteral("fileExplorerContextGroupMenu"));
+    rebuildGroupMenu(group_menu);
     addCommandMenuAction(menu, FileExplorerCommandId::Refresh, context);
     menu->addSeparator();
     auto* new_menu = menu->addMenu(tr("New"));

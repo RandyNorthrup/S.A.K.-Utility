@@ -107,8 +107,14 @@ private:
     /// Steps the pane history several entries at once, then loads once.
     void jumpHistory(int steps, bool back);
     /// Sort flyout (Files ArrangementOptions): sort-by + direction.
-    void rebuildSortMenu(QMenu* menu);
+    void rebuildSortMenu(QMenu* menu, bool include_grouping = true);
+    void rebuildGroupMenu(QMenu* menu);
+    void addGroupDirectionActions(QMenu* menu);
+    void addGroupDateUnitActions(QMenu* menu);
     void applySortOrder(int column, Qt::SortOrder order);
+    void applyGrouping(FileExplorerGroupOption option,
+                       FileExplorerGroupDateUnit date_unit,
+                       Qt::SortOrder order);
     /// Tab-actions flyout (Files TabStripHeader): split/arrange/close pane.
     void rebuildTabActionsMenu(QMenu* menu);
     void splitPane(Qt::Orientation orientation);

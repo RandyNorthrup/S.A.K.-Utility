@@ -44,16 +44,26 @@ void FileExplorerPane::buildModels() {
     m_item_model = new FileExplorerItemModel(this);
     m_sort_filter_model = new FileExplorerSortFilterModel(this);
     m_sort_filter_model->setSourceModel(m_item_model);
+    // Group-header proxy on top of the sorted rows (Files grouped
+    // collections); transparent identity mapping while grouping is off.
+    m_group_proxy = new FileExplorerGroupProxyModel(this);
+    m_group_proxy->setSourceModel(m_sort_filter_model);
     m_columns_preview_model = new FileExplorerItemModel(this);
     m_columns_preview_proxy = new FileExplorerSortFilterModel(this);
     m_columns_preview_proxy->setSourceModel(m_columns_preview_model);
-    m_selection_model = new QItemSelectionModel(m_sort_filter_model, this);
+    m_selection_model = new QItemSelectionModel(m_group_proxy, this);
+    connect(m_group_proxy, &QAbstractItemModel::modelReset, this, [this]() {
+        applyGroupHeaderSpans();
+    });
+    connect(m_group_proxy, &QAbstractItemModel::layoutChanged, this, [this]() {
+        applyGroupHeaderSpans();
+    });
 }
 
 void FileExplorerPane::buildItemViews() {
     m_view_stack = new QStackedWidget(this);
     m_details_view = new FileExplorerDetailsView(this);
-    m_details_view->setModel(m_sort_filter_model);
+    m_details_view->setModel(m_group_proxy);
     m_details_view->setSelectionModel(m_selection_model);
     m_view_stack->addWidget(m_details_view);
 
@@ -144,6 +154,10 @@ FileExplorerSortFilterModel* FileExplorerPane::sortFilterModel() const {
     return m_sort_filter_model;
 }
 
+FileExplorerGroupProxyModel* FileExplorerPane::groupProxyModel() const {
+    return m_group_proxy;
+}
+
 QTableView* FileExplorerPane::tableView() const {
     return m_details_view;
 }
@@ -198,14 +212,15 @@ FileManagementEntry FileExplorerPane::entryAtViewRow(const int row) const {
     if (!hasViewEntry(row)) {
         return {};
     }
-    const QModelIndex proxy_index = m_sort_filter_model->index(row,
-                                                               FileExplorerItemModel::NameColumn);
+    const QModelIndex group_index = m_group_proxy->index(row, FileExplorerItemModel::NameColumn);
+    const QModelIndex proxy_index = m_group_proxy->mapToSource(group_index);
     const QModelIndex source_index = m_sort_filter_model->mapToSource(proxy_index);
     return m_item_model->entryAt(source_index.row());
 }
 
 bool FileExplorerPane::hasViewEntry(const int row) const {
-    return m_sort_filter_model && m_item_model && row >= 0 && row < m_sort_filter_model->rowCount();
+    return m_group_proxy && m_sort_filter_model && m_item_model && row >= 0 &&
+           row < m_group_proxy->rowCount() && !m_group_proxy->isHeaderRow(row);
 }
 
 FileExplorerViewMode FileExplorerPane::viewMode() const {
@@ -248,6 +263,14 @@ void FileExplorerPane::setViewMode(const FileExplorerViewMode mode) {
         m_view_stack->setCurrentWidget(m_columns_container);
         updateColumnsPreviewRequest();
         break;
+    }
+}
+
+void FileExplorerPane::setGrouping(const FileExplorerGroupOption option,
+                                   const FileExplorerGroupDateUnit date_unit,
+                                   const Qt::SortOrder direction) {
+    if (m_group_proxy) {
+        m_group_proxy->setGrouping(option, date_unit, direction);
     }
 }
 
@@ -325,7 +348,7 @@ void FileExplorerPane::configureListView(QListView* view,
         return;
     }
     view->setObjectName(object_name);
-    view->setModel(m_sort_filter_model);
+    view->setModel(m_group_proxy);
     view->setSelectionModel(m_selection_model);
     view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     view->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -398,6 +421,23 @@ void FileExplorerPane::applyLayoutSizes() {
     if (m_columns_preview_view) {
         m_columns_preview_view->setIconSize(QSize(columnsIcon, columnsIcon));
         m_columns_preview_view->setGridSize(columnsCell);
+    }
+}
+
+void FileExplorerPane::applyGroupHeaderSpans() {
+    // Files renders group headers full-width above each section; in the
+    // details table the injected header rows span every column.
+    if (!m_details_view || !m_group_proxy) {
+        return;
+    }
+    m_details_view->clearSpans();
+    const int columns = m_group_proxy->columnCount();
+    if (columns <= 1) {
+        return;
+    }
+    const QVector<int> header_rows = m_group_proxy->headerRows();
+    for (const int row : header_rows) {
+        m_details_view->setSpan(row, 0, 1, columns);
     }
 }
 

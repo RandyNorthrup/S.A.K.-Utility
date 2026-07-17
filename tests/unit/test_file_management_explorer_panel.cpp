@@ -925,6 +925,112 @@ private Q_SLOTS:
         QCOMPARE(pane->layoutSizes().grid, gridKindBefore);
     }
 
+    void groupByMenuGroupsRowsWithHeadersAndPersists() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto writeBytes = [](const QString& path, const int size) {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                return false;
+            }
+            return file.write(QByteArray(size, 'x')) == size;
+        };
+        QVERIFY(writeBytes(dir.filePath(QStringLiteral("alpha.txt")), 10));
+        QVERIFY(writeBytes(dir.filePath(QStringLiteral("beta.bin")), 42));
+        QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("stuff")));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        QVERIFY(pane);
+        QVERIFY(table);
+        QVERIFY(pathEdit);
+        QVERIFY(targetList);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No local File Explorer target for the temp drive on this host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha")) >= 0);
+
+        // Group by Size from the sort flyout (the Files toolbar grouping
+        // surface): sections become Folders and Tiny with header rows.
+        triggerGroupActionInSortFlyout(panel, QStringLiteral("Size"));
+
+        // 3 items plus 2 injected section headers.
+        QTRY_COMPARE(table->model()->rowCount(), 5);
+        QCOMPARE(pane->groupProxyModel()->headerRows(), (QVector<int>{0, 2}));
+        QCOMPARE(table->model()->index(0, 0).data().toString(), QStringLiteral("Folders"));
+        QVERIFY(table->model()->index(2, 0).data().toString().startsWith(QStringLiteral("Tiny")));
+        // Details header rows span the full column set (Files full-width
+        // group headers).
+        QCOMPARE(table->columnSpan(0, 0), table->model()->columnCount());
+        QVERIFY(!pane->hasViewEntry(0));
+        QVERIFY(pane->hasViewEntry(1));
+        QCOMPARE(pane->entryAtViewRow(1).name, QStringLiteral("stuff"));
+
+        verifyGroupedSelectionPersistenceAndReset(panel, pane, table);
+    }
+
+    void triggerGroupActionInSortFlyout(sak::FileManagementExplorerPanel& panel,
+                                        const QString& prefix) {
+        auto* sortButton = child<QToolButton>(&panel, "fileExplorerSortButton");
+        QVERIFY(sortButton);
+        QVERIFY(sortButton->menu());
+        sortButton->menu()->popup(QPoint(10, 10));
+        QApplication::processEvents();
+        auto* groupMenu =
+            sortButton->menu()->findChild<QMenu*>(QStringLiteral("fileExplorerGroupBySubmenu"));
+        QVERIFY(groupMenu);
+        QAction* action = actionStartingWith(groupMenu, prefix);
+        QVERIFY(action);
+        action->trigger();
+        sortButton->menu()->hide();
+        QApplication::processEvents();
+    }
+
+    void verifyGroupedSelectionPersistenceAndReset(sak::FileManagementExplorerPanel& panel,
+                                                   sak::FileExplorerPane* pane,
+                                                   QTableView* table) {
+        // Select-all collects only real items, never the header rows.
+        table->selectAll();
+        QApplication::processEvents();
+        int real_rows = 0;
+        const QModelIndexList selected = pane->sharedSelectionModel()->selectedRows();
+        for (const QModelIndex& index : selected) {
+            if (pane->hasViewEntry(index.row())) {
+                ++real_rows;
+            }
+        }
+        QCOMPARE(real_rows, 3);
+
+        // The grouping preference persists per-location under the Files
+        // setting name.
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        settings.beginGroup(QStringLiteral("View"));
+        bool found = false;
+        const QStringList groups = settings.childGroups();
+        for (const QString& group : groups) {
+            settings.beginGroup(group);
+            if (settings.value(QStringLiteral("GroupOption")).toString() ==
+                QStringLiteral("size")) {
+                found = true;
+            }
+            settings.endGroup();
+        }
+        QVERIFY(found);
+
+        // None restores the flat listing.
+        triggerGroupActionInSortFlyout(panel, QStringLiteral("None"));
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        QVERIFY(pane->groupProxyModel()->headerRows().isEmpty());
+    }
+
     void sidebarGroupsExposeFilesLikeTargets() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1280, 760);

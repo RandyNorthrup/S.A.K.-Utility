@@ -26,6 +26,12 @@ void writePane(QSettings& settings, const QString& prefix, const FileExplorerPan
     settings.setValue(prefix + QStringLiteral("columnsSize"), pane.view.sizes.columns);
     settings.setValue(prefix + QStringLiteral("sortKey"), pane.view.sort_key);
     settings.setValue(prefix + QStringLiteral("sortOrder"), static_cast<int>(pane.view.sort_order));
+    settings.setValue(prefix + QStringLiteral("groupOption"),
+                      static_cast<int>(pane.view.group_option));
+    settings.setValue(prefix + QStringLiteral("groupOrder"),
+                      static_cast<int>(pane.view.group_order));
+    settings.setValue(prefix + QStringLiteral("groupDateUnit"),
+                      static_cast<int>(pane.view.group_date_unit));
 }
 
 FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
@@ -55,6 +61,19 @@ FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
         settings.value(prefix + QStringLiteral("sortKey"), QStringLiteral("name")).toString();
     pane.view.sort_order = static_cast<Qt::SortOrder>(
         settings.value(prefix + QStringLiteral("sortOrder"), static_cast<int>(Qt::AscendingOrder))
+            .toInt());
+    pane.view.group_option = static_cast<FileExplorerGroupOption>(
+        settings
+            .value(prefix + QStringLiteral("groupOption"),
+                   static_cast<int>(FileExplorerGroupOption::None))
+            .toInt());
+    pane.view.group_order = static_cast<Qt::SortOrder>(
+        settings.value(prefix + QStringLiteral("groupOrder"), static_cast<int>(Qt::AscendingOrder))
+            .toInt());
+    pane.view.group_date_unit = static_cast<FileExplorerGroupDateUnit>(
+        settings
+            .value(prefix + QStringLiteral("groupDateUnit"),
+                   static_cast<int>(FileExplorerGroupDateUnit::Year))
             .toInt());
     return pane;
 }

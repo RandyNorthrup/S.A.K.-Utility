@@ -4,10 +4,13 @@
 /// @file test_file_explorer_item_model.cpp
 /// @brief Unit tests for File Explorer item model.
 
+#include "sak/file_explorer_group_proxy_model.h"
+#include "sak/file_explorer_grouping.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_sort_filter_model.h"
 
 #include <QDateTime>
+#include <QLocale>
 #include <QMimeData>
 #include <QTimeZone>
 #include <QtTest/QtTest>
@@ -312,6 +315,170 @@ private Q_SLOTS:
                  QStringLiteral("z.bin"));
         QCOMPARE(proxy.index(2, sak::FileExplorerItemModel::NameColumn).data().toString(),
                  QStringLiteral("a.bin"));
+    }
+
+    void groupInfoMatchesFilesBuckets() {
+        using sak::FileExplorerGroupDateUnit;
+        using sak::FileExplorerGroupOption;
+        const QDateTime now(QDate(2026, 7, 16), QTime(12, 0));  // a Thursday
+
+        const auto info =
+            [&now](const sak::FileExplorerGroupSource& source,
+                   const FileExplorerGroupOption option,
+                   const FileExplorerGroupDateUnit unit = FileExplorerGroupDateUnit::Year) {
+                return sak::fileExplorerGroupInfo(source, option, unit, now);
+            };
+
+        // Name: first character uppercased, digits as-is (GroupingHelper).
+        sak::FileExplorerGroupSource named;
+        named.name = QStringLiteral("alpha.txt");
+        QCOMPARE(info(named, FileExplorerGroupOption::Name).text, QStringLiteral("A"));
+        named.name = QStringLiteral("1a");
+        QCOMPARE(info(named, FileExplorerGroupOption::Name).text, QStringLiteral("1"));
+
+        // Size buckets with the Files thresholds (strict greater-than).
+        sak::FileExplorerGroupSource sized;
+        const auto sizeText = [&](const quint64 bytes) {
+            sized.size_bytes = bytes;
+            return info(sized, FileExplorerGroupOption::Size).text;
+        };
+        QVERIFY(sizeText(10).startsWith(QStringLiteral("Tiny")));
+        QVERIFY(sizeText(16'000).startsWith(QStringLiteral("Tiny")));
+        QVERIFY(sizeText(20'000).startsWith(QStringLiteral("Small")));
+        QVERIFY(sizeText(2'000'000).startsWith(QStringLiteral("Medium")));
+        QVERIFY(sizeText(200'000'000).startsWith(QStringLiteral("Large")));
+        QVERIFY(sizeText(2'000'000'000ULL).startsWith(QStringLiteral("Very large")));
+        QVERIFY(sizeText(6'000'000'000ULL).startsWith(QStringLiteral("Huge")));
+        sized.directory = true;
+        QCOMPARE(info(sized, FileExplorerGroupOption::Size).text, QStringLiteral("Folders"));
+        QVERIFY(info(sized, FileExplorerGroupOption::Size).sort_index < 0);
+
+        // FileType: folders by type above files by lower-cased extension.
+        sak::FileExplorerGroupSource typed;
+        typed.name = QStringLiteral("Notes.TXT");
+        typed.type = QStringLiteral("file");
+        QCOMPARE(info(typed, FileExplorerGroupOption::FileType).text, QStringLiteral("txt"));
+        QCOMPARE(info(typed, FileExplorerGroupOption::FileType).sort_index, 1);
+        typed.name = QStringLiteral("README");
+        QCOMPARE(info(typed, FileExplorerGroupOption::FileType).text, QStringLiteral("file"));
+        typed.directory = true;
+        typed.type = QStringLiteral("directory");
+        QCOMPARE(info(typed, FileExplorerGroupOption::FileType).sort_index, 0);
+
+        // FileTag: first tag, Untagged bucket sorts below tagged.
+        sak::FileExplorerGroupSource tagged;
+        tagged.tags = {QStringLiteral("red"), QStringLiteral("keep")};
+        QCOMPARE(info(tagged, FileExplorerGroupOption::FileTag).text, QStringLiteral("red"));
+        tagged.tags.clear();
+        QCOMPARE(info(tagged, FileExplorerGroupOption::FileTag).text, QStringLiteral("Untagged"));
+        QCOMPARE(info(tagged, FileExplorerGroupOption::FileTag).sort_index, 1);
+
+        // Option names round-trip for persistence.
+        QCOMPARE(sak::fileExplorerGroupOptionFromName(
+                     sak::fileExplorerGroupOptionName(FileExplorerGroupOption::DateModified)),
+                 FileExplorerGroupOption::DateModified);
+    }
+
+    void groupInfoMatchesFilesDateLadder() {
+        using sak::FileExplorerGroupDateUnit;
+        using sak::FileExplorerGroupOption;
+        const QDateTime now(QDate(2026, 7, 16), QTime(12, 0));  // a Thursday
+
+        // Date ladder (AbstractDateTimeFormatter.ToTimeSpanLabel).
+        sak::FileExplorerGroupSource dated;
+        const auto dateText = [&](const QDate date, const FileExplorerGroupDateUnit unit) {
+            dated.modified_time = QDateTime(date, QTime(9, 0));
+            return sak::fileExplorerGroupInfo(
+                       dated, FileExplorerGroupOption::DateModified, unit, now)
+                .text;
+        };
+        const auto yearUnit = FileExplorerGroupDateUnit::Year;
+        QCOMPARE(dateText(QDate(2026, 7, 20), yearUnit), QStringLiteral("Future"));
+        QCOMPARE(dateText(QDate(2026, 7, 16), yearUnit), QStringLiteral("Today"));
+        QCOMPARE(dateText(QDate(2026, 7, 15), yearUnit), QStringLiteral("Yesterday"));
+        QCOMPARE(dateText(QDate(2026, 7, 14), yearUnit), QStringLiteral("Earlier this week"));
+        QCOMPARE(dateText(QDate(2026, 7, 8), yearUnit), QStringLiteral("Last week"));
+        QCOMPARE(dateText(QDate(2026, 7, 1), yearUnit), QStringLiteral("Earlier this month"));
+        QCOMPARE(dateText(QDate(2026, 6, 20), yearUnit), QStringLiteral("Last month"));
+        QCOMPARE(dateText(QDate(2026, 3, 1), yearUnit), QStringLiteral("Earlier this year"));
+        QCOMPARE(dateText(QDate(2025, 12, 1), yearUnit), QStringLiteral("Last year"));
+        QCOMPARE(dateText(QDate(2023, 5, 1), yearUnit), QStringLiteral("2023"));
+        // Month unit: beyond Last month the label is the specific month.
+        QCOMPARE(dateText(QDate(2026, 3, 1), FileExplorerGroupDateUnit::Month),
+                 QLocale().toString(QDate(2026, 3, 1), QStringLiteral("MMMM yyyy")));
+        // Day unit: beyond Yesterday the label is the specific date.
+        QCOMPARE(dateText(QDate(2026, 7, 14), FileExplorerGroupDateUnit::Day),
+                 QLocale().toString(QDate(2026, 7, 14), QLocale::LongFormat));
+    }
+
+    void groupProxyInjectsHeadersAndMapsRows() {
+        sak::FileExplorerItemModel model;
+        model.setEntries({fileEntry(QStringLiteral("z-big.bin"), 20'000'000),
+                          directoryEntry(QStringLiteral("Alpha")),
+                          fileEntry(QStringLiteral("a.bin"), 20),
+                          fileEntry(QStringLiteral("notes.txt"), 42)});
+        sak::FileExplorerSortFilterModel sort_proxy;
+        sort_proxy.setSourceModel(&model);
+        sort_proxy.sort(sak::FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
+        sak::FileExplorerGroupProxyModel group_proxy;
+        group_proxy.setSourceModel(&sort_proxy);
+
+        // Identity while grouping is off: same rows, selectable, no headers.
+        QCOMPARE(group_proxy.rowCount(), 4);
+        QVERIFY(group_proxy.headerRows().isEmpty());
+        QCOMPARE(group_proxy.index(0, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("Alpha"));
+        QVERIFY(group_proxy.flags(group_proxy.index(0, 0)).testFlag(Qt::ItemIsSelectable));
+
+        // Size grouping: Folders, then Tiny (both small files), then Medium.
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::Size,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::AscendingOrder);
+        QCOMPARE(group_proxy.rowCount(), 7);
+        QCOMPARE(group_proxy.headerRows(), (QVector<int>{0, 2, 5}));
+        QCOMPARE(group_proxy.index(0, 0).data().toString(), QStringLiteral("Folders"));
+        QVERIFY(group_proxy.index(0, 0)
+                    .data(sak::FileExplorerGroupProxyModel::IsGroupHeaderRole)
+                    .toBool());
+        QVERIFY(!group_proxy.flags(group_proxy.index(0, 0)).testFlag(Qt::ItemIsSelectable));
+        QVERIFY(!group_proxy.mapToSource(group_proxy.index(0, 0)).isValid());
+        QCOMPARE(group_proxy.index(1, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("Alpha"));
+        QVERIFY(group_proxy.index(2, 0).data().toString().startsWith(QStringLiteral("Tiny")));
+        QCOMPARE(group_proxy.index(3, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("a.bin"));
+        QCOMPARE(group_proxy.index(4, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("notes.txt"));
+        QVERIFY(group_proxy.index(5, 0).data().toString().startsWith(QStringLiteral("Medium")));
+        QCOMPARE(group_proxy.index(6, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("z-big.bin"));
+
+        // Column headers forward by section even with an injected row 0.
+        QCOMPARE(
+            group_proxy
+                .headerData(sak::FileExplorerItemModel::NameColumn, Qt::Horizontal, Qt::DisplayRole)
+                .toString(),
+            QStringLiteral("Name"));
+
+        // mapFromSource lands on the grouped position.
+        const QModelIndex source_alpha = sort_proxy.index(0,
+                                                          sak::FileExplorerItemModel::NameColumn);
+        QCOMPARE(source_alpha.data().toString(), QStringLiteral("Alpha"));
+        QCOMPARE(group_proxy.mapFromSource(source_alpha).row(), 1);
+
+        // Descending direction reverses the group section order.
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::Size,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::DescendingOrder);
+        QVERIFY(group_proxy.index(0, 0).data().toString().startsWith(QStringLiteral("Medium")));
+        QCOMPARE(group_proxy.index(6, sak::FileExplorerItemModel::NameColumn).data().toString(),
+                 QStringLiteral("Alpha"));
+
+        // None restores the identity mapping.
+        group_proxy.setGrouping(sak::FileExplorerGroupOption::None,
+                                sak::FileExplorerGroupDateUnit::Year,
+                                Qt::AscendingOrder);
+        QCOMPARE(group_proxy.rowCount(), 4);
     }
 };
 

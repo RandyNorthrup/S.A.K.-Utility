@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/file_explorer_grouping.h"
 #include "sak/file_management_file_system.h"
 #include "sak/layout_constants.h"
 
@@ -120,6 +121,9 @@ struct FileExplorerViewSettings {
     FileExplorerLayoutSizes sizes;
     QString sort_key{QStringLiteral("name")};
     Qt::SortOrder sort_order{Qt::AscendingOrder};
+    FileExplorerGroupOption group_option{FileExplorerGroupOption::None};
+    FileExplorerGroupDateUnit group_date_unit{FileExplorerGroupDateUnit::Year};
+    Qt::SortOrder group_order{Qt::AscendingOrder};
 };
 
 struct FileExplorerPaneState {

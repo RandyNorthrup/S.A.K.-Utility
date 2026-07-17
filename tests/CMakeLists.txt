@@ -1025,8 +1025,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_item_model.cpp")
         unit/test_file_explorer_item_model.cpp
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
+        ../src/core/file_explorer_grouping.cpp
+        ../src/core/file_explorer_group_proxy_model.cpp
         ../include/sak/file_explorer_item_model.h
         ../include/sak/file_explorer_sort_filter_model.h
+        ../include/sak/file_explorer_grouping.h
+        ../include/sak/file_explorer_group_proxy_model.h
         ../include/sak/file_management_file_system.h
     )
     set_target_properties(test_file_explorer_item_model PROPERTIES
@@ -1062,6 +1066,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/gui/file_management_explorer_panel.cpp
         ../src/core/file_explorer_types.cpp
         ../src/core/file_explorer_layout_metrics.cpp
+        ../src/core/file_explorer_grouping.cpp
+        ../src/core/file_explorer_group_proxy_model.cpp
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
@@ -1102,6 +1108,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../include/sak/file_management_explorer_panel.h
         ../include/sak/file_explorer_types.h
         ../include/sak/file_explorer_layout_metrics.h
+        ../include/sak/file_explorer_grouping.h
+        ../include/sak/file_explorer_group_proxy_model.h
         ../include/sak/file_explorer_item_model.h
         ../include/sak/file_explorer_sort_filter_model.h
         ../include/sak/file_explorer_command_registry.h
