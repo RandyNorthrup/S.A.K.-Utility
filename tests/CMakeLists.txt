@@ -1063,6 +1063,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_session_store.cpp
         ../src/core/file_explorer_tag_store.cpp
         ../src/core/file_explorer_archive_service.cpp
+        ../src/gui/file_explorer_properties_dialog.cpp
+        ../include/sak/file_explorer_properties_dialog.h
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/recycle_bin.cpp

@@ -10,6 +10,7 @@
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
+#include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_session_store.h"
 #include "sak/file_explorer_style.h"
 #include "sak/file_explorer_tag_store.h"
@@ -3742,8 +3743,52 @@ bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerComm
 
 void FileManagementExplorerPanel::showSelectedItemProperties() {
     updateDetailsPane();
-    if (m_details_pane) {
-        m_details_pane->showDetailsTab();
+    const FileExplorerSelection selection = currentSelection();
+    if (selection.isEmpty()) {
+        // No selection: fall back to the info pane's Details tab.
+        if (m_details_pane) {
+            m_details_pane->showDetailsTab();
+        }
+        return;
+    }
+    // Files OpenPropertiesAction (Alt+Enter): a real Properties window. The
+    // name field doubles as a rename that commits on OK.
+    auto* dialog = new FileExplorerPropertiesDialog(currentTarget(), selection.entries, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog, &QDialog::accepted, this, [this, dialog]() {
+        commitPropertiesRename(dialog->originalName(), dialog->editedName());
+    });
+    dialog->show();
+}
+
+void FileManagementExplorerPanel::commitPropertiesRename(const QString& original,
+                                                         const QString& edited) {
+    if (original.isEmpty() || edited.isEmpty() || edited == original) {
+        return;
+    }
+    const FileManagementTarget target = currentTarget();
+    if (!target.can_write_files || !isSafeChildName(edited)) {
+        sak::showWarningLogged(this, tr("Rename"), tr("Enter a name without path separators."));
+        return;
+    }
+    if (target.local_file_system && isReservedWindowsName(edited)) {
+        sak::showWarningLogged(this,
+                               tr("Rename"),
+                               tr("'%1' is a reserved name on Windows.").arg(edited));
+        return;
+    }
+    QString identity_blocker;
+    if (!validateCurrentTargetIdentity(&identity_blocker)) {
+        sak::showWarningLogged(this, tr("Rename"), identity_blocker);
+        return;
+    }
+    const auto result = FileManagementFileSystemBridge::renameEntry(
+        target,
+        childPathFor(m_current_path, original, target.local_file_system),
+        childPathFor(m_current_path, edited, target.local_file_system));
+    showMutationResult(tr("Rename"), result);
+    if (result.ok) {
+        loadDirectory(m_current_path);
     }
 }
 

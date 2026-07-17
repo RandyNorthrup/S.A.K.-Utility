@@ -319,6 +319,7 @@ private:
     void buildBackgroundContextMenu(QMenu* menu, const FileExplorerCommandContext& context);
     void addTagsSubmenu(QMenu* menu, const FileExplorerCommandContext& context);
     void toggleTagOnSelection(const QString& tag, bool add);
+    void commitPropertiesRename(const QString& original, const QString& edited);
     void removeTagsFromSelection();
     void createFolderWithSelection();
     void openTerminalHere();

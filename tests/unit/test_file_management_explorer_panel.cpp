@@ -11,6 +11,7 @@
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_pane.h"
+#include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_sort_filter_model.h"
 #include "sak/file_management_explorer_panel.h"
 
@@ -978,6 +979,72 @@ private Q_SLOTS:
         QVERIFY(targetActions.contains(QStringLiteral("Refresh Mounted Targets")));
         QVERIFY(targetActions.contains(QStringLiteral("Scan Disks")));
         QVERIFY(targetActions.contains(QStringLiteral("Add Raw/Image")));
+    }
+
+    void propertiesWindowShowsGeneralComputesHashesAndRenames() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QByteArray payload = QByteArrayLiteral("properties payload");
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("props.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), payload.size());
+        }
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("props")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Alt+Enter (Files OpenPropertiesAction) opens the Properties window.
+        QVERIFY(selectRowStable(table, QStringLiteral("props")));
+        QTest::keyClick(table, Qt::Key_Return, Qt::AltModifier);
+        sak::FileExplorerPropertiesDialog* dialog = nullptr;
+        QTRY_VERIFY((dialog = panel.findChild<sak::FileExplorerPropertiesDialog*>(
+                         QStringLiteral("fileExplorerPropertiesDialog"))) != nullptr);
+        auto* name = dialog->findChild<QLineEdit*>(QStringLiteral("fileExplorerPropertiesName"));
+        auto* size = dialog->findChild<QLabel*>(QStringLiteral("fileExplorerPropertiesSize"));
+        auto* tabs = dialog->findChild<QTabWidget*>(QStringLiteral("fileExplorerPropertiesTabs"));
+        QVERIFY(name);
+        QVERIFY(size);
+        QVERIFY(tabs);
+        QCOMPARE(name->text(), QStringLiteral("props.txt"));
+        QTRY_VERIFY(size->text() != QStringLiteral("Calculating..."));
+
+        // The Hashes tab computes lazily on first open; SHA-256 must match.
+        QCOMPARE(tabs->count(), 2);
+        tabs->setCurrentIndex(1);
+        auto* sha =
+            dialog->findChild<QLabel*>(QStringLiteral("fileExplorerPropertiesHash-SHA-256"));
+        QVERIFY(sha);
+        const QString expected = QString::fromLatin1(
+            QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+        QTRY_COMPARE_WITH_TIMEOUT(sha->text(), expected, 5000);
+
+        // Editing the name and accepting commits a rename through the bridge.
+        name->setText(QStringLiteral("props2.txt"));
+        dialog->accept();
+        QVERIFY2(QTest::qWaitFor(
+                     [&dir]() {
+                         return QFile::exists(
+                             QDir(dir.path()).filePath(QStringLiteral("props2.txt")));
+                     },
+                     5000),
+                 "properties rename did not land");
+        QVERIFY(!QFile::exists(QDir(dir.path()).filePath(QStringLiteral("props.txt"))));
     }
 
     void archiveServiceRoundTripsAndDetectsSingleRoot() {

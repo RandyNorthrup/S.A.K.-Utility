@@ -352,6 +352,8 @@ set(CORE_SOURCES
     src/core/file_explorer_tag_store.cpp
     src/core/file_explorer_archive_service.cpp
     include/sak/file_explorer_archive_service.h
+    src/gui/file_explorer_properties_dialog.cpp
+    include/sak/file_explorer_properties_dialog.h
     src/core/file_management_file_system.cpp
     src/core/apfs_crypto.cpp
     src/core/apfs_keybag.cpp
