@@ -5,6 +5,7 @@
 /// @brief Unit tests for File Explorer state and command registry.
 
 #include "sak/file_explorer_command_registry.h"
+#include "sak/file_explorer_layout_metrics.h"
 
 #include <QtTest/QtTest>
 
@@ -562,6 +563,78 @@ private Q_SLOTS:
                  sak::FileExplorerCommandGroup::Target);
         QCOMPARE(Registry::group(sak::FileExplorerCommandId::Hash),
                  sak::FileExplorerCommandGroup::Safety);
+    }
+
+    void layoutMetricsMatchFilesSizeKindTables() {
+        using sak::FileExplorerViewMode;
+
+        // Files *ViewSizeKind enums: Details/List/Columns 1..5, Cards 1..4,
+        // Grid 1..12; Adaptive shares the Grid size kind.
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Details), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::List), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Columns), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Cards), 4);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Grid), 12);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Adaptive), 12);
+
+        // LayoutSizeKindHelper.GetDetailsViewRowHeight / GetListViewRowHeight.
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Details, 1), 28);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Details, 5), 48);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::List, 1), 24);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Columns, 5), 44);
+
+        // GetGridViewItemWidth: 80 + 20 per kind up to 300.
+        QCOMPARE(sak::fileExplorerGridItemWidth(1), 80);
+        QCOMPARE(sak::fileExplorerGridItemWidth(8), 220);
+        QCOMPARE(sak::fileExplorerGridItemWidth(12), 300);
+
+        // GetIconSize: compact layouts 16/16/20/24/48, Cards 64/64/80/96,
+        // Grid 96 then 128 through kind 8 then 256.
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Details, 2), 16);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::List, 5), 48);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Cards, 4), 96);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 1), 96);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 8), 128);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 9), 256);
+
+        // Defaults: Details/List/Cards/Columns Small, Grid Large.
+        const sak::FileExplorerLayoutSizes defaults;
+        QCOMPARE(defaults.details, 2);
+        QCOMPARE(defaults.list, 2);
+        QCOMPARE(defaults.cards, 1);
+        QCOMPARE(defaults.grid, 8);
+        QCOMPARE(defaults.columns, 2);
+
+        // Out-of-range kinds clamp instead of reading past the tables.
+        sak::FileExplorerLayoutSizes wild;
+        wild.grid = 99;
+        wild.cards = 0;
+        sak::clampFileExplorerLayoutSizes(wild);
+        QCOMPARE(wild.grid, 12);
+        QCOMPARE(wild.cards, 1);
+    }
+
+    void layoutCyclerRingMatchesFilesOrder() {
+        using sak::FileExplorerViewMode;
+
+        // Files LayoutCycler: Details -> List -> Cards -> Grid -> Columns,
+        // wrapping in both directions; Adaptive resolves as Grid.
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Details, true),
+                 FileExplorerViewMode::List);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::List, true),
+                 FileExplorerViewMode::Cards);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Cards, true),
+                 FileExplorerViewMode::Grid);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Grid, true),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Columns, true),
+                 FileExplorerViewMode::Details);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Details, false),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Adaptive, true),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Adaptive, false),
+                 FileExplorerViewMode::Cards);
     }
 };
 

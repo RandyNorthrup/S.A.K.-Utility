@@ -3,15 +3,16 @@
 
 #include "sak/file_explorer_pane.h"
 
+#include "sak/file_explorer_layout_metrics.h"
 #include "sak/file_explorer_name_delegate.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QVBoxLayout>
 
-#include <algorithm>
 #include <utility>
 
 namespace sak {
@@ -24,7 +25,7 @@ FileExplorerPane::FileExplorerPane(QWidget* parent) : QWidget(parent) {
     buildStateLabel(layout);
     buildModels();
     buildItemViews();
-    applyItemSize();
+    applyLayoutSizes();
     layout->addWidget(m_view_stack, 1);
     buildStatusLabel(layout);
     connectSignals();
@@ -211,8 +212,8 @@ FileExplorerViewMode FileExplorerPane::viewMode() const {
     return m_view_mode;
 }
 
-int FileExplorerPane::itemSizePx() const {
-    return m_item_size_px;
+FileExplorerLayoutSizes FileExplorerPane::layoutSizes() const {
+    return m_layout_sizes;
 }
 
 bool FileExplorerPane::showHiddenItems() const {
@@ -250,14 +251,14 @@ void FileExplorerPane::setViewMode(const FileExplorerViewMode mode) {
     }
 }
 
-void FileExplorerPane::setItemSizePx(const int item_size_px) {
-    const int clamped =
-        std::clamp(item_size_px, kFileExplorerItemSizeMin, kFileExplorerItemSizeMax);
-    if (m_item_size_px == clamped) {
+void FileExplorerPane::setLayoutSizes(const FileExplorerLayoutSizes& sizes) {
+    FileExplorerLayoutSizes clamped = sizes;
+    clampFileExplorerLayoutSizes(clamped);
+    if (m_layout_sizes == clamped) {
         return;
     }
-    m_item_size_px = clamped;
-    applyItemSize();
+    m_layout_sizes = clamped;
+    applyLayoutSizes();
 }
 
 void FileExplorerPane::setShowHiddenItems(const bool show) {
@@ -354,37 +355,49 @@ void FileExplorerPane::configureColumnsPreviewView(QListView* view) {
     view->setAccessibleName(tr("File explorer columns child preview"));
 }
 
-void FileExplorerPane::applyItemSize() {
-    const QSize iconSize(m_item_size_px, m_item_size_px);
+void FileExplorerPane::applyLayoutSizes() {
+    // Files LayoutSizeKindHelper: each layout's size kind drives its row
+    // height (or grid cell) and icon edge; kinds are independent per layout.
+    if (m_details_view) {
+        const int icon = fileExplorerIconSize(FileExplorerViewMode::Details,
+                                              m_layout_sizes.details);
+        m_details_view->setIconSize(QSize(icon, icon));
+        m_details_view->verticalHeader()->setDefaultSectionSize(
+            fileExplorerRowHeight(FileExplorerViewMode::Details, m_layout_sizes.details));
+    }
     if (m_list_view) {
-        m_list_view->setIconSize(QSize(kFileExplorerListIconSize, kFileExplorerListIconSize));
-        m_list_view->setGridSize(QSize(kFileExplorerListCellW, kFileExplorerListCellH));
+        const int icon = fileExplorerIconSize(FileExplorerViewMode::List, m_layout_sizes.list);
+        m_list_view->setIconSize(QSize(icon, icon));
+        m_list_view->setGridSize(
+            QSize(kFileExplorerListCellW,
+                  fileExplorerRowHeight(FileExplorerViewMode::List, m_layout_sizes.list)));
     }
     if (m_grid_view) {
-        m_grid_view->setIconSize(iconSize);
-        m_grid_view->setGridSize(QSize(
-            std::max(kFileExplorerGridMinCellW, m_item_size_px + kFileExplorerGridCellExtraW),
-            std::max(kFileExplorerGridMinCellH, m_item_size_px + kFileExplorerGridCellExtraH)));
+        const int icon = fileExplorerIconSize(FileExplorerViewMode::Grid, m_layout_sizes.grid);
+        m_grid_view->setIconSize(QSize(icon, icon));
+        m_grid_view->setGridSize(
+            QSize(fileExplorerGridItemWidth(m_layout_sizes.grid),
+                  fileExplorerRowHeight(FileExplorerViewMode::Grid, m_layout_sizes.grid)));
     }
     if (m_cards_view) {
-        const int cardsIconSize = std::max(kFileExplorerCardsMinIconSize, m_item_size_px / 2);
-        m_cards_view->setIconSize(QSize(cardsIconSize, cardsIconSize));
-        m_cards_view->setGridSize(QSize(kFileExplorerCardsCellW,
-                                        std::max(kFileExplorerCardsMinCellH,
-                                                 m_item_size_px + kFileExplorerCardsCellExtraH)));
+        const int icon = fileExplorerIconSize(FileExplorerViewMode::Cards, m_layout_sizes.cards);
+        m_cards_view->setIconSize(QSize(icon, icon));
+        m_cards_view->setGridSize(
+            QSize(kFileExplorerCardsCellW,
+                  fileExplorerRowHeight(FileExplorerViewMode::Cards, m_layout_sizes.cards)));
     }
+    const int columnsIcon = fileExplorerIconSize(FileExplorerViewMode::Columns,
+                                                 m_layout_sizes.columns);
+    const QSize columnsCell(kFileExplorerColumnsMinCellW,
+                            fileExplorerRowHeight(FileExplorerViewMode::Columns,
+                                                  m_layout_sizes.columns));
     if (m_columns_view) {
-        m_columns_view->setIconSize(QSize(kFileExplorerListIconSize, kFileExplorerListIconSize));
-        m_columns_view->setGridSize(QSize(std::max(kFileExplorerColumnsMinCellW,
-                                                   m_item_size_px * kFileExplorerColumnsCellScale),
-                                          kFileExplorerColumnsCellH));
+        m_columns_view->setIconSize(QSize(columnsIcon, columnsIcon));
+        m_columns_view->setGridSize(columnsCell);
     }
     if (m_columns_preview_view) {
-        m_columns_preview_view->setIconSize(
-            QSize(kFileExplorerListIconSize, kFileExplorerListIconSize));
-        m_columns_preview_view->setGridSize(QSize(
-            std::max(kFileExplorerColumnsMinCellW, m_item_size_px * kFileExplorerColumnsCellScale),
-            kFileExplorerColumnsCellH));
+        m_columns_preview_view->setIconSize(QSize(columnsIcon, columnsIcon));
+        m_columns_preview_view->setGridSize(columnsCell);
     }
 }
 

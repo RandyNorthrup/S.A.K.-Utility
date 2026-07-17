@@ -948,8 +948,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
     add_executable(test_file_explorer_types
         unit/test_file_explorer_types.cpp
         ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_layout_metrics.cpp
         ../src/core/file_explorer_command_registry.cpp
         ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_layout_metrics.h
         ../include/sak/file_explorer_command_registry.h
         ../include/sak/file_management_file_system.h
     )
@@ -973,8 +975,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_session_store.cpp
     add_executable(test_file_explorer_session_store
         unit/test_file_explorer_session_store.cpp
         ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_layout_metrics.cpp
         ../src/core/file_explorer_session_store.cpp
         ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_layout_metrics.h
         ../include/sak/file_explorer_session_store.h
         ../include/sak/file_management_file_system.h
     )
@@ -1057,6 +1061,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/gui/file_explorer_style.cpp
         ../src/gui/file_management_explorer_panel.cpp
         ../src/core/file_explorer_types.cpp
+        ../src/core/file_explorer_layout_metrics.cpp
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
@@ -1096,6 +1101,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../include/sak/file_explorer_details_pane.h
         ../include/sak/file_management_explorer_panel.h
         ../include/sak/file_explorer_types.h
+        ../include/sak/file_explorer_layout_metrics.h
         ../include/sak/file_explorer_item_model.h
         ../include/sak/file_explorer_sort_filter_model.h
         ../include/sak/file_explorer_command_registry.h

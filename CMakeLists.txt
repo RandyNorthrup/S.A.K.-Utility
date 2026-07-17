@@ -345,6 +345,7 @@ set(CORE_SOURCES
     src/core/diagnostic_controller.cpp
     src/core/file_recovery_engine.cpp
     src/core/file_explorer_types.cpp
+    src/core/file_explorer_layout_metrics.cpp
     src/core/file_explorer_item_model.cpp
     src/core/file_explorer_sort_filter_model.cpp
     src/core/file_explorer_command_registry.cpp
@@ -442,6 +443,7 @@ set(CORE_SOURCES
     include/sak/diagnostic_controller.h
     include/sak/file_recovery_engine.h
     include/sak/file_explorer_types.h
+    include/sak/file_explorer_layout_metrics.h
     include/sak/file_explorer_item_model.h
     include/sak/file_explorer_sort_filter_model.h
     include/sak/file_explorer_command_registry.h

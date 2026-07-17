@@ -98,11 +98,26 @@ struct FileExplorerItemCapabilities {
         const FileManagementTarget& target, const FileManagementEntry& entry);
 };
 
+// Files ILayoutSettingsService: one size kind per layout. Details, List, and
+// Columns span Compact(1)..ExtraLarge(5); Cards spans Small(1)..ExtraLarge(4);
+// Grid spans Small(1)..ExtraLarge(12). Defaults match LayoutSettingsService
+// (Details/List/Cards/Columns Small, Grid Large).
+struct FileExplorerLayoutSizes {
+    int details{2};
+    int list{2};
+    int cards{1};
+    int grid{8};
+    int columns{2};
+
+    [[nodiscard]] friend bool operator==(const FileExplorerLayoutSizes& lhs,
+                                         const FileExplorerLayoutSizes& rhs) = default;
+};
+
 struct FileExplorerViewSettings {
     FileExplorerViewMode mode{FileExplorerViewMode::Details};
     bool show_hidden{false};
     bool show_extensions{true};
-    int item_size_px{kFileExplorerItemSizeDefault};
+    FileExplorerLayoutSizes sizes;
     QString sort_key{QStringLiteral("name")};
     Qt::SortOrder sort_order{Qt::AscendingOrder};
 };

@@ -375,7 +375,7 @@ private:
     bool dispatchOpenElsewhereCommand(FileExplorerCommandId command);
     void invertCurrentSelection();
     void toggleCurrentItemSelection();
-    void stepItemSize(int direction);
+    void stepLayoutSize(int direction);
     void performInlineRename(int row, const QString& new_name);
     void activatePaneForView(QAbstractItemView* view);
     bool handleViewKeyPress(QAbstractItemView* view, QKeyEvent* key);

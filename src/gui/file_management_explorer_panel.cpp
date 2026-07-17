@@ -10,6 +10,7 @@
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
+#include "sak/file_explorer_layout_metrics.h"
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_session_store.h"
 #include "sak/file_explorer_style.h"
@@ -110,13 +111,11 @@ constexpr int kDetailsTabsCollapseWidth = 920;
 // panel sits inside the app shell, so the effective threshold is higher.
 constexpr int kNavClusterCollapseWidth = 640;
 constexpr int kMaxRecentTargetIds = 10;
-constexpr int kSizeSliderSingleStep = 8;
 // Files BaseLayoutPage tapDebounceTimer: slow second click on the selected
 // item's name starts an inline rename after 1500 ms.
 constexpr int kRenameTapDebounceMs = 1500;
 // Files SpringLoaded timer: hovering a folder for 1300 ms during a drag opens it.
 constexpr int kSpringOpenMs = 1300;
-constexpr int kSizeSliderPageStep = 16;
 constexpr const char* kExplorerSettingsGroup = "FileManagementExplorer";
 constexpr const char* kTabSessionGroup = "FileManagementExplorer/TabSession";
 constexpr const char* kTagStoreGroup = "FileManagementExplorer/Tags";
@@ -126,7 +125,13 @@ constexpr const char* kLastTargetIdKey = "LastTargetId";
 constexpr const char* kViewModeKey = "ViewMode";
 constexpr const char* kShowHiddenKey = "ShowHiddenItems";
 constexpr const char* kShowExtensionsKey = "ShowFileExtensions";
-constexpr const char* kItemSizeKey = "ItemSizePx";
+// Files ILayoutSettingsService stores one size kind per layout; the key names
+// mirror the Files setting names.
+constexpr const char* kDetailsSizeKey = "DetailsViewSize";
+constexpr const char* kListSizeKey = "ListViewSize";
+constexpr const char* kCardsSizeKey = "CardsViewSize";
+constexpr const char* kGridSizeKey = "GridViewSize";
+constexpr const char* kColumnsSizeKey = "ColumnsViewSize";
 constexpr const char* kSearchHistoryKey = "SearchHistory";
 constexpr int kMaxSearchHistoryEntries = 20;
 constexpr int kExplorerSearchMaxResults = 500;
@@ -1212,7 +1217,7 @@ bool FileManagementExplorerPanel::handleViewportMouseEvent(QAbstractItemView* vi
         // Files BaseLayoutViewModel: Ctrl+mouse-wheel steps the layout size.
         const auto* wheel = static_cast<QWheelEvent*>(event);
         if (wheel->modifiers().testFlag(Qt::ControlModifier)) {
-            stepItemSize(wheel->angleDelta().y() >= 0 ? 1 : -1);
+            stepLayoutSize(wheel->angleDelta().y() >= 0 ? 1 : -1);
             return true;
         }
         return false;
@@ -1824,11 +1829,9 @@ void FileManagementExplorerPanel::applyViewSettings() {
     if (!m_pane) {
         return;
     }
-    m_pane_state.view.item_size_px = std::clamp(m_pane_state.view.item_size_px,
-                                                kFileExplorerItemSizeMin,
-                                                kFileExplorerItemSizeMax);
+    clampFileExplorerLayoutSizes(m_pane_state.view.sizes);
     m_pane->setViewMode(m_pane_state.view.mode);
-    m_pane->setItemSizePx(m_pane_state.view.item_size_px);
+    m_pane->setLayoutSizes(m_pane_state.view.sizes);
     m_pane->setShowHiddenItems(m_pane_state.view.show_hidden);
     m_pane->setShowFileExtensions(m_pane_state.view.show_extensions);
     if (m_view_button) {
@@ -1873,9 +1876,16 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
         m_pane_state.view.show_extensions =
             settings.value(QString::fromLatin1(kShowExtensionsKey)).toBool();
     }
-    if (settings.contains(QString::fromLatin1(kItemSizeKey))) {
-        m_pane_state.view.item_size_px = settings.value(QString::fromLatin1(kItemSizeKey)).toInt();
-    }
+    const auto readSizeKind = [&settings](const char* key, int& kind) {
+        if (settings.contains(QString::fromLatin1(key))) {
+            kind = settings.value(QString::fromLatin1(key)).toInt();
+        }
+    };
+    readSizeKind(kDetailsSizeKey, m_pane_state.view.sizes.details);
+    readSizeKind(kListSizeKey, m_pane_state.view.sizes.list);
+    readSizeKind(kCardsSizeKey, m_pane_state.view.sizes.cards);
+    readSizeKind(kGridSizeKey, m_pane_state.view.sizes.grid);
+    readSizeKind(kColumnsSizeKey, m_pane_state.view.sizes.columns);
     settings.endGroup();
     settings.endGroup();
     applyViewSettings();
@@ -1891,7 +1901,11 @@ void FileManagementExplorerPanel::saveViewSettings() const {
     settings.setValue(QString::fromLatin1(kViewModeKey), viewModeName(m_pane_state.view.mode));
     settings.setValue(QString::fromLatin1(kShowHiddenKey), m_pane_state.view.show_hidden);
     settings.setValue(QString::fromLatin1(kShowExtensionsKey), m_pane_state.view.show_extensions);
-    settings.setValue(QString::fromLatin1(kItemSizeKey), m_pane_state.view.item_size_px);
+    settings.setValue(QString::fromLatin1(kDetailsSizeKey), m_pane_state.view.sizes.details);
+    settings.setValue(QString::fromLatin1(kListSizeKey), m_pane_state.view.sizes.list);
+    settings.setValue(QString::fromLatin1(kCardsSizeKey), m_pane_state.view.sizes.cards);
+    settings.setValue(QString::fromLatin1(kGridSizeKey), m_pane_state.view.sizes.grid);
+    settings.setValue(QString::fromLatin1(kColumnsSizeKey), m_pane_state.view.sizes.columns);
     settings.endGroup();
     settings.endGroup();
 }
@@ -3459,6 +3473,10 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
 }
 
 void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
+    // Files Toolbar.xaml layout flyout: a tick-snapped slider per layout bound
+    // to that layout's size kind (Details/List/Columns 1-5, Cards 1-4, Grid
+    // 1-12). This row binds to the active layout's kind.
+    const FileExplorerViewMode mode = m_pane_state.view.mode;
     auto* sizeRow = new QWidget(menu);
     sizeRow->setObjectName(QStringLiteral("fileExplorerItemSizeRow"));
     auto* sizeLayout = new QHBoxLayout(sizeRow);
@@ -3470,10 +3488,12 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     auto* sizeSlider = new QSlider(Qt::Horizontal, sizeRow);
     sizeSlider->setObjectName(QStringLiteral("fileExplorerItemSizeSlider"));
     sizeSlider->setAccessibleName(tr("Explorer item size"));
-    sizeSlider->setRange(kFileExplorerItemSizeMin, kFileExplorerItemSizeMax);
-    sizeSlider->setSingleStep(kSizeSliderSingleStep);
-    sizeSlider->setPageStep(kSizeSliderPageStep);
-    sizeSlider->setValue(m_pane_state.view.item_size_px);
+    sizeSlider->setRange(fileExplorerSizeKindMin(mode), fileExplorerSizeKindMax(mode));
+    sizeSlider->setSingleStep(1);
+    sizeSlider->setPageStep(1);
+    sizeSlider->setTickPosition(QSlider::TicksBelow);
+    sizeSlider->setTickInterval(1);
+    sizeSlider->setValue(fileExplorerSizeKind(m_pane_state.view.sizes, mode));
     sizeLabel->setBuddy(sizeSlider);
     sizeLayout->addWidget(sizeLabel);
     sizeLayout->addWidget(sizeSlider, 1);
@@ -3481,10 +3501,12 @@ void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
     sizeAction->setDefaultWidget(sizeRow);
     menu->addAction(sizeAction);
     connect(sizeSlider, &QSlider::valueChanged, this, [this](const int value) {
-        m_pane_state.view.item_size_px = value;
+        setFileExplorerSizeKind(m_pane_state.view.sizes, m_pane_state.view.mode, value);
         applyViewSettings();
         saveViewSettings();
-        Q_EMIT statusMessage(tr("Explorer item size set to %1 px").arg(value),
+        Q_EMIT statusMessage(tr("Layout size set to %1 of %2")
+                                 .arg(value)
+                                 .arg(fileExplorerSizeKindMax(m_pane_state.view.mode)),
                              sak::kTimerStatusMessageMs);
     });
 }
@@ -3731,10 +3753,10 @@ bool FileManagementExplorerPanel::dispatchFileViewCommand(const FileExplorerComm
         toggleFileExtensions();
         return true;
     case FileExplorerCommandId::IncreaseSize:
-        stepItemSize(1);
+        stepLayoutSize(1);
         return true;
     case FileExplorerCommandId::DecreaseSize:
-        stepItemSize(-1);
+        stepLayoutSize(-1);
         return true;
     default:
         return false;
@@ -4293,18 +4315,28 @@ void FileManagementExplorerPanel::toggleCurrentItemSelection() {
                                    QItemSelectionModel::Toggle | QItemSelectionModel::Rows);
 }
 
-void FileManagementExplorerPanel::stepItemSize(const int direction) {
-    // Files LayoutIncreaseSize/LayoutDecreaseSize step the active layout's
-    // size kind; until the C5 size-kind tables land this steps the shared
-    // pixel size by the slider step, clamped (no layout cycling at bounds).
-    const int stepped = m_pane_state.view.item_size_px + direction * kSizeSliderSingleStep;
-    const int clamped = std::clamp(stepped, kFileExplorerItemSizeMin, kFileExplorerItemSizeMax);
-    if (clamped == m_pane_state.view.item_size_px) {
+void FileManagementExplorerPanel::stepLayoutSize(const int direction) {
+    // Files LayoutIncreaseSizeAction/LayoutDecreaseSizeAction: step the active
+    // layout's size kind by one; at the bounds LayoutCycler.Cycle switches to
+    // the adjacent layout in the Details-List-Cards-Grid-Columns ring, landing
+    // on its minimum when growing and its maximum when shrinking, so repeated
+    // zoom keeps moving in one direction across every layout.
+    const FileExplorerViewMode mode = m_pane_state.view.mode;
+    const int kind = fileExplorerSizeKind(m_pane_state.view.sizes, mode);
+    const int stepped = kind + direction;
+    if (stepped >= fileExplorerSizeKindMin(mode) && stepped <= fileExplorerSizeKindMax(mode)) {
+        setFileExplorerSizeKind(m_pane_state.view.sizes, mode, stepped);
+        applyViewSettings();
+        saveViewSettings();
         return;
     }
-    m_pane_state.view.item_size_px = clamped;
-    applyViewSettings();
-    saveViewSettings();
+    const bool forward = direction > 0;
+    const FileExplorerViewMode next = fileExplorerAdjacentLayout(mode, forward);
+    setFileExplorerSizeKind(m_pane_state.view.sizes,
+                            next,
+                            forward ? fileExplorerSizeKindMin(next)
+                                    : fileExplorerSizeKindMax(next));
+    setExplorerViewMode(next);
 }
 
 void FileManagementExplorerPanel::toggleHiddenItems() {

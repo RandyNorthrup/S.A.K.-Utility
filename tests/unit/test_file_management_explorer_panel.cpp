@@ -387,7 +387,7 @@ void verifyRestoredPaneMatchesPersistedSettings() {
     auto* restoredPane = restored.findChild<sak::FileExplorerPane*>();
     QVERIFY(restoredPane);
     QCOMPARE(restoredPane->viewMode(), sak::FileExplorerViewMode::Adaptive);
-    QCOMPARE(restoredPane->itemSizePx(), 96);
+    QCOMPARE(restoredPane->layoutSizes().grid, 12);
     QCOMPARE(restoredPane->showFileExtensions(), false);
 }
 
@@ -844,12 +844,16 @@ private Q_SLOTS:
             ViewModeWidgets{table, list, grid, cards, columns, columnsPreview});
         verifyPersistedAdaptiveViewMode();
 
+        // The pane is in Adaptive mode here, which shares the Grid size kind,
+        // so the slider spans the Files GridViewSizeKind range 1..12.
         auto* slider =
             view->menu()->findChild<QSlider*>(QStringLiteral("fileExplorerItemSizeSlider"));
         QVERIFY(slider);
-        slider->setValue(96);
+        QCOMPARE(slider->minimum(), 1);
+        QCOMPARE(slider->maximum(), 12);
+        slider->setValue(12);
         QApplication::processEvents();
-        QCOMPARE(pane->itemSizePx(), 96);
+        QCOMPARE(pane->layoutSizes().grid, 12);
 
         auto* extensions = actionStartingWith(view->menu(), QStringLiteral("File Extensions"));
         QVERIFY(extensions);
@@ -859,6 +863,66 @@ private Q_SLOTS:
         QCOMPARE(pane->showFileExtensions(), false);
 
         verifyRestoredPaneMatchesPersistedSettings();
+    }
+
+    void zoomStepsSizeKindsAndCyclesLayoutRing() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        QVERIFY(pane);
+        QVERIFY(table);
+        QVERIFY(targetList);
+        if (firstTargetRow(targetList) < 0) {
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+
+        // Files LayoutSizeKindHelper: Details Small (kind 2) is a 36px row.
+        QTest::keyClick(table, Qt::Key_1, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_COMPARE(pane->viewMode(), sak::FileExplorerViewMode::Details);
+        QCOMPARE(pane->layoutSizes().details, 2);
+        QCOMPARE(table->verticalHeader()->defaultSectionSize(), 36);
+        const int gridKindBefore = pane->layoutSizes().grid;
+
+        // In-bounds zoom-out steps the kind: Small -> Compact (28px row).
+        QTest::keyClick(table, Qt::Key_Minus, Qt::ControlModifier);
+        QTRY_COMPARE(pane->layoutSizes().details, 1);
+        QCOMPARE(table->verticalHeader()->defaultSectionSize(), 28);
+
+        // Files LayoutCycler: zoom-out below Details Compact wraps backward
+        // to Columns at its maximum kind.
+        QTest::keyClick(table, Qt::Key_Minus, Qt::ControlModifier);
+        QTRY_COMPARE(pane->viewMode(), sak::FileExplorerViewMode::Columns);
+        QCOMPARE(pane->layoutSizes().columns, 5);
+
+        // Zoom-in past Columns ExtraLarge wraps forward to Details at its
+        // minimum kind; the Details kind set above is overwritten.
+        QTest::keyClick(table, Qt::Key_Equal, Qt::ControlModifier);
+        QTRY_COMPARE(pane->viewMode(), sak::FileExplorerViewMode::Details);
+        QCOMPARE(pane->layoutSizes().details, 1);
+
+        // Ctrl+mouse-wheel up zooms in one kind (BaseLayoutViewModel wheel).
+        QWheelEvent wheelUp(QPointF(10, 10),
+                            table->viewport()->mapToGlobal(QPoint(10, 10)),
+                            QPoint(),
+                            QPoint(0, 120),
+                            Qt::NoButton,
+                            Qt::ControlModifier,
+                            Qt::NoScrollPhase,
+                            false);
+        QApplication::sendEvent(table->viewport(), &wheelUp);
+        QTRY_COMPARE(pane->layoutSizes().details, 2);
+
+        // Each layout keeps an independent kind: the Grid kind is untouched
+        // by Details/Columns zooming.
+        QCOMPARE(pane->layoutSizes().grid, gridKindBefore);
     }
 
     void sidebarGroupsExposeFilesLikeTargets() {
@@ -1892,10 +1956,14 @@ private Q_SLOTS:
                            table->viewport()->rect().bottomRight() - QPoint(5, 5));
         QTRY_VERIFY(pathEdit->text() != before_up);
 
-        // Ctrl+mouse-wheel steps the item size (BaseLayoutViewModel).
-        auto* grid = child<QListView>(&panel, "fileExplorerGridView");
-        QVERIFY(grid);
-        const QSize size_before = grid->iconSize();
+        // Ctrl+mouse-wheel zooms the ACTIVE layout only (BaseLayoutViewModel
+        // routes to LayoutIncreaseSize): the Details size kind steps while
+        // the other layouts' kinds stay untouched.
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        QVERIFY(pane);
+        QCOMPARE(pane->viewMode(), sak::FileExplorerViewMode::Details);
+        const int details_before = pane->layoutSizes().details;
+        const int grid_before = pane->layoutSizes().grid;
         const QPoint wheel_pos = table->viewport()->rect().center();
         QWheelEvent wheel(wheel_pos,
                           table->viewport()->mapToGlobal(wheel_pos),
@@ -1906,7 +1974,8 @@ private Q_SLOTS:
                           Qt::NoScrollPhase,
                           false);
         QVERIFY(QApplication::sendEvent(table->viewport(), &wheel));
-        QTRY_VERIFY(grid->iconSize() != size_before);
+        QTRY_VERIFY(pane->layoutSizes().details != details_before);
+        QCOMPARE(pane->layoutSizes().grid, grid_before);
     }
 
     void headerMenuOffersSizeAllColumnsToFit() {

@@ -46,12 +46,12 @@ public:
     [[nodiscard]] FileManagementEntry entryAtViewRow(int row) const;
     [[nodiscard]] bool hasViewEntry(int row) const;
     [[nodiscard]] FileExplorerViewMode viewMode() const;
-    [[nodiscard]] int itemSizePx() const;
+    [[nodiscard]] FileExplorerLayoutSizes layoutSizes() const;
     [[nodiscard]] bool showHiddenItems() const;
     [[nodiscard]] bool showFileExtensions() const;
 
     void setViewMode(FileExplorerViewMode mode);
-    void setItemSizePx(int item_size_px);
+    void setLayoutSizes(const FileExplorerLayoutSizes& sizes);
     void setShowHiddenItems(bool show);
     void setShowFileExtensions(bool show);
     void setColumnsPreviewEntries(const QString& path, QVector<FileManagementEntry> entries);
@@ -70,7 +70,7 @@ private:
     void setStateMessage(const QString& message, bool visible);
     void configureListView(QListView* view, const QString& object_name, QListView::ViewMode mode);
     void configureColumnsPreviewView(QListView* view);
-    void applyItemSize();
+    void applyLayoutSizes();
     void updateColumnsPreviewRequest();
     [[nodiscard]] FileManagementEntry columnsPreviewEntryAtRow(int row) const;
 
@@ -96,7 +96,7 @@ private:
     QLabel* m_status_label{nullptr};
     QString m_columns_preview_path;
     FileExplorerViewMode m_view_mode{FileExplorerViewMode::Details};
-    int m_item_size_px{kFileExplorerItemSizeDefault};
+    FileExplorerLayoutSizes m_layout_sizes;
 };
 
 }  // namespace sak

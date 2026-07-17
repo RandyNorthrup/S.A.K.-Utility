@@ -19,7 +19,11 @@ void writePane(QSettings& settings, const QString& prefix, const FileExplorerPan
     settings.setValue(prefix + QStringLiteral("viewMode"), static_cast<int>(pane.view.mode));
     settings.setValue(prefix + QStringLiteral("showHidden"), pane.view.show_hidden);
     settings.setValue(prefix + QStringLiteral("showExtensions"), pane.view.show_extensions);
-    settings.setValue(prefix + QStringLiteral("itemSize"), pane.view.item_size_px);
+    settings.setValue(prefix + QStringLiteral("detailsSize"), pane.view.sizes.details);
+    settings.setValue(prefix + QStringLiteral("listSize"), pane.view.sizes.list);
+    settings.setValue(prefix + QStringLiteral("cardsSize"), pane.view.sizes.cards);
+    settings.setValue(prefix + QStringLiteral("gridSize"), pane.view.sizes.grid);
+    settings.setValue(prefix + QStringLiteral("columnsSize"), pane.view.sizes.columns);
     settings.setValue(prefix + QStringLiteral("sortKey"), pane.view.sort_key);
     settings.setValue(prefix + QStringLiteral("sortOrder"), static_cast<int>(pane.view.sort_order));
 }
@@ -36,8 +40,17 @@ FileExplorerPaneState readPane(QSettings& settings, const QString& prefix) {
     pane.view.show_hidden = settings.value(prefix + QStringLiteral("showHidden"), false).toBool();
     pane.view.show_extensions =
         settings.value(prefix + QStringLiteral("showExtensions"), true).toBool();
-    pane.view.item_size_px =
-        settings.value(prefix + QStringLiteral("itemSize"), kFileExplorerItemSizeDefault).toInt();
+    const FileExplorerLayoutSizes size_defaults;
+    pane.view.sizes.details =
+        settings.value(prefix + QStringLiteral("detailsSize"), size_defaults.details).toInt();
+    pane.view.sizes.list =
+        settings.value(prefix + QStringLiteral("listSize"), size_defaults.list).toInt();
+    pane.view.sizes.cards =
+        settings.value(prefix + QStringLiteral("cardsSize"), size_defaults.cards).toInt();
+    pane.view.sizes.grid =
+        settings.value(prefix + QStringLiteral("gridSize"), size_defaults.grid).toInt();
+    pane.view.sizes.columns =
+        settings.value(prefix + QStringLiteral("columnsSize"), size_defaults.columns).toInt();
     pane.view.sort_key =
         settings.value(prefix + QStringLiteral("sortKey"), QStringLiteral("name")).toString();
     pane.view.sort_order = static_cast<Qt::SortOrder>(

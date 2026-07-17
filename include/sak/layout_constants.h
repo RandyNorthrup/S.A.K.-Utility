@@ -176,22 +176,8 @@ constexpr int kFileExplorerSidebarMinW = 210;
 constexpr int kFileExplorerSidebarMaxW = 360;
 constexpr int kFileExplorerDetailsPaneMinW = 260;
 constexpr int kFileExplorerDetailsPaneMaxW = 430;
-constexpr int kFileExplorerItemSizeMin = 32;
-constexpr int kFileExplorerItemSizeDefault = 48;
-constexpr int kFileExplorerItemSizeMax = 160;
-constexpr int kFileExplorerListIconSize = 24;
 constexpr int kFileExplorerListCellW = 260;
-constexpr int kFileExplorerListCellH = 28;
-constexpr int kFileExplorerGridMinCellW = 112;
-constexpr int kFileExplorerGridMinCellH = 88;
-constexpr int kFileExplorerGridCellExtraW = 72;
-constexpr int kFileExplorerGridCellExtraH = 54;
-constexpr int kFileExplorerCardsMinIconSize = 32;
 constexpr int kFileExplorerCardsCellW = 360;
-constexpr int kFileExplorerCardsMinCellH = 64;
-constexpr int kFileExplorerCardsCellExtraH = 30;
 constexpr int kFileExplorerColumnsMinCellW = 220;
-constexpr int kFileExplorerColumnsCellScale = 4;
-constexpr int kFileExplorerColumnsCellH = 30;
 
 }  // namespace sak

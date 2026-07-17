@@ -52,7 +52,8 @@ private Q_SLOTS:
                                     QStringLiteral("C:/Users"),
                                     sak::FileExplorerViewMode::List));
         session.tabs[0].primary.view.show_hidden = true;
-        session.tabs[0].primary.view.item_size_px = 96;
+        session.tabs[0].primary.view.sizes.grid = 12;
+        session.tabs[0].primary.view.sizes.details = 5;
         session.tabs[1].secondary_pane_enabled = true;
         session.tabs[1].secondary.location.target_id.value = QStringLiteral("local:D:");
         session.tabs[1].secondary.location.path = QStringLiteral("D:/data");
@@ -78,7 +79,9 @@ private Q_SLOTS:
         QCOMPARE(loaded.tabs[0].primary.location.path, QStringLiteral("/docs"));
         QCOMPARE(loaded.tabs[0].primary.view.mode, sak::FileExplorerViewMode::Grid);
         QVERIFY(loaded.tabs[0].primary.view.show_hidden);
-        QCOMPARE(loaded.tabs[0].primary.view.item_size_px, 96);
+        QCOMPARE(loaded.tabs[0].primary.view.sizes.grid, 12);
+        QCOMPARE(loaded.tabs[0].primary.view.sizes.details, 5);
+        QCOMPARE(loaded.tabs[0].primary.view.sizes.cards, sak::FileExplorerLayoutSizes{}.cards);
         // Transient history is intentionally dropped.
         QVERIFY(loaded.tabs[0].primary.back_stack.isEmpty());
 
