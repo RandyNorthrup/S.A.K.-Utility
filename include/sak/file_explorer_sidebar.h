@@ -13,7 +13,7 @@
 namespace sak {
 
 /// Left navigation: target list plus a footer with the target-discovery
-/// actions (scan disks, add raw/image), Files-style.
+/// actions (scan disks, add raw/image) and the settings gear, Files-style.
 class FileExplorerSidebar : public QWidget {
     Q_OBJECT
 
@@ -23,11 +23,13 @@ public:
     [[nodiscard]] QListWidget* targetList() const;
     [[nodiscard]] QPushButton* scanDisksButton() const;
     [[nodiscard]] QPushButton* addManualButton() const;
+    [[nodiscard]] QPushButton* settingsButton() const;
 
 private:
     QListWidget* m_target_list{nullptr};
     QPushButton* m_scan_disks_button{nullptr};
     QPushButton* m_add_manual_button{nullptr};
+    QPushButton* m_settings_button{nullptr};
 };
 
 }  // namespace sak

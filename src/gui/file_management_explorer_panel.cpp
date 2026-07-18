@@ -149,6 +149,8 @@ constexpr const char* kShowCheckboxesKey = "ShowCheckboxesWhenSelectingItems";
 constexpr const char* kShowFlattenKey = "ShowFlattenOptions";
 // Files GeneralSettingsService.ShowFilterHeader (default false).
 constexpr const char* kShowFilterHeaderKey = "ShowFilterHeader";
+// Files FoldersSettingsService.DoubleClickToGoUp (default true).
+constexpr const char* kDoubleClickToGoUpKey = "DoubleClickToGoUp";
 // Files search-mode suggestion debounce (200 ms) and cap (FolderSearch
 // MaxItemCount 10); FilterHeader debounce is 250 ms with a 180px box.
 constexpr int kSearchSuggestDebounceMs = 200;
@@ -543,6 +545,10 @@ void FileManagementExplorerPanel::setupUi() {
     m_target_list = m_sidebar->targetList();
     m_scan_disks_button = m_sidebar->scanDisksButton();
     m_add_manual_button = m_sidebar->addManualButton();
+    // Files sidebar footer gear (MainPage SettingsButton).
+    connect(m_sidebar->settingsButton(), &QPushButton::clicked, this, [this]() {
+        showExplorerSettings();
+    });
     // Files SidebarViewModel drag targets: items drop onto tag rows
     // (drag-to-tag) and target rows (copy/move to that location), and
     // favorites reorder by drag within their section.
@@ -1444,7 +1450,76 @@ bool FileManagementExplorerPanel::handleViewportMousePress(QAbstractItemView* vi
 bool FileManagementExplorerPanel::doubleClickToGoUpEnabled() const {
     QSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
-    return settings.value(QStringLiteral("DoubleClickToGoUp"), true).toBool();
+    return settings.value(QString::fromLatin1(kDoubleClickToGoUpKey), true).toBool();
+}
+
+// Files Settings page (OpenSettingsAction, Ctrl+, and the sidebar gear):
+// the explorer-global behavior toggles, applied live on OK. Files opens
+// Settings as a tab; the S.A.K. explorer hosts location tabs only, so this
+// surface is a dialog.
+void FileManagementExplorerPanel::showExplorerSettings() {
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("fileExplorerSettingsDialog"));
+    dialog.setWindowTitle(tr("Explorer Settings"));
+    dialog.setMinimumWidth(sak::kDialogWidthLarge);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* folders_label = new QLabel(tr("Files and folders"), &dialog);
+    QFont section_font = folders_label->font();
+    section_font.setBold(true);
+    folders_label->setFont(section_font);
+    layout->addWidget(folders_label);
+    auto* checkboxes = new QCheckBox(tr("Show checkboxes when selecting items"), &dialog);
+    checkboxes->setObjectName(QStringLiteral("fileExplorerSettingsCheckboxes"));
+    checkboxes->setChecked(showCheckboxesEnabled());
+    layout->addWidget(checkboxes);
+    auto* double_click_up = new QCheckBox(tr("Double-click a blank space to go up a folder"),
+                                          &dialog);
+    double_click_up->setObjectName(QStringLiteral("fileExplorerSettingsDoubleClickUp"));
+    double_click_up->setChecked(doubleClickToGoUpEnabled());
+    layout->addWidget(double_click_up);
+
+    auto* general_label = new QLabel(tr("General"), &dialog);
+    general_label->setFont(section_font);
+    layout->addWidget(general_label);
+    auto* filter_header = new QCheckBox(tr("Show the filter header"), &dialog);
+    filter_header->setObjectName(QStringLiteral("fileExplorerSettingsFilterHeader"));
+    filter_header->setChecked(showFilterHeaderEnabled());
+    layout->addWidget(filter_header);
+    auto* flatten = new QCheckBox(tr("Show flatten options (experimental)"), &dialog);
+    flatten->setObjectName(QStringLiteral("fileExplorerSettingsFlatten"));
+    flatten->setChecked(showFlattenOptionsEnabled());
+    layout->addWidget(flatten);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    applyExplorerSettings(checkboxes->isChecked(),
+                          double_click_up->isChecked(),
+                          filter_header->isChecked(),
+                          flatten->isChecked());
+}
+
+void FileManagementExplorerPanel::applyExplorerSettings(const bool checkboxes,
+                                                        const bool double_click_up,
+                                                        const bool filter_header,
+                                                        const bool flatten) {
+    setShowCheckboxes(checkboxes);
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.setValue(QString::fromLatin1(kDoubleClickToGoUpKey), double_click_up);
+    settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), filter_header);
+    settings.setValue(QString::fromLatin1(kShowFlattenKey), flatten);
+    settings.endGroup();
+    if (m_filter_header) {
+        m_filter_header->setVisible(filter_header);
+    }
+    Q_EMIT statusMessage(tr("Explorer settings saved."), sak::kTimerStatusMessageMs);
 }
 
 void FileManagementExplorerPanel::handleRenameTapEvent(QAbstractItemView* view, QEvent* event) {
@@ -1624,6 +1699,14 @@ void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
             &QShortcut::activated,
             this,
             &FileManagementExplorerPanel::toggleFilterHeader);
+
+    // Files OpenSettingsAction: Ctrl+, opens the explorer settings.
+    auto* settingsShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+,")), this);
+    settingsShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(settingsShortcut,
+            &QShortcut::activated,
+            this,
+            &FileManagementExplorerPanel::showExplorerSettings);
 
     auto* paletteShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")), this);
     paletteShortcut->setContext(Qt::WidgetWithChildrenShortcut);

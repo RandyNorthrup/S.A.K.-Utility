@@ -354,6 +354,12 @@ private:
     void toggleSelectionForPath(FileExplorerPane* pane, const QString& path, bool checked);
     /// Files ShowFlattenOptions gate and the recursive flatten walk.
     [[nodiscard]] bool showFlattenOptionsEnabled() const;
+    /// Files Settings page subset (Ctrl+, and the sidebar gear).
+    void showExplorerSettings();
+    void applyExplorerSettings(bool checkboxes,
+                               bool double_click_up,
+                               bool filter_header,
+                               bool flatten);
     int flattenFolderTree(const FileManagementTarget& target,
                           const QString& root,
                           const QString& current,

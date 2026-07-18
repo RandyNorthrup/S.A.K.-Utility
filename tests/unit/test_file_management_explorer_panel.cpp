@@ -21,6 +21,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
@@ -1362,6 +1363,53 @@ private Q_SLOTS:
         columns_action->trigger();
         QTRY_VERIFY(columns->isVisible());
         QVERIFY(!columns->grab().isNull());
+    }
+
+    void settingsDialogPersistsAndAppliesExplorerToggles() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        auto* gear = child<QPushButton>(&panel, "fileExplorerSettingsButton");
+        auto* filterHeader = child<QWidget>(&panel, "fileExplorerFilterHeader");
+        QVERIFY(pane);
+        QVERIFY(gear);
+        QVERIFY(filterHeader);
+        QVERIFY(pane->itemModel()->checkboxesVisible());  // Files default ON
+        QVERIFY(!filterHeader->isVisible());              // Files default OFF
+
+        // Drive the dialog: uncheck the selection checkboxes, enable the
+        // filter header and the flatten opt-in, then accept.
+        bool dialog_seen = false;
+        QTimer::singleShot(0, [&dialog_seen]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog || dialog->objectName() != QStringLiteral("fileExplorerSettingsDialog")) {
+                return;
+            }
+            dialog_seen = true;
+            dialog->findChild<QCheckBox*>(QStringLiteral("fileExplorerSettingsCheckboxes"))
+                ->setChecked(false);
+            dialog->findChild<QCheckBox*>(QStringLiteral("fileExplorerSettingsFilterHeader"))
+                ->setChecked(true);
+            dialog->findChild<QCheckBox*>(QStringLiteral("fileExplorerSettingsFlatten"))
+                ->setChecked(true);
+            dialog->accept();
+        });
+        gear->click();
+        QVERIFY(dialog_seen);
+
+        // Applied live and persisted under the Files setting names.
+        QTRY_VERIFY(!pane->itemModel()->checkboxesVisible());
+        QTRY_VERIFY(filterHeader->isVisible());
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        QVERIFY(!settings.value(QStringLiteral("ShowCheckboxesWhenSelectingItems"), true).toBool());
+        QVERIFY(settings.value(QStringLiteral("ShowFilterHeader"), false).toBool());
+        QVERIFY(settings.value(QStringLiteral("ShowFlattenOptions"), false).toBool());
+        QVERIFY(settings.value(QStringLiteral("DoubleClickToGoUp"), true).toBool());
+        settings.endGroup();
     }
 
     void sidebarAcceptsTagDropAndFavoriteReorder() {

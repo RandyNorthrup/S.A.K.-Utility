@@ -53,6 +53,15 @@ FileExplorerSidebar::FileExplorerSidebar(QWidget* parent) : QWidget(parent) {
     footer_layout->addWidget(m_add_manual_button);
     footer_layout->addStretch(1);
 
+    // Files MainPage SettingsButton (SidebarView.Footer): the gear opens the
+    // explorer settings.
+    m_settings_button = new QPushButton(footer);
+    m_settings_button->setObjectName(QStringLiteral("fileExplorerSettingsButton"));
+    m_settings_button->setAccessibleName(tr("Open File Explorer settings"));
+    m_settings_button->setToolTip(tr("Explorer settings"));
+    m_settings_button->setIcon(FileExplorerIconRegistry::iconForKey(QStringLiteral("more")));
+    footer_layout->addWidget(m_settings_button);
+
     layout->addWidget(footer, 0);
 }
 
@@ -66,6 +75,10 @@ QPushButton* FileExplorerSidebar::scanDisksButton() const {
 
 QPushButton* FileExplorerSidebar::addManualButton() const {
     return m_add_manual_button;
+}
+
+QPushButton* FileExplorerSidebar::settingsButton() const {
+    return m_settings_button;
 }
 
 }  // namespace sak
