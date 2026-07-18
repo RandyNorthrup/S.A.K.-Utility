@@ -147,6 +147,16 @@ constexpr const char* kGroupDateUnitKey = "GroupByDateUnit";
 // default false; surfaced on the C6 settings page).
 constexpr const char* kShowCheckboxesKey = "ShowCheckboxesWhenSelectingItems";
 constexpr const char* kShowFlattenKey = "ShowFlattenOptions";
+// Files GeneralSettingsService.ShowFilterHeader (default false).
+constexpr const char* kShowFilterHeaderKey = "ShowFilterHeader";
+// Files search-mode suggestion debounce (200 ms) and cap (FolderSearch
+// MaxItemCount 10); FilterHeader debounce is 250 ms with a 180px box.
+constexpr int kSearchSuggestDebounceMs = 200;
+constexpr int kOmnibarSearchSuggestCap = 10;
+constexpr int kFilterDebounceMs = 250;
+constexpr int kFilterBoxWidth = 180;
+// Suggestion rows that map to a real file carry its path in this role.
+constexpr int kSearchPathRole = Qt::UserRole + 9;
 constexpr const char* kSearchHistoryKey = "SearchHistory";
 constexpr int kMaxSearchHistoryEntries = 20;
 constexpr int kExplorerSearchMaxResults = 500;
@@ -523,6 +533,7 @@ void FileManagementExplorerPanel::setupUi() {
     m_search_button = m_omnibar->searchButton();
     m_command_button = m_omnibar->commandButton();
     layout->addWidget(m_omnibar, 0);
+    buildFilterHeader(layout);
 
     m_shell_splitter = new QSplitter(Qt::Horizontal, this);
     m_shell_splitter->setChildrenCollapsible(false);
@@ -1075,34 +1086,67 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
     connect(m_details_toggle_button, &QPushButton::clicked, this, [this]() {
         m_details_pane->setVisible(!m_details_pane->isVisible());
     });
+    // Files SearchAction surfaces: the button enters the omnibar search mode;
+    // Enter in the persistent quick-search box submits straight into the
+    // listing (Files SubmitSearch).
     connect(m_search_button, &QPushButton::clicked, this, [this]() {
-        showExplorerSearchDialog(m_search_box ? m_search_box->text().trimmed() : QString());
+        if (m_omnibar) {
+            m_omnibar->setMode(FileExplorerOmnibarMode::Search);
+        }
     });
     connect(m_search_box, &QLineEdit::returnPressed, this, [this]() {
-        showExplorerSearchDialog(m_search_box->text().trimmed());
+        submitExplorerSearch(m_search_box->text().trimmed());
     });
     connect(m_command_button,
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
-    // Inline omnibar modes (Files Omnibar): palette suggestions repopulate on
-    // every edit and Enter/click executes through the registry.
+    connectOmnibarModeSignals();
+}
+
+// Inline omnibar modes (Files Omnibar): palette suggestions repopulate on
+// every edit and Enter/click executes through the registry; search mode
+// shows recents / debounced live matches and submits into the listing.
+void FileManagementExplorerPanel::connectOmnibarModeSignals() {
     connect(m_omnibar, &FileExplorerOmnibar::queryTextEdited, this, [this](const QString& text) {
         if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
             populateOmnibarPalette(text.trimmed());
+        } else if (m_omnibar->mode() == FileExplorerOmnibarMode::Search) {
+            populateOmnibarSearch(text);
         }
     });
     connect(m_omnibar, &FileExplorerOmnibar::querySubmitted, this, [this](const QString& text) {
         if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
             executePaletteSuggestion(m_omnibar->suggestionList()->currentItem(), text);
+        } else if (m_omnibar->mode() == FileExplorerOmnibarMode::Search) {
+            submitSearchSuggestion(m_omnibar->suggestionList()->currentItem(), text);
         }
     });
     connect(
         m_omnibar, &FileExplorerOmnibar::suggestionActivated, this, [this](QListWidgetItem* item) {
             if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
                 executePaletteSuggestion(item, item ? item->text() : QString());
+            } else if (m_omnibar->mode() == FileExplorerOmnibarMode::Search) {
+                submitSearchSuggestion(item, item ? item->text() : QString());
             }
         });
+    // Files search-suggestion debounce (200 ms) ahead of the live worker run.
+    m_search_suggest_timer = new QTimer(this);
+    m_search_suggest_timer->setSingleShot(true);
+    m_search_suggest_timer->setInterval(kSearchSuggestDebounceMs);
+    connect(m_search_suggest_timer, &QTimer::timeout, this, [this]() {
+        runSearchSuggestions(m_pending_search_suggest);
+    });
+    // Leaving search mode cancels the pending debounce and the live worker.
+    connect(m_omnibar,
+            &FileExplorerOmnibar::modeChanged,
+            this,
+            [this](const FileExplorerOmnibarMode mode) {
+                if (mode == FileExplorerOmnibarMode::Path) {
+                    m_search_suggest_timer->stop();
+                    stopExplorerSearch();
+                }
+            });
 }
 
 void FileManagementExplorerPanel::connectNavigationSignals() {
@@ -1248,23 +1292,49 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
 }
 
 bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
-    if (m_target_list && watched == m_target_list->viewport()) {
-        if (event && handleSidebarViewportEvent(event)) {
-            return true;
-        }
-        return QWidget::eventFilter(watched, event);
-    }
-    if (auto* view = qobject_cast<QAbstractItemView*>(watched)) {
-        if (event && event->type() == QEvent::KeyPress &&
-            handleViewKeyPress(view, static_cast<QKeyEvent*>(event))) {
-            return true;
-        }
-        return QWidget::eventFilter(watched, event);
-    }
-    if (filterPaneViewportEvent(watched, event)) {
+    if (dispatchFilteredEvent(watched, event)) {
         return true;
     }
     return QWidget::eventFilter(watched, event);
+}
+
+// Routes a filtered event to the surface that owns the watched widget: the
+// filter box, the sidebar viewport, an item view (key presses), or a pane
+// viewport. Returns true when the event was consumed.
+bool FileManagementExplorerPanel::dispatchFilteredEvent(QObject* watched, QEvent* event) {
+    if (!event) {
+        return false;
+    }
+    if (m_filter_box && watched == m_filter_box) {
+        return handleFilterBoxKeyEvent(event);
+    }
+    if (m_target_list && watched == m_target_list->viewport()) {
+        return handleSidebarViewportEvent(event);
+    }
+    if (auto* view = qobject_cast<QAbstractItemView*>(watched)) {
+        return event->type() == QEvent::KeyPress &&
+               handleViewKeyPress(view, static_cast<QKeyEvent*>(event));
+    }
+    return filterPaneViewportEvent(watched, event);
+}
+
+// Files FilterTextBox_PreviewKeyDown: Esc in the filter box returns focus to
+// the file list (the ShortcutOverride claim keeps the ambient ClearSelection
+// Esc shortcut from eating the key first).
+bool FileManagementExplorerPanel::handleFilterBoxKeyEvent(QEvent* event) {
+    if (event->type() == QEvent::ShortcutOverride &&
+        static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        event->accept();
+        return true;
+    }
+    if (event->type() == QEvent::KeyPress &&
+        static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        if (auto* view = currentItemView()) {
+            view->setFocus(Qt::ShortcutFocusReason);
+        }
+        return true;
+    }
+    return false;
 }
 
 bool FileManagementExplorerPanel::filterPaneViewportEvent(QObject* watched, QEvent* event) {
@@ -1538,12 +1608,22 @@ void FileManagementExplorerPanel::installCommandShortcuts() {
 }
 
 void FileManagementExplorerPanel::installAuxiliaryShortcuts() {
+    // Files SearchAction: Ctrl+F (and F3 below) enter the omnibar search
+    // mode; the filter header moved to Ctrl+Shift+F (ToggleFilterHeaderAction).
     auto* searchShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+F")), this);
     searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(searchShortcut,
+    connect(searchShortcut, &QShortcut::activated, this, [this]() {
+        if (m_omnibar) {
+            m_omnibar->setMode(FileExplorerOmnibarMode::Search);
+        }
+    });
+
+    auto* filterShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), this);
+    filterShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(filterShortcut,
             &QShortcut::activated,
             this,
-            &FileManagementExplorerPanel::promptCurrentFolderFilter);
+            &FileManagementExplorerPanel::toggleFilterHeader);
 
     auto* paletteShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")), this);
     paletteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -1588,10 +1668,12 @@ void FileManagementExplorerPanel::installFilesAliasShortcuts() {
     connect(addPanelShortcut(QStringLiteral("Ctrl+D")), &QShortcut::activated, this, [this]() {
         executeCommand(FileExplorerCommandId::Delete);
     });
-    connect(addPanelShortcut(QStringLiteral("F3")),
-            &QShortcut::activated,
-            this,
-            &FileManagementExplorerPanel::promptCurrentFolderFilter);
+    // Files SearchAction second hotkey: F3 also enters the search mode.
+    connect(addPanelShortcut(QStringLiteral("F3")), &QShortcut::activated, this, [this]() {
+        if (m_omnibar) {
+            m_omnibar->setMode(FileExplorerOmnibarMode::Search);
+        }
+    });
     // Files EditPathAction: Ctrl+L / Alt+D focus the omnibar path editor.
     for (const auto* key : {"Ctrl+L", "Alt+D"}) {
         connect(addPanelShortcut(QString::fromLatin1(key)), &QShortcut::activated, this, [this]() {
@@ -2161,7 +2243,20 @@ void FileManagementExplorerPanel::resetListingForUnavailableTarget(const QString
     updateActionButtons();
 }
 
+// Files ShellViewModel: the folder filter clears on directory change.
+void FileManagementExplorerPanel::clearFolderFilterOnNavigation() {
+    if (!m_filter_box || m_filter_box->text().isEmpty()) {
+        return;
+    }
+    const QSignalBlocker blocker(m_filter_box);
+    m_filter_box->clear();
+    if (m_pane && m_pane->sortFilterModel()) {
+        m_pane->sortFilterModel()->setNameFilter(QString());
+    }
+}
+
 void FileManagementExplorerPanel::loadDirectory(const QString& path, const bool add_history) {
+    clearFolderFilterOnNavigation();
     const auto target = currentTarget();
     if (target.root_path.isEmpty()) {
         resetListingForUnavailableTarget(tr("No File Explorer target selected."), false);
@@ -4987,26 +5082,73 @@ int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& t
     return moved;
 }
 
-void FileManagementExplorerPanel::promptCurrentFolderFilter() {
+// Files FilterHeader (ModernShellPage.xaml): a "Filtering for" row with a
+// Filename box that filters the loaded listing in place, toggled by
+// Ctrl+Shift+F behind the persisted ShowFilterHeader setting.
+void FileManagementExplorerPanel::buildFilterHeader(QVBoxLayout* layout) {
+    m_filter_header = new QWidget(this);
+    m_filter_header->setObjectName(QStringLiteral("fileExplorerFilterHeader"));
+    auto* row = new QHBoxLayout(m_filter_header);
+    row->setContentsMargins(
+        ui::kMarginSmall, ui::kSpacingTight, ui::kMarginSmall, ui::kSpacingTight);
+    row->setSpacing(ui::kSpacingSmall);
+    auto* label = new QLabel(tr("Filtering for"), m_filter_header);
+    label->setAccessibleName(tr("Folder filter label"));
+    row->addWidget(label);
+    m_filter_box = new QLineEdit(m_filter_header);
+    m_filter_box->setObjectName(QStringLiteral("fileExplorerFilterBox"));
+    m_filter_box->setAccessibleName(tr("Folder filter"));
+    m_filter_box->setPlaceholderText(tr("Filename"));
+    m_filter_box->setClearButtonEnabled(true);
+    m_filter_box->setFixedWidth(kFilterBoxWidth);
+    m_filter_box->installEventFilter(this);
+    row->addWidget(m_filter_box);
+    row->addStretch(1);
+    layout->addWidget(m_filter_header, 0);
+    m_filter_header->setVisible(showFilterHeaderEnabled());
+
+    // Files FilesAndFoldersFilter: 250 ms debounce, then filter in place.
+    m_filter_debounce = new QTimer(this);
+    m_filter_debounce->setSingleShot(true);
+    m_filter_debounce->setInterval(kFilterDebounceMs);
+    connect(m_filter_debounce, &QTimer::timeout, this, [this]() {
+        applyFilterHeaderText(m_filter_box ? m_filter_box->text() : QString());
+    });
+    connect(m_filter_box, &QLineEdit::textChanged, this, [this]() { m_filter_debounce->start(); });
+}
+
+bool FileManagementExplorerPanel::showFilterHeaderEnabled() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    // Files GeneralSettingsService.ShowFilterHeader: default off.
+    const bool enabled = settings.value(QString::fromLatin1(kShowFilterHeaderKey), false).toBool();
+    settings.endGroup();
+    return enabled;
+}
+
+void FileManagementExplorerPanel::toggleFilterHeader() {
+    // Files ToggleFilterHeaderAction (Ctrl+Shift+F): flip the setting; the
+    // shown box takes focus.
+    const bool enabled = !showFilterHeaderEnabled();
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), enabled);
+    settings.endGroup();
+    if (m_filter_header) {
+        m_filter_header->setVisible(enabled);
+    }
+    if (enabled && m_filter_box) {
+        m_filter_box->setFocus(Qt::ShortcutFocusReason);
+    }
+}
+
+void FileManagementExplorerPanel::applyFilterHeaderText(const QString& text) {
     if (!m_pane || !m_pane->sortFilterModel()) {
         return;
     }
-
-    bool ok = false;
-    const QString current_filter = m_pane->sortFilterModel()->nameFilter();
-    const QString filter = QInputDialog::getText(this,
-                                                 tr("Filter Current Folder"),
-                                                 tr("Name, type, or path contains:"),
-                                                 QLineEdit::Normal,
-                                                 current_filter,
-                                                 &ok);
-    if (!ok) {
-        return;
-    }
-
-    m_pane->sortFilterModel()->setNameFilter(filter);
+    m_pane->sortFilterModel()->setNameFilter(text);
     const int visible_count = m_pane->sortFilterModel()->rowCount();
-    const QString message = filter.trimmed().isEmpty()
+    const QString message = text.trimmed().isEmpty()
                                 ? tr("Current folder filter cleared.")
                                 : tr("Filter active: %1 item(s) visible.").arg(visible_count);
     if (m_status_label) {
@@ -5051,34 +5193,34 @@ void FileManagementExplorerPanel::stopExplorerSearch() {
     m_search_worker = nullptr;
 }
 
-void FileManagementExplorerPanel::startExplorerSearch(const QString& query,
-                                                      QListWidget* results,
-                                                      QLabel* status) {
+// Shared worker setup for the inline search surfaces: suggestions cap at 10
+// (Files FolderSearch MaxItemCount) and submits run to the full cap.
+void FileManagementExplorerPanel::startSearchWorker(
+    const QString& query,
+    const int max_results,
+    std::function<void(const QVector<SearchMatch>&)> on_matches,
+    std::function<void()> on_finished) {
     stopExplorerSearch();
-    results->clear();
     SearchConfig config;
     config.file_system_target = currentTarget();
     config.use_file_system_target = true;
     config.root_path = m_current_path;
     config.pattern = query;
     config.search_file_metadata = true;  // matches file NAME and path as well as content
-    config.max_results = kExplorerSearchMaxResults;
+    config.max_results = max_results;
     config.max_file_size = kExplorerPreviewMaxBytes;
     m_search_worker = new AdvancedSearchWorker(config, this);
     connect(m_search_worker,
             &AdvancedSearchWorker::resultsReady,
-            results,
-            [results](const QVector<SearchMatch>& matches) {
-                for (const SearchMatch& match : matches) {
-                    if (results->findItems(match.file_path, Qt::MatchFixedString).isEmpty()) {
-                        results->addItem(match.file_path);
-                    }
-                }
+            this,
+            [handler = std::move(on_matches)](const QVector<SearchMatch>& matches) {
+                handler(matches);
             });
-    connect(m_search_worker, &QThread::finished, status, [results, status]() {
-        status->setText(tr("Search finished: %1 result(s).").arg(results->count()));
-    });
-    status->setText(tr("Searching..."));
+    if (on_finished) {
+        connect(m_search_worker, &QThread::finished, this, [handler = std::move(on_finished)]() {
+            handler();
+        });
+    }
     m_search_worker->start();
 }
 
@@ -5092,112 +5234,143 @@ void FileManagementExplorerPanel::openSearchResult(const QString& path, const bo
     loadDirectory(parent);
 }
 
-FileManagementExplorerPanel::SearchDialogUi FileManagementExplorerPanel::buildSearchDialogUi(
-    QDialog* dialog, const FileManagementTarget& target) const {
-    SearchDialogUi ui;
-    dialog->setObjectName(QStringLiteral("fileExplorerSearchDialog"));
-    dialog->setWindowTitle(tr("Search"));
-    dialog->setMinimumWidth(sak::kDialogWidthLarge);
-    auto* layout = new QVBoxLayout(dialog);
-
-    auto* badge = new QLabel(
-        tr("Target: %1  |  %2  |  under %3").arg(target.label, target.file_system, m_current_path),
-        dialog);
-    badge->setObjectName(QStringLiteral("fileExplorerSearchTargetBadge"));
-    layout->addWidget(badge);
-
-    auto* query_row = new QHBoxLayout();
-    ui.query = new QComboBox(dialog);
-    ui.query->setEditable(true);
-    ui.query->setObjectName(QStringLiteral("fileExplorerSearchQuery"));
-    ui.query->setAccessibleName(tr("Search text"));
-    ui.query->addItems(searchHistory());
-    ui.query->setCurrentText(QString());
-    query_row->addWidget(ui.query, 1);
-    ui.search = new QPushButton(tr("Search"), dialog);
-    ui.search->setObjectName(QStringLiteral("fileExplorerSearchRunButton"));
-    query_row->addWidget(ui.search);
-    ui.clear = new QPushButton(tr("Clear"), dialog);
-    ui.clear->setObjectName(QStringLiteral("fileExplorerSearchClearButton"));
-    query_row->addWidget(ui.clear);
-    layout->addLayout(query_row);
-
-    ui.results = new QListWidget(dialog);
-    ui.results->setObjectName(QStringLiteral("fileExplorerSearchResults"));
-    ui.results->setAccessibleName(tr("Search results"));
-    layout->addWidget(ui.results, 1);
-
-    ui.status = new QLabel(tr("Names, paths, and text content match under the current folder."),
-                           dialog);
-    ui.status->setObjectName(QStringLiteral("fileExplorerSearchStatus"));
-    layout->addWidget(ui.status);
-
-    auto* action_row = new QHBoxLayout();
-    ui.open = new QPushButton(tr("Open Result"), dialog);
-    ui.open->setObjectName(QStringLiteral("fileExplorerSearchOpenButton"));
-    action_row->addWidget(ui.open);
-    ui.open_location = new QPushButton(tr("Open Location"), dialog);
-    ui.open_location->setObjectName(QStringLiteral("fileExplorerSearchOpenLocationButton"));
-    action_row->addWidget(ui.open_location);
-    action_row->addStretch(1);
-    auto* close = new QPushButton(tr("Close"), dialog);
-    connect(close, &QPushButton::clicked, dialog, &QDialog::reject);
-    action_row->addWidget(close);
-    layout->addLayout(action_row);
-    return ui;
+// Files PopulateOmnibarSuggestionsForSearchMode: an empty query lists the
+// recent searches; typed text debounces 200 ms into a live capped search.
+void FileManagementExplorerPanel::populateOmnibarSearch(const QString& text) {
+    if (!m_omnibar || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
+        return;
+    }
+    const QString clean = text.trimmed();
+    if (clean.isEmpty()) {
+        m_search_suggest_timer->stop();
+        stopExplorerSearch();
+        QListWidget* list = m_omnibar->suggestionList();
+        list->clear();
+        const QStringList history = searchHistory();
+        for (int i = 0; i < history.size() && i < kOmnibarSearchSuggestCap; ++i) {
+            auto* item = new QListWidgetItem(history.at(i), list);
+            item->setToolTip(tr("Recent search"));
+        }
+        list->setCurrentRow(-1);
+        m_omnibar->setSuggestionsVisible(list->count() > 0);
+        return;
+    }
+    m_pending_search_suggest = clean;
+    m_search_suggest_timer->start();
 }
 
-void FileManagementExplorerPanel::showExplorerSearchDialog(const QString& initial_query) {
+void FileManagementExplorerPanel::runSearchSuggestions(const QString& query) {
+    if (!m_omnibar || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
+        return;
+    }
+    QListWidget* list = m_omnibar->suggestionList();
+    list->clear();
+    m_omnibar->setSuggestionsVisible(true);
+    const FileManagementTarget target = currentTarget();
+    const bool local = target.local_file_system;
+    startSearchWorker(
+        query,
+        kOmnibarSearchSuggestCap,
+        [this, list, local](const QVector<SearchMatch>& matches) {
+            if (!m_omnibar || m_omnibar->mode() != FileExplorerOmnibarMode::Search) {
+                return;
+            }
+            for (const SearchMatch& match : matches) {
+                if (!list->findItems(nameForPath(match.file_path, local), Qt::MatchExactly)
+                         .isEmpty()) {
+                    continue;
+                }
+                auto* item = new QListWidgetItem(nameForPath(match.file_path, local), list);
+                item->setToolTip(match.file_path);
+                item->setData(kSearchPathRole, match.file_path);
+            }
+        },
+        {});
+}
+
+// Files SubmitSearch: the full search renders its results in the normal
+// layout page (the listing shows the matches; navigating away restores).
+void FileManagementExplorerPanel::submitExplorerSearch(const QString& query) {
     const FileManagementTarget target = currentTarget();
     if (FileExplorerTargetId::fromTarget(target).isEmpty()) {
         Q_EMIT statusMessage(tr("Select a File Explorer target first."),
                              sak::kTimerStatusMessageMs);
         return;
     }
-    QDialog dialog(this);
-    const SearchDialogUi ui = buildSearchDialogUi(&dialog, target);
-
-    const auto run_search = [this, ui]() {
-        const QString query = ui.query->currentText().trimmed();
-        if (query.isEmpty()) {
-            ui.status->setText(tr("Type a search text first."));
-            return;
-        }
-        rememberSearchQuery(query);
-        startExplorerSearch(query, ui.results, ui.status);
-    };
-    connect(ui.search, &QPushButton::clicked, &dialog, run_search);
-    connect(ui.query->lineEdit(), &QLineEdit::returnPressed, &dialog, run_search);
-    connect(ui.clear, &QPushButton::clicked, &dialog, [this, ui]() {
-        stopExplorerSearch();
-        ui.results->clear();
-        ui.status->setText(tr("Search cleared."));
-    });
-    const auto open_selected = [this, ui, &dialog](const bool location_only) {
-        auto* item = ui.results->currentItem();
-        if (!item) {
-            ui.status->setText(tr("Select a result first."));
-            return;
-        }
-        openSearchResult(item->text(), location_only);
-        dialog.accept();
-    };
-    connect(ui.open, &QPushButton::clicked, &dialog, [open_selected]() { open_selected(false); });
-    connect(ui.open_location, &QPushButton::clicked, &dialog, [open_selected]() {
-        open_selected(true);
-    });
-    connect(ui.results, &QListWidget::itemDoubleClicked, &dialog, [open_selected]() {
-        open_selected(false);
-    });
-
-    if (!initial_query.isEmpty()) {
-        ui.query->setCurrentText(initial_query);
-        run_search();
+    const QString clean = query.trimmed();
+    if (clean.isEmpty()) {
+        Q_EMIT statusMessage(tr("Type a search text first."), sak::kTimerStatusMessageMs);
+        return;
     }
+    rememberSearchQuery(clean);
+    m_search_result_entries.clear();
+    m_search_result_paths.clear();
+    Q_EMIT statusMessage(tr("Searching for %1...").arg(clean), sak::kTimerStatusMessageMs);
+    const bool local = target.local_file_system;
+    startSearchWorker(
+        clean,
+        kExplorerSearchMaxResults,
+        [this, local](const QVector<SearchMatch>& matches) {
+            for (const SearchMatch& match : matches) {
+                if (m_search_result_paths.contains(match.file_path)) {
+                    continue;
+                }
+                m_search_result_paths.insert(match.file_path);
+                FileManagementEntry entry;
+                entry.name = nameForPath(match.file_path, local);
+                entry.path = match.file_path;
+                entry.regular_file = true;
+                entry.type = tr("Search result");
+                if (local) {
+                    const QFileInfo info(match.file_path);
+                    entry.size_bytes = static_cast<uint64_t>(std::max<qint64>(info.size(), 0));
+                    entry.modified_time = info.lastModified();
+                    entry.directory = info.isDir();
+                    entry.regular_file = info.isFile();
+                }
+                m_search_result_entries.append(entry);
+            }
+        },
+        [this, clean]() {
+            if (m_item_model) {
+                m_item_model->setEntries(m_search_result_entries);
+            }
+            if (m_pane) {
+                if (m_search_result_entries.isEmpty()) {
+                    m_pane->showEmptyState(tr("No results for %1.").arg(clean));
+                } else {
+                    m_pane->showReadyState();
+                }
+            }
+            Q_EMIT statusMessage(tr("%n result(s) for %1.",
+                                    nullptr,
+                                    static_cast<int>(m_search_result_entries.size()))
+                                     .arg(clean),
+                                 sak::kTimerStatusDefaultMs);
+            updateStatusCounts();
+        });
+}
 
-    dialog.resize(sak::kDialogWidthLarge, 480);
-    dialog.exec();
-    stopExplorerSearch();
+// Files Omnibar_QuerySubmitted search branch: a chosen file suggestion opens
+// its item; a recent-search row (or the raw text) submits the full search.
+void FileManagementExplorerPanel::submitSearchSuggestion(QListWidgetItem* item,
+                                                         const QString& typed) {
+    QString query = typed.trimmed();
+    if (item) {
+        const QVariant path = item->data(kSearchPathRole);
+        if (!path.isNull()) {
+            if (m_omnibar) {
+                m_omnibar->setMode(FileExplorerOmnibarMode::Path);
+            }
+            openSearchResult(path.toString(), false);
+            return;
+        }
+        query = item->text();
+    }
+    if (m_omnibar) {
+        m_omnibar->setMode(FileExplorerOmnibarMode::Path);
+    }
+    submitExplorerSearch(query);
 }
 
 void FileManagementExplorerPanel::showCommandPalette() {

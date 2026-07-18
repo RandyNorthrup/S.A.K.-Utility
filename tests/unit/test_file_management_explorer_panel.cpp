@@ -690,38 +690,55 @@ private Q_SLOTS:
                 .isNull());
     }
 
-    void searchBoxEnterOpensDialogPrefilled() {
+    void searchBoxEnterSubmitsSearchIntoListing() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("sak-inline-probe.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("inline search payload") > 0);
+        }
+
         sak::FileManagementExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
         auto* searchBox = child<QLineEdit>(&panel, "fileExplorerSearchBox");
         QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
         QVERIFY(searchBox);
-        const int targetRow = firstTargetRow(targetList);
-        if (targetRow < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
         }
-        targetList->setCurrentRow(targetRow);
-        QApplication::processEvents();
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("sak-inline")) >= 0);
 
-        bool verified = false;
-        QTimer::singleShot(0, [&verified]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* query = dialog->findChild<QComboBox*>(QStringLiteral("fileExplorerSearchQuery"));
-            verified = query && query->currentText() == QStringLiteral("sak-search-box-probe");
-            dialog->reject();
-        });
-        searchBox->setText(QStringLiteral("sak-search-box-probe"));
+        // Enter in the quick-search box submits the full search; the results
+        // render in the normal listing (Files SubmitSearch), and the query
+        // lands in the persisted history.
+        searchBox->setText(QStringLiteral("sak-inline-probe"));
         QTest::keyClick(searchBox, Qt::Key_Return);
-        QApplication::processEvents();
-
-        QVERIFY2(verified, "search box Enter did not open the search dialog prefilled");
+        QTRY_VERIFY2(
+            [table]() {
+                for (int row = 0; row < table->model()->rowCount(); ++row) {
+                    if (table->model()->index(row, 0).data().toString().contains(
+                            QStringLiteral("sak-inline-probe"))) {
+                        return true;
+                    }
+                }
+                return false;
+            }(),
+            "search results did not land in the listing");
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        QVERIFY(settings.value(QStringLiteral("SearchHistory"))
+                    .toStringList()
+                    .contains(QStringLiteral("sak-inline-probe")));
+        settings.endGroup();
     }
 
     void filesCommunityIconRegistryMapsBundledAssets() {
@@ -2578,7 +2595,7 @@ private Q_SLOTS:
         QVERIFY(table->columnWidth(sak::FileExplorerItemModel::NameColumn) != 555);
     }
 
-    void searchShortcutAppliesCurrentFolderFilter() {
+    void filterHeaderTogglesAndFiltersListing() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
@@ -2588,25 +2605,35 @@ private Q_SLOTS:
         QVERIFY(pane);
         QVERIFY(pane->sortFilterModel());
 
-        bool dialogSeen = false;
-        QTimer::singleShot(0, [&dialogSeen]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* edit = dialog->findChild<QLineEdit*>();
-            if (!edit) {
-                return;
-            }
-            dialogSeen = true;
-            edit->setText(QStringLiteral("codex-filter-no-match"));
-            dialog->accept();
-        });
-
+        // Files ToggleFilterHeaderAction: hidden by default, Ctrl+Shift+F
+        // shows the "Filtering for" row and focuses the Filename box.
+        auto* header = child<QWidget>(&panel, "fileExplorerFilterHeader");
+        auto* filterBox = child<QLineEdit>(&panel, "fileExplorerFilterBox");
+        QVERIFY(header);
+        QVERIFY(filterBox);
+        QVERIFY(!header->isVisible());
         panel.setFocus();
-        QTest::keyClick(&panel, Qt::Key_F, Qt::ControlModifier);
-        QVERIFY(dialogSeen);
-        QCOMPARE(pane->sortFilterModel()->nameFilter(), QStringLiteral("codex-filter-no-match"));
+        QTest::keyClick(&panel, Qt::Key_F, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(header->isVisible());
+
+        // Typing filters the loaded listing after the 250 ms debounce.
+        filterBox->setText(QStringLiteral("codex-filter-no-match"));
+        QTRY_COMPARE_WITH_TIMEOUT(pane->sortFilterModel()->nameFilter(),
+                                  QStringLiteral("codex-filter-no-match"),
+                                  2000);
+
+        // Esc returns focus to the file list (FilterTextBox_PreviewKeyDown).
+        QTest::keyClick(filterBox, Qt::Key_Escape);
+        QApplication::processEvents();
+        QVERIFY(!filterBox->hasFocus());
+
+        // Toggling again hides the row; the persisted setting flips too.
+        QTest::keyClick(&panel, Qt::Key_F, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY(!header->isVisible());
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        QVERIFY(!settings.value(QStringLiteral("ShowFilterHeader"), false).toBool());
+        settings.endGroup();
     }
 
     void commandPaletteShortcutEntersInlineOmnibarMode() {
@@ -3089,16 +3116,22 @@ private Q_SLOTS:
         QCOMPARE(copied.readAll(), payload);
     }
 
-    void omnibarSearchDialogExposesResultRoutingAndHistory() {
-        // The rich omnibar search dialog opens from the search button with a target badge,
-        // an editable query pre-seeded from history, a result list, and open/clear actions.
+    void omnibarSearchModeShowsRecentsAndLiveSuggestions() {
+        // Files Omnibar search mode: empty query lists the recent searches;
+        // typed text debounces into live file suggestions; Enter on a file
+        // suggestion navigates to it.
         QSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
-        const QStringList previous = settings.value(QStringLiteral("SearchHistory")).toStringList();
         settings.setValue(QStringLiteral("SearchHistory"),
                           QStringList{QStringLiteral("prior-query")});
         settings.endGroup();
-        settings.sync();
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("sak-suggest-probe.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("suggestion payload") > 0);
+        }
 
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
@@ -3106,50 +3139,69 @@ private Q_SLOTS:
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
         auto* searchButton = child<QPushButton>(&panel, "fileExplorerSearchButton");
         QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
         QVERIFY(searchButton);
-        const int targetRow = firstTargetRow(targetList);
-        if (targetRow < 0) {
-            settings.beginGroup(QStringLiteral("FileManagementExplorer"));
-            settings.setValue(QStringLiteral("SearchHistory"), previous);
-            settings.endGroup();
-            QSKIP("No mounted File Explorer targets on this test host.");
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
         }
-        targetList->setCurrentRow(targetRow);
-        QApplication::processEvents();
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("sak-suggest")) >=
+                0);
 
-        bool verified = false;
-        QTimer::singleShot(0, [&verified]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* badge =
-                dialog->findChild<QLabel*>(QStringLiteral("fileExplorerSearchTargetBadge"));
-            auto* query = dialog->findChild<QComboBox*>(QStringLiteral("fileExplorerSearchQuery"));
-            auto* results =
-                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerSearchResults"));
-            auto* clear =
-                dialog->findChild<QPushButton*>(QStringLiteral("fileExplorerSearchClearButton"));
-            auto* open =
-                dialog->findChild<QPushButton*>(QStringLiteral("fileExplorerSearchOpenButton"));
-            auto* openLocation = dialog->findChild<QPushButton*>(
-                QStringLiteral("fileExplorerSearchOpenLocationButton"));
-            verified = badge && query && results && clear && open && openLocation &&
-                       !badge->text().trimmed().isEmpty() &&
-                       query->findText(QStringLiteral("prior-query")) >= 0;
-            dialog->reject();
-        });
+        // The search button enters search mode: search placeholder + recents.
         searchButton->click();
         QApplication::processEvents();
+        QCOMPARE(pathEdit->placeholderText(), QStringLiteral("Search for files and folders..."));
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
+        QTRY_VERIFY(suggestions->isVisible());
+        bool recent_seen = false;
+        for (int i = 0; i < suggestions->count(); ++i) {
+            recent_seen = recent_seen ||
+                          suggestions->item(i)->text() == QStringLiteral("prior-query");
+        }
+        QVERIFY2(recent_seen, "recent search query row missing");
 
-        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
-        settings.setValue(QStringLiteral("SearchHistory"), previous);
-        settings.endGroup();
-        settings.sync();
+        verifyLiveSearchSuggestionOpens(panel, pathEdit, suggestions, dir.path());
+    }
 
-        QVERIFY2(verified, "omnibar search dialog is missing expected controls or history seed");
+    void verifyLiveSearchSuggestionOpens(sak::FileManagementExplorerPanel& panel,
+                                         QLineEdit* pathEdit,
+                                         QListWidget* suggestions,
+                                         const QString& dir_path) {
+        // Typing repopulates with debounced live matches carrying the path
+        // (kSearchPathRole = UserRole + 9).
+        QTest::keyClicks(pathEdit, QStringLiteral("sak-suggest-probe"));
+        QTRY_VERIFY2_WITH_TIMEOUT(
+            [suggestions]() {
+                for (int i = 0; i < suggestions->count(); ++i) {
+                    if (!suggestions->item(i)->data(Qt::UserRole + 9).isNull()) {
+                        return true;
+                    }
+                }
+                return false;
+            }(),
+            "no live file suggestion appeared",
+            8000);
+
+        // Enter on the file suggestion opens its location and selects it.
+        for (int i = 0; i < suggestions->count(); ++i) {
+            if (!suggestions->item(i)->data(Qt::UserRole + 9).isNull()) {
+                suggestions->setCurrentRow(i);
+                break;
+            }
+        }
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QTRY_VERIFY(pathEdit->text().contains(dir_path.mid(3), Qt::CaseInsensitive) ||
+                    pathEdit->text().compare(dir_path, Qt::CaseInsensitive) == 0);
+        auto* omnibar = panel.findChild<sak::FileExplorerOmnibar*>();
+        QVERIFY(omnibar);
+        QCOMPARE(omnibar->mode(), sak::FileExplorerOmnibarMode::Path);
     }
 
     void evidenceReportsMatchTargetByPath() {

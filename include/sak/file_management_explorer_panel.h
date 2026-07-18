@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/advanced_search_types.h"
 #include "sak/file_explorer_command_bar.h"
 #include "sak/file_explorer_command_registry.h"
 #include "sak/file_explorer_details_pane.h"
@@ -26,10 +27,13 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSet>
 #include <QSplitter>
 #include <QStringList>
 #include <QUrl>
 #include <QWidget>
+
+#include <functional>
 
 class QJsonArray;
 class QComboBox;
@@ -145,6 +149,9 @@ private:
     void selectTabByNumber(int digit);
     void connectUiSignals();
     void connectToolbarSignals();
+    void connectOmnibarModeSignals();
+    bool handleFilterBoxKeyEvent(QEvent* event);
+    bool dispatchFilteredEvent(QObject* watched, QEvent* event);
     void connectNavigationSignals();
     void connectPaneSignals(FileExplorerPane* pane, int pane_index);
     void installCommandShortcuts();
@@ -502,21 +509,22 @@ private:
                                   bool warn_when_missing = false);
     void appendStaleFavoriteRow(const QString& target_id);
     bool showStaleFavoriteContextMenu(const QPoint& position);
-    void promptCurrentFolderFilter();
-    /// Widgets of the omnibar search dialog, shared between builder and wiring.
-    struct SearchDialogUi {
-        QComboBox* query{nullptr};
-        QListWidget* results{nullptr};
-        QLabel* status{nullptr};
-        QPushButton* search{nullptr};
-        QPushButton* clear{nullptr};
-        QPushButton* open{nullptr};
-        QPushButton* open_location{nullptr};
-    };
-    void showExplorerSearchDialog(const QString& initial_query = {});
-    [[nodiscard]] SearchDialogUi buildSearchDialogUi(QDialog* dialog,
-                                                     const FileManagementTarget& target) const;
-    void startExplorerSearch(const QString& query, QListWidget* results, QLabel* status);
+    /// Files FilterHeader row (Ctrl+Shift+F): filters the loaded listing.
+    void buildFilterHeader(QVBoxLayout* layout);
+    [[nodiscard]] bool showFilterHeaderEnabled() const;
+    void toggleFilterHeader();
+    void applyFilterHeaderText(const QString& text);
+    void clearFolderFilterOnNavigation();
+    /// Inline omnibar search mode (Files Omnibar search): recents, debounced
+    /// live suggestions, and full submits into the listing.
+    void startSearchWorker(const QString& query,
+                           int max_results,
+                           std::function<void(const QVector<SearchMatch>&)> on_matches,
+                           std::function<void()> on_finished);
+    void populateOmnibarSearch(const QString& text);
+    void runSearchSuggestions(const QString& query);
+    void submitExplorerSearch(const QString& query);
+    void submitSearchSuggestion(QListWidgetItem* item, const QString& typed);
     void stopExplorerSearch();
     void openSearchResult(const QString& path, bool location_only);
     [[nodiscard]] QStringList searchHistory() const;
@@ -643,10 +651,20 @@ private:
     QString m_last_hash_name;
     QString m_last_hash_sha256;
     bool m_last_hash_capped{false};
-    // Live omnibar search worker (one per search; stopped on re-search/dialog close).
+    // Live omnibar search worker (one per search; stopped on re-search/mode exit).
     AdvancedSearchWorker* m_search_worker{nullptr};
     // Entry name to select once the next listing arrives (open-search-result flow).
     QString m_pending_select_name;
+    // Inline search-mode plumbing: 200 ms suggestion debounce (Files), the
+    // pending query it fires with, and the accumulating full-search results.
+    QTimer* m_search_suggest_timer{nullptr};
+    QString m_pending_search_suggest;
+    QVector<FileManagementEntry> m_search_result_entries;
+    QSet<QString> m_search_result_paths;
+    // Files FilterHeader row (Ctrl+Shift+F): filter box + 250 ms debounce.
+    QWidget* m_filter_header{nullptr};
+    QLineEdit* m_filter_box{nullptr};
+    QTimer* m_filter_debounce{nullptr};
     FileExplorerItemModel* m_item_model{nullptr};
     QVector<FileManagementTarget> m_targets;
     QString m_current_path{QStringLiteral("/")};
