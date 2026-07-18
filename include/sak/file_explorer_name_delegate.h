@@ -30,16 +30,39 @@ protected:
 /// Name-column delegate: rename editor with Files semantics -- base name
 /// selected for files when extensions are shown, restricted characters
 /// stripped live with a warning tip (FilesystemHelpers.RestrictedCharacters).
+/// With @p folder_chevron on, folder rows paint the Files columns-view
+/// chevron (ColumnLayoutPage OpenFolderChevron, glyph E76C) right-aligned.
 class FileExplorerNameDelegate : public QStyledItemDelegate {
     Q_OBJECT
 
 public:
-    explicit FileExplorerNameDelegate(QObject* parent = nullptr);
+    explicit FileExplorerNameDelegate(QObject* parent = nullptr, bool folder_chevron = false);
 
     [[nodiscard]] QWidget* createEditor(QWidget* parent,
                                         const QStyleOptionViewItem& option,
                                         const QModelIndex& index) const override;
     void setEditorData(QWidget* editor, const QModelIndex& index) const override;
+    void paint(QPainter* painter,
+               const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override;
+    [[nodiscard]] bool folderChevronEnabled() const;
+
+private:
+    bool m_folder_chevron{false};
+};
+
+/// Cards-layout delegate (Files CardsBrowserTemplate): a rounded card with
+/// the icon box on the left and a details block of name (bold), type
+/// caption, and size caption. Inherits the rename editor.
+class FileExplorerCardDelegate : public FileExplorerNameDelegate {
+    Q_OBJECT
+
+public:
+    explicit FileExplorerCardDelegate(QObject* parent = nullptr);
+
+    void paint(QPainter* painter,
+               const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override;
 };
 
 }  // namespace sak

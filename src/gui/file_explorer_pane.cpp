@@ -96,13 +96,19 @@ void FileExplorerPane::buildItemViews() {
     m_view_stack->addWidget(m_columns_container);
 
     // Inline rename (Files BaseLayoutPage): a name-column delegate per view
-    // (sharing one instance would cross-wire commitData between views); the
-    // columns preview stays read-only.
+    // (sharing one instance would cross-wire commitData between views). Cards
+    // paints the Files card cell; the columns blades add the folder chevron
+    // (the preview blade is read-only but still shows it).
     m_details_view->setItemDelegateForColumn(FileExplorerItemModel::NameColumn,
                                              new FileExplorerNameDelegate(m_details_view));
-    for (QListView* view : {m_list_view, m_grid_view, m_cards_view, m_columns_view}) {
+    for (QListView* view : {m_list_view, m_grid_view}) {
         view->setItemDelegate(new FileExplorerNameDelegate(view));
     }
+    m_cards_view->setItemDelegate(new FileExplorerCardDelegate(m_cards_view));
+    m_columns_view->setItemDelegate(
+        new FileExplorerNameDelegate(m_columns_view, /*folder_chevron=*/true));
+    m_columns_preview_view->setItemDelegate(
+        new FileExplorerNameDelegate(m_columns_preview_view, /*folder_chevron=*/true));
 
     // Drag and drop (Files BaseItemsLayoutPage): rows drag out through the
     // model's payload provider; drops are filtered at the viewport by the

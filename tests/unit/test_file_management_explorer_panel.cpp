@@ -10,6 +10,7 @@
 #include "sak/file_explorer_details_view.h"
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
+#include "sak/file_explorer_name_delegate.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_sort_filter_model.h"
@@ -1275,6 +1276,74 @@ private Q_SLOTS:
         QTRY_VERIFY(!QFileInfo::exists(root.filePath(QStringLiteral("flatten_me/sub"))));
         QVERIFY2(question_text.contains(QStringLiteral("Flatten"), Qt::CaseInsensitive),
                  qPrintable(question_text));
+    }
+
+    void cardsAndColumnsDelegatesRenderFilesCells() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("folder_row")));
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("card_row.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("card payload") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        auto* cards = child<QListView>(&panel, "fileExplorerCardsView");
+        auto* columns = child<QListView>(&panel, "fileExplorerColumnsView");
+        auto* preview = child<QListView>(&panel, "fileExplorerColumnsPreviewView");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        QVERIFY(cards);
+        QVERIFY(columns);
+        QVERIFY(preview);
+
+        // Files CardsBrowserTemplate delegate on Cards; the columns blades
+        // carry the folder-chevron variant (preview blade included).
+        QVERIFY(qobject_cast<sak::FileExplorerCardDelegate*>(cards->itemDelegate()));
+        auto* columns_delegate =
+            qobject_cast<sak::FileExplorerNameDelegate*>(columns->itemDelegate());
+        QVERIFY(columns_delegate);
+        QVERIFY(columns_delegate->folderChevronEnabled());
+        auto* preview_delegate =
+            qobject_cast<sak::FileExplorerNameDelegate*>(preview->itemDelegate());
+        QVERIFY(preview_delegate);
+        QVERIFY(preview_delegate->folderChevronEnabled());
+        // Grid/List keep the plain rename delegate (no chevron, no card).
+        auto* grid = child<QListView>(&panel, "fileExplorerGridView");
+        QVERIFY(grid);
+        auto* grid_delegate = qobject_cast<sak::FileExplorerNameDelegate*>(grid->itemDelegate());
+        QVERIFY(grid_delegate);
+        QVERIFY(!grid_delegate->folderChevronEnabled());
+        QVERIFY(!qobject_cast<sak::FileExplorerCardDelegate*>(grid->itemDelegate()));
+
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("card_row")) >= 0);
+
+        // Paint smoke offscreen: both custom paints execute over real rows.
+        auto* view_button = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view_button);
+        QVERIFY(view_button->menu());
+        QAction* cards_action = actionStartingWith(view_button->menu(), QStringLiteral("Cards"));
+        QVERIFY(cards_action);
+        cards_action->trigger();
+        QTRY_VERIFY(cards->isVisible());
+        QVERIFY(!cards->grab().isNull());
+        QAction* columns_action = actionStartingWith(view_button->menu(),
+                                                     QStringLiteral("Columns"));
+        QVERIFY(columns_action);
+        columns_action->trigger();
+        QTRY_VERIFY(columns->isVisible());
+        QVERIFY(!columns->grab().isNull());
     }
 
     void sidebarAcceptsTagDropAndFavoriteReorder() {

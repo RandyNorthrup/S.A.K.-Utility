@@ -3,10 +3,13 @@
 
 #include "sak/file_explorer_name_delegate.h"
 
+#include "sak/file_explorer_group_proxy_model.h"
 #include "sak/file_explorer_item_model.h"
 
+#include <QApplication>
 #include <QEvent>
 #include <QKeyEvent>
+#include <QPainter>
 #include <QToolTip>
 
 namespace sak {
@@ -75,7 +78,125 @@ void FileExplorerRenameLineEdit::keyPressEvent(QKeyEvent* event) {
     }
 }
 
-FileExplorerNameDelegate::FileExplorerNameDelegate(QObject* parent) : QStyledItemDelegate(parent) {}
+FileExplorerNameDelegate::FileExplorerNameDelegate(QObject* parent, const bool folder_chevron)
+    : QStyledItemDelegate(parent), m_folder_chevron(folder_chevron) {}
+
+bool FileExplorerNameDelegate::folderChevronEnabled() const {
+    return m_folder_chevron;
+}
+
+void FileExplorerNameDelegate::paint(QPainter* painter,
+                                     const QStyleOptionViewItem& option,
+                                     const QModelIndex& index) const {
+    QStyledItemDelegate::paint(painter, option, index);
+    if (!m_folder_chevron || !index.data(FileExplorerItemModel::EntryDirectoryRole).toBool()) {
+        return;
+    }
+    // Files ColumnLayoutPage OpenFolderChevron: a right-aligned chevron on
+    // folder rows marks that opening pushes the next blade.
+    constexpr int kChevronEdge = 12;
+    constexpr int kChevronMargin = 4;
+    QStyleOption arrow;
+    arrow.rect = QRect(option.rect.right() - kChevronEdge - kChevronMargin,
+                       option.rect.center().y() - kChevronEdge / 2,
+                       kChevronEdge,
+                       kChevronEdge);
+    arrow.state = option.state;
+    arrow.palette = option.palette;
+    QApplication::style()->drawPrimitive(QStyle::PE_IndicatorArrowRight, &arrow, painter);
+}
+
+FileExplorerCardDelegate::FileExplorerCardDelegate(QObject* parent)
+    : FileExplorerNameDelegate(parent) {}
+
+namespace {
+
+// Files CardsBrowserTemplate: rounded card (CornerRadius 8) with a 1px
+// border and the icon box on the left; palette-driven so light and dark
+// themes both read. Returns the details rect to the right of the icon box.
+QRect paintCardFrameAndIcon(QPainter* painter,
+                            const QStyleOptionViewItem& option,
+                            const QModelIndex& index) {
+    constexpr int kCardMargin = 3;
+    constexpr int kCardRadius = 8;
+    constexpr int kDetailsSpacing = 8;
+    const QRect card = option.rect.adjusted(kCardMargin, kCardMargin, -kCardMargin, -kCardMargin);
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
+    QColor fill = option.palette.color(selected ? QPalette::Highlight : QPalette::Base);
+    if (selected) {
+        fill.setAlpha(60);
+    }
+    painter->setPen(QPen(option.palette.color(selected ? QPalette::Highlight : QPalette::Mid), 1));
+    painter->setBrush(fill);
+    painter->drawRoundedRect(card, kCardRadius, kCardRadius);
+
+    const int box = card.height();
+    const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+    if (!icon.isNull()) {
+        const QSize icon_size = option.decorationSize;
+        icon.paint(painter,
+                   QRect(card.left() + (box - icon_size.width()) / 2,
+                         card.top() + (box - icon_size.height()) / 2,
+                         icon_size.width(),
+                         icon_size.height()));
+    }
+    return {card.left() + box + kDetailsSpacing,
+            card.top() + kDetailsSpacing / 2,
+            card.width() - box - 2 * kDetailsSpacing,
+            card.height() - kDetailsSpacing};
+}
+
+}  // namespace
+
+void FileExplorerCardDelegate::paint(QPainter* painter,
+                                     const QStyleOptionViewItem& option,
+                                     const QModelIndex& index) const {
+    // Injected group-section headers keep the default painting.
+    if (index.data(FileExplorerGroupProxyModel::IsGroupHeaderRole).toBool()) {
+        QStyledItemDelegate::paint(painter, option, index);
+        return;
+    }
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    const QRect details = paintCardFrameAndIcon(painter, option, index);
+
+    // Details block: name (BodyStrong), then type and size captions.
+    constexpr int kLineSpacing = 2;
+    QColor title_color = option.palette.color(QPalette::Text);
+    if (const QVariant foreground = index.data(Qt::ForegroundRole); foreground.isValid()) {
+        title_color = foreground.value<QBrush>().color();  // cut dimming
+    }
+    QFont title_font = option.font;
+    title_font.setBold(true);
+    const QFontMetrics title_metrics(title_font);
+    painter->setFont(title_font);
+    painter->setPen(title_color);
+    int y = details.top();
+    painter->drawText(QRect(details.left(), y, details.width(), title_metrics.height()),
+                      Qt::AlignLeft | Qt::AlignVCenter,
+                      title_metrics.elidedText(index.data(Qt::DisplayRole).toString(),
+                                               Qt::ElideMiddle,
+                                               details.width()));
+    y += title_metrics.height() + kLineSpacing;
+    const QFontMetrics caption_metrics(option.font);
+    painter->setFont(option.font);
+    painter->setPen(option.palette.color(QPalette::PlaceholderText));
+    painter->drawText(
+        QRect(details.left(), y, details.width(), caption_metrics.height()),
+        Qt::AlignLeft | Qt::AlignVCenter,
+        caption_metrics.elidedText(index.data(FileExplorerItemModel::EntryTypeRole).toString(),
+                                   Qt::ElideRight,
+                                   details.width()));
+    if (!index.data(FileExplorerItemModel::EntryDirectoryRole).toBool()) {
+        y += caption_metrics.height() + kLineSpacing;
+        const QString size_text = FileExplorerItemModel::sizeText(
+            index.data(FileExplorerItemModel::EntrySizeRole).toULongLong());
+        painter->drawText(QRect(details.left(), y, details.width(), caption_metrics.height()),
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          size_text);
+    }
+    painter->restore();
+}
 
 QWidget* FileExplorerNameDelegate::createEditor(QWidget* parent,
                                                 const QStyleOptionViewItem& option,
