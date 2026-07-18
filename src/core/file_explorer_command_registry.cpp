@@ -78,6 +78,7 @@ FileExplorerCommandGroup groupFor(const FileExplorerCommandId id) {
         {Id::ExtractToChildFolder, Group::File},
         {Id::Undo, Group::File},
         {Id::Redo, Group::File},
+        {Id::FlattenFolder, Group::File},
     });
     const auto it = std::ranges::find(kGroups, id, &std::pair<Id, Group>::first);
     return it != kGroups.end() ? it->second : Group::Navigation;
@@ -617,6 +618,12 @@ QVector<FileExplorerCommand> historyCommands() {
                     QStringLiteral("Redo"),
                     QStringLiteral("Redo the last undone file operation."),
                     QStringLiteral("Ctrl+Y")),
+        // Files FlattenFolderAction: experimental, gated by ShowFlattenOptions.
+        makeCommand(FileExplorerCommandId::FlattenFolder,
+                    QStringLiteral("Flatten folder"),
+                    QStringLiteral("Move all contents from subfolders into the selected folder."),
+                    {},
+                    {.destructive = true, .selection_required = true, .write_operation = true}),
     };
 }
 
@@ -764,6 +771,24 @@ FileExplorerCommand FileExplorerCommandRegistry::command(const FileExplorerComma
 
 namespace {
 
+// Files FlattenFolderAction.IsExecutable: the ShowFlattenOptions setting is
+// on, and exactly one folder is selected.
+std::optional<FileExplorerCommandState> flattenState(const FileExplorerCommandId id,
+                                                     const FileExplorerCommandContext& context,
+                                                     const FileExplorerCommand& entry) {
+    if (id != FileExplorerCommandId::FlattenFolder) {
+        return std::nullopt;
+    }
+    if (!context.show_flatten_options) {
+        return disabledState(entry, QStringLiteral("Enable flatten options first."));
+    }
+    if (!context.pane.selection.hasSingleEntry() ||
+        !context.pane.selection.entries.first().directory) {
+        return disabledState(entry, QStringLiteral("Select one folder to flatten."));
+    }
+    return std::nullopt;
+}
+
 // Second half of the enablement chain: capability and feature gates evaluated
 // after the target/selection preconditions passed.
 FileExplorerCommandState featureGateState(const FileExplorerCommandId id,
@@ -783,6 +808,9 @@ FileExplorerCommandState featureGateState(const FileExplorerCommandId id,
     }
     if (const auto archive = archiveState(id, context, entry)) {
         return *archive;
+    }
+    if (const auto flatten = flattenState(id, context, entry)) {
+        return *flatten;
     }
     return enabledState(entry);
 }
@@ -869,6 +897,7 @@ QString FileExplorerCommandRegistry::commandIdName(const FileExplorerCommandId i
         {Id::PasteIntoSelection, "paste-into-selection"},
         {Id::Undo, "undo"},
         {Id::Redo, "redo"},
+        {Id::FlattenFolder, "flatten-folder"},
     });
     const auto it = std::ranges::find(kNames, id, &std::pair<Id, const char*>::first);
     return it != kNames.end() ? QString::fromLatin1(it->second) : QStringLiteral("unknown");

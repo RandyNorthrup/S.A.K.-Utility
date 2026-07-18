@@ -97,6 +97,8 @@ private Q_SLOTS:
     void onItemDoubleClicked(const QModelIndex& index);
     void onTableContextMenuRequested(const QPoint& position);
     void onTargetContextMenuRequested(const QPoint& position);
+    /// Files FlattenFolderAction (setting-gated, one folder, confirmation).
+    void flattenSelectedFolder();
 
 private:
     void setupUi();
@@ -336,6 +338,22 @@ private:
     bool maybeStartFavoriteDrag(QEvent* event);
     [[nodiscard]] bool canEjectTarget(const FileManagementTarget& target) const;
     void ejectLocalTargetAtIndex(int target_index);
+    /// Files ShowCheckboxesWhenSelectingItems: selection checkboxes.
+    [[nodiscard]] bool showCheckboxesEnabled() const;
+    void setShowCheckboxes(bool enabled);
+    void toggleSelectionForPath(FileExplorerPane* pane, const QString& path, bool checked);
+    /// Files ShowFlattenOptions gate and the recursive flatten walk.
+    [[nodiscard]] bool showFlattenOptionsEnabled() const;
+    int flattenFolderTree(const FileManagementTarget& target,
+                          const QString& root,
+                          const QString& current,
+                          int depth,
+                          QStringList* blockers);
+    void removeEmptiedSubfolder(const FileManagementTarget& target,
+                                const QString& path,
+                                QStringList* blockers);
+    void installSelectionCheckboxes(FileExplorerPane* pane);
+    void appendViewToggleActions(QMenu* menu, const FileExplorerCommandContext& context);
     void recordHistory(FileExplorerHistoryOperation operation,
                        const FileManagementTarget& source_target,
                        const FileManagementTarget& destination_target,

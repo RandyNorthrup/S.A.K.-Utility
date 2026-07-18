@@ -144,6 +144,11 @@ constexpr const char* kColumnsSizeKey = "ColumnsViewSize";
 constexpr const char* kGroupOptionKey = "GroupOption";
 constexpr const char* kGroupDirectionKey = "GroupDirection";
 constexpr const char* kGroupDateUnitKey = "GroupByDateUnit";
+// Files global settings: selection checkboxes (FoldersSettingsService,
+// default true) and the flatten-folder opt-in (GeneralSettingsService,
+// default false; surfaced on the C6 settings page).
+constexpr const char* kShowCheckboxesKey = "ShowCheckboxesWhenSelectingItems";
+constexpr const char* kShowFlattenKey = "ShowFlattenOptions";
 constexpr const char* kSearchHistoryKey = "SearchHistory";
 constexpr int kMaxSearchHistoryEntries = 20;
 constexpr int kExplorerSearchMaxResults = 500;
@@ -1203,7 +1208,39 @@ void FileManagementExplorerPanel::connectNavigationSignals() {
             &FileManagementExplorerPanel::onDeleteClicked);
 }
 
+void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* pane) {
+    // Files ShowCheckboxesWhenSelectingItems: the checkbox mirrors the
+    // selection, so the model reads a per-pane snapshot of selected paths and
+    // checkbox clicks route back into the selection model.
+    auto checked_paths = std::make_shared<QSet<QString>>();
+    pane->itemModel()->setCheckboxProviders(
+        [checked_paths](const QString& path) { return checked_paths->contains(path); },
+        [this, pane](const QString& path, const bool checked) {
+            toggleSelectionForPath(pane, path, checked);
+        });
+    pane->itemModel()->setCheckboxesVisible(showCheckboxesEnabled());
+    if (!pane->sharedSelectionModel()) {
+        return;
+    }
+    connect(pane->sharedSelectionModel(),
+            &QItemSelectionModel::selectionChanged,
+            this,
+            [pane, checked_paths]() {
+                checked_paths->clear();
+                const QModelIndexList rows = pane->sharedSelectionModel()
+                                                 ? pane->sharedSelectionModel()->selectedRows()
+                                                 : QModelIndexList{};
+                for (const QModelIndex& row : rows) {
+                    if (pane->hasViewEntry(row.row())) {
+                        checked_paths->insert(pane->entryAtViewRow(row.row()).path);
+                    }
+                }
+                pane->itemModel()->refreshChecks();
+            });
+}
+
 void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int pane_index) {
+    installSelectionCheckboxes(pane);
     if (pane->sharedSelectionModel()) {
         connect(pane->sharedSelectionModel(),
                 &QItemSelectionModel::selectionChanged,
@@ -3794,6 +3831,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
     context.clipboard_has_files = clipboardHasPasteableFiles();
     context.selection_has_tags = selectionHasTags(context.pane.selection);
     context.dual_pane_active = m_dual_pane_enabled;
+    context.show_flatten_options = showFlattenOptionsEnabled();
     context.other_pane_target = otherPaneTarget();
     return context;
 }
@@ -3880,16 +3918,7 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     appendItemSizeMenuRow(menu);
 
     menu->addSeparator();
-    if (auto* hiddenAction =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
-        hiddenAction->setCheckable(true);
-        hiddenAction->setChecked(m_pane_state.view.show_hidden);
-    }
-    if (auto* extensionAction =
-            addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
-        extensionAction->setCheckable(true);
-        extensionAction->setChecked(m_pane_state.view.show_extensions);
-    }
+    appendViewToggleActions(menu, context);
     menu->addSeparator();
     addCommandMenuAction(menu, FileExplorerCommandId::ToggleDualPane, context);
     auto* stackAction = menu->addAction(tr("Stack Panes Vertically"));
@@ -3913,6 +3942,29 @@ void FileManagementExplorerPanel::rebuildViewMenu(const FileExplorerCommandConte
     m_view_button->setEnabled(detailsState.enabled);
     m_view_button->setToolTip(detailsState.enabled ? tr("Change File Explorer view layout")
                                                    : detailsState.blocker);
+}
+
+void FileManagementExplorerPanel::appendViewToggleActions(
+    QMenu* menu, const FileExplorerCommandContext& context) {
+    if (auto* hiddenAction =
+            addCommandMenuAction(menu, FileExplorerCommandId::ToggleHiddenItems, context)) {
+        hiddenAction->setCheckable(true);
+        hiddenAction->setChecked(m_pane_state.view.show_hidden);
+    }
+    if (auto* extensionAction =
+            addCommandMenuAction(menu, FileExplorerCommandId::ToggleFileExtensions, context)) {
+        extensionAction->setCheckable(true);
+        extensionAction->setChecked(m_pane_state.view.show_extensions);
+    }
+    // Files Settings > Folders "Show checkboxes when selecting items";
+    // surfaced here until the C6 settings page lands.
+    auto* checkboxesAction = menu->addAction(tr("Item Check Boxes"));
+    checkboxesAction->setObjectName(QStringLiteral("fileExplorerItemCheckBoxesAction"));
+    checkboxesAction->setCheckable(true);
+    checkboxesAction->setChecked(showCheckboxesEnabled());
+    connect(checkboxesAction, &QAction::triggered, this, [this](const bool checked) {
+        setShowCheckboxes(checked);
+    });
 }
 
 void FileManagementExplorerPanel::appendItemSizeMenuRow(QMenu* menu) {
@@ -4159,6 +4211,9 @@ bool FileManagementExplorerPanel::dispatchSelectionToolCommand(
         return true;
     case FileExplorerCommandId::Redo:
         redoLastOperation();
+        return true;
+    case FileExplorerCommandId::FlattenFolder:
+        flattenSelectedFolder();
         return true;
     default:
         return dispatchArchiveCommand(command);
@@ -4844,6 +4899,151 @@ void FileManagementExplorerPanel::toggleFileExtensions() {
     Q_EMIT statusMessage(m_pane_state.view.show_extensions ? tr("File extensions shown")
                                                            : tr("File extensions hidden"),
                          sak::kTimerStatusMessageMs);
+}
+
+bool FileManagementExplorerPanel::showCheckboxesEnabled() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    // Files FoldersSettingsService.ShowCheckboxesWhenSelectingItems: default on.
+    const bool enabled = settings.value(QString::fromLatin1(kShowCheckboxesKey), true).toBool();
+    settings.endGroup();
+    return enabled;
+}
+
+void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    settings.setValue(QString::fromLatin1(kShowCheckboxesKey), enabled);
+    settings.endGroup();
+    for (FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
+        if (pane && pane->itemModel()) {
+            pane->itemModel()->setCheckboxesVisible(enabled);
+        }
+    }
+    Q_EMIT statusMessage(enabled ? tr("Item check boxes shown") : tr("Item check boxes hidden"),
+                         sak::kTimerStatusMessageMs);
+}
+
+// Checkbox click for @p path: (de)select that row in the pane, matching the
+// Files selection checkbox.
+void FileManagementExplorerPanel::toggleSelectionForPath(FileExplorerPane* pane,
+                                                         const QString& path,
+                                                         const bool checked) {
+    if (!pane || !pane->groupProxyModel() || !pane->sharedSelectionModel()) {
+        return;
+    }
+    auto* view_model = pane->groupProxyModel();
+    for (int row = 0; row < view_model->rowCount(); ++row) {
+        if (!pane->hasViewEntry(row) || pane->entryAtViewRow(row).path != path) {
+            continue;
+        }
+        const QModelIndex left = view_model->index(row, 0);
+        const QModelIndex right = view_model->index(row, view_model->columnCount() - 1);
+        pane->sharedSelectionModel()->select(QItemSelection(left, right),
+                                             checked ? QItemSelectionModel::Select
+                                                     : QItemSelectionModel::Deselect);
+        return;
+    }
+}
+
+bool FileManagementExplorerPanel::showFlattenOptionsEnabled() const {
+    QSettings settings;
+    settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
+    // Files GeneralSettingsService.ShowFlattenOptions: experimental, default off.
+    const bool enabled = settings.value(QString::fromLatin1(kShowFlattenKey), false).toBool();
+    settings.endGroup();
+    return enabled;
+}
+
+void FileManagementExplorerPanel::flattenSelectedFolder() {
+    // Files FlattenFolderAction: one selected folder, confirmation first;
+    // moves every descendant file up into the selected folder, skipping name
+    // collisions, then removes the emptied subfolders. Runs through the
+    // bridge, so raw APFS/HFS folders flatten identically to local ones.
+    const FileExplorerSelection selection = currentSelection();
+    const FileManagementTarget target = currentTarget();
+    if (!selection.hasSingleEntry() || !selection.entries.first().directory ||
+        !target.can_write_files) {
+        return;
+    }
+    const auto response = sak::showQuestionLogged(
+        this,
+        tr("Flatten folder"),
+        tr("Flattening a folder will move all contents from its subfolders to the selected "
+           "location. This operation is permanent and cannot be undone. Continue?"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (response != QMessageBox::Yes) {
+        return;
+    }
+    QStringList blockers;
+    const QString root = selection.entries.first().path;
+    const int moved = flattenFolderTree(target, root, root, 0, &blockers);
+    loadDirectory(m_current_path);
+    if (!blockers.isEmpty()) {
+        sak::showWarningLogged(this, tr("Flatten folder"), blockers.join(QStringLiteral("\n")));
+    }
+    Q_EMIT statusMessage(tr("Flattened %1 item(s) into %2")
+                             .arg(moved)
+                             .arg(nameForPath(root, target.local_file_system)),
+                         sak::kTimerStatusDefaultMs);
+}
+
+// Files deletes only the EMPTIED subfolder; one still holding skipped
+// collisions stays (the local delete is recursive, so an unguarded call
+// would destroy the files Files preserves).
+void FileManagementExplorerPanel::removeEmptiedSubfolder(const FileManagementTarget& target,
+                                                         const QString& path,
+                                                         QStringList* blockers) {
+    const FileManagementListResult remainder =
+        FileManagementFileSystemBridge::listDirectory(target, path, 1);
+    if (!remainder.ok || !remainder.entries.isEmpty()) {
+        return;
+    }
+    const auto removed = FileManagementFileSystemBridge::deleteDirectory(target, path);
+    if (!removed.ok) {
+        blockers->append(removed.blockers);
+    }
+}
+
+int FileManagementExplorerPanel::flattenFolderTree(const FileManagementTarget& target,
+                                                   const QString& root,
+                                                   const QString& current,
+                                                   const int depth,
+                                                   QStringList* blockers) {
+    constexpr int kFlattenMaxDepth = 32;
+    if (depth > kFlattenMaxDepth) {
+        blockers->append(tr("Flatten stopped: folder tree deeper than %1.").arg(kFlattenMaxDepth));
+        return 0;
+    }
+    const FileManagementListResult listing =
+        FileManagementFileSystemBridge::listDirectory(target, current, 10'000);
+    if (!listing.ok) {
+        blockers->append(listing.blockers);
+        return 0;
+    }
+    int moved = 0;
+    for (const FileManagementEntry& entry : listing.entries) {
+        if (entry.directory) {
+            moved += flattenFolderTree(target, root, entry.path, depth + 1, blockers);
+            removeEmptiedSubfolder(target, entry.path, blockers);
+            continue;
+        }
+        if (current == root) {
+            continue;  // already at the destination level
+        }
+        if (destinationOccupied(target, root, entry.name)) {
+            continue;  // Files skips name collisions
+        }
+        const auto result = FileManagementFileSystemBridge::renameEntry(
+            target, entry.path, childPathFor(root, entry.name, target.local_file_system));
+        if (result.ok) {
+            ++moved;
+        } else {
+            blockers->append(result.blockers);
+        }
+    }
+    return moved;
 }
 
 void FileManagementExplorerPanel::promptCurrentFolderFilter() {
@@ -6281,6 +6481,11 @@ void FileManagementExplorerPanel::buildItemContextMenu(QMenu* menu,
     addCommandMenuAction(menu, FileExplorerCommandId::Properties, context);
     menu->addSeparator();
     addArchiveSubmenus(menu, context);
+    // Files places Flatten folder after the compression group, only while
+    // the ShowFlattenOptions setting is on (hidden otherwise, not disabled).
+    if (context.show_flatten_options) {
+        addCommandMenuAction(menu, FileExplorerCommandId::FlattenFolder, context);
+    }
     addTagsSubmenu(menu, context);
     addCommandMenuAction(menu, FileExplorerCommandId::EditInNotepad, context);
     menu->addSeparator();

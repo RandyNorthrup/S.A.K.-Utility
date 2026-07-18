@@ -1194,6 +1194,89 @@ private Q_SLOTS:
         QTRY_VERIFY(QFileInfo(folder_path).isDir());
     }
 
+    void checkboxSettingTogglesSelectionAndFlattenMovesDescendants() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("flatten_me/sub/deep")));
+        const auto writeText = [](const QString& path) {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                return false;
+            }
+            return file.write("flatten payload") > 0;
+        };
+        QVERIFY(writeText(root.filePath(QStringLiteral("flatten_me/top.txt"))));
+        QVERIFY(writeText(root.filePath(QStringLiteral("flatten_me/sub/inner.txt"))));
+        QVERIFY(writeText(root.filePath(QStringLiteral("flatten_me/sub/deep/leaf.txt"))));
+        {
+            // Files ShowFlattenOptions (experimental, default off): opt in.
+            QSettings settings;
+            settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+            settings.setValue(QStringLiteral("ShowFlattenOptions"), true);
+            settings.endGroup();
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(pane);
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("flatten_me")) >= 0);
+
+        // Checkboxes default ON (Files ShowCheckboxesWhenSelectingItems):
+        // checking a row selects it, unchecking clears it.
+        QAbstractItemModel* view_model = table->model();
+        QVERIFY(view_model->flags(view_model->index(0, 0)).testFlag(Qt::ItemIsUserCheckable));
+        QVERIFY(view_model->setData(view_model->index(0, 0), Qt::Checked, Qt::CheckStateRole));
+        QTRY_VERIFY(pane->sharedSelectionModel()->isRowSelected(0, QModelIndex()));
+        QCOMPARE(view_model->index(0, 0).data(Qt::CheckStateRole).value<Qt::CheckState>(),
+                 Qt::Checked);
+        QVERIFY(view_model->setData(view_model->index(0, 0), Qt::Unchecked, Qt::CheckStateRole));
+        QTRY_VERIFY(!pane->sharedSelectionModel()->isRowSelected(0, QModelIndex()));
+
+        // The View-menu toggle turns the boxes off.
+        auto* view_button = child<QToolButton>(&panel, "fileExplorerViewButton");
+        QVERIFY(view_button);
+        QVERIFY(view_button->menu());
+        QAction* checkboxes = actionStartingWith(view_button->menu(),
+                                                 QStringLiteral("Item Check Boxes"));
+        QVERIFY(checkboxes);
+        QVERIFY(checkboxes->isChecked());
+        checkboxes->trigger();
+        QApplication::processEvents();
+        QVERIFY(!view_model->flags(view_model->index(0, 0)).testFlag(Qt::ItemIsUserCheckable));
+
+        verifyFlattenFolderMovesDescendants(panel, table, root);
+    }
+
+    void verifyFlattenFolderMovesDescendants(sak::FileManagementExplorerPanel& panel,
+                                             QTableView* table,
+                                             const QDir& root) {
+        // Flatten folder (Files FlattenFolderAction): descendants move up
+        // into the selected folder, emptied subfolders are removed.
+        QVERIFY(selectRowStable(table, QStringLiteral("flatten_me")));
+        QString question_text;
+        armAutoAcceptQuestion(&question_text);
+        QVERIFY(QMetaObject::invokeMethod(&panel, "flattenSelectedFolder", Qt::DirectConnection));
+        QTRY_VERIFY(QFile::exists(root.filePath(QStringLiteral("flatten_me/inner.txt"))));
+        QVERIFY(QFile::exists(root.filePath(QStringLiteral("flatten_me/leaf.txt"))));
+        QVERIFY(QFile::exists(root.filePath(QStringLiteral("flatten_me/top.txt"))));
+        QTRY_VERIFY(!QFileInfo::exists(root.filePath(QStringLiteral("flatten_me/sub"))));
+        QVERIFY2(question_text.contains(QStringLiteral("Flatten"), Qt::CaseInsensitive),
+                 qPrintable(question_text));
+    }
+
     void sidebarAcceptsTagDropAndFavoriteReorder() {
         // Seed a known tag and two favorites BEFORE the panel builds its
         // sidebar, so the Tags section and Favorites section render rows.

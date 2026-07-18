@@ -411,6 +411,44 @@ private Q_SLOTS:
                  QLocale().toString(QDate(2026, 7, 14), QLocale::LongFormat));
     }
 
+    void checkboxProvidersMirrorSelectionAndRouteToggles() {
+        sak::FileExplorerItemModel model;
+        model.setEntries(
+            {fileEntry(QStringLiteral("a.txt"), 1), fileEntry(QStringLiteral("b.txt"), 2)});
+
+        QSet<QString> selected;
+        QString toggled_path;
+        bool toggled_checked = false;
+        model.setCheckboxProviders(
+            [&selected](const QString& path) { return selected.contains(path); },
+            [&toggled_path, &toggled_checked](const QString& path, const bool checked) {
+                toggled_path = path;
+                toggled_checked = checked;
+            });
+
+        // Hidden (the Files setting off): no check state, not user-checkable.
+        QVERIFY(!model.checkboxesVisible());
+        QVERIFY(!model.index(0, 0).data(Qt::CheckStateRole).isValid());
+        QVERIFY(!model.flags(model.index(0, 0)).testFlag(Qt::ItemIsUserCheckable));
+
+        // Visible: the box mirrors the selection provider.
+        model.setCheckboxesVisible(true);
+        QVERIFY(model.flags(model.index(0, 0)).testFlag(Qt::ItemIsUserCheckable));
+        QCOMPARE(model.index(0, 0).data(Qt::CheckStateRole).value<Qt::CheckState>(), Qt::Unchecked);
+        selected.insert(QStringLiteral("/a.txt"));
+        model.refreshChecks();
+        QCOMPARE(model.index(0, 0).data(Qt::CheckStateRole).value<Qt::CheckState>(), Qt::Checked);
+        QCOMPARE(model.index(1, 0).data(Qt::CheckStateRole).value<Qt::CheckState>(), Qt::Unchecked);
+
+        // Checking routes through the toggle handler (the panel selects).
+        QVERIFY(model.setData(model.index(1, 0), Qt::Checked, Qt::CheckStateRole));
+        QCOMPARE(toggled_path, QStringLiteral("/b.txt"));
+        QVERIFY(toggled_checked);
+        QVERIFY(model.setData(model.index(0, 0), Qt::Unchecked, Qt::CheckStateRole));
+        QCOMPARE(toggled_path, QStringLiteral("/a.txt"));
+        QVERIFY(!toggled_checked);
+    }
+
     void groupProxyInjectsHeadersAndMapsRows() {
         sak::FileExplorerItemModel model;
         model.setEntries({fileEntry(QStringLiteral("z-big.bin"), 20'000'000),

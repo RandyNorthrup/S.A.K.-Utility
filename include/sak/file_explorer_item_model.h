@@ -68,6 +68,13 @@ public:
     /// unset = rows are not draggable.
     using DragPayloadProvider = std::function<QMimeData*(const QList<int>& rows)>;
 
+    /// Selection-checkbox callbacks (Files ShowCheckboxesWhenSelectingItems):
+    /// the provider reports whether an entry path is selected, the handler
+    /// toggles the selection when the user clicks the checkbox. Both unset
+    /// disables the checkbox column.
+    using CheckStateProvider = std::function<bool(const QString& path)>;
+    using CheckToggleHandler = std::function<void(const QString& path, bool checked)>;
+
     explicit FileExplorerItemModel(QObject* parent = nullptr);
 
     [[nodiscard]] int rowCount(const QModelIndex& parent = {}) const override;
@@ -96,6 +103,15 @@ public:
     void setIconProvider(IconProvider provider);
     /// Set the drag payload builder; pass a null function to disable dragging.
     void setDragPayloadProvider(DragPayloadProvider provider);
+    /// Install the selection-checkbox callbacks (wired once per pane).
+    void setCheckboxProviders(CheckStateProvider provider, CheckToggleHandler handler);
+    /// Show/hide the selection checkboxes (the Files
+    /// ShowCheckboxesWhenSelectingItems setting); hidden also drops the
+    /// user-checkable flag.
+    void setCheckboxesVisible(bool visible);
+    [[nodiscard]] bool checkboxesVisible() const;
+    /// Notify views that the selection changed so the checkbox column repaints.
+    void refreshChecks();
     /// Notify views that tag data changed (e.g. after editing tags) so the column repaints.
     void refreshTags();
 
@@ -114,6 +130,10 @@ Q_SIGNALS:
 
 private:
     [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
+    [[nodiscard]] QVariant presentationData(const FileManagementEntry& entry,
+                                            int column,
+                                            int role) const;
+    [[nodiscard]] QVariant checkStateForEntry(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QVariant editForColumn(const FileManagementEntry& entry, int column) const;
     [[nodiscard]] QVariant foregroundForEntry(const FileManagementEntry& entry) const;
@@ -127,6 +147,9 @@ private:
     TagProvider m_tag_provider;
     IconProvider m_icon_provider;
     DragPayloadProvider m_drag_payload_provider;
+    CheckStateProvider m_check_state_provider;
+    CheckToggleHandler m_check_toggle_handler;
+    bool m_checkboxes_visible{false};
 };
 
 }  // namespace sak

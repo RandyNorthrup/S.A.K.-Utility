@@ -70,6 +70,7 @@ enum class FileExplorerCommandId {
     ExtractToChildFolder,
     Undo,
     Redo,
+    FlattenFolder,
 };
 
 /// Command-palette section a command belongs to. Palette rows render grouped
@@ -104,6 +105,8 @@ struct FileExplorerCommandContext {
     bool clipboard_has_files{false};  ///< True when the clipboard holds pasteable file items.
     bool selection_has_tags{false};   ///< True when any selected item carries app-level tags.
     bool dual_pane_active{false};     ///< True when a second pane is currently shown.
+    /// Files ShowFlattenOptions (experimental, default off): gates FlattenFolder.
+    bool show_flatten_options{false};
     /// Target shown in the INACTIVE pane while dual pane is active (cross-pane destination).
     FileManagementTarget other_pane_target;
 };

@@ -183,21 +183,35 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     }
 
     const FileManagementEntry& entry = m_entries.at(index.row());
+    if (role == Qt::CheckStateRole) {
+        return checkStateForEntry(entry, index.column());
+    }
+    if (role == EntryTagsRole) {
+        return tagsForEntry(entry);
+    }
+    // Presentation roles first; anything they do not answer falls through to
+    // the entry-field role table (a presentation role that answers "empty"
+    // has no entry-field mapping either, so the fallthrough stays a no-op).
+    const QVariant presentation = presentationData(entry, index.column(), role);
+    return presentation.isValid() ? presentation : entryRoleValue(entry, role);
+}
+
+QVariant FileExplorerItemModel::presentationData(const FileManagementEntry& entry,
+                                                 const int column,
+                                                 const int role) const {
     switch (role) {
     case Qt::DisplayRole:
-        return displayForColumn(entry, index.column());
+        return displayForColumn(entry, column);
     case Qt::EditRole:
-        return editForColumn(entry, index.column());
+        return editForColumn(entry, column);
     case Qt::DecorationRole:
-        return decorationForColumn(entry, index.column());
+        return decorationForColumn(entry, column);
     case Qt::TextAlignmentRole:
-        return alignmentForColumn(index.column());
+        return alignmentForColumn(column);
     case Qt::ForegroundRole:
         return foregroundForEntry(entry);
-    case EntryTagsRole:
-        return tagsForEntry(entry);
     default:
-        return entryRoleValue(entry, role);
+        return {};
     }
 }
 
@@ -244,7 +258,10 @@ Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
     const Qt::ItemFlags drag = m_drag_payload_provider ? Qt::ItemIsDragEnabled : Qt::NoItemFlags;
     // Only the name is editable (inline rename); every other column is data.
     if (index.column() == NameColumn) {
-        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | drag;
+        const Qt::ItemFlags check = m_checkboxes_visible && m_check_state_provider
+                                        ? Qt::ItemIsUserCheckable
+                                        : Qt::NoItemFlags;
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | drag | check;
     }
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable | drag;
 }
@@ -271,6 +288,14 @@ Qt::DropActions FileExplorerItemModel::supportedDragActions() const {
 bool FileExplorerItemModel::setData(const QModelIndex& index,
                                     const QVariant& value,
                                     const int role) {
+    if (role == Qt::CheckStateRole && index.column() == NameColumn && hasEntry(index.row()) &&
+        m_check_toggle_handler) {
+        // Files checkbox click: (de)selects the item; the panel owns the
+        // selection model, so the toggle routes through the handler.
+        m_check_toggle_handler(m_entries.at(index.row()).path,
+                               value.value<Qt::CheckState>() == Qt::Checked);
+        return true;
+    }
     if (role != Qt::EditRole || index.column() != NameColumn || !hasEntry(index.row())) {
         return false;
     }
@@ -361,6 +386,43 @@ void FileExplorerItemModel::setIconProvider(IconProvider provider) {
 
 void FileExplorerItemModel::setDragPayloadProvider(DragPayloadProvider provider) {
     m_drag_payload_provider = std::move(provider);
+}
+
+QVariant FileExplorerItemModel::checkStateForEntry(const FileManagementEntry& entry,
+                                                   const int column) const {
+    // Files selection checkboxes: the box mirrors the selection state.
+    if (column != NameColumn || !m_checkboxes_visible || !m_check_state_provider) {
+        return {};
+    }
+    return m_check_state_provider(entry.path) ? Qt::Checked : Qt::Unchecked;
+}
+
+void FileExplorerItemModel::setCheckboxProviders(CheckStateProvider provider,
+                                                 CheckToggleHandler handler) {
+    m_check_state_provider = std::move(provider);
+    m_check_toggle_handler = std::move(handler);
+    refreshChecks();
+}
+
+void FileExplorerItemModel::setCheckboxesVisible(const bool visible) {
+    if (m_checkboxes_visible == visible) {
+        return;
+    }
+    m_checkboxes_visible = visible;
+    refreshChecks();
+}
+
+bool FileExplorerItemModel::checkboxesVisible() const {
+    return m_checkboxes_visible;
+}
+
+void FileExplorerItemModel::refreshChecks() {
+    if (m_entries.isEmpty()) {
+        return;
+    }
+    Q_EMIT dataChanged(index(0, NameColumn),
+                       index(m_entries.size() - 1, NameColumn),
+                       {Qt::CheckStateRole});
 }
 
 void FileExplorerItemModel::refreshTags() {
