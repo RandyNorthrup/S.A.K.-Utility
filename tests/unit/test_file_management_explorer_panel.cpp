@@ -42,6 +42,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -3427,6 +3428,156 @@ private Q_SLOTS:
         QTest::keyClick(pathEdit, Qt::Key_Return);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
+    }
+
+    void statusCenterFlyoutOpensWithEmptyState() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        // Files ShowStatusCenterButton at the toolbar's right edge toggles
+        // the flyout; with no operations it shows the empty state and a
+        // disabled "Clear completed".
+        auto* button = child<QPushButton>(&panel, "fileExplorerStatusCenterButton");
+        QVERIFY(button);
+        QVERIFY(!button->icon().isNull());
+        QTest::mouseClick(button, Qt::LeftButton);
+        QApplication::processEvents();
+        auto* flyout =
+            panel.window()->findChild<QFrame*>(QStringLiteral("fileExplorerStatusCenterFlyout"));
+        QVERIFY(flyout);
+        QTRY_VERIFY(flyout->isVisible());
+        auto* title = child<QLabel>(flyout, "fileExplorerStatusCenterTitle");
+        QVERIFY(title);
+        QCOMPARE(title->text(), QStringLiteral("Status center"));
+        auto* empty = child<QLabel>(flyout, "fileExplorerStatusEmptyLabel");
+        QVERIFY(empty);
+        QVERIFY(empty->isVisible());
+        QCOMPARE(empty->text(), QStringLiteral("No ongoing file operations"));
+        auto* clear = child<QPushButton>(flyout, "fileExplorerStatusClearCompleted");
+        QVERIFY(clear);
+        QVERIFY(!clear->isEnabled());
+
+        // Second click closes the flyout again.
+        QTest::mouseClick(button, Qt::LeftButton);
+        QTRY_VERIFY(!flyout->isVisible());
+    }
+
+    void verifyInProgressCardAndCancel(QFrame* flyout, sak::FileExplorerStatusCenterItem* item) {
+        auto* card = flyout->findChild<QFrame*>(QStringLiteral("fileExplorerStatusCard"));
+        QVERIFY(card);
+        auto* title = child<QLabel>(card, "fileExplorerStatusCardTitle");
+        QVERIFY(title);
+        QCOMPARE(title->text(), QStringLiteral("Discovered 2 items"));
+        auto* progressBar = child<QProgressBar>(card, "fileExplorerStatusCardProgressBar");
+        QVERIFY(progressBar);
+        QVERIFY(progressBar->isVisible());
+        // In-progress cards carry no dismiss X (Files CloseItemButton loads
+        // only for completed cards) but do offer the expand chevron.
+        auto* dismiss = child<QToolButton>(card, "fileExplorerStatusCardDismiss");
+        QVERIFY(dismiss);
+        QVERIFY(!dismiss->isVisible());
+        auto* expand = child<QToolButton>(card, "fileExplorerStatusCardExpand");
+        QVERIFY(expand);
+        QVERIFY(expand->isVisible());
+
+        // A progress report drives the bar; expanding swaps it for the speed
+        // graph with the Speed/Name rows (Files expanded card).
+        sak::FileExplorerStatusProgress progress;
+        progress.enumeration_completed = true;
+        progress.total_size = 1000;
+        progress.processed_size = 400;
+        progress.items_count = 2;
+        progress.processed_items_count = 1;
+        progress.size_speed = 800.0;
+        progress.file_name = QStringLiteral("a.txt");
+        item->reportProgress(progress);
+        QApplication::processEvents();
+        QCOMPARE(progressBar->value(), 40);
+        expand->click();
+        QApplication::processEvents();
+        auto* graphFrame = child<QFrame>(card, "fileExplorerStatusCardGraphFrame");
+        QVERIFY(graphFrame);
+        QTRY_VERIFY(graphFrame->isVisible());
+        QVERIFY(!progressBar->isVisible());
+        auto* speed = child<QLabel>(card, "fileExplorerStatusCardSpeed");
+        QVERIFY(speed);
+        QCOMPARE(speed->text(), QStringLiteral("Speed: 800 bytes/s"));
+        auto* name = child<QLabel>(card, "fileExplorerStatusCardName");
+        QVERIFY(name);
+        QVERIFY(name->isVisible());
+        QCOMPARE(name->text(), QStringLiteral("Name: a.txt"));
+        expand->click();
+        QApplication::processEvents();
+
+        // Cancel through the more-options flyout: the card flags Canceling,
+        // goes indeterminate, and loses its cancel affordance.
+        auto* more = child<QToolButton>(card, "fileExplorerStatusCardMore");
+        QVERIFY(more);
+        QVERIFY(more->isVisible());
+        auto* cancelAction =
+            card->findChild<QAction*>(QStringLiteral("fileExplorerStatusCardCancel"));
+        QVERIFY(cancelAction);
+        cancelAction->trigger();
+        QApplication::processEvents();
+        QVERIFY(item->isCancelRequested());
+        QVERIFY(title->text().startsWith(QStringLiteral("Canceling - ")));
+        QVERIFY(!more->isVisible());
+    }
+
+    void statusCenterCardsRenderCancelAndDismiss() {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        // An in-progress copy card: the toolbar button swaps its icon for the
+        // ring+badge overlays (Files hides the icon while the ring shows).
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 2;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        auto* item = panel.statusCenterModel()->addItem(request);
+        auto* button = child<QPushButton>(&panel, "fileExplorerStatusCenterButton");
+        QVERIFY(button);
+        QTRY_VERIFY(button->icon().isNull());
+
+        QTest::mouseClick(button, Qt::LeftButton);
+        QApplication::processEvents();
+        auto* flyout =
+            panel.window()->findChild<QFrame*>(QStringLiteral("fileExplorerStatusCenterFlyout"));
+        QVERIFY(flyout);
+        QTRY_VERIFY(flyout->isVisible());
+        verifyInProgressCardAndCancel(flyout, item);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // The Files two-card pattern: the in-progress card is removed and a
+        // terminal success card takes its place, dismissible via its X.
+        panel.statusCenterModel()->removeItem(item);
+        request.result = sak::FileExplorerReturnResult::Success;
+        request.cancelable = false;
+        panel.statusCenterModel()->addItem(request);
+        QApplication::processEvents();
+        auto* card = flyout->findChild<QFrame*>(QStringLiteral("fileExplorerStatusCard"));
+        QVERIFY(card);
+        auto* titleLabel = child<QLabel>(card, "fileExplorerStatusCardTitle");
+        QVERIFY(titleLabel);
+        QCOMPARE(titleLabel->text(), QStringLiteral("Copied 2 items to \"Bundle\""));
+        auto* dismiss = child<QToolButton>(card, "fileExplorerStatusCardDismiss");
+        QVERIFY(dismiss);
+        QTRY_VERIFY(dismiss->isVisible());
+        QTest::mouseClick(dismiss, Qt::LeftButton);
+        QApplication::processEvents();
+        QVERIFY(!panel.statusCenterModel()->hasAnyItem());
+        auto* empty = child<QLabel>(flyout, "fileExplorerStatusEmptyLabel");
+        QVERIFY(empty);
+        QTRY_VERIFY(empty->isVisible());
     }
 };
 

@@ -950,10 +950,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_explorer_types.cpp")
         ../src/core/file_explorer_types.cpp
         ../src/core/file_explorer_layout_metrics.cpp
         ../src/core/file_explorer_storage_history.cpp
+        ../src/core/file_explorer_status_center.cpp
         ../src/core/file_explorer_command_registry.cpp
         ../include/sak/file_explorer_types.h
         ../include/sak/file_explorer_layout_metrics.h
         ../include/sak/file_explorer_storage_history.h
+        ../include/sak/file_explorer_status_center.h
         ../include/sak/file_explorer_command_registry.h
         ../include/sak/file_management_file_system.h
     )
@@ -1059,6 +1061,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/gui/file_explorer_icon_registry.cpp
         ../src/gui/file_explorer_command_bar.cpp
         ../src/gui/file_explorer_omnibar.cpp
+        ../src/gui/file_explorer_status_center_widget.cpp
         ../src/gui/file_explorer_details_view.cpp
         ../src/gui/file_explorer_name_delegate.cpp
         ../include/sak/file_explorer_name_delegate.h
@@ -1071,6 +1074,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_explorer_grouping.cpp
         ../src/core/file_explorer_group_proxy_model.cpp
         ../src/core/file_explorer_storage_history.cpp
+        ../src/core/file_explorer_status_center.cpp
         ../src/core/file_explorer_item_model.cpp
         ../src/core/file_explorer_sort_filter_model.cpp
         ../src/core/file_explorer_command_registry.cpp
@@ -1107,6 +1111,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../include/sak/file_explorer_icon_registry.h
         ../include/sak/file_explorer_command_bar.h
         ../include/sak/file_explorer_omnibar.h
+        ../include/sak/file_explorer_status_center.h
+        ../include/sak/file_explorer_status_center_widget.h
         ../include/sak/file_explorer_details_view.h
         ../include/sak/file_explorer_pane.h
         ../include/sak/file_explorer_details_pane.h

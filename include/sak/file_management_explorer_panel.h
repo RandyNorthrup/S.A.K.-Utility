@@ -14,6 +14,7 @@
 #include "sak/file_explorer_omnibar.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_sidebar.h"
+#include "sak/file_explorer_status_center.h"
 #include "sak/file_explorer_storage_history.h"
 #include "sak/file_management_file_system.h"
 
@@ -56,6 +57,7 @@ class QTimer;
 namespace sak {
 
 class AdvancedSearchWorker;
+class FileExplorerStatusCenterFlyout;
 
 class FileManagementExplorerPanel : public QWidget {
     Q_OBJECT
@@ -73,6 +75,11 @@ public:
     /// matches @p target_root_path; returns the matching report file paths.
     [[nodiscard]] static QStringList evidenceReportsForTarget(const QString& evidence_root,
                                                               const QString& target_root_path);
+
+    /// Files StatusCenterViewModel: operation cards + toolbar badge state.
+    [[nodiscard]] FileExplorerStatusCenterModel* statusCenterModel() const {
+        return m_status_center;
+    }
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -150,6 +157,10 @@ private:
     void connectUiSignals();
     void connectToolbarSignals();
     void connectOmnibarModeSignals();
+    /// Files ShowStatusCenterButton click: toggles the status-center flyout
+    /// anchored to the button's bottom-right corner.
+    void toggleStatusCenterFlyout();
+    void syncStatusCenterButton();
     bool handleFilterBoxKeyEvent(QEvent* event);
     bool dispatchFilteredEvent(QObject* watched, QEvent* event);
     void connectNavigationSignals();
@@ -589,6 +600,8 @@ private:
     QTabBar* m_tab_bar{nullptr};
     FileExplorerCommandBar* m_command_bar{nullptr};
     FileExplorerOmnibar* m_omnibar{nullptr};
+    FileExplorerStatusCenterModel* m_status_center{nullptr};
+    FileExplorerStatusCenterFlyout* m_status_flyout{nullptr};
     FileExplorerPane* m_pane{nullptr};
     // Dual-pane: two physical panes in a splitter. m_pane always points at the ACTIVE pane
     // (m_pane_a or m_pane_b), so all existing single-pane logic operates on the active pane;

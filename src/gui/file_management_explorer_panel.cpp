@@ -14,6 +14,7 @@
 #include "sak/file_explorer_layout_metrics.h"
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_session_store.h"
+#include "sak/file_explorer_status_center_widget.h"
 #include "sak/file_explorer_style.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
@@ -495,6 +496,7 @@ void resetPaneNavigationPreservingView(FileExplorerPaneState* state) {
 }  // namespace
 
 FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWidget(parent) {
+    m_status_center = new FileExplorerStatusCenterModel(this);
     setupUi();
     loadSidebarState();
     setTargets(FileManagementFileSystemBridge::mountedTargets());
@@ -1107,7 +1109,38 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
+    // Files ShowStatusCenterButton: opens the status-center flyout; the badge
+    // mirrors the view-model aggregates on every model change.
+    connect(m_omnibar->statusCenterButton(),
+            &QPushButton::clicked,
+            this,
+            &FileManagementExplorerPanel::toggleStatusCenterFlyout);
+    connect(m_status_center,
+            &FileExplorerStatusCenterModel::changed,
+            this,
+            &FileManagementExplorerPanel::syncStatusCenterButton);
     connectOmnibarModeSignals();
+}
+
+void FileManagementExplorerPanel::toggleStatusCenterFlyout() {
+    if (!m_status_flyout) {
+        m_status_flyout = new FileExplorerStatusCenterFlyout(m_status_center, window());
+    }
+    if (m_status_flyout->isVisible()) {
+        m_status_flyout->hide();
+        return;
+    }
+    // Files Placement=BottomEdgeAlignedRight under the toolbar button.
+    QPushButton* button = m_omnibar->statusCenterButton();
+    const QPoint anchor = button->mapTo(window(), button->rect().bottomRight());
+    m_status_flyout->openAt(QPoint(anchor.x(), anchor.y() + 2));
+}
+
+void FileManagementExplorerPanel::syncStatusCenterButton() {
+    m_omnibar->statusCenterButton()->setBadge(m_status_center->infoBadgeState(),
+                                              m_status_center->infoBadgeValue(),
+                                              m_status_center->averageProgress(),
+                                              m_status_center->showProgressRing());
 }
 
 // Inline omnibar modes (Files Omnibar): palette suggestions repopulate on

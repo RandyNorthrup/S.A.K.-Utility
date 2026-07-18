@@ -20,6 +20,7 @@ class QStackedWidget;
 namespace sak {
 
 class FileExplorerBreadcrumb;
+class FileExplorerStatusCenterButton;
 
 /// Files Omnibar modes (Files.App.Controls.Omnibar): the address text box
 /// serves path editing (default), the command palette, and search.
@@ -48,6 +49,8 @@ public:
     [[nodiscard]] QLineEdit* searchBox() const;
     [[nodiscard]] QPushButton* searchButton() const;
     [[nodiscard]] QPushButton* commandButton() const;
+    /// Files NavigationToolbar ShowStatusCenterButton at the row's right edge.
+    [[nodiscard]] FileExplorerStatusCenterButton* statusCenterButton() const;
 
     /// Switches the address slot between the breadcrumb (false) and the
     /// editable path line (true, focused with the text selected).
@@ -109,6 +112,7 @@ private:
     QLineEdit* m_search_box{nullptr};
     QPushButton* m_search_button{nullptr};
     QPushButton* m_command_button{nullptr};
+    FileExplorerStatusCenterButton* m_status_center_button{nullptr};
     QFrame* m_suggestion_frame{nullptr};
     QListWidget* m_suggestion_list{nullptr};
     FileExplorerOmnibarMode m_mode{FileExplorerOmnibarMode::Path};

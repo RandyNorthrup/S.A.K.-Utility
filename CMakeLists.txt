@@ -349,6 +349,7 @@ set(CORE_SOURCES
     src/core/file_explorer_grouping.cpp
     src/core/file_explorer_group_proxy_model.cpp
     src/core/file_explorer_storage_history.cpp
+    src/core/file_explorer_status_center.cpp
     src/core/file_explorer_item_model.cpp
     src/core/file_explorer_sort_filter_model.cpp
     src/core/file_explorer_command_registry.cpp
@@ -450,6 +451,7 @@ set(CORE_SOURCES
     include/sak/file_explorer_grouping.h
     include/sak/file_explorer_group_proxy_model.h
     include/sak/file_explorer_storage_history.h
+    include/sak/file_explorer_status_center.h
     include/sak/file_explorer_item_model.h
     include/sak/file_explorer_sort_filter_model.h
     include/sak/file_explorer_command_registry.h
@@ -620,6 +622,7 @@ set(GUI_SOURCES
     src/gui/file_explorer_icon_registry.cpp
     src/gui/file_explorer_command_bar.cpp
     src/gui/file_explorer_omnibar.cpp
+    src/gui/file_explorer_status_center_widget.cpp
     src/gui/file_explorer_details_view.cpp
     src/gui/file_explorer_name_delegate.cpp
     src/gui/file_explorer_pane.cpp
@@ -635,6 +638,7 @@ set(GUI_SOURCES
     include/sak/file_explorer_icon_registry.h
     include/sak/file_explorer_command_bar.h
     include/sak/file_explorer_omnibar.h
+    include/sak/file_explorer_status_center_widget.h
     include/sak/file_explorer_details_view.h
     include/sak/file_explorer_name_delegate.h
     include/sak/file_explorer_pane.h

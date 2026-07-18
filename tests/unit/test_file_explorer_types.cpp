@@ -6,6 +6,7 @@
 
 #include "sak/file_explorer_command_registry.h"
 #include "sak/file_explorer_layout_metrics.h"
+#include "sak/file_explorer_status_center.h"
 #include "sak/file_explorer_storage_history.h"
 
 #include <QtTest/QtTest>
@@ -682,6 +683,265 @@ private Q_SLOTS:
         QCOMPARE(wrapper.count(), 0);
         QVERIFY(!wrapper.canUndo());
         QVERIFY(!wrapper.canRedo());
+    }
+
+    void statusCenterCardStringsMatchFilesTemplates() {
+        using Op = sak::FileExplorerOperationType;
+        using Result = sak::FileExplorerReturnResult;
+        const auto header = [](const Op operation, const Result result) {
+            sak::FileExplorerStatusCardRequest request;
+            request.operation = operation;
+            request.result = result;
+            request.source = {QStringLiteral("C:/staging/report.txt")};
+            request.destination = {QStringLiteral("C:/exports/Bundle")};
+            request.items_count = 2;
+            sak::FileExplorerStatusCenterItem item(request);
+            return item.header();
+        };
+        // Files resw StatusCenter_* templates (terminal cards skip the
+        // discovery substitution because they are not in progress).
+        QCOMPARE(header(Op::Copy, Result::Success), QStringLiteral("Copied 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Copy, Result::Failed),
+                 QStringLiteral("Error copying 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Copy, Result::Cancelled),
+                 QStringLiteral("Canceled copying 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Move, Result::Success), QStringLiteral("Moved 2 items to \"Bundle\""));
+        // Delete/Recycle share the Delete headers and name the source folder.
+        QCOMPARE(header(Op::Delete, Result::Success),
+                 QStringLiteral("Deleted 2 items from \"staging\""));
+        QCOMPARE(header(Op::Recycle, Result::Cancelled),
+                 QStringLiteral("Canceled deleting 2 items from \"staging\""));
+        QCOMPARE(header(Op::Compressed, Result::Success),
+                 QStringLiteral("Compressed 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Extract, Result::Success),
+                 QStringLiteral("Extracted \"report.txt\" to \"Bundle\""));
+        QCOMPARE(header(Op::Prepare, Result::InProgress),
+                 QStringLiteral("Preparing the operation..."));
+
+        // The in-progress card starts on the discovery header and the failed
+        // card carries the Files failed subheader.
+        sak::FileExplorerStatusCardRequest in_progress;
+        in_progress.operation = Op::Copy;
+        in_progress.result = Result::InProgress;
+        in_progress.source = {QStringLiteral("C:/staging/report.txt")};
+        in_progress.destination = {QStringLiteral("C:/exports/Bundle")};
+        in_progress.items_count = 2;
+        in_progress.can_provide_progress = true;
+        sak::FileExplorerStatusCenterItem discovering(in_progress);
+        QCOMPARE(discovering.header(), QStringLiteral("Discovered 2 items"));
+        QCOMPARE(discovering.message(), QStringLiteral("Discovering items..."));
+        QVERIFY(discovering.isInProgress());
+
+        sak::FileExplorerStatusCardRequest failed = in_progress;
+        failed.result = Result::Failed;
+        sak::FileExplorerStatusCenterItem failed_item(failed);
+        QCOMPARE(failed_item.subHeader(),
+                 QStringLiteral("Failed to copy 2 items from \"C:/staging/report.txt\" to "
+                                "\"C:/exports/Bundle\""));
+        QCOMPARE(failed_item.kind(), sak::FileExplorerStatusItemKind::Error);
+    }
+
+    void statusCenterCardProgressReportsMatchFiles() {
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.source = {QStringLiteral("C:/staging")};
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 3;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QVERIFY(item.isSpeedAndProgressAvailable());
+        QVERIFY(!item.isIndeterminate());
+        QVERIFY(item.isCancelable());
+
+        // First report with the enumeration done: the discovery phase ends
+        // ("Processing items...") and the header gains the percentage.
+        sak::FileExplorerStatusProgress progress;
+        progress.enumeration_completed = true;
+        progress.total_size = 1000;
+        progress.processed_size = 250;
+        progress.items_count = 3;
+        progress.processed_items_count = 1;
+        progress.file_name = QStringLiteral("a.txt");
+        progress.size_speed = 500.0;
+        item.reportProgress(progress);
+        QCOMPARE(item.message(), QStringLiteral("Processing items..."));
+        QCOMPARE(item.progressPercentage(), 25);
+        QCOMPARE(item.speedText(), QStringLiteral("500 bytes/s"));
+        QCOMPARE(item.currentItemName(), QStringLiteral("a.txt"));
+        QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (25%)"));
+
+        // Later reports show the Files size footer and extend the graph.
+        progress.processed_size = 750;
+        progress.size_speed = 750.0;
+        item.reportProgress(progress);
+        QCOMPARE(item.message(), QStringLiteral("750 bytes of 1000 bytes processed"));
+        QCOMPARE(item.progressPercentage(), 75);
+        QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (75%)"));
+        QCOMPARE(item.graphPoints().size(), 2);
+        QCOMPARE(item.graphPoints().last().x(), 75.0);
+
+        // Delete-family cards report the items footer instead of sizes.
+        sak::FileExplorerStatusCardRequest delete_request = request;
+        delete_request.operation = sak::FileExplorerOperationType::Delete;
+        sak::FileExplorerStatusCenterItem delete_item(delete_request);
+        sak::FileExplorerStatusProgress delete_progress;
+        delete_progress.enumeration_completed = true;
+        delete_progress.items_count = 3;
+        delete_progress.processed_items_count = 2;
+        delete_item.reportProgress(delete_progress);
+        delete_progress.processed_items_count = 3;
+        delete_item.reportProgress(delete_progress);
+        QCOMPARE(delete_item.message(), QStringLiteral("3/3 items processed"));
+    }
+
+    void statusProgressReporterThrottlesAndComputesDeltaSpeed() {
+        qint64 now_ms = 0;
+        int delivered = 0;
+        sak::FileExplorerStatusProgress last;
+        sak::FileExplorerStatusProgressReporter reporter(
+            [&delivered, &last](const sak::FileExplorerStatusProgress& snapshot) {
+                ++delivered;
+                last = snapshot;
+            },
+            [&now_ms]() { return now_ms; });
+
+        reporter.setTotalSize(1000);
+        reporter.setItemsCount(4);
+        reporter.setProcessedSize(100);
+        reporter.addProcessedItems(1);
+        reporter.report();
+        QCOMPARE(delivered, 1);
+        // Files seeds the previous sample one second back: 100 bytes / 1s.
+        QCOMPARE(last.size_speed, 100.0);
+        QCOMPARE(last.items_speed, 1.0);
+
+        // Inside the 100ms sampler window: suppressed.
+        now_ms = 50;
+        reporter.setProcessedSize(200);
+        reporter.report();
+        QCOMPARE(delivered, 1);
+
+        // Past the window: delivered with the delta-over-elapsed speed.
+        now_ms = 150;
+        reporter.setProcessedSize(400);
+        reporter.report();
+        QCOMPARE(delivered, 2);
+        QCOMPARE(last.processed_size, 400);
+        QCOMPARE(last.size_speed, 2000.0);
+
+        // Critical status change bypasses the throttle.
+        now_ms = 160;
+        reporter.setStatus(sak::FileExplorerReturnResult::Failed);
+        reporter.report();
+        QCOMPARE(delivered, 3);
+        QCOMPARE(last.status, sak::FileExplorerReturnResult::Failed);
+
+        // Files auto-success: fully processed after enumeration flips the
+        // status without an explicit setStatus.
+        int auto_delivered = 0;
+        sak::FileExplorerStatusProgress auto_last;
+        sak::FileExplorerStatusProgressReporter auto_reporter(
+            [&auto_delivered, &auto_last](const sak::FileExplorerStatusProgress& snapshot) {
+                ++auto_delivered;
+                auto_last = snapshot;
+            },
+            [&now_ms]() { return now_ms; });
+        auto_reporter.setTotalSize(100);
+        auto_reporter.setItemsCount(2);
+        auto_reporter.setProcessedSize(100);
+        auto_reporter.addProcessedItems(2);
+        auto_reporter.setEnumerationCompleted();
+        auto_reporter.report();
+        QCOMPARE(auto_delivered, 1);
+        QCOMPARE(auto_last.status, sak::FileExplorerReturnResult::Success);
+    }
+
+    void statusCenterAggregatesAndBadgeMatrixMatchFiles() {
+        sak::FileExplorerStatusCenterModel model;
+        QCOMPARE(model.infoBadgeState(), 0);
+        QCOMPARE(model.infoBadgeValue(), -1);
+        QVERIFY(!model.showProgressRing());
+
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 1;
+        request.can_provide_progress = true;
+        auto* first = model.addItem(request);
+        auto* second = model.addItem(request);
+        // Newest first (Files inserts at index 0).
+        QCOMPARE(model.items().first(), second);
+        QCOMPARE(model.infoBadgeState(), 1);
+        QCOMPARE(model.infoBadgeValue(), 2);
+        QVERIFY(model.showProgressRing());
+
+        sak::FileExplorerStatusProgress progress;
+        progress.enumeration_completed = true;
+        progress.total_size = 100;
+        progress.processed_size = 40;
+        first->reportProgress(progress);
+        QCOMPARE(model.averageProgress(), 20);
+
+        // A failure beside running work: state 2; only failures left: state 3.
+        sak::FileExplorerStatusCardRequest failed = request;
+        failed.result = sak::FileExplorerReturnResult::Failed;
+        auto* failed_item = model.addItem(failed);
+        QCOMPARE(model.infoBadgeState(), 2);
+        model.removeItem(first);
+        model.removeItem(second);
+        QCOMPARE(model.infoBadgeState(), 3);
+        QCOMPARE(model.infoBadgeValue(), -1);
+        // Opening the flyout keeps the ring for the unreviewed error.
+        model.flyoutOpened();
+        QVERIFY(model.showProgressRing());
+
+        // Clear completed removes only terminal cards; an empty model resets
+        // the ring on the next flyout open.
+        auto* running = model.addItem(request);
+        model.removeAllCompletedItems();
+        QCOMPARE(model.items().size(), 1);
+        QCOMPARE(model.items().first(), running);
+        QVERIFY(!model.items().contains(failed_item));
+        model.removeItem(running);
+        model.flyoutOpened();
+        QVERIFY(!model.showProgressRing());
+        QCOMPARE(model.infoBadgeState(), 0);
+    }
+
+    void statusCenterCancelFlagsCardCanceling() {
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Move;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 1;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QSignalSpy cancel_spy(&item, &sak::FileExplorerStatusCenterItem::cancelRequested);
+
+        item.requestCancel();
+        QCOMPARE(cancel_spy.count(), 1);
+        QVERIFY(item.isCancelRequested());
+        QVERIFY(!item.isCancelable());
+        QVERIFY(item.isIndeterminate());
+        QVERIFY(!item.isSpeedAndProgressAvailable());
+        QVERIFY(item.header().startsWith(QStringLiteral("Canceling - ")));
+
+        // Files ReportProgress bails after cancellation.
+        const QString frozen_header = item.header();
+        sak::FileExplorerStatusProgress progress;
+        progress.total_size = 100;
+        progress.processed_size = 50;
+        item.reportProgress(progress);
+        QCOMPARE(item.header(), frozen_header);
+        QCOMPARE(item.progressPercentage(), 0);
+
+        // A second cancel is a no-op.
+        item.requestCancel();
+        QCOMPARE(cancel_spy.count(), 1);
     }
 };
 

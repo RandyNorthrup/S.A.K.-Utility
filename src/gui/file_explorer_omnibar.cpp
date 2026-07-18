@@ -5,6 +5,7 @@
 
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
+#include "sak/file_explorer_status_center_widget.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
 
@@ -194,6 +195,16 @@ void FileExplorerOmnibar::createAddressAndSearch(QHBoxLayout* row) {
                                       tr("Open File Explorer command palette"),
                                       tr("Search and run File Explorer commands"));
     row->addWidget(m_command_button);
+
+    // Files NavigationToolbar ShowStatusCenterButton: rightmost slot of the
+    // address row, hosting the progress ring and InfoBadge overlays.
+    m_status_center_button = new FileExplorerStatusCenterButton(this);
+    m_status_center_button->setFixedSize(kAddressButtonWidth, kAddressButtonHeight);
+    row->addWidget(m_status_center_button);
+}
+
+FileExplorerStatusCenterButton* FileExplorerOmnibar::statusCenterButton() const {
+    return m_status_center_button;
 }
 
 void FileExplorerOmnibar::setAddressEditMode(const bool edit) {
