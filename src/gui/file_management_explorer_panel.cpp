@@ -7,6 +7,7 @@
 #include "sak/file_management_explorer_panel.h"
 
 #include "sak/advanced_search_worker.h"
+#include "sak/drive_unmounter.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/file_explorer_breadcrumb.h"
 #include "sak/file_explorer_icon_registry.h"
@@ -34,6 +35,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -97,6 +99,11 @@ constexpr const char* kExplorerClipboardMime = "application/x-sak-file-explorer-
 constexpr int kSidebarKindRole = Qt::UserRole + 1;
 constexpr int kTargetIndexRole = Qt::UserRole + 2;
 constexpr int kSidebarTagRole = Qt::UserRole + 7;
+// Position of a favorites-section row inside m_favorite_target_ids; only set
+// on rows in the Favorites section (drag-reorder scope).
+constexpr int kSidebarFavoritePosRole = Qt::UserRole + 8;
+// Internal drag payload for reordering favorites within the sidebar.
+constexpr const char* kSidebarFavoriteMime = "application/x-sak-explorer-favorite";
 constexpr int kCommandIdRole = Qt::UserRole + 3;
 constexpr int kCommandEnabledRole = Qt::UserRole + 4;
 constexpr int kCommandBlockerRole = Qt::UserRole + 5;
@@ -597,6 +604,12 @@ void FileManagementExplorerPanel::setupUi() {
     m_target_list = m_sidebar->targetList();
     m_scan_disks_button = m_sidebar->scanDisksButton();
     m_add_manual_button = m_sidebar->addManualButton();
+    // Files SidebarViewModel drag targets: items drop onto tag rows
+    // (drag-to-tag) and target rows (copy/move to that location), and
+    // favorites reorder by drag within their section.
+    m_target_list->setAcceptDrops(true);
+    m_target_list->viewport()->setAcceptDrops(true);
+    m_target_list->viewport()->installEventFilter(this);
     m_shell_splitter->addWidget(m_sidebar);
 
     auto* center = new QWidget(m_shell_splitter);
@@ -1257,6 +1270,12 @@ void FileManagementExplorerPanel::connectPaneSignals(FileExplorerPane* pane, int
 }
 
 bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (m_target_list && watched == m_target_list->viewport()) {
+        if (event && handleSidebarViewportEvent(event)) {
+            return true;
+        }
+        return QWidget::eventFilter(watched, event);
+    }
     if (auto* view = qobject_cast<QAbstractItemView*>(watched)) {
         if (event && event->type() == QEvent::KeyPress &&
             handleViewKeyPress(view, static_cast<QKeyEvent*>(event))) {
@@ -1264,17 +1283,25 @@ bool FileManagementExplorerPanel::eventFilter(QObject* watched, QEvent* event) {
         }
         return QWidget::eventFilter(watched, event);
     }
-    auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
-    if (view && event) {
-        if (handleViewportDragEvent(view, event)) {
-            return true;
-        }
-        if (handleViewportMouseEvent(view, event)) {
-            return true;
-        }
-        handleRenameTapEvent(view, event);
+    if (filterPaneViewportEvent(watched, event)) {
+        return true;
     }
     return QWidget::eventFilter(watched, event);
+}
+
+bool FileManagementExplorerPanel::filterPaneViewportEvent(QObject* watched, QEvent* event) {
+    auto* view = qobject_cast<QAbstractItemView*>(watched ? watched->parent() : nullptr);
+    if (!view || !event) {
+        return false;
+    }
+    if (handleViewportDragEvent(view, event)) {
+        return true;
+    }
+    if (handleViewportMouseEvent(view, event)) {
+        return true;
+    }
+    handleRenameTapEvent(view, event);
+    return false;
 }
 
 void FileManagementExplorerPanel::activatePaneForView(QAbstractItemView* view) {
@@ -1727,10 +1754,16 @@ void FileManagementExplorerPanel::appendSidebarTargetsById(const QString& title,
                                                            const QStringList& target_ids,
                                                            const bool warn_when_missing) {
     appendSidebarHeader(title);
-    for (const QString& target_id : target_ids) {
+    for (int position = 0; position < target_ids.size(); ++position) {
+        const QString& target_id = target_ids.at(position);
         const int index = targetIndexForId(target_id);
         if (index >= 0) {
             appendSidebarTarget(m_targets.at(index), index);
+            if (warn_when_missing) {
+                // Favorites rows carry their pin position for drag-reorder.
+                m_target_list->item(m_target_list->count() - 1)
+                    ->setData(kSidebarFavoritePosRole, position);
+            }
         } else if (warn_when_missing) {
             appendStaleFavoriteRow(target_id);
         }
@@ -2960,7 +2993,12 @@ QList<FileManagementExplorerPanel::PasteItem> FileManagementExplorerPanel::paste
 
 void FileManagementExplorerPanel::executePaste(const PasteSources& sources,
                                                const QString& destination_dir) {
-    const FileManagementTarget target = currentTarget();
+    executePasteTo(currentTarget(), sources, destination_dir);
+}
+
+void FileManagementExplorerPanel::executePasteTo(const FileManagementTarget& target,
+                                                 const PasteSources& sources,
+                                                 const QString& destination_dir) {
     const int source_index = targetIndexForId(sources.source_target_id);
     // External URL drops have no tracked source target; they are host paths, so a
     // plain local target routes them (moves never originate from external payloads).
@@ -6505,6 +6543,255 @@ void FileManagementExplorerPanel::showTargetPropertiesAtIndex(const int target_i
     sak::showInformationLogged(this, tr("Target Properties"), lines.join(QStringLiteral("\n")));
 }
 
+// Sidebar drag-and-drop (Files SidebarViewModel): explorer items drop onto
+// tag rows (drag-to-tag) or target rows (copy/move to that location), and
+// favorites reorder by dragging within their section.
+bool FileManagementExplorerPanel::handleSidebarViewportEvent(QEvent* event) {
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseMove:
+        return maybeStartFavoriteDrag(event);
+    case QEvent::DragEnter:
+    case QEvent::DragMove:
+        return handleSidebarDragOver(static_cast<QDropEvent*>(event));
+    case QEvent::Drop:
+        return handleSidebarDrop(static_cast<QDropEvent*>(event));
+    default:
+        return false;
+    }
+}
+
+// Files DragDropHelpers cascade against the DROP target: Ctrl forces Copy,
+// Shift forces Move, an unmodified drop moves within the payload's own
+// target and copies otherwise.
+Qt::DropAction FileManagementExplorerPanel::sidebarPasteAction(const FileManagementTarget& target,
+                                                               const QDropEvent* drop) const {
+    if (drop->modifiers().testFlag(Qt::ControlModifier)) {
+        return Qt::CopyAction;
+    }
+    if (drop->modifiers().testFlag(Qt::ShiftModifier)) {
+        return Qt::MoveAction;
+    }
+    const QMimeData* mime = drop->mimeData();
+    if (mime && mime->hasFormat(QLatin1String(kExplorerClipboardMime))) {
+        const QJsonObject payload =
+            QJsonDocument::fromJson(mime->data(QLatin1String(kExplorerClipboardMime))).object();
+        if (payload.value(QStringLiteral("target")).toString() ==
+            FileExplorerTargetId::fromTarget(target).value) {
+            return Qt::MoveAction;
+        }
+    }
+    return Qt::CopyAction;
+}
+
+bool FileManagementExplorerPanel::handleSidebarDragOver(QDropEvent* drop) {
+    QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
+    if (!item) {
+        return false;
+    }
+    const QMimeData* mime = drop->mimeData();
+    if (mime->hasFormat(QLatin1String(kSidebarFavoriteMime))) {
+        // Favorites reorder: only other favorites rows are drop positions.
+        if (!item->data(kSidebarFavoritePosRole).isNull()) {
+            drop->setDropAction(Qt::MoveAction);
+            drop->accept();
+            return true;
+        }
+        return false;
+    }
+    if (!mimeHasPasteableItems(mime)) {
+        return false;
+    }
+    const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
+    if (kind == SidebarEntryKind::Tag) {
+        // Files HandleTagItemDragOverAsync: tagging advertises the Link
+        // operation ("Link to {tag}").
+        drop->setDropAction(Qt::LinkAction);
+        drop->accept();
+        return true;
+    }
+    if (kind == SidebarEntryKind::Target) {
+        const int target_index = item->data(kTargetIndexRole).toInt();
+        if (target_index >= 0 && target_index < m_targets.size() &&
+            m_targets.at(target_index).can_write_files) {
+            drop->setDropAction(sidebarPasteAction(m_targets.at(target_index), drop));
+            drop->accept();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FileManagementExplorerPanel::handleSidebarDrop(QDropEvent* drop) {
+    QListWidgetItem* item = m_target_list->itemAt(drop->position().toPoint());
+    if (!item) {
+        return false;
+    }
+    const QMimeData* mime = drop->mimeData();
+    if (mime->hasFormat(QLatin1String(kSidebarFavoriteMime))) {
+        const QVariant to_position = item->data(kSidebarFavoritePosRole);
+        if (to_position.isNull()) {
+            return false;
+        }
+        drop->acceptProposedAction();
+        reorderFavorite(mime->data(QLatin1String(kSidebarFavoriteMime)).toInt(),
+                        to_position.toInt());
+        return true;
+    }
+    if (!mimeHasPasteableItems(mime)) {
+        return false;
+    }
+    const auto kind = static_cast<SidebarEntryKind>(item->data(kSidebarKindRole).toInt());
+    if (kind == SidebarEntryKind::Tag) {
+        drop->acceptProposedAction();
+        applyDroppedTag(item->data(kSidebarTagRole).toString(), mime);
+        return true;
+    }
+    if (kind != SidebarEntryKind::Target) {
+        return false;
+    }
+    return handleSidebarTargetDrop(item->data(kTargetIndexRole).toInt(), drop);
+}
+
+bool FileManagementExplorerPanel::handleSidebarTargetDrop(const int target_index,
+                                                          QDropEvent* drop) {
+    if (target_index < 0 || target_index >= m_targets.size() ||
+        !m_targets.at(target_index).can_write_files) {
+        return false;
+    }
+    const FileManagementTarget target = m_targets.at(target_index);
+    drop->setDropAction(sidebarPasteAction(target, drop));
+    drop->accept();
+    PasteSources sources = collectPasteSources(drop->mimeData());
+    sources.move = drop->dropAction() == Qt::MoveAction;
+    sources.clipboard = false;
+    const QString destination = target.local_file_system ? target.root_path : QStringLiteral("/");
+    // Deferred like the view drop: collision dialogs must not run inside the
+    // native drag loop, and the mime data dies with the drag.
+    QMetaObject::invokeMethod(
+        this,
+        [this, target, sources, destination]() { executePasteTo(target, sources, destination); },
+        Qt::QueuedConnection);
+    return true;
+}
+
+// Files HandleTagItemDroppedAsync: append the tag to every dragged item that
+// does not carry it yet. Tags are app-level metadata keyed by the payload's
+// own target, so this works for raw-target items too.
+void FileManagementExplorerPanel::applyDroppedTag(const QString& tag, const QMimeData* mime) {
+    const PasteSources sources = collectPasteSources(mime);
+    if (tag.trimmed().isEmpty() || sources.source_target_id.isEmpty()) {
+        Q_EMIT statusMessage(tr("Drag items from the explorer to tag them."),
+                             sak::kTimerStatusMessageMs);
+        return;
+    }
+    QStringList paths = sources.host_files;
+    for (const PasteItem& raw_item : sources.raw_items) {
+        paths.append(raw_item.path);
+    }
+    QSettings settings;
+    int tagged = 0;
+    for (const QString& path : paths) {
+        QStringList tags = FileExplorerTagStore::tagsFor(
+            settings, QString::fromLatin1(kTagStoreGroup), sources.source_target_id, path);
+        if (tags.contains(tag, Qt::CaseInsensitive)) {
+            continue;
+        }
+        tags.append(tag);
+        FileExplorerTagStore::setTags(
+            settings, QString::fromLatin1(kTagStoreGroup), sources.source_target_id, path, tags);
+        ++tagged;
+    }
+    if (m_item_model) {
+        m_item_model->refreshTags();
+    }
+    Q_EMIT statusMessage(tr("Tagged %1 item(s) with %2").arg(tagged).arg(tag),
+                         sak::kTimerStatusDefaultMs);
+}
+
+void FileManagementExplorerPanel::reorderFavorite(const int from_position, const int to_position) {
+    if (from_position < 0 || from_position >= m_favorite_target_ids.size() || to_position < 0 ||
+        to_position >= m_favorite_target_ids.size() || from_position == to_position) {
+        return;
+    }
+    m_favorite_target_ids.move(from_position, to_position);
+    saveSidebarState();
+    rebuildTargetList();
+    Q_EMIT statusMessage(tr("Favorites reordered"), sak::kTimerStatusMessageMs);
+}
+
+// Manual drag start for favorites rows (the sidebar is a plain QListWidget:
+// press arms a candidate, moving past the drag threshold starts the drag).
+bool FileManagementExplorerPanel::maybeStartFavoriteDrag(QEvent* event) {
+    auto* mouse = static_cast<QMouseEvent*>(event);
+    if (event->type() == QEvent::MouseButtonPress) {
+        m_sidebar_press_favorite = -1;
+        if (mouse->button() == Qt::LeftButton) {
+            if (QListWidgetItem* item = m_target_list->itemAt(mouse->position().toPoint())) {
+                const QVariant position_role = item->data(kSidebarFavoritePosRole);
+                if (!position_role.isNull()) {
+                    m_sidebar_press_favorite = position_role.toInt();
+                    m_sidebar_press_pos = mouse->position().toPoint();
+                }
+            }
+        }
+        return false;  // selection and click handling proceed normally
+    }
+    if (m_sidebar_press_favorite < 0 || !mouse->buttons().testFlag(Qt::LeftButton)) {
+        return false;
+    }
+    if ((mouse->position().toPoint() - m_sidebar_press_pos).manhattanLength() <
+        QApplication::startDragDistance()) {
+        return false;
+    }
+    const int favorite_position = m_sidebar_press_favorite;
+    m_sidebar_press_favorite = -1;
+    auto* drag = new QDrag(m_target_list);
+    auto* mime = new QMimeData;
+    mime->setData(QLatin1String(kSidebarFavoriteMime), QByteArray::number(favorite_position));
+    drag->setMimeData(mime);
+    drag->exec(Qt::MoveAction);
+    return true;
+}
+
+// Files ShowEjectDevice: drives only, never the system drive. Dismounting
+// flushes and invalidates the mounted volume through the same primitives the
+// flasher uses before raw writes.
+bool FileManagementExplorerPanel::canEjectTarget(const FileManagementTarget& target) const {
+    if (!target.local_file_system || target.kind != FileManagementTargetKind::LocalPath) {
+        return false;
+    }
+    const QString root = QDir::cleanPath(target.root_path);
+    if (root.size() < 2 || root.at(1) != QLatin1Char(':')) {
+        return false;
+    }
+    return !root.startsWith(QDir::rootPath().left(2), Qt::CaseInsensitive);
+}
+
+void FileManagementExplorerPanel::ejectLocalTargetAtIndex(const int target_index) {
+    if (target_index < 0 || target_index >= m_targets.size()) {
+        return;
+    }
+    const FileManagementTarget target = m_targets.at(target_index);
+    if (!canEjectTarget(target)) {
+        return;
+    }
+    const QString letter = QDir::cleanPath(target.root_path).left(2);
+    DriveUnmounter unmounter;
+    HANDLE volume = unmounter.lockVolume(QStringLiteral("\\\\.\\%1").arg(letter));
+    if (volume == INVALID_HANDLE_VALUE || !unmounter.dismountVolume(volume)) {
+        sak::showWarningLogged(this,
+                               tr("Eject"),
+                               unmounter.lastError().isEmpty()
+                                   ? tr("Could not eject %1.").arg(letter)
+                                   : unmounter.lastError());
+        return;
+    }
+    logMessage(tr("Ejected volume %1").arg(letter));
+    Q_EMIT statusMessage(tr("Ejected %1").arg(letter), sak::kTimerStatusDefaultMs);
+    onRefreshMountedTargets();
+}
+
 // A stale "[offline]" favorite has no connected target index, but the pin itself must
 // stay removable; show its dedicated menu and return true when the row was a stale pin.
 bool FileManagementExplorerPanel::showStaleFavoriteContextMenu(const QPoint& position) {
@@ -6577,6 +6864,14 @@ void FileManagementExplorerPanel::onTargetContextMenuRequested(const QPoint& pos
     properties->setEnabled(has_menu_target);
     connect(properties, &QAction::triggered, this, [this, menu_target_index]() {
         showTargetPropertiesAtIndex(menu_target_index);
+    });
+    // Files SidebarViewModel ShowEjectDevice: drives only, never the system
+    // drive.
+    auto* eject = menu.addAction(tr("Eject"));
+    eject->setObjectName(QStringLiteral("fileExplorerEjectTarget"));
+    eject->setEnabled(has_menu_target && canEjectTarget(m_targets.at(menu_target_index)));
+    connect(eject, &QAction::triggered, this, [this, menu_target_index]() {
+        ejectLocalTargetAtIndex(menu_target_index);
     });
     menu.addSeparator();
     auto* refresh = menu.addAction(tr("Refresh Mounted Targets"));

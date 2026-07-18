@@ -1082,6 +1082,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_file_management_explorer_panel.
         ../src/core/file_management_file_system.cpp
         ../src/core/file_hash.cpp
         ../src/core/recycle_bin.cpp
+        ../src/core/drive_unmounter.cpp
+        ../include/sak/drive_unmounter.h
         ../src/core/advanced_search_worker.cpp
         ../src/threading/worker_base.cpp
         ../src/core/apfs_crypto.cpp

@@ -13,6 +13,7 @@
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_sort_filter_model.h"
+#include "sak/file_explorer_tag_store.h"
 #include "sak/file_management_explorer_panel.h"
 
 #include <QAbstractItemView>
@@ -1191,6 +1192,146 @@ private Q_SLOTS:
         QApplication::processEvents();
         QTest::keyClick(table, Qt::Key_Y, Qt::ControlModifier);
         QTRY_VERIFY(QFileInfo(folder_path).isDir());
+    }
+
+    void sidebarAcceptsTagDropAndFavoriteReorder() {
+        // Seed a known tag and two favorites BEFORE the panel builds its
+        // sidebar, so the Tags section and Favorites section render rows.
+        const auto mounted = sak::FileManagementFileSystemBridge::mountedTargets();
+        if (mounted.size() < 2) {
+            QSKIP("Need two mounted targets for the favorites reorder leg.");
+        }
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("tagme.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("tag payload") > 0);
+        }
+        {
+            QSettings settings;
+            settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+            settings.setValue(QStringLiteral("FavoriteTargetIds"),
+                              QStringList{mounted.at(0).id, mounted.at(1).id});
+            settings.endGroup();
+            sak::FileExplorerTagStore::setTags(settings,
+                                               QStringLiteral("FileManagementExplorer/Tags"),
+                                               mounted.at(0).id,
+                                               QStringLiteral("/tag-seed"),
+                                               {QStringLiteral("crimson")});
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1100, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("tagme")) >= 0);
+
+        verifySidebarTagDrop(panel, targetList, table, dir.path());
+        verifySidebarFavoriteReorder(targetList, mounted.at(0).id, mounted.at(1).id);
+    }
+
+    void verifySidebarTagDrop(sak::FileManagementExplorerPanel& panel,
+                              QListWidget* targetList,
+                              QTableView* table,
+                              const QString& dir_path) {
+        Q_UNUSED(panel);
+        // Copy the file to build the internal drag payload, then drop it on
+        // the "crimson" tag row (Files HandleTagItemDroppedAsync).
+        QVERIFY(selectRowStable(table, QStringLiteral("tagme")));
+        QTest::keyClick(table, Qt::Key_C, Qt::ControlModifier);
+        const QMimeData* clip = QApplication::clipboard()->mimeData();
+        QVERIFY(clip);
+        QVERIFY(clip->hasFormat(QStringLiteral("application/x-sak-file-explorer-items")));
+        QMimeData drag_mime;
+        drag_mime.setData(QStringLiteral("application/x-sak-file-explorer-items"),
+                          clip->data(QStringLiteral("application/x-sak-file-explorer-items")));
+        const QString payload_target =
+            QJsonDocument::fromJson(clip->data(QStringLiteral("application/"
+                                                              "x-sak-file-explorer-items")))
+                .object()
+                .value(QStringLiteral("target"))
+                .toString();
+        QVERIFY(!payload_target.isEmpty());
+
+        QListWidgetItem* tag_row = nullptr;
+        for (int row = 0; row < targetList->count(); ++row) {
+            auto* item = targetList->item(row);
+            // SidebarEntryKind::Tag == 3 (kSidebarKindRole = UserRole + 1).
+            if (item->data(Qt::UserRole + 1).toInt() == 3 &&
+                item->data(Qt::UserRole + 7).toString() == QStringLiteral("crimson")) {
+                tag_row = item;
+                break;
+            }
+        }
+        QVERIFY2(tag_row, "tag row did not render in the sidebar");
+        const QPoint drop_pos = targetList->visualItemRect(tag_row).center();
+        QDragEnterEvent enter(drop_pos,
+                              Qt::CopyAction | Qt::MoveAction | Qt::LinkAction,
+                              &drag_mime,
+                              Qt::NoButton,
+                              Qt::NoModifier);
+        QVERIFY(QApplication::sendEvent(targetList->viewport(), &enter));
+        QVERIFY(enter.isAccepted());
+        QDropEvent drop(drop_pos,
+                        Qt::CopyAction | Qt::MoveAction | Qt::LinkAction,
+                        &drag_mime,
+                        Qt::NoButton,
+                        Qt::NoModifier);
+        QVERIFY(QApplication::sendEvent(targetList->viewport(), &drop));
+
+        QSettings settings;
+        const QString tagged_path =
+            QDir::fromNativeSeparators(QDir(dir_path).filePath(QStringLiteral("tagme.txt")));
+        QTRY_VERIFY(
+            sak::FileExplorerTagStore::tagsFor(settings,
+                                               QStringLiteral("FileManagementExplorer/Tags"),
+                                               payload_target,
+                                               tagged_path)
+                .contains(QStringLiteral("crimson"), Qt::CaseInsensitive));
+    }
+
+    void verifySidebarFavoriteReorder(QListWidget* targetList,
+                                      const QString& first_id,
+                                      const QString& second_id) {
+        // Drag favorite 0 onto favorite 1 (kSidebarFavoritePosRole =
+        // UserRole + 8): the pin order flips and persists.
+        QListWidgetItem* second_favorite = nullptr;
+        for (int row = 0; row < targetList->count(); ++row) {
+            auto* item = targetList->item(row);
+            const QVariant position = item->data(Qt::UserRole + 8);
+            if (!position.isNull() && position.toInt() == 1) {
+                second_favorite = item;
+                break;
+            }
+        }
+        QVERIFY2(second_favorite, "second favorite row did not render");
+        QMimeData favorite_mime;
+        favorite_mime.setData(QStringLiteral("application/x-sak-explorer-favorite"),
+                              QByteArrayLiteral("0"));
+        const QPoint drop_pos = targetList->visualItemRect(second_favorite).center();
+        QDragEnterEvent enter(
+            drop_pos, Qt::MoveAction, &favorite_mime, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(QApplication::sendEvent(targetList->viewport(), &enter));
+        QVERIFY(enter.isAccepted());
+        QDropEvent drop(drop_pos, Qt::MoveAction, &favorite_mime, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(QApplication::sendEvent(targetList->viewport(), &drop));
+
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("FileManagementExplorer"));
+        const QStringList order =
+            settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
+        settings.endGroup();
+        QCOMPARE(order, (QStringList{second_id, first_id}));
     }
 
     // The parameter keeps this helper out of QtTest's parameterless-slot

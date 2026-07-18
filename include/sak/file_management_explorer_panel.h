@@ -319,6 +319,23 @@ private:
                           const PasteItem& item,
                           QStringList* blockers);
     /// Undo/redo journal (Files StorageHistoryWrapper + StorageHistoryOperations).
+    void executePasteTo(const FileManagementTarget& target,
+                        const PasteSources& sources,
+                        const QString& destination_dir);
+    /// Sidebar drag targets (Files SidebarViewModel): drag-to-tag, drop onto
+    /// a target row, and favorites drag-reorder; plus the drive Eject action.
+    bool handleSidebarViewportEvent(QEvent* event);
+    bool handleSidebarDragOver(QDropEvent* drop);
+    bool handleSidebarDrop(QDropEvent* drop);
+    bool handleSidebarTargetDrop(int target_index, QDropEvent* drop);
+    bool filterPaneViewportEvent(QObject* watched, QEvent* event);
+    [[nodiscard]] Qt::DropAction sidebarPasteAction(const FileManagementTarget& target,
+                                                    const QDropEvent* drop) const;
+    void applyDroppedTag(const QString& tag, const QMimeData* mime);
+    void reorderFavorite(int from_position, int to_position);
+    bool maybeStartFavoriteDrag(QEvent* event);
+    [[nodiscard]] bool canEjectTarget(const FileManagementTarget& target) const;
+    void ejectLocalTargetAtIndex(int target_index);
     void recordHistory(FileExplorerHistoryOperation operation,
                        const FileManagementTarget& source_target,
                        const FileManagementTarget& destination_target,
@@ -589,6 +606,10 @@ private:
     QString m_last_preview_path;
     // Result of the most recent mutation, surfaced in the Evidence tab (path + hashes).
     FileManagementMutationResult m_last_mutation;
+    // Favorites drag-reorder candidate: press position and pin index armed on
+    // mouse-press over a favorites row (-1 = none).
+    QPoint m_sidebar_press_pos;
+    int m_sidebar_press_favorite{-1};
     // Undo/redo journal (Files StorageHistoryWrapper): per-panel, in-memory.
     FileExplorerStorageHistoryWrapper m_storage_history;
     // Per-batch capture of the paths the transfer kernel actually wrote
