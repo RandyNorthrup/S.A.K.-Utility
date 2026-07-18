@@ -110,6 +110,9 @@ private:
     /// Steps the pane history several entries at once, then loads once.
     void jumpHistory(int steps, bool back);
     /// Sort flyout (Files ArrangementOptions): sort-by + direction.
+    /// Inline omnibar command palette (Files Omnibar palette mode).
+    void populateOmnibarPalette(const QString& needle);
+    void executePaletteSuggestion(QListWidgetItem* item, const QString& typed);
     void rebuildSortMenu(QMenu* menu, bool include_grouping = true);
     void rebuildGroupMenu(QMenu* menu);
     void addGroupDirectionActions(QMenu* menu);

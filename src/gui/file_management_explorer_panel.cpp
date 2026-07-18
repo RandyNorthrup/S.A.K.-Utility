@@ -106,8 +106,6 @@ constexpr int kSidebarFavoritePosRole = Qt::UserRole + 8;
 constexpr const char* kSidebarFavoriteMime = "application/x-sak-explorer-favorite";
 constexpr int kCommandIdRole = Qt::UserRole + 3;
 constexpr int kCommandEnabledRole = Qt::UserRole + 4;
-constexpr int kCommandBlockerRole = Qt::UserRole + 5;
-constexpr int kCommandHeaderRole = Qt::UserRole + 6;
 
 // Shell layout + control constants.
 constexpr int kViewIdDigestChars = 24;
@@ -453,81 +451,6 @@ QString sidebarIconKeyForTarget(const FileManagementTarget& target) {
 }
 
 // Adds one command-palette row; returns its row index when enabled, else -1.
-int addPaletteCommandItem(QListWidget* commands,
-                          const FileExplorerCommandState& state,
-                          const QString& needle) {
-    const QString searchable =
-        QStringList{state.command.text, state.command.shortcut, state.command.status_text}.join(
-            QLatin1Char(' '));
-    if (!needle.isEmpty() && !searchable.contains(needle, Qt::CaseInsensitive)) {
-        return -1;
-    }
-    QString label = state.command.text;
-    if (!state.command.shortcut.trimmed().isEmpty()) {
-        label += QCoreApplication::translate("FileManagementExplorerPanel", " (%1)")
-                     .arg(state.command.shortcut);
-    }
-    if (!state.enabled && !state.blocker.isEmpty()) {
-        label +=
-            QCoreApplication::translate("FileManagementExplorerPanel", " - %1").arg(state.blocker);
-    }
-    auto* item = new QListWidgetItem(label, commands);
-    item->setData(kCommandIdRole, QVariant::fromValue(state.command.id));
-    item->setData(kCommandEnabledRole, state.enabled);
-    item->setData(kCommandBlockerRole, state.blocker);
-    item->setToolTip(state.enabled ? state.command.status_text : state.blocker);
-    if (!state.enabled) {
-        item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
-        return -1;
-    }
-    return commands->row(item);
-}
-
-// Adds a non-selectable bold section header row for a command group.
-QListWidgetItem* addPaletteGroupHeader(QListWidget* commands, const QString& name) {
-    auto* header = new QListWidgetItem(name, commands);
-    header->setFlags(Qt::NoItemFlags);
-    header->setData(kCommandEnabledRole, false);
-    header->setData(kCommandHeaderRole, true);
-    QFont font = header->font();
-    font.setBold(true);
-    header->setFont(font);
-    return header;
-}
-
-void populateCommandPalette(QListWidget* commands,
-                            const QString& needle,
-                            const FileExplorerCommandContext& context,
-                            QDialogButtonBox* buttons) {
-    commands->clear();
-    int first_enabled_row = -1;
-    for (const FileExplorerCommandGroup group : FileExplorerCommandRegistry::groupOrder()) {
-        QListWidgetItem* header =
-            addPaletteGroupHeader(commands, FileExplorerCommandRegistry::groupName(group));
-        const int rows_before = commands->count();
-        for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
-            if (command.group != group) {
-                continue;
-            }
-            const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
-                                                                                      context);
-            const int row = addPaletteCommandItem(commands, state, needle);
-            if (row >= 0 && first_enabled_row < 0) {
-                first_enabled_row = row;
-            }
-        }
-        if (commands->count() == rows_before) {
-            delete commands->takeItem(commands->row(header));  // no matching rows for this group
-        }
-    }
-    if (first_enabled_row >= 0) {
-        commands->setCurrentRow(first_enabled_row);
-    }
-    buttons->button(QDialogButtonBox::Ok)
-        ->setEnabled(commands->currentItem() &&
-                     commands->currentItem()->data(kCommandEnabledRole).toBool());
-}
-
 QString locationViewSettingsGroup(const FileExplorerLocation& location) {
     const QString raw = QStringLiteral("%1\n%2").arg(location.target_id.value, location.path);
     const QByteArray digest =
@@ -1162,6 +1085,24 @@ void FileManagementExplorerPanel::connectToolbarSignals() {
             &QPushButton::clicked,
             this,
             &FileManagementExplorerPanel::showCommandPalette);
+    // Inline omnibar modes (Files Omnibar): palette suggestions repopulate on
+    // every edit and Enter/click executes through the registry.
+    connect(m_omnibar, &FileExplorerOmnibar::queryTextEdited, this, [this](const QString& text) {
+        if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
+            populateOmnibarPalette(text.trimmed());
+        }
+    });
+    connect(m_omnibar, &FileExplorerOmnibar::querySubmitted, this, [this](const QString& text) {
+        if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
+            executePaletteSuggestion(m_omnibar->suggestionList()->currentItem(), text);
+        }
+    });
+    connect(
+        m_omnibar, &FileExplorerOmnibar::suggestionActivated, this, [this](QListWidgetItem* item) {
+            if (m_omnibar->mode() == FileExplorerOmnibarMode::Palette) {
+                executePaletteSuggestion(item, item ? item->text() : QString());
+            }
+        });
 }
 
 void FileManagementExplorerPanel::connectNavigationSignals() {
@@ -5260,53 +5201,89 @@ void FileManagementExplorerPanel::showExplorerSearchDialog(const QString& initia
 }
 
 void FileManagementExplorerPanel::showCommandPalette() {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Command Palette"));
-    dialog.setMinimumWidth(sak::kDialogWidthLarge);
+    // Files OpenCommandPaletteAction (Ctrl+Shift+P): switch the omnibar into
+    // the inline palette mode; suggestions populate for the empty query.
+    if (m_omnibar) {
+        m_omnibar->setMode(FileExplorerOmnibarMode::Palette);
+    }
+}
 
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* filter = new QLineEdit(&dialog);
-    filter->setObjectName(QStringLiteral("fileExplorerCommandPaletteFilter"));
-    filter->setAccessibleName(tr("Filter File Explorer commands"));
-    filter->setPlaceholderText(tr("Type a command name"));
-    layout->addWidget(filter);
-
-    auto* commands = new QListWidget(&dialog);
-    commands->setObjectName(QStringLiteral("fileExplorerCommandPaletteList"));
-    commands->setAccessibleName(tr("File Explorer commands"));
-    layout->addWidget(commands, 1);
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Run"));
-    layout->addWidget(buttons);
-
-    const auto rebuild = [this, commands, filter, buttons]() {
-        populateCommandPalette(commands, filter->text().trimmed(), commandContext(), buttons);
-    };
-
-    connect(filter, &QLineEdit::textChanged, &dialog, rebuild);
-    connect(commands, &QListWidget::currentItemChanged, &dialog, [buttons](QListWidgetItem* item) {
-        buttons->button(QDialogButtonBox::Ok)
-            ->setEnabled(item && item->data(kCommandEnabledRole).toBool());
-    });
-    connect(commands, &QListWidget::itemDoubleClicked, &dialog, [&dialog](QListWidgetItem* item) {
-        if (item && item->data(kCommandEnabledRole).toBool()) {
-            dialog.accept();
+// Files PopulateOmnibarSuggestionsForCommandPaletteMode: a FLAT list of the
+// executable commands whose text matches the typed needle (case-insensitive
+// contains, unranked, uncapped); no group headers, no disabled rows.
+void FileManagementExplorerPanel::populateOmnibarPalette(const QString& needle) {
+    if (!m_omnibar) {
+        return;
+    }
+    QListWidget* list = m_omnibar->suggestionList();
+    list->clear();
+    const FileExplorerCommandContext context = commandContext();
+    for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
+        const FileExplorerCommandState state = FileExplorerCommandRegistry::state(command.id,
+                                                                                  context);
+        if (!state.enabled) {
+            continue;
         }
-    });
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        const QString searchable =
+            QStringList{command.text,
+                        command.status_text,
+                        FileExplorerCommandRegistry::commandIdName(command.id)}
+                .join(QLatin1Char(' '));
+        if (!needle.isEmpty() && !searchable.contains(needle, Qt::CaseInsensitive)) {
+            continue;
+        }
+        QString label = command.text;
+        if (!command.shortcut.trimmed().isEmpty()) {
+            label += tr(" (%1)").arg(command.shortcut);
+        }
+        auto* item = new QListWidgetItem(label, list);
+        item->setData(kCommandIdRole, QVariant::fromValue(command.id));
+        item->setData(kCommandEnabledRole, true);
+        item->setToolTip(command.status_text);
+    }
+    if (list->count() == 0) {
+        // Files NoCommandsFound row.
+        auto* item = new QListWidgetItem(tr("There are no commands containing %1").arg(needle),
+                                         list);
+        item->setFlags(Qt::NoItemFlags);
+        item->setData(kCommandEnabledRole, false);
+    } else {
+        list->setCurrentRow(0);
+    }
+    m_omnibar->setSuggestionsVisible(true);
+}
 
-    rebuild();
-    if (dialog.exec() != QDialog::Accepted) {
+// Files Omnibar_QuerySubmitted palette branch: run the chosen suggestion,
+// else the command whose label equals the typed text; no match reports.
+void FileManagementExplorerPanel::executePaletteSuggestion(QListWidgetItem* item,
+                                                           const QString& typed) {
+    FileExplorerCommandId command_id{};
+    bool found = false;
+    if (item && item->data(kCommandEnabledRole).toBool()) {
+        command_id = item->data(kCommandIdRole).value<FileExplorerCommandId>();
+        found = true;
+    } else {
+        const QString clean = typed.trimmed();
+        for (const FileExplorerCommand& command : FileExplorerCommandRegistry::commands()) {
+            if (command.text.compare(clean, Qt::CaseInsensitive) == 0) {
+                command_id = command.id;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (m_omnibar) {
+        m_omnibar->setMode(FileExplorerOmnibarMode::Path);
+    }
+    if (!found) {
+        Q_EMIT statusMessage(tr("No command named %1.").arg(typed.trimmed()),
+                             sak::kTimerStatusMessageMs);
         return;
     }
-
-    auto* current = commands->currentItem();
-    if (!current || !current->data(kCommandEnabledRole).toBool()) {
-        return;
+    executeCommand(command_id);
+    if (auto* view = currentItemView()) {
+        view->setFocus();
     }
-    executeCommand(current->data(kCommandIdRole).value<FileExplorerCommandId>());
 }
 
 namespace {

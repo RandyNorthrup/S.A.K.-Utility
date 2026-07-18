@@ -11,6 +11,7 @@
 #include "sak/file_explorer_icon_registry.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_name_delegate.h"
+#include "sak/file_explorer_omnibar.h"
 #include "sak/file_explorer_pane.h"
 #include "sak/file_explorer_properties_dialog.h"
 #include "sak/file_explorer_sort_filter_model.h"
@@ -2608,29 +2609,37 @@ private Q_SLOTS:
         QCOMPARE(pane->sortFilterModel()->nameFilter(), QStringLiteral("codex-filter-no-match"));
     }
 
-    void commandPaletteShortcutOpensRegistryBackedDialog() {
+    void commandPaletteShortcutEntersInlineOmnibarMode() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
-        bool paletteSeen = false;
-        bool listSeen = false;
-        QTimer::singleShot(0, [&paletteSeen, &listSeen]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            paletteSeen = dialog->windowTitle() == QStringLiteral("Command Palette");
-            listSeen = dialog->findChild<QListWidget*>(
-                           QStringLiteral("fileExplorerCommandPaletteList")) != nullptr;
-            dialog->reject();
-        });
-
+        // Ctrl+Shift+P switches the omnibar into the inline palette mode
+        // (Files Omnibar): palette placeholder, suggestion popup visible with
+        // executable commands, Esc backs out to the breadcrumb.
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
         panel.setFocus();
         QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
-        QVERIFY(paletteSeen);
-        QVERIFY(listSeen);
+        QApplication::processEvents();
+        QCOMPARE(pathEdit->placeholderText(), QStringLiteral("Find features and commands..."));
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
+        QTRY_VERIFY(suggestions->isVisible());
+        QVERIFY(suggestions->count() > 0);
+        // Rows are executable-only and carry the command id role (UserRole+3).
+        for (int i = 0; i < suggestions->count(); ++i) {
+            QVERIFY(suggestions->item(i)->data(Qt::UserRole + 4).toBool());
+        }
+
+        // Two-stage Escape: first closes the popup, second reverts to Path
+        // mode (breadcrumb visible again).
+        QTest::keyClick(pathEdit, Qt::Key_Escape);
+        QTRY_VERIFY(!suggestions->isVisible());
+        QTest::keyClick(pathEdit, Qt::Key_Escape);
+        QTRY_VERIFY(!panel.findChild<sak::FileExplorerOmnibar*>()->addressEditMode());
     }
 
     void explorerTabCloseRemovesTabKeepingLast() {
@@ -3181,120 +3190,73 @@ private Q_SLOTS:
                     .isEmpty());
     }
 
-    void commandPaletteFilterNarrowsCommandList() {
+    void commandPaletteFilterNarrowsAndExecutesInline() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
-        int fullCount = -1;
-        int filteredCount = -1;
-        QTimer::singleShot(0, [&fullCount, &filteredCount]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* list =
-                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
-            auto* filter =
-                dialog->findChild<QLineEdit*>(QStringLiteral("fileExplorerCommandPaletteFilter"));
-            if (!list || !filter) {
-                dialog->reject();
-                return;
-            }
-            fullCount = list->count();
-            filter->setText(QStringLiteral("Delete"));
-            QApplication::processEvents();
-            filteredCount = list->count();
-            dialog->reject();
-        });
-
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        QVERIFY(targetList);
+        if (firstTargetRow(targetList) < 0) {
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
         panel.setFocus();
         QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QApplication::processEvents();
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
+        const int fullCount = suggestions->count();
         QVERIFY(fullCount > 0);
+
+        // Typing narrows by case-insensitive contains (Files palette filter).
+        QTest::keyClicks(pathEdit, QStringLiteral("Hidden"));
+        QApplication::processEvents();
+        const int filteredCount = suggestions->count();
         QVERIFY(filteredCount > 0);
         QVERIFY(filteredCount < fullCount);
+        QVERIFY(
+            suggestions->item(0)->text().contains(QStringLiteral("Hidden"), Qt::CaseInsensitive));
+
+        // Enter executes the selected suggestion (ToggleHiddenItems) and the
+        // omnibar reverts to Path mode.
+        auto* pane = panel.findChild<sak::FileExplorerPane*>();
+        QVERIFY(pane);
+        const bool hidden_before = pane->showHiddenItems();
+        QTest::keyClick(pathEdit, Qt::Key_Return);
+        QApplication::processEvents();
+        QTRY_COMPARE(pane->showHiddenItems(), !hidden_before);
+        QTRY_VERIFY(!suggestions->isVisible());
+        auto* omnibar = panel.findChild<sak::FileExplorerOmnibar*>();
+        QVERIFY(omnibar);
+        QCOMPARE(omnibar->mode(), sak::FileExplorerOmnibarMode::Path);
     }
 
-    void commandPaletteRendersGroupHeaders() {
+    void commandPaletteReportsNoMatchRow() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
-        // The palette groups commands under non-selectable section headers whose
-        // labels come from the registry group names, and a header always precedes
-        // its commands.
-        bool sawNavigationHeader = false;
-        bool headerPrecedesCommand = false;
-        QTimer::singleShot(0, [&sawNavigationHeader, &headerPrecedesCommand]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* list =
-                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
-            if (!list) {
-                dialog->reject();
-                return;
-            }
-            bool headerSeen = false;
-            for (int i = 0; i < list->count(); ++i) {
-                const QListWidgetItem* item = list->item(i);
-                const bool isHeader = (item->flags() == Qt::NoItemFlags);
-                if (isHeader) {
-                    headerSeen = true;
-                    if (item->text() == QStringLiteral("Navigation")) {
-                        sawNavigationHeader = true;
-                    }
-                } else if (headerSeen) {
-                    headerPrecedesCommand = true;
-                }
-            }
-            dialog->reject();
-        });
-
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
         panel.setFocus();
         QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
-        QVERIFY(sawNavigationHeader);
-        QVERIFY(headerPrecedesCommand);
-    }
+        QApplication::processEvents();
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
 
-    void commandPaletteMarksDisabledCommandWithBlocker() {
-        sak::FileManagementExplorerPanel panel;
-        panel.resize(1100, 700);
-        panel.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&panel));
-
-        // With no target selected, write/selection commands are disabled and must
-        // carry their blocker text inline and in the tooltip, never silently.
-        bool foundDisabledWithBlocker = false;
-        QTimer::singleShot(0, [&foundDisabledWithBlocker]() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* list =
-                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
-            if (!list) {
-                dialog->reject();
-                return;
-            }
-            for (int i = 0; i < list->count(); ++i) {
-                const QListWidgetItem* item = list->item(i);
-                const bool enabled = (item->flags() & Qt::ItemIsEnabled) != 0;
-                if (!enabled && item->text().contains(QStringLiteral(" - ")) &&
-                    !item->toolTip().isEmpty()) {
-                    foundDisabledWithBlocker = true;
-                    break;
-                }
-            }
-            dialog->reject();
-        });
-
-        panel.setFocus();
-        QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
-        QVERIFY(foundDisabledWithBlocker);
+        // Files NoCommandsFound: a single non-selectable row reports the miss.
+        QTest::keyClicks(pathEdit, QStringLiteral("zz-no-such-command"));
+        QApplication::processEvents();
+        QCOMPARE(suggestions->count(), 1);
+        QCOMPARE(suggestions->item(0)->flags(), Qt::NoItemFlags);
+        QVERIFY(suggestions->item(0)->text().contains(QStringLiteral("no commands"),
+                                                      Qt::CaseInsensitive));
     }
 
     void duplicateTabClonesCurrentTab() {
@@ -3348,37 +3310,21 @@ private Q_SLOTS:
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 1);
 
-        // Run "Reopen Closed Tab" through the command palette (it now resolves to
-        // enabled from the live context) to restore the closed tab.
-        QTimer::singleShot(0, []() {
-            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            auto* list =
-                dialog->findChild<QListWidget*>(QStringLiteral("fileExplorerCommandPaletteList"));
-            auto* filter =
-                dialog->findChild<QLineEdit*>(QStringLiteral("fileExplorerCommandPaletteFilter"));
-            if (!list || !filter) {
-                dialog->reject();
-                return;
-            }
-            filter->setText(QStringLiteral("Reopen Closed Tab"));
-            QApplication::processEvents();
-            for (int i = 0; i < list->count(); ++i) {
-                QListWidgetItem* item = list->item(i);
-                if (item->text().startsWith(QStringLiteral("Reopen Closed Tab")) &&
-                    (item->flags() & Qt::ItemIsEnabled) != 0) {
-                    list->setCurrentItem(item);
-                    dialog->accept();
-                    return;
-                }
-            }
-            dialog->reject();
-        });
-
+        // Run "Reopen Closed Tab" through the inline palette (it now resolves
+        // to enabled from the live context) to restore the closed tab.
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
         panel.setFocus();
         QTest::keyClick(&panel, Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+        QApplication::processEvents();
+        auto* suggestions =
+            panel.findChild<QListWidget*>(QStringLiteral("fileExplorerOmnibarSuggestions"));
+        QVERIFY(suggestions);
+        QTest::keyClicks(pathEdit, QStringLiteral("Reopen Closed Tab"));
+        QApplication::processEvents();
+        QVERIFY(suggestions->count() > 0);
+        QVERIFY(suggestions->item(0)->text().startsWith(QStringLiteral("Reopen Closed Tab")));
+        QTest::keyClick(pathEdit, Qt::Key_Return);
         QApplication::processEvents();
         QCOMPARE(tabs->count(), 2);
     }
